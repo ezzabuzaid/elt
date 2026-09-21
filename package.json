@@ -1,0 +1,11 @@
+{
+  "name": "mac-elt",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "26.6.1",
+    "nx": "23.2.1",
+    "typescript": "5.9.3"
+  }
+}

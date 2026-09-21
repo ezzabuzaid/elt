@@ -1,0 +1,22 @@
+{
+  "name": "mac-elt",
+  "targets": {
+    "build": {
+      "command": "tsc -p tsconfig.json"
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "biome check --write src tests package.json project.json nx.json tsconfig.json biome.json",
+          "tsc -p tsconfig.json --noEmit"
+        ],
+        "parallel": false
+      }
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --experimental-test-module-mocks --test work/dist/tests/*.test.js"
+    }
+  }
+}

@@ -1,0 +1,102 @@
+import osa from '../../platform/macos/osa.ts';
+import { AppleNotesStream } from './apple-notes-stream.ts';
+
+export type Attachment = {
+  id: string;
+  name: string | null;
+  // The container is a note; optional file extraction travels outside this metadata.
+  containerId: string;
+  contentId: string | null;
+  url: string | null;
+  createdAt: string;
+  modifiedAt: string;
+  shared: boolean;
+};
+
+export class AttachmentsStream extends AppleNotesStream<Attachment> {
+  readonly name = 'attachments';
+  readonly supportsFileTransfer = true;
+  override readonly supportedSyncModes = Object.freeze([
+    'full_refresh',
+    'incremental',
+  ] as const);
+  readonly jsonSchema = {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      name: { type: ['string', 'null'] },
+      containerId: { type: 'string' },
+      contentId: { type: ['string', 'null'] },
+      url: { type: ['string', 'null'] },
+      createdAt: { type: 'string', format: 'date-time' },
+      modifiedAt: { type: 'string', format: 'date-time' },
+      shared: { type: 'boolean' },
+    },
+    required: [
+      'id',
+      'name',
+      'containerId',
+      'contentId',
+      'url',
+      'createdAt',
+      'modifiedAt',
+      'shared',
+    ],
+  } as const;
+
+  protected readonly script = `
+      app.attachments().map(attachment => ({
+        id: attachment.id(),
+        name: attachment.name() ?? null,
+        containerId: attachment.container().id(),
+        contentId: attachment.contentIdentifier() ?? null,
+        url: attachment.url() ?? null,
+        createdAt: attachment.creationDate().toISOString(),
+        modifiedAt: attachment.modificationDate().toISOString(),
+        shared: attachment.shared()
+      }))
+  `;
+
+  async save(id: string, path: string): Promise<boolean> {
+    const exported: unknown = JSON.parse(
+      await osa.execute(`
+      const app = Application('/System/Applications/Notes.app');
+      if (!app.running()) throw new Error('NOTES_UNAVAILABLE');
+      const attachment = app.attachments.byId(${JSON.stringify(id)});
+      const hasFile = !attachment.container().passwordProtected() &&
+        attachment.url() == null;
+      if (hasFile) app.save(attachment, { in: Path(${JSON.stringify(path)}) });
+      JSON.stringify(hasFile);
+    `),
+    );
+    if (typeof exported !== 'boolean')
+      throw new TypeError(
+        'Notes returned an unexpected attachment export result',
+      );
+    return exported;
+  }
+
+  protected validate(attachments: unknown): Attachment[] {
+    if (
+      !Array.isArray(attachments) ||
+      !attachments.every(
+        (attachment) =>
+          attachment !== null &&
+          typeof attachment === 'object' &&
+          !Array.isArray(attachment) &&
+          typeof attachment.id === 'string' &&
+          (attachment.name === null || typeof attachment.name === 'string') &&
+          typeof attachment.containerId === 'string' &&
+          (attachment.contentId === null ||
+            typeof attachment.contentId === 'string') &&
+          (attachment.url === null || typeof attachment.url === 'string') &&
+          typeof attachment.createdAt === 'string' &&
+          typeof attachment.modifiedAt === 'string' &&
+          typeof attachment.shared === 'boolean',
+      )
+    )
+      throw new TypeError('Notes returned an unexpected attachment format');
+
+    return attachments;
+  }
+}
