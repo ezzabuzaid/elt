@@ -5,11 +5,13 @@ Extract Apple Notes and Apple Reminders into SQLite or Markdown with immutable `
 [Sync decisions and verification](tmp/plans/sync-modes.md) · [Attachment declaration decisions and verification](tmp/plans/attachment-declarations.md) · [Earlier Airbyte API discussion](docs/plans/airbyte-sync-api.md)
 
 ```ts
-import { Copy } from './src/core/copy.ts';
-import { Pipeline } from './src/core/pipeline.ts';
-import { SQLiteDestination } from './src/destinations/sqlite/sqlite-destination.ts';
-import { AppleNotesSource } from './src/sources/apple-notes/apple-notes-source.ts';
-import { SQLiteCheckpointStore } from './src/state/sqlite-checkpoint-store.ts';
+import {
+  AppleNotesSource,
+  Copy,
+  Pipeline,
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from 'elt';
 
 const notes = new AppleNotesSource();
 const sqlite = new SQLiteDestination({ path: './notes.sqlite' });
@@ -110,7 +112,7 @@ This polling source has no deletion events or consistent database snapshot. Incr
 ## Attachment files and document parsing
 
 ```ts
-import { MacOSDocumentParser } from './src/parsers/macos-document-parser.ts';
+import { MacOSDocumentParser } from 'elt';
 
 const attachmentCopy = new Copy(
   notes.attachments,
@@ -158,7 +160,7 @@ A bare table still infers the discovered metadata schema. To include all metadat
 Markdown targets use the same destination-independent `FileRead` declaration, alongside their existing metadata rendering:
 
 ```ts
-import { FileRead } from './src/core/file-read.ts';
+import { FileRead } from 'elt';
 
 new Copy(notes.attachments, markdown.folder('attachments', {
   fields: [new FileRead('content', notes.attachments.file, new MacOSDocumentParser())],
@@ -186,7 +188,7 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 Copies then execute in declaration order. Each SQLite copy opens its own handle and transaction; each Markdown copy stages its complete output. Errors before commit/publication preserve the previous output for that copy. Empty overwrite clears it; empty append preserves existing records. Earlier copies remain committed if a later copy fails. There is no pipeline-wide rollback.
 
 ```ts
-import { PipelineError } from './src/core/pipeline.ts';
+import { PipelineError } from 'elt';
 
 try {
   await pipeline.run();
@@ -208,7 +210,7 @@ SQLite holds its transaction during extraction. Long reads can block other write
 ## Markdown destination
 
 ```ts
-import { MarkdownDestination } from './src/destinations/markdown/markdown-destination.ts';
+import { MarkdownDestination } from 'elt';
 
 const markdown = new MarkdownDestination({ path: './exports' });
 const exportPipeline = new Pipeline({
@@ -244,7 +246,7 @@ An exclusive `.markdown-<target>.lock` directory prevents cooperating concurrent
 ## Apple Reminders
 
 ```ts
-import { AppleRemindersSource } from './src/sources/apple-reminders/apple-reminders-source.ts';
+import { AppleRemindersSource } from 'elt';
 
 const reminders = new AppleRemindersSource();
 const sqlite = new SQLiteDestination({ path: './reminders.sqlite' });
@@ -270,21 +272,33 @@ Incremental extraction is rejected until native modification-date behavior is ve
 
 Open Reminders and allow macOS Automation access for the process running the export. `RemindersUnavailableError` reports a closed or inaccessible app; an explicit permission denial or other scripting failure keeps its original cause. Sandbox restrictions can make a running app appear inaccessible. Failed reads preserve the previous contents of the affected target.
 
-## Running and checking
+## Workspace
+
+- `packages/elt`: the reusable `elt` library, imported through its package entry point.
+- `apps/apple`: the Apple Notes export application, restored from the original `main.ts`.
+
+npm workspaces link the app to the library. Each project builds into its own `dist/` directory, and Nx builds `elt` before dependent app targets.
+
+## Building and checking
 
 Use Node.js 26 from the workspace root:
 
 ```sh
 npm ci
-nx run mac-elt:build
-node work/dist/src/main.js
-node work/dist/src/export-accounts.js
-node work/dist/src/export-attachments.js
-node work/dist/src/export-reminders.js
-nx run mac-elt:typecheck
-nx run mac-elt:test
+nx run apple:build
+nx run elt:typecheck
+nx run apple:typecheck
+nx run elt:test
 ```
 
-The examples write `outputs/apple-notes.sqlite`, `outputs/markdown/`, and `outputs/attachments.sqlite`. `main.ts` loads attachment metadata, parsed text, and original bytes into `raw_attachments`, then queries the attachment content and byte length joined to the containing note's name. Both Notes attachment examples require files supported by the selected native parser; export/parse errors stop them before the query. Notes must be open and macOS automation accessible. Tests use synthetic records, mocked Notes automation, temporary SQLite/Markdown destinations, and real native parsing of synthetic PDF/Word/text documents. They do not read personal Notes data. Use the built JavaScript: Node's default TypeScript stripping does not support the parameter properties used by this project.
+Use the built JavaScript: Node's default TypeScript stripping does not support the parameter properties used by this project.
 
-The Reminders example writes `outputs/apple-reminders.sqlite`, replacing `raw_accounts`, `raw_lists`, and `raw_reminders` on each run. Open Reminders before running it. Reminders tests use synthetic native-shaped properties and temporary destinations; they do not read or change personal reminders.
+The package test copies synthetic source records into a temporary SQLite database through the public API. It does not read personal Notes data.
+
+## Running the Apple app
+
+```sh
+nx run apple:start
+```
+
+Run from the workspace root. The app creates `outputs/` and writes `outputs/apple-notes.sqlite`, replacing `raw_accounts`, `raw_folders`, `raw_notes`, and `raw_attachments` on each run. It loads attachment metadata, parsed text, and original bytes, then queries attachment content and byte lengths joined to note names. Notes must be open and macOS Automation access allowed. Unsupported attachment formats or export/parse errors stop the run.

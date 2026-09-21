@@ -1,14 +1,19 @@
-import { resolve } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { Copy } from './core/copy.ts';
-import { Pipeline, PipelineError } from './core/pipeline.ts';
-import { SQLiteDestination } from './destinations/sqlite/sqlite-destination.ts';
-import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
-import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
-import { NotesUnavailableError } from './sources/apple-notes/apple-notes-stream.ts';
+import {
+  AppleNotesSource,
+  Copy,
+  MacOSDocumentParser,
+  NotesUnavailableError,
+  Pipeline,
+  PipelineError,
+  SQLiteDestination,
+} from 'elt';
 
 try {
   const path = resolve('outputs/apple-notes.sqlite');
+  await mkdir(dirname(path), { recursive: true });
   const source = new AppleNotesSource();
   const destination = new SQLiteDestination({ path });
   const pipeline = new Pipeline({

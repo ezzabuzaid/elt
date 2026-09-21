@@ -1,0 +1,33 @@
+export { Catalog } from './core/catalog.ts';
+export { Copy } from './core/copy.ts';
+export { CopyConfiguration } from './core/copy-configuration.ts';
+export { Destination, type DestinationSyncMode } from './core/destination.ts';
+export { DocumentParser } from './core/document-parser.ts';
+export { FileRead, FileReference } from './core/file-read.ts';
+export { type CopyResult, Pipeline, PipelineError } from './core/pipeline.ts';
+export {
+  type RecordMessage,
+  Source,
+  type SourceMessage,
+  type StateMessage,
+} from './core/source.ts';
+export { Stream, type SyncMode } from './core/stream.ts';
+export { Target } from './core/target.ts';
+export {
+  CommittedWriteError,
+  type WriteResult,
+  Writer,
+} from './core/writer.ts';
+export { MarkdownDestination } from './destinations/markdown/markdown-destination.ts';
+export { MarkdownFile } from './destinations/markdown/markdown-file.ts';
+export { MarkdownFolder } from './destinations/markdown/markdown-folder.ts';
+export { SQLiteColumn } from './destinations/sqlite/sqlite-column.ts';
+export { SQLiteColumns } from './destinations/sqlite/sqlite-columns.ts';
+export { SQLiteDestination } from './destinations/sqlite/sqlite-destination.ts';
+export { SQLiteTable } from './destinations/sqlite/sqlite-table.ts';
+export { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
+export { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
+export { NotesUnavailableError } from './sources/apple-notes/apple-notes-stream.ts';
+export { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
+export { RemindersUnavailableError } from './sources/apple-reminders/apple-reminders-stream.ts';
+export { SQLiteCheckpointStore } from './state/sqlite-checkpoint-store.ts';

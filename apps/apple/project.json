@@ -1,0 +1,25 @@
+{
+  "name": "apple",
+  "sourceRoot": "apps/apple/src",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "command": "tsc -p apps/apple/tsconfig.json",
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "biome check --write apps/apple/src apps/apple/package.json apps/apple/project.json apps/apple/tsconfig.json",
+          "tsc -p apps/apple/tsconfig.json --noEmit"
+        ],
+        "parallel": false
+      }
+    },
+    "start": {
+      "dependsOn": ["build"],
+      "command": "node apps/apple/dist/main.js"
+    }
+  }
+}

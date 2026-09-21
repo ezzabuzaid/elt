@@ -1,0 +1,8 @@
+{
+  "name": "apple",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "elt": "0.0.1"
+  }
+}

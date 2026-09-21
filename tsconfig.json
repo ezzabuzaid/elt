@@ -6,9 +6,7 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "rewriteRelativeImportExtensions": true,
-    "rootDir": ".",
-    "outDir": "work/dist",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "files": []
 }

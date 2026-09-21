@@ -1,0 +1,25 @@
+{
+  "name": "elt",
+  "sourceRoot": "packages/elt/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "command": "tsc -p packages/elt/tsconfig.json",
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "biome check --write packages/elt/src packages/elt/package.json packages/elt/project.json packages/elt/tsconfig.json package.json nx.json tsconfig.json biome.json",
+          "tsc -p packages/elt/tsconfig.json --noEmit"
+        ],
+        "parallel": false
+      }
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test packages/elt/dist/index.test.js"
+    }
+  }
+}
