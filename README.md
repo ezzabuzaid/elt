@@ -109,7 +109,40 @@ Notes and attachments support `cursorField: 'modifiedAt'`. Accounts and folders 
 
 JXA still scans and validates the full collection. Incremental filtering reduces emitted records, not scan cost. Records at the saved timestamp are replayed inclusively. The next watermark is the greatest observed timestamp capped at scan start, so changes during a scan remain eligible for replay. An empty scan preserves the previous watermark. Timestamps must be canonical UTC ISO strings with four-digit years.
 
-This polling source has no deletion events or consistent database snapshot. Incremental loading does not remove deleted notes, and it can miss late/backdated changes whose timestamps precede the watermark. Use full refresh overwrite when you need to reconcile the current snapshot. These are source limitations, not deduplication behavior.
+This reader has no deletion events or consistent database snapshot. Incremental loading does not remove deleted notes, and it can miss late/backdated changes whose timestamps precede the watermark. Use full refresh overwrite when you need to reconcile the current snapshot. These are source limitations, not deduplication behavior.
+
+## Watching for changes
+
+Use the same configured pipeline for continuous synchronization:
+
+```ts
+const controller = new AbortController();
+
+for await (const results of pipeline.watch({ signal: controller.signal })) {
+  // These copies have already extracted, loaded, and saved their checkpoints.
+  console.table(results.map(({ copy, count }) => ({
+    stream: copy.from.name,
+    processed: count,
+  })));
+}
+
+// Call controller.abort() from your app's stop/shutdown handler.
+```
+
+Watching preflights the whole pipeline, subscribes before the initial synchronization, and then reruns copies whose streams receive notifications. It uses the existing copy modes: the incremental Notes recipe above remains incremental; Calendar and Reminders retain full-refresh extraction. Notifications do not provide records or turn a full-refresh source into an incremental one. `run()` remains a single execution, and the runnable Apple app still uses it.
+
+The source owns change detection:
+
+- **Calendar and Reminders:** a persistent OSA process subscribes to native `EKEventStoreChangedNotification` notifications. These invalidate all selected streams because EventKit does not identify individual changes. The existing EventKit permission requirements apply. Full-refresh overwrite reconciles deletions on the next successful pass.
+- **Notes:** Node's native `fs.watch` watches `~/Library/Group Containers/group.com.apple.notes` recursively and triggers the existing JXA reader. This is a filesystem invalidation hint over private Notes storage, not a public note-change subscription. It can also fire for unrelated storage activity, and signals concern persisted changes rather than every keystroke. It requires access to that protected directory, potentially Full Disk Access for the host process, as well as the existing Notes Automation permission for extraction. Denied access fails with an actionable error; there is no polling fallback. The reader still scans the collection, and incremental mode still does not remove deleted notes.
+
+Runs are serial. Notifications received during extraction or while the caller handles a result are coalesced into a pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. Every yielded result has completed loading and checkpoint persistence; `count` still counts accepted observations, including deduplication no-ops. A load failure raises `PipelineError`; a watcher failure is propagated. No automatic retries or periodic reconciliation are added.
+
+Aborting stops native observation, lets an in-flight pass finish and yield its result, and prevents another pass. Breaking the loop also closes the watcher. A new watch session subscribes and performs an initial pass again, using the saved checkpoints. Notifications themselves are not durable, and the source's existing snapshot/cursor limitations still apply.
+
+Custom sources implement `watch({ streams, signal }): AsyncIterable<readonly Stream[]>`. Establish observation before yielding all selected streams once; then emit the affected selected streams until cancellation. The pipeline keeps consuming these invalidations while it loads records. Close native resources when aborted or when the iterator is closed; errors must propagate. `Stream` remains immutable metadata, and loading continues through `Source.read`, `Copy`, and the destination writers.
+
+Verification covers actual filesystem events in temporary storage, native EventKit observer delivery using process-local notifications without personal data, and destination/checkpoint visibility before results are yielded. The native filesystem test requires an environment that permits filesystem notifications; this host's sandbox reports `EMFILE` even for a single temporary-directory watcher, while the same probe succeeds outside it. Live Notes directory observation returned `EPERM` even outside the sandbox; actual personal Notes edits and cross-process Calendar/Reminders edits remain unverified.
 
 ## Attachment files and document parsing
 

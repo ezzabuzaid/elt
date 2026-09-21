@@ -9,6 +9,7 @@ export {
   type RecordMessage,
   Source,
   type SourceMessage,
+  type SourceWatchOptions,
   type StateMessage,
 } from './core/source.ts';
 export { Stream, type SyncMode } from './core/stream.ts';

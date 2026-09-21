@@ -2,6 +2,12 @@ import { readFile } from 'node:fs/promises';
 import type { Catalog } from './catalog.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { DocumentParser } from './document-parser.ts';
+import type { Stream } from './stream.ts';
+
+export type SourceWatchOptions = {
+  readonly streams: readonly Stream[];
+  readonly signal: AbortSignal;
+};
 
 export type RecordMessage = {
   readonly stream: string;
@@ -24,6 +30,9 @@ export abstract class Source {
   abstract discover(): Promise<Catalog>;
   // Check source-owned metadata without extraction or rediscovery.
   abstract validate(configuration: CopyConfiguration): void;
+  // Subscribe before yielding all selected streams once, then yield invalidations.
+  // Keep receiving changes until signal aborts, including while extraction runs.
+  abstract watch(options: SourceWatchOptions): AsyncIterable<readonly Stream[]>;
   // Must be lazy: the destination prepares its target before pulling records.
   async *read(
     configuration: CopyConfiguration,

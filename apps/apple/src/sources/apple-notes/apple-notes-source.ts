@@ -1,7 +1,9 @@
+import { on } from 'node:events';
+import fs from 'node:fs';
 import { lstat, mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
-import type { CopyConfiguration } from 'elt';
+import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
 import { Catalog, Source, type SourceMessage } from 'elt';
 import { AccountsStream } from './accounts-stream.ts';
 import { AttachmentsStream } from './attachments-stream.ts';
@@ -34,6 +36,40 @@ export class AppleNotesSource extends Source {
 
   async discover(): Promise<Catalog> {
     return this.#catalog;
+  }
+
+  override async *watch({
+    streams,
+    signal,
+  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
+    for (const stream of streams) this.#catalog.get(stream.name);
+    if (signal.aborted) return;
+    // Native filesystem invalidations, not a public Notes change feed. Re-read through JXA.
+    const path = join(
+      homedir(),
+      'Library/Group Containers/group.com.apple.notes',
+    );
+    try {
+      const watcher = fs.watch(path, { recursive: true, signal });
+      try {
+        await using changes = on(watcher, 'change', { signal });
+        yield streams;
+        for await (const _ of changes) yield streams;
+      } finally {
+        watcher.close();
+      }
+    } catch (cause) {
+      if (
+        cause instanceof Error &&
+        'code' in cause &&
+        (cause.code === 'EPERM' || cause.code === 'EACCES')
+      )
+        throw new Error(
+          `Apple Notes watching cannot access ${path}. Allow the host process Full Disk Access in System Settings > Privacy & Security and run outside a sandbox that blocks this directory.`,
+          { cause },
+        );
+      throw cause;
+    }
   }
 
   validate(configuration: CopyConfiguration): void {

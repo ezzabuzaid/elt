@@ -30,6 +30,7 @@ Keep `packages/elt` platform-independent: reusable contracts, pipeline, destinat
 
 - Advertise only verified sync modes. Start with full refresh unless incremental behavior is required and proven.
 - For incremental reads, validate prior state, handle replay and equal cursors, and emit source-owned `STATE` messages. Let the pipeline persist acknowledged state.
+- Implement `Source.watch({ streams, signal })` with the source's change trigger. Subscribe before yielding all selected streams once, then emit affected streams. Honor cancellation and close native resources; do not load records or persist checkpoints in the watcher. Native notifications can trigger full-refresh extraction without providing an incremental cursor.
 - Document deletion and snapshot limitations.
 - Reuse `Copy`, `Pipeline`, and destinations; keep loading out of the source.
 - Follow the staged-file contract and cleanup. Let `Source.read()` resolve requested bytes or parsed text.

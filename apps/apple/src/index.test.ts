@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
-import { mkdtempDisposable, readFile } from 'node:fs/promises';
+import fs, { writeFileSync } from 'node:fs';
+import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -1324,4 +1324,167 @@ test('EventKit permission gate requests the correct entity and refuses incomplet
     }
     assert.throws(check(0, 3, entity, false).run, /macOS 14 or later/);
   }
+});
+
+test('Notes subscribes before its initial invalidation and reacts to native filesystem changes', {
+  timeout: 10_000,
+}, async (t) => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-watch-'));
+  const nativeWatch = fs.watch;
+  const source = new AppleNotesSource();
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const closed = Promise.withResolvers<void>();
+  t.mock.method(
+    fs,
+    'watch',
+    (path: fs.PathLike, options: fs.WatchOptionsWithStringEncoding) => {
+      assert.match(
+        String(path),
+        /Library\/Group Containers\/group\.com\.apple\.notes$/,
+      );
+      const watcher = nativeWatch(scratch.path, options);
+      watcher.once('close', () => closed.resolve());
+      return watcher;
+    },
+  );
+  await using watching = source.watch({
+    streams: [source.notes],
+    signal: controller.signal,
+  });
+  assert.deepEqual(await watching.next(), {
+    value: [source.notes],
+    done: false,
+  });
+  const [changed] = await Promise.all([
+    watching.next(),
+    writeFile(join(scratch.path, 'NoteStore.sqlite-wal'), 'test change'),
+  ]);
+  assert.deepEqual(changed, { value: [source.notes], done: false });
+  controller.abort();
+  // Abort may follow already queued native events, so drain until cancellation.
+  await assert.rejects(
+    async () => {
+      for await (const _ of watching) {
+      }
+    },
+    { name: 'AbortError' },
+  );
+  await closed.promise;
+});
+
+test('Notes watcher permission failures preserve their cause and do not fall back to polling', async (t) => {
+  const cause = Object.assign(new Error('Access denied'), { code: 'EPERM' });
+  const start = t.mock.method(fs, 'watch', () => {
+    throw cause;
+  });
+  const source = new AppleNotesSource();
+  const watching = source.watch({
+    streams: [source.notes],
+    signal: new AbortController().signal,
+  });
+  await assert.rejects(watching.next(), (error) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /Full Disk Access/);
+    assert.equal(error.cause, cause);
+    return true;
+  });
+  assert.equal(start.mock.callCount(), 1);
+});
+
+test('Calendar and Reminders watch native EventKit notifications without reading personal data', {
+  timeout: 10_000,
+}, async (t) => {
+  const nativeWatch = osa.watch.bind(osa);
+  t.mock.method(osa, 'watch', (script: string, signal: AbortSignal) => {
+    // Exercise the actual observer and bridge with an unsaved store. Do not request
+    // access or modify Calendar/Reminders; post only a process-local notification.
+    const probe = script
+      .replace('requireEventKitAccess(store, entityType, marker);', '')
+      .replace(
+        '$.NSRunLoop.currentRunLoop.run;',
+        `center.postNotificationNameObject($.EKEventStoreChangedNotification, store);
+       $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));`,
+      );
+    return nativeWatch(probe, signal);
+  });
+  const calendar = new AppleCalendarSource({
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+  });
+  const reminders = new AppleRemindersSource();
+  for (const [source, stream] of [
+    [calendar, calendar.events],
+    [reminders, reminders.reminders],
+  ] as const) {
+    const controller = new AbortController();
+    t.after(() => controller.abort());
+    await using watching = source.watch({
+      streams: [stream],
+      signal: controller.signal,
+    });
+    assert.deepEqual(await watching.next(), { value: [stream], done: false });
+    assert.deepEqual(await watching.next(), { value: [stream], done: false });
+    controller.abort();
+    assert.deepEqual(await watching.next(), { value: undefined, done: true });
+  }
+});
+
+test('EventKit watching preserves permission failures and rejects invalid native notifications', async (t) => {
+  for (const [entity, marker, Unavailable] of [
+    ['events', 'CALENDAR_UNAVAILABLE', CalendarUnavailableError],
+    ['reminders', 'REMINDERS_UNAVAILABLE', RemindersUnavailableError],
+  ] as const) {
+    const cause = Object.assign(new Error('Access denied'), { stderr: marker });
+    t.mock.method(osa, 'watch', () => {
+      throw cause;
+    });
+    const client = new EventKit(entity);
+    await assert.rejects(
+      client.watch(new AbortController().signal).next(),
+      (error) => {
+        assert.ok(error instanceof Unavailable);
+        assert.equal(error.cause, cause);
+        return true;
+      },
+    );
+    t.mock.reset();
+  }
+  t.mock.method(osa, 'watch', async function* () {
+    yield 'unexpected';
+  });
+  await assert.rejects(
+    new EventKit('events').watch(new AbortController().signal).next(),
+    /invalid notification/,
+  );
+});
+
+test('OSA watching closes on abort or iterator return and reports native failures', {
+  timeout: 10_000,
+}, async (t) => {
+  const script = `ObjC.import('Foundation');
+    $.NSFileHandle.fileHandleWithStandardOutput.writeData($('ready\\n').dataUsingEncoding($.NSUTF8StringEncoding));
+    $.NSRunLoop.currentRunLoop.run;`;
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  await using watching = osa.watch(script, controller.signal);
+  assert.deepEqual(await watching.next(), { value: 'ready', done: false });
+  const pending = watching.next();
+  controller.abort();
+  assert.deepEqual(await pending, { value: undefined, done: true });
+  const stopped = osa.watch(script, new AbortController().signal);
+  assert.equal((await stopped.next()).value, 'ready');
+  assert.deepEqual(await stopped.return(undefined), {
+    value: undefined,
+    done: true,
+  });
+  await assert.rejects(
+    osa
+      .watch(
+        "throw new Error('native probe failure');",
+        new AbortController().signal,
+      )
+      .next(),
+    /native probe failure/,
+  );
 });

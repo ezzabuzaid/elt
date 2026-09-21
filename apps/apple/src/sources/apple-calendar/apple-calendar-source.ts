@@ -1,4 +1,9 @@
-import type { Catalog, CopyConfiguration, Stream } from 'elt';
+import type {
+  Catalog,
+  CopyConfiguration,
+  SourceWatchOptions,
+  Stream,
+} from 'elt';
 import { type RecordMessage, Source } from 'elt';
 import { EventKit } from '../../platform/macos/eventkit.ts';
 import {
@@ -106,6 +111,14 @@ export class AppleCalendarSource extends Source {
 
   async discover(): Promise<Catalog> {
     return catalog;
+  }
+
+  override async *watch({
+    streams,
+    signal,
+  }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
+    for (const stream of streams) catalog.get(stream.name);
+    for await (const _ of this.#eventKit.watch(signal)) yield streams;
   }
 
   validate(configuration: CopyConfiguration): void {
