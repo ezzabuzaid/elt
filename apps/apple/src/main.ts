@@ -23,7 +23,6 @@ try {
           columns.text('id').primaryKey(),
           columns.text('name').notNull(),
         ]),
-        { syncMode: 'full_refresh', destinationSyncMode: 'overwrite' },
       ),
       new Copy(source.folders, destination.table('raw_folders')),
       new Copy(source.notes, destination.table('raw_notes')),
@@ -39,7 +38,6 @@ try {
             .parse(new MacOSDocumentParser()),
           columns.blob('bytes').from(source.attachments.file),
         ]),
-        { syncMode: 'full_refresh', destinationSyncMode: 'overwrite' },
       ),
     ],
   });

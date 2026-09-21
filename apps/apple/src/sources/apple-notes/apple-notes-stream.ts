@@ -28,12 +28,18 @@ export abstract class AppleNotesStream<T> {
   }
 
   async *read(): AsyncGenerator<T> {
-    let output: string;
+    const records: unknown = JSON.parse(
+      await this.execute(`JSON.stringify(${this.script});`),
+    );
+    yield* this.validate(records);
+  }
+
+  protected async execute(script: string): Promise<string> {
     try {
-      output = await osa.execute(`
+      return await osa.execute(`
         const app = Application('/System/Applications/Notes.app');
         if (!app.running()) throw new Error('NOTES_UNAVAILABLE');
-        JSON.stringify(${this.script});
+        ${script}
       `);
     } catch (error) {
       if (
@@ -45,7 +51,5 @@ export abstract class AppleNotesStream<T> {
         throw new NotesUnavailableError(error);
       throw error;
     }
-    const records: unknown = JSON.parse(output);
-    yield* this.validate(records);
   }
 }

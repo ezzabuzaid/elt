@@ -1,4 +1,3 @@
-import osa from '../../platform/macos/osa.ts';
 import { AppleNotesStream } from './apple-notes-stream.ts';
 
 export type Attachment = {
@@ -59,12 +58,10 @@ export class AttachmentsStream extends AppleNotesStream<Attachment> {
 
   async save(id: string, path: string): Promise<boolean> {
     const exported: unknown = JSON.parse(
-      await osa.execute(`
-      const app = Application('/System/Applications/Notes.app');
-      if (!app.running()) throw new Error('NOTES_UNAVAILABLE');
+      await this.execute(`
       const attachment = app.attachments.byId(${JSON.stringify(id)});
       const hasFile = !attachment.container().passwordProtected() &&
-        attachment.url() == null;
+        attachment.url() == null && attachment.contents() != null;
       if (hasFile) app.save(attachment, { in: Path(${JSON.stringify(path)}) });
       JSON.stringify(hasFile);
     `),

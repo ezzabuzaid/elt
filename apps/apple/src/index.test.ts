@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { mkdtempDisposable, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,11 +20,13 @@ import {
   AppleNotesSource,
   AppleRemindersSource,
   CalendarUnavailableError,
+  NotesUnavailableError,
   RemindersUnavailableError,
 } from './index.ts';
 import { EventKit } from './platform/macos/eventkit.ts';
 import osa from './platform/macos/osa.ts';
 import { calendarScript } from './sources/apple-calendar/calendar-script.ts';
+import { AttachmentsStream } from './sources/apple-notes/attachments-stream.ts';
 import { remindersScript } from './sources/apple-reminders/reminders-script.ts';
 
 type Field = {
@@ -107,6 +110,98 @@ test('Notes adapts its records to the ELT pipeline', async () => {
   const row = database.prepare('SELECT id, name FROM accounts').get();
   assert.ok(row);
   assert.deepEqual({ ...row }, { id: 'account-1', name: 'Test account' });
+});
+
+test('Notes uses native file availability and rolls back actual export failures', async (t) => {
+  const source = new AppleNotesSource();
+  const nativeError = Object.assign(new Error('Command failed: osascript'), {
+    stderr:
+      'execution error: Error: Error: AppleEvent handler failed. (-10000)\n',
+  });
+  const records = [
+    recordFor(source.attachments, { id: 'file-1', name: 'example.txt' }),
+    recordFor(source.attachments, { id: 'embedded-1', name: null }),
+    recordFor(source.attachments, { id: 'url-1', url: 'https://example.com' }),
+    recordFor(source.attachments, { id: 'locked-1' }),
+  ];
+  const stagedPaths: string[] = [];
+  t.mock.method(osa, 'execute', async (script: string) => {
+    if (!script.includes('app.save')) return JSON.stringify(records);
+    return runInNewContext(script, {
+      Application: () => ({
+        running: () => true,
+        attachments: {
+          byId: (id: string) => ({
+            id,
+            container: () => ({ passwordProtected: () => id === 'locked-1' }),
+            url: () => (id === 'url-1' ? 'https://example.com' : null),
+            contents: () => (id === 'embedded-1' ? null : {}),
+          }),
+        },
+        save: (attachment: { id: string }, options: { in: string }) => {
+          if (attachment.id !== 'file-1') throw nativeError;
+          writeFileSync(options.in, 'example');
+        },
+      }),
+      Path: (path: string) => {
+        stagedPaths.push(path);
+        return path;
+      },
+    }) as string;
+  });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'notes.sqlite'),
+  });
+  const copy = new Copy(
+    source.attachments,
+    destination.table('attachments', (c) => [
+      c.text('id'),
+      c.blob('bytes').from(source.attachments.file),
+    ]),
+  );
+  const pipeline = new Pipeline({ source, destination, steps: [copy] });
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 4 }]);
+  using database = new DatabaseSync(destination.path);
+  const rows = () =>
+    database
+      .prepare('SELECT id, bytes FROM attachments')
+      .all()
+      .map((row) => ({ ...row }));
+  const expected = [
+    { id: 'file-1', bytes: new Uint8Array(Buffer.from('example')) },
+    ...['embedded-1', 'url-1', 'locked-1'].map((id) => ({ id, bytes: null })),
+  ];
+  assert.deepEqual(rows(), expected);
+  records.push(
+    recordFor(source.attachments, { id: 'broken-1', name: 'broken.txt' }),
+  );
+  await assert.rejects(pipeline.run(), (error) => {
+    assert.ok(error instanceof PipelineError);
+    assert.equal(error.failedCopy, copy);
+    assert.equal(error.cause, nativeError);
+    return true;
+  });
+  assert.deepEqual(rows(), expected);
+  for (const path of stagedPaths)
+    await assert.rejects(readFile(path), { code: 'ENOENT' });
+});
+
+test('Notes becoming unavailable during attachment export retains its actionable error', async (t) => {
+  const cause = Object.assign(new Error('Command failed: osascript'), {
+    stderr: 'execution error: Error: NOTES_UNAVAILABLE (-2700)\n',
+  });
+  t.mock.method(osa, 'execute', async () => {
+    throw cause;
+  });
+  await assert.rejects(
+    new AttachmentsStream().save('attachment-1', '/unused'),
+    (error) => {
+      assert.ok(error instanceof NotesUnavailableError);
+      assert.equal(error.cause, cause);
+      return true;
+    },
+  );
 });
 
 test('Calendar extracts every scalar stream into SQLite and Markdown', {
