@@ -5,29 +5,51 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import {
-  AppleNotesSource,
+  Catalog,
   Copy,
   type CopyConfiguration,
   Pipeline,
+  Source,
   SQLiteDestination,
+  Stream,
 } from './index.ts';
 
-test('the package API copies source records into SQLite', async () => {
-  class Notes extends AppleNotesSource {
+test('the public ELT API copies source records into SQLite', async () => {
+  class TestSource extends Source {
+    readonly identity = 'test';
+    readonly records = new Stream({
+      name: 'records',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, name: { type: 'string' } },
+        required: ['id', 'name'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh'],
+    });
+
+    async discover() {
+      return new Catalog([this.records]);
+    }
+
+    validate(configuration: CopyConfiguration) {
+      configuration.validate(this.records);
+    }
+
     protected override async *extract(configuration: CopyConfiguration) {
       yield {
         stream: configuration.stream.name,
-        data: { id: 'account-1', name: 'Test account', upgraded: true },
+        data: { id: 'record-1', name: 'Test record' },
       };
     }
   }
 
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-test-'));
-  const source = new Notes();
+  const source = new TestSource();
   const destination = new SQLiteDestination({
-    path: join(scratch.path, 'notes.sqlite'),
+    path: join(scratch.path, 'records.sqlite'),
   });
-  const copy = new Copy(source.accounts, destination.table('accounts'));
+  const copy = new Copy(source.records, destination.table('records'));
   const results = await new Pipeline({
     source,
     destination,
@@ -36,7 +58,7 @@ test('the package API copies source records into SQLite', async () => {
 
   assert.deepEqual(results, [{ copy, count: 1 }]);
   using database = new DatabaseSync(destination.path, { readOnly: true });
-  const row = database.prepare('SELECT id, name FROM accounts').get();
+  const row = database.prepare('SELECT id, name FROM records').get();
   assert.ok(row);
-  assert.deepEqual({ ...row }, { id: 'account-1', name: 'Test account' });
+  assert.deepEqual({ ...row }, { id: 'record-1', name: 'Test record' });
 });

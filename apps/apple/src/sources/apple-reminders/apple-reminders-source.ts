@@ -1,6 +1,6 @@
-import { Catalog } from '../../core/catalog.ts';
-import type { CopyConfiguration } from '../../core/copy-configuration.ts';
-import { type RecordMessage, Source } from '../../core/source.ts';
+import { Catalog } from 'elt';
+import type { CopyConfiguration } from 'elt';
+import { type RecordMessage, Source } from 'elt';
 import { AccountsStream } from './accounts-stream.ts';
 import { ListsStream } from './lists-stream.ts';
 import { RemindersStream } from './reminders-stream.ts';

@@ -1,9 +1,8 @@
 import { lstat, mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
-import { Catalog } from '../../core/catalog.ts';
-import type { CopyConfiguration } from '../../core/copy-configuration.ts';
-import { Source, type SourceMessage } from '../../core/source.ts';
+import type { CopyConfiguration } from 'elt';
+import { Catalog, Source, type SourceMessage } from 'elt';
 import { AccountsStream } from './accounts-stream.ts';
 import { AttachmentsStream } from './attachments-stream.ts';
 import { FoldersStream } from './folders-stream.ts';

@@ -1,23 +1,25 @@
-import { Stream } from '../../core/stream.ts';
+import { Stream, type SyncMode } from 'elt';
 import osa from '../../platform/macos/osa.ts';
 
-export class RemindersUnavailableError extends Error {
-  override name = 'RemindersUnavailableError';
+export class NotesUnavailableError extends Error {
+  override name = 'NotesUnavailableError';
 
   constructor(cause: unknown) {
     super(
-      'Apple Reminders is closed or inaccessible. Open Reminders; if it is already open, run outside the sandbox that blocks macOS automation.',
+      'Apple Notes is closed or inaccessible. Open Notes; if it is already open, run outside the sandbox that blocks macOS automation.',
       { cause },
     );
   }
 }
 
-// Internal extraction; discovery exposes immutable Stream descriptions.
-export abstract class AppleRemindersStream<T> {
+// Internal extractor; public discovery returns only its Stream description.
+export abstract class AppleNotesStream<T> {
   abstract readonly name: string;
   abstract readonly jsonSchema: Readonly<Record<string, unknown>>;
   readonly primaryKey = ['id'] as const;
-  readonly supportedSyncModes = Object.freeze(['full_refresh'] as const);
+  readonly supportedSyncModes: readonly SyncMode[] = Object.freeze([
+    'full_refresh',
+  ]);
   protected abstract readonly script: string;
   protected abstract validate(records: unknown): T[];
 
@@ -29,8 +31,8 @@ export abstract class AppleRemindersStream<T> {
     let output: string;
     try {
       output = await osa.execute(`
-        const app = Application('/System/Applications/Reminders.app');
-        if (!app.running()) throw new Error('REMINDERS_UNAVAILABLE');
+        const app = Application('/System/Applications/Notes.app');
+        if (!app.running()) throw new Error('NOTES_UNAVAILABLE');
         JSON.stringify(${this.script});
       `);
     } catch (error) {
@@ -38,9 +40,9 @@ export abstract class AppleRemindersStream<T> {
         error instanceof Error &&
         'stderr' in error &&
         typeof error.stderr === 'string' &&
-        error.stderr.includes('REMINDERS_UNAVAILABLE')
+        error.stderr.includes('NOTES_UNAVAILABLE')
       )
-        throw new RemindersUnavailableError(error);
+        throw new NotesUnavailableError(error);
       throw error;
     }
     const records: unknown = JSON.parse(output);

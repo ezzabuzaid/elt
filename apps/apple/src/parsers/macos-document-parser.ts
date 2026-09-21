@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { extname, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { DocumentParser } from '../core/document-parser.ts';
+import { DocumentParser } from 'elt';
 import osa from '../platform/macos/osa.ts';
 
 const execute = promisify(execFile);
