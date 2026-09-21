@@ -1,17 +1,19 @@
 # mac-elt
 
-Extract Apple Notes and Apple Reminders into SQLite or Markdown with immutable `Copy` declarations composed in a `Pipeline`. Extraction includes explicitly selected document parsing for Notes attachments. Loading belongs here; arbitrary transformations and querying stay in your destination.
+Extract Apple Notes, Apple Reminders, and Apple Calendar into SQLite or Markdown with immutable `Copy` declarations composed in a `Pipeline`. Extraction includes explicitly selected document parsing for Notes attachments. Loading belongs here; arbitrary transformations and querying stay in your destination.
 
 [Sync decisions and verification](tmp/plans/sync-modes.md) · [Attachment declaration decisions and verification](tmp/plans/attachment-declarations.md) · [Earlier Airbyte API discussion](docs/plans/airbyte-sync-api.md)
 
+The following recipes live inside `apps/apple/src`: import reusable pipeline types from `elt` and Apple connectors from the app’s `./index.ts`.
+
 ```ts
 import {
-  AppleNotesSource,
   Copy,
   Pipeline,
   SQLiteCheckpointStore,
   SQLiteDestination,
 } from 'elt';
+import { AppleNotesSource } from './index.ts';
 
 const notes = new AppleNotesSource();
 const sqlite = new SQLiteDestination({ path: './notes.sqlite' });
@@ -112,7 +114,7 @@ This polling source has no deletion events or consistent database snapshot. Incr
 ## Attachment files and document parsing
 
 ```ts
-import { MacOSDocumentParser } from 'elt';
+import { MacOSDocumentParser } from './index.ts';
 
 const attachmentCopy = new Copy(
   notes.attachments,
@@ -173,7 +175,7 @@ This follows Airbyte's source-side parser and staged-file concepts: its [file pa
 
 `MacOSDocumentParser` uses native PDFKit for PDFs with a text layer and native `textutil` for TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, and WordML. It selects the format from the filename extension, preserves text/Markdown content, and strips rich formatting when converting other formats to plain text. HTML conversion does not load external resources. Images, PowerPoint, OCR, locked PDFs, and files without a supported extension are not supported. PDFs with no extractable text and corrupt or unsupported documents fail the copy; there is no implicit skip policy. PDF parsing uses the existing OSA command's 64 MiB output buffer and 120-second timeout. Text conversion uses Node's native `execFile` defaults (1 MiB output limit and no timeout).
 
-Notes exports through its public scripting `save` command into a disposable staging directory. We never read its private database or treat an attachment's URL as a download URL. URL attachments and attachments inside password-protected notes retain metadata with null content/bytes. Other export errors fail the copy, including Notes objects that its save API cannot export. An unnamed attachment can be requested as an original file, but the native parser cannot choose its format without an extension. Sources do not invent missing filenames or claim an unsuccessful export succeeded.
+Notes exports through its scripting `save` command into a disposable staging directory. We never read its private database or treat an attachment's URL as a download URL. URL attachments, attachments inside password-protected notes, and objects whose native `contents` property is missing retain metadata with null content/bytes. The `contents` property is used only to check file availability; `save` still performs the export. Actual export errors fail the copy. An unnamed attachment with file contents can be requested as an original file, but the native parser cannot choose its format without an extension. Sources do not invent missing filenames or claim an unsuccessful export succeeded.
 
 `Source.read()` is the shared template method. Source implementations provide protected `extract(configuration, state)`, yielding metadata, optional staged file paths, and state. The source resolves `configuration.fileReads` into named text or byte values before yielding records to the destination. Staging paths stay inside extraction; writers reject any leaked path. The source cleans staging on success, cancellation, and failure. Binary fields hold each complete file in memory; large files require a different storage strategy.
 
@@ -246,36 +248,132 @@ An exclusive `.markdown-<target>.lock` directory prevents cooperating concurrent
 ## Apple Reminders
 
 ```ts
-import { AppleRemindersSource } from 'elt';
+import { Copy, Pipeline, SQLiteDestination } from 'elt';
+import { AppleRemindersSource } from './index.ts';
 
 const reminders = new AppleRemindersSource();
-const sqlite = new SQLiteDestination({ path: './reminders.sqlite' });
+const sqlite = new SQLiteDestination({ path: './reminders-eventkit.sqlite' });
 
 await new Pipeline({
   source: reminders,
   destination: sqlite,
-  steps: [
-    new Copy(reminders.accounts, sqlite.table('accounts')),
-    new Copy(reminders.lists, sqlite.table('lists')),
-    new Copy(reminders.reminders, sqlite.table('reminders')),
-  ],
+  steps: (await reminders.discover()).streams.map(stream =>
+    new Copy(stream, sqlite.table(stream.name)),
+  ),
 }).run();
 ```
 
-All three streams support full refresh, defaulting to overwrite. Discovery is metadata-only. Extraction uses the public Reminders scripting API through the existing OSA transport, including completed reminders. The same streams work with Markdown targets and explicit SQLite projections. Each stream describes `id` as its source key; list `containerId` can reference an account or another list, and reminder `containerId` can reference a list or another reminder.
+Reminders uses **EventKit exclusively**, accessed through the existing JXA/OSA runner. It does not use Reminders.app's scripting API, and the app need not be open. macOS 14 or later and full Reminders permission are required for the process running the export. Enable access in **System Settings > Privacy & Security > Reminders**. Calendar permission and Automation permission do not substitute for it. A packaged host must supply `NSRemindersFullAccessUsageDescription` and any required sandbox entitlements.
 
-Reminder records include `name`, nullable `body`, `createdAt`, `modifiedAt`, `completed`, nullable `completedAt`, nullable `dueAt`, nullable `allDayDueDate`, nullable `remindAt`, native `priority` (0–9), and `flagged`. Lists include native `color` and nullable `emblem`.
+All eight streams support full refresh and work with inferred SQLite tables or Markdown targets. Discovery and validation perform no native reads or permission requests. The first extraction requests permission if undecided, waiting up to 30 seconds. Denied, restricted, pending, and revoked access throw `RemindersUnavailableError`, retaining the process error as its cause. Asynchronous fetches time out after 60 seconds and cancel the request. A nil fetch result is an error; only a successful empty array can clear a target. Failed reads preserve the previous contents of the affected target.
 
-`allDayDueDate` preserves the native local calendar date as `YYYY-MM-DD`; timestamp fields use UTC ISO strings. Missing values stay `null`. The native all-day date property is also populated for timed reminders, so it does not provide a reliable `isAllDay` flag. Both fields are retained without inferring one from the other or shifting the calendar date through UTC.
+| Stream | Contents and relationships |
+| --- | --- |
+| `accounts` | Native EventKit sources: `id`, name, type, delegate flag. May include accounts with no visible reminder lists. |
+| `lists` | Native reminder calendars: `id`, `accountId`, name, type, writable/subscribed/immutable flags, sRGB color components, availability and entity masks. |
+| `reminders` | Native `id`, `listId`, nullable external identifier, name/body/location/URL, item time zone, nullable creation/modification/completion timestamps, completion flag, priority (0–9). Includes completed and incomplete reminders. |
+| `dateComponents` | Up to two rows per reminder, linked by `reminderId`, with `kind` of `start` or `due`. Preserves native date components, calendar identifier, and nullable time zone. |
+| `attendees` | Public EventKit participants, when supplied: `reminderId`, position, name/URL, status, role, type, current-user flag. This is not a Reminders sharing/assignment API. |
+| `alarms` | `reminderId`, position, type, relative offset, absolute timestamp, email/sound, proximity, location title, latitude/longitude, radius in meters. |
+| `recurrenceRules` | `reminderId`, position, calendar identifier, frequency, interval, first weekday, ending date/count. |
+| `recurrenceRuleValues` | `reminderId`, `ruleId`, component/position, value and optional weekday ordinal; preserves all six public recurrence selectors. |
 
-Incremental extraction is rejected until native modification-date behavior is verified for completion, reopening, and moves. Full-refresh overwrite reconciles deletions on the next successful copy. There is no cross-stream snapshot or pipeline-wide transaction. This source covers the public scripting fields above; recurrence rules, tags, attachments, and location triggers are not exposed by this implementation.
+Date components preserve undefined values as `null`, including missing clock components for date-only reminders. A null time zone means a floating date/time; it is never silently replaced with UTC. Start, due, and item time zones remain separate. No UTC due instant is invented from a date-only or floating reminder. `dayOfYear` is null when unavailable before macOS 15; `repeatedDay` is null when unavailable before macOS 26. Native timestamp properties remain UTC ISO strings. Missing start/due properties produce no component row.
 
-Open Reminders and allow macOS Automation access for the process running the export. `RemindersUnavailableError` reports a closed or inaccessible app; an explicit permission denial or other scripting failure keeps its original cause. Sandbox restrictions can make a running app appear inaccessible. Failed reads preserve the previous contents of the affected target.
+Native enum values remain integers. Alarm proximity is `0` (none), `1` (arrival), or `2` (departure); a radius of `0` asks the system to choose a radius. Recurrence frequency is `0` (daily), `1` (weekly), `2` (monthly), or `3` (yearly). A zero recurrence count means no count-based limit. Only the next incomplete reminder in a recurring series is exposed by Apple; the source does not invent future occurrences or deliver notifications.
+
+**Migration from the scripting source:** identifiers now use EventKit's namespace and the source identity is `apple-reminders:eventkit`. `containerId` is replaced by `listId` on reminders and `accountId` on lists. `dueAt`, `allDayDueDate`, and `remindAt` are replaced by date-component and alarm streams; `color` is represented by sRGB components. Flags, parent-reminder/list hierarchy, and list emblems are removed because the inspected public EventKit API does not expose them. Native tags and attachments are also unavailable. Use a fresh SQLite database or new table names and update explicit column projections: overwrite replaces rows but does not migrate old table schemas. Start with a full overwrite of managed Markdown targets so old IDs are not mixed with new ones.
+
+EventKit IDs can change after a full server sync; external identifiers are not universally unique or stable across providers/devices. Child IDs identify positions within the current snapshot. Full-refresh overwrite reconciles deletions; incremental extraction remains unsupported because modification timestamps alone do not provide a deletion feed. Streams are queried independently, without a cross-stream snapshot or pipeline-wide transaction. OSA buffers each complete response up to 64 MiB and has a 120-second process timeout; large collections can exceed those limits.
+
+See the [EventKit research and implementation notes](docs/eventkit-reminders.md) for API evidence, design choices, verification, and migration details.
+
+## Apple Calendar
+
+```ts
+import { mkdir } from 'node:fs/promises';
+import { Copy, Pipeline, SQLiteDestination } from 'elt';
+import { AppleCalendarSource } from './index.ts';
+
+await mkdir('./outputs', { recursive: true });
+const calendar = new AppleCalendarSource({
+  startAt: '2026-09-01T00:00:00.000Z',
+  endAt: '2026-10-01T00:00:00.000Z',
+});
+const sqlite = new SQLiteDestination({ path: './outputs/apple-calendar.sqlite' });
+
+await new Pipeline({
+  source: calendar,
+  destination: sqlite,
+  steps: (await calendar.discover()).streams.map(stream =>
+    new Copy(stream, sqlite.table(stream.name)),
+  ),
+}).run();
+```
+
+Calendar uses the public EventKit framework through the existing OSA bridge. It needs macOS 14 or later and full Calendar access for the process running the export. The first extraction requests access if it is undecided or write-only, waiting up to 30 seconds. If permission is denied, restricted, or still pending, `CalendarUnavailableError` preserves the native cause and explains how to enable access. A sandbox can block access even when macOS permission is granted. Permission failures never become empty successful exports.
+
+The `calendars`, `eventMetadata`, and `excludedDates` streams also read Calendar's scripting interface and require macOS Automation access to Calendar. This can launch Calendar.app. The other streams use EventKit alone. Scripting failures and mismatched native lookups fail the copy with the original cause.
+
+### Streams
+
+All nine streams support full refresh and work with inferred SQLite tables or Markdown targets. Related collections are separate scalar rows, preserving their data without adding JSON columns to SQLite.
+
+| Stream | Contents and relationships |
+| --- | --- |
+| `accounts` | EventKit sources: identifier, name, native source type, delegate flag. |
+| `calendars` | Identifier, `accountId`, name, scripting description, native type, write/subscription/immutability flags, sRGB components, supported availability and entity masks. |
+| `events` | Expanded occurrences: native identifiers, `calendarId`, title/body/location/URL, start/end, all-day dates, time zone, creation/modification dates, original occurrence date, detached flag, status/availability, birthday contact identifier, geographic location. |
+| `eventMetadata` | One row per selected native calendar item: `calendarId`, `calendarItemId`, returned `scriptingUid`, raw recurrence string (or null), and sequence number. Join to occurrences using both `calendarId` and `calendarItemId`. |
+| `excludedDates` | `eventMetadataId`, position, excluded instant (`excludedAt`), and local `excludedDate` for all-day items. These are recurrence metadata and may lie outside the selected occurrence window. |
+| `attendees` | `eventId`, position, participant name/URL, native status/role/type, current-user flag. `kind` distinguishes attendees from the organizer. |
+| `alarms` | `eventId`, position, native alarm type, relative offset in seconds, absolute date, email/sound, proximity and geographic location. |
+| `recurrenceRules` | `eventId`, position, calendar identifier, frequency, interval, first weekday, end date and occurrence count. |
+| `recurrenceRuleValues` | `ruleId`, `eventId`, component and position, integer value, optional weekday ordinal. Preserves weekdays, month/year days, year weeks, months, and set positions. |
+
+Native enums and bitmasks remain integers. Missing optional values remain `null`; zero recurrence count means no count-based limit. Schema details are available on each stream's `jsonSchema`.
+
+### Dates and occurrence identity
+
+The required bounds are canonical UTC ISO timestamps with `startAt < endAt`. They select the half-open interval `[startAt, endAt)`: overlapping events are included; a zero-duration event is included when its start lies in the interval. The range is part of the immutable source identity. Construction, discovery, and preflight perform no native reads.
+
+EventKit expands recurrence and applies deleted/rescheduled occurrence exceptions. The source queries in windows of at most 365 days to avoid EventKit's silent four-year query truncation, and removes repeated occurrence rows across window boundaries. An unbounded export is not supported because a repeating series may have no end.
+
+`startAt`, `endAt`, and other timestamps retain native instants as UTC strings. For all-day events, `startDate` and exclusive `endDate` separately preserve the local Gregorian dates in EventKit's default time zone. A null `timeZone` remains null; it is not replaced with UTC. Timed events have null date-only fields.
+
+The event `id` (also exposed as `eventId`) combines the calendar identifier, local calendar-item identifier, and the original occurrence date for repeating/detached events. It uses the native original date rather than the rescheduled start; all-day occurrence keys use a calendar date. Native event and external identifiers remain separate fields. EventKit identifiers can change after moves or full server syncs, so these are local extraction identities, not permanent cross-device IDs. Child IDs add the collection kind/component and position; they identify snapshot rows, not independently stable native objects.
+
+Scripting metadata uses native identifier lookups, never title-based matching. Its `id` is the JSON tuple `[calendarId, calendarItemId]`; expanded occurrences of the same native item share one metadata row. Each scripting query reads at most 100 native items, continuing by identifier even when an excluded-date page is empty. Scripting dates are checked against the stored EventKit item, whose start may precede the occurrence window. For detached events, Calendar returns the parent series' `scriptingUid` and raw recurrence, but the detached item's own sequence and excluded-date list. The returned scripting UID is therefore kept separate from `calendarItemId`.
+
+Markdown uses the same source; for example, `new Copy(calendar.events, markdown.folder('events', { title: 'name' }))`. Use lowercase target names such as `recurrence-rules` for camel-cased streams.
+
+### Completeness and limits
+
+Full-refresh overwrite reconciles deletions and events moved outside the selected window on the next successful run. Ordinary append retains observations. Each stream is read separately, so concurrent Calendar changes can affect relationships; the pipeline has no cross-stream snapshot or transaction. OSA still buffers at most 64 MiB per query and times out after 120 seconds; very dense windows can exceed those limits. Duplicate tracking retains occurrence/child IDs for the duration of one copy.
+
+The source preserves the EventKit and scripting fields above. These remaining capabilities require more than another source field:
+
+- **Incremental deletion/move reconciliation:** EventKit provides change notifications but no durable change cursor or deletion feed here. The current `SourceMessage` protocol also has no delete/tombstone message or scoped reconciliation operation. Calendar therefore rejects incremental extraction.
+- **Attachments, travel time, and conference metadata:** EventKit and Calendar's scripting interface do not provide attachment file export or dedicated travel/conference fields. The existing file-transfer pipeline can load staged files, but this source cannot supply those bytes. Deprecated open-file alarm URLs are also unavailable on modern macOS.
+- **Consistent multi-stream snapshots and resumable large exports:** these need additional extraction/checkpoint and pipeline support. Full refresh currently restarts a failed copy, preserving its previous destination contents until the complete replacement succeeds.
+
+See Apple's [EventKit retrieval documentation](https://developer.apple.com/documentation/eventkit/retrieving-events-and-reminders), [occurrence identity](https://developer.apple.com/documentation/eventkit/ekevent/occurrencedate), and [calendar-item identity caveats](https://developer.apple.com/documentation/eventkit/ekcalendaritem/calendaritemidentifier).
+
+### Calendar export probe
+
+A read-only probe on macOS 26.6.2 (2026-09-21) checked Calendar's **File > Export** output:
+
+- **`.ics`:** the sample preserved raw recurrence rules, excluded dates, recurrence IDs, five attachment references, and Google/Microsoft conference properties. It contained no embedded attachment bytes; three references were HTTPS URLs and two were relative query references requiring provider context.
+- **`.icbu`:** the archive contained `Calendar.sqlitedb` and `Info.plist`. Its five attachment records had no local file paths or embedded payloads. The database included travel-time columns, but every sampled value was null, so travel-time preservation remains unverified.
+
+These exports establish a route to additional metadata, not a complete attachment backup. This source does not import either format. Reading `.ics` metadata and retrieving referenced files would require an additional extractor and, where required, provider authentication. The archive's private database schema is not a stable public API. Personal probe exports were temporary and are not repository fixtures.
 
 ## Workspace
 
-- `packages/elt`: the reusable `elt` library, imported through its package entry point.
-- `apps/apple`: the Apple Notes export application, restored from the original `main.ts`.
+- `packages/elt`: the platform-independent ELT library: contracts, pipeline, destinations, and checkpoint storage. It has no Apple connectors or native framework dependencies.
+- `apps/apple`: Notes, Calendar, and Reminders connectors, the macOS document parser, native clients, connector tests, and the runnable Notes export. Its sources consume the public `elt` API.
+
+`EventKit` is a native client class under `apps/apple/src/platform/macos`. It owns framework setup, authorization, execution, and native errors. It has no dependency on `Source`, `Stream`, catalogs, or schemas. Calendar and Reminders compose this client; their schemas, projections, and record validation live under `apps/apple/src/sources`.
 
 npm workspaces link the app to the library. Each project builds into its own `dist/` directory, and Nx builds `elt` before dependent app targets.
 
@@ -289,16 +387,19 @@ nx run apple:build
 nx run elt:typecheck
 nx run apple:typecheck
 nx run elt:test
+nx run apple:test
 ```
 
 Use the built JavaScript: Node's default TypeScript stripping does not support the parameter properties used by this project.
 
-The package test copies synthetic source records into a temporary SQLite database through the public API. It does not read personal Notes data.
+The ELT package tests cover public pipeline loading independently of Apple. The Apple app tests cover its connector integration, Calendar and Reminders validation and rollback, date-window coverage, permission/fetch failures, and native projection of unsaved EventKit objects on macOS. They do not fetch personal Notes, Calendar, or Reminders records.
 
 ## Running the Apple app
+
+The workspace ships one runnable app: the Apple Notes export in `apps/apple/src/main.ts`. Use the app’s connectors with the `elt` API and the recipes above for Markdown exports, Apple Reminders, Apple Calendar, or custom pipelines.
 
 ```sh
 nx run apple:start
 ```
 
-Run from the workspace root. The app creates `outputs/` and writes `outputs/apple-notes.sqlite`, replacing `raw_accounts`, `raw_folders`, `raw_notes`, and `raw_attachments` on each run. It loads attachment metadata, parsed text, and original bytes, then queries attachment content and byte lengths joined to note names. Notes must be open and macOS Automation access allowed. Unsupported attachment formats or export/parse errors stop the run.
+Run from the workspace root. This target builds `elt` and `apple` before executing the compiled app. The app creates `outputs/` and writes `outputs/apple-notes.sqlite`, replacing `raw_accounts`, `raw_folders`, `raw_notes`, and `raw_attachments` on each run. It loads attachment metadata, parsed text, and original bytes, then queries attachment content and byte lengths joined to note names. Notes must be open and macOS Automation access allowed. Attachments without a native file retain metadata with null content/bytes. Unsupported file formats or actual export/parse errors stop the run and roll back the failed copy; earlier completed copies remain committed.
