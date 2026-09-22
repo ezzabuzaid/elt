@@ -137,7 +137,7 @@ Triggers are source-specific. Calendar and Reminders use EventKit notifications.
 
 Calling `controller.abort()` stops observation and lets the current pass finish. Breaking the loop also closes the watcher. Watchers preserve the configured extraction mode and do not add retries, periodic reconciliation, or a durable change feed.
 
-Native observer delivery and temporary-filesystem notifications are tested. End-to-end watching of personal app edits remains unverified; access to the Notes directory was blocked on the development host. See [watching behavior and verification limits](docs/reference.md#watching-for-changes).
+Live verification confirmed that Notes GUI edits and Calendar/Reminders writes through EventKit in a separate process reach SQLite through `Pipeline.watch()`: creation, updates, and removal were checked. Notes in **Recently Deleted** remain exported until permanently deleted. Native observer delivery and temporary-filesystem notifications are also tested. See [watching behavior and verification limits](docs/reference.md#watching-for-changes).
 
 ## Markdown exports
 

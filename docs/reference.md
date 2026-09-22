@@ -144,7 +144,19 @@ Aborting stops native observation, lets an in-flight pass finish and yield its r
 
 Custom sources implement `watch({ streams, signal }): AsyncIterable<readonly Stream[]>`. Establish observation before yielding all selected streams once; then emit the affected selected streams until cancellation. The pipeline keeps consuming these invalidations while it loads records. Close native resources when aborted or when the iterator is closed; errors must propagate. `Stream` remains immutable metadata, and loading continues through `Source.read`, `Copy`, and the destination writers.
 
-Verification covers actual filesystem events in temporary storage, native EventKit observer delivery using process-local notifications without personal data, and destination/checkpoint visibility before results are yielded. The native filesystem test requires an environment that permits filesystem notifications; this host's sandbox reports `EMFILE` even for a single temporary-directory watcher, while the same probe succeeds outside it. Live Notes directory observation returned `EPERM` even outside the sandbox; actual personal Notes edits and cross-process Calendar/Reminders edits remain unverified.
+Automated verification covers actual filesystem events in temporary storage, native EventKit observer delivery using process-local notifications without personal data, and destination/checkpoint visibility before results are yielded. The native filesystem test requires an environment that permits filesystem notifications; this host's sandbox reports `EMFILE` even for a single temporary-directory watcher, while the same probe succeeds outside it.
+
+Live verification on **2026-09-22**, using **macOS 26.6.2 and Node.js 26.8.1**, exercised the existing sources, `Pipeline.watch()`, `Copy`, and temporary SQLite destinations without mocking notifications or extraction. Calendar and Reminders each completed four observed passes: initial sync, creation, update, and deletion. Their mutations were real EventKit writes from separate OSA processes. Notes mutations were made through the Notes GUI; its successful run completed 26 passes because filesystem notifications also fire for intermediate and unrelated storage changes. SQLite assertions ran after the watcher yielded completed loads.
+
+| Source stream | Live assertions |
+| --- | --- |
+| Calendar `events` | A uniquely labeled event appeared, its changed title and start time reached SQLite, and deleting it removed the exported row. The fixed occurrence window was `2026-09-22T00:00:00.000Z` to `2026-09-23T00:00:00.000Z`. |
+| Reminders `reminders` | A uniquely labeled reminder appeared, its changed title and completed status reached SQLite, and deleting it removed the exported row. |
+| Notes `notes` | A uniquely labeled note appeared, its edited body reached SQLite, and permanently deleting it from Recently Deleted removed the exported row. |
+
+Watchers were closed after verification. The Calendar test event, temporary Reminders list, both Notes test records, and temporary databases were removed. EventKit cleanup was checked through fresh native reads; Notes cleanup was confirmed in its UI and the successful run's SQLite output. Existing user records were not modified. This live pass covered the primary streams and SQLite; Calendar/Reminders GUI edits, other streams, and Markdown were not exercised live.
+
+**Notes access and deletion semantics:** the initial storage probe returned `EPERM` even outside the sandbox. Opening Notes and granting the host process Full Disk Access resolved it. Normal deletion moves a note to Recently Deleted, which remains visible through `app.notes()` and therefore remains in the export. Full-refresh overwrite removes the exported row after permanent deletion. The first live probe timed out while investigating this distinction; a second run verified the complete create/update/permanent-delete sequence. This does not change incremental extraction's existing lack of deletion reconciliation.
 
 ## Attachment files and document parsing
 
