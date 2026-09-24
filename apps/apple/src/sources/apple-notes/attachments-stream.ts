@@ -1,3 +1,4 @@
+import { isTimestamp } from 'elt';
 import { AppleNotesStream } from './apple-notes-stream.ts';
 
 export type Attachment = {
@@ -87,8 +88,8 @@ export class AttachmentsStream extends AppleNotesStream<Attachment> {
           (attachment.contentId === null ||
             typeof attachment.contentId === 'string') &&
           (attachment.url === null || typeof attachment.url === 'string') &&
-          typeof attachment.createdAt === 'string' &&
-          typeof attachment.modifiedAt === 'string' &&
+          isTimestamp(attachment.createdAt) &&
+          isTimestamp(attachment.modifiedAt) &&
           typeof attachment.shared === 'boolean',
       )
     )

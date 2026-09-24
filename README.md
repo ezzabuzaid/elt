@@ -77,6 +77,34 @@ This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table'
 
 The repository also includes a [Notes exporter](apps/apple/src/main.ts) that loads accounts, folders, notes, and attachment metadata, text, and bytes. Run it with `npx nx run apple:start`. It writes `outputs/apple-notes.sqlite`; unsupported attachment formats or export failures stop the affected copy.
 
+### Reminders
+
+Reminders reads through EventKit, so Reminders.app need not be open. Grant the process running your script full access in **System Settings → Privacy & Security → Reminders**.
+
+```ts
+import { mkdir } from 'node:fs/promises';
+import { Copy, Pipeline, SQLiteDestination } from 'elt';
+import { AppleRemindersSource } from './index.ts';
+
+await mkdir('./outputs', { recursive: true });
+
+const source = new AppleRemindersSource();
+const destination = new SQLiteDestination({
+  path: './outputs/reminders.sqlite',
+});
+
+await new Pipeline({
+  source,
+  destination,
+  steps: [
+    new Copy(source.reminders, destination.table('reminders')),
+    new Copy(source.dateComponents, destination.table('dateComponents')),
+  ],
+}).run();
+```
+
+Reminders supports full refresh only; each overwrite also removes deleted reminders. Due and start dates are exported as raw date components, so date-only and floating reminders are never shifted into UTC. Apple exposes only the next incomplete occurrence of a recurring reminder. See [Reminders streams](docs/reference.md#apple-reminders) for all eight streams and their limits.
+
 ## Incremental sync
 
 To retain the latest version of each note across runs, keep the quick-start imports and source/destination setup, then replace the pipeline declaration and execution with:
@@ -133,7 +161,7 @@ for await (const results of pipeline.watch({ signal: controller.signal })) {
 
 Watching subscribes before the initial sync, then reruns affected copies when the source signals a change. Runs never overlap within one watcher. Changes received during a run or while you handle its results remain pending for another pass. The loop body is for application work after a sync; it does not need to extract or load anything.
 
-Triggers are source-specific. Calendar and Reminders use EventKit notifications. Notes watches its protected storage directory using native filesystem notifications, which can also fire for unrelated storage activity. Notes watching may require **Full Disk Access** for the host process, in addition to Automation permission for reading. Access failures are reported; there is no polling fallback.
+Triggers are source-specific. Calendar and Reminders use EventKit notifications, which cover the whole event store: an edit in either app reruns watched copies of both. Notes watches its protected storage directory using native filesystem notifications, which can also fire for unrelated storage activity. Notes watching may require **Full Disk Access** for the host process, in addition to Automation permission for reading. Access failures are reported; there is no polling fallback.
 
 Calling `controller.abort()` stops observation and lets the current pass finish. Breaking the loop also closes the watcher. Watchers preserve the configured extraction mode and do not add retries, periodic reconciliation, or a durable change feed.
 

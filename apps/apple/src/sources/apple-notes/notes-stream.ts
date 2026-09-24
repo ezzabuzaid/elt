@@ -1,3 +1,4 @@
+import { isTimestamp } from 'elt';
 import { AppleNotesStream } from './apple-notes-stream.ts';
 
 export type Note = {
@@ -76,8 +77,8 @@ export class NotesStream extends AppleNotesStream<Note> {
           typeof note.containerId === 'string' &&
           (note.body === null || typeof note.body === 'string') &&
           (note.plaintext === null || typeof note.plaintext === 'string') &&
-          typeof note.createdAt === 'string' &&
-          typeof note.modifiedAt === 'string' &&
+          isTimestamp(note.createdAt) &&
+          isTimestamp(note.modifiedAt) &&
           typeof note.passwordProtected === 'boolean' &&
           typeof note.shared === 'boolean',
       )

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import fs, { writeFileSync } from 'node:fs';
+import { execFile as execFileCallback } from 'node:child_process';
+import fs, { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import {
   Copy,
@@ -12,6 +14,7 @@ import {
   MarkdownDestination,
   Pipeline,
   PipelineError,
+  SQLiteCheckpointStore,
   SQLiteDestination,
   Stream,
 } from 'elt';
@@ -28,6 +31,8 @@ import osa from './platform/macos/osa.ts';
 import { calendarScript } from './sources/apple-calendar/calendar-script.ts';
 import { AttachmentsStream } from './sources/apple-notes/attachments-stream.ts';
 import { remindersScript } from './sources/apple-reminders/reminders-script.ts';
+
+const execFile = promisify(execFileCallback);
 
 type Field = {
   readonly type: string | readonly string[];
@@ -204,6 +209,293 @@ test('Notes becoming unavailable during attachment export retains its actionable
   );
 });
 
+test('Notes incremental extraction re-reads equal cursors and caps its watermark at the scan start', async (t) => {
+  const source = new AppleNotesSource();
+  const note = (id: string, modifiedAt: string) =>
+    recordFor(source.notes, { id, modifiedAt });
+  const older = note('older', '2025-01-01T00:00:00.000Z');
+  const saved = note('saved', '2025-01-02T00:00:00.000Z');
+  const future = note('future', '2999-01-01T00:00:00.000Z');
+  let notes = [older, saved, future];
+  t.mock.method(osa, 'execute', async () => JSON.stringify(notes));
+  const destination = new MarkdownDestination({ path: '/unused' });
+  const { configuration } = new Copy(source.notes, destination.file('n.md'), {
+    syncMode: 'incremental',
+    destinationSyncMode: 'append',
+    cursorField: 'modifiedAt',
+  });
+  const read = async (state: unknown) => {
+    const ids: unknown[] = [];
+    let checkpoint: unknown;
+    for await (const message of source.read(configuration, state)) {
+      if ('type' in message) checkpoint = message;
+      else ids.push((message.data as { id: unknown }).id);
+    }
+    return { ids, checkpoint };
+  };
+  const scanned = async (state: unknown) => {
+    const before = new Date().toISOString();
+    const { ids, checkpoint } = await read(state);
+    const after = new Date().toISOString();
+    const { modifiedAt } = (checkpoint as { state: { modifiedAt: string } })
+      .state;
+    assert.ok(before <= modifiedAt && modifiedAt <= after);
+    return ids;
+  };
+
+  assert.deepEqual(await scanned(null), ['older', 'saved', 'future']);
+  assert.deepEqual(await scanned({ modifiedAt: saved.modifiedAt }), [
+    'saved',
+    'future',
+  ]);
+  notes = [older, saved];
+  assert.deepEqual(await read({ modifiedAt: older.modifiedAt }), {
+    ids: ['older', 'saved'],
+    checkpoint: {
+      type: 'STATE',
+      stream: 'notes',
+      state: { modifiedAt: saved.modifiedAt },
+    },
+  });
+  for (const invalid of [
+    {},
+    [],
+    'checkpoint',
+    { modifiedAt: '2025-01-02' },
+    { modifiedAt: saved.modifiedAt, extra: true },
+  ])
+    await assert.rejects(read(invalid), /Invalid Apple Notes checkpoint/);
+  notes = [note('offset', '2025-01-02T00:00:00Z')];
+  await assert.rejects(read(null), /unexpected note format/);
+  assert.throws(
+    () =>
+      new Copy(source.notes, destination.file('n.md'), {
+        syncMode: 'incremental',
+        destinationSyncMode: 'append',
+        cursorField: 'createdAt',
+      }).validate(source, destination),
+    /requires the modifiedAt cursor/,
+  );
+});
+
+test('Notes incremental copies persist their checkpoint and skip unchanged notes on the next run', async (t) => {
+  const source = new AppleNotesSource();
+  const note = (id: string, modifiedAt: string) =>
+    recordFor(source.notes, { id, modifiedAt });
+  const first = note('first', '2025-01-01T00:00:00.000Z');
+  const second = note('second', '2025-01-02T00:00:00.000Z');
+  let notes = [first, second];
+  t.mock.method(osa, 'execute', async () => JSON.stringify(notes));
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'notes.sqlite'),
+  });
+  const copy = new Copy(source.notes, destination.table('notes'), {
+    id: 'notes',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['id'],
+    cursorField: 'modifiedAt',
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [copy],
+  });
+
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2 }]);
+  notes = [
+    first,
+    second,
+    note('newer', '2025-01-03T00:00:00.000Z'),
+    note('backdated', '2024-12-31T00:00:00.000Z'),
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2 }]);
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare('SELECT id FROM notes ORDER BY id')
+      .all()
+      .map((row) => row.id),
+    ['first', 'newer', 'second'],
+  );
+});
+
+test('Notes rejects malformed native records and keeps unavailability actionable on read', async (t) => {
+  const source = new AppleNotesSource();
+  let response: unknown;
+  const unavailable = Object.assign(new Error('Command failed: osascript'), {
+    stderr: 'execution error: Error: NOTES_UNAVAILABLE (-2700)\n',
+  });
+  let failure: Error | undefined;
+  t.mock.method(osa, 'execute', async () => {
+    if (failure) throw failure;
+    return JSON.stringify(response);
+  });
+  const destination = new MarkdownDestination({ path: '/unused' });
+  const read = (stream: Stream) =>
+    Array.fromAsync(
+      source.read(
+        new Copy(stream, destination.file(`${stream.name}.md`)).configuration,
+        null,
+      ),
+    );
+
+  for (const stream of [
+    source.accounts,
+    source.folders,
+    source.notes,
+    source.attachments,
+  ]) {
+    response = [recordFor(stream)];
+    assert.equal((await read(stream)).length, 1);
+    for (const malformed of [{}, [null], [recordFor(stream, { id: 1 })]]) {
+      response = malformed;
+      await assert.rejects(read(stream), /Notes returned an unexpected/);
+    }
+  }
+  for (const stream of [source.notes, source.attachments]) {
+    response = [recordFor(stream, { createdAt: '2025-01-02T03:04:05Z' })];
+    await assert.rejects(read(stream), /Notes returned an unexpected/);
+  }
+  failure = unavailable;
+  await assert.rejects(read(source.notes), (error) => {
+    assert.ok(error instanceof NotesUnavailableError);
+    assert.equal(error.cause, unavailable);
+    return true;
+  });
+});
+
+test('Notes JXA projection omits protected content and preserves absent attachment metadata', async (t) => {
+  const source = new AppleNotesSource();
+  const date = new Date(timestamp);
+  const note = (id: string, passwordProtected: boolean) => ({
+    id: () => id,
+    name: () => id,
+    container: () => ({ id: () => 'folder-1' }),
+    passwordProtected: () => passwordProtected,
+    body: () => '<p>secret</p>',
+    plaintext: () => 'secret',
+    creationDate: () => date,
+    modificationDate: () => date,
+    shared: () => false,
+  });
+  t.mock.method(
+    osa,
+    'execute',
+    async (script: string) =>
+      runInNewContext(script, {
+        Application: () => ({
+          running: () => true,
+          notes: () => [note('open', false), note('locked', true)],
+          attachments: () => [
+            {
+              id: () => 'attachment-1',
+              name: () => undefined,
+              container: () => ({ id: () => 'open' }),
+              contentIdentifier: () => undefined,
+              url: () => undefined,
+              creationDate: () => date,
+              modificationDate: () => date,
+              shared: () => true,
+            },
+          ],
+        }),
+      }) as string,
+  );
+  const destination = new MarkdownDestination({ path: '/unused' });
+  const read = (stream: Stream) =>
+    Array.fromAsync(
+      source.read(
+        new Copy(stream, destination.file('x.md')).configuration,
+        null,
+      ),
+    );
+  const projected = (id: string, passwordProtected: boolean) => ({
+    stream: 'notes',
+    data: {
+      id,
+      name: id,
+      containerId: 'folder-1',
+      body: passwordProtected ? null : '<p>secret</p>',
+      plaintext: passwordProtected ? null : 'secret',
+      createdAt: timestamp,
+      modifiedAt: timestamp,
+      passwordProtected,
+      shared: false,
+    },
+  });
+
+  assert.deepEqual(await read(source.notes), [
+    projected('open', false),
+    projected('locked', true),
+  ]);
+  assert.deepEqual(await read(source.attachments), [
+    {
+      stream: 'attachments',
+      data: {
+        id: 'attachment-1',
+        name: null,
+        containerId: 'open',
+        contentId: null,
+        url: null,
+        createdAt: timestamp,
+        modifiedAt: timestamp,
+        shared: true,
+      },
+    },
+  ]);
+});
+
+test('Notes rejects an attachment export that is not a regular file', async (t) => {
+  const source = new AppleNotesSource();
+  t.mock.method(osa, 'execute', async (script: string) => {
+    if (!script.includes('app.save'))
+      return JSON.stringify([
+        recordFor(source.attachments, { id: 'bundle-1', name: 'a.pages' }),
+      ]);
+    return runInNewContext(script, {
+      Application: () => ({
+        running: () => true,
+        attachments: {
+          byId: () => ({
+            container: () => ({ passwordProtected: () => false }),
+            url: () => null,
+            contents: () => ({}),
+          }),
+        },
+        save: (_attachment: unknown, options: { in: string }) =>
+          mkdirSync(options.in),
+      }),
+      Path: (path: string) => path,
+    }) as string;
+  });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'notes.sqlite'),
+  });
+  const copy = new Copy(
+    source.attachments,
+    destination.table('attachments', (c) => [
+      c.text('id'),
+      c.blob('bytes').from(source.attachments.file),
+    ]),
+  );
+
+  await assert.rejects(
+    new Pipeline({ source, destination, steps: [copy] }).run(),
+    (error) => {
+      assert.ok(error instanceof PipelineError);
+      assert.match(String(error.cause), /regular attachment file/);
+      return true;
+    },
+  );
+});
+
 test('Calendar extracts every scalar stream into SQLite and Markdown', {
   concurrency: false,
 }, async (t) => {
@@ -375,10 +667,21 @@ test('Calendar validates its request range and preflights without OSA', {
     /canonical UTC/,
   );
 
-  const source = new AppleCalendarSource({
+  const january = {
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
+  };
+  const source = new AppleCalendarSource(january);
+  assert.deepEqual(JSON.parse(source.identity), {
+    type: 'apple-calendar:eventkit',
+    ...january,
   });
+  assert.equal(new AppleCalendarSource(january).identity, source.identity);
+  assert.notEqual(
+    new AppleCalendarSource({ ...january, endAt: '2025-03-01T00:00:00.000Z' })
+      .identity,
+    source.identity,
+  );
   let calls = 0;
   t.mock.method(osa, 'execute', async () => {
     calls++;
@@ -709,6 +1012,99 @@ test('Calendar JXA projects unsaved EventKit objects without reading Calendar da
   assert.equal(value?.ruleId, rule?.id);
 });
 
+test('Calendar JXA rejects scripting data that disagrees with EventKit and ranges beyond 366 days', {
+  concurrency: false,
+}, async (t) => {
+  if (process.platform !== 'darwin') {
+    t.skip('EventKit is available only on macOS');
+    return;
+  }
+  const output = await osa.execute(`
+    ${EventKit.runtime}
+    ${calendarScript}
+    const nativeStore = $.EKEventStore.alloc.init;
+    const calendar = $.EKCalendar.calendarForEntityTypeEventStore(0, nativeStore);
+    calendar.title = 'Test calendar';
+    const event = $.EKEvent.eventWithEventStore(nativeStore);
+    event.title = 'Unsaved event';
+    event.startDate = $.NSDate.dateWithTimeIntervalSince1970(1735689600);
+    event.endDate = $.NSDate.dateWithTimeIntervalSince1970(1735693200);
+    event.calendar = calendar;
+    const store = {
+      sources: $([]),
+      calendarsForEntityType: () => $([calendar]),
+      predicateForEventsWithStartDateEndDateCalendars: () => $(),
+      eventsMatchingPredicate: () => $([event]),
+      calendarItemWithIdentifier: () => event,
+    };
+    const scripting = (overrides) => ({
+      calendars: {
+        byId: () => ({
+          name: () => overrides.name ?? 'Test calendar',
+          description: () => {
+            if (overrides.description) throw new Error(overrides.description);
+            return 'About';
+          },
+          events: {
+            byId: () => ({
+              properties: () => ({
+                uid: eventKit.string(event.calendarItemIdentifier),
+                startDate: new Date(1735689600000),
+                endDate: new Date(1735693200000),
+                recurrence: null,
+                sequence: 0,
+                excludedDates: [],
+                ...overrides.event,
+              }),
+            }),
+          },
+        }),
+      },
+    });
+    const attempt = (stream, overrides = {}, endAt = '2025-01-02T00:00:00.000Z') => {
+      try {
+        readCalendar(store, stream, '2025-01-01T00:00:00.000Z', endAt, scripting(overrides));
+        return 'ok';
+      } catch (error) {
+        return error.message;
+      }
+    };
+    JSON.stringify({
+      metadata: attempt('eventMetadata'),
+      name: attempt('eventMetadata', { name: 'Renamed calendar' }),
+      emptyUid: attempt('eventMetadata', { event: { uid: '' } }),
+      uid: attempt('eventMetadata', { event: { uid: 'another-item' } }),
+      invalidDate: attempt('eventMetadata', { event: { startDate: 'soon' } }),
+      date: attempt('eventMetadata', { event: { startDate: new Date(0) } }),
+      recurrence: attempt('eventMetadata', { event: { recurrence: 1 } }),
+      sequence: attempt('eventMetadata', { event: { sequence: 1.5 } }),
+      excluded: attempt('excludedDates', { event: { excludedDates: 'none' } }),
+      description: attempt('calendars', { description: 'description lookup failed' }),
+      range: attempt('events', {}, '2026-01-03T00:00:00.000Z'),
+      unknown: attempt('tasks'),
+    });
+  `);
+
+  const { name, ...failures } = JSON.parse(output);
+  assert.match(
+    name,
+    /^Calendar scripting lookup did not match EventKit calendar \S+$/,
+  );
+  assert.deepEqual(failures, {
+    metadata: 'ok',
+    emptyUid: 'Calendar scripting returned an invalid event UID',
+    uid: 'Calendar scripting event UID did not match EventKit item',
+    invalidDate: 'Calendar scripting returned an invalid date',
+    date: 'Calendar scripting event did not match EventKit dates',
+    recurrence: 'Calendar scripting returned an invalid recurrence',
+    sequence: 'Calendar scripting returned an invalid event sequence',
+    excluded: 'Calendar scripting returned invalid excluded dates',
+    description: 'description lookup failed',
+    range: 'Calendar range must be positive and no longer than 366 days',
+    unknown: 'Unknown calendar stream: tasks',
+  });
+});
+
 test('Calendar occurrence keys survive rescheduling and preserve all-day dates', async (t) => {
   if (process.platform !== 'darwin') {
     t.skip('EventKit is available only on macOS');
@@ -823,7 +1219,8 @@ test('Calendar occurrence keys survive rescheduling and preserve all-day dates',
     allDay.title = 'Unsaved all-day event';
     allDay.allDay = true;
     allDay.startDate = $.NSDate.dateWithTimeIntervalSince1970(Date.parse('2024-12-31T21:00:00.000Z') / 1000);
-    allDay.endDate = $.NSDate.dateWithTimeIntervalSince1970(Date.parse('2025-01-01T21:00:00.000Z') / 1000);
+    // Saved all-day events end one second before the next local midnight (verified live).
+    allDay.endDate = $.NSDate.dateWithTimeIntervalSince1970(Date.parse('2025-01-01T20:59:59.000Z') / 1000);
     allDay.addRecurrenceRule($.EKRecurrenceRule.alloc.initRecurrenceWithFrequencyIntervalEnd(0, 1, $()));
     selected = [allDay];
     const day = read()[0];
@@ -858,7 +1255,7 @@ test('Calendar occurrence keys survive rescheduling and preserve all-day dates',
     101,
   );
   assert.equal(day.startDate, '2025-01-01');
-  assert.equal(day.endDate, '2025-01-02');
+  assert.equal(day.endDate, '2025-01-01');
   assert.equal(day.startAt, '2024-12-31T21:00:00.000Z');
   assert.equal(day.occurrenceAt, '2024-12-31T21:00:00.000Z');
   assert.equal(day.occurrenceDate, '2025-01-01');
@@ -1090,6 +1487,121 @@ test('Reminders EventKit projects native records through every SQLite and Markdo
       .get()?.count,
     5,
   );
+});
+
+test('Reminders JXA keeps each date component set intact and rejects unidentified reminders', {
+  concurrency: false,
+}, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+  const output = await osa.execute(`
+    ${EventKit.runtime}
+    ${remindersScript}
+    const nativeStore = $.EKEventStore.alloc.init;
+    const calendar = $.EKCalendar.calendarForEntityTypeEventStore(1, nativeStore);
+    calendar.title = 'Synthetic list';
+    const collection = values => ({count: values.length, objectAtIndex: i => values[i]});
+    const reminder = $.EKReminder.reminderWithEventStore(nativeStore);
+    reminder.title = 'Both dates';
+    reminder.calendar = calendar;
+    const start = $.NSDateComponents.alloc.init;
+    // EKReminder accepts only nil or Gregorian date-component calendars.
+    start.calendar = $.NSCalendar.alloc.initWithCalendarIdentifier('gregorian');
+    start.year = 2026; start.month = 6; start.day = 1; start.leapMonth = true;
+    reminder.startDateComponents = start;
+    const due = $.NSDateComponents.alloc.init;
+    due.year = 2026; due.month = 9; due.day = 21; due.hour = 17;
+    reminder.dueDateComponents = due;
+    let selected = [reminder];
+    const store = {
+      predicateForRemindersInCalendars: () => $(),
+      fetchRemindersMatchingPredicateCompletion: (predicate, completion) => {
+        $.NSOperationQueue.mainQueue.addOperationWithBlock(() => completion(collection(selected)));
+        return 'request';
+      },
+    };
+    const attempt = stream => {
+      try {
+        return readReminders(store, stream);
+      } catch (error) {
+        return error.message;
+      }
+    };
+    const components = attempt('dateComponents');
+    // macOS 14 lacks dayOfYear and isRepeatedDay; hide those selectors to model it.
+    const legacy = reminderDateComponents('legacy', 'due', new Proxy(due, {get(target, key) {
+      if (key === 'respondsToSelector')
+        return name => name !== 'dayOfYear' && name !== 'isRepeatedDay' && target.respondsToSelector(name);
+      return target[key];
+    }}));
+    selected = [new Proxy(reminder, {get(target, key) {
+      if (key === 'calendar') return $();
+      return target[key];
+    }})];
+    JSON.stringify({
+      components,
+      legacy,
+      unlisted: attempt('reminders'),
+      unknown: attempt('tasks'),
+    });
+  `);
+  const { components, legacy, unlisted, unknown } = JSON.parse(output);
+  const pick = (row: Record<string, unknown>) => ({
+    kind: row.kind,
+    calendarIdentifier: row.calendarIdentifier,
+    timeZone: row.timeZone,
+    year: row.year,
+    month: row.month,
+    day: row.day,
+    hour: row.hour,
+    minute: row.minute,
+    dayOfYear: row.dayOfYear,
+    leapMonth: row.leapMonth,
+    repeatedDay: row.repeatedDay,
+  });
+
+  assert.deepEqual(components.map(pick), [
+    {
+      kind: 'start',
+      calendarIdentifier: 'gregorian',
+      timeZone: null,
+      year: 2026,
+      month: 6,
+      day: 1,
+      hour: null,
+      minute: null,
+      dayOfYear: null,
+      leapMonth: true,
+      repeatedDay: false,
+    },
+    // EventKit normalizes a due time: it assigns Gregorian and fills the minute.
+    {
+      kind: 'due',
+      calendarIdentifier: 'gregorian',
+      timeZone: null,
+      year: 2026,
+      month: 9,
+      day: 21,
+      hour: 17,
+      minute: 0,
+      dayOfYear: null,
+      leapMonth: false,
+      repeatedDay: false,
+    },
+  ]);
+  assert.equal(
+    new Set(components.map((row: { reminderId: unknown }) => row.reminderId))
+      .size,
+    1,
+  );
+  assert.deepEqual(
+    { dayOfYear: legacy.dayOfYear, repeatedDay: legacy.repeatedDay },
+    { dayOfYear: null, repeatedDay: null },
+  );
+  assert.equal(
+    unlisted,
+    'EventKit returned a reminder without a list or item identifier',
+  );
+  assert.equal(unknown, 'Unknown reminders stream: tasks');
 });
 
 test('Reminders rejects unsupported selections and preserves targets on invalid data or access failure', {
@@ -1333,44 +1845,47 @@ test('Notes subscribes before its initial invalidation and reacts to native file
   const nativeWatch = fs.watch;
   const source = new AppleNotesSource();
   const controller = new AbortController();
-  t.after(() => controller.abort());
-  const closed = Promise.withResolvers<void>();
-  t.mock.method(
-    fs,
-    'watch',
-    (path: fs.PathLike, options: fs.WatchOptionsWithStringEncoding) => {
-      assert.match(
-        String(path),
-        /Library\/Group Containers\/group\.com\.apple\.notes$/,
-      );
-      const watcher = nativeWatch(scratch.path, options);
-      watcher.once('close', () => closed.resolve());
-      return watcher;
-    },
-  );
-  await using watching = source.watch({
-    streams: [source.notes],
-    signal: controller.signal,
-  });
-  assert.deepEqual(await watching.next(), {
-    value: [source.notes],
-    done: false,
-  });
-  const [changed] = await Promise.all([
-    watching.next(),
-    writeFile(join(scratch.path, 'NoteStore.sqlite-wal'), 'test change'),
-  ]);
-  assert.deepEqual(changed, { value: [source.notes], done: false });
-  controller.abort();
-  // Abort may follow already queued native events, so drain until cancellation.
-  await assert.rejects(
-    async () => {
-      for await (const _ of watching) {
-      }
-    },
-    { name: 'AbortError' },
-  );
-  await closed.promise;
+  try {
+    const closed = Promise.withResolvers<void>();
+    t.mock.method(
+      fs,
+      'watch',
+      (path: fs.PathLike, options: fs.WatchOptionsWithStringEncoding) => {
+        assert.match(
+          String(path),
+          /Library\/Group Containers\/group\.com\.apple\.notes$/,
+        );
+        const watcher = nativeWatch(scratch.path, options);
+        watcher.once('close', () => closed.resolve());
+        return watcher;
+      },
+    );
+    await using watching = source.watch({
+      streams: [source.notes],
+      signal: controller.signal,
+    });
+    assert.deepEqual(await watching.next(), {
+      value: [source.notes],
+      done: false,
+    });
+    const [changed] = await Promise.all([
+      watching.next(),
+      writeFile(join(scratch.path, 'NoteStore.sqlite-wal'), 'test change'),
+    ]);
+    assert.deepEqual(changed, { value: [source.notes], done: false });
+    controller.abort();
+    // Abort may follow already queued native events, so drain until cancellation.
+    await assert.rejects(
+      async () => {
+        for await (const _ of watching) {
+        }
+      },
+      { name: 'AbortError' },
+    );
+    await closed.promise;
+  } finally {
+    controller.abort();
+  }
 });
 
 test('Notes watcher permission failures preserve their cause and do not fall back to polling', async (t) => {
@@ -1396,16 +1911,19 @@ test('Calendar and Reminders watch native EventKit notifications without reading
   timeout: 10_000,
 }, async (t) => {
   const nativeWatch = osa.watch.bind(osa);
+  const marker = `eventkit-watch-probe-${process.pid}-${Date.now()}`;
   t.mock.method(osa, 'watch', (script: string, signal: AbortSignal) => {
     // Exercise the actual observer and bridge with an unsaved store. Do not request
     // access or modify Calendar/Reminders; post only a process-local notification.
-    const probe = script
-      .replace('requireEventKitAccess(store, entityType, marker);', '')
-      .replace(
-        '$.NSRunLoop.currentRunLoop.run;',
-        `center.postNotificationNameObject($.EKEventStoreChangedNotification, store);
-       $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));`,
-      );
+    // The run loop keeps running, so only cancellation can end the native process.
+    const probe = `// ${marker}
+      ${script
+        .replace('requireEventKitAccess(store, entityType, marker);', '')
+        .replace(
+          '$.NSRunLoop.currentRunLoop.run;',
+          `center.postNotificationNameObject($.EKEventStoreChangedNotification, store);
+       $.NSRunLoop.currentRunLoop.run;`,
+        )}`;
     return nativeWatch(probe, signal);
   });
   const calendar = new AppleCalendarSource({
@@ -1418,15 +1936,19 @@ test('Calendar and Reminders watch native EventKit notifications without reading
     [reminders, reminders.reminders],
   ] as const) {
     const controller = new AbortController();
-    t.after(() => controller.abort());
-    await using watching = source.watch({
-      streams: [stream],
-      signal: controller.signal,
-    });
-    assert.deepEqual(await watching.next(), { value: [stream], done: false });
-    assert.deepEqual(await watching.next(), { value: [stream], done: false });
-    controller.abort();
-    assert.deepEqual(await watching.next(), { value: undefined, done: true });
+    try {
+      await using watching = source.watch({
+        streams: [stream],
+        signal: controller.signal,
+      });
+      assert.deepEqual(await watching.next(), { value: [stream], done: false });
+      assert.deepEqual(await watching.next(), { value: [stream], done: false });
+      controller.abort();
+      assert.deepEqual(await watching.next(), { value: undefined, done: true });
+      await assert.rejects(execFile('pgrep', ['-f', marker]), { code: 1 });
+    } finally {
+      controller.abort();
+    }
   }
 });
 
@@ -1461,17 +1983,20 @@ test('EventKit watching preserves permission failures and rejects invalid native
 
 test('OSA watching closes on abort or iterator return and reports native failures', {
   timeout: 10_000,
-}, async (t) => {
+}, async () => {
   const script = `ObjC.import('Foundation');
     $.NSFileHandle.fileHandleWithStandardOutput.writeData($('ready\\n').dataUsingEncoding($.NSUTF8StringEncoding));
     $.NSRunLoop.currentRunLoop.run;`;
   const controller = new AbortController();
-  t.after(() => controller.abort());
-  await using watching = osa.watch(script, controller.signal);
-  assert.deepEqual(await watching.next(), { value: 'ready', done: false });
-  const pending = watching.next();
-  controller.abort();
-  assert.deepEqual(await pending, { value: undefined, done: true });
+  try {
+    await using watching = osa.watch(script, controller.signal);
+    assert.deepEqual(await watching.next(), { value: 'ready', done: false });
+    const pending = watching.next();
+    controller.abort();
+    assert.deepEqual(await pending, { value: undefined, done: true });
+  } finally {
+    controller.abort();
+  }
   const stopped = osa.watch(script, new AbortController().signal);
   assert.equal((await stopped.next()).value, 'ready');
   assert.deepEqual(await stopped.return(undefined), {
