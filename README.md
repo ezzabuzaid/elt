@@ -140,7 +140,7 @@ await pipeline.run();
 
 The Apple apps have no change feed, so an incremental copy compares each full scan with the snapshot saved by the previous run. The first run loads every note. Later runs write only new and changed notes and delete notes that disappeared, including edits that did not advance `modifiedAt`. These copies select no `cursorField` and need `append_dedup` keyed by `id`.
 
-Keep the copy ID and both SQLite files between runs. The checkpoint store must use a separate file from the destination. Changing the source, target, schema, or copy configuration requires a new copy ID or an explicit checkpoint reset. Reset the checkpoint if you delete or replace destination storage.
+Keep the copy ID and both SQLite files between runs. The checkpoint store must use a separate file from the destination. A Postgres destination keeps its checkpoints beside the data instead, with `PostgresCheckpointStore` from `elt-postgresql`; see [checkpoint stores](docs/reference.md#checkpoint-stores). Changing the source, target, schema, or copy configuration requires a new copy ID or an explicit checkpoint reset. Reset the checkpoint if you delete or replace destination storage.
 
 **Notes still scans the full collection.** The comparison reduces writes, not the source scan cost. Notes returns notes in **Recently Deleted**, so they stay until permanently deleted.
 
@@ -314,7 +314,7 @@ npx nx run-many -t test
 
 Typecheck targets also format and lint. Test targets build first and use Node's test runner. The `elt-postgresql` and `google` tests need Postgres: start it with `docker compose -f infra/docker-compose.yml up -d --wait`, or point `TEST_DATABASE_URL` at a server where the user can create databases and roles. Apple tests require macOS and an environment that permits native filesystem notifications; they use temporary files and unsaved/process-local EventKit objects, without modifying personal app data.
 
-Run the Search Console example with `GOOGLE_OAUTH_CLIENT_ID=… GOOGLE_OAUTH_CLIENT_SECRET=… npx nx run google:start`. It loads `sc-domain:ezz.sh` into the compose warehouse (`docker compose -f infra/docker-compose.yml up -d --wait`) and installs the [agent-facing marts](docs/reference.md#warehouse-marts); an agent reads them through the `warehouse` MCP server in `.mcp.json`. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup.
+Run the Search Console example with `GOOGLE_OAUTH_CLIENT_ID=… GOOGLE_OAUTH_CLIENT_SECRET=… npx nx run google:start`. It loads `sc-domain:ezz.sh` into the compose warehouse, checkpoints included, and writes no local files (`docker compose -f infra/docker-compose.yml up -d --wait`) and installs the [agent-facing marts](docs/reference.md#warehouse-marts); an agent reads them through the `warehouse` MCP server in `.mcp.json`. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup.
 
 Build with `npx nx run apple:build` before running Apple scripts. Nx builds the `elt` dependency first. Run the generated JavaScript: Node's default TypeScript stripping does not support the parameter properties used here.
 

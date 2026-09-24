@@ -1,8 +1,5 @@
-import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
-
-import { Pipeline, PipelineError, SQLiteCheckpointStore } from 'elt';
-import { PostgresDestination } from 'elt-postgresql';
+import { Pipeline, PipelineError } from 'elt';
+import { PostgresCheckpointStore, PostgresDestination } from 'elt-postgresql';
 import { GOOGLE_SEARCH_CONSOLE_SCOPE } from 'google-auth';
 import postgres from 'postgres';
 
@@ -32,8 +29,6 @@ const reader = 'agent_reader';
 const raw = 'google_search_console';
 
 try {
-  await mkdir(resolve('outputs'), { recursive: true });
-
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) throw new MissingClientError();
@@ -54,8 +49,9 @@ try {
   const results = await new Pipeline({
     source,
     destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: resolve('outputs/search-console-warehouse-state.sqlite'),
+    checkpoints: new PostgresCheckpointStore({
+      url: warehouseUrl,
+      schema: raw,
     }),
     steps: searchConsoleCopies(source, (name) => destination.table(name)),
   }).run();

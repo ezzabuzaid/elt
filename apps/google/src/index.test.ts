@@ -2,12 +2,10 @@ import assert from 'node:assert/strict';
 import { mkdtempDisposable, readdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { type TestContext, test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
-import { Copy, Pipeline, SQLiteCheckpointStore } from 'elt';
-import { SQLiteDestination } from 'elt-sqlite';
+import { Copy, Pipeline } from 'elt';
 import { GOOGLE_SEARCH_CONSOLE_SCOPE } from 'google-auth';
 import { LoginTicket, OAuth2Client } from 'google-auth-library';
 
@@ -21,6 +19,7 @@ import {
   SearchConsoleQuotaError,
   SearchConsoleSource,
 } from './index.ts';
+import { scratchWarehouse } from './test-warehouse.ts';
 
 const SITE = 'sc-domain:example.com';
 const NOW = () => new Date('2026-09-22T00:00:00.000Z');
@@ -80,15 +79,13 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
       },
     ],
   }));
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-map-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
     now: NOW,
     requester,
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   const copy = new Copy(
     source.searchAnalyticsQueries,
@@ -99,15 +96,10 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
     await new Pipeline({ source, destination, steps: [copy] }).run(),
     [{ copy, count: 1, deleted: 0 }],
   );
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  const [loaded] =
+    await sql`SELECT date::text, query, clicks::int, impressions::int, position FROM search_analytics`;
   assert.deepEqual(
-    {
-      ...database
-        .prepare(
-          'SELECT date, query, clicks, impressions, position FROM search_analytics',
-        )
-        .get(),
-    },
+    { ...loaded },
     {
       clicks: 0,
       date: '2026-09-20',
@@ -151,18 +143,13 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
       },
     ],
   }));
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-restate-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
     now: NOW,
     requester,
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
-  });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
   });
   const copy = new Copy(
     source.searchAnalyticsQueries,
@@ -184,45 +171,37 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
   });
 
   await pipeline.run();
-  using database = new DatabaseSync(destination.path, { readOnly: true });
-  using state = new DatabaseSync(checkpoints.path, { readOnly: true });
-  const loaded = () =>
-    database
-      .prepare(
-        'SELECT date, clicks, settled FROM search_analytics ORDER BY date',
-      )
-      .all()
-      .map((row) => ({ ...row }));
-  const saved = () =>
-    JSON.parse(
-      String(
-        state
-          .prepare('SELECT state FROM checkpoints WHERE id = ?')
-          .get('search-analytics')?.state,
-      ),
-    );
+  const loaded = async () =>
+    (
+      await sql`SELECT date::text, clicks::int, settled FROM search_analytics ORDER BY date`
+    ).map((row) => ({ ...row }));
+  const saved = async () => {
+    const [row] =
+      await sql`SELECT state FROM _mac_elt_checkpoints WHERE id = ${'search-analytics'}`;
+    return row?.state;
+  };
   // The 21st is still being collected, and its row says so.
-  assert.deepEqual(loaded(), [
-    { clicks: 12, date: '2026-09-20', settled: 1 },
-    { clicks: 5, date: '2026-09-21', settled: 0 },
+  assert.deepEqual(await loaded(), [
+    { clicks: 12, date: '2026-09-20', settled: true },
+    { clicks: 5, date: '2026-09-21', settled: false },
   ]);
   // firstIncompleteDate is 2026-09-21, so the last settled day is the 20th,
   // kept as the property's own partition state.
   const checkpoint = (date: string) => ({
     partitions: [{ partition: { siteUrl: SITE }, state: { date } }],
   });
-  assert.deepEqual(saved(), checkpoint('2026-09-20'));
+  assert.deepEqual(await saved(), checkpoint('2026-09-20'));
 
   clicks = 19;
   firstIncompleteDate = '2026-09-22';
   await pipeline.run();
   // One row per day still, carrying the restated metric, and the 21st has
   // settled since.
-  assert.deepEqual(loaded(), [
-    { clicks: 19, date: '2026-09-20', settled: 1 },
-    { clicks: 5, date: '2026-09-21', settled: 1 },
+  assert.deepEqual(await loaded(), [
+    { clicks: 19, date: '2026-09-20', settled: true },
+    { clicks: 5, date: '2026-09-21', settled: true },
   ]);
-  assert.deepEqual(saved(), checkpoint('2026-09-21'));
+  assert.deepEqual(await saved(), checkpoint('2026-09-21'));
   // The second run resumes at the settled day rather than after it.
   assert.equal(analyticsCalls(calls).at(-1)?.data?.startDate, '2026-09-20');
 });
@@ -239,15 +218,13 @@ test('a fractional click count is refused rather than stored', async () => {
       },
     ],
   }));
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-integer-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
     now: NOW,
     requester,
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
 
   await assert.rejects(
@@ -276,15 +253,13 @@ test('analytics pagination follows startRow until a short page', async () => {
     const rowLimit = Number(call.data?.['rowLimit'] ?? 0);
     return { rows: startRow === 0 ? page(0, rowLimit) : page(rowLimit, 3) };
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-page-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
     now: NOW,
     requester,
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   const copy = new Copy(
     source.searchAnalyticsQueries,
@@ -297,11 +272,8 @@ test('analytics pagination follows startRow until a short page', async () => {
   assert.equal(requests.length, 2, 'a full page is followed by one more');
   assert.equal(requests[0]?.data?.['startRow'], 0);
   assert.equal(requests[1]?.data?.['startRow'], 25_000);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
-  assert.deepEqual(
-    { ...database.prepare('SELECT count(*) AS count FROM rows').get() },
-    { count: 25_003 },
-  );
+  const [total] = await sql`SELECT count(*)::int AS count FROM rows`;
+  assert.deepEqual({ ...total }, { count: 25_003 });
 });
 
 test('sitemaps convert int64 text and second-precision times', async () => {
@@ -316,16 +288,14 @@ test('sitemaps convert int64 text and second-precision times', async () => {
       },
     ],
   }));
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-sitemap-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     fetch: async () =>
       new Response('https://example.com/a\nhttps://example.com/b\n'),
     now: NOW,
     requester,
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   await new Pipeline({
     source,
@@ -336,33 +306,26 @@ test('sitemaps convert int64 text and second-precision times', async () => {
     ],
   }).run();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  const [sitemap] =
+    await sql`SELECT path, errors::int, warnings::int, "isPending", "isSitemapsIndex", "lastDownloaded", "lastSubmitted", "urlsRead"::int, "readError" FROM sitemaps`;
   assert.deepEqual(
-    {
-      ...database
-        .prepare(
-          'SELECT path, errors, warnings, isPending, isSitemapsIndex, lastDownloaded, lastSubmitted, urlsRead, readError FROM sitemaps',
-        )
-        .get(),
-    },
+    { ...sitemap },
     {
       errors: 2,
-      isPending: 0,
-      isSitemapsIndex: 0,
-      lastDownloaded: '2026-09-20T10:30:00.000Z',
-      lastSubmitted: '2026-09-19T08:00:00.250Z',
+      isPending: false,
+      isSitemapsIndex: false,
+      lastDownloaded: new Date('2026-09-20T10:30:00.000Z'),
+      lastSubmitted: new Date('2026-09-19T08:00:00.250Z'),
       path: 'https://example.com/sitemap.xml',
       readError: null,
       urlsRead: 2,
       warnings: 0,
     },
   );
+  const [content] =
+    await sql`SELECT "sitemapPath", type, submitted::int, indexed::int FROM contents`;
   assert.deepEqual(
-    {
-      ...database
-        .prepare('SELECT sitemapPath, type, submitted, indexed FROM contents')
-        .get(),
-    },
+    { ...content },
     {
       indexed: null,
       sitemapPath: 'https://example.com/sitemap.xml',
@@ -428,7 +391,8 @@ test('inspection covers every sitemap and search URL once, shared by all three s
       '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/a</loc></url><url><loc>https://example.com/c?x=1&amp;y=2</loc></url></urlset>',
     );
   };
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-inspect-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     fetch,
     now: NOW,
@@ -436,15 +400,10 @@ test('inspection covers every sitemap and search URL once, shared by all three s
     searchTypes: ['WEB'],
     siteUrls: [SITE],
   });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
-  });
   const pipeline = new Pipeline({
     source,
     destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
+    checkpoints,
     steps: (
       [
         [source.urlInspection, 'inspection'],
@@ -478,31 +437,28 @@ test('inspection covers every sitemap and search URL once, shared by all three s
   await pipeline.run();
   assert.equal(inspected().length, 3);
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
-    database
-      .prepare(
-        'SELECT inspectionUrl, inSitemap, inSearchAnalytics, verdict, inspectedAt FROM inspection ORDER BY inspectionUrl',
-      )
-      .all()
-      .map((row) => ({ ...row })),
-    [
-      ['https://example.com/a', 1, 1],
-      ['https://example.com/b', 0, 1],
-      ['https://example.com/c?x=1&y=2', 1, 0],
-    ].map(([inspectionUrl, inSitemap, inSearchAnalytics]) => ({
+    (
+      await sql`SELECT "inspectionUrl", "inSitemap", "inSearchAnalytics", verdict, "inspectedAt" FROM inspection ORDER BY "inspectionUrl"`
+    ).map((row) => ({ ...row })),
+    (
+      [
+        ['https://example.com/a', true, true],
+        ['https://example.com/b', false, true],
+        ['https://example.com/c?x=1&y=2', true, false],
+      ] as const
+    ).map(([inspectionUrl, inSitemap, inSearchAnalytics]) => ({
       inspectionUrl,
       inSitemap,
       inSearchAnalytics,
       verdict: 'PASS',
-      inspectedAt: NOW().toISOString(),
+      inspectedAt: NOW(),
     })),
   );
-  for (const table of ['inspection_sitemaps', 'inspection_referrers'])
-    assert.equal(
-      database.prepare(`SELECT count(*) AS count FROM ${table}`).get()?.count,
-      3,
-    );
+  for (const table of ['inspection_sitemaps', 'inspection_referrers']) {
+    const [total] = await sql`SELECT count(*)::int AS count FROM ${sql(table)}`;
+    assert.equal(total?.count, 3);
+  }
 });
 
 test('watching invalidates only when the property actually changed', async () => {
@@ -519,16 +475,14 @@ test('watching invalidates only when the property actually changed', async () =>
       },
     ],
   }));
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-watch-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
     now: NOW,
     pollIntervalMs: 1,
     requester,
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   // One key per row is the daily grain.
   const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
@@ -549,8 +503,8 @@ test('watching invalidates only when the property actually changed', async () =>
     assert.deepEqual((await watching.next()).value, [
       { copy, count: 1, deleted: 0 },
     ]);
-    using database = new DatabaseSync(destination.path, { readOnly: true });
-    assert.equal(database.prepare('SELECT clicks FROM rows').get()?.clicks, 19);
+    const [row] = await sql`SELECT clicks::int FROM rows`;
+    assert.equal(row?.clicks, 19);
   } finally {
     controller.abort();
   }
@@ -577,15 +531,13 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
       ],
     };
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-feed-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
     requester,
     searchTypes: ['WEB', 'DISCOVER', 'GOOGLE_NEWS'],
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   await new Pipeline({
     source,
@@ -593,14 +545,10 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
     steps: [new Copy(source.searchAnalyticsDaily, destination.table('daily'))],
   }).run();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
-    database
-      .prepare(
-        'SELECT searchType, clicks, position FROM daily ORDER BY searchType',
-      )
-      .all()
-      .map((row) => ({ ...row })),
+    (
+      await sql`SELECT "searchType", clicks::int, position FROM daily ORDER BY "searchType"`
+    ).map((row) => ({ ...row })),
     [
       { searchType: 'DISCOVER', clicks: 0, position: null },
       { searchType: 'GOOGLE_NEWS', clicks: 0, position: null },
@@ -615,7 +563,8 @@ test('the history window clamps to the last day of a shorter start month', async
     if (call.data?.['startDate']) requests.push(String(call.data['startDate']));
     return { rows: [] };
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-clamp-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination } = warehouse;
   // Sixteen months before 31 March is 30 November, which has no 31st. An
   // unclamped subtraction rolls into December and drops a month of history.
   const source = new SearchConsoleSource({
@@ -623,9 +572,6 @@ test('the history window clamps to the last day of a shorter start month', async
     requester,
     searchTypes: ['WEB'],
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   await new Pipeline({
     source,
@@ -660,15 +606,13 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
     if (call.data?.['startDate']) windows.push(String(call.data['startDate']));
     return { rows };
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-country-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     breakdownMonths: 3,
     now: NOW,
     requester,
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   const copy = new Copy(
     source.searchAnalyticsCountries,
@@ -683,9 +627,7 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
   const pipeline = new Pipeline({
     source,
     destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
+    checkpoints,
     steps: [copy],
   });
 
@@ -703,14 +645,10 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
 
   // The window trails the clock; no date checkpoint narrows it.
   assert.deepEqual(windows, ['2026-06-22', '2026-06-22']);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
-    database
-      .prepare(
-        'SELECT siteUrl, country, device, clicks, startDate, endDate FROM countries',
-      )
-      .all()
-      .map((row) => ({ ...row })),
+    (
+      await sql`SELECT "siteUrl", country, device, clicks::int, "startDate"::text, "endDate"::text FROM countries`
+    ).map((row) => ({ ...row })),
     [
       {
         clicks: 4,
@@ -765,13 +703,8 @@ test('two properties load into the same tables without deleting each other', asy
       rows: [{ clicks: 1, ctr: 0.1, impressions: 10, keys, position: 3 }],
     };
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-share-'));
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
-  });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
-  });
+  await using warehouse = await scratchWarehouse();
+  const { destination, checkpoints, sql } = warehouse;
   const pipeline = (siteUrl: string) => {
     const source = new SearchConsoleSource({
       fetch: async () => new Response(''),
@@ -820,15 +753,13 @@ test('two properties load into the same tables without deleting each other', asy
     ['searchAnalyticsDaily', 1, 0],
     ['searchAnalyticsCountries', 0, 0],
   ]);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
-  const sites = (table: string) =>
-    database
-      .prepare(`SELECT siteUrl FROM ${table} ORDER BY siteUrl`)
-      .all()
-      .map((row) => row['siteUrl']);
-  assert.deepEqual(sites('sitemaps'), [B]);
-  assert.deepEqual(sites('daily'), [A, B]);
-  assert.deepEqual(sites('countries'), [A, B]);
+  const sites = async (table: string) =>
+    (await sql`SELECT "siteUrl" FROM ${sql(table)} ORDER BY "siteUrl"`).map(
+      (row) => row.siteUrl,
+    );
+  assert.deepEqual(await sites('sitemaps'), [B]);
+  assert.deepEqual(await sites('daily'), [A, B]);
+  assert.deepEqual(await sites('countries'), [A, B]);
 });
 
 test('an unverified property is not offered as a readable site', async () => {
@@ -846,14 +777,12 @@ test('an unverified property is not offered as a readable site', async () => {
       },
     ],
   }));
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-sites-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
     requester,
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   await new Pipeline({
     source,
@@ -861,12 +790,10 @@ test('an unverified property is not offered as a readable site', async () => {
     steps: [new Copy(source.sites, destination.table('sites'))],
   }).run();
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
-    database
-      .prepare('SELECT siteUrl, permissionLevel FROM sites ORDER BY siteUrl')
-      .all()
-      .map((row) => ({ ...row })),
+    (
+      await sql`SELECT "siteUrl", "permissionLevel" FROM sites ORDER BY "siteUrl"`
+    ).map((row) => ({ ...row })),
     [
       { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:owned.example' },
       {
@@ -1198,14 +1125,14 @@ test('a grant Google no longer honors is replaced through consent', async (t) =>
 test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
   timeout: 5000,
 }, async () => {
-  let served = 0;
+  let loaded = false;
   const limited = Promise.withResolvers<void>();
   const requester = {
     async request() {
-      served += 1;
-      // The first probe and the first load succeed; the next probe is told to
-      // come back in 45 seconds.
-      if (served <= 2)
+      // Every probe and the load of the first pass succeed; the next probe is
+      // told to come back in 45 seconds. The watcher keeps probing while the
+      // warehouse connects, so the first pass can take more than two calls.
+      if (!loaded)
         return {
           data: {
             rows: [
@@ -1223,7 +1150,8 @@ test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
       throw httpError(429, { retryAfter: '45' });
     },
   };
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-abort-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
     pollIntervalMs: 1,
@@ -1231,9 +1159,6 @@ test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
     retry: { attempts: 3, baseDelayMs: 1, maxDelayMs: 60_000 },
     searchTypes: ['WEB'],
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
   const controller = new AbortController();
@@ -1244,6 +1169,7 @@ test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
   assert.deepEqual((await watching.next()).value, [
     { copy, count: 1, deleted: 0 },
   ]);
+  loaded = true;
   await limited.promise;
   const started = performance.now();
   controller.abort();
@@ -1312,14 +1238,12 @@ test('an incremental sites copy deletes a property that is no longer listed', as
     { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:b.example' },
   ];
   const { requester } = recorder(() => ({ siteEntry }));
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-snap-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
     requester,
     siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   const copy = new Copy(source.sites, destination.table('sites'), {
     id: 'sites',
@@ -1330,9 +1254,7 @@ test('an incremental sites copy deletes a property that is no longer listed', as
   const pipeline = new Pipeline({
     source,
     destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
+    checkpoints,
     steps: [copy],
   });
 
@@ -1342,12 +1264,10 @@ test('an incremental sites copy deletes a property that is no longer listed', as
     { permissionLevel: 'siteFullUser', siteUrl: 'sc-domain:a.example' },
   ];
   assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 1 }]);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
-    database
-      .prepare('SELECT siteUrl, permissionLevel FROM sites')
-      .all()
-      .map((row) => ({ ...row })),
+    (await sql`SELECT "siteUrl", "permissionLevel" FROM sites`).map((row) => ({
+      ...row,
+    })),
     [{ siteUrl: 'sc-domain:a.example', permissionLevel: 'siteFullUser' }],
   );
 });
@@ -1510,13 +1430,8 @@ test('one source loads every property; a newly listed one backfills while the ot
       ],
     };
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-many-'));
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
-  });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
-  });
+  await using warehouse = await scratchWarehouse();
+  const { destination, checkpoints, sql } = warehouse;
   const run = (siteUrls: string[]) => {
     const source = new SearchConsoleSource({
       now: NOW,
@@ -1559,24 +1474,19 @@ test('one source loads every property; a newly listed one backfills while the ot
     [A, '2026-09-20'],
     [B, '2025-05-22'],
   ]);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
-    database
-      .prepare('SELECT siteUrl, clicks FROM daily ORDER BY siteUrl')
-      .all()
-      .map((row) => [row.siteUrl, row.clicks]),
+    (
+      await sql`SELECT "siteUrl", clicks::int FROM daily ORDER BY "siteUrl"`
+    ).map((row) => [row.siteUrl, row.clicks]),
     [
       [A, 3],
       [B, 7],
     ],
   );
   assert.deepEqual(
-    database
-      .prepare(
-        'SELECT siteUrl, inspectionUrl, verdict FROM inspection ORDER BY siteUrl',
-      )
-      .all()
-      .map((row) => [row.siteUrl, row.inspectionUrl, row.verdict]),
+    (
+      await sql`SELECT "siteUrl", "inspectionUrl", verdict FROM inspection ORDER BY "siteUrl"`
+    ).map((row) => [row.siteUrl, row.inspectionUrl, row.verdict]),
     [
       [A, 'https://a.example/', A],
       [B, 'https://b.example/', B],
@@ -1601,19 +1511,14 @@ test('a property that keeps failing commits nothing for any property', async () 
       ],
     };
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-fail-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
     requester,
     retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
     searchTypes: ['WEB'],
     siteUrls: [A, B],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
-  });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
   });
 
   await assert.rejects(
@@ -1635,15 +1540,10 @@ test('a property that keeps failing commits nothing for any property', async () 
     /status code 500/,
   );
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
-  assert.deepEqual(
-    database
-      .prepare("SELECT name FROM sqlite_schema WHERE name = 'daily'")
-      .all(),
-    [],
-  );
-  using state = new DatabaseSync(checkpoints.path, { readOnly: true });
-  assert.deepEqual(state.prepare('SELECT id FROM checkpoints').all(), []);
+  const [daily] =
+    await sql`SELECT to_regclass('google_search_console.daily')::text AS name`;
+  assert.equal(daily?.name, null);
+  assert.deepEqual([...(await sql`SELECT id FROM _mac_elt_checkpoints`)], []);
 });
 
 test('watching invalidates when only one of several properties changed', async () => {
@@ -1662,16 +1562,14 @@ test('watching invalidates when only one of several properties changed', async (
       },
     ],
   }));
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-watch-'));
+  await using warehouse = await scratchWarehouse();
+  const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
     pollIntervalMs: 1,
     requester,
     searchTypes: ['WEB'],
     siteUrls: [A, B],
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
   });
   const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
   const controller = new AbortController();
@@ -1694,12 +1592,10 @@ test('watching invalidates when only one of several properties changed', async (
     assert.deepEqual((await watching.next()).value, [
       { copy, count: 2, deleted: 0 },
     ]);
-    using database = new DatabaseSync(destination.path, { readOnly: true });
     assert.deepEqual(
-      database
-        .prepare('SELECT siteUrl, clicks FROM rows ORDER BY siteUrl')
-        .all()
-        .map((row) => [row.siteUrl, row.clicks]),
+      (
+        await sql`SELECT "siteUrl", clicks::int FROM rows ORDER BY "siteUrl"`
+      ).map((row) => [row.siteUrl, row.clicks]),
       [
         [A, 3],
         [B, 9],
@@ -1762,22 +1658,21 @@ function inspectionProperty({
   return { requester, fetch, inspected };
 }
 
+type Warehouse = Awaited<ReturnType<typeof scratchWarehouse>>;
+
 async function inspectionRun(
   source: SearchConsoleSource,
-  path: string,
+  { destination, checkpoints }: Warehouse,
   streams: readonly (
     | 'urlInspection'
     | 'urlInspectionSitemaps'
     | 'urlInspectionReferrers'
   )[] = ['urlInspection'],
 ) {
-  const destination = new SQLiteDestination({ path: join(path, 'sc.sqlite') });
   return new Pipeline({
     source,
     destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(path, 'state.sqlite'),
-    }),
+    checkpoints,
     steps: streams.map(
       (name) =>
         new Copy(source[name], destination.table(name), {
@@ -1790,14 +1685,10 @@ async function inspectionRun(
   }).run();
 }
 
-function inspectionRows(path: string, table = 'urlInspection') {
-  using database = new DatabaseSync(join(path, 'sc.sqlite'), {
-    readOnly: true,
-  });
-  return database
-    .prepare(`SELECT * FROM ${table} ORDER BY inspectionUrl`)
-    .all()
-    .map((row) => ({ ...row }));
+async function inspectionRows({ sql }: Warehouse, table = 'urlInspection') {
+  return (await sql`SELECT * FROM ${sql(table)} ORDER BY "inspectionUrl"`).map(
+    (row) => ({ ...row }),
+  );
 }
 
 test('sitemaps in every format feed the inspection universe', async () => {
@@ -1816,7 +1707,7 @@ test('sitemaps in every format feed the inspection universe', async () => {
         '<feed xmlns="http://www.w3.org/2005/Atom"><link rel="self" href="https://example.com/atom.xml"/><entry><link href="https://example.com/a"/></entry></feed>',
     },
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-sitemap-'));
+  await using warehouse = await scratchWarehouse();
 
   await inspectionRun(
     new SearchConsoleSource({
@@ -1825,7 +1716,7 @@ test('sitemaps in every format feed the inspection universe', async () => {
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     }),
-    scratch.path,
+    warehouse,
   );
 
   // Entity forms and anchors collapse to one URL; other hosts are dropped.
@@ -1878,17 +1769,13 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
         'https://example.com/good.xml': 'https://example.com/g\n',
       },
     });
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'gsc-sitemap-'),
-    );
+    await using warehouse = await scratchWarehouse();
+    const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
       ...property,
       now: NOW,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
-    });
-    const destination = new SQLiteDestination({
-      path: join(scratch.path, 'sc.sqlite'),
     });
 
     await new Pipeline({
@@ -1896,7 +1783,7 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
       destination,
       steps: [new Copy(source.sitemaps, destination.table('sitemaps'))],
     }).run();
-    await inspectionRun(source, scratch.path);
+    await inspectionRun(source, warehouse);
 
     // The good sitemap's page and the search page are still inspected.
     assert.deepEqual(
@@ -1904,11 +1791,9 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
       ['https://example.com/g', 'https://example.com/p'],
       label,
     );
-    using database = new DatabaseSync(destination.path, { readOnly: true });
-    const rows = database
-      .prepare('SELECT path, urlsRead, readError FROM sitemaps ORDER BY path')
-      .all()
-      .map((row) => ({ ...row }));
+    const rows = (
+      await sql`SELECT path, "urlsRead"::int, "readError" FROM sitemaps ORDER BY path`
+    ).map((row) => ({ ...row }));
     const good = rows.find(
       (row) => row.path === 'https://example.com/good.xml',
     );
@@ -1941,10 +1826,10 @@ test('rolling refresh inspects new URLs first, then the stalest, and skips fresh
       siteUrls: [SITE],
     });
   const hour = 60 * 60 * 1000;
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-roll-'));
+  await using warehouse = await scratchWarehouse();
   const calls = async () => {
     const before = property.inspected.length;
-    await inspectionRun(source(), scratch.path);
+    await inspectionRun(source(), warehouse);
     return property.inspected.slice(before);
   };
 
@@ -1984,9 +1869,9 @@ test('the daily quota stops inspection cleanly and resumes after Pacific midnigh
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-quota-'));
+    await using warehouse = await scratchWarehouse();
 
-    await inspectionRun(source, scratch.path);
+    await inspectionRun(source, warehouse);
     // Live, the exhausted daily quota answers 429 rateLimitExceeded with no
     // Retry-After ("Quota exceeded for sc-domain:limerence.sh.").
     assert.deepEqual(property.inspected, [
@@ -1995,15 +1880,15 @@ test('the daily quota stops inspection cleanly and resumes after Pacific midnigh
       'https://example.com/c',
     ]);
     assert.deepEqual(
-      inspectionRows(scratch.path).map((row) => row.inspectionUrl),
+      (await inspectionRows(warehouse)).map((row) => row.inspectionUrl),
       ['https://example.com/a', 'https://example.com/b'],
     );
     clock = Date.parse(reset) - 1;
-    await inspectionRun(source, scratch.path);
+    await inspectionRun(source, warehouse);
     assert.equal(property.inspected.length, 3, 'no call before the reset');
     clock = Date.parse(reset);
     allowed = 10;
-    await inspectionRun(source, scratch.path);
+    await inspectionRun(source, warehouse);
     assert.deepEqual(property.inspected.slice(3), [
       'https://example.com/c',
       'https://example.com/d',
@@ -2037,31 +1922,33 @@ test('one inspection serves all three streams, and a URL that leaves is deleted 
     'urlInspectionSitemaps',
     'urlInspectionReferrers',
   ] as const;
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-three-'));
+  await using warehouse = await scratchWarehouse();
 
-  await inspectionRun(source, scratch.path, ['urlInspection']);
+  await inspectionRun(source, warehouse, ['urlInspection']);
   // The other two streams load later: they reuse the inspections already made.
-  await inspectionRun(source, scratch.path, all);
+  await inspectionRun(source, warehouse, all);
   assert.equal(property.inspected.length, 2);
 
   pages.pop();
   referrers = 1;
   clock += 25 * 60 * 60 * 1000;
-  await inspectionRun(source, scratch.path, all);
+  await inspectionRun(source, warehouse, all);
 
   assert.equal(property.inspected.length, 3);
   for (const table of all)
     assert.deepEqual(
       [
         ...new Set(
-          inspectionRows(scratch.path, table).map((row) => row.inspectionUrl),
+          (await inspectionRows(warehouse, table)).map(
+            (row) => row.inspectionUrl,
+          ),
         ),
       ],
       ['https://example.com/a'],
       table,
     );
   assert.deepEqual(
-    inspectionRows(scratch.path, 'urlInspectionReferrers').map(
+    (await inspectionRows(warehouse, 'urlInspectionReferrers')).map(
       (row) => row.referringUrl,
     ),
     ['https://example.com/a/r0'],
@@ -2107,7 +1994,7 @@ test('inspections run concurrently, a rejected URL becomes a row, and a server e
       };
     },
   };
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-pool-'));
+  await using warehouse = await scratchWarehouse();
 
   await inspectionRun(
     new SearchConsoleSource({
@@ -2118,13 +2005,17 @@ test('inspections run concurrently, a rejected URL becomes a row, and a server e
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     }),
-    scratch.path,
+    warehouse,
   );
 
   assert.equal(peak, 3);
-  const rows = inspectionRows(scratch.path);
+  const rows = await inspectionRows(warehouse);
   assert.deepEqual(
-    rows.map((row) => [row.inspectionUrl, row.verdict, row.errorStatus]),
+    rows.map((row) => [
+      row.inspectionUrl,
+      row.verdict,
+      row.errorStatus === null ? null : Number(row.errorStatus),
+    ]),
     pages.map((page) =>
       page.endsWith('/3') ? [page, null, 400] : [page, 'PASS', null],
     ),
@@ -2136,7 +2027,7 @@ test('inspections run concurrently, a rejected URL becomes a row, and a server e
     inspect: (url) =>
       url.endsWith('/5') ? googleError(500) : { verdict: 'PASS' },
   });
-  await using broken = await mkdtempDisposable(join(tmpdir(), 'gsc-pool-'));
+  await using broken = await scratchWarehouse();
   await assert.rejects(
     inspectionRun(
       new SearchConsoleSource({
@@ -2146,14 +2037,14 @@ test('inspections run concurrently, a rejected URL becomes a row, and a server e
         searchTypes: ['WEB'],
         siteUrls: [SITE],
       }),
-      broken.path,
+      broken,
     ),
     /status code 500/,
   );
-  using state = new DatabaseSync(join(broken.path, 'state.sqlite'), {
-    readOnly: true,
-  });
-  assert.deepEqual(state.prepare('SELECT id FROM checkpoints').all(), []);
+  assert.deepEqual(
+    [...(await broken.sql`SELECT id FROM _mac_elt_checkpoints`)],
+    [],
+  );
 });
 
 test('inspection options are validated', () => {
@@ -2206,10 +2097,8 @@ test('watching wakes inspection streams when URLs fall due, not when traffic cha
     searchTypes: ['WEB'],
     siteUrls: [SITE],
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-due-'));
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'sc.sqlite'),
-  });
+  await using warehouse = await scratchWarehouse();
+  const { destination, checkpoints } = warehouse;
   const copy = (stream: typeof source.urlInspection, id: string, extra = {}) =>
     new Copy(stream, destination.table(id), {
       id,
@@ -2222,9 +2111,7 @@ test('watching wakes inspection streams when URLs fall due, not when traffic cha
   const watching = new Pipeline({
     source,
     destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
+    checkpoints,
     steps: [
       copy(source.urlInspection, 'inspection'),
       copy(source.searchAnalyticsDaily, 'daily', {

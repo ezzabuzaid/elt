@@ -1,12 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { Pipeline, SQLiteCheckpointStore } from 'elt';
-import { PostgresDestination } from 'elt-postgresql';
+import { Pipeline } from 'elt';
 import postgres from 'postgres';
 
 import {
@@ -15,12 +11,9 @@ import {
   SearchConsoleSource,
   searchConsoleCopies,
 } from './index.ts';
+import { RAW, scratchWarehouse, testServer } from './test-warehouse.ts';
 
-const server =
-  process.env.TEST_DATABASE_URL ??
-  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
 const NOW = () => new Date('2026-09-22T00:00:00.000Z');
-const RAW = 'google_search_console';
 
 type Row = {
   keys: string[];
@@ -41,38 +34,21 @@ type Google = {
  * fake Search Console, with marts installed as the app installs them.
  */
 async function warehouse(siteUrls: string[], google: Google) {
-  const admin = postgres(server, { max: 1, onnotice: () => {} });
-  const id = randomUUID().replaceAll('-', '');
-  const name = `gsc_test_${id}`;
-  const reader = `agent_${id}`;
-  try {
-    await admin.unsafe(`CREATE DATABASE "${name}"`);
-  } catch (cause) {
-    await admin.end();
-    throw new Error(
-      `Test Postgres at ${new URL(server).host} is unavailable. Start it with: docker compose -f infra/docker-compose.yml up -d --wait`,
-      { cause },
-    );
-  }
+  const base = await scratchWarehouse();
+  const reader = `agent_${randomUUID().replaceAll('-', '')}`;
   // The same role settings infra/init/01-roles.sh gives agent_reader.
-  await admin.unsafe(
+  await base.sql.unsafe(
     `CREATE ROLE "${reader}" LOGIN NOINHERIT PASSWORD 'agent'`,
   );
-  await admin.unsafe(
+  await base.sql.unsafe(
     `ALTER ROLE "${reader}" SET default_transaction_read_only = on`,
   );
-  await admin.unsafe(`ALTER ROLE "${reader}" SET search_path = marts`);
-  const scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-warehouse-'));
-  const url = new URL(server);
-  url.pathname = `/${name}`;
-  const agentUrl = new URL(url);
+  await base.sql.unsafe(`ALTER ROLE "${reader}" SET search_path = marts`);
+  const agentUrl = new URL(base.url);
   agentUrl.username = reader;
   agentUrl.password = 'agent';
-  const sql = postgres(url.href, { max: 1, onnotice: () => {} });
+  const { sql, destination, checkpoints } = base;
   const agent = postgres(agentUrl.href, { max: 1, onnotice: () => {} });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
-  });
   const requester = {
     async request(options: { url: string; data?: Record<string, unknown> }) {
       const path = new URL(options.url).pathname;
@@ -120,10 +96,6 @@ async function warehouse(siteUrls: string[], google: Google) {
         now: NOW,
         searchTypes: ['WEB', 'DISCOVER'],
       });
-      const destination = new PostgresDestination({
-        url: url.href,
-        schema: RAW,
-      });
       await new Pipeline({
         source,
         destination,
@@ -135,11 +107,11 @@ async function warehouse(siteUrls: string[], google: Google) {
     },
     async [Symbol.asyncDispose]() {
       await agent.end();
-      await sql.end();
-      await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);
+      await base[Symbol.asyncDispose]();
+      // A role outlives the database, so it goes once its grants are gone.
+      const admin = postgres(testServer, { max: 1, onnotice: () => {} });
       await admin.unsafe(`DROP ROLE "${reader}"`);
       await admin.end();
-      await scratch[Symbol.asyncDispose]();
     },
   };
 }

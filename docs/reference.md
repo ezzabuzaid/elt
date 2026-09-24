@@ -136,20 +136,29 @@ Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The `count` r
 
 ## Incremental extraction and checkpoints
 
-Incremental copies require an explicit stable `id` and a `SQLiteCheckpointStore`. Use a separate persistent SQLite state file, including when the destination is Markdown. IDs must be unique within a pipeline. Copying the same stream to two targets requires two IDs, so progress in one does not advance the other.
+Incremental copies require an explicit stable `id` and a [checkpoint store](#checkpoint-stores). IDs must be unique within a pipeline. Copying the same stream to two targets requires two IDs, so progress in one does not advance the other.
 
 `Source.read(configuration, previousState)` receives `null` initially. It emits `{ stream, data }` records, `{ type: 'DELETE', stream, key }` deletions and `{ type: 'STATE', stream, state }` checkpoints. State is losslessly JSON serializable and source-owned; destinations do not interpret it. Writers snapshot proposed state and return `WriteResult { count, deleted, checkpoints }` only after committing/publishing the complete copy. Acknowledgements retain their order; orchestration persists the last one. No acknowledgement means no advancement, even if the source mutates its input state.
 
 The store binds each ID to the source identity, target declaration, schema and selected configuration. A changed binding fails before extraction. Use a new ID or explicitly reset progress:
 
 ```ts
-checkpoints.reset('notes-to-sqlite'); // Next read starts from null; destination data is unchanged.
+await checkpoints.reset('notes-to-sqlite'); // Next read starts from null; destination data is unchanged.
 await pipeline.run();
 ```
 
 Resetting append progress may duplicate data. Resetting deduplicated progress reconciles replayed records. Reset state when deleting/replacing destination storage; bindings cannot detect that content was removed. Do not share a state file between independent machines or put it inside a managed Markdown folder. Its parent directory must exist.
 
-Data and checkpoint commits are separate. If data commits but state persistence fails, retry may replay records: delivery is **at least once**. Append keeps replayed observations; deduplication reconciles them. No batching or resumable full refresh is implemented. State-file transactions serialize copies using that file; concurrent attempts fail with SQLite's lock error, and native locks release on process exit. Use separate state files for independent parallel pipelines. The state file must differ from the SQLite destination file.
+Data and checkpoint commits are separate. If data commits but state persistence fails, retry may replay records: delivery is **at least once**. Append keeps replayed observations; deduplication reconciles them. No batching or resumable full refresh is implemented.
+
+### Checkpoint stores
+
+State belongs to the orchestration, not the destination, as in Airbyte: a writer acknowledges a source's checkpoints only after its load commits, and `Copy` hands the last one to the store. Any store works with any destination. `CheckpointStore` owns that protocol (the binding check, the cloned input state, advancing only on an acknowledgement, `CommittedWriteError` after a committed load). A store supplies a locked session and `async reset(id)`.
+
+| Store | Keeps state in | Concurrency |
+| --- | --- | --- |
+| `SQLiteCheckpointStore({ path })` from `elt` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | One transaction per file: copies sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Use separate files for independent parallel pipelines. |
+| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._mac_elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | An advisory lock per copy `id`: different ids run in parallel, a second run of one id fails with "in use by another run". The table is created in its own committed transaction under the writers' schema lock, so a writer never waits on an idle checkpoint transaction. Each incremental copy holds two connections, and the checkpoint one idles in its transaction while the load runs, so the loading role must not have an `idle_in_transaction_session_timeout`. |
 
 ### Snapshot streams
 
@@ -403,7 +412,7 @@ Each copy is one transaction that holds a per-schema advisory lock, so writers t
 - Deletions apply in source order: pending records are written first.
 - Writer claims live in `<schema>._mac_elt_writers` and follow the [shared-target rules](#shared-targets).
 
-Existing tables are not migrated: a deduplicating load checks that stored key and cursor columns keep their types and fails otherwise. Checkpoints still use `SQLiteCheckpointStore`, so the data and the checkpoint commit separately, as with SQLite.
+Existing tables are not migrated: a deduplicating load checks that stored key and cursor columns keep their types and fails otherwise. Keep checkpoints in the same schema with `PostgresCheckpointStore` ([checkpoint stores](#checkpoint-stores)).
 
 ## Apple Reminders
 
@@ -676,7 +685,7 @@ The example app loads into the compose Postgres warehouse and installs a reading
 
 ```text
 warehouse database
-├── google_search_console   raw tables loaded by elt-postgresql; readers have no access
+├── google_search_console   raw tables and _mac_elt_checkpoints, loaded by elt-postgresql; readers have no access
 ├── marts                   views and one table, every object and column described
 └── public                  revoked from PUBLIC
 roles: warehouse (loads, owns the database) · agent_reader (reads marts only)
