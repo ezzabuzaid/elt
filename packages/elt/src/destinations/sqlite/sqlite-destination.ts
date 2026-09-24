@@ -29,6 +29,10 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     return JSON.stringify({ type: 'sqlite', path: this.path, target });
   }
 
+  override location(target: SQLiteTable): string {
+    return target.location;
+  }
+
   table(
     name: string,
     configure?: (columns: SQLiteColumns) => readonly SQLiteColumn[],

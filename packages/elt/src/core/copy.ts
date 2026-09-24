@@ -36,6 +36,15 @@ export class Copy<Target extends DestinationTarget> {
     return this.configuration.stream;
   }
 
+  // The declared id names the replication; without one, the source and stream do.
+  writer(source: Source): string {
+    return JSON.stringify(
+      this.id !== undefined
+        ? { copy: this.id }
+        : { source: source.identity, stream: this.from.name },
+    );
+  }
+
   validate(
     source: Source,
     destination: Destination<Target>,
@@ -63,6 +72,7 @@ export class Copy<Target extends DestinationTarget> {
         this.configuration,
         this.to,
         source.read(this.configuration, state),
+        this.writer(source),
       );
     if (this.configuration.syncMode === 'incremental') {
       if (this.id === undefined || checkpoints === undefined)

@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { CopyConfiguration } from './copy-configuration.ts';
+import type { WriterClaim } from './ownership.ts';
 import type { SourceMessage } from './source.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import type { WriteResult, Writer } from './writer.ts';
@@ -15,6 +16,9 @@ export abstract class Destination<Target extends DestinationTarget> {
   abstract readonly supportedDestinationSyncModes: readonly DestinationSyncMode[];
 
   abstract identity(target: Target): string;
+
+  // The stored object a target names; targets at one location share its writer claims.
+  abstract location(target: Target): string;
 
   // Validate declarations without storage I/O; destinations check their own targets.
   validate(configuration: CopyConfiguration, target: Target): void {
@@ -44,11 +48,29 @@ export abstract class Destination<Target extends DestinationTarget> {
     target: Target,
   ): Writer;
 
+  // writer identifies the replication across runs; the target refuses a writer
+  // that could delete or shadow rows another writer owns.
   async write(
     configuration: CopyConfiguration,
     target: Target,
     records: AsyncIterable<SourceMessage>,
+    writer: string,
   ): Promise<WriteResult> {
-    return this.createWriter(configuration, target).write(records);
+    return this.createWriter(configuration, target).write(
+      records,
+      claimOf(configuration, writer),
+    );
   }
+}
+
+export function claimOf(
+  configuration: CopyConfiguration,
+  writer: string,
+): WriterClaim {
+  if (!writer) throw new TypeError('A write requires a writer identity');
+  return {
+    writer,
+    destinationSyncMode: configuration.destinationSyncMode,
+    primaryKey: configuration.primaryKey ?? null,
+  };
 }

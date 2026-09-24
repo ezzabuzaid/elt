@@ -9,6 +9,7 @@ import {
   Catalog,
   Copy,
   type CopyConfiguration,
+  type Destination,
   diffSnapshot,
   isCalendarDate,
   isTimestamp,
@@ -24,6 +25,7 @@ import {
   SQLiteDestination,
   type SQLiteTable,
   Stream,
+  type Target,
   validateRecords,
 } from './index.ts';
 
@@ -990,6 +992,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     copy.configuration,
     copy.to,
     source.read(copy.configuration, firstState),
+    copy.writer(source),
   );
   assert.deepEqual(names(), ['a:A', 'b:B2', 'd:D']);
 
@@ -1023,4 +1026,263 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     Array.fromAsync(diffSnapshot(plain, [], null)),
     /must declare sourceDefinedCursor and emitsDeletes/,
   );
+});
+
+test('writers share a target only when each upserts by the same key', async () => {
+  class Records extends Source {
+    extracted = 0;
+    readonly records = new Stream({
+      name: 'records',
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          version: { type: 'integer' },
+        },
+        required: ['id', 'name', 'version'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+    });
+    protected readonly catalog = new Catalog([this.records]);
+    constructor(
+      readonly identity: string,
+      readonly rows: readonly Record<string, unknown>[],
+    ) {
+      super();
+    }
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(configuration: CopyConfiguration) {
+      this.extracted++;
+      for (const data of this.rows)
+        yield { stream: configuration.stream.name, data };
+    }
+  }
+  const scenario = async <T extends Target>(
+    destination: Destination<T>,
+    target: () => T,
+    checkpoints: SQLiteCheckpointStore,
+    loaded: () => Promise<number>,
+  ) => {
+    const upsert = (id: string, primaryKey: string[], source: Records) =>
+      new Pipeline({
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(source.records, target(), {
+            id,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+            primaryKey,
+          }),
+        ],
+      }).run();
+    const late = new Records('late', [{ id: 'c', name: 'C', version: 1 }]);
+
+    await upsert(
+      'a',
+      ['id'],
+      new Records('a', [{ id: 'a', name: 'A', version: 1 }]),
+    );
+    await upsert(
+      'b',
+      ['id'],
+      new Records('b', [{ id: 'b', name: 'B', version: 1 }]),
+    );
+    await assert.rejects(
+      new Pipeline({
+        source: late,
+        destination,
+        steps: [new Copy(late.records, target())],
+      }).run(),
+      /is written by \{"copy":"a"\} \(append_dedup on \["id"\]\); \{"source":"late","stream":"records"\} \(overwrite\) cannot share it/,
+    );
+    await assert.rejects(
+      upsert('by-name', ['name'], late),
+      /\{"copy":"by-name"\} \(append_dedup on \["name"\]\) cannot share it/,
+    );
+
+    assert.equal(late.extracted, 0);
+    assert.equal(await loaded(), 2);
+  };
+
+  {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-own-'));
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'out.sqlite'),
+    });
+    await scenario(
+      destination,
+      () => destination.table('records'),
+      new SQLiteCheckpointStore({ path: join(scratch.path, 'state.sqlite') }),
+      async () => {
+        using database = new DatabaseSync(destination.path, { readOnly: true });
+        return database.prepare('SELECT id FROM records').all().length;
+      },
+    );
+  }
+  {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-own-'));
+    const destination = new MarkdownDestination({ path: scratch.path });
+    await scenario<MarkdownFile | MarkdownFolder>(
+      destination,
+      () => destination.file('records.md'),
+      new SQLiteCheckpointStore({ path: join(scratch.path, 'state.sqlite') }),
+      async () =>
+        (await readFile(join(scratch.path, 'records.md'), 'utf8')).match(
+          /mac-elt-record/g,
+        )?.length ?? 0,
+    );
+  }
+  {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-own-'));
+    const destination = new MarkdownDestination({ path: scratch.path });
+    await scenario<MarkdownFile | MarkdownFolder>(
+      destination,
+      () => destination.folder('records'),
+      new SQLiteCheckpointStore({ path: join(scratch.path, 'state.sqlite') }),
+      async () =>
+        (await readdir(join(scratch.path, 'records'))).filter((name) =>
+          name.endsWith('.md'),
+        ).length,
+    );
+  }
+});
+
+test('a writer may change its own mode, and dropping a target releases it', async () => {
+  class Records extends Source {
+    readonly records = new Stream({
+      name: 'records',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, version: { type: 'integer' } },
+        required: ['id', 'version'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+    });
+    protected readonly catalog = new Catalog([this.records]);
+    constructor(readonly identity: string) {
+      super();
+    }
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(configuration: CopyConfiguration) {
+      yield {
+        stream: configuration.stream.name,
+        data: { id: this.identity, version: 1 },
+      };
+    }
+  }
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-own-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const first = new Records('first');
+  const second = new Records('second');
+  const overwrite = (source: Records) =>
+    new Pipeline({
+      source,
+      destination,
+      steps: [new Copy(source.records, destination.table('Records'))],
+    }).run();
+
+  await overwrite(first);
+  await new Pipeline({
+    source: first,
+    destination,
+    steps: [
+      new Copy(first.records, destination.table('records'), {
+        syncMode: 'full_refresh',
+        destinationSyncMode: 'overwrite_dedup',
+        cursorField: 'version',
+        primaryKey: ['id'],
+      }),
+    ],
+  }).run();
+  await assert.rejects(
+    overwrite(second),
+    /Target Records is written by \{"source":"first","stream":"records"\} \(overwrite_dedup on \["id"\]\)/,
+  );
+  {
+    using database = new DatabaseSync(destination.path);
+    database.exec('DROP TABLE records');
+  }
+  await overwrite(second);
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare('SELECT id FROM records')
+      .all()
+      .map((row) => row['id']),
+    ['second'],
+  );
+  assert.throws(() => destination.table('_MAC_ELT_writers'), /reserved/);
+});
+
+test('a pipeline refuses copies that cannot share a target before running any', async () => {
+  let extracted = 0;
+  class Records extends Source {
+    readonly identity = 'records';
+    readonly records = new Stream({
+      name: 'records',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, version: { type: 'integer' } },
+        required: ['id', 'version'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+    });
+    protected readonly catalog = new Catalog([this.records]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(configuration: CopyConfiguration) {
+      extracted++;
+      yield {
+        stream: configuration.stream.name,
+        data: { id: 'a', version: 1 },
+      };
+    }
+  }
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-own-'));
+  const source = new Records();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [
+      new Copy(source.records, destination.table('records'), {
+        id: 'upsert',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        cursorField: 'version',
+        primaryKey: ['id'],
+      }),
+      new Copy(source.records, destination.table('RECORDS'), {
+        id: 'log',
+        syncMode: 'full_refresh',
+        destinationSyncMode: 'append',
+      }),
+    ],
+  });
+
+  await assert.rejects(
+    pipeline.run(),
+    /Target records is written by \{"copy":"upsert"\}/,
+  );
+  assert.equal(extracted, 0);
 });

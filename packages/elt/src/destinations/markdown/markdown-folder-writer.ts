@@ -14,6 +14,11 @@ import {
 import { join } from 'node:path';
 import type { CopyConfiguration } from '../../core/copy-configuration.ts';
 import {
+  assertShareable,
+  type WriterClaim,
+  withClaim,
+} from '../../core/ownership.ts';
+import {
   CommittedWriteError,
   type WriteCount,
   type WriteOperation,
@@ -34,6 +39,7 @@ export class MarkdownFolderWriter extends MarkdownWriter {
 
   protected override async writeRecords(
     operations: AsyncIterable<WriteOperation>,
+    claim: WriterClaim,
   ): Promise<WriteCount> {
     let committed: WriteCount | undefined;
     try {
@@ -45,6 +51,12 @@ export class MarkdownFolderWriter extends MarkdownWriter {
       await mkdir(lock);
       try {
         const existsBefore = await this.assertManagedFolder(path);
+        const claims = existsBefore
+          ? MarkdownFolder.claims(
+              await readFile(join(path, MarkdownFolder.markerName), 'utf8'),
+            )
+          : [];
+        assertShareable(target.name, claims, claim);
         const previousRows: unknown[] = [];
         if (
           existsBefore &&
@@ -73,7 +85,7 @@ export class MarkdownFolderWriter extends MarkdownWriter {
           await mkdir(next, { mode: 0o700 });
           await writeFile(
             join(next, MarkdownFolder.markerName),
-            MarkdownFolder.marker,
+            MarkdownFolder.markerFor(withClaim(claims, claim)),
             { flag: 'wx', mode: 0o600 },
           );
           for (const [index, record] of rows.entries()) {
@@ -150,11 +162,12 @@ export class MarkdownFolderWriter extends MarkdownWriter {
     if (
       !entries.some(
         (entry) => entry.name === MarkdownFolder.markerName && entry.isFile(),
-      ) ||
-      (await readFile(join(path, MarkdownFolder.markerName), 'utf8')) !==
-        MarkdownFolder.marker
+      )
     )
       throw new TypeError('Refusing to replace an unmanaged Markdown folder');
+    MarkdownFolder.claims(
+      await readFile(join(path, MarkdownFolder.markerName), 'utf8'),
+    );
     for (const entry of entries) {
       if (entry.name === MarkdownFolder.markerName) continue;
       if (

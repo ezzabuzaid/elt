@@ -104,6 +104,21 @@ A stream that declares `emitsDeletes` can send `DELETE` messages during incremen
 
 Records and deletions apply in the order the source emits them, and deleting an absent key is a no-op, so replaying a run is safe. A deletion is rejected when the stream does not declare `emitsDeletes`, when its key is malformed, or when the load does not deduplicate. Results report accepted deletions as `deleted`, separately from `count`.
 
+### Shared targets
+
+Every destination records which writers load each target, stored with the target and committed with the load. A writer is the copy's `id`, or the source identity and stream name for a copy without one. Before a copy extracts or changes anything, the target checks its claim against the other writers':
+
+| Writers of one target | Allowed |
+| --- | --- |
+| All `append_dedup` on the same `primaryKey`, in the same order | Yes. Each upserts and deletes only by key, so none removes or shadows another's rows. |
+| Any `overwrite` or `overwrite_dedup` | No. It empties the whole target, including the other writers' rows. |
+| Any `append` | No. An append log cannot tell its rows apart from another writer's. |
+| `append_dedup` on different keys | No. One target holds one deduplication key. |
+
+A refused copy fails before extraction and leaves the target unchanged; a pipeline also refuses such a pair among its own copies before running any. The error names both writers, their modes and keys. A writer may change its own mode or key. To reassign a target, drop it: a dropped SQLite table or a deleted Markdown file or folder releases its claims, and the next load starts from scratch. SQLite keeps claims in the reserved `_mac_elt_writers` table; Markdown keeps them in the file's header comment or the folder's marker file.
+
+Several properties or accounts can therefore share tables when each loads with its own incremental `append_dedup` copy, keyed by a primary key that includes the property, as the Search Console example does.
+
 ## Identity, cursors, and schemas
 
 Three separate concepts control identity:
@@ -118,7 +133,7 @@ The greatest cursor wins. Older arrivals are ignored after validation. Equal cur
 
 SQLite inference maps flat JSON Schema fields: `string` → `TEXT`, `integer` → `INTEGER`, `number` → `REAL`, `boolean` → `INTEGER` with a 0/1 constraint. Nullable scalars are supported for ordinary fields. Missing optional fields become SQL `NULL`. Explicit columns support `text`, `integer`, `real`, `blob`, and `boolean`; they allow null unless marked `.notNull()` or `.primaryKey()`. Missing/undefined explicit fields fail. An explicit projection can omit unsupported nested fields.
 
-SQLite creates strict tables. Existing SQL constraints remain authoritative; there are no schema migrations. Deduplication additionally verifies stored key/cursor column types and rejects null keys/cursors. It uses native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html) and a reserved `_mac_elt_dedup_*` unique index. Changing to ordinary append/overwrite removes that mode-owned index while retaining explicit constraints. An existing append-history table with repeated keys must be replaced with `overwrite_dedup` before incremental deduplication can start.
+SQLite creates strict tables. Existing SQL constraints remain authoritative; there are no schema migrations. Table names starting with `_mac_elt_` are reserved. Deduplication additionally verifies stored key/cursor column types and rejects null keys/cursors. It uses native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html) and a reserved `_mac_elt_dedup_*` unique index. Changing to ordinary append/overwrite removes that mode-owned index while retaining explicit constraints. An existing append-history table with repeated keys must be replaced with `overwrite_dedup` before incremental deduplication can start.
 
 Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The `count` returned for a committed copy is the number of accepted input observations, including deduplication no-ops, and `deleted` is the number of accepted deletions, including keys that were already absent; neither is the final row count.
 
@@ -331,7 +346,7 @@ await exportPipeline.run();
 
 `file()` stores the stream in one document; `folder()` stores one record per document. Both retain every record field, including nested JSON. The optional title field supplies headings; otherwise headings use record positions. Values are escaped Markdown text; HTML stays text. Non-JSON values fail instead of being silently discarded or coerced.
 
-Managed v2 documents include base64-encoded JSON record comments alongside their visible sections. Append and deduplication read these canonical records, without parsing rendered Markdown or using a SQL sidecar. These comments are not encryption. Generated files are owned by the export; manual edits are replaced. Earlier layouts have no compatibility reader or migration.
+Managed v3 documents include a writer-claims comment and base64-encoded JSON record comments alongside their visible sections. Append and deduplication read these canonical records, without parsing rendered Markdown or using a SQL sidecar. These comments are not encryption. Generated files are owned by the export; manual edits are replaced. Earlier layouts have no compatibility reader or migration.
 
 Ordinary overwrite/append requires no key. Folder filenames represent record occurrences, so repeated source IDs remain separate. Deduplicated folders hash the selected key values instead; title changes do not change identity. The old `folder({ key })` option is removed: selected deduplication keys belong to the copy. Reconciliation currently holds the target in memory and republishes its complete contents.
 

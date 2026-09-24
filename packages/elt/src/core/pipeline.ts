@@ -1,6 +1,7 @@
 import type { SQLiteCheckpointStore } from '../state/sqlite-checkpoint-store.ts';
 import { Copy } from './copy.ts';
-import type { Destination } from './destination.ts';
+import { claimOf, type Destination } from './destination.ts';
+import { assertShareable, type WriterClaim } from './ownership.ts';
 import type { Source } from './source.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import { CommittedWriteError, type WriteCount } from './writer.ts';
@@ -144,6 +145,16 @@ export class Pipeline<Target extends DestinationTarget> {
       throw new TypeError('Pipeline copy IDs must be distinct');
     for (const copy of this.steps)
       copy.validate(this.source, this.destination, this.checkpoints);
+    // Copies into one target must be able to share it, so an incompatible
+    // pair fails before any copy runs rather than after the first commits.
+    const claims = new Map<string, WriterClaim[]>();
+    for (const copy of this.steps) {
+      const location = this.destination.location(copy.to);
+      const claim = claimOf(copy.configuration, copy.writer(this.source));
+      const existing = claims.get(location) ?? [];
+      assertShareable(location, existing, claim);
+      claims.set(location, [...existing, claim]);
+    }
   }
 
   private async runSteps(

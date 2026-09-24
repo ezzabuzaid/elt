@@ -30,6 +30,10 @@ export class MarkdownDestination extends Destination<
     return JSON.stringify({ type: 'markdown', path: this.path, target });
   }
 
+  override location(target: MarkdownFile | MarkdownFolder): string {
+    return target.name;
+  }
+
   file(
     name: string,
     options?: ConstructorParameters<typeof MarkdownFile>[1],

@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import {
+  assertShareable,
+  readClaims,
+  type WriterClaim,
+} from '../../core/ownership.ts';
 import type { KeyValue } from '../../core/source.ts';
 import type { Stream } from '../../core/stream.ts';
 import {
@@ -23,9 +28,7 @@ export abstract class SQLiteWriter extends Writer {
 
   protected get dedupIndex(): string {
     return `"_mac_elt_dedup_${createHash('sha256')
-      .update(
-        this.table.name.replaceAll(/[A-Z]/g, (letter) => letter.toLowerCase()),
-      )
+      .update(this.table.location)
       .digest('hex')}"`;
   }
 
@@ -48,8 +51,48 @@ export abstract class SQLiteWriter extends Writer {
     return undefined;
   }
 
+  // Claims live beside the tables they guard and commit with the load. A
+  // dropped table releases its claims, since nothing it held remains.
+  private claim(database: DatabaseSync, claim: WriterClaim): void {
+    database.exec(
+      'CREATE TABLE IF NOT EXISTS "_mac_elt_writers" ("target" TEXT NOT NULL, "writer" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL, "primary_key" TEXT, PRIMARY KEY ("target", "writer")) STRICT',
+    );
+    database.exec(
+      `DELETE FROM "_mac_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`,
+    );
+    const rows = database
+      .prepare(
+        'SELECT "writer", "destination_sync_mode" AS "destinationSyncMode", "primary_key" AS "primaryKey" FROM "_mac_elt_writers" WHERE "target" = ?',
+      )
+      .all(this.table.location);
+    assertShareable(
+      this.table.name,
+      readClaims(
+        rows.map((row) => ({
+          ...row,
+          primaryKey:
+            typeof row.primaryKey === 'string'
+              ? JSON.parse(row.primaryKey)
+              : null,
+        })),
+      ),
+      claim,
+    );
+    database
+      .prepare(
+        'INSERT INTO "_mac_elt_writers" ("target", "writer", "destination_sync_mode", "primary_key") VALUES (?, ?, ?, ?) ON CONFLICT ("target", "writer") DO UPDATE SET "destination_sync_mode" = excluded."destination_sync_mode", "primary_key" = excluded."primary_key"',
+      )
+      .run(
+        this.table.location,
+        claim.writer,
+        claim.destinationSyncMode,
+        claim.primaryKey === null ? null : JSON.stringify(claim.primaryKey),
+      );
+  }
+
   protected override async writeRecords(
     operations: AsyncIterable<WriteOperation>,
+    claim: WriterClaim,
   ): Promise<WriteCount> {
     let committed: WriteCount | undefined;
     try {
@@ -57,6 +100,7 @@ export abstract class SQLiteWriter extends Writer {
       // ponytail: holds the write transaction during extraction; stage first if long reads block other writers.
       database.exec('BEGIN IMMEDIATE');
       try {
+        this.claim(database, claim);
         // Only this library-owned mode index is replaced; explicit SQL constraints remain authoritative.
         database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
         this.initialize(database);

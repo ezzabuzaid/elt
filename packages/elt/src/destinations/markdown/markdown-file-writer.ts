@@ -9,6 +9,11 @@ import {
 import { join } from 'node:path';
 import type { CopyConfiguration } from '../../core/copy-configuration.ts';
 import {
+  assertShareable,
+  type WriterClaim,
+  withClaim,
+} from '../../core/ownership.ts';
+import {
   CommittedWriteError,
   type WriteCount,
   type WriteOperation,
@@ -29,6 +34,7 @@ export class MarkdownFileWriter extends MarkdownWriter {
 
   protected override async writeRecords(
     operations: AsyncIterable<WriteOperation>,
+    claim: WriterClaim,
   ): Promise<WriteCount> {
     let committed: WriteCount | undefined;
     try {
@@ -38,12 +44,17 @@ export class MarkdownFileWriter extends MarkdownWriter {
       const lock = join(this.path, `.markdown-${target.name}.lock`);
       await mkdir(lock);
       try {
-        const exists = await this.assertManagedFile(path);
+        const existing = (await this.assertManagedFile(path))
+          ? await readFile(path, 'utf8')
+          : undefined;
+        const claims =
+          existing === undefined ? [] : MarkdownDocument.claims(existing);
+        assertShareable(target.name, claims, claim);
         const previous =
-          exists &&
+          existing !== undefined &&
           (this.configuration.destinationSyncMode === 'append' ||
             this.configuration.destinationSyncMode === 'append_dedup')
-            ? MarkdownDocument.records(await readFile(path, 'utf8'))
+            ? MarkdownDocument.records(existing)
             : [];
         const { rows, count, deleted } = await this.collect(
           operations,
@@ -55,7 +66,9 @@ export class MarkdownFileWriter extends MarkdownWriter {
         const stagedPath = join(staging.path, target.name);
         {
           await using file = await open(stagedPath, 'wx', 0o600);
-          await file.writeFile(target.document.header(stream));
+          await file.writeFile(
+            target.document.header(stream, withClaim(claims, claim)),
+          );
           for (const [index, record] of rows.entries())
             await file.writeFile(target.document.render(record, index + 1));
         }

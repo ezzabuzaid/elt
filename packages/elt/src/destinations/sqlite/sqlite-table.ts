@@ -10,6 +10,8 @@ export class SQLiteTable extends Target {
 
   constructor(name: string, columns?: readonly SQLiteColumn[]) {
     if (!name || name.includes('\0')) throw new TypeError('Invalid table name');
+    if (/^_mac_elt_/i.test(name))
+      throw new TypeError('Table names starting with _mac_elt_ are reserved');
     if (
       columns !== undefined &&
       (!Array.isArray(columns) ||
@@ -68,6 +70,11 @@ export class SQLiteTable extends Target {
       }
     }
     return this;
+  }
+
+  // SQLite compares ASCII identifiers case-insensitively, so one table has one location.
+  get location(): string {
+    return this.name.replaceAll(/[A-Z]/g, (letter) => letter.toLowerCase());
   }
 
   get quotedName(): string {
