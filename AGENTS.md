@@ -7,3 +7,7 @@ Every destination table, Markdown export, and checkpoint can be rebuilt by rerun
 - Never design around data that is already stored: no backward-compatible schemas, no keeping checkpoint bindings stable, no migration paths, no compatibility shims or defaults left `undefined` for old state.
 - Change schemas, identities, bindings, and defaults whenever the design improves; the fix for old output is a fresh run.
 - Do not document migrations between connector versions. Document the current behavior only.
+
+## Exhaust live verification before calling something unverified
+
+When a live probe finds no instance of a feature, widen it before concluding: scan the full history, not a sample window, and use any earlier evidence that the data exists. Mark behavior unverified only when the environment genuinely cannot produce it, and say what blocked it.
