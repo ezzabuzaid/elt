@@ -95,6 +95,22 @@ test('current answers only when the grant covers the scopes and the account is k
   );
 });
 
+test('a grant issued to another OAuth client is not current, so consent runs', async () => {
+  // Refreshing it would pair that client's id with this app's secret, which
+  // Google refuses as invalid_client partway through a run.
+  const { consent: c, ready } = consent({
+    ...STORED,
+    clientId: 'other-client',
+  });
+  await ready;
+
+  const current = await c.current(USER, [GOOGLE_BIGQUERY_SCOPE], {
+    differentAccount: false,
+  });
+
+  assert.equal(current, undefined);
+});
+
 test('begin with no grant asks for identity plus the data scopes', async () => {
   const { consent: c } = consent();
 

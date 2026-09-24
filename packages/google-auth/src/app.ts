@@ -177,6 +177,12 @@ export class GoogleOAuthApp {
     return oauth;
   }
 
+  // A consented grant keeps no secret of its own, so it refreshes with this
+  // app's; only a grant this client issued can pair with it.
+  issued(grant: GoogleGrant): boolean {
+    return grant.credential.clientId === this.#clientId;
+  }
+
   async revoke(grant: GoogleGrant): Promise<void> {
     if (!grant.revocable) return;
     await new OAuth2Client({

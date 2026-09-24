@@ -29,7 +29,7 @@ export class GoogleConsent {
     this.#vault = options.vault;
   }
 
-  /** The active grant, when it already covers the scopes and the user keeps the account. */
+  /** The active grant, when this app's client issued it, it covers the scopes, and the user keeps the account. */
   async current(
     userId: string,
     dataScopes: readonly string[],
@@ -37,7 +37,11 @@ export class GoogleConsent {
   ): Promise<GoogleActiveGrant | undefined> {
     if (options.differentAccount) return undefined;
     const active = await this.#vault.active(userId);
-    return active?.grant.covers(dataScopes) ? active : undefined;
+    return active !== undefined &&
+      this.#app.issued(active.grant) &&
+      active.grant.covers(dataScopes)
+      ? active
+      : undefined;
   }
 
   /**
