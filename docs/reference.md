@@ -6,15 +6,11 @@ Detailed sync, storage, connector, and failure contracts for `elt`.
 
 ## Working example
 
-The examples below live inside `apps/apple/src`: import pipeline types from `elt` and Apple connectors from the app's `./index.ts`. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
+The examples below live inside `apps/apple/src`: import pipeline types from `elt`, the SQLite destination from `elt-sqlite`, and Apple connectors from the app's `./index.ts`. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
 
 ```ts
-import {
-  Copy,
-  Pipeline,
-  SQLiteCheckpointStore,
-  SQLiteDestination,
-} from 'elt';
+import { Copy, Pipeline, SQLiteCheckpointStore } from 'elt';
+import { SQLiteDestination } from 'elt-sqlite';
 import { AppleNotesSource } from './index.ts';
 
 const notes = new AppleNotesSource();
@@ -382,10 +378,38 @@ A file publishes with a rename after staging and closing. A folder moves the old
 
 An exclusive `.markdown-<target>.lock` directory prevents cooperating concurrent writes to either layout. Normal completion/failure removes staging and locks unless a recovery backup must remain. Abrupt termination can leave staging, a backup and a stale lock; inspect and restore the backup before removing the lock and retrying.
 
+## Postgres destination
+
+`PostgresDestination({ url, schema })` from `elt-postgresql` loads every table of a pipeline into one schema, created on first load. The URL carries credentials, so it stays private: `identity()` records host, port, database, schema and target, never the user or password. Declarations are checked without connecting.
+
+Inferred columns follow the stream schema, and unlike SQLite the string formats get their own types, so readers can do date arithmetic:
+
+| JSON Schema | Postgres |
+| --- | --- |
+| `string` | `TEXT` |
+| `string` + `format: 'date'` | `DATE` |
+| `string` + `format: 'date-time'` | `TIMESTAMPTZ` |
+| `integer` | `BIGINT` |
+| `number` | `DOUBLE PRECISION` |
+| `boolean` | `BOOLEAN` |
+
+Explicit columns use `columns.text/integer/real/boolean/date/timestamp(field)` with `.notNull()` and `.primaryKey()`. File reads are not supported. Identifiers are case-sensitive and limited to 63 bytes, because Postgres would silently truncate a longer one; `_mac_elt_` names and a `loaded_at` column are reserved, and `pg_` schemas are refused.
+
+Each copy is one transaction that holds a per-schema advisory lock, so writers to one schema run one at a time. Readers never wait on the lock:
+
+- Overwrite empties the table with `DELETE`, not `TRUNCATE`, because the transaction stays open while the source is read and `TRUNCATE` would block readers for all of it. Until commit, readers see the previous load.
+- Records are inserted in batches of 1000, sent as one JSON parameter and cast per column. Every row of a copy shares one `loaded_at` (`TIMESTAMPTZ`), the transaction's start time.
+- Deduplication upserts on a unique index named after the table and key (`_mac_elt_dedup_<hash>`). The index is created once and rebuilt only when the key changes. Within a batch, one row per key is kept, as applying the batch row by row would: `replace` keeps the last and `cursor_newer` keeps the first with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`).
+- Deletions apply in source order: pending records are written first.
+- Writer claims live in `<schema>._mac_elt_writers` and follow the [shared-target rules](#shared-targets).
+
+Existing tables are not migrated: a deduplicating load checks that stored key and cursor columns keep their types and fails otherwise. Checkpoints still use `SQLiteCheckpointStore`, so the data and the checkpoint commit separately, as with SQLite.
+
 ## Apple Reminders
 
 ```ts
-import { Copy, Pipeline, SQLiteDestination } from 'elt';
+import { Copy, Pipeline } from 'elt';
+import { SQLiteDestination } from 'elt-sqlite';
 import { AppleRemindersSource } from './index.ts';
 
 const reminders = new AppleRemindersSource();
@@ -427,7 +451,8 @@ See the [EventKit research and implementation notes](eventkit-reminders.md) for 
 
 ```ts
 import { mkdir } from 'node:fs/promises';
-import { Copy, Pipeline, SQLiteDestination } from 'elt';
+import { Copy, Pipeline } from 'elt';
+import { SQLiteDestination } from 'elt-sqlite';
 import { AppleCalendarSource } from './index.ts';
 
 await mkdir('./outputs', { recursive: true });
@@ -599,7 +624,7 @@ Because a user credential is billed to the project that issued its OAuth client,
 | `searchAnalyticsDaily` | Incremental | `[siteUrl, date, searchType]` | Site-wide totals per day **per report type**, with `searchType` as a column. |
 | `searchAnalyticsQueries` | Incremental | `[siteUrl, date, query]` | Per day and query, web results only. |
 | `searchAnalyticsPages` | Incremental | `[siteUrl, date, page]` | Per day and page, web results only. |
-| `searchAnalyticsCountries` | Full refresh or snapshot | `[siteUrl, country, device]` | Country and device for a trailing `breakdownMonths` window (default 3). No date dimension, so it is diffed as a whole rather than resumed. |
+| `searchAnalyticsCountries` | Full refresh or snapshot | `[siteUrl, country, device]` | Country and device for a trailing `breakdownMonths` window (default 3), stated on each row as `startDate` and `endDate`. No date dimension, so it is diffed as a whole rather than resumed. |
 | `urlInspection` | Full refresh or snapshot | `[siteUrl, inspectionUrl]` | One request per URL. |
 | `urlInspectionSitemaps` / `urlInspectionReferrers` | Full refresh or snapshot | `[siteUrl, inspectionUrl, position]` | The arrays nested in the index status result. |
 
@@ -620,12 +645,13 @@ Google withholds rare queries for privacy, and the loss compounds with every dim
 
 A single wide request loses 36% of clicks and 49% of impressions, and no aggregation of it can recover the property's real totals. Each grain is therefore its own stream with its own window: `searchAnalyticsDaily` stays authoritative for totals, and the breakdowns are only comparable within themselves. Google additionally caps a property at 50,000 rows per day per search type and states the API "does not guarantee to return all data rows", so a high-cardinality request receives silent truncation rather than an error.
 
-Consequences for anything querying these tables: average `position` must be weighted by impressions over non-null rows, `ctr` must be recomputed as `SUM(clicks) / SUM(impressions)` rather than averaged, and query or page rows will not sum to the daily totals.
+Consequences for anything querying these tables: average `position` must be weighted by impressions over non-null rows, `ctr` must be recomputed as `SUM(clicks) / SUM(impressions)` rather than averaged, and query or page rows will not sum to the daily totals. The [warehouse marts](#warehouse-marts) build these rules into the columns an agent reads.
 
 #### Projection
 
 - `ApiDataRow.keys` is **positional** against requested `dimensions`; the API never names the columns. A row whose key count disagrees with the request is skipped rather than failing the copy.
-- Proto3 omits zero-valued fields, so an absent `clicks`, `impressions` or `ctr` loads as `0`.
+- Proto3 omits zero-valued fields, so an absent `clicks`, `impressions` or `ctr` loads as `0`. `clicks` and `impressions` are integers; a fractional count fails validation.
+- Dated grains carry `settled`: false from the page's `firstIncompleteDate` on, while Google may still restate the day. The next incremental run re-reads it and the flag turns true once Google settles it.
 - `position` is **nullable**, and absent for a different reason: Discover and Google News report no rank at all, on every row including zero-traffic ones. Loading a missing rank as `0` would claim the best possible position. Verified live: all 380 Discover and all 380 Google News daily rows carry no position.
 - Sitemap `warnings`/`errors`/`submitted` are `string/int64` → parsed to integer, non-safe integers rejected.
 - `date` is a **PST calendar date**, not an instant (`format: 'date'`).
@@ -643,6 +669,44 @@ Google revises recent metrics for roughly two to three days. The response metada
 - Rows are paginated by `startRow` at 25000 per page until a short page.
 
 Because `date` is both the cursor and part of the key, each resumable grain requires `dedupPolicy: 'replace'`. With the default guard the restated day would be discarded. `searchAnalyticsDaily` requests one window per report type and keeps the earliest settled boundary across them, because report types settle independently.
+
+### Warehouse marts
+
+With `WAREHOUSE_URL`, the example app loads into Postgres and installs a reading layer for agents. The layout:
+
+```text
+warehouse database
+├── google_search_console   raw tables loaded by elt-postgresql; readers have no access
+├── marts                   views and one table, every object and column described
+└── public                  revoked from PUBLIC
+roles: warehouse (loads, owns the database) · agent_reader (reads marts only)
+```
+
+- **Privileges are the barrier.** `agent_reader` has `CONNECT`, `USAGE` on `marts` and `SELECT` on its relations, and nothing else. It has no `TEMP`, no `CREATE`, and no access to raw schemas. Views run with their owner's rights. The role's settings (`default_transaction_read_only`, `statement_timeout 30s`, `search_path = marts`) are only defaults, since a session may change them.
+- **Agents connect through Postgres MCP Pro**, `crystaldba/postgres-mcp:0.3.0` in `--access-mode=restricted`, served over SSE on `127.0.0.1:8000` (see `infra/docker-compose.yml` and `.mcp.json`). The server holds the reader's password. It parses each statement, rejects anything but reads (including `COMMIT; …` escapes), and cancels statements after 30 seconds. It does not cap result rows.
+- **Only built-in functions.** Restricted mode allows only a fixed list of built-in functions and cannot be configured. The marts therefore expose no functions: every calculation lives inside a view, where the check does not look, or is computed at load time. Helpers such as `marts._url_path` are internal.
+
+`installWarehouse(sql, { reader })` sets up the shared parts: grants, the `marts` schema, `catalog` and `freshness`. `installSearchConsoleMarts(sql, { raw, reader })` then replaces the Search Console views in one transaction and refreshes `freshness`. Both run as the loader after every load. A view that another connector built on top of these makes the reinstall fail rather than disappear, because it drops views without `CASCADE`.
+
+| Relation | Contents |
+| --- | --- |
+| `catalog` | Every view, table and column in `marts`, with its description. The agent's starting point. |
+| `freshness` | Per view: latest day, latest settled day, last load. Refreshed after every load. |
+| `search_console_totals_daily` | Authoritative totals per property, day and report type. |
+| `search_console_queries_daily`, `search_console_pages_daily` | Web breakdowns. Pages add `page_path`. Rows a re-read no longer returns are hidden (only the latest load of each property and day shows). |
+| `search_console_withheld_daily` | Web totals, the sum of query rows, and the difference Google withheld. |
+| `search_console_countries` | The trailing country × device window with its `start_date` and `end_date`. |
+| `search_console_properties`, `_sitemaps`, `_sitemap_contents`, `_url_inspection` (+ `_sitemaps`, `_referrers`) | The listings, in snake_case. Inspection adds `page_path`. |
+
+Measures are additive only. The views carry `clicks`, `impressions`, `ranked_impressions` (impressions that had a rank) and `position_weight` (rank × impressions), and no per-row `ctr` or `position`. The only rates an agent can express are the correct ones: `sum(clicks)::float / nullif(sum(impressions), 0)` and `sum(position_weight) / nullif(sum(ranked_impressions), 0)`. Column descriptions state both. Dates are Pacific Time calendar days, and `settled` marks days Google may still restate.
+
+Verified on 2026-09-24 against Postgres 18.3, first on a local Homebrew server. The tests load a fake Search Console through the real pipeline, install marts, and read as a fresh reader role. A separate run as the non-superuser `warehouse` and `agent_reader` roles, reading through `postgres-mcp` 0.3.0 in restricted mode, confirmed four things:
+- The documented rate formulas return the expected values.
+- Raw schemas answer `permission denied`.
+- `COMMIT; CREATE TABLE …` fails validation.
+- A three-billion-row count is cancelled after 30 seconds.
+
+The compose stack was then started on Docker Desktop 4.92.0. The init script created both roles and the database, `elt-postgresql` tests passed against it, and the MCP container answered as `agent_reader` with `search_path` `marts`: it refused `pg_authid`, rejected a `COMMIT;` escape, and cancelled a long count at 30 seconds. A live Search Console load into Postgres was not run.
 
 ### URL inspection and quota
 

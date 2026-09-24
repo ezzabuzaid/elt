@@ -1,6 +1,6 @@
 import type { SQLInputValue } from 'node:sqlite';
-import type { DocumentParser } from '../../core/document-parser.ts';
-import { FileRead, type FileReference } from '../../core/file-read.ts';
+import type { DocumentParser } from 'elt';
+import { FileRead, type FileReference } from 'elt';
 
 const storageTypes = {
   text: 'TEXT',

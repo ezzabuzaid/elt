@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
-import type { CopyConfiguration } from '../../core/copy-configuration.ts';
-import { Destination } from '../../core/destination.ts';
+import type { CopyConfiguration } from 'elt';
+import { Destination } from 'elt';
 import { SQLiteAppendWriter } from './sqlite-append-writer.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';

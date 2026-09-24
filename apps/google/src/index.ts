@@ -23,6 +23,10 @@ export {
   parseGoogleAttachment,
 } from './sources/calendar-attachments/google-calendar-attachments.ts';
 export {
+  searchConsoleCopies,
+  searchConsoleTables,
+} from './sources/search-console/search-console-copies.ts';
+export {
   type SearchAnalyticsDimension,
   searchAnalyticsDimensions,
 } from './sources/search-console/search-console-schema.ts';
@@ -31,3 +35,5 @@ export {
   type SearchConsoleOptions,
   SearchConsoleSource,
 } from './sources/search-console/search-console-source.ts';
+export { installSearchConsoleMarts } from './warehouse/search-console-marts.ts';
+export { installWarehouse } from './warehouse/warehouse.ts';

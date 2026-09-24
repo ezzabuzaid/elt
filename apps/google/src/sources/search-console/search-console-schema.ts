@@ -44,8 +44,8 @@ export type SearchAnalyticsDimension =
   (typeof searchAnalyticsDimensions)[number];
 
 export const searchAnalyticsMetrics = {
-  clicks: metric,
-  impressions: metric,
+  clicks: ordinal,
+  impressions: ordinal,
   ctr: metric,
   position: nullableMetric,
 } as const;
@@ -84,9 +84,11 @@ export const searchAnalyticsGrains: Readonly<
     dimensions: ['date', 'page'],
     key: ['date', 'page'],
   },
+  // Dateless, so each row states the trailing window it totals.
   searchAnalyticsCountries: {
     dimensions: ['country', 'device'],
     key: ['country', 'device'],
+    extra: { startDate: date, endDate: date },
   },
 };
 
@@ -104,6 +106,9 @@ export function searchAnalyticsFields(
     ),
     ...(extra ?? {}),
     ...searchAnalyticsMetrics,
+    // False from the API's first incomplete date on: Google may still restate
+    // the day, and the next incremental run reads it again.
+    ...(dimensions.includes('date') ? { settled: boolean } : {}),
   };
 }
 

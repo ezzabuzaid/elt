@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type TestContext, test } from 'node:test';
 
-import { Copy, Pipeline, SQLiteCheckpointStore, SQLiteDestination } from 'elt';
+import { Copy, Pipeline, SQLiteCheckpointStore } from 'elt';
+import { SQLiteDestination } from 'elt-sqlite';
 import { GOOGLE_SEARCH_CONSOLE_SCOPE } from 'google-auth';
 import { LoginTicket, OAuth2Client } from 'google-auth-library';
 
@@ -116,8 +117,9 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
 
 test('a restated day replaces the loaded row and the checkpoint stops at the settled date', async () => {
   let clicks = 12;
+  let firstIncompleteDate = '2026-09-21';
   const { requester, calls } = recorder(() => ({
-    metadata: { firstIncompleteDate: '2026-09-21' },
+    metadata: { firstIncompleteDate },
     rows: [
       {
         clicks,
@@ -125,6 +127,13 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
         impressions: 340,
         keys: ['2026-09-20', 'context compiler'],
         position: 8.1,
+      },
+      {
+        clicks: 5,
+        ctr: 0.05,
+        impressions: 100,
+        keys: ['2026-09-21', 'context compiler'],
+        position: 7,
       },
     ],
   }));
@@ -165,7 +174,9 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
   using state = new DatabaseSync(checkpoints.path, { readOnly: true });
   const loaded = () =>
     database
-      .prepare('SELECT date, clicks FROM search_analytics')
+      .prepare(
+        'SELECT date, clicks, settled FROM search_analytics ORDER BY date',
+      )
       .all()
       .map((row) => ({ ...row }));
   const saved = () =>
@@ -176,23 +187,65 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
           .get('search-analytics')?.state,
       ),
     );
-  assert.deepEqual(loaded(), [{ clicks: 12, date: '2026-09-20' }]);
+  // The 21st is still being collected, and its row says so.
+  assert.deepEqual(loaded(), [
+    { clicks: 12, date: '2026-09-20', settled: 1 },
+    { clicks: 5, date: '2026-09-21', settled: 0 },
+  ]);
   // firstIncompleteDate is 2026-09-21, so the last settled day is the 20th,
   // kept as the property's own partition state.
-  const settled = {
-    partitions: [
-      { partition: { siteUrl: SITE }, state: { date: '2026-09-20' } },
-    ],
-  };
-  assert.deepEqual(saved(), settled);
+  const checkpoint = (date: string) => ({
+    partitions: [{ partition: { siteUrl: SITE }, state: { date } }],
+  });
+  assert.deepEqual(saved(), checkpoint('2026-09-20'));
 
   clicks = 19;
+  firstIncompleteDate = '2026-09-22';
   await pipeline.run();
-  // One row still, carrying the restated metric rather than the first one.
-  assert.deepEqual(loaded(), [{ clicks: 19, date: '2026-09-20' }]);
-  assert.deepEqual(saved(), settled);
+  // One row per day still, carrying the restated metric, and the 21st has
+  // settled since.
+  assert.deepEqual(loaded(), [
+    { clicks: 19, date: '2026-09-20', settled: 1 },
+    { clicks: 5, date: '2026-09-21', settled: 1 },
+  ]);
+  assert.deepEqual(saved(), checkpoint('2026-09-21'));
   // The second run resumes at the settled day rather than after it.
   assert.equal(analyticsCalls(calls).at(-1)?.data?.startDate, '2026-09-20');
+});
+
+test('a fractional click count is refused rather than stored', async () => {
+  const { requester } = recorder(() => ({
+    rows: [
+      {
+        clicks: 1.5,
+        ctr: 0.5,
+        impressions: 3,
+        keys: ['2026-09-20'],
+        position: 2,
+      },
+    ],
+  }));
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-integer-'));
+  const source = new SearchConsoleSource({
+    searchTypes: ['WEB'],
+    now: NOW,
+    requester,
+    siteUrls: [SITE],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'sc.sqlite'),
+  });
+
+  await assert.rejects(
+    new Pipeline({
+      source,
+      destination,
+      steps: [
+        new Copy(source.searchAnalyticsDaily, destination.table('daily')),
+      ],
+    }).run(),
+    /clicks/,
+  );
 });
 
 test('analytics pagination follows startRow until a short page', async () => {
@@ -614,10 +667,21 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
   using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
     database
-      .prepare('SELECT siteUrl, country, device, clicks FROM countries')
+      .prepare(
+        'SELECT siteUrl, country, device, clicks, startDate, endDate FROM countries',
+      )
       .all()
       .map((row) => ({ ...row })),
-    [{ clicks: 4, country: 'usa', device: 'DESKTOP', siteUrl: SITE }],
+    [
+      {
+        clicks: 4,
+        country: 'usa',
+        device: 'DESKTOP',
+        endDate: '2026-09-22',
+        siteUrl: SITE,
+        startDate: '2026-06-22',
+      },
+    ],
   );
 });
 

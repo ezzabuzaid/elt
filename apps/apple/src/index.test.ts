@@ -20,10 +20,9 @@ import {
   Pipeline,
   PipelineError,
   SQLiteCheckpointStore,
-  SQLiteDestination,
-  type SQLiteTable,
   Stream,
 } from 'elt';
+import { SQLiteDestination, type SQLiteTable } from 'elt-sqlite';
 import {
   AppleCalendarSource,
   AppleNotesSource,

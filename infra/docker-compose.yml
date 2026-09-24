@@ -1,0 +1,43 @@
+# Local warehouse for the Postgres destination, and the agent's only way in.
+# Start: docker compose -f infra/docker-compose.yml up -d --wait
+name: context-compiler
+
+services:
+  warehouse:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      WAREHOUSE_PASSWORD: ${WAREHOUSE_PASSWORD:-warehouse}
+      AGENT_PASSWORD: ${AGENT_PASSWORD:-agent}
+    ports:
+      - 127.0.0.1:55432:5432
+    volumes:
+      # The 18 image keeps PGDATA under /var/lib/postgresql/18/docker.
+      - warehouse:/var/lib/postgresql
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres -d warehouse]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # The agent connects here, never to Postgres: the server holds the reader's
+  # password, runs every statement in a read-only transaction, rejects
+  # statements that would end it, and cancels anything past 30 seconds.
+  # Pinned: 0.3.0 is the latest release and serves stdio or SSE only.
+  warehouse-mcp:
+    image: crystaldba/postgres-mcp:0.3.0
+    command:
+      - --access-mode=restricted
+      - --transport=sse
+      - --sse-host=0.0.0.0
+    environment:
+      DATABASE_URI: postgresql://agent_reader:${AGENT_PASSWORD:-agent}@warehouse:5432/warehouse
+    ports:
+      - 127.0.0.1:8000:8000
+    depends_on:
+      warehouse:
+        condition: service_healthy
+
+volumes:
+  warehouse:

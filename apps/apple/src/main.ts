@@ -1,7 +1,8 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { Copy, Pipeline, PipelineError, SQLiteDestination } from 'elt';
+import { Copy, Pipeline, PipelineError } from 'elt';
+import { SQLiteDestination } from 'elt-sqlite';
 import {
   AppleNotesSource,
   MacOSDocumentParser,

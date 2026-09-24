@@ -1,0 +1,25 @@
+{
+  "name": "elt-sqlite",
+  "sourceRoot": "packages/destinations/sqlite/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "command": "tsc -p packages/destinations/sqlite/tsconfig.json",
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "biome check --write packages/destinations/sqlite/src packages/destinations/sqlite/package.json packages/destinations/sqlite/project.json packages/destinations/sqlite/tsconfig.json",
+          "tsc -p packages/destinations/sqlite/tsconfig.json --noEmit"
+        ],
+        "parallel": false
+      }
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test packages/destinations/sqlite/dist/*.test.js"
+    }
+  }
+}

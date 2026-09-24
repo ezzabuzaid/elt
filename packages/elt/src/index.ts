@@ -4,6 +4,7 @@ export {
   CopyConfiguration,
   type DedupPolicy,
 } from './core/copy-configuration.ts';
+export type { Deduplication } from './core/deduplication.ts';
 export { Destination, type DestinationSyncMode } from './core/destination.ts';
 export { DocumentParser } from './core/document-parser.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
@@ -43,8 +44,4 @@ export {
 export { MarkdownDestination } from './destinations/markdown/markdown-destination.ts';
 export { MarkdownFile } from './destinations/markdown/markdown-file.ts';
 export { MarkdownFolder } from './destinations/markdown/markdown-folder.ts';
-export { SQLiteColumn } from './destinations/sqlite/sqlite-column.ts';
-export { SQLiteColumns } from './destinations/sqlite/sqlite-columns.ts';
-export { SQLiteDestination } from './destinations/sqlite/sqlite-destination.ts';
-export { SQLiteTable } from './destinations/sqlite/sqlite-table.ts';
 export { SQLiteCheckpointStore } from './state/sqlite-checkpoint-store.ts';

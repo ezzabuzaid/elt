@@ -1,18 +1,15 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { KeyValue, Stream } from 'elt';
 import {
   assertShareable,
-  readClaims,
-  type WriterClaim,
-} from '../../core/ownership.ts';
-import type { KeyValue } from '../../core/source.ts';
-import type { Stream } from '../../core/stream.ts';
-import {
   CommittedWriteError,
+  readClaims,
   type WriteCount,
   type WriteOperation,
   Writer,
-} from '../../core/writer.ts';
+  type WriterClaim,
+} from 'elt';
 import type { SQLiteTable } from './sqlite-table.ts';
 
 export abstract class SQLiteWriter extends Writer {

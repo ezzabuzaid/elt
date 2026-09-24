@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { Stream } from '../../core/stream.ts';
+import type { Stream } from 'elt';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { SQLiteWriter } from './sqlite-writer.ts';
 

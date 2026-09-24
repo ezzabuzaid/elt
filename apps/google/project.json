@@ -23,7 +23,7 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test apps/google/dist/index.test.js"
+      "command": "node --test apps/google/dist/*.test.js"
     }
   }
 }

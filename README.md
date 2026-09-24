@@ -1,10 +1,10 @@
 # elt
 
-**Extract data from native apps. Load it into SQLite or Markdown. Keep it up to date.**
+**Extract data from native apps. Load it into SQLite, Postgres or Markdown. Keep it up to date.**
 
 `elt` is a TypeScript library for declaring and running ELT pipelines. Connect a source stream to a destination with `Copy`, then execute the transfers with `Pipeline`. It supports full refresh, incremental loading with persistent checkpoints, native change watching, and attachment extraction.
 
-The core uses Node.js APIs with no runtime dependencies. The included Apple connectors use macOS scripting and EventKit; the Google connectors call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
+The core uses Node.js APIs with no runtime dependencies. Destinations beyond Markdown are their own packages: `elt-sqlite`, and `elt-postgresql`, which adds the `postgres` driver. The included Apple connectors use macOS scripting and EventKit; the Google connectors call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
 
 [Quick start](#quick-start) · [Incremental sync](#incremental-sync) · [Watch for changes](#watch-for-changes) · [Reference](docs/reference.md)
 
@@ -17,9 +17,10 @@ The core uses Node.js APIs with no runtime dependencies. The included Apple conn
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh or snapshot incremental | EventKit notifications |
 | Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection | Full refresh; incremental by date for the dated analytics grains and by snapshot for properties, sitemaps, the country breakdown and URL inspection; every row carries its property, so properties share tables | Change-gated polling (the API publishes no notification) |
 
-Both destinations support overwrite, append, and deduplication:
+Every destination supports overwrite, append, and deduplication:
 
-- **SQLite:** strict tables with inferred or explicitly selected columns, including text and attachment bytes.
+- **SQLite** (`elt-sqlite`): strict tables with inferred or explicitly selected columns, including text and attachment bytes.
+- **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers.
 - **Markdown:** one document per stream or one document per record, with managed append and deduplication.
 
 See the reference for [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Search Console streams](docs/reference.md#google-search-console), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
@@ -42,7 +43,8 @@ Create `apps/apple/src/example.ts`:
 
 ```ts
 import { mkdir } from 'node:fs/promises';
-import { Copy, Pipeline, SQLiteDestination } from 'elt';
+import { Copy, Pipeline } from 'elt';
+import { SQLiteDestination } from 'elt-sqlite';
 import { AppleNotesSource } from './index.ts';
 
 await mkdir('./outputs', { recursive: true });
@@ -85,7 +87,8 @@ Reminders reads through EventKit, so Reminders.app need not be open. Grant the p
 
 ```ts
 import { mkdir } from 'node:fs/promises';
-import { Copy, Pipeline, SQLiteDestination } from 'elt';
+import { Copy, Pipeline } from 'elt';
+import { SQLiteDestination } from 'elt-sqlite';
 import { AppleRemindersSource } from './index.ts';
 
 await mkdir('./outputs', { recursive: true });
@@ -292,11 +295,14 @@ Manage permissions in **System Settings → Privacy & Security**. Calendar and R
 ## Development
 
 ```text
-packages/elt/          Core contracts, pipelines, destinations, and checkpoint storage
+packages/elt/                     Core contracts, pipelines, the Markdown destination, and checkpoint storage
+packages/destinations/sqlite/     SQLite destination (elt-sqlite)
+packages/destinations/postgresql/ Postgres destination (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
 apps/apple/            Apple connectors, native bridges, document parser, and example app
 apps/google/           Google connectors and example app
 docs/                  Detailed behavior and native API research
+infra/                 Local Postgres warehouse and the agent's MCP server
 ```
 
 Run checks from the repository root:
@@ -306,9 +312,9 @@ npx nx run-many -t typecheck
 npx nx run-many -t test
 ```
 
-Typecheck targets also format and lint. Test targets build first and use Node's test runner. Apple tests require macOS and an environment that permits native filesystem notifications; they use temporary files and unsaved/process-local EventKit objects, without modifying personal app data.
+Typecheck targets also format and lint. Test targets build first and use Node's test runner. The `elt-postgresql` and `google` tests need Postgres: start it with `docker compose -f infra/docker-compose.yml up -d --wait`, or point `TEST_DATABASE_URL` at a server where the user can create databases and roles. Apple tests require macOS and an environment that permits native filesystem notifications; they use temporary files and unsaved/process-local EventKit objects, without modifying personal app data.
 
-Run the Search Console example with `GOOGLE_OAUTH_CLIENT_ID=… GOOGLE_OAUTH_CLIENT_SECRET=… npx nx run google:start -- sc-domain:example.com sc-domain:example.org`, listing one or more properties. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup.
+Run the Search Console example with `GOOGLE_OAUTH_CLIENT_ID=… GOOGLE_OAUTH_CLIENT_SECRET=… npx nx run google:start -- sc-domain:example.com sc-domain:example.org`, listing one or more properties. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup. With `WAREHOUSE_URL=postgres://warehouse:warehouse@127.0.0.1:55432/warehouse` it loads the compose warehouse instead of SQLite and installs the [agent-facing marts](docs/reference.md#warehouse-marts); an agent reads them through the `warehouse` MCP server in `.mcp.json`.
 
 Build with `npx nx run apple:build` before running Apple scripts. Nx builds the `elt` dependency first. Run the generated JavaScript: Node's default TypeScript stripping does not support the parameter properties used here.
 

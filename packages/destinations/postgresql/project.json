@@ -1,0 +1,25 @@
+{
+  "name": "elt-postgresql",
+  "sourceRoot": "packages/destinations/postgresql/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "command": "tsc -p packages/destinations/postgresql/tsconfig.json",
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "biome check --write packages/destinations/postgresql/src packages/destinations/postgresql/package.json packages/destinations/postgresql/project.json packages/destinations/postgresql/tsconfig.json",
+          "tsc -p packages/destinations/postgresql/tsconfig.json --noEmit"
+        ],
+        "parallel": false
+      }
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test packages/destinations/postgresql/dist/*.test.js"
+    }
+  }
+}

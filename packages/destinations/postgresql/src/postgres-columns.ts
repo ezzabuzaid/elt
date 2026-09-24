@@ -1,10 +1,11 @@
-import type { Stream } from '../../core/stream.ts';
-import { SQLiteColumn } from './sqlite-column.ts';
+import type { Stream } from 'elt';
+import { PostgresColumn } from './postgres-column.ts';
 
-// SQLite column declarations are independent of a source or connection.
-export class SQLiteColumns {
-  // ponytail: flat scalar schemas only; add nested mapping when a source requires it.
-  static fromSchema(schema: Stream['jsonSchema']): readonly SQLiteColumn[] {
+// Postgres column declarations are independent of a source or connection.
+export class PostgresColumns {
+  // Flat scalar schemas only. Unlike SQLite, the string formats get their own
+  // types, so readers can do date arithmetic without parsing text.
+  static fromSchema(schema: Stream['jsonSchema']): readonly PostgresColumn[] {
     const { properties, required } = schema;
     if (
       schema.type !== 'object' ||
@@ -13,7 +14,7 @@ export class SQLiteColumns {
       Array.isArray(properties)
     )
       throw new TypeError(
-        'SQLite requires an object schema with explicit properties',
+        'Postgres requires an object schema with explicit properties',
       );
     if (
       required !== undefined &&
@@ -44,12 +45,18 @@ export class SQLiteColumns {
         const scalarTypes = types.filter((value) => value !== 'null');
         if (scalarTypes.length !== 1)
           throw new TypeError(
-            `SQLite requires one scalar type for field ${name}`,
+            `Postgres requires one scalar type for field ${name}`,
           );
-        let kind: SQLiteColumn['kind'];
+        const format: unknown = Reflect.get(field, 'format');
+        let kind: PostgresColumn['kind'];
         switch (scalarTypes[0]) {
           case 'string':
-            kind = 'text';
+            kind =
+              format === 'date'
+                ? 'date'
+                : format === 'date-time'
+                  ? 'timestamp'
+                  : 'text';
             break;
           case 'integer':
             kind = 'integer';
@@ -65,7 +72,7 @@ export class SQLiteColumns {
               `Unsupported JSON Schema type for field ${name}: ${scalarTypes[0]}`,
             );
         }
-        return new SQLiteColumn(name, kind, {
+        return new PostgresColumn(name, kind, {
           nullable: types.includes('null'),
           optional: !requiredFields.has(name),
           primaryKey: false,
@@ -74,40 +81,32 @@ export class SQLiteColumns {
     );
   }
 
-  text(field: string): SQLiteColumn {
-    return new SQLiteColumn(field, 'text', {
-      nullable: true,
-      optional: false,
-      primaryKey: false,
-    });
+  text(field: string): PostgresColumn {
+    return this.#column(field, 'text');
   }
 
-  integer(field: string): SQLiteColumn {
-    return new SQLiteColumn(field, 'integer', {
-      nullable: true,
-      optional: false,
-      primaryKey: false,
-    });
+  integer(field: string): PostgresColumn {
+    return this.#column(field, 'integer');
   }
 
-  real(field: string): SQLiteColumn {
-    return new SQLiteColumn(field, 'real', {
-      nullable: true,
-      optional: false,
-      primaryKey: false,
-    });
+  real(field: string): PostgresColumn {
+    return this.#column(field, 'real');
   }
 
-  blob(field: string): SQLiteColumn {
-    return new SQLiteColumn(field, 'blob', {
-      nullable: true,
-      optional: false,
-      primaryKey: false,
-    });
+  boolean(field: string): PostgresColumn {
+    return this.#column(field, 'boolean');
   }
 
-  boolean(field: string): SQLiteColumn {
-    return new SQLiteColumn(field, 'boolean', {
+  date(field: string): PostgresColumn {
+    return this.#column(field, 'date');
+  }
+
+  timestamp(field: string): PostgresColumn {
+    return this.#column(field, 'timestamp');
+  }
+
+  #column(field: string, kind: PostgresColumn['kind']): PostgresColumn {
+    return new PostgresColumn(field, kind, {
       nullable: true,
       optional: false,
       primaryKey: false,

@@ -341,17 +341,18 @@ export class SearchConsoleSource extends Source {
     const grain = searchAnalyticsGrains[name];
     const endDate = today(this.#now());
     if (!grain.dimensions.includes('date')) {
+      const startDate = subMonths(endDate, this.breakdownMonths);
       const page = await readSearchAnalytics(this.#api, siteUrl, {
         dataState: 'ALL',
         dimensions: [...grain.dimensions],
         endDate,
-        startDate: subMonths(endDate, this.breakdownMonths),
+        startDate,
         type: 'WEB',
       });
       yield* this.#listing(
         configuration,
         state,
-        this.#rows(name, page.rows, 'WEB', siteUrl),
+        this.#rows(name, page.rows, siteUrl, () => ({ startDate, endDate })),
       );
       return;
     }
@@ -373,7 +374,16 @@ export class SearchConsoleSource extends Source {
         startDate,
         type,
       });
-      yield* this.#records(stream, this.#rows(name, page.rows, type, siteUrl));
+      const { firstIncompleteDate } = page;
+      yield* this.#records(
+        stream,
+        this.#rows(name, page.rows, siteUrl, (row) => ({
+          ...(name === 'searchAnalyticsDaily' ? { searchType: type } : {}),
+          settled:
+            firstIncompleteDate === undefined ||
+            String(row.date) < firstIncompleteDate,
+        })),
+      );
       if (page.firstIncompleteDate === undefined) continue;
       // Report types settle independently, so the checkpoint keeps the
       // earliest boundary and re-reads the rest next run.
@@ -391,21 +401,24 @@ export class SearchConsoleSource extends Source {
   #rows(
     name: SearchAnalyticsGrain,
     rows: readonly SearchAnalyticsRow[],
-    type: SearchAnalyticsType,
     siteUrl: string,
+    extra: (row: Record<string, unknown>) => Record<string, unknown>,
   ): Record<string, unknown>[] {
-    const { dimensions, extra } = searchAnalyticsGrains[name];
+    const { dimensions } = searchAnalyticsGrains[name];
     return rows.flatMap((row) => {
       // A row whose keys disagree with the requested dimensions is Google's
       // doing; skipping it keeps one malformed row from failing the copy.
       if (row.keys.length !== dimensions.length) return [];
+      const keyed = {
+        siteUrl,
+        ...Object.fromEntries(
+          dimensions.map((dimension, index) => [dimension, row.keys[index]]),
+        ),
+      };
       return [
         {
-          siteUrl,
-          ...Object.fromEntries(
-            dimensions.map((dimension, index) => [dimension, row.keys[index]]),
-          ),
-          ...(extra === undefined ? {} : { searchType: type }),
+          ...keyed,
+          ...extra(keyed),
           clicks: row.clicks,
           ctr: row.ctr,
           impressions: row.impressions,

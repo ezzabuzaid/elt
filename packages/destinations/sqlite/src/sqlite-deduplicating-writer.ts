@@ -1,7 +1,5 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import type { CopyConfiguration } from '../../core/copy-configuration.ts';
-import type { Deduplication } from '../../core/deduplication.ts';
-import type { KeyValue } from '../../core/source.ts';
+import type { CopyConfiguration, Deduplication, KeyValue } from 'elt';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { SQLiteWriter } from './sqlite-writer.ts';

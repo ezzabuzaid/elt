@@ -1,5 +1,5 @@
-import type { Stream } from '../../core/stream.ts';
-import { Target } from '../../core/target.ts';
+import type { Stream } from 'elt';
+import { Target } from 'elt';
 import { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
 
