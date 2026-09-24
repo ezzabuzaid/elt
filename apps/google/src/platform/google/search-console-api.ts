@@ -1,6 +1,7 @@
 import { setTimeout as wait } from 'node:timers/promises';
 
 import type { GoogleRequester } from 'google-auth';
+import { statusOf } from './google-errors.ts';
 
 const BASE = 'https://searchconsole.googleapis.com/';
 
@@ -234,14 +235,4 @@ function rateLimitReason(error: unknown): boolean {
         RATE_LIMIT_REASONS.has(String(Reflect.get(entry, 'reason'))),
     )
   );
-}
-
-function statusOf(error: unknown): number | undefined {
-  if (error === null || typeof error !== 'object') return undefined;
-  const status: unknown = Reflect.get(error, 'status');
-  if (typeof status === 'number') return status;
-  const response: unknown = Reflect.get(error, 'response');
-  if (response === null || typeof response !== 'object') return undefined;
-  const code: unknown = Reflect.get(response, 'status');
-  return typeof code === 'number' ? code : undefined;
 }

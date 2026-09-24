@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable, readdir, stat } from 'node:fs/promises';
+import { mkdtempDisposable, readdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,6 +11,7 @@ import { LoginTicket, OAuth2Client } from 'google-auth-library';
 
 import {
   GrantFiles,
+  googleCalendarAttachments,
   googleSession,
   listenForCallback,
   OAuthCallbackTimeoutError,
@@ -1107,4 +1108,121 @@ test('an incremental sites copy deletes a property that is no longer listed', as
       .map((row) => ({ ...row })),
     [{ siteUrl: 'sc-domain:a.example', permissionLevel: 'siteFullUser' }],
   );
+});
+
+function googleError(status: number, data: unknown = {}) {
+  return Object.assign(new Error(`Request failed with status code ${status}`), {
+    status,
+    response: { status, data },
+  });
+}
+
+test('Calendar attachments download Drive files and Gmail parts, and report unreachable ones', async () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer;
+  const pdf = new TextEncoder().encode('%PDF-1.7').buffer;
+  const { calls, requester } = recorder(({ url }) => {
+    if (url.includes('/files/image?fields')) return { mimeType: 'image/png' };
+    if (url.includes('/files/image?alt=media')) return png;
+    if (url.includes('/files/doc?fields'))
+      return { mimeType: 'application/vnd.google-apps.document' };
+    if (url.includes('/files/doc/export?mimeType=application%2Fpdf'))
+      return pdf;
+    if (url.includes('/files/private'))
+      throw googleError(403, { error: { errors: [{ reason: 'forbidden' }] } });
+    if (url.includes('/files/gone')) throw googleError(404);
+    if (url.includes('/messages/m1?format=full'))
+      return {
+        id: 'm1',
+        payload: {
+          partId: '',
+          parts: [
+            { partId: '0', body: { size: 3 } },
+            { partId: '1', filename: 'a.pdf', body: { attachmentId: 'att-1' } },
+          ],
+        },
+      };
+    if (url.includes('/messages/m1/attachments/att-1'))
+      return { data: Buffer.from('mail bytes').toString('base64url') };
+    if (url.includes('/messages/t1?format=full')) throw googleError(404);
+    if (url.includes('/threads/t1?format=full'))
+      return {
+        messages: [
+          {
+            id: 'm2',
+            payload: {
+              parts: [
+                {
+                  partId: '2',
+                  body: { data: Buffer.from('inline').toString('base64url') },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    throw new Error(`unexpected ${url}`);
+  });
+  const fetch = googleCalendarAttachments(requester);
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-att-'));
+  const saved = async (uri: string) => {
+    const path = join(scratch.path, `f${calls.length}`);
+    const result = await fetch({ uri }, path);
+    return result ? new Uint8Array(await readFile(path)) : result;
+  };
+
+  assert.deepEqual(
+    await saved('https://drive.google.com/file/d/image/view?usp=drive_web'),
+    new Uint8Array(png),
+  );
+  assert.deepEqual(
+    await saved('https://drive.google.com/open?id=doc&authuser=0'),
+    new Uint8Array(pdf),
+  );
+  assert.deepEqual(
+    await saved('?view=att&th=m1&attid=0.1&disp=safe&zw'),
+    new Uint8Array(Buffer.from('mail bytes')),
+  );
+  assert.deepEqual(
+    await saved('?view=att&th=t1&attid=0.2&disp=safe&zw'),
+    new Uint8Array(Buffer.from('inline')),
+  );
+  assert.equal(
+    await saved('https://drive.google.com/file/d/private/view'),
+    false,
+  );
+  assert.equal(await saved('https://drive.google.com/file/d/gone/view'), false);
+  assert.equal(await saved('https://example.com/file.pdf'), false);
+  assert.equal(await saved('?view=att&th=m1&attid=0.9'), false);
+});
+
+test('Calendar attachment downloads fail on a disabled API, a missing scope or a server error', async () => {
+  for (const [error, message] of [
+    [
+      googleError(403, {
+        error: { errors: [{ reason: 'accessNotConfigured' }] },
+      }),
+      /403/,
+    ],
+    [
+      googleError(403, {
+        error: {
+          status: 'PERMISSION_DENIED',
+          details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }],
+        },
+      }),
+      /403/,
+    ],
+    [googleError(500), /500/],
+  ] as const) {
+    const { requester } = recorder(() => {
+      throw error;
+    });
+    await assert.rejects(
+      googleCalendarAttachments(requester)(
+        { uri: 'https://drive.google.com/file/d/abc/view' },
+        '/unused',
+      ),
+      message,
+    );
+  }
 });

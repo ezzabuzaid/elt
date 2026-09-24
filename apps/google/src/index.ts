@@ -18,6 +18,11 @@ export {
   URL_INSPECTION_QUOTA,
 } from './platform/google/search-console-api.ts';
 export {
+  type CalendarAttachmentReference,
+  googleCalendarAttachments,
+  parseGoogleAttachment,
+} from './sources/calendar-attachments/google-calendar-attachments.ts';
+export {
   type SearchAnalyticsDimension,
   searchAnalyticsDimensions,
 } from './sources/search-console/search-console-schema.ts';
