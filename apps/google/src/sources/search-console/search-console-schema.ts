@@ -170,6 +170,7 @@ export function searchConsoleStream({
   primaryKey,
   supportedSyncModes = ['full_refresh'],
   snapshot = false,
+  partitionKey,
 }: {
   name: string;
   fields: Record<string, FieldSchema>;
@@ -177,6 +178,7 @@ export function searchConsoleStream({
   supportedSyncModes?: readonly SyncMode[];
   // A complete list on every read: incremental copies diff it (diffSnapshot).
   snapshot?: boolean;
+  partitionKey?: readonly string[];
 }): Stream {
   return new Stream({
     name,
@@ -190,5 +192,6 @@ export function searchConsoleStream({
       ? ['full_refresh', 'incremental']
       : supportedSyncModes,
     ...(snapshot && { sourceDefinedCursor: true, emitsDeletes: true }),
+    ...(partitionKey && { partitionKey }),
   });
 }

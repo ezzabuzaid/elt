@@ -70,7 +70,7 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
     searchTypes: ['WEB'],
     now: NOW,
     requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -133,7 +133,7 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
     searchTypes: ['WEB'],
     now: NOW,
     requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -149,7 +149,7 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
       dedupPolicy: 'replace',
       destinationSyncMode: 'append_dedup',
       id: 'search-analytics',
-      primaryKey: ['date', 'query'],
+      primaryKey: ['siteUrl', 'date', 'query'],
       syncMode: 'incremental',
     },
   );
@@ -177,14 +177,20 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
       ),
     );
   assert.deepEqual(loaded(), [{ clicks: 12, date: '2026-09-20' }]);
-  // firstIncompleteDate is 2026-09-21, so the last settled day is the 20th.
-  assert.deepEqual(saved(), { date: '2026-09-20' });
+  // firstIncompleteDate is 2026-09-21, so the last settled day is the 20th,
+  // kept as the property's own partition state.
+  const settled = {
+    partitions: [
+      { partition: { siteUrl: SITE }, state: { date: '2026-09-20' } },
+    ],
+  };
+  assert.deepEqual(saved(), settled);
 
   clicks = 19;
   await pipeline.run();
   // One row still, carrying the restated metric rather than the first one.
   assert.deepEqual(loaded(), [{ clicks: 19, date: '2026-09-20' }]);
-  assert.deepEqual(saved(), { date: '2026-09-20' });
+  assert.deepEqual(saved(), settled);
   // The second run resumes at the settled day rather than after it.
   assert.equal(analyticsCalls(calls).at(-1)?.data?.startDate, '2026-09-20');
 });
@@ -208,7 +214,7 @@ test('analytics pagination follows startRow until a short page', async () => {
     searchTypes: ['WEB'],
     now: NOW,
     requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -249,7 +255,7 @@ test('sitemaps normalize int64 text, omitted flags, and second-precision times',
   const source = new SearchConsoleSource({
     now: NOW,
     requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -342,7 +348,7 @@ test('the three urlInspection streams share one inspection batch', async () => {
     inspectionLimit: 2,
     now: NOW,
     requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -427,7 +433,7 @@ test('watching invalidates only when the property actually changed', async () =>
     now: NOW,
     pollIntervalMs: 1,
     requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -484,7 +490,7 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
     now: NOW,
     requester,
     searchTypes: ['WEB', 'DISCOVER', 'GOOGLE_NEWS'],
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -524,7 +530,7 @@ test('the history window clamps to the last day of a shorter start month', async
     now: () => new Date('2026-03-31T00:00:00.000Z'),
     requester,
     searchTypes: ['WEB'],
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -567,7 +573,7 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
     breakdownMonths: 3,
     now: NOW,
     requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -619,7 +625,7 @@ test('every stream but sites carries its property and keys by it first', async (
   const source = new SearchConsoleSource({
     now: NOW,
     requester: recorder(() => ({})).requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
 
   const unkeyed = (await source.discover()).streams.filter(
@@ -668,7 +674,7 @@ test('two properties load into the same tables without deleting each other', asy
       now: NOW,
       requester,
       searchTypes: ['WEB'],
-      siteUrl,
+      siteUrls: [siteUrl],
     });
     const listing = (stream: typeof source.sitemaps, table: string) =>
       new Copy(stream, destination.table(table), {
@@ -740,7 +746,7 @@ test('an unverified property is not offered as a readable site', async () => {
   const source = new SearchConsoleSource({
     now: NOW,
     requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -1120,7 +1126,7 @@ test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
     requester,
     retry: { attempts: 3, baseDelayMs: 1, maxDelayMs: 60_000 },
     searchTypes: ['WEB'],
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -1180,7 +1186,7 @@ test('aborting a watcher cancels its in-flight probe as an AbortError', {
     pollIntervalMs: 1,
     requester,
     searchTypes: ['WEB'],
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const controller = new AbortController();
   const watching = source.watch({
@@ -1206,7 +1212,7 @@ test('an incremental sites copy deletes a property that is no longer listed', as
   const source = new SearchConsoleSource({
     now: NOW,
     requester,
-    siteUrl: SITE,
+    siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
@@ -1356,5 +1362,242 @@ test('Calendar attachment downloads fail on a disabled API, a missing scope or a
       ),
       message,
     );
+  }
+});
+
+const siteOf = (call: Call) =>
+  decodeURIComponent(call.url.split('/sites/')[1]?.split('/')[0] ?? '') ||
+  String(call.data?.['siteUrl']);
+
+test('one source loads every property; a newly listed one backfills while the others resume', async () => {
+  const A = 'sc-domain:a.example';
+  const B = 'sc-domain:b.example';
+  const { requester, calls } = recorder((call) => {
+    const site = siteOf(call);
+    if (call.url.includes('index:inspect'))
+      return { inspectionResult: { indexStatusResult: { verdict: site } } };
+    const pages = call.data?.['dimensions'];
+    // A later startRow exhausts the range, which ends the paging loop.
+    if (Array.isArray(pages) && pages.includes('page'))
+      return {
+        rows:
+          Number(call.data?.['startRow'] ?? 0) > 0
+            ? []
+            : [
+                {
+                  clicks: 1,
+                  ctr: 1,
+                  impressions: 1,
+                  keys: [`https://${site}/`],
+                  position: 1,
+                },
+              ],
+      };
+    return {
+      metadata: { firstIncompleteDate: '2026-09-21' },
+      rows: [
+        {
+          clicks: site === A ? 3 : 7,
+          ctr: 0.1,
+          impressions: 30,
+          keys: ['2026-09-20'],
+          position: 2,
+        },
+      ],
+    };
+  });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-many-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'sc.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const run = (siteUrls: string[]) => {
+    const source = new SearchConsoleSource({
+      inspectionLimit: 1,
+      now: NOW,
+      requester,
+      searchTypes: ['WEB'],
+      siteUrls,
+    });
+    return new Pipeline({
+      source,
+      destination,
+      checkpoints,
+      steps: [
+        new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+          id: 'daily',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          dedupPolicy: 'replace',
+          cursorField: 'date',
+          primaryKey: [...source.searchAnalyticsDaily.primaryKey],
+        }),
+        new Copy(source.urlInspection, destination.table('inspection')),
+      ],
+    }).run();
+  };
+
+  await run([A]);
+  const firstRun = calls.length;
+  await run([A, B]);
+
+  const windows = analyticsCalls(calls.slice(firstRun))
+    .filter((call) => call.data?.['dimensions']?.toString() === 'date')
+    .map((call) => [siteOf(call), call.data?.['startDate']]);
+  // A resumes at its settled day; B has no state yet, so it backfills.
+  assert.deepEqual(windows, [
+    [A, '2026-09-20'],
+    [B, '2025-05-22'],
+  ]);
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare('SELECT siteUrl, clicks FROM daily ORDER BY siteUrl')
+      .all()
+      .map((row) => [row.siteUrl, row.clicks]),
+    [
+      [A, 3],
+      [B, 7],
+    ],
+  );
+  assert.deepEqual(
+    database
+      .prepare(
+        'SELECT siteUrl, inspectionUrl, verdict FROM inspection ORDER BY siteUrl',
+      )
+      .all()
+      .map((row) => [row.siteUrl, row.inspectionUrl, row.verdict]),
+    [
+      [A, `https://${A}/`, A],
+      [B, `https://${B}/`, B],
+    ],
+  );
+});
+
+test('a property that keeps failing commits nothing for any property', async () => {
+  const A = 'sc-domain:a.example';
+  const B = 'sc-domain:b.example';
+  const { requester } = recorder((call) => {
+    if (siteOf(call) === B) throw googleError(500);
+    return {
+      rows: [
+        {
+          clicks: 1,
+          ctr: 1,
+          impressions: 1,
+          keys: ['2026-09-20'],
+          position: 1,
+        },
+      ],
+    };
+  });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-fail-'));
+  const source = new SearchConsoleSource({
+    now: NOW,
+    requester,
+    retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    searchTypes: ['WEB'],
+    siteUrls: [A, B],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'sc.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+
+  await assert.rejects(
+    new Pipeline({
+      source,
+      destination,
+      checkpoints,
+      steps: [
+        new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+          id: 'daily',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          dedupPolicy: 'replace',
+          cursorField: 'date',
+          primaryKey: [...source.searchAnalyticsDaily.primaryKey],
+        }),
+      ],
+    }).run(),
+    /status code 500/,
+  );
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare("SELECT name FROM sqlite_schema WHERE name = 'daily'")
+      .all(),
+    [],
+  );
+  using state = new DatabaseSync(checkpoints.path, { readOnly: true });
+  assert.deepEqual(state.prepare('SELECT id FROM checkpoints').all(), []);
+});
+
+test('watching invalidates when only one of several properties changed', async () => {
+  const A = 'sc-domain:a.example';
+  const B = 'sc-domain:b.example';
+  const clicks: Record<string, number> = { [A]: 3, [B]: 7 };
+  const { requester, calls } = recorder((call) => ({
+    metadata: { firstIncompleteDate: '2026-09-21' },
+    rows: [
+      {
+        clicks: clicks[siteOf(call)],
+        ctr: 0.1,
+        impressions: 30,
+        keys: ['2026-09-20'],
+        position: 2,
+      },
+    ],
+  }));
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-watch-'));
+  const source = new SearchConsoleSource({
+    now: NOW,
+    pollIntervalMs: 1,
+    requester,
+    searchTypes: ['WEB'],
+    siteUrls: [A, B],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'sc.sqlite'),
+  });
+  const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
+  const controller = new AbortController();
+  const watching = new Pipeline({ source, destination, steps: [copy] }).watch({
+    signal: controller.signal,
+  });
+
+  try {
+    assert.deepEqual((await watching.next()).value, [
+      { copy, count: 2, deleted: 0 },
+    ]);
+    const probed = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(
+      [...new Set(calls.slice(probed).map(siteOf))].sort(),
+      [A, B],
+      'every property is probed',
+    );
+    clicks[B] = 9;
+    assert.deepEqual((await watching.next()).value, [
+      { copy, count: 2, deleted: 0 },
+    ]);
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    assert.deepEqual(
+      database
+        .prepare('SELECT siteUrl, clicks FROM rows ORDER BY siteUrl')
+        .all()
+        .map((row) => [row.siteUrl, row.clicks]),
+      [
+        [A, 3],
+        [B, 9],
+      ],
+    );
+  } finally {
+    controller.abort();
   }
 });

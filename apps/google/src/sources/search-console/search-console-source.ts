@@ -3,6 +3,7 @@ import {
   type CopyConfiguration,
   diffSnapshot,
   isCalendarDate,
+  type Partition,
   type RecordMessage,
   Source,
   type SourceMessage,
@@ -47,7 +48,7 @@ export type SearchAnalyticsType =
 
 export type SearchConsoleOptions = {
   readonly requester: ConstructorParameters<typeof SearchConsoleApi>[0];
-  readonly siteUrl: string;
+  readonly siteUrls: readonly string[];
   readonly retry?: RetryPolicy;
   readonly searchTypes?: readonly SearchAnalyticsType[];
   readonly breakdownMonths?: number;
@@ -79,7 +80,7 @@ function isGrain(name: string): name is SearchAnalyticsGrain {
 
 export class SearchConsoleSource extends Source {
   readonly identity: string;
-  readonly siteUrl: string;
+  readonly siteUrls: readonly string[];
   readonly searchTypes: readonly SearchAnalyticsType[];
   readonly breakdownMonths: number;
   readonly inspectionLimit: number;
@@ -100,15 +101,16 @@ export class SearchConsoleSource extends Source {
   readonly #api: SearchConsoleApi;
   protected readonly catalog: Catalog;
   readonly #now: () => Date;
+  // One inspection batch per property, shared by its three inspection streams.
   readonly #inspections = new Map<
     string,
-    Awaited<ReturnType<typeof inspectUrls>>
+    { key: string; batch: Awaited<ReturnType<typeof inspectUrls>> }
   >();
 
   constructor(options: SearchConsoleOptions) {
     super();
     const {
-      siteUrl,
+      siteUrls,
       searchTypes = SEARCH_TYPES,
       breakdownMonths = 3,
       inspectionLimit = 200,
@@ -116,8 +118,15 @@ export class SearchConsoleSource extends Source {
       pollIntervalMs = 6 * 60 * 60 * 1000,
       now = () => new Date(),
     } = options;
-    if (typeof siteUrl !== 'string' || !siteUrl)
-      throw new TypeError('Search Console requires a property siteUrl');
+    if (
+      !Array.isArray(siteUrls) ||
+      siteUrls.length === 0 ||
+      !siteUrls.every((siteUrl) => typeof siteUrl === 'string' && siteUrl) ||
+      new Set(siteUrls).size !== siteUrls.length
+    )
+      throw new TypeError(
+        'Search Console requires one or more distinct property siteUrls',
+      );
     if (
       searchTypes.length === 0 ||
       new Set(searchTypes).size !== searchTypes.length ||
@@ -130,7 +139,7 @@ export class SearchConsoleSource extends Source {
       throw new TypeError('inspectionLimit must be a whole number of URLs');
     if (!Number.isSafeInteger(inspectionWindowDays) || inspectionWindowDays < 1)
       throw new TypeError('inspectionWindowDays must be at least one day');
-    this.siteUrl = siteUrl;
+    this.siteUrls = Object.freeze([...siteUrls]);
     this.searchTypes = Object.freeze([...searchTypes]);
     this.breakdownMonths = breakdownMonths;
     this.inspectionLimit = inspectionLimit;
@@ -138,8 +147,9 @@ export class SearchConsoleSource extends Source {
     this.pollIntervalMs = pollIntervalMs;
     this.#now = now;
     // The report types change which rows exist, so they bind a checkpoint.
-    // The window does not: it moves with the clock and state resumes it.
-    this.identity = `search-console:${siteUrl}:${this.searchTypes.join('+')}`;
+    // The window does not: it moves with the clock and state resumes it. Nor
+    // do the properties: each is a partition with its own checkpoint.
+    this.identity = `search-console:${this.searchTypes.join('+')}`;
     this.#api = new SearchConsoleApi(options.requester, {
       ...(options.retry ? { retry: options.retry } : {}),
     });
@@ -150,14 +160,18 @@ export class SearchConsoleSource extends Source {
       primaryKey: ['siteUrl'],
       snapshot: true,
     });
+    // Every stream but sites is read once per property, the partition every
+    // row carries; sites is the grant's own list, the same for all of them.
     this.sitemaps = searchConsoleStream({
       name: 'sitemaps',
+      partitionKey: ['siteUrl'],
       fields: sitemapsFields,
       primaryKey: ['siteUrl', 'path'],
       snapshot: true,
     });
     this.sitemapContents = searchConsoleStream({
       name: 'sitemapContents',
+      partitionKey: ['siteUrl'],
       fields: sitemapContentsFields,
       primaryKey: ['siteUrl', 'sitemapPath', 'type'],
       snapshot: true,
@@ -166,6 +180,7 @@ export class SearchConsoleSource extends Source {
     const grain = (name: SearchAnalyticsGrain): Stream =>
       searchConsoleStream({
         name,
+        partitionKey: ['siteUrl'],
         fields: searchAnalyticsFields(name),
         primaryKey: ['siteUrl', ...searchAnalyticsGrains[name].key],
         // A grain carrying the date dimension resumes on it; one without is a
@@ -180,18 +195,21 @@ export class SearchConsoleSource extends Source {
     this.searchAnalyticsCountries = grain('searchAnalyticsCountries');
     this.urlInspection = searchConsoleStream({
       name: 'urlInspection',
+      partitionKey: ['siteUrl'],
       fields: urlInspectionFields,
       primaryKey: ['siteUrl', 'inspectionUrl'],
       snapshot: true,
     });
     this.urlInspectionSitemaps = searchConsoleStream({
       name: 'urlInspectionSitemaps',
+      partitionKey: ['siteUrl'],
       fields: urlInspectionSitemapsFields,
       primaryKey: ['siteUrl', 'inspectionUrl', 'position'],
       snapshot: true,
     });
     this.urlInspectionReferrers = searchConsoleStream({
       name: 'urlInspectionReferrers',
+      partitionKey: ['siteUrl'],
       fields: urlInspectionReferrersFields,
       primaryKey: ['siteUrl', 'inspectionUrl', 'position'],
       snapshot: true,
@@ -209,6 +227,10 @@ export class SearchConsoleSource extends Source {
       this.urlInspectionReferrers,
     ]);
     Object.freeze(this);
+  }
+
+  protected override partitions(): readonly Partition[] {
+    return this.siteUrls.map((siteUrl) => ({ siteUrl }));
   }
 
   protected override validateExtraction(
@@ -249,32 +271,35 @@ export class SearchConsoleSource extends Source {
   protected override async *extract(
     configuration: CopyConfiguration,
     state: unknown,
+    partition: Partition | null,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
-    if (isGrain(stream.name)) {
-      yield* this.#extractAnalytics(stream, stream.name, configuration, state);
+    if (stream.name === 'sites') {
+      yield* this.#listing(configuration, state, await this.#readSites());
       return;
     }
-    switch (stream.name) {
-      case 'sites':
-        yield* this.#listing(configuration, state, await this.#readSites());
-        return;
-      case 'sitemaps':
-      case 'sitemapContents':
-        yield* this.#listing(
-          configuration,
-          state,
-          await this.#readSitemaps(stream.name),
-        );
-        return;
-      default:
-        yield* this.#listing(
-          configuration,
-          state,
-          await this.#readInspections(stream.name),
-        );
-        return;
+    const siteUrl = partition?.siteUrl;
+    if (typeof siteUrl !== 'string')
+      throw new TypeError(
+        `Search Console stream ${stream.name} is read per property`,
+      );
+    if (isGrain(stream.name)) {
+      yield* this.#extractAnalytics(
+        stream,
+        stream.name,
+        configuration,
+        state,
+        siteUrl,
+      );
+      return;
     }
+    yield* this.#listing(
+      configuration,
+      state,
+      stream.name === 'sitemaps' || stream.name === 'sitemapContents'
+        ? await this.#readSitemaps(stream.name, siteUrl)
+        : await this.#readInspections(stream.name, siteUrl),
+    );
   }
 
   // Sites, sitemaps, inspections and the dateless grain are complete lists on
@@ -311,11 +336,12 @@ export class SearchConsoleSource extends Source {
     name: SearchAnalyticsGrain,
     configuration: CopyConfiguration,
     state: unknown,
+    siteUrl: string,
   ): AsyncGenerator<SourceMessage> {
     const grain = searchAnalyticsGrains[name];
     const endDate = today(this.#now());
     if (!grain.dimensions.includes('date')) {
-      const page = await readSearchAnalytics(this.#api, this.siteUrl, {
+      const page = await readSearchAnalytics(this.#api, siteUrl, {
         dataState: 'ALL',
         dimensions: [...grain.dimensions],
         endDate,
@@ -325,7 +351,7 @@ export class SearchConsoleSource extends Source {
       yield* this.#listing(
         configuration,
         state,
-        this.#rows(name, page.rows, 'WEB'),
+        this.#rows(name, page.rows, 'WEB', siteUrl),
       );
       return;
     }
@@ -340,14 +366,14 @@ export class SearchConsoleSource extends Source {
 
     let settled: string | undefined;
     for (const type of types) {
-      const page = await readSearchAnalytics(this.#api, this.siteUrl, {
+      const page = await readSearchAnalytics(this.#api, siteUrl, {
         dataState: 'ALL',
         dimensions: [...grain.dimensions],
         endDate,
         startDate,
         type,
       });
-      yield* this.#records(stream, this.#rows(name, page.rows, type));
+      yield* this.#records(stream, this.#rows(name, page.rows, type, siteUrl));
       if (page.firstIncompleteDate === undefined) continue;
       // Report types settle independently, so the checkpoint keeps the
       // earliest boundary and re-reads the rest next run.
@@ -366,6 +392,7 @@ export class SearchConsoleSource extends Source {
     name: SearchAnalyticsGrain,
     rows: readonly SearchAnalyticsRow[],
     type: SearchAnalyticsType,
+    siteUrl: string,
   ): Record<string, unknown>[] {
     const { dimensions, extra } = searchAnalyticsGrains[name];
     return rows.flatMap((row) => {
@@ -374,7 +401,7 @@ export class SearchConsoleSource extends Source {
       if (row.keys.length !== dimensions.length) return [];
       return [
         {
-          siteUrl: this.siteUrl,
+          siteUrl,
           ...Object.fromEntries(
             dimensions.map((dimension, index) => [dimension, row.keys[index]]),
           ),
@@ -404,12 +431,15 @@ export class SearchConsoleSource extends Source {
       }));
   }
 
-  async #readSitemaps(name: string): Promise<Record<string, unknown>[]> {
-    const body = await this.#api.sitemaps(this.siteUrl);
+  async #readSitemaps(
+    name: string,
+    siteUrl: string,
+  ): Promise<Record<string, unknown>[]> {
+    const body = await this.#api.sitemaps(siteUrl);
     const sitemaps = list(body, 'sitemap');
     if (name === 'sitemaps')
       return sitemaps.map((sitemap) => ({
-        siteUrl: this.siteUrl,
+        siteUrl,
         errors: count(sitemap, 'errors'),
         isPending: flag(sitemap, 'isPending'),
         isSitemapsIndex: flag(sitemap, 'isSitemapsIndex'),
@@ -421,7 +451,7 @@ export class SearchConsoleSource extends Source {
       }));
     return sitemaps.flatMap((sitemap) =>
       list(sitemap, 'contents').map((content) => ({
-        siteUrl: this.siteUrl,
+        siteUrl,
         indexed: optionalCount(content, 'indexed'),
         sitemapPath: required(sitemap, 'path'),
         submitted: count(content, 'submitted'),
@@ -430,8 +460,11 @@ export class SearchConsoleSource extends Source {
     );
   }
 
-  async #readInspections(name: string): Promise<Record<string, unknown>[]> {
-    const inspections = await this.#inspect();
+  async #readInspections(
+    name: string,
+    siteUrl: string,
+  ): Promise<Record<string, unknown>[]> {
+    const inspections = await this.#inspect(siteUrl);
     if (name === 'urlInspection')
       return inspections.map(({ inspectionUrl, indexStatus, result }) => ({
         ampVerdict: text(record(result, 'ampResult'), 'verdict'),
@@ -452,7 +485,7 @@ export class SearchConsoleSource extends Source {
           'verdict',
         ),
         robotsTxtState: text(indexStatus, 'robotsTxtState'),
-        siteUrl: this.siteUrl,
+        siteUrl,
         userCanonical: text(indexStatus, 'userCanonical'),
         verdict: text(indexStatus, 'verdict'),
       }));
@@ -463,7 +496,7 @@ export class SearchConsoleSource extends Source {
     return inspections.flatMap(({ inspectionUrl, indexStatus }) =>
       inspectionTexts(Reflect.get(indexStatus, field)).map(
         (value, position) => ({
-          siteUrl: this.siteUrl,
+          siteUrl,
           inspectionUrl,
           position,
           [column]: value,
@@ -472,21 +505,22 @@ export class SearchConsoleSource extends Source {
     );
   }
 
-  async #inspect(): Promise<Awaited<ReturnType<typeof inspectUrls>>> {
-    const urls = await this.#topPages();
+  async #inspect(
+    siteUrl: string,
+  ): Promise<Awaited<ReturnType<typeof inspectUrls>>> {
+    const urls = await this.#topPages(siteUrl);
     const key = JSON.stringify(urls);
-    const cached = this.#inspections.get(key);
-    if (cached) return cached;
-    this.#inspections.clear();
-    const inspections = await inspectUrls(this.#api, this.siteUrl, urls);
-    this.#inspections.set(key, inspections);
-    return inspections;
+    const cached = this.#inspections.get(siteUrl);
+    if (cached?.key === key) return cached.batch;
+    const batch = await inspectUrls(this.#api, siteUrl, urls);
+    this.#inspections.set(siteUrl, { key, batch });
+    return batch;
   }
 
-  async #topPages(): Promise<readonly string[]> {
+  async #topPages(siteUrl: string): Promise<readonly string[]> {
     if (this.inspectionLimit === 0) return [];
     const endDate = today(this.#now());
-    const page = await readSearchAnalytics(this.#api, this.siteUrl, {
+    const page = await readSearchAnalytics(this.#api, siteUrl, {
       dataState: 'ALL',
       dimensions: ['page'],
       endDate,
@@ -502,25 +536,35 @@ export class SearchConsoleSource extends Source {
     );
   }
 
+  // One probe per property; a change in any of them invalidates the streams.
   async #fingerprint(signal: AbortSignal): Promise<string> {
-    signal.throwIfAborted();
-    const endDate = today(this.#now());
-    const page = await readSearchAnalytics(
-      this.#api,
-      this.siteUrl,
-      {
-        dataState: 'ALL',
-        dimensions: ['date'],
-        endDate,
-        startDate: addDays(endDate, -this.inspectionWindowDays),
-        type: 'WEB',
-      },
-      { signal },
-    );
-    return JSON.stringify({
-      firstIncompleteDate: page.firstIncompleteDate ?? null,
-      rows: page.rows.map((row) => [row.keys[0], row.clicks, row.impressions]),
-    });
+    const probes = [];
+    for (const siteUrl of this.siteUrls) {
+      signal.throwIfAborted();
+      const endDate = today(this.#now());
+      const page = await readSearchAnalytics(
+        this.#api,
+        siteUrl,
+        {
+          dataState: 'ALL',
+          dimensions: ['date'],
+          endDate,
+          startDate: addDays(endDate, -this.inspectionWindowDays),
+          type: 'WEB',
+        },
+        { signal },
+      );
+      probes.push({
+        siteUrl,
+        firstIncompleteDate: page.firstIncompleteDate ?? null,
+        rows: page.rows.map((row) => [
+          row.keys[0],
+          row.clicks,
+          row.impressions,
+        ]),
+      });
+    }
+    return JSON.stringify(probes);
   }
 }
 

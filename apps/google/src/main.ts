@@ -27,12 +27,16 @@ class MissingClientError extends Error {
   }
 }
 
-const siteUrl = process.argv[2] ?? process.env.SEARCH_CONSOLE_SITE_URL;
+const argumentSites = process.argv.slice(2);
+const siteUrls =
+  argumentSites.length > 0
+    ? argumentSites
+    : (process.env.SEARCH_CONSOLE_SITE_URLS?.split(',').filter(Boolean) ?? []);
 
 try {
-  if (!siteUrl)
+  if (siteUrls.length === 0)
     throw new TypeError(
-      'Pass a Search Console property, for example: nx run google:start -- sc-domain:example.com',
+      'Pass one or more Search Console properties, for example: nx run google:start -- sc-domain:example.com sc-domain:example.org',
     );
   const path = resolve('outputs/search-console.sqlite');
   await mkdir(dirname(path), { recursive: true });
@@ -47,7 +51,9 @@ try {
     clientSecret,
     scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
   });
-  const source = new SearchConsoleSource({ requester, siteUrl });
+  // One source reads every property as a partition of each stream, so each
+  // table has one writer and each property keeps its own checkpoint.
+  const source = new SearchConsoleSource({ requester, siteUrls });
   const destination = new SQLiteDestination({ path });
   const checkpoints = new SQLiteCheckpointStore({
     path: resolve('outputs/search-console-state.sqlite'),
@@ -57,10 +63,8 @@ try {
     destination,
     checkpoints,
     steps: [
-      // Every row carries its property, and each copy id names the property,
-      // so several properties' pipelines share these tables. Listings are
-      // complete on every read: a copy writes changes and deletes only the
-      // keys its own previous snapshot held.
+      // Listings are complete on every read: a copy writes changes and
+      // deletes only the keys the previous snapshot held.
       ...(
         [
           [source.sites, 'raw_sites'],
@@ -76,7 +80,7 @@ try {
       ).map(
         ([stream, table]) =>
           new Copy(stream, destination.table(table), {
-            id: `${stream.name}:${siteUrl}`,
+            id: stream.name,
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
             primaryKey: [...stream.primaryKey],
@@ -95,7 +99,7 @@ try {
       ).map(
         ([stream, table]) =>
           new Copy(stream, destination.table(table), {
-            id: `${stream.name}:${siteUrl}`,
+            id: stream.name,
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
             dedupPolicy: 'replace',
@@ -115,7 +119,7 @@ try {
       deleted,
     })),
   );
-  console.log(`Loaded Search Console for ${siteUrl} into ${path}`);
+  console.log(`Loaded Search Console for ${siteUrls.join(', ')} into ${path}`);
   using database = new DatabaseSync(path, { readOnly: true });
   // Query rows never add up to the daily totals, because Google withholds
   // rare queries. Showing both is the point of keeping the grains apart.
@@ -123,6 +127,7 @@ try {
     database
       .prepare(`
       SELECT
+        totals.siteUrl,
         totals.date,
         totals.clicks AS total_clicks,
         totals.impressions AS total_impressions,
@@ -131,12 +136,12 @@ try {
       FROM raw_search_daily AS totals
       LEFT JOIN raw_search_queries_daily AS queries
         ON queries.siteUrl = totals.siteUrl AND queries.date = totals.date
-      WHERE totals.siteUrl = ? AND totals.searchType = 'WEB'
-      GROUP BY totals.date, totals.clicks, totals.impressions
-      ORDER BY totals.date DESC
+      WHERE totals.searchType = 'WEB'
+      GROUP BY totals.siteUrl, totals.date, totals.clicks, totals.impressions
+      ORDER BY totals.date DESC, totals.siteUrl
       LIMIT 10
     `)
-      .all(siteUrl),
+      .all(),
   );
 } catch (error) {
   const cause = error instanceof PipelineError ? error.cause : error;

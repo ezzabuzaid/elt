@@ -563,7 +563,7 @@ const requester = await googleSession({
 });
 const source = new SearchConsoleSource({
   requester,
-  siteUrl: 'sc-domain:example.com',
+  siteUrls: ['sc-domain:example.com', 'sc-domain:example.org'],
 });
 ```
 
@@ -602,11 +602,11 @@ Because a user credential is billed to the project that issued its OAuth client,
 | `urlInspection` | Full refresh or snapshot | `[siteUrl, inspectionUrl]` | One request per URL. |
 | `urlInspectionSitemaps` / `urlInspectionReferrers` | Full refresh or snapshot | `[siteUrl, inspectionUrl, position]` | The arrays nested in the index status result. |
 
-Every row except `sites` carries the property it came from in `siteUrl`, and every key starts with it, so several properties load into the same tables. `sites` lists what the grant can read, which is the same for every property of one grant.
+One source reads several properties. Every stream except `sites` is a [partitioned stream](#partitioned-streams) with `partitionKey: ['siteUrl']`: each property is read with its own checkpoint, every row carries its property in `siteUrl`, and every key starts with it, so all properties share one table per stream. Adding a property backfills its history while the others resume; removing one stops reading it and keeps its rows. `sites` lists what the grant can read, which is the same for every property, so it is not partitioned.
 
 Every read of the snapshot streams returns the complete list, so an incremental copy (`append_dedup` on the stream's key, no `cursorField`) writes only changed rows and deletes the rest; see [snapshot streams](#snapshot-streams). URL inspection covers only the current top pages by impressions, so a page that drops out of that set is deleted, exactly as a full-refresh overwrite would remove it.
 
-A full-refresh `overwrite` empties the whole table, so it cannot share one. Load several properties into shared tables with one incremental copy per property, each with an id that names the property, as the example app does: a snapshot copy deletes only keys its own previous snapshot held, and the dated grains upsert by a key that includes `siteUrl`.
+The example app lists every property in one source, so each table has one writer. Separate pipelines per property also work: give each copy an id that names its property and load incrementally, so a snapshot copy deletes only keys its own snapshot held and the dated grains upsert by keys that include `siteUrl`. A full-refresh `overwrite` empties the whole table, so the [shared-target rules](#shared-targets) refuse it next to another writer.
 
 #### Why the grains are separate
 
@@ -630,7 +630,7 @@ Consequences for anything querying these tables: average `position` must be weig
 - `date` is a **PST calendar date**, not an instant (`format: 'date'`).
 - The 16-month history window is calendar arithmetic clamped to the end of a shorter month: sixteen months before 31 March is 30 November. Counting 480 days instead drifts by roughly a week and silently drops history.
 
-The report types change which rows exist, so they are part of the source identity (`search-console:<siteUrl>:<searchTypes>`). The window is not: it moves with the clock, and state resumes it.
+The report types change which rows exist, so they are part of the source identity (`search-console:<searchTypes>`); the properties are partitions, not identity. The window is not: it moves with the clock, and state resumes it.
 
 ### Incremental search analytics
 
