@@ -2,6 +2,15 @@ import { readFile } from 'node:fs/promises';
 import type { Catalog } from './catalog.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { DocumentParser } from './document-parser.ts';
+import {
+  assertInPartition,
+  assertPartitions,
+  type Partition,
+  type PartitionState,
+  partitionIdentity,
+  readPartition,
+  readPartitionStates,
+} from './partition.ts';
 import type { Stream } from './stream.ts';
 
 export type SourceWatchOptions = {
@@ -47,8 +56,11 @@ export abstract class Source {
 
   // Check source-owned metadata without extraction or rediscovery.
   validate(configuration: CopyConfiguration): void {
-    configuration.validate(this.member(configuration.stream));
+    const stream = this.member(configuration.stream);
+    configuration.validate(stream);
     this.validateExtraction(configuration);
+    if (stream.partitionKey !== undefined)
+      assertPartitions(stream, this.partitions(stream));
   }
 
   async *watch(options: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
@@ -58,6 +70,15 @@ export abstract class Source {
 
   // Source-specific selection rules, checked without I/O.
   protected validateExtraction(_configuration: CopyConfiguration): void {}
+
+  // The partitions a partitioned stream is read as, derived from configuration
+  // without I/O. The list is not part of the identity: adding or removing a
+  // partition keeps every other partition's checkpoint.
+  protected partitions(stream: Stream): readonly Partition[] {
+    throw new TypeError(
+      `Source must declare partitions for stream ${stream.name}`,
+    );
+  }
 
   // Subscribe before yielding all selected streams once, then yield invalidations.
   // Keep receiving changes until signal aborts, including while extraction runs.
@@ -79,7 +100,11 @@ export abstract class Source {
     state: unknown,
   ): AsyncGenerator<SourceMessage> {
     this.validate(configuration);
-    for await (const message of this.extract(configuration, state)) {
+    const messages =
+      configuration.stream.partitionKey === undefined
+        ? this.extract(configuration, state, null)
+        : this.partitioned(configuration, state);
+    for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0) {
         yield message;
         continue;
@@ -128,8 +153,52 @@ export abstract class Source {
     }
   }
 
+  // Reads each partition with its own saved state: null for a partition not
+  // seen before, so it starts from the source's normal beginning. Partitions
+  // no longer listed drop out of the checkpoint; their rows stay loaded.
+  private async *partitioned(
+    configuration: CopyConfiguration,
+    state: unknown,
+  ): AsyncGenerator<SourceMessage> {
+    const { stream } = configuration;
+    const incremental = configuration.syncMode === 'incremental';
+    const saved = incremental
+      ? readPartitionStates(stream, state)
+      : new Map<string, PartitionState>();
+    const identity = partitionIdentity(stream);
+    const states: PartitionState[] = [];
+    for (const listed of this.partitions(stream)) {
+      const { key, partition } = readPartition(identity, listed);
+      let latest = saved.get(key);
+      for await (const message of this.extract(
+        configuration,
+        latest?.state ?? null,
+        partition,
+      )) {
+        if ('type' in message && message.type === 'STATE') {
+          latest = { partition, state: message.state };
+          continue;
+        }
+        assertInPartition(
+          stream,
+          partition,
+          'type' in message ? message.key : message.data,
+        );
+        yield message;
+      }
+      if (latest !== undefined) states.push(latest);
+    }
+    if (incremental)
+      yield {
+        type: 'STATE',
+        stream: stream.name,
+        state: { partitions: states },
+      };
+  }
+
   protected abstract extract(
     configuration: CopyConfiguration,
     state: unknown,
+    partition: Partition | null,
   ): AsyncIterable<SourceMessage>;
 }

@@ -171,6 +171,31 @@ The state is `{ snapshot: { <primary key JSON>: <SHA-256 of the record> } }`. Ea
 - **Cost:** the source still reads everything each run; only destination writes shrink. The state holds one key and a 43-character fingerprint per row, so it grows with the stream.
 - **Reset:** resetting the checkpoint makes the next run reload everything but forgets which rows exist, so rows deleted upstream meanwhile stay behind. Reset together with clearing the target, or run a full-refresh overwrite.
 
+### Partitioned streams
+
+One source can read a stream as several partitions, such as one per Search Console property or per account. The stream declares `partitionKey`, a subset of its `primaryKey`; the source lists the partitions from its configuration and receives each one in `extract`:
+
+```ts
+protected override partitions(stream) {
+  return this.siteUrls.map(siteUrl => ({ siteUrl }));
+}
+
+protected override async *extract(configuration, state, partition) {
+  // state is this partition's own checkpoint, or null the first time.
+}
+```
+
+`Source.read` calls `extract` once per partition, in the listed order, and keeps each partition's state apart. The checkpoint is `{ partitions: [{ partition, state }] }`, owned by the library:
+
+- **New partition:** it receives `null` and starts from the source's normal beginning, for example a full history backfill, while the others resume.
+- **Removed partition:** it leaves the checkpoint; its rows stay loaded. Reading it again later starts it from `null`.
+- **Identity:** the partition list is not part of the source identity or the checkpoint binding, so adding or removing a partition never invalidates the others' checkpoints.
+- **Rows:** every record and every `DELETE` key must carry its partition's values; a row naming another partition, or none, fails the copy. Deduplicating copies must include the `partitionKey` fields in their `primaryKey`.
+- **Failures:** a copy is one transaction, so a failing partition rolls back every partition's rows and checkpoint.
+- **Full refresh:** partitions are read the same way without state, and an overwrite replaces the whole target with every listed partition.
+
+Partitions are declared without I/O: `partitionKey` fields must be distinct non-null scalar members of the primary key, and the list must be non-empty with no repeats.
+
 ### Apple Notes behavior
 
 All four streams are [snapshot streams](#snapshot-streams): incremental copies select no `cursorField` and use `append_dedup` keyed by `id`. Each run scans and validates the full collection through JXA, writes only new and changed records, and deletes records that disappeared. A change is detected from the record's content, so edits that keep an older `modifiedAt` are still loaded. Attachment reads contain metadata unless the target declares file-derived fields; files are exported only for new or changed attachments, and a changed file whose metadata did not change is not detected. Protected note content remains null.

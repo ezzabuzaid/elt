@@ -16,6 +16,7 @@ import {
   MarkdownDestination,
   type MarkdownFile,
   type MarkdownFolder,
+  type Partition,
   Pipeline,
   PipelineError,
   Source,
@@ -1221,7 +1222,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
     database
       .prepare('SELECT id FROM records')
       .all()
-      .map((row) => row['id']),
+      .map((row) => row.id),
     ['second'],
   );
   assert.throws(() => destination.table('_MAC_ELT_writers'), /reserved/);
@@ -1285,4 +1286,241 @@ test('a pipeline refuses copies that cannot share a target before running any', 
     /Target records is written by \{"copy":"upsert"\}/,
   );
   assert.equal(extracted, 0);
+});
+
+class Sites extends Source {
+  readonly identity = 'sites';
+  readonly received: [string, unknown][] = [];
+  readonly pages = new Stream({
+    name: 'pages',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        site: { type: 'string' },
+        path: { type: 'string' },
+        views: { type: 'integer' },
+      },
+      required: ['site', 'path', 'views'],
+    },
+    primaryKey: ['site', 'path'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+    partitionKey: ['site'],
+  });
+  protected readonly catalog = new Catalog([this.pages]);
+  constructor(
+    public sites: string[],
+    public pagesOf: Record<string, Record<string, unknown>[]>,
+  ) {
+    super();
+  }
+  protected override partitions() {
+    return this.sites.map((site) => ({ site }));
+  }
+  protected override async *observe({ streams }: SourceWatchOptions) {
+    yield streams;
+  }
+  protected override async *extract(
+    configuration: CopyConfiguration,
+    state: unknown,
+    partition: Partition | null,
+  ) {
+    const site = String(partition?.site);
+    this.received.push([site, state]);
+    const pages = this.pagesOf[site];
+    if (pages === undefined) throw new Error(`site ${site} is down`);
+    yield* diffSnapshot(configuration.stream, pages, state);
+  }
+}
+
+test('a partitioned stream resumes each partition from its own state', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  const page = (site: string, path: string, views = 1) => ({
+    site,
+    path,
+    views,
+  });
+  const source = new Sites(['a', 'b'], {
+    a: [page('a', '/1'), page('a', '/2')],
+    b: [page('b', '/1')],
+    c: [page('c', '/1')],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const copy = new Copy(source.pages, destination.table('pages'), {
+    id: 'pages',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['site', 'path'],
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [copy],
+  });
+  const rows = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT site, path, views FROM pages ORDER BY site, path')
+      .all()
+      .map((row) => `${row.site}${row.path}=${row.views}`);
+  };
+
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 3, deleted: 0 }]);
+  source.sites = ['a', 'c'];
+  source.pagesOf.a = [page('a', '/1', 5)];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 1 }]);
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+
+  const [a, , , c] = source.received;
+  assert.deepEqual([a?.[1], c], [null, ['c', null]]);
+  assert.deepEqual(
+    source.received.slice(2).map(([site, state]) => [site, state === null]),
+    [
+      ['a', false],
+      ['c', true],
+      ['a', false],
+      ['c', false],
+    ],
+  );
+  // b left the partition list: its checkpoint is gone, its rows stay.
+  assert.deepEqual(rows(), ['a/1=5', 'b/1=1', 'c/1=1']);
+  using state = new DatabaseSync(checkpoints.path, { readOnly: true });
+  const saved = state.prepare('SELECT state FROM checkpoints').get();
+  assert.deepEqual(
+    JSON.parse(String(saved?.state)).partitions.map(
+      (entry: { partition: Partition }) => entry.partition,
+    ),
+    [{ site: 'a' }, { site: 'c' }],
+  );
+});
+
+test('a partition failure or foreign row commits nothing for any partition', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const run = (source: Sites) =>
+    new Pipeline({
+      source,
+      destination,
+      checkpoints,
+      steps: [
+        new Copy(source.pages, destination.table('pages'), {
+          id: 'pages',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          primaryKey: ['site', 'path'],
+        }),
+      ],
+    }).run();
+
+  await assert.rejects(
+    run(new Sites(['a', 'b'], { a: [{ site: 'a', path: '/', views: 1 }] })),
+    /site b is down/,
+  );
+  await assert.rejects(
+    run(
+      new Sites(['a', 'b'], {
+        a: [{ site: 'a', path: '/', views: 1 }],
+        b: [{ site: 'a', path: '/other', views: 1 }],
+      }),
+    ),
+    /record for partition \{"site":"b"\} carries site "a"/,
+  );
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare("SELECT name FROM sqlite_schema WHERE name = 'pages'")
+      .all(),
+    [],
+  );
+  using state = new DatabaseSync(checkpoints.path, { readOnly: true });
+  assert.deepEqual(state.prepare('SELECT * FROM checkpoints').all(), []);
+});
+
+test('partition declarations and checkpoints are validated before extraction', async () => {
+  const stream = (partitionKey: string[]) =>
+    new Stream({
+      name: 'pages',
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          site: { type: ['string', 'null'] },
+          path: { type: 'string' },
+        },
+        required: ['site', 'path'],
+      },
+      primaryKey: ['site', 'path'],
+      supportedSyncModes: ['full_refresh'],
+      partitionKey,
+    });
+  assert.throws(() => stream(['views']), /distinct members of primaryKey/);
+  assert.throws(
+    () => stream(['site']),
+    /requires one non-null scalar schema type/,
+  );
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const read = (sites: string[], state: unknown = null) => {
+    const source = new Sites(sites, { a: [] });
+    return Array.fromAsync(
+      source.read(
+        new Copy(source.pages, destination.table('pages'), {
+          id: 'pages',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          primaryKey: ['site', 'path'],
+        }).configuration,
+        state,
+      ),
+    );
+  };
+  await assert.rejects(read([]), /requires at least one partition/);
+  await assert.rejects(read(['a', 'a']), /lists partition \["a"\] twice/);
+  for (const invalid of [
+    { partitions: {} },
+    { partitions: [{ partition: { site: 'a' } }] },
+    { partitions: [{ partition: { site: 1 }, state: null }] },
+    { partitions: [{ partition: { site: 'a' }, state: null }], extra: 1 },
+  ])
+    await assert.rejects(
+      read(['a'], invalid),
+      /Invalid partitioned checkpoint/,
+    );
+
+  const partitioned = new Stream({
+    name: 'pages',
+    jsonSchema: {
+      type: 'object',
+      properties: { site: { type: 'string' }, path: { type: 'string' } },
+      required: ['site', 'path'],
+    },
+    primaryKey: ['site', 'path'],
+    supportedSyncModes: ['full_refresh'],
+    partitionKey: ['site'],
+  });
+  assert.throws(
+    () =>
+      new Copy(partitioned, destination.table('pages'), {
+        syncMode: 'full_refresh',
+        destinationSyncMode: 'overwrite_dedup',
+        dedupPolicy: 'replace',
+        primaryKey: ['path'],
+      }).configuration.validateSelection(),
+    /partitioned by \["site"\]; select a primaryKey that includes them/,
+  );
 });

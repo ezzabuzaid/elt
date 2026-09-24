@@ -14,6 +14,7 @@ export {
   type WriterClaim,
   withClaim,
 } from './core/ownership.ts';
+export type { Partition, PartitionState } from './core/partition.ts';
 export { type CopyResult, Pipeline, PipelineError } from './core/pipeline.ts';
 export {
   type FieldSchema,

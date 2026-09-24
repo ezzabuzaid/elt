@@ -1,3 +1,4 @@
+import { Deduplication } from './deduplication.ts';
 import { FileReference } from './file-read.ts';
 
 export type SyncMode = 'full_refresh' | 'incremental';
@@ -13,6 +14,9 @@ export class Stream {
   readonly sourceDefinedCursor?: true;
   // Incremental reads may emit DELETE messages keyed by primaryKey.
   readonly emitsDeletes?: true;
+  // The source reads the stream once per value of these primaryKey fields and
+  // keeps each partition's state apart; every record carries its partition.
+  readonly partitionKey?: readonly string[];
 
   constructor({
     name,
@@ -22,6 +26,7 @@ export class Stream {
     supportsFileTransfer,
     sourceDefinedCursor,
     emitsDeletes,
+    partitionKey,
   }: {
     name: string;
     jsonSchema: Readonly<Record<string, unknown>>;
@@ -30,6 +35,7 @@ export class Stream {
     supportsFileTransfer?: true;
     sourceDefinedCursor?: true;
     emitsDeletes?: true;
+    partitionKey?: readonly string[];
   }) {
     if (!name || name.includes('\0'))
       throw new TypeError('Invalid stream name');
@@ -76,6 +82,19 @@ export class Stream {
     freeze(this.jsonSchema);
     this.primaryKey = Object.freeze([...primaryKey]);
     this.supportedSyncModes = Object.freeze([...supportedSyncModes]);
+    if (partitionKey !== undefined) {
+      if (
+        !Array.isArray(partitionKey) ||
+        partitionKey.length === 0 ||
+        new Set(partitionKey).size !== partitionKey.length ||
+        !partitionKey.every((field) => primaryKey.includes(field))
+      )
+        throw new TypeError(
+          'partitionKey fields must be distinct members of primaryKey',
+        );
+      this.partitionKey = Object.freeze([...partitionKey]);
+      new Deduplication(this, this.partitionKey);
+    }
     Object.freeze(this);
   }
   get file(): FileReference {

@@ -143,6 +143,14 @@ export class CopyConfiguration {
     ) {
       if (primaryKey === undefined)
         throw new TypeError('Deduplication requires an explicit primaryKey');
+      const { partitionKey } = this.stream;
+      if (
+        partitionKey !== undefined &&
+        !partitionKey.every((field) => primaryKey.includes(field))
+      )
+        throw new TypeError(
+          `Stream ${this.stream.name} is partitioned by ${JSON.stringify(partitionKey)}; select a primaryKey that includes them`,
+        );
       if (dedupPolicy === 'cursor_newer' && cursorField === undefined)
         throw new TypeError(
           sourceDefinedCursor
