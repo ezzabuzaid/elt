@@ -1,0 +1,29 @@
+{
+  "name": "google",
+  "sourceRoot": "apps/google/src",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "command": "tsc -p apps/google/tsconfig.json",
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "biome check --write apps/google/src apps/google/package.json apps/google/project.json apps/google/tsconfig.json",
+          "tsc -p apps/google/tsconfig.json --noEmit"
+        ],
+        "parallel": false
+      }
+    },
+    "start": {
+      "dependsOn": ["build"],
+      "command": "node apps/google/dist/main.js"
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test apps/google/dist/index.test.js"
+    }
+  }
+}

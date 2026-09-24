@@ -61,6 +61,30 @@ Omitting the entire third `Copy` argument selects `full_refresh` + `overwrite`. 
 
 These combinations follow Airbyte's [documented sync modes](https://docs.airbyte.com/platform/using-airbyte/core-concepts/sync-modes). Its platform [maps Full Refresh Overwrite + Deduped to `full_refresh` + `overwrite_dedup`](https://github.com/airbytehq/airbyte-platform/blob/main/airbyte-server/src/main/kotlin/io/airbyte/server/apis/publicapi/helpers/AirbyteCatalogHelper.kt). Its [serializer](https://github.com/airbytehq/airbyte-platform/blob/main/airbyte-commons-protocol/src/main/kotlin/io/airbyte/commons/protocol/DefaultProtocolSerializer.kt) maps `overwrite_dedup` to `append_dedup` for refresh-capable destinations, using generation metadata, and to `overwrite` otherwise. The separate [wire protocol enum](https://github.com/airbytehq/airbyte-protocol/blob/main/protocol-models/src/main/resources/airbyte_protocol/v0/airbyte_protocol.yaml) does not include `overwrite_dedup`. This library uses the platform vocabulary and an in-process protocol; it does not claim Airbyte wire compatibility. The default and tie policy below are explicit library choices.
 
+### Conflict policy for deduplicating loads
+
+`dedupPolicy` selects how `append_dedup` and `overwrite_dedup` resolve a conflict on the selected key:
+
+| `dedupPolicy` | Upsert guard | Use when |
+| --- | --- | --- |
+| `cursor_newer` (default) | `WHERE excluded.<cursor> > target.<cursor>` | The cursor advances independently of identity, so a lower cursor means a stale replay. |
+| `replace` | none | The upstream restates facts it already published, so the newest extraction is authoritative. |
+
+Leaving `dedupPolicy` unset keeps the guard and serializes into an unchanged checkpoint binding, so existing incremental copies are unaffected.
+
+Selecting `cursor_newer` with a cursor that is a member of `primaryKey` is rejected. A conflict on that key implies an equal cursor, so the guard could never fire and a restated record would load as a no-op that reports a count without changing the row. The rejection names the field and points at `replace`.
+
+```ts
+new Copy(source.searchAnalytics, destination.table('raw_search_analytics'), {
+  id: 'search-analytics',
+  syncMode: 'incremental',
+  destinationSyncMode: 'append_dedup',
+  dedupPolicy: 'replace',
+  cursorField: 'date',
+  primaryKey: ['date', 'query', 'page', 'country', 'device'],
+});
+```
+
 Capabilities are immutable metadata:
 
 ```ts
@@ -414,3 +438,142 @@ A read-only probe on macOS 26.6.2 (2026-09-21) checked Calendar's **File > Expor
 - **`.icbu`:** the archive contained `Calendar.sqlitedb` and `Info.plist`. Its five attachment records had no local file paths or embedded payloads. The database included travel-time columns, but every sampled value was null, so travel-time preservation remains unverified.
 
 These exports establish a route to additional metadata, not a complete attachment backup. This source does not import either format. Reading `.ics` metadata and retrieving referenced files would require an additional extractor and, where required, provider authentication. The archive's private database schema is not a stable public API. Personal probe exports were temporary and are not repository fixtures.
+
+## Google Search Console
+
+`SearchConsoleSource` reads one property through the `searchconsole:v1` API. `sites`, `sitemaps` and `searchAnalytics` are served under the original `webmasters/v3` path prefix; URL inspection is served from `v1` on the same host.
+
+Construct it with an authenticated requester from `googleSession`:
+
+```ts
+const requester = await googleSession({
+  clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+  scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
+});
+const source = new SearchConsoleSource({
+  requester,
+  siteUrl: 'sc-domain:example.com',
+});
+```
+
+### Authorization
+
+The app signs in with its own **Desktop-type** OAuth client, whose id and secret come from `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`. The read scope is `https://www.googleapis.com/auth/webmasters.readonly`. Search Console authorizes per property; the client's Google Cloud project supplies API quota, so it must have `searchconsole.googleapis.com` enabled.
+
+One-time setup in the Cloud Console (Google has no API for creating Desktop OAuth clients):
+
+1. Configure the OAuth consent screen as External and add the `webmasters.readonly` scope.
+2. Set the publishing status to **In production**. An External consent screen in **Testing** is issued refresh tokens that expire after 7 days unless every scope is one of name, email address and user profile, which `webmasters.readonly` is not.
+3. Create an OAuth client ID of type **Desktop app** and export its id and secret.
+
+`googleSession` then works like this:
+
+- **First run.** With no stored grant covering the scopes, it listens on `http://127.0.0.1:<random port>/callback`, prints the consent link (and opens it on macOS), and waits up to five minutes. Only a redirect carrying the flow's `state` is accepted; any other request gets `400` and the listener keeps waiting.
+- **Later runs.** The stored grant is reused without a browser. Each access-token refresh is written back before the request that caused it returns.
+- **New scopes.** When a later caller needs a scope the grant lacks, consent runs again for the union of old and new scopes, so no earlier permission is dropped.
+- **Revoked or expired grants.** When Google refuses the stored refresh token (revoked consent, an expired Testing-mode token, or a Workspace re-authentication demand), consent runs again.
+
+Grants are stored under `${XDG_CONFIG_HOME:-~/.config}/mac-elt/google/` as owner-only (`0600`) JSON files, written through a temporary file and a rename, so a crash leaves the previous grant intact. This is the same protection gcloud gives its own refresh token; the file is not encrypted. File and directory names are SHA-256 hashes, not account ids. To switch Google accounts, delete that directory; the next run asks for consent.
+
+Because a user credential is billed to the project that issued its OAuth client, no quota-project header is needed. The previous gcloud-import path failed with `SERVICE_DISABLED` / `accessNotConfigured` naming `projects/764086051850`, gcloud's own client project, until a quota project was named.
+
+### Streams
+
+| Stream | Extraction | Notes |
+| --- | --- | --- |
+| `sites` | Full refresh | Properties the grant can read. `siteUnverifiedUser` entries are dropped: Google lists them, but their history cannot be read. |
+| `sitemaps` | Full refresh | int64 counts arrive as decimal strings; omitted counts and flags mean zero and false. |
+| `sitemapContents` | Full refresh | The per-content-type rows nested in each sitemap, keyed by `sitemapPath` and `type`. |
+| `searchAnalyticsDaily` | Incremental | Site-wide totals per day **per report type**, with `searchType` as a column. Key `[date, searchType]`. |
+| `searchAnalyticsQueries` | Incremental | Per day and query, web results only. Key `[date, query]`. |
+| `searchAnalyticsPages` | Incremental | Per day and page, web results only. Key `[date, page]`. |
+| `searchAnalyticsCountries` | Full refresh | Country and device for a trailing `breakdownMonths` window (default 3). No date dimension, so it cannot be resumed. Key `[country, device]`. |
+| `urlInspection` | Full refresh | One request per URL. |
+| `urlInspectionSitemaps` / `urlInspectionReferrers` | Full refresh | The arrays nested in the index status result, keyed by `inspectionUrl` and `position`. |
+
+#### Why the grains are separate
+
+Google withholds rare queries for privacy, and the loss compounds with every dimension added to a request. Measured against one live property over 2026-09-10 to 2026-09-20:
+
+| Request | Rows | Clicks | Impressions |
+| --- | --- | --- | --- |
+| `['date']` | 11 | 58 | 1986 |
+| `['date','query','page','country','device']` | 749 | 37 | 1020 |
+
+A single wide request loses 36% of clicks and 49% of impressions, and no aggregation of it can recover the property's real totals. Each grain is therefore its own stream with its own window: `searchAnalyticsDaily` stays authoritative for totals, and the breakdowns are only comparable within themselves. Google additionally caps a property at 50,000 rows per day per search type and states the API "does not guarantee to return all data rows", so a high-cardinality request receives silent truncation rather than an error.
+
+Consequences for anything querying these tables: average `position` must be weighted by impressions over non-null rows, `ctr` must be recomputed as `SUM(clicks) / SUM(impressions)` rather than averaged, and query or page rows will not sum to the daily totals.
+
+#### Projection
+
+- `ApiDataRow.keys` is **positional** against requested `dimensions`; the API never names the columns. A row whose key count disagrees with the request is skipped rather than failing the copy.
+- Proto3 omits zero-valued fields, so an absent `clicks`, `impressions` or `ctr` loads as `0`.
+- `position` is **nullable**, and absent for a different reason: Discover and Google News report no rank at all, on every row including zero-traffic ones. Loading a missing rank as `0` would claim the best possible position. Verified live: all 380 Discover and all 380 Google News daily rows carry no position.
+- Sitemap `warnings`/`errors`/`submitted` are `string/int64` → parsed to integer, non-safe integers rejected.
+- `date` is a **PST calendar date**, not an instant (`format: 'date'`).
+- The 16-month history window is calendar arithmetic clamped to the end of a shorter month: sixteen months before 31 March is 30 November. Counting 480 days instead drifts by roughly a week and silently drops history.
+
+The report types change which rows exist, so they are part of the source identity (`search-console:<siteUrl>:<searchTypes>`). The window is not: it moves with the clock, and state resumes it.
+
+### Incremental search analytics
+
+Google revises recent metrics for roughly two to three days. The response metadata reports `firstIncompleteDate`, the first day still being collected, so the connector does not guess a lookback:
+
+- State is `{ date: '<last settled day>' }`.
+- A run resumes **at** the saved date rather than after it, so the last settled day is re-read. That re-read is the lookback.
+- Requests use `dataState: 'ALL'`, and the checkpoint advances to `firstIncompleteDate` minus one day, or to the end date when the API reports none.
+- Rows are paginated by `startRow` at 25000 per page until a short page.
+
+Because `date` is both the cursor and part of the key, each resumable grain requires `dedupPolicy: 'replace'`. With the default guard the restated day would be discarded. `searchAnalyticsDaily` requests one window per report type and keeps the earliest settled boundary across them, because report types settle independently.
+
+### URL inspection and quota
+
+URL inspection has no listing endpoint: each row costs one request naming one URL, against roughly 2000 per day and 600 per minute for a property. The connector derives its URL list from a `searchAnalytics` query grouped by `page` over `inspectionWindowDays` (default 28), sorted by impressions, capped at `inspectionLimit` (default 200). Inspections run sequentially, and one batch is shared by the three `urlInspection` streams so loading all of them spends the per-URL quota once. A rate limit that outlasts the retry policy becomes `SearchConsoleQuotaError` and fails the copy rather than truncating the set.
+
+### Retry
+
+Every Search Console call retries rate limits and transient server errors, then gives up loudly. Search Console allows 1200 queries per minute per site per user, and 40000 per minute and 30000000 per day per project.
+
+| Response | Retried | When retries run out |
+| --- | --- | --- |
+| `429` | Yes | `SearchConsoleQuotaError`, with `status` and `attempts` |
+| `403` with reason `rateLimitExceeded` or `userRateLimitExceeded` | Yes | `SearchConsoleQuotaError` |
+| Any other `403` (insufficient scope, disabled API) | No | The original error, unchanged |
+| `408`, `500`, `502`, `503`, `504` | Yes | The original error, unchanged |
+| Anything else | No | The original error, unchanged |
+
+The wait honors the server's `Retry-After`, in seconds or as an HTTP date. Without one, it doubles per attempt from `baseDelayMs` with full jitter, capped at `maxDelayMs`. A `Retry-After` longer than `maxDelayMs` fails at once instead of stalling the pipeline. The default policy is five attempts, one second base, one minute ceiling; pass `retry: { attempts, baseDelayMs, maxDelayMs }` to `SearchConsoleSource` to change it.
+
+google-auth-library's transport, gaxios, has its own retry, but it is off by default, excludes `POST` (which `searchAnalytics.query` and URL inspection both use), and never reads `Retry-After`. The retry therefore lives in `SearchConsoleApi`, over the library-agnostic `GoogleRequester`.
+
+### Watching
+
+Search Console publishes no change notification. `watch()` polls every `pollIntervalMs` (default six hours) and first reads a cheap summary grouped by `date`, invalidating the selected streams only when `firstIncompleteDate` moved or a day's clicks or impressions changed. A restatement that leaves daily totals identical while reshuffling the per-query breakdown is not detected by this probe.
+
+Aborting the watch signal cancels the probe's request and any `Retry-After` wait at once, so closing never sits out a rate-limit delay. The cancellation surfaces as the signal's `AbortError`, not the transport's wrapped error.
+
+### Verified and unverified
+
+Stream projection, positional key mapping, pagination, incremental checkpointing, restatement replacement, inspection batch sharing, watch gating, retry and abort behavior, the loopback consent flow, and grant reuse and re-consent are covered by tests using controlled API responses.
+
+Live verification on **2026-09-22** ran the pipeline twice against a real property (`sc-domain:ezz.sh`) into SQLite, over `google-auth-library` 11.1.0 and Node.js 26.8.1:
+
+- All seven streams loaded: 4 sites, 1 sitemap, 1 sitemap content row, 7736 analytics rows spanning 2025-07-21 to 2026-09-22, 9 inspected URLs, and 12 referrer rows.
+- The API reported `firstIncompleteDate: 2026-09-21`, and the checkpoint stopped at `2026-09-20`.
+- The second run extracted 135 rows rather than 7736, resuming at the checkpoint instead of re-reading the backfill window.
+- Row count and distinct key count both stayed at 7736, so the re-read days replaced their rows instead of duplicating them. `loaded_at` on 2026-09-20 through 2026-09-22 advanced to the second run while 2026-09-19 kept the first run's value, which is the replacement the default `cursor_newer` guard would have skipped.
+
+A second live run on the four-grain structure loaded 2280 daily rows across six report types, 3525 query rows, 1508 page rows and 261 country rows. All 380 Discover and all 380 Google News daily rows carried a null position, and the daily totals reproduced a standalone date-only request exactly (58 clicks, 1986 impressions for 2026-09-10 to 2026-09-20) where the former single wide stream saw 37 and 1020.
+
+Live verification on **2026-09-24** repeated it over the loopback consent flow, since the runs above used the since-removed gcloud credential. The client was an existing Desktop-type OAuth client in the same Cloud project as the API:
+
+- The first run found no grant, opened Google consent, stored the grant as owner-only files (`0700` directories, `0600` JSON, hashed names), then loaded all ten streams, resuming the analytics grains from the earlier checkpoint.
+- The second run reused the stored grant with no browser and finished in 80 seconds. It re-read three days (18 daily rows across six report types) from the `2026-09-21` checkpoint.
+- Every analytics table kept row count equal to distinct key count (2286 daily, 3571 query, 1514 page rows), so the re-read days replaced their rows.
+
+Not exercised live: `watch()` over a real polling interval, Markdown destinations, a property large enough to page past 25000 rows, and the quota ceiling on URL inspection.
+
+### Row ceiling
+
+Two limits apply, and only one loses data. A request returns at most 25000 rows; the connector pages past that with `startRow`, so nothing is lost. Separately, Google keeps at most 50000 rows per day per report type for a property and states the API "does not guarantee to return all data rows"; beyond that, rows are dropped with no signal. This is documented by Google, not observed: the live property's busiest day had 39 query rows.

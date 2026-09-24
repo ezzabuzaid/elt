@@ -18,7 +18,9 @@ description: Add or extend a data source in mac-elt. Use when implementing a new
 
 ## Implement extraction
 
-Keep `packages/elt` platform-independent: reusable contracts, pipeline, destinations, and checkpoint storage only. Apple connectors and native helpers belong under `apps/apple/src`; other integrations belong in their owning app. Work on Apple sources under `apps/apple/src/sources/<source>/`. Import ELT contracts through `elt`, never library-internal paths.
+Keep `packages/elt` platform-independent: reusable contracts, pipeline, destinations, and checkpoint storage only. Apple connectors and native helpers belong under `apps/apple/src`; Google connectors under `apps/google/src`; other integrations belong in their owning app. Work on Apple sources under `apps/apple/src/sources/<source>/`. Import ELT contracts through `elt`, never library-internal paths.
+
+A provider's authorization is the exception: it is shared by every connector for that provider and carries its own tests, so it belongs in a package named for the provider (`packages/google-auth`), not in `packages/elt` and not in one app.
 
 - Declare immutable streams in a `catalog`, at module level so instances share stream objects unless configuration changes the streams, and a stable source identity that distinguishes extraction configurations. The base `Source` provides metadata-only `discover()` and rejects any stream that is not the catalog's own object in `validate()` and `watch()`; never re-implement that check.
 - Put source-specific selection rules, such as a required cursor field, in `validateExtraction()`, without I/O. Implement lazy `extract(configuration, state)`, yielding `{ stream, data }` through the shared `Source.read()` path.

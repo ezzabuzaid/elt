@@ -78,7 +78,13 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
       ...this.table.columns.map((column) => column.quotedName),
       '"loaded_at"',
     ];
-    return `${super.insertSQL} ON CONFLICT (${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')}) DO UPDATE SET ${fields.map((field) => `${field} = excluded.${field}`).join(', ')} WHERE excluded.${this.cursor.quotedName} COLLATE BINARY > "_mac_elt_target".${this.cursor.quotedName}`;
+    // replace lets the newest extraction win, so a restated fact overwrites the
+    // loaded one; cursor_newer keeps the guard that rejects out-of-order replay.
+    const guard =
+      this.configuration.dedupPolicy === 'replace'
+        ? ''
+        : ` WHERE excluded.${this.cursor.quotedName} COLLATE BINARY > "_mac_elt_target".${this.cursor.quotedName}`;
+    return `${super.insertSQL} ON CONFLICT (${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')}) DO UPDATE SET ${fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guard}`;
   }
 
   protected override encode(record: unknown): SQLInputValue[] {

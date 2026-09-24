@@ -311,3 +311,190 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   );
   assert.equal(changes.listenerCount('change'), 0);
 });
+
+test('a cursor inside the primary key is rejected unless the policy replaces', async () => {
+  class MetricsSource extends Source {
+    readonly identity = 'metrics-test';
+    readonly metrics = new Stream({
+      name: 'metrics',
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          date: { type: 'string' },
+          query: { type: 'string' },
+          clicks: { type: 'number' },
+        },
+        required: ['date', 'query', 'clicks'],
+      },
+      supportedSyncModes: ['full_refresh', 'incremental'],
+    });
+
+    protected readonly catalog = new Catalog([this.metrics]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(configuration: CopyConfiguration) {
+      yield {
+        stream: configuration.stream.name,
+        data: { date: '2026-09-20', query: 'elt', clicks: 1 },
+      };
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-policy-'));
+  const source = new MetricsSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const guarded = {
+    id: 'metrics',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    cursorField: 'date',
+    primaryKey: ['date', 'query'],
+  } as const;
+  // A Copy is a declaration; the pipeline validates it before extracting.
+  // Each accepted selection needs its own id, because a checkpoint binding
+  // covers the whole configuration.
+  const validating = (
+    name: string,
+    modes: ConstructorParameters<typeof CopyConfiguration>[1] & { id?: string },
+  ) =>
+    new Pipeline({
+      source,
+      destination,
+      checkpoints,
+      steps: [
+        new Copy(source.metrics, destination.table(name), {
+          ...modes,
+          id: name,
+        }),
+      ],
+    }).run();
+
+  await assert.rejects(
+    validating('guarded', guarded),
+    /can never update a conflicting row/,
+  );
+  await assert.rejects(
+    validating('unknown', { ...guarded, dedupPolicy: 'newest' } as never),
+    /Unsupported dedupPolicy/,
+  );
+  await assert.rejects(
+    validating('misplaced', {
+      syncMode: 'full_refresh',
+      destinationSyncMode: 'overwrite',
+      dedupPolicy: 'replace',
+    }),
+    /only for deduplication loading/,
+  );
+  // Replacing accepts the equal cursor, and a cursor outside the primary key
+  // keeps guarding replay without any policy.
+  assert.deepEqual(
+    (await validating('replacing', { ...guarded, dedupPolicy: 'replace' })).map(
+      ({ count }) => count,
+    ),
+    [1],
+  );
+  assert.deepEqual(
+    (await validating('outside', { ...guarded, primaryKey: ['query'] })).map(
+      ({ count }) => count,
+    ),
+    [1],
+  );
+});
+
+test('replace loads a restated fact that cursor_newer discards', async () => {
+  let clicks = 12;
+  class RestatingSource extends Source {
+    readonly identity = 'restating-test';
+    readonly metrics = new Stream({
+      name: 'metrics',
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          date: { type: 'string' },
+          query: { type: 'string' },
+          clicks: { type: 'number' },
+        },
+        required: ['date', 'query', 'clicks'],
+      },
+      supportedSyncModes: ['full_refresh', 'incremental'],
+    });
+
+    protected readonly catalog = new Catalog([this.metrics]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(configuration: CopyConfiguration) {
+      // The same fact, re-extracted after the upstream restated its metrics.
+      yield {
+        stream: configuration.stream.name,
+        data: { date: '2026-09-20', query: 'elt', clicks },
+      };
+      yield {
+        type: 'STATE' as const,
+        stream: configuration.stream.name,
+        state: { date: '2026-09-20' },
+      };
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-restate-'));
+  const source = new RestatingSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'data.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const replacing = new Copy(source.metrics, destination.table('replacing'), {
+    id: 'replacing',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    cursorField: 'date',
+    primaryKey: ['date', 'query'],
+    dedupPolicy: 'replace',
+  });
+  // Same equal-cursor conflict, but guarded: the restatement is a no-op.
+  const guarding = new Copy(source.metrics, destination.table('guarding'), {
+    id: 'guarding',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    cursorField: 'date',
+    primaryKey: ['query'],
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [replacing, guarding],
+  });
+
+  assert.deepEqual(await pipeline.run(), [
+    { copy: replacing, count: 1 },
+    { copy: guarding, count: 1 },
+  ]);
+  clicks = 19;
+  // The replay is accepted by both copies; only the policy decides the row.
+  assert.deepEqual(await pipeline.run(), [
+    { copy: replacing, count: 1 },
+    { copy: guarding, count: 1 },
+  ]);
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  const rows = (table: string) =>
+    database
+      .prepare(`SELECT date, query, clicks FROM ${table}`)
+      .all()
+      .map((row) => ({ ...row }));
+  assert.deepEqual(rows('replacing'), [
+    { date: '2026-09-20', query: 'elt', clicks: 19 },
+  ]);
+  assert.deepEqual(rows('guarding'), [
+    { date: '2026-09-20', query: 'elt', clicks: 12 },
+  ]);
+});

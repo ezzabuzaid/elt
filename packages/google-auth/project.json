@@ -1,0 +1,25 @@
+{
+  "name": "google-auth",
+  "sourceRoot": "packages/google-auth/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "command": "tsc -p packages/google-auth/tsconfig.json",
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "biome check --write packages/google-auth/src packages/google-auth/package.json packages/google-auth/project.json packages/google-auth/tsconfig.json",
+          "tsc -p packages/google-auth/tsconfig.json --noEmit"
+        ],
+        "parallel": false
+      }
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test packages/google-auth/dist/*.test.js"
+    }
+  }
+}

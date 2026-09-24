@@ -1,0 +1,12 @@
+{
+  "name": "google",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "elt": "0.0.1",
+    "google-auth": "0.0.1"
+  },
+  "devDependencies": {
+    "google-auth-library": "^11.1.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "google-auth",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./scopes": {
+      "types": "./dist/scopes.d.ts",
+      "default": "./dist/scopes.js"
+    }
+  },
+  "dependencies": {
+    "google-auth-library": "^11.1.0"
+  },
+  "devDependencies": {
+    "msw": "^2.15.0"
+  }
+}

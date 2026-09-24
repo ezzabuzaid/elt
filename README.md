@@ -4,7 +4,7 @@
 
 `elt` is a TypeScript library for declaring and running ELT pipelines. Connect a source stream to a destination with `Copy`, then execute the transfers with `Pipeline`. It supports full refresh, incremental loading with persistent checkpoints, native change watching, and attachment extraction.
 
-The core uses Node.js APIs with no runtime dependencies. The included Apple connectors use macOS scripting and EventKit. Transformations, queries, and search indexes belong in the application consuming the exported data.
+The core uses Node.js APIs with no runtime dependencies. The included Apple connectors use macOS scripting and EventKit; the Google connectors call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
 
 [Quick start](#quick-start) · [Incremental sync](#incremental-sync) · [Watch for changes](#watch-for-changes) · [Reference](docs/reference.md)
 
@@ -15,13 +15,14 @@ The core uses Node.js APIs with no runtime dependencies. The included Apple conn
 | Apple Notes | Accounts, folders, notes, and attachments | Full refresh; incremental for notes and attachments | Native filesystem notifications over Notes storage |
 | Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, and scripting metadata | Full refresh within a required date range | EventKit notifications |
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh | EventKit notifications |
+| Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection | Full refresh; incremental for the dated analytics grains | Change-gated polling (the API publishes no notification) |
 
 Both destinations support overwrite, append, and deduplication:
 
 - **SQLite:** strict tables with inferred or explicitly selected columns, including text and attachment bytes.
 - **Markdown:** one document per stream or one document per record, with managed append and deduplication.
 
-See the reference for [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
+See the reference for [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Search Console streams](docs/reference.md#google-search-console), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
 
 ## Quick start
 
@@ -229,6 +230,17 @@ Extraction and loading are separate choices:
 
 Other combinations are rejected. An explicit options object requires both mode fields. Deduplication requires `primaryKey` and `cursorField`; incremental copies also require a stable `id` and checkpoint store.
 
+### Restated data
+
+A deduplicating load resolves a key conflict with `dedupPolicy`:
+
+| `dedupPolicy` | Behavior |
+| --- | --- |
+| `cursor_newer` (default) | Keep the row whose cursor sorts highest. Rejects out-of-order replay. |
+| `replace` | Let the newest extraction win. Required when an upstream restates facts it already published. |
+
+A cursor that is itself part of the primary key is equal on every conflict, so `cursor_newer` could never update the conflicting row and a restatement would load as a silent no-op. Selecting that combination is rejected; choose `replace` instead. Google Search Console is the worked example: it revises recent metrics, and its rows are identified by the same `date` it is ordered by.
+
 ## Failure behavior
 
 - Copies execute in order. Each SQLite copy uses a transaction; Markdown stages output before publication. Failures before commit/publication preserve that copy's previous output. Earlier successful copies remain committed.
@@ -255,21 +267,23 @@ Manage permissions in **System Settings → Privacy & Security**. Calendar and R
 ## Development
 
 ```text
-packages/elt/   Core contracts, pipelines, destinations, and checkpoint storage
-apps/apple/    Apple connectors, native bridges, document parser, and example app
-docs/          Detailed behavior and native API research
+packages/elt/          Core contracts, pipelines, destinations, and checkpoint storage
+packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
+apps/apple/            Apple connectors, native bridges, document parser, and example app
+apps/google/           Google connectors and example app
+docs/                  Detailed behavior and native API research
 ```
 
 Run checks from the repository root:
 
 ```sh
-npx nx run elt:typecheck
-npx nx run apple:typecheck
-npx nx run elt:test
-npx nx run apple:test
+npx nx run-many -t typecheck
+npx nx run-many -t test
 ```
 
 Typecheck targets also format and lint. Test targets build first and use Node's test runner. Apple tests require macOS and an environment that permits native filesystem notifications; they use temporary files and unsaved/process-local EventKit objects, without modifying personal app data.
+
+Run the Search Console example with `GOOGLE_OAUTH_CLIENT_ID=… GOOGLE_OAUTH_CLIENT_SECRET=… npx nx run google:start -- sc-domain:example.com`. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup.
 
 Build with `npx nx run apple:build` before running Apple scripts. Nx builds the `elt` dependency first. Run the generated JavaScript: Node's default TypeScript stripping does not support the parameter properties used here.
 

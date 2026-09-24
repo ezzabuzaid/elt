@@ -3,6 +3,12 @@ import type { DestinationSyncMode } from './destination.ts';
 import { FileRead } from './file-read.ts';
 import { Stream, type SyncMode } from './stream.ts';
 
+// How a deduplicating load resolves a conflict on the primary key.
+// cursor_newer keeps the row whose cursor sorts highest, which protects against
+// out-of-order replay. replace lets the newest extraction win, which is what a
+// source that restates already-loaded facts requires.
+export type DedupPolicy = 'cursor_newer' | 'replace';
+
 // A copy's immutable selection, separate from discovery metadata and runtime state.
 export class CopyConfiguration {
   readonly stream: Stream;
@@ -11,6 +17,9 @@ export class CopyConfiguration {
   readonly destinationSyncMode: DestinationSyncMode;
   readonly cursorField?: string;
   readonly primaryKey?: readonly string[];
+  // Left undefined when unset so this selection serializes into an unchanged
+  // checkpoint binding; every reader treats undefined as cursor_newer.
+  readonly dedupPolicy?: DedupPolicy;
 
   constructor(
     from: Stream,
@@ -19,11 +28,13 @@ export class CopyConfiguration {
       destinationSyncMode,
       cursorField,
       primaryKey,
+      dedupPolicy,
     }: {
       syncMode: SyncMode;
       destinationSyncMode: DestinationSyncMode;
       cursorField?: string;
       primaryKey?: readonly string[];
+      dedupPolicy?: DedupPolicy;
     },
     fileReads: readonly FileRead[] = [],
   ) {
@@ -50,6 +61,7 @@ export class CopyConfiguration {
     this.cursorField = cursorField;
     this.primaryKey =
       primaryKey === undefined ? undefined : Object.freeze([...primaryKey]);
+    this.dedupPolicy = dedupPolicy;
     Object.freeze(this);
   }
 
@@ -66,7 +78,13 @@ export class CopyConfiguration {
   }
   validateSelection(): void {
     for (const read of this.fileReads) read.validate(this.stream);
-    const { syncMode, destinationSyncMode, cursorField, primaryKey } = this;
+    const {
+      syncMode,
+      destinationSyncMode,
+      cursorField,
+      primaryKey,
+      dedupPolicy,
+    } = this;
     if (syncMode !== 'full_refresh' && syncMode !== 'incremental')
       throw new TypeError(`Unsupported syncMode: ${syncMode}`);
     if (
@@ -87,6 +105,12 @@ export class CopyConfiguration {
     )
       throw new TypeError('Incremental extraction requires cursorField');
     if (
+      dedupPolicy !== undefined &&
+      dedupPolicy !== 'cursor_newer' &&
+      dedupPolicy !== 'replace'
+    )
+      throw new TypeError(`Unsupported dedupPolicy: ${dedupPolicy}`);
+    if (
       destinationSyncMode === 'append_dedup' ||
       destinationSyncMode === 'overwrite_dedup'
     ) {
@@ -95,8 +119,19 @@ export class CopyConfiguration {
           'Deduplication requires explicit primaryKey and cursorField',
         );
       new Deduplication(this.stream, primaryKey, cursorField);
-    } else if (primaryKey !== undefined) {
-      throw new TypeError('Select primaryKey only for deduplication loading');
+      // A cursor inside the primary key is equal on every conflict, so the
+      // cursor_newer guard can never fire and restated facts load as no-ops.
+      if (dedupPolicy !== 'replace' && primaryKey.includes(cursorField))
+        throw new TypeError(
+          `Cursor field ${cursorField} is part of the primary key, so cursor_newer can never update a conflicting row; select dedupPolicy 'replace' to let the newest extraction win`,
+        );
+    } else {
+      if (primaryKey !== undefined)
+        throw new TypeError('Select primaryKey only for deduplication loading');
+      if (dedupPolicy !== undefined)
+        throw new TypeError(
+          'Select dedupPolicy only for deduplication loading',
+        );
     }
     if (
       syncMode === 'full_refresh' &&

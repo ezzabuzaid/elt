@@ -1,6 +1,9 @@
 export { Catalog } from './core/catalog.ts';
 export { Copy } from './core/copy.ts';
-export { CopyConfiguration } from './core/copy-configuration.ts';
+export {
+  CopyConfiguration,
+  type DedupPolicy,
+} from './core/copy-configuration.ts';
 export { Destination, type DestinationSyncMode } from './core/destination.ts';
 export { DocumentParser } from './core/document-parser.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
