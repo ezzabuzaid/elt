@@ -468,13 +468,37 @@ A read-only probe on macOS 26.6.2 (2026-09-21) checked Calendar's **File > Expor
 
 These GUI exports are not used. The ICS streams read the same iCalendar data per item through EventKit instead. The archive's private database schema is not a stable public API. Personal probe exports were temporary and are not repository fixtures.
 
+### Attachment files
+
+`icsAttachments` reads attachment bytes only when the target asks for them, and remote references need a fetcher. For Google calendars, `googleCalendarAttachments` from the Google app downloads Drive files (native Docs, Sheets and Slides as PDF) and Gmail message attachments. It needs a grant with `drive.readonly` and `gmail.readonly` from an OAuth client whose project enables the Drive and Gmail APIs:
+
+```ts
+const requester = await googleSession({
+  clientId, clientSecret,
+  scopes: [GOOGLE_DRIVE_READONLY_SCOPE, GMAIL_READONLY_SCOPE],
+});
+const calendar = new AppleCalendarSource({
+  startAt, endAt,
+  attachments: googleCalendarAttachments(requester),
+});
+new Copy(calendar.icsAttachments, sqlite.table('attachments', (c) => [
+  c.text('uri'), c.text('filename'),
+  c.blob('bytes').from(calendar.icsAttachments.file),
+]));
+```
+
+A Drive file the account cannot open (HTTP 404, or a 403 that is not a configuration error) loads with a `null` file. A disabled API, a missing scope, or any other failure fails the copy.
+
 ### ICS export verification
 
 On **2026-09-24** (macOS 26.6.2, Asia/Amman) read-only probes exported every item within ±180 days (960 items) and printed only property names and counts:
 
 - Both private selectors exist. No export was empty, and the largest item was 92 KB.
 - Every detached item's export carries its own `RECURRENCE-ID` with `TZID`; a recurring master's export can also include its override `VEVENT`s.
-- Vendor properties arrive intact: `X-GOOGLE-CONFERENCE` (33 events), `X-GOOGLE-CALENDAR-CONTENT-TITLE`, `X-MICROSOFT-CDO-*`, and `X-APPLE-STRUCTURED-LOCATION` with its parameters. No `ATTACH` occurred in that window. A second probe walked the whole history (2005–2030 in three-year windows, 3,286 items) and found 4 items carrying 5 `ATTACH` properties from 2021–2023. Reading those days through `AppleCalendarSource` loaded all 5 as `icsProperties` rows with 13 `icsParameters` rows: 3 `FMTTYPE`, 5 `VALUE=URI` and 5 `X-APPLE-FILENAME`. Three values are HTTPS URLs and two are relative references that need provider context, matching the GUI export above. None carried inline bytes.
+- Vendor properties arrive intact: `X-GOOGLE-CONFERENCE` (33 events), `X-GOOGLE-CALENDAR-CONTENT-TITLE`, `X-MICROSOFT-CDO-*`, and `X-APPLE-STRUCTURED-LOCATION` with its parameters. No `ATTACH` occurred in that window. A second probe walked the whole history (2005–2030 in three-year windows, 3,286 items) and found 4 items carrying 5 `ATTACH` properties from 2021–2023. Reading those days through `AppleCalendarSource` loaded all 5 as `icsProperties` rows with 13 `icsParameters` rows: 3 `FMTTYPE`, 5 `VALUE=URI` and 5 `X-APPLE-FILENAME`. Three values are HTTPS URLs and two are relative references that need provider context, matching the GUI export above. None carried inline bytes. Downloading them on **2026-09-24** through `googleCalendarAttachments`, with one account (the calendars' own) and a Desktop client of the project that enables Search Console, Drive and Gmail:
+
+- Both Gmail references downloaded byte-for-byte. A 102,262-byte PNG and a 115,390-byte PDF matched the Gmail message parts' sizes and file signatures, confirming that `attid=0.N…` maps to part `N…` of message `th`.
+- The three Drive references returned 404 for the account. Its Drive, including trash and shared drives, held no file with any of their names, so the files had been deleted. They loaded as rows with a `null` file.
 - Exporting the same items from two processes three seconds apart changed only `DTSTAMP`, for all 280 events, and never the structure. `DTSTAMP` is the export time, so the streams omit it.
 
 A live run then saved a temporary weekly event with a URL, a location and an alarm, and detached its second occurrence. It ran `events` plus the three ICS streams incrementally into SQLite:
