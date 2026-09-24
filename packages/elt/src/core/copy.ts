@@ -4,6 +4,7 @@ import type { Destination } from './destination.ts';
 import type { Source } from './source.ts';
 import type { Stream } from './stream.ts';
 import { Target as DestinationTarget } from './target.ts';
+import type { WriteCount } from './writer.ts';
 
 // One configured transfer from a source stream to a destination declaration.
 export class Copy<Target extends DestinationTarget> {
@@ -55,7 +56,7 @@ export class Copy<Target extends DestinationTarget> {
     source: Source,
     destination: Destination<Target>,
     checkpoints?: SQLiteCheckpointStore,
-  ): Promise<number> {
+  ): Promise<WriteCount> {
     this.validate(source, destination, checkpoints);
     const write = (state: unknown) =>
       destination.write(
@@ -78,6 +79,7 @@ export class Copy<Target extends DestinationTarget> {
         write,
       );
     }
-    return (await write(null)).count;
+    const { count, deleted } = await write(null);
+    return { count, deleted };
   }
 }

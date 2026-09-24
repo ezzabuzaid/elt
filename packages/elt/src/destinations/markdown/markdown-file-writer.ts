@@ -8,7 +8,11 @@ import {
 } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CopyConfiguration } from '../../core/copy-configuration.ts';
-import { CommittedWriteError } from '../../core/writer.ts';
+import {
+  CommittedWriteError,
+  type WriteCount,
+  type WriteOperation,
+} from '../../core/writer.ts';
 import { MarkdownDocument } from './markdown-document.ts';
 import type { MarkdownFile } from './markdown-file.ts';
 import { MarkdownWriter } from './markdown-writer.ts';
@@ -24,9 +28,9 @@ export class MarkdownFileWriter extends MarkdownWriter {
   }
 
   protected override async writeRecords(
-    records: AsyncIterable<unknown>,
-  ): Promise<number> {
-    let committed: number | undefined;
+    operations: AsyncIterable<WriteOperation>,
+  ): Promise<WriteCount> {
+    let committed: WriteCount | undefined;
     try {
       const { stream, target } = this;
       const path = join(this.path, target.name);
@@ -41,7 +45,10 @@ export class MarkdownFileWriter extends MarkdownWriter {
             this.configuration.destinationSyncMode === 'append_dedup')
             ? MarkdownDocument.records(await readFile(path, 'utf8'))
             : [];
-        const { rows, count } = await this.collect(records, previous);
+        const { rows, count, deleted } = await this.collect(
+          operations,
+          previous,
+        );
         await using staging = await mkdtempDisposable(
           join(this.path, '.markdown-'),
         );
@@ -54,8 +61,8 @@ export class MarkdownFileWriter extends MarkdownWriter {
         }
         await this.assertManagedFile(path);
         await rename(stagedPath, path);
-        committed = count;
-        return count;
+        committed = { count, deleted };
+        return committed;
       } finally {
         await rmdir(lock);
       }

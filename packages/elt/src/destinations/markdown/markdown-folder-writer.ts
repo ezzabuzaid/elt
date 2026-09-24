@@ -13,7 +13,11 @@ import {
 } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CopyConfiguration } from '../../core/copy-configuration.ts';
-import { CommittedWriteError } from '../../core/writer.ts';
+import {
+  CommittedWriteError,
+  type WriteCount,
+  type WriteOperation,
+} from '../../core/writer.ts';
 import { MarkdownDocument } from './markdown-document.ts';
 import { MarkdownFolder } from './markdown-folder.ts';
 import { MarkdownWriter } from './markdown-writer.ts';
@@ -29,9 +33,9 @@ export class MarkdownFolderWriter extends MarkdownWriter {
   }
 
   protected override async writeRecords(
-    records: AsyncIterable<unknown>,
-  ): Promise<number> {
-    let committed: number | undefined;
+    operations: AsyncIterable<WriteOperation>,
+  ): Promise<WriteCount> {
+    let committed: WriteCount | undefined;
     try {
       const { stream, target } = this;
       const path = join(this.path, target.name);
@@ -56,7 +60,10 @@ export class MarkdownFolderWriter extends MarkdownWriter {
             );
           }
         }
-        const { rows, count } = await this.collect(records, previousRows);
+        const { rows, count, deleted } = await this.collect(
+          operations,
+          previousRows,
+        );
         const { deduplication } = this;
         const staging = await mkdtemp(join(this.path, '.markdown-'));
         const next = join(staging, 'next');
@@ -105,8 +112,8 @@ export class MarkdownFolderWriter extends MarkdownWriter {
             }
             throw error;
           }
-          committed = count;
-          return count;
+          committed = { count, deleted };
+          return committed;
         } finally {
           // Never dispose the only remaining copy when restoration fails.
           if (!preserveBackup)

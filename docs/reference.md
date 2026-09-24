@@ -94,6 +94,17 @@ sqlite.supportedDestinationSyncModes;
 // ['overwrite', 'append', 'append_dedup', 'overwrite_dedup']
 ```
 
+### Deletions
+
+A stream that declares `emitsDeletes` can send `DELETE` messages during incremental reads, each carrying exactly the stream's `primaryKey` fields. Such copies must use `append_dedup` with the stream's own `primaryKey`, so the destination can find the row:
+
+| Destination | Effect of `DELETE` |
+| --- | --- |
+| SQLite `append_dedup` | Deletes the row with that key inside the copy's transaction. |
+| Markdown `append_dedup` file or folder | Drops the record before the target is republished. |
+
+Records and deletions apply in the order the source emits them, and deleting an absent key is a no-op, so replaying a run is safe. A deletion is rejected when the stream does not declare `emitsDeletes`, when its key is malformed, or when the load does not deduplicate. Results report accepted deletions as `deleted`, separately from `count`.
+
 ## Identity, cursors, and schemas
 
 Three separate concepts control identity:
@@ -102,7 +113,7 @@ Three separate concepts control identity:
 - `Copy` options `primaryKey: ['id']` or `['tenantId', 'id']` select the identity used by a deduplicating load.
 - `.primaryKey()` on a SQLite column is a physical constraint. Conflicting append operations fail and roll back that copy; they never silently become updates.
 
-Both deduplication modes require explicit `primaryKey` and `cursorField`. Fields must be top-level scalar properties declared with one non-null JSON Schema type. Keys support text, finite numbers, safe integers, and booleans; cursors support text or numbers. Missing/null values fail. Composite keys are supported; nested field paths and nullable key/cursor schemas are not. Explicit SQL projections must include all selected keys and the cursor with matching types.
+Both deduplication modes require an explicit `primaryKey`. `cursor_newer` also requires `cursorField`; `replace` works without one. A stream with `sourceDefinedCursor` has no cursor field: its copies omit `cursorField`, and its deduplicating loads default to and require `replace`. Fields must be top-level scalar properties declared with one non-null JSON Schema type. Keys support text, finite numbers, safe integers, and booleans; cursors support text or numbers. Missing/null values fail. Composite keys are supported; nested field paths and nullable key/cursor schemas are not. Explicit SQL projections must include all selected keys and the cursor with matching types.
 
 The greatest cursor wins. Older arrivals are ignored after validation. Equal cursors retain the first stored record, including across runs. This makes replay deterministic; a source that changes content without changing its cursor cannot distinguish those versions. Text uses UTF-8 byte order, matching SQLite `BINARY`; timestamps should use one canonical UTC ISO format. All observations are validated, even losing versions.
 
@@ -110,7 +121,7 @@ SQLite inference maps flat JSON Schema fields: `string` â†’ `TEXT`, `integer` â†
 
 SQLite creates strict tables. Existing SQL constraints remain authoritative; there are no schema migrations. Deduplication additionally verifies stored key/cursor column types and rejects null keys/cursors. It uses native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html) and a reserved `_mac_elt_dedup_*` unique index. Changing to ordinary append/overwrite removes that mode-owned index while retaining explicit constraints. An existing append-history table with repeated keys must be replaced with `overwrite_dedup` before incremental deduplication can start.
 
-Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The count returned for a committed copy is the number of accepted input observations, including deduplication no-ops; it is not the final row count.
+Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The `count` returned for a committed copy is the number of accepted input observations, including deduplication no-ops, and `deleted` is the number of accepted deletions, including keys that were already absent; neither is the final row count.
 
 ## Incremental extraction and checkpoints
 
@@ -146,9 +157,10 @@ const controller = new AbortController();
 
 for await (const results of pipeline.watch({ signal: controller.signal })) {
   // These copies have already extracted, loaded, and saved their checkpoints.
-  console.table(results.map(({ copy, count }) => ({
+  console.table(results.map(({ copy, count, deleted }) => ({
     stream: copy.from.name,
     processed: count,
+    deleted,
   })));
 }
 
@@ -162,7 +174,7 @@ The source owns change detection:
 - **Calendar and Reminders:** a persistent OSA process subscribes to native `EKEventStoreChangedNotification` notifications. These invalidate all selected streams because EventKit does not identify individual changes. The notification covers the whole event store, so a Calendar edit also re-extracts a Reminders watch, and a Reminders edit also re-extracts a Calendar watch. The existing EventKit permission requirements apply. Full-refresh overwrite reconciles deletions on the next successful pass.
 - **Notes:** Node's native `fs.watch` watches `~/Library/Group Containers/group.com.apple.notes` recursively and triggers the existing JXA reader. This is a filesystem invalidation hint over private Notes storage, not a public note-change subscription. It can also fire for unrelated storage activity, and signals concern persisted changes rather than every keystroke. It requires access to that protected directory, potentially Full Disk Access for the host process, as well as the existing Notes Automation permission for extraction. Denied access fails with an actionable error; there is no polling fallback. The reader still scans the collection, and incremental mode still does not remove deleted notes.
 
-Runs are serial. Notifications received during extraction or while the caller handles a result are coalesced into a pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. Every yielded result has completed loading and checkpoint persistence; `count` still counts accepted observations, including deduplication no-ops. A load failure raises `PipelineError`; a watcher failure is propagated. No automatic retries or periodic reconciliation are added.
+Runs are serial. Notifications received during extraction or while the caller handles a result are coalesced into a pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. Every yielded result has completed loading and checkpoint persistence; `count` and `deleted` still count accepted observations, including deduplication no-ops and absent keys. A load failure raises `PipelineError`; a watcher failure is propagated. No automatic retries or periodic reconciliation are added.
 
 Aborting stops native observation, lets an in-flight pass finish and yield its result, and prevents another pass. Breaking the loop also closes the watcher. A new watch session subscribes and performs an initial pass again, using the saved checkpoints. Notifications themselves are not durable, and the source's existing snapshot/cursor limitations still apply.
 
@@ -267,9 +279,9 @@ try {
   await pipeline.run();
 } catch (error) {
   if (!(error instanceof PipelineError)) throw error; // Preflight errors are direct.
-  console.log(error.completed);      // Earlier successful { copy, count } results.
-  console.log(error.failedCopy);     // The copy that stopped execution.
-  console.log(error.committedCount); // Accepted records if it committed before an error.
+  console.log(error.completed);  // Earlier successful { copy, count, deleted } results.
+  console.log(error.failedCopy); // The copy that stopped execution.
+  console.log(error.committed);  // { count, deleted } if it committed before an error.
   console.error(error.cause);        // Original error, or CommittedWriteError with its cause.
 }
 ```

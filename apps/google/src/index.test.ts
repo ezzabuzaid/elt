@@ -81,7 +81,7 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
 
   assert.deepEqual(
     await new Pipeline({ source, destination, steps: [copy] }).run(),
-    [{ copy, count: 1 }],
+    [{ copy, count: 1, deleted: 0 }],
   );
   using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
@@ -439,13 +439,17 @@ test('watching invalidates only when the property actually changed', async () =>
   });
 
   try {
-    assert.deepEqual((await watching.next()).value, [{ copy, count: 1 }]);
+    assert.deepEqual((await watching.next()).value, [
+      { copy, count: 1, deleted: 0 },
+    ]);
     const afterFirst = calls.length;
     // The property is unchanged, so ticks probe without ever extracting.
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.ok(calls.length > afterFirst, 'the watcher keeps probing');
     clicks = 19;
-    assert.deepEqual((await watching.next()).value, [{ copy, count: 1 }]);
+    assert.deepEqual((await watching.next()).value, [
+      { copy, count: 1, deleted: 0 },
+    ]);
     using database = new DatabaseSync(destination.path, { readOnly: true });
     assert.equal(database.prepare('SELECT clicks FROM rows').get()?.clicks, 19);
   } finally {
@@ -994,7 +998,9 @@ test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
     signal: controller.signal,
   });
 
-  assert.deepEqual((await watching.next()).value, [{ copy, count: 1 }]);
+  assert.deepEqual((await watching.next()).value, [
+    { copy, count: 1, deleted: 0 },
+  ]);
   await limited.promise;
   const started = performance.now();
   controller.abort();

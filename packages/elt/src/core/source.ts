@@ -23,7 +23,17 @@ export type StateMessage = {
   readonly state: unknown;
 };
 
-export type SourceMessage = RecordMessage | StateMessage;
+export type KeyValue = string | number | boolean;
+
+// Removes the destination row with this primary key. Only streams that declare
+// emitsDeletes may send it, and only deduplicating loads can apply it.
+export type DeleteMessage = {
+  readonly type: 'DELETE';
+  readonly stream: string;
+  readonly key: Readonly<Record<string, KeyValue>>;
+};
+
+export type SourceMessage = RecordMessage | StateMessage | DeleteMessage;
 
 export abstract class Source {
   abstract readonly identity: string;

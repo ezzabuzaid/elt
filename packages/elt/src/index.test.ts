@@ -12,12 +12,16 @@ import {
   isCalendarDate,
   isTimestamp,
   MarkdownDestination,
+  type MarkdownFile,
+  type MarkdownFolder,
   Pipeline,
   PipelineError,
   Source,
+  type SourceMessage,
   type SourceWatchOptions,
   SQLiteCheckpointStore,
   SQLiteDestination,
+  type SQLiteTable,
   Stream,
   validateRecords,
 } from './index.ts';
@@ -62,7 +66,7 @@ test('the public ELT API copies source records into SQLite', async () => {
     steps: [copy],
   }).run();
 
-  assert.deepEqual(results, [{ copy, count: 1 }]);
+  assert.deepEqual(results, [{ copy, count: 1, deleted: 0 }]);
   using database = new DatabaseSync(destination.path, { readOnly: true });
   const row = database.prepare('SELECT id, name FROM records').get();
   assert.ok(row);
@@ -281,8 +285,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     changes.emit('change', [source.records]);
   });
   assert.deepEqual((await watching.next()).value, [
-    { copy, count: 1 },
-    { copy: other, count: 1 },
+    { copy, count: 1, deleted: 0 },
+    { copy: other, count: 1, deleted: 0 },
   ]);
   using database = new DatabaseSync(destination.path, { readOnly: true });
   using state = new DatabaseSync(checkpoints.path, { readOnly: true });
@@ -298,7 +302,9 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     );
   assert.equal(loadedVersion(), 1);
   assert.deepEqual(savedVersion(), { version: 1 });
-  assert.deepEqual((await watching.next()).value, [{ copy, count: 1 }]);
+  assert.deepEqual((await watching.next()).value, [
+    { copy, count: 1, deleted: 0 },
+  ]);
   assert.equal(loadedVersion(), 2);
   assert.deepEqual(savedVersion(), { version: 2 });
   assert.deepEqual(previousStates, [null, null, { version: 1 }]);
@@ -307,7 +313,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   version = 3;
   changes.emit('change', [source.records]);
   for await (const results of watching) {
-    assert.deepEqual(results, [{ copy, count: 1 }]);
+    assert.deepEqual(results, [{ copy, count: 1, deleted: 0 }]);
     assert.equal(loadedVersion(), 3);
     assert.deepEqual(savedVersion(), { version: 3 });
     break;
@@ -352,8 +358,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const inFlight = pipeline.watch({ signal: stopping.signal });
   reads.once('read', () => stopping.abort());
   assert.deepEqual((await inFlight.next()).value, [
-    { copy, count: 1 },
-    { copy: other, count: 1 },
+    { copy, count: 1, deleted: 0 },
+    { copy: other, count: 1, deleted: 0 },
   ]);
   assert.equal(loadedVersion(), 5);
   assert.deepEqual(savedVersion(), { version: 5 });
@@ -540,14 +546,14 @@ test('replace loads a restated fact that cursor_newer discards', async () => {
   });
 
   assert.deepEqual(await pipeline.run(), [
-    { copy: replacing, count: 1 },
-    { copy: guarding, count: 1 },
+    { copy: replacing, count: 1, deleted: 0 },
+    { copy: guarding, count: 1, deleted: 0 },
   ]);
   clicks = 19;
   // The replay is accepted by both copies; only the policy decides the row.
   assert.deepEqual(await pipeline.run(), [
-    { copy: replacing, count: 1 },
-    { copy: guarding, count: 1 },
+    { copy: replacing, count: 1, deleted: 0 },
+    { copy: guarding, count: 1, deleted: 0 },
   ]);
 
   using database = new DatabaseSync(destination.path, { readOnly: true });
@@ -655,5 +661,238 @@ test('Markdown file and folder targets honor the deduplication policy', async ()
   assert.deepEqual(
     await Promise.all(targets.map((target) => clicksIn(target.name))),
     [[19], [19], [12], [12]],
+  );
+});
+
+test('deletions remove keyed rows from deduplicating SQLite and Markdown targets', async () => {
+  let messages: SourceMessage[] = [];
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, name: { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  class DeletingSource extends Source {
+    readonly identity = 'deleting-test';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract() {
+      yield* messages;
+      yield { type: 'STATE' as const, stream: 'items', state: {} };
+    }
+  }
+  const record = (id: string, name: string) => ({
+    stream: 'items',
+    data: { id, name },
+  });
+  const remove = (id: string) => ({
+    type: 'DELETE' as const,
+    stream: 'items',
+    key: { id },
+  });
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-delete-'));
+  const source = new DeletingSource();
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const markdown = new MarkdownDestination({ path: join(scratch.path, 'md') });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const selection = {
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['id'],
+  } as const;
+  const copy = <Target extends MarkdownFile | MarkdownFolder | SQLiteTable>(
+    to: Target,
+    id: string,
+  ) => new Copy(items, to, { ...selection, id });
+  const pipelines = [
+    new Pipeline({
+      source,
+      destination: sqlite,
+      checkpoints,
+      steps: [copy(sqlite.table('items'), 'sqlite')],
+    }),
+    new Pipeline({
+      source,
+      destination: markdown,
+      checkpoints,
+      steps: [
+        copy(markdown.file('items.md'), 'file'),
+        copy(markdown.folder('items'), 'folder'),
+      ],
+    }),
+  ];
+  const names = async () => {
+    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    const decode = (document: string) =>
+      Array.from(
+        document.matchAll(/^<!-- mac-elt-record:([A-Za-z0-9+/=]+) -->$/gm),
+        ([, encoded]) =>
+          JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))
+            .name,
+      );
+    const folder = join(markdown.path, 'items');
+    return [
+      database
+        .prepare('SELECT name FROM items ORDER BY id')
+        .all()
+        .map((row) => row.name),
+      decode(await readFile(join(markdown.path, 'items.md'), 'utf8')).sort(),
+      (
+        await Promise.all(
+          (
+            await readdir(folder)
+          ).map(async (file) =>
+            decode(await readFile(join(folder, file), 'utf8')),
+          ),
+        )
+      )
+        .flat()
+        .sort(),
+    ];
+  };
+  const runAll = async () => {
+    const results = [];
+    for (const pipeline of pipelines) results.push(...(await pipeline.run()));
+    return results.map(({ count, deleted }) => ({ count, deleted }));
+  };
+
+  messages = [record('a', 'A'), record('b', 'B'), record('c', 'C')];
+  await runAll();
+  // Operations apply in source order: b is deleted, re-added, then deleted again.
+  messages = [
+    remove('b'),
+    record('b', 'B2'),
+    remove('b'),
+    remove('c'),
+    record('a', 'A2'),
+  ];
+  assert.deepEqual(await runAll(), Array(3).fill({ count: 2, deleted: 3 }));
+  assert.deepEqual(await names(), Array(3).fill(['A2']));
+  // At-least-once replay of the same operations leaves every target unchanged.
+  assert.deepEqual(await runAll(), Array(3).fill({ count: 2, deleted: 3 }));
+  assert.deepEqual(await names(), Array(3).fill(['A2']));
+});
+
+test('deletion streams require keyed deduplicating copies and well-formed keys', async () => {
+  const selectable = (overrides: object = {}) =>
+    new Stream({
+      name: 'items',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, rank: { type: 'integer' } },
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      sourceDefinedCursor: true,
+      emitsDeletes: true,
+      ...overrides,
+    });
+  const items = selectable();
+  let messages: SourceMessage[] = [];
+  class DeletingSource extends Source {
+    readonly identity = 'deleting-rules-test';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract() {
+      yield* messages;
+    }
+  }
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-delete-'));
+  const source = new DeletingSource();
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const rejects = (options: object, message: RegExp) =>
+    assert.throws(
+      () =>
+        new Copy(items, sqlite.table('items'), {
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          primaryKey: ['id'],
+          id: 'items',
+          ...options,
+        } as ConstructorParameters<typeof Copy>[2]).validate(
+          source,
+          sqlite,
+          checkpoints,
+        ),
+      message,
+    );
+
+  assert.throws(
+    () => selectable({ supportedSyncModes: ['full_refresh'] }),
+    /require incremental support/,
+  );
+  assert.throws(() => selectable({ primaryKey: [] }), /requires a primaryKey/);
+  rejects(
+    { destinationSyncMode: 'append', primaryKey: undefined },
+    /require append_dedup/,
+  );
+  rejects({ primaryKey: ['rank'] }, /select primaryKey \["id"\]/);
+  rejects({ cursorField: 'rank' }, /defines its own cursor; omit cursorField/);
+  rejects({ dedupPolicy: 'cursor_newer' }, /no cursor field to compare/);
+  const copy = new Copy(items, sqlite.table('items'), {
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['id'],
+    id: 'items',
+  });
+  assert.equal(copy.configuration.dedupPolicy, 'replace');
+
+  const run = (to = copy) =>
+    new Pipeline({
+      source,
+      destination: sqlite,
+      checkpoints,
+      steps: [to],
+    }).run();
+  for (const [key, message] of [
+    [{}, /exactly its primary key/],
+    [{ id: 'a', rank: 1 }, /exactly its primary key/],
+    [{ id: 1 }, /DELETE for items has an invalid id|requires non-null string/],
+    [{ id: '\uD800' }, /invalid id/],
+  ] as const) {
+    messages = [{ type: 'DELETE', stream: 'items', key: key as never }];
+    await assert.rejects(run(), message);
+  }
+  // A full-refresh overwrite cannot apply a deletion, and a stream that does
+  // not declare deletions cannot send one.
+  messages = [{ type: 'DELETE', stream: 'items', key: { id: 'a' } }];
+  await assert.rejects(
+    run(new Copy(items, sqlite.table('snapshot'))),
+    /Only deduplicating loads can apply deletions/,
+  );
+  const plain = new Stream({
+    ...selectable(),
+    sourceDefinedCursor: undefined,
+    emitsDeletes: undefined,
+  });
+  class PlainSource extends DeletingSource {
+    protected override readonly catalog = new Catalog([plain]);
+  }
+  await assert.rejects(
+    new Pipeline({
+      source: new PlainSource(),
+      destination: sqlite,
+      steps: [new Copy(plain, sqlite.table('plain'))],
+    }).run(),
+    /Stream items does not emit deletions/,
   );
 });

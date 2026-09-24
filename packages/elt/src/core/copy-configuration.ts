@@ -60,10 +60,12 @@ export class CopyConfiguration {
     this.cursorField = cursorField;
     this.primaryKey =
       primaryKey === undefined ? undefined : Object.freeze([...primaryKey]);
+    // A source-defined cursor leaves no field to compare, so the newest extraction wins.
     this.dedupPolicy =
       destinationSyncMode === 'append_dedup' ||
       destinationSyncMode === 'overwrite_dedup'
-        ? (dedupPolicy ?? 'cursor_newer')
+        ? (dedupPolicy ??
+          (from.sourceDefinedCursor ? 'replace' : 'cursor_newer'))
         : dedupPolicy;
     Object.freeze(this);
   }
@@ -102,11 +104,33 @@ export class CopyConfiguration {
       throw new TypeError(
         'Full refresh deduplication requires overwrite_dedup',
       );
+    const { sourceDefinedCursor, emitsDeletes } = this.stream;
+    if (sourceDefinedCursor && cursorField !== undefined)
+      throw new TypeError(
+        `Stream ${this.stream.name} defines its own cursor; omit cursorField`,
+      );
     if (
       syncMode === 'incremental' &&
+      !sourceDefinedCursor &&
       (typeof cursorField !== 'string' || !cursorField)
     )
       throw new TypeError('Incremental extraction requires cursorField');
+    if (emitsDeletes && syncMode === 'incremental') {
+      if (destinationSyncMode !== 'append_dedup')
+        throw new TypeError(
+          `Stream ${this.stream.name} emits deletions; incremental copies require append_dedup`,
+        );
+      if (
+        primaryKey === undefined ||
+        primaryKey.length !== this.stream.primaryKey.length ||
+        primaryKey.some(
+          (field, index) => field !== this.stream.primaryKey[index],
+        )
+      )
+        throw new TypeError(
+          `Stream ${this.stream.name} emits deletions by its primary key; select primaryKey ${JSON.stringify(this.stream.primaryKey)}`,
+        );
+    }
     if (
       dedupPolicy !== undefined &&
       dedupPolicy !== 'cursor_newer' &&
@@ -117,14 +141,22 @@ export class CopyConfiguration {
       destinationSyncMode === 'append_dedup' ||
       destinationSyncMode === 'overwrite_dedup'
     ) {
-      if (primaryKey === undefined || cursorField === undefined)
+      if (primaryKey === undefined)
+        throw new TypeError('Deduplication requires an explicit primaryKey');
+      if (dedupPolicy === 'cursor_newer' && cursorField === undefined)
         throw new TypeError(
-          'Deduplication requires explicit primaryKey and cursorField',
+          sourceDefinedCursor
+            ? `Stream ${this.stream.name} has no cursor field to compare; deduplicate with dedupPolicy 'replace'`
+            : 'cursor_newer deduplication requires cursorField',
         );
       new Deduplication(this.stream, primaryKey, cursorField);
       // A cursor inside the primary key is equal on every conflict, so the
       // cursor_newer guard can never fire and restated facts load as no-ops.
-      if (dedupPolicy !== 'replace' && primaryKey.includes(cursorField))
+      if (
+        dedupPolicy === 'cursor_newer' &&
+        cursorField !== undefined &&
+        primaryKey.includes(cursorField)
+      )
         throw new TypeError(
           `Cursor field ${cursorField} is part of the primary key, so cursor_newer can never update a conflicting row; select dedupPolicy 'replace' to let the newest extraction win`,
         );
@@ -147,8 +179,8 @@ export class CopyConfiguration {
   }
 
   deduplication(): Deduplication {
-    if (this.primaryKey === undefined || this.cursorField === undefined)
-      throw new TypeError('Deduplication requires primaryKey and cursorField');
+    if (this.primaryKey === undefined)
+      throw new TypeError('Deduplication requires a primaryKey');
     return new Deduplication(this.stream, this.primaryKey, this.cursorField);
   }
 }

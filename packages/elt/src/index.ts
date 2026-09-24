@@ -15,6 +15,8 @@ export {
   validateRecords,
 } from './core/record-validation.ts';
 export {
+  type DeleteMessage,
+  type KeyValue,
   type RecordMessage,
   Source,
   type SourceMessage,
@@ -25,6 +27,8 @@ export { Stream, type SyncMode } from './core/stream.ts';
 export { Target } from './core/target.ts';
 export {
   CommittedWriteError,
+  type WriteCount,
+  type WriteOperation,
   type WriteResult,
   Writer,
 } from './core/writer.ts';

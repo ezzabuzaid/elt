@@ -1,7 +1,11 @@
 import { lstat, open } from 'node:fs/promises';
 import type { CopyConfiguration } from '../../core/copy-configuration.ts';
 import type { Deduplication } from '../../core/deduplication.ts';
-import { Writer } from '../../core/writer.ts';
+import {
+  type WriteCount,
+  type WriteOperation,
+  Writer,
+} from '../../core/writer.ts';
 import { MarkdownDocument } from './markdown-document.ts';
 
 export abstract class MarkdownWriter extends Writer {
@@ -20,9 +24,9 @@ export abstract class MarkdownWriter extends Writer {
   }
 
   protected async collect(
-    records: AsyncIterable<unknown>,
+    operations: AsyncIterable<WriteOperation>,
     previous: unknown[],
-  ): Promise<{ rows: unknown[]; count: number }> {
+  ): Promise<WriteCount & { rows: unknown[] }> {
     // ponytail: Markdown reconciliation holds the target in memory; use an on-disk index if exports outgrow memory.
     const { deduplication } = this;
     const replace = this.configuration.dedupPolicy === 'replace';
@@ -32,7 +36,8 @@ export abstract class MarkdownWriter extends Writer {
         deduplication === undefined
           ? String(rows.size)
           : deduplication.key(record);
-      if (deduplication !== undefined) deduplication.cursor(record);
+      if (deduplication?.cursorField !== undefined)
+        deduplication.cursor(record);
       const saved = rows.get(key);
       if (
         saved === undefined ||
@@ -44,13 +49,21 @@ export abstract class MarkdownWriter extends Writer {
     };
     for (const record of previous) add(record);
     let count = 0;
-    for await (const record of records) {
+    let deleted = 0;
+    for await (const operation of operations) {
+      if (operation.type === 'DELETE') {
+        if (deduplication === undefined)
+          throw new TypeError('Only deduplicating loads can apply deletions');
+        rows.delete(deduplication.key(operation.key));
+        deleted++;
+        continue;
+      }
       // Validate every observation, including deduplication losers, before acknowledging it.
-      this.document.render(record, 1);
-      add(record);
+      this.document.render(operation.data, 1);
+      add(operation.data);
       count++;
     }
-    return { rows: [...rows.values()], count };
+    return { rows: [...rows.values()], count, deleted };
   }
 
   protected async assertManagedFile(path: string): Promise<boolean> {

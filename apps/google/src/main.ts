@@ -104,10 +104,11 @@ try {
 
   const results = await pipeline.run();
   console.table(
-    results.map(({ copy, count }) => ({
+    results.map(({ copy, count, deleted }) => ({
       stream: copy.from.name,
       table: copy.to.name,
       count,
+      deleted,
     })),
   );
   console.log(`Loaded Search Console for ${siteUrl} into ${path}`);

@@ -2,7 +2,11 @@ import { chmodSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
-import { CommittedWriteError, type WriteResult } from '../core/writer.ts';
+import {
+  CommittedWriteError,
+  type WriteCount,
+  type WriteResult,
+} from '../core/writer.ts';
 
 // Checkpoints belong to a replication ID, not to a shared Stream or warehouse table.
 export class SQLiteCheckpointStore {
@@ -19,8 +23,8 @@ export class SQLiteCheckpointStore {
     id: string,
     binding: object,
     write: (state: unknown) => Promise<WriteResult>,
-  ): Promise<number> {
-    let committed: number | undefined;
+  ): Promise<WriteCount> {
+    let committed: WriteCount | undefined;
     try {
       const serializedBinding = JSON.stringify(binding);
       using database = this.open();
@@ -46,7 +50,7 @@ export class SQLiteCheckpointStore {
           saved === undefined ? null : JSON.parse(String(saved.state));
         // A source may mutate its input state, but only an acknowledged message may advance it.
         const result = await write(structuredClone(state));
-        committed = result.count;
+        committed = { count: result.count, deleted: result.deleted };
         const last = result.checkpoints.at(-1);
         database
           .prepare(
@@ -58,7 +62,7 @@ export class SQLiteCheckpointStore {
             JSON.stringify(last === undefined ? state : last.state),
           );
         database.exec('COMMIT');
-        return result.count;
+        return committed;
       } catch (error) {
         if (database.isTransaction) database.exec('ROLLBACK');
         throw error;

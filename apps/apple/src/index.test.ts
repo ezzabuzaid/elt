@@ -110,7 +110,7 @@ test('Notes adapts its records to the ELT pipeline', async () => {
     steps: [copy],
   }).run();
 
-  assert.deepEqual(results, [{ copy, count: 1 }]);
+  assert.deepEqual(results, [{ copy, count: 1, deleted: 0 }]);
   using database = new DatabaseSync(destination.path, { readOnly: true });
   const row = database.prepare('SELECT id, name FROM accounts').get();
   assert.ok(row);
@@ -166,7 +166,7 @@ test('Notes uses native file availability and rolls back actual export failures'
     ]),
   );
   const pipeline = new Pipeline({ source, destination, steps: [copy] });
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 4 }]);
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 4, deleted: 0 }]);
   using database = new DatabaseSync(destination.path);
   const rows = () =>
     database
@@ -306,14 +306,14 @@ test('Notes incremental copies persist their checkpoint and skip unchanged notes
     steps: [copy],
   });
 
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 2 }]);
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
   notes = [
     first,
     second,
     note('newer', '2025-01-03T00:00:00.000Z'),
     note('backdated', '2024-12-31T00:00:00.000Z'),
   ];
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 2 }]);
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
 
   using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(

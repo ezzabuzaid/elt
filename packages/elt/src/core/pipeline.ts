@@ -3,17 +3,18 @@ import { Copy } from './copy.ts';
 import type { Destination } from './destination.ts';
 import type { Source } from './source.ts';
 import type { Target as DestinationTarget } from './target.ts';
-import { CommittedWriteError } from './writer.ts';
+import { CommittedWriteError, type WriteCount } from './writer.ts';
 
-export type CopyResult<Target extends DestinationTarget> = {
+// count is accepted records, deleted is accepted deletions.
+export type CopyResult<Target extends DestinationTarget> = WriteCount & {
   readonly copy: Copy<Target>;
-  readonly count: number;
 };
 
 export class PipelineError<Target extends DestinationTarget> extends Error {
   override name = 'PipelineError';
   readonly completed: readonly CopyResult<Target>[];
-  readonly committedCount: number;
+  // What the failed copy committed before a later step failed; zero if nothing.
+  readonly committed: WriteCount;
   constructor(
     readonly failedCopy: Copy<Target>,
     completed: readonly CopyResult<Target>[],
@@ -21,8 +22,10 @@ export class PipelineError<Target extends DestinationTarget> extends Error {
   ) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.completed = Object.freeze([...completed]);
-    this.committedCount =
-      cause instanceof CommittedWriteError ? cause.count : 0;
+    this.committed =
+      cause instanceof CommittedWriteError
+        ? { count: cause.count, deleted: cause.deleted }
+        : { count: 0, deleted: 0 };
   }
 }
 
@@ -149,12 +152,12 @@ export class Pipeline<Target extends DestinationTarget> {
     const results: CopyResult<Target>[] = [];
     for (const copy of steps) {
       try {
-        const count = await copy.run(
+        const { count, deleted } = await copy.run(
           this.source,
           this.destination,
           this.checkpoints,
         );
-        results.push({ copy, count });
+        results.push({ copy, count, deleted });
       } catch (cause) {
         throw new PipelineError(copy, results, cause);
       }

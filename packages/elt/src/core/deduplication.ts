@@ -7,7 +7,8 @@ export class Deduplication {
   constructor(
     readonly stream: Stream,
     primaryKey: readonly string[],
-    readonly cursorField: string,
+    // Absent when the newest extraction always wins (dedupPolicy replace).
+    readonly cursorField?: string,
   ) {
     if (
       !Array.isArray(primaryKey) ||
@@ -17,7 +18,10 @@ export class Deduplication {
       throw new TypeError('Deduplication requires distinct primaryKey fields');
     this.primaryKey = Object.freeze([...primaryKey]);
     for (const field of this.primaryKey) this.type(field);
-    if (!['string', 'number', 'integer'].includes(this.type(cursorField)))
+    if (
+      cursorField !== undefined &&
+      !['string', 'number', 'integer'].includes(this.type(cursorField))
+    )
       throw new TypeError('Deduplication cursor must be text or numeric');
     Object.freeze(this);
   }
@@ -81,6 +85,8 @@ export class Deduplication {
   }
 
   cursor(record: unknown): string | number {
+    if (this.cursorField === undefined)
+      throw new TypeError('Deduplication has no cursor field');
     const value = this.value(record, this.cursorField);
     if (typeof value === 'boolean')
       throw new TypeError('Cursor cannot be boolean');

@@ -59,9 +59,10 @@ const pipeline = new Pipeline({
 });
 
 const results = await pipeline.run();
-console.table(results.map(({ copy, count }) => ({
+console.table(results.map(({ copy, count, deleted }) => ({
   stream: copy.from.name,
   processed: count,
+  deleted,
 })));
 ```
 
@@ -74,7 +75,7 @@ node apps/apple/dist/example.js
 
 This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table's contents with the current snapshot. Columns are inferred from the source schema. Password-protected note bodies remain `null`.
 
-`Copy` defaults to `full_refresh` extraction and `overwrite` loading. Creating a pipeline performs no extraction; `run()` executes it once and returns `{ copy, count }` results after loading. Counts describe accepted input records, including deduplication no-ops, rather than the number of changed rows.
+`Copy` defaults to `full_refresh` extraction and `overwrite` loading. Creating a pipeline performs no extraction; `run()` executes it once and returns `{ copy, count, deleted }` results after loading. `count` is accepted input records, including deduplication no-ops, and `deleted` is accepted deletions, including keys that were already absent; neither is the number of changed rows.
 
 The repository also includes a [Notes exporter](apps/apple/src/main.ts) that loads accounts, folders, notes, and attachment metadata, text, and bytes. Run it with `npx nx run apple:start`. It writes `outputs/apple-notes.sqlite`; unsupported attachment formats or export failures stop the affected copy.
 
@@ -153,9 +154,10 @@ process.once('SIGINT', () => controller.abort());
 
 for await (const results of pipeline.watch({ signal: controller.signal })) {
   // The data is already extracted, loaded, and checkpointed here.
-  console.table(results.map(({ copy, count }) => ({
+  console.table(results.map(({ copy, count, deleted }) => ({
     stream: copy.from.name,
     processed: count,
+    deleted,
   })));
 }
 ```

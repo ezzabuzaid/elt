@@ -9,6 +9,10 @@ export class Stream {
   readonly primaryKey: readonly string[];
   readonly supportedSyncModes: readonly SyncMode[];
   readonly supportsFileTransfer?: true;
+  // Incremental progress is opaque source state, so copies select no cursorField.
+  readonly sourceDefinedCursor?: true;
+  // Incremental reads may emit DELETE messages keyed by primaryKey.
+  readonly emitsDeletes?: true;
 
   constructor({
     name,
@@ -16,12 +20,16 @@ export class Stream {
     primaryKey = [],
     supportedSyncModes,
     supportsFileTransfer,
+    sourceDefinedCursor,
+    emitsDeletes,
   }: {
     name: string;
     jsonSchema: Readonly<Record<string, unknown>>;
     primaryKey?: readonly string[];
     supportedSyncModes: readonly SyncMode[];
     supportsFileTransfer?: true;
+    sourceDefinedCursor?: true;
+    emitsDeletes?: true;
   }) {
     if (!name || name.includes('\0'))
       throw new TypeError('Invalid stream name');
@@ -38,6 +46,23 @@ export class Stream {
     if (supportsFileTransfer !== undefined && supportsFileTransfer !== true)
       throw new TypeError('supportsFileTransfer must be true when declared');
     this.supportsFileTransfer = supportsFileTransfer;
+    if (sourceDefinedCursor !== undefined && sourceDefinedCursor !== true)
+      throw new TypeError('sourceDefinedCursor must be true when declared');
+    if (emitsDeletes !== undefined && emitsDeletes !== true)
+      throw new TypeError('emitsDeletes must be true when declared');
+    if (
+      (sourceDefinedCursor || emitsDeletes) &&
+      !supportedSyncModes.includes('incremental')
+    )
+      throw new TypeError(
+        'A source-defined cursor or deletions require incremental support',
+      );
+    if (emitsDeletes && primaryKey.length === 0)
+      throw new TypeError(
+        'A stream that emits deletions requires a primaryKey',
+      );
+    this.sourceDefinedCursor = sourceDefinedCursor;
+    this.emitsDeletes = emitsDeletes;
     this.jsonSchema = structuredClone(jsonSchema);
     // Snapshot nested metadata too, so changes in a source cannot rewrite a pipeline.
     const seen = new WeakSet<object>();
