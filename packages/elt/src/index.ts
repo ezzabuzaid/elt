@@ -4,6 +4,7 @@ export { CopyConfiguration } from './core/copy-configuration.ts';
 export { Destination, type DestinationSyncMode } from './core/destination.ts';
 export { DocumentParser } from './core/document-parser.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
+export { isCalendarDate, isTimestamp } from './core/formats.ts';
 export { type CopyResult, Pipeline, PipelineError } from './core/pipeline.ts';
 export {
   type RecordMessage,

@@ -27,12 +27,42 @@ export type SourceMessage = RecordMessage | StateMessage;
 
 export abstract class Source {
   abstract readonly identity: string;
-  abstract discover(): Promise<Catalog>;
+  // Metadata only. Selections must use these exact Stream objects: a stream's
+  // schema shapes the destination, so a matching name is not enough.
+  protected abstract readonly catalog: Catalog;
+
+  async discover(): Promise<Catalog> {
+    return this.catalog;
+  }
+
   // Check source-owned metadata without extraction or rediscovery.
-  abstract validate(configuration: CopyConfiguration): void;
+  validate(configuration: CopyConfiguration): void {
+    configuration.validate(this.member(configuration.stream));
+    this.validateExtraction(configuration);
+  }
+
+  async *watch(options: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
+    for (const stream of options.streams) this.member(stream);
+    yield* this.observe(options);
+  }
+
+  // Source-specific selection rules, checked without I/O.
+  protected validateExtraction(_configuration: CopyConfiguration): void {}
+
   // Subscribe before yielding all selected streams once, then yield invalidations.
   // Keep receiving changes until signal aborts, including while extraction runs.
-  abstract watch(options: SourceWatchOptions): AsyncIterable<readonly Stream[]>;
+  protected abstract observe(
+    options: SourceWatchOptions,
+  ): AsyncIterable<readonly Stream[]>;
+
+  private member(stream: Stream): Stream {
+    if (this.catalog.get(stream.name) !== stream)
+      throw new TypeError(
+        `Stream ${stream.name} is not from this source's discovered catalog`,
+      );
+    return stream;
+  }
+
   // Must be lazy: the destination prepares its target before pulling records.
   async *read(
     configuration: CopyConfiguration,

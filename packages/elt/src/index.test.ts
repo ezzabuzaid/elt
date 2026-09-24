@@ -9,6 +9,8 @@ import {
   Catalog,
   Copy,
   type CopyConfiguration,
+  isCalendarDate,
+  isTimestamp,
   Pipeline,
   PipelineError,
   Source,
@@ -32,15 +34,9 @@ test('the public ELT API copies source records into SQLite', async () => {
       supportedSyncModes: ['full_refresh'],
     });
 
-    async discover() {
-      return new Catalog([this.records]);
-    }
+    protected readonly catalog = new Catalog([this.records]);
 
-    validate(configuration: CopyConfiguration) {
-      configuration.validate(this.records);
-    }
-
-    override async *watch({ streams }: SourceWatchOptions) {
+    protected override async *observe({ streams }: SourceWatchOptions) {
       yield streams;
     }
 
@@ -71,6 +67,74 @@ test('the public ELT API copies source records into SQLite', async () => {
   assert.deepEqual({ ...row }, { id: 'record-1', name: 'Test record' });
 });
 
+test('date formats accept only canonical UTC timestamps and real calendar dates', () => {
+  assert.equal(isTimestamp('2025-01-02T03:04:05.006Z'), true);
+  for (const value of [
+    '2025-01-02T03:04:05Z',
+    '2025-01-02T03:04:05.006+00:00',
+    '2025-02-30T00:00:00.000Z',
+    1735787045006,
+  ])
+    assert.equal(isTimestamp(value), false);
+  assert.equal(isCalendarDate('2024-02-29'), true);
+  for (const value of ['2025-02-29', '2025-1-02', '2025-01-02T00:00:00.000Z'])
+    assert.equal(isCalendarDate(value), false);
+});
+
+test('a source accepts only the stream objects from its own catalog', async () => {
+  class OwnedSource extends Source {
+    readonly identity = 'owned-test';
+    readonly records = new Stream({
+      name: 'records',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+      supportedSyncModes: ['full_refresh'],
+    });
+    protected readonly catalog = new Catalog([this.records]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract() {}
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-owned-'));
+  const source = new OwnedSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'owned.sqlite'),
+  });
+  const signal = new AbortController().signal;
+
+  assert.deepEqual((await source.discover()).streams, [source.records]);
+  for (const stream of [
+    new Stream({ ...source.records }),
+    new OwnedSource().records,
+  ]) {
+    assert.throws(
+      () =>
+        new Copy(stream, destination.table('records')).validate(
+          source,
+          destination,
+        ),
+      /not from this source's discovered catalog/,
+    );
+    await assert.rejects(
+      source.watch({ streams: [stream], signal }).next(),
+      /not from this source's discovered catalog/,
+    );
+  }
+  new Copy(source.records, destination.table('records')).validate(
+    source,
+    destination,
+  );
+  assert.deepEqual(
+    await source.watch({ streams: [source.records], signal }).next(),
+    { value: [source.records], done: false },
+  );
+});
+
 test('watch loads and checkpoints before yielding, coalesces edits during a load, and closes on break', async () => {
   const changes = new EventEmitter();
   const reads = new EventEmitter();
@@ -89,14 +153,9 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     });
     readonly other = new Stream({ ...this.records, name: 'other' });
 
-    async discover() {
-      return new Catalog([this.records, this.other]);
-    }
-    validate(configuration: CopyConfiguration) {
-      configuration.validate(configuration.stream);
-    }
+    protected readonly catalog = new Catalog([this.records, this.other]);
 
-    override async *watch({ streams, signal }: SourceWatchOptions) {
+    protected override async *observe({ streams, signal }: SourceWatchOptions) {
       await using events = on(changes, 'change', { signal });
       yield streams;
       for await (const [affected] of events)

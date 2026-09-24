@@ -1,10 +1,5 @@
-import type {
-  Catalog,
-  CopyConfiguration,
-  SourceWatchOptions,
-  Stream,
-} from 'elt';
-import { type RecordMessage, Source } from 'elt';
+import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
+import { isTimestamp, type RecordMessage, Source } from 'elt';
 import { EventKit } from '../../platform/macos/eventkit.ts';
 import {
   eventKitAccountFields,
@@ -12,7 +7,6 @@ import {
   eventKitCatalog,
   eventKitFields,
   eventKitRelatedFields,
-  isTimestamp,
   validateEventKitRecords,
 } from '../eventkit-schema.ts';
 import { calendarScript } from './calendar-script.ts';
@@ -81,6 +75,7 @@ const catalog = eventKitCatalog({
 export class AppleCalendarSource extends Source {
   readonly #eventKit = new EventKit('events');
   readonly identity: string;
+  protected readonly catalog = catalog;
   readonly startAt: string;
   readonly endAt: string;
   readonly accounts = catalog.get('accounts');
@@ -109,32 +104,17 @@ export class AppleCalendarSource extends Source {
     Object.freeze(this);
   }
 
-  async discover(): Promise<Catalog> {
-    return catalog;
-  }
-
-  override async *watch({
+  protected override async *observe({
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for (const stream of streams) catalog.get(stream.name);
     for await (const _ of this.#eventKit.watch(signal)) yield streams;
   }
 
-  validate(configuration: CopyConfiguration): void {
-    const stream = catalog.get(configuration.stream.name);
-    if (configuration.stream !== stream)
-      throw new TypeError(
-        'Calendar requires a stream from its discovered catalog',
-      );
-    configuration.validate(stream);
-  }
-
   protected override async *extract(
-    configuration: CopyConfiguration,
+    { stream }: CopyConfiguration,
     _state: unknown,
   ): AsyncGenerator<RecordMessage> {
-    const stream = catalog.get(configuration.stream.name);
     const metadata = stream.name === 'accounts' || stream.name === 'calendars';
     const seen = new Set<string>();
     let startAt = this.startAt;

@@ -20,8 +20,8 @@ description: Add or extend a data source in mac-elt. Use when implementing a new
 
 Keep `packages/elt` platform-independent: reusable contracts, pipeline, destinations, and checkpoint storage only. Apple connectors and native helpers belong under `apps/apple/src`; other integrations belong in their owning app. Work on Apple sources under `apps/apple/src/sources/<source>/`. Import ELT contracts through `elt`, never library-internal paths.
 
-- Expose immutable streams, metadata-only `discover()`, and a stable source identity that distinguishes extraction configurations.
-- Validate selections without I/O. Implement lazy `extract(configuration, state)`, yielding `{ stream, data }` through the shared `Source.read()` path.
+- Declare immutable streams in a `catalog`, at module level so instances share stream objects unless configuration changes the streams, and a stable source identity that distinguishes extraction configurations. The base `Source` provides metadata-only `discover()` and rejects any stream that is not the catalog's own object in `validate()` and `watch()`; never re-implement that check.
+- Put source-specific selection rules, such as a required cursor field, in `validateExtraction()`, without I/O. Implement lazy `extract(configuration, state)`, yielding `{ stream, data }` through the shared `Source.read()` path.
 - Validate records before yielding. Preserve missing values and distinguish timestamps from local calendar dates.
 - Compose the [EventKit class](apps/apple/src/platform/macos/eventkit.ts) for EventKit access. The native client must not depend on `Source`, `Stream`, catalogs, schemas, or destinations. Keep projection and record validation in the connectors.
 - Reuse [OSA](apps/apple/src/platform/macos/osa.ts) for scripting APIs. Preserve error causes; failed reads must not become empty collections.
@@ -30,7 +30,7 @@ Keep `packages/elt` platform-independent: reusable contracts, pipeline, destinat
 
 - Advertise only verified sync modes. Start with full refresh unless incremental behavior is required and proven.
 - For incremental reads, validate prior state, handle replay and equal cursors, and emit source-owned `STATE` messages. Let the pipeline persist acknowledged state.
-- Implement `Source.watch({ streams, signal })` with the source's change trigger. Subscribe before yielding all selected streams once, then emit affected streams. Honor cancellation and close native resources; do not load records or persist checkpoints in the watcher. Native notifications can trigger full-refresh extraction without providing an incremental cursor.
+- Implement `observe({ streams, signal })` with the source's change trigger; the base `watch()` checks membership first. Subscribe before yielding all selected streams once, then emit affected streams. Honor cancellation and close native resources; do not load records or persist checkpoints in the watcher. Native notifications can trigger full-refresh extraction without providing an incremental cursor.
 - Document deletion and snapshot limitations.
 - Reuse `Copy`, `Pipeline`, and destinations; keep loading out of the source.
 - Follow the staged-file contract and cleanup. Let `Source.read()` resolve requested bytes or parsed text.

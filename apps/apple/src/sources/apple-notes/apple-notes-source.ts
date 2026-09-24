@@ -4,45 +4,39 @@ import { lstat, mkdtempDisposable } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
-import { Catalog, Source, type SourceMessage } from 'elt';
+import { Catalog, isTimestamp, Source, type SourceMessage } from 'elt';
 import { AccountsStream } from './accounts-stream.ts';
 import { AttachmentsStream } from './attachments-stream.ts';
 import { FoldersStream } from './folders-stream.ts';
 import { NotesStream } from './notes-stream.ts';
 
+const readers = Object.freeze({
+  accounts: new AccountsStream(),
+  folders: new FoldersStream(),
+  notes: new NotesStream(),
+  attachments: new AttachmentsStream(),
+});
+const catalog = new Catalog(
+  Object.values(readers).map((reader) => reader.describe()),
+);
+
 export class AppleNotesSource extends Source {
   readonly identity = 'apple-notes:local';
-  readonly #readers = Object.freeze({
-    accounts: new AccountsStream(),
-    folders: new FoldersStream(),
-    notes: new NotesStream(),
-    attachments: new AttachmentsStream(),
-  });
-  readonly accounts = this.#readers.accounts.describe();
-  readonly folders = this.#readers.folders.describe();
-  readonly notes = this.#readers.notes.describe();
-  readonly attachments = this.#readers.attachments.describe();
-  readonly #catalog = new Catalog([
-    this.accounts,
-    this.folders,
-    this.notes,
-    this.attachments,
-  ]);
+  protected readonly catalog = catalog;
+  readonly accounts = catalog.get('accounts');
+  readonly folders = catalog.get('folders');
+  readonly notes = catalog.get('notes');
+  readonly attachments = catalog.get('attachments');
 
   constructor() {
     super();
     Object.freeze(this);
   }
 
-  async discover(): Promise<Catalog> {
-    return this.#catalog;
-  }
-
-  override async *watch({
+  protected override async *observe({
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for (const stream of streams) this.#catalog.get(stream.name);
     if (signal.aborted) return;
     // Native filesystem invalidations, not a public Notes change feed. Re-read through JXA.
     const path = join(
@@ -72,8 +66,9 @@ export class AppleNotesSource extends Source {
     }
   }
 
-  validate(configuration: CopyConfiguration): void {
-    configuration.validate(this.#catalog.get(configuration.stream.name));
+  protected override validateExtraction(
+    configuration: CopyConfiguration,
+  ): void {
     if (
       configuration.syncMode === 'incremental' &&
       configuration.cursorField !== 'modifiedAt'
@@ -87,11 +82,7 @@ export class AppleNotesSource extends Source {
     configuration: CopyConfiguration,
     state: unknown,
   ): AsyncGenerator<SourceMessage> {
-    const reader = Object.values(this.#readers).find(
-      (reader) => reader.name === configuration.stream.name,
-    );
-    if (!reader)
-      throw new TypeError(`Unknown stream: ${configuration.stream.name}`);
+    const reader = readers[configuration.stream.name as keyof typeof readers];
     if (configuration.syncMode === 'full_refresh') {
       for await (const data of reader.read())
         yield* this.record(data, configuration);
@@ -106,14 +97,14 @@ export class AppleNotesSource extends Source {
             Object.hasOwn(state, 'modifiedAt')
           ? Reflect.get(state, 'modifiedAt')
           : undefined;
-    if (saved !== null && !this.isTimestamp(saved))
+    if (saved !== null && !isTimestamp(saved))
       throw new TypeError('Invalid Apple Notes checkpoint');
     let watermark = saved;
     const startedAt = new Date().toISOString();
     // ponytail: JXA scans all records; incremental filtering reduces emitted data, not source scan cost.
     for await (const data of reader.read()) {
       const modifiedAt: unknown = Reflect.get(data, 'modifiedAt');
-      if (!this.isTimestamp(modifiedAt))
+      if (!isTimestamp(modifiedAt))
         throw new TypeError('Notes returned an invalid modifiedAt cursor');
       if (saved !== null && modifiedAt < saved) continue;
       yield* this.record(data, configuration);
@@ -143,18 +134,9 @@ export class AppleNotesSource extends Source {
     // Notes may supply no filename. Keep that fact in metadata; never use a source path.
     const extension = data.name === null ? '' : extname(data.name);
     const path = join(scratch.path, `content${extension}`);
-    const exported = await this.#readers.attachments.save(data.id, path);
+    const exported = await readers.attachments.save(data.id, path);
     if (exported && !(await lstat(path)).isFile())
       throw new TypeError('Notes did not export a regular attachment file');
     yield { stream, data, file: exported ? path : null };
-  }
-
-  private isTimestamp(value: unknown): value is string {
-    return (
-      typeof value === 'string' &&
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
-      Number.isFinite(Date.parse(value)) &&
-      new Date(value).toISOString() === value
-    );
   }
 }

@@ -1,9 +1,4 @@
-import type {
-  Catalog,
-  CopyConfiguration,
-  SourceWatchOptions,
-  Stream,
-} from 'elt';
+import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
 import { type RecordMessage, Source } from 'elt';
 import { EventKit } from '../../platform/macos/eventkit.ts';
 import {
@@ -56,6 +51,7 @@ const catalog = eventKitCatalog({
 export class AppleRemindersSource extends Source {
   readonly #eventKit = new EventKit('reminders');
   readonly identity = 'apple-reminders:eventkit';
+  protected readonly catalog = catalog;
   readonly accounts = catalog.get('accounts');
   readonly lists = catalog.get('lists');
   readonly reminders = catalog.get('reminders');
@@ -70,32 +66,17 @@ export class AppleRemindersSource extends Source {
     Object.freeze(this);
   }
 
-  async discover(): Promise<Catalog> {
-    return catalog;
-  }
-
-  override async *watch({
+  protected override async *observe({
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for (const stream of streams) catalog.get(stream.name);
     for await (const _ of this.#eventKit.watch(signal)) yield streams;
   }
 
-  validate(configuration: CopyConfiguration): void {
-    const stream = catalog.get(configuration.stream.name);
-    if (configuration.stream !== stream)
-      throw new TypeError(
-        'Reminders requires a stream from its discovered catalog',
-      );
-    configuration.validate(stream);
-  }
-
   protected override async *extract(
-    configuration: CopyConfiguration,
+    { stream }: CopyConfiguration,
     _state: unknown,
   ): AsyncGenerator<RecordMessage> {
-    const stream = catalog.get(configuration.stream.name);
     const records = validateEventKitRecords(
       stream,
       await this.#eventKit.execute(`

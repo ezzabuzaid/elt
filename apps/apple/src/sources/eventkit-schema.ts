@@ -1,4 +1,4 @@
-import { Catalog, Stream } from 'elt';
+import { Catalog, isCalendarDate, isTimestamp, Stream } from 'elt';
 
 export type Field = {
   readonly type: string | readonly string[];
@@ -171,22 +171,10 @@ export function validateEventKitRecords(
           field.minLength !== undefined &&
           value.length < field.minLength) ||
         (field.format === 'date-time' && !isTimestamp(value)) ||
-        (field.format === 'date' &&
-          (typeof value !== 'string' ||
-            !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
-            !isTimestamp(`${value}T00:00:00.000Z`)))
+        (field.format === 'date' && !isCalendarDate(value))
       )
         throw new TypeError(`EventKit returned invalid ${stream.name}.${name}`);
     }
   }
   return records;
-}
-
-export function isTimestamp(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
-    Number.isFinite(Date.parse(value)) &&
-    new Date(value).toISOString() === value
-  );
 }
