@@ -1838,7 +1838,9 @@ test('Reminders rejects unsupported selections and preserves targets on invalid 
   assert.ok(
     streams.every(
       (stream) =>
-        Object.isFrozen(stream) && stream.supportedSyncModes.length === 1,
+        Object.isFrozen(stream) &&
+        stream.sourceDefinedCursor === true &&
+        stream.emitsDeletes === true,
     ),
   );
   await using scratch = await mkdtempDisposable(
@@ -1853,9 +1855,8 @@ test('Reminders rejects unsupported selections and preserves targets on invalid 
       new Copy(source.reminders, target, {
         syncMode: 'incremental',
         destinationSyncMode: 'append',
-        cursorField: 'modifiedAt',
       }).validate(source, destination),
-    /does not support incremental/,
+    /emits deletions; incremental copies require append_dedup/,
   );
   const forged = new Stream({
     name: 'reminders',
@@ -2654,5 +2655,44 @@ test('Calendar ICS snapshots delete a removed property with its parameters', {
   assert.equal(
     database.prepare('SELECT count(*) AS n FROM icsParameters').get()?.n,
     0,
+  );
+});
+
+test('Reminders snapshot incremental writes only changed reminders and deletes removed ones', async (t) => {
+  const source = new AppleRemindersSource();
+  const reminder = (id: string, name: string) =>
+    recordFor(source.reminders, { id, listId: 'list-1', name });
+  let native = [reminder('r1', 'Buy milk'), reminder('r2', 'Call Ann')];
+  t.mock.method(osa, 'execute', async () => JSON.stringify(native));
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-rem-'));
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'r.sqlite'),
+  });
+  const copy = new Copy(source.reminders, sqlite.table('reminders'), {
+    id: 'reminders',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['id'],
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination: sqlite,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 's.sqlite'),
+    }),
+    steps: [copy],
+  });
+
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+  native = [reminder('r1', 'Buy oat milk'), reminder('r3', 'Book flight')];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 1 }]);
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+  using database = new DatabaseSync(sqlite.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare('SELECT id, name FROM reminders ORDER BY id')
+      .all()
+      .map((row) => `${row.id}:${row.name}`),
+    ['r1:Buy oat milk', 'r3:Book flight'],
   );
 });

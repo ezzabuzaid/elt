@@ -1,5 +1,5 @@
 import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
-import { type RecordMessage, Source, validateRecords } from 'elt';
+import { diffSnapshot, Source, type SourceMessage, validateRecords } from 'elt';
 import { EventKit } from '../../platform/macos/eventkit.ts';
 import {
   eventKitAccountFields,
@@ -13,38 +13,41 @@ import { dateComponentNames, remindersScript } from './reminders-script.ts';
 const { id, text, nullableText, nullableTimestamp, integer, boolean } =
   eventKitFields;
 
-const catalog = eventKitCatalog({
-  accounts: eventKitAccountFields,
-  lists: eventKitCalendarFields,
-  reminders: {
-    id,
-    listId: id,
-    externalId: nullableText,
-    name: text,
-    body: nullableText,
-    location: nullableText,
-    url: nullableText,
-    timeZone: nullableText,
-    createdAt: nullableTimestamp,
-    modifiedAt: nullableTimestamp,
-    completed: boolean,
-    completedAt: nullableTimestamp,
-    priority: { ...integer, minimum: 0, maximum: 9 },
+const catalog = eventKitCatalog(
+  {
+    accounts: eventKitAccountFields,
+    lists: eventKitCalendarFields,
+    reminders: {
+      id,
+      listId: id,
+      externalId: nullableText,
+      name: text,
+      body: nullableText,
+      location: nullableText,
+      url: nullableText,
+      timeZone: nullableText,
+      createdAt: nullableTimestamp,
+      modifiedAt: nullableTimestamp,
+      completed: boolean,
+      completedAt: nullableTimestamp,
+      priority: { ...integer, minimum: 0, maximum: 9 },
+    },
+    dateComponents: {
+      id,
+      reminderId: id,
+      kind: { ...text, enum: ['start', 'due'] },
+      calendarIdentifier: nullableText,
+      timeZone: nullableText,
+      ...Object.fromEntries(
+        dateComponentNames.map((name) => [name, { type: ['integer', 'null'] }]),
+      ),
+      leapMonth: boolean,
+      repeatedDay: { type: ['boolean', 'null'] },
+    },
+    ...eventKitRelatedFields('reminderId'),
   },
-  dateComponents: {
-    id,
-    reminderId: id,
-    kind: { ...text, enum: ['start', 'due'] },
-    calendarIdentifier: nullableText,
-    timeZone: nullableText,
-    ...Object.fromEntries(
-      dateComponentNames.map((name) => [name, { type: ['integer', 'null'] }]),
-    ),
-    leapMonth: boolean,
-    repeatedDay: { type: ['boolean', 'null'] },
-  },
-  ...eventKitRelatedFields('reminderId'),
-});
+  { snapshot: true },
+);
 
 // Adapter: native EventKit records enter the existing Source/Copy/Pipeline contract.
 export class AppleRemindersSource extends Source {
@@ -73,9 +76,9 @@ export class AppleRemindersSource extends Source {
   }
 
   protected override async *extract(
-    { stream }: CopyConfiguration,
-    _state: unknown,
-  ): AsyncGenerator<RecordMessage> {
+    { stream, syncMode }: CopyConfiguration,
+    state: unknown,
+  ): AsyncGenerator<SourceMessage> {
     const records = validateRecords(
       stream,
       await this.#eventKit.execute(`
@@ -84,6 +87,7 @@ export class AppleRemindersSource extends Source {
       `),
       'EventKit',
     );
-    for (const data of records) yield { stream: stream.name, data };
+    if (syncMode === 'incremental') yield* diffSnapshot(stream, records, state);
+    else for (const data of records) yield { stream: stream.name, data };
   }
 }
