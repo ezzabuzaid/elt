@@ -1,6 +1,7 @@
 import type { SQLiteCheckpointStore } from '../state/sqlite-checkpoint-store.ts';
 import { CopyConfiguration } from './copy-configuration.ts';
 import type { Destination } from './destination.ts';
+import type { WriterClaim } from './ownership.ts';
 import type { Source } from './source.ts';
 import type { Stream } from './stream.ts';
 import { Target as DestinationTarget } from './target.ts';
@@ -36,13 +37,19 @@ export class Copy<Target extends DestinationTarget> {
     return this.configuration.stream;
   }
 
-  // The declared id names the replication; without one, the source and stream do.
-  writer(source: Source): string {
-    return JSON.stringify(
-      this.id !== undefined
-        ? { copy: this.id }
-        : { source: source.identity, stream: this.from.name },
-    );
+  // The declared id names the replication; without one, the source and stream
+  // do. The claim also says how and which partitions this copy loads.
+  claim(source: Source): WriterClaim {
+    return {
+      writer: JSON.stringify(
+        this.id !== undefined
+          ? { copy: this.id }
+          : { source: source.identity, stream: this.from.name },
+      ),
+      destinationSyncMode: this.configuration.destinationSyncMode,
+      primaryKey: this.configuration.primaryKey ?? null,
+      partitions: source.partitionsOf(this.from),
+    };
   }
 
   validate(
@@ -72,7 +79,7 @@ export class Copy<Target extends DestinationTarget> {
         this.configuration,
         this.to,
         source.read(this.configuration, state),
-        this.writer(source),
+        this.claim(source),
       );
     if (this.configuration.syncMode === 'incremental') {
       if (this.id === undefined || checkpoints === undefined)

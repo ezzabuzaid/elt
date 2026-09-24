@@ -48,29 +48,14 @@ export abstract class Destination<Target extends DestinationTarget> {
     target: Target,
   ): Writer;
 
-  // writer identifies the replication across runs; the target refuses a writer
-  // that could delete or shadow rows another writer owns.
+  // claim names the writer across runs and what it loads; the target refuses
+  // a writer that could delete or shadow rows another writer owns.
   async write(
     configuration: CopyConfiguration,
     target: Target,
     records: AsyncIterable<SourceMessage>,
-    writer: string,
+    claim: WriterClaim,
   ): Promise<WriteResult> {
-    return this.createWriter(configuration, target).write(
-      records,
-      claimOf(configuration, writer),
-    );
+    return this.createWriter(configuration, target).write(records, claim);
   }
-}
-
-export function claimOf(
-  configuration: CopyConfiguration,
-  writer: string,
-): WriterClaim {
-  if (!writer) throw new TypeError('A write requires a writer identity');
-  return {
-    writer,
-    destinationSyncMode: configuration.destinationSyncMode,
-    primaryKey: configuration.primaryKey ?? null,
-  };
 }

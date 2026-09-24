@@ -106,18 +106,19 @@ Records and deletions apply in the order the source emits them, and deleting an 
 
 ### Shared targets
 
-Every destination records which writers load each target, stored with the target and committed with the load. A writer is the copy's `id`, or the source identity and stream name for a copy without one. Before a copy extracts or changes anything, the target checks its claim against the other writers':
+Every destination records which writers load each target, stored with the target and committed with the load. A writer is the copy's `id`, or the source identity and stream name for a copy without one; its claim also records its mode, key, and the [partitions](#partitioned-streams) it loads. Before a copy extracts or changes anything, the target checks its claim against the other writers':
 
 | Writers of one target | Allowed |
 | --- | --- |
-| All `append_dedup` on the same `primaryKey`, in the same order | Yes. Each upserts and deletes only by key, so none removes or shadows another's rows. |
+| All `append_dedup` on the same `primaryKey`, in the same order, over disjoint partitions | Yes. Each upserts and deletes only keys inside its own partitions, so none removes or shadows another's rows. |
+| `append_dedup` on the same key, but sharing a partition or not partitioned | No. A snapshot copy deletes keys it once saw, which can be keys the other writer loads, and an unpartitioned writer may hold any key. |
 | Any `overwrite` or `overwrite_dedup` | No. It empties the whole target, including the other writers' rows. |
 | Any `append` | No. An append log cannot tell its rows apart from another writer's. |
 | `append_dedup` on different keys | No. One target holds one deduplication key. |
 
 A refused copy fails before extraction and leaves the target unchanged; a pipeline also refuses such a pair among its own copies before running any. The error names both writers, their modes and keys. A writer may change its own mode or key. To reassign a target, drop it: a dropped SQLite table or a deleted Markdown file or folder releases its claims, and the next load starts from scratch. SQLite keeps claims in the reserved `_mac_elt_writers` table; Markdown keeps them in the file's header comment or the folder's marker file.
 
-Several properties or accounts can therefore share tables when each loads with its own incremental `append_dedup` copy, keyed by a primary key that includes the property, as the Search Console example does.
+Several properties or accounts can therefore share tables either through one partitioned source, which is one writer, or through one pipeline per property whose source lists only that property.
 
 ## Identity, cursors, and schemas
 

@@ -253,7 +253,7 @@ Extraction and loading are separate choices:
 
 Other combinations are rejected. An explicit options object requires both mode fields. Deduplication requires `primaryKey` and `cursorField`; incremental copies also require a stable `id` and checkpoint store.
 
-Several copies may load one target only when all use `append_dedup` on the same `primaryKey`; an `overwrite` or `append` copy must be the target's only writer. A copy that would break that fails before it extracts anything, and dropping the target releases it. See [shared targets](docs/reference.md#shared-targets).
+Several copies may load one target only when all use `append_dedup` on the same `primaryKey` over disjoint partitions; an `overwrite` or `append` copy must be the target's only writer. A copy that would break that fails before it extracts anything, and dropping the target releases it. See [shared targets](docs/reference.md#shared-targets).
 
 ### Restated data
 

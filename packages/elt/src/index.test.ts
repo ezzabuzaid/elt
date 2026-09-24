@@ -993,7 +993,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     copy.configuration,
     copy.to,
     source.read(copy.configuration, firstState),
-    copy.writer(source),
+    copy.claim(source),
   );
   assert.deepEqual(names(), ['a:A', 'b:B2', 'd:D']);
 
@@ -1029,7 +1029,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
   );
 });
 
-test('writers share a target only when each upserts by the same key', async () => {
+test('writers share a target only when each upserts by the same key over its own partitions', async () => {
   class Records extends Source {
     extracted = 0;
     readonly records = new Stream({
@@ -1037,29 +1037,36 @@ test('writers share a target only when each upserts by the same key', async () =
       jsonSchema: {
         type: 'object',
         properties: {
+          owner: { type: 'string' },
           id: { type: 'string' },
           name: { type: 'string' },
           version: { type: 'integer' },
         },
-        required: ['id', 'name', 'version'],
+        required: ['owner', 'id', 'name', 'version'],
       },
-      primaryKey: ['id'],
+      primaryKey: ['owner', 'id'],
       supportedSyncModes: ['full_refresh', 'incremental'],
+      partitionKey: ['owner'],
     });
     protected readonly catalog = new Catalog([this.records]);
     constructor(
       readonly identity: string,
-      readonly rows: readonly Record<string, unknown>[],
+      readonly owner: string,
     ) {
       super();
+    }
+    protected override partitions() {
+      return [{ owner: this.owner }];
     }
     protected override async *observe({ streams }: SourceWatchOptions) {
       yield streams;
     }
     protected override async *extract(configuration: CopyConfiguration) {
       this.extracted++;
-      for (const data of this.rows)
-        yield { stream: configuration.stream.name, data };
+      yield {
+        stream: configuration.stream.name,
+        data: { owner: this.owner, id: '1', name: this.identity, version: 1 },
+      };
     }
   }
   const scenario = async <T extends Target>(
@@ -1083,32 +1090,31 @@ test('writers share a target only when each upserts by the same key', async () =
           }),
         ],
       }).run();
-    const late = new Records('late', [{ id: 'c', name: 'C', version: 1 }]);
+    const late = new Records('late', 'c');
+    const again = new Records('again', 'a');
 
-    await upsert(
-      'a',
-      ['id'],
-      new Records('a', [{ id: 'a', name: 'A', version: 1 }]),
-    );
-    await upsert(
-      'b',
-      ['id'],
-      new Records('b', [{ id: 'b', name: 'B', version: 1 }]),
-    );
+    await upsert('a', ['owner', 'id'], new Records('a', 'a'));
+    await upsert('b', ['owner', 'id'], new Records('b', 'b'));
     await assert.rejects(
       new Pipeline({
         source: late,
         destination,
         steps: [new Copy(late.records, target())],
       }).run(),
-      /is written by \{"copy":"a"\} \(append_dedup on \["id"\]\); \{"source":"late","stream":"records"\} \(overwrite\) cannot share it/,
+      /is written by \{"copy":"a"\} \(append_dedup on \["owner","id"\] for \[\{"owner":"a"\}\]\); \{"source":"late","stream":"records"\} \(overwrite for \[\{"owner":"c"\}\]\) cannot share it/,
     );
     await assert.rejects(
-      upsert('by-name', ['name'], late),
-      /\{"copy":"by-name"\} \(append_dedup on \["name"\]\) cannot share it/,
+      upsert('by-name', ['owner', 'name'], late),
+      /\{"copy":"by-name"\} \(append_dedup on \["owner","name"\] for \[\{"owner":"c"\}\]\) cannot share it/,
+    );
+    // Same key, but owner a is already loaded by writer a: a snapshot delete
+    // from either would remove the other's row.
+    await assert.rejects(
+      upsert('again', ['owner', 'id'], again),
+      /\{"copy":"again"\} \(append_dedup on \["owner","id"\] for \[\{"owner":"a"\}\]\) cannot share it/,
     );
 
-    assert.equal(late.extracted, 0);
+    assert.equal(late.extracted + again.extracted, 0);
     assert.equal(await loaded(), 2);
   };
 
@@ -1281,9 +1287,32 @@ test('a pipeline refuses copies that cannot share a target before running any', 
     ],
   });
 
+  const upsert = (id: string) =>
+    new Copy(source.records, destination.table('records'), {
+      id,
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      cursorField: 'version',
+      primaryKey: ['id'],
+    });
+  // An unpartitioned stream may hold any key, so two same-key writers of it
+  // could still delete each other's rows.
+  const twins = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [upsert('one'), upsert('two')],
+  });
+
   await assert.rejects(
     pipeline.run(),
     /Target records is written by \{"copy":"upsert"\}/,
+  );
+  await assert.rejects(
+    twins.run(),
+    /\{"copy":"one"\} \(append_dedup on \["id"\]\); \{"copy":"two"\}/,
   );
   assert.equal(extracted, 0);
 });

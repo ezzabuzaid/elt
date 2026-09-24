@@ -55,14 +55,14 @@ export abstract class SQLiteWriter extends Writer {
   // dropped table releases its claims, since nothing it held remains.
   private claim(database: DatabaseSync, claim: WriterClaim): void {
     database.exec(
-      'CREATE TABLE IF NOT EXISTS "_mac_elt_writers" ("target" TEXT NOT NULL, "writer" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL, "primary_key" TEXT, PRIMARY KEY ("target", "writer")) STRICT',
+      'CREATE TABLE IF NOT EXISTS "_mac_elt_writers" ("target" TEXT NOT NULL, "writer" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL, "primary_key" TEXT, "partitions" TEXT, PRIMARY KEY ("target", "writer")) STRICT',
     );
     database.exec(
       `DELETE FROM "_mac_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`,
     );
     const rows = database
       .prepare(
-        'SELECT "writer", "destination_sync_mode" AS "destinationSyncMode", "primary_key" AS "primaryKey" FROM "_mac_elt_writers" WHERE "target" = ?',
+        'SELECT "writer", "destination_sync_mode" AS "destinationSyncMode", "primary_key" AS "primaryKey", "partitions" FROM "_mac_elt_writers" WHERE "target" = ?',
       )
       .all(this.table.location);
     assertShareable(
@@ -74,19 +74,24 @@ export abstract class SQLiteWriter extends Writer {
             typeof row.primaryKey === 'string'
               ? JSON.parse(row.primaryKey)
               : null,
+          partitions:
+            typeof row.partitions === 'string'
+              ? JSON.parse(row.partitions)
+              : null,
         })),
       ),
       claim,
     );
     database
       .prepare(
-        'INSERT INTO "_mac_elt_writers" ("target", "writer", "destination_sync_mode", "primary_key") VALUES (?, ?, ?, ?) ON CONFLICT ("target", "writer") DO UPDATE SET "destination_sync_mode" = excluded."destination_sync_mode", "primary_key" = excluded."primary_key"',
+        'INSERT INTO "_mac_elt_writers" ("target", "writer", "destination_sync_mode", "primary_key", "partitions") VALUES (?, ?, ?, ?, ?) ON CONFLICT ("target", "writer") DO UPDATE SET "destination_sync_mode" = excluded."destination_sync_mode", "primary_key" = excluded."primary_key", "partitions" = excluded."partitions"',
       )
       .run(
         this.table.location,
         claim.writer,
         claim.destinationSyncMode,
         claim.primaryKey === null ? null : JSON.stringify(claim.primaryKey),
+        claim.partitions === null ? null : JSON.stringify(claim.partitions),
       );
   }
 
