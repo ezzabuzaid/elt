@@ -672,7 +672,7 @@ Because `date` is both the cursor and part of the key, each resumable grain requ
 
 ### Warehouse marts
 
-With `WAREHOUSE_URL`, the example app loads into Postgres and installs a reading layer for agents. The layout:
+The example app loads into the compose Postgres warehouse and installs a reading layer for agents. The layout:
 
 ```text
 warehouse database
@@ -706,7 +706,7 @@ Verified on 2026-09-24 against Postgres 18.3, first on a local Homebrew server. 
 - `COMMIT; CREATE TABLE …` fails validation.
 - A three-billion-row count is cancelled after 30 seconds.
 
-The compose stack was then started on Docker Desktop 4.92.0. The init script created both roles and the database, `elt-postgresql` tests passed against it, and the MCP container answered as `agent_reader` with `search_path` `marts`: it refused `pg_authid`, rejected a `COMMIT;` escape, and cancelled a long count at 30 seconds. A live Search Console load into Postgres was not run.
+The compose stack was then started on Docker Desktop 4.92.0. The init script created both roles and the database, `elt-postgresql` tests passed against it, and the MCP container answered as `agent_reader` with `search_path` `marts`: it refused `pg_authid`, rejected a `COMMIT;` escape, and cancelled a long count at 30 seconds. A live load of `sc-domain:ezz.sh` into the compose warehouse then filled every view. Read as `agent_reader`, `freshness` showed data through 2026-09-24, settled through 2026-09-21, and `search_console_withheld_daily` showed Google withholding 1–2 clicks a day from the query rows.
 
 ### URL inspection and quota
 
