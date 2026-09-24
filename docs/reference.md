@@ -527,15 +527,17 @@ Because a user credential is billed to the project that issued its OAuth client,
 
 | Stream | Extraction | Notes |
 | --- | --- | --- |
-| `sites` | Full refresh | Properties the grant can read. `siteUnverifiedUser` entries are dropped: Google lists them, but their history cannot be read. |
-| `sitemaps` | Full refresh | int64 counts arrive as decimal strings; omitted counts and flags mean zero and false. |
-| `sitemapContents` | Full refresh | The per-content-type rows nested in each sitemap, keyed by `sitemapPath` and `type`. |
+| `sites` | Full refresh or snapshot | Properties the grant can read. `siteUnverifiedUser` entries are dropped: Google lists them, but their history cannot be read. |
+| `sitemaps` | Full refresh or snapshot | int64 counts arrive as decimal strings; omitted counts and flags mean zero and false. |
+| `sitemapContents` | Full refresh or snapshot | The per-content-type rows nested in each sitemap, keyed by `sitemapPath` and `type`. |
 | `searchAnalyticsDaily` | Incremental | Site-wide totals per day **per report type**, with `searchType` as a column. Key `[date, searchType]`. |
 | `searchAnalyticsQueries` | Incremental | Per day and query, web results only. Key `[date, query]`. |
 | `searchAnalyticsPages` | Incremental | Per day and page, web results only. Key `[date, page]`. |
 | `searchAnalyticsCountries` | Full refresh | Country and device for a trailing `breakdownMonths` window (default 3). No date dimension, so it cannot be resumed. Key `[country, device]`. |
-| `urlInspection` | Full refresh | One request per URL. |
-| `urlInspectionSitemaps` / `urlInspectionReferrers` | Full refresh | The arrays nested in the index status result, keyed by `inspectionUrl` and `position`. |
+| `urlInspection` | Full refresh or snapshot | One request per URL. |
+| `urlInspectionSitemaps` / `urlInspectionReferrers` | Full refresh or snapshot | The arrays nested in the index status result, keyed by `inspectionUrl` and `position`. |
+
+Every read of the snapshot streams returns the complete list, so an incremental copy (`append_dedup` on the stream's key, no `cursorField`) writes only changed rows and deletes the rest; see [snapshot streams](#snapshot-streams). URL inspection covers only the current top pages by impressions, so a page that drops out of that set is deleted, exactly as a full-refresh overwrite would remove it.
 
 #### Why the grains are separate
 

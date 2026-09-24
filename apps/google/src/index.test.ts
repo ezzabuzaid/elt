@@ -1062,3 +1062,49 @@ test('aborting a watcher cancels its in-flight probe as an AbortError', {
 
   await assert.rejects(polling, { name: 'AbortError' });
 });
+
+test('an incremental sites copy deletes a property that is no longer listed', async () => {
+  let siteEntry = [
+    { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:a.example' },
+    { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:b.example' },
+  ];
+  const { requester } = recorder(() => ({ siteEntry }));
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-snap-'));
+  const source = new SearchConsoleSource({
+    now: NOW,
+    requester,
+    siteUrl: SITE,
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'sc.sqlite'),
+  });
+  const copy = new Copy(source.sites, destination.table('sites'), {
+    id: 'sites',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['siteUrl'],
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [copy],
+  });
+
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+  siteEntry = [
+    { permissionLevel: 'siteFullUser', siteUrl: 'sc-domain:a.example' },
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 1 }]);
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare('SELECT siteUrl, permissionLevel FROM sites')
+      .all()
+      .map((row) => ({ ...row })),
+    [{ siteUrl: 'sc-domain:a.example', permissionLevel: 'siteFullUser' }],
+  );
+});

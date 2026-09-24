@@ -1,6 +1,7 @@
 import {
   Catalog,
   type CopyConfiguration,
+  diffSnapshot,
   isCalendarDate,
   type RecordMessage,
   Source,
@@ -147,16 +148,19 @@ export class SearchConsoleSource extends Source {
       name: 'sites',
       fields: sitesFields,
       primaryKey: ['siteUrl'],
+      snapshot: true,
     });
     this.sitemaps = searchConsoleStream({
       name: 'sitemaps',
       fields: sitemapsFields,
       primaryKey: ['path'],
+      snapshot: true,
     });
     this.sitemapContents = searchConsoleStream({
       name: 'sitemapContents',
       fields: sitemapContentsFields,
       primaryKey: ['sitemapPath', 'type'],
+      snapshot: true,
     });
     const grain = (name: SearchAnalyticsGrain): Stream =>
       searchConsoleStream({
@@ -178,16 +182,19 @@ export class SearchConsoleSource extends Source {
       name: 'urlInspection',
       fields: urlInspectionFields,
       primaryKey: ['inspectionUrl'],
+      snapshot: true,
     });
     this.urlInspectionSitemaps = searchConsoleStream({
       name: 'urlInspectionSitemaps',
       fields: urlInspectionSitemapsFields,
       primaryKey: ['inspectionUrl', 'position'],
+      snapshot: true,
     });
     this.urlInspectionReferrers = searchConsoleStream({
       name: 'urlInspectionReferrers',
       fields: urlInspectionReferrersFields,
       primaryKey: ['inspectionUrl', 'position'],
+      snapshot: true,
     });
     this.catalog = new Catalog([
       this.sites,
@@ -209,6 +216,7 @@ export class SearchConsoleSource extends Source {
   ): void {
     if (
       configuration.syncMode === 'incremental' &&
+      !configuration.stream.sourceDefinedCursor &&
       configuration.cursorField !== 'date'
     )
       throw new TypeError(
@@ -249,16 +257,40 @@ export class SearchConsoleSource extends Source {
     }
     switch (stream.name) {
       case 'sites':
-        yield* this.#records(stream, await this.#readSites());
+        yield* this.#listing(configuration, state, await this.#readSites());
         return;
       case 'sitemaps':
       case 'sitemapContents':
-        yield* this.#records(stream, await this.#readSitemaps(stream.name));
+        yield* this.#listing(
+          configuration,
+          state,
+          await this.#readSitemaps(stream.name),
+        );
         return;
       default:
-        yield* this.#records(stream, await this.#readInspections(stream.name));
+        yield* this.#listing(
+          configuration,
+          state,
+          await this.#readInspections(stream.name),
+        );
         return;
     }
+  }
+
+  // Sites, sitemaps and inspections are complete lists on every read, so an
+  // incremental copy diffs them with the previous snapshot.
+  async *#listing(
+    { stream, syncMode }: CopyConfiguration,
+    state: unknown,
+    records: readonly Record<string, unknown>[],
+  ): AsyncGenerator<SourceMessage> {
+    if (syncMode === 'incremental')
+      yield* diffSnapshot(
+        stream,
+        validateRecords(stream, records, 'Search Console'),
+        state,
+      );
+    else yield* this.#records(stream, records);
   }
 
   *#records(

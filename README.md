@@ -15,7 +15,7 @@ The core uses Node.js APIs with no runtime dependencies. The included Apple conn
 | Apple Notes | Accounts, folders, notes, and attachments | Full refresh; incremental for notes and attachments | Native filesystem notifications over Notes storage |
 | Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, scripting metadata, and each item's iCalendar (ICS) components, properties and parameters | Full refresh or snapshot incremental within a required date range | EventKit notifications |
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh or snapshot incremental | EventKit notifications |
-| Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection | Full refresh; incremental for the dated analytics grains | Change-gated polling (the API publishes no notification) |
+| Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection | Full refresh; incremental by date for the dated analytics grains and by snapshot for properties, sitemaps and URL inspection | Change-gated polling (the API publishes no notification) |
 
 Both destinations support overwrite, append, and deduplication:
 

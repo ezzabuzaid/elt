@@ -164,11 +164,14 @@ export function searchConsoleStream({
   fields,
   primaryKey,
   supportedSyncModes = ['full_refresh'],
+  snapshot = false,
 }: {
   name: string;
   fields: Record<string, FieldSchema>;
   primaryKey: readonly string[];
   supportedSyncModes?: readonly SyncMode[];
+  // A complete list on every read: incremental copies diff it (diffSnapshot).
+  snapshot?: boolean;
 }): Stream {
   return new Stream({
     name,
@@ -178,6 +181,9 @@ export function searchConsoleStream({
       required: Object.keys(fields),
     },
     primaryKey,
-    supportedSyncModes,
+    supportedSyncModes: snapshot
+      ? ['full_refresh', 'incremental']
+      : supportedSyncModes,
+    ...(snapshot && { sourceDefinedCursor: true, emitsDeletes: true }),
   });
 }
