@@ -689,6 +689,13 @@ Live verification on **2026-09-24** repeated it over the loopback consent flow, 
 - The second run reused the stored grant with no browser and finished in 80 seconds. It re-read three days (18 daily rows across six report types) from the `2026-09-21` checkpoint.
 - Every analytics table kept row count equal to distinct key count (2286 daily, 3571 query, 1514 page rows), so the re-read days replaced their rows.
 
+Live verification on **2026-09-24** of shared tables, target ownership and partitions, against `sc-domain:ezz.sh`, `sc-domain:january.sh` and `sc-domain:limerence.sh`:
+
+- Two per-property pipelines loaded `ezz.sh` then `january.sh` into the same file: every table held both properties (for example 2292 and 2934 daily rows), and the second load left the first property's rows untouched.
+- A full-refresh `overwrite` copy pointed at the shared `raw_sitemaps` was refused before extraction, naming the `append_dedup` writer that owns it; both properties' rows remained.
+- One source listing all three properties loaded every table in one run, with one checkpoint per stream holding a `{ partitions: [...] }` entry per property and one writer claim per table.
+- A second pipeline covering `ezz.sh` and `limerence.sh` was refused on a table where `ezz.sh` already had a writer, while separate `ezz.sh` and `january.sh` pipelines shared it.
+
 Not exercised live: `watch()` over a real polling interval, Markdown destinations, a property large enough to page past 25000 rows, and the quota ceiling on URL inspection.
 
 ### Row ceiling
