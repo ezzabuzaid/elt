@@ -216,94 +216,112 @@ test('Notes becoming unavailable during attachment export retains its actionable
   );
 });
 
-test('Notes incremental extraction re-reads equal cursors and caps its watermark at the scan start', async (t) => {
+test('Notes incremental copies skip unchanged notes, catch backdated edits and delete removed notes', async (t) => {
   const source = new AppleNotesSource();
-  const note = (id: string, modifiedAt: string) =>
-    recordFor(source.notes, { id, modifiedAt });
-  const older = note('older', '2025-01-01T00:00:00.000Z');
-  const saved = note('saved', '2025-01-02T00:00:00.000Z');
-  const future = note('future', '2999-01-01T00:00:00.000Z');
-  let notes = [older, saved, future];
-  t.mock.method(osa, 'execute', async () => JSON.stringify(notes));
-  const destination = new MarkdownDestination({ path: '/unused' });
-  const { configuration } = new Copy(source.notes, destination.file('n.md'), {
-    syncMode: 'incremental',
-    destinationSyncMode: 'append',
-    cursorField: 'modifiedAt',
-  });
-  const read = async (state: unknown) => {
-    const ids: unknown[] = [];
-    let checkpoint: unknown;
-    for await (const message of source.read(configuration, state)) {
-      if ('type' in message) checkpoint = message;
-      else ids.push((message.data as { id: unknown }).id);
-    }
-    return { ids, checkpoint };
-  };
-  const scanned = async (state: unknown) => {
-    const before = new Date().toISOString();
-    const { ids, checkpoint } = await read(state);
-    const after = new Date().toISOString();
-    const { modifiedAt } = (checkpoint as { state: { modifiedAt: string } })
-      .state;
-    assert.ok(before <= modifiedAt && modifiedAt <= after);
-    return ids;
-  };
-
-  assert.deepEqual(await scanned(null), ['older', 'saved', 'future']);
-  assert.deepEqual(await scanned({ modifiedAt: saved.modifiedAt }), [
-    'saved',
-    'future',
-  ]);
-  notes = [older, saved];
-  assert.deepEqual(await read({ modifiedAt: older.modifiedAt }), {
-    ids: ['older', 'saved'],
-    checkpoint: {
-      type: 'STATE',
-      stream: 'notes',
-      state: { modifiedAt: saved.modifiedAt },
-    },
-  });
-  for (const invalid of [
-    {},
-    [],
-    'checkpoint',
-    { modifiedAt: '2025-01-02' },
-    { modifiedAt: saved.modifiedAt, extra: true },
-  ])
-    await assert.rejects(read(invalid), /Invalid Apple Notes checkpoint/);
-  notes = [note('offset', '2025-01-02T00:00:00Z')];
-  await assert.rejects(read(null), /Notes returned invalid notes\.modifiedAt/);
-  assert.throws(
-    () =>
-      new Copy(source.notes, destination.file('n.md'), {
-        syncMode: 'incremental',
-        destinationSyncMode: 'append',
-        cursorField: 'createdAt',
-      }).validate(source, destination),
-    /requires the modifiedAt cursor/,
-  );
-});
-
-test('Notes incremental copies persist their checkpoint and skip unchanged notes on the next run', async (t) => {
-  const source = new AppleNotesSource();
-  const note = (id: string, modifiedAt: string) =>
-    recordFor(source.notes, { id, modifiedAt });
-  const first = note('first', '2025-01-01T00:00:00.000Z');
-  const second = note('second', '2025-01-02T00:00:00.000Z');
-  let notes = [first, second];
+  const note = (id: string, body: string, modifiedAt = timestamp) =>
+    recordFor(source.notes, { id, body, modifiedAt });
+  let notes = [note('first', 'one'), note('second', 'two')];
   t.mock.method(osa, 'execute', async () => JSON.stringify(notes));
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'notes.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
   });
   const copy = new Copy(source.notes, destination.table('notes'), {
     id: 'notes',
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
     primaryKey: ['id'],
-    cursorField: 'modifiedAt',
   });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [copy],
+  });
+  const rows = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT id, body FROM notes ORDER BY id')
+      .all()
+      .map((row) => `${row.id}:${row.body}`);
+  };
+
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+  // second changes without advancing modifiedAt, which a cursor would miss.
+  notes = [
+    note('first', 'one'),
+    note('second', 'two, edited', '2020-01-01T00:00:00.000Z'),
+    note('third', 'three'),
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+  notes = [
+    note('second', 'two, edited', '2020-01-01T00:00:00.000Z'),
+    note('third', 'three'),
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 1 }]);
+  assert.deepEqual(rows(), ['second:two, edited', 'third:three']);
+  assert.throws(
+    () =>
+      new Copy(source.notes, destination.table('notes'), {
+        id: 'notes',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+        cursorField: 'modifiedAt',
+      }).validate(source, destination, checkpoints),
+    /defines its own cursor; omit cursorField/,
+  );
+});
+
+test('Notes incremental attachment copies export files only for changed attachments', async (t) => {
+  const source = new AppleNotesSource();
+  const unchanged = recordFor(source.attachments, { id: 'a1', name: 'a.txt' });
+  let attachments = [
+    unchanged,
+    recordFor(source.attachments, { id: 'a2', name: 'b.txt' }),
+  ];
+  const saved: string[] = [];
+  t.mock.method(osa, 'execute', async (script: string) => {
+    if (!script.includes('app.save')) return JSON.stringify(attachments);
+    return runInNewContext(script, {
+      Application: () => ({
+        running: () => true,
+        attachments: {
+          byId: (id: string) => ({
+            id,
+            container: () => ({ passwordProtected: () => false }),
+            url: () => null,
+            contents: () => ({}),
+          }),
+        },
+        save: (attachment: { id: string }, options: { in: string }) => {
+          saved.push(attachment.id);
+          writeFileSync(options.in, `bytes of ${attachment.id}`);
+        },
+      }),
+      Path: (path: string) => path,
+    }) as string;
+  });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'notes.sqlite'),
+  });
+  const copy = new Copy(
+    source.attachments,
+    destination.table('attachments', (c) => [
+      c.text('id'),
+      c.blob('bytes').from(source.attachments.file),
+    ]),
+    {
+      id: 'attachments',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      primaryKey: ['id'],
+    },
+  );
   const pipeline = new Pipeline({
     source,
     destination,
@@ -313,23 +331,13 @@ test('Notes incremental copies persist their checkpoint and skip unchanged notes
     steps: [copy],
   });
 
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
-  notes = [
-    first,
-    second,
-    note('newer', '2025-01-03T00:00:00.000Z'),
-    note('backdated', '2024-12-31T00:00:00.000Z'),
+  await pipeline.run();
+  attachments = [
+    unchanged,
+    recordFor(source.attachments, { id: 'a2', name: 'b-renamed.txt' }),
   ];
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
-
-  using database = new DatabaseSync(destination.path, { readOnly: true });
-  assert.deepEqual(
-    database
-      .prepare('SELECT id FROM notes ORDER BY id')
-      .all()
-      .map((row) => row.id),
-    ['first', 'newer', 'second'],
-  );
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 0 }]);
+  assert.deepEqual(saved, ['a1', 'a2', 'a2']);
 });
 
 test('Notes rejects malformed native records and keeps unavailability actionable on read', async (t) => {

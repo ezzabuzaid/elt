@@ -36,7 +36,11 @@ export abstract class AppleNotesStream<P extends Properties> {
   readonly primaryKey = ['id'] as const;
   readonly supportedSyncModes: readonly SyncMode[] = Object.freeze([
     'full_refresh',
+    'incremental',
   ]);
+  // Notes has no change feed: incremental reads diff each full scan (diffSnapshot).
+  readonly sourceDefinedCursor = true;
+  readonly emitsDeletes = true;
   protected abstract readonly script: string;
   #stream?: Stream;
 

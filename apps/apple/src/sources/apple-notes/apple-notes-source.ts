@@ -4,11 +4,13 @@ import { lstat, mkdtempDisposable } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
-import { Catalog, isTimestamp, Source, type SourceMessage } from 'elt';
+import { Catalog, diffSnapshot, Source, type SourceMessage } from 'elt';
 import { AccountsStream } from './accounts-stream.ts';
 import { AttachmentsStream } from './attachments-stream.ts';
 import { FoldersStream } from './folders-stream.ts';
 import { NotesStream } from './notes-stream.ts';
+
+type NotesRecord = { id: string; name: string | null };
 
 const readers = Object.freeze({
   accounts: new AccountsStream(),
@@ -66,18 +68,6 @@ export class AppleNotesSource extends Source {
     }
   }
 
-  protected override validateExtraction(
-    configuration: CopyConfiguration,
-  ): void {
-    if (
-      configuration.syncMode === 'incremental' &&
-      configuration.cursorField !== 'modifiedAt'
-    )
-      throw new TypeError(
-        'Apple Notes incremental extraction requires the modifiedAt cursor',
-      );
-  }
-
   protected override async *extract(
     configuration: CopyConfiguration,
     state: unknown,
@@ -88,39 +78,15 @@ export class AppleNotesSource extends Source {
         yield* this.record(data, configuration);
       return;
     }
-    const saved: unknown =
-      state === null
-        ? null
-        : typeof state === 'object' &&
-            !Array.isArray(state) &&
-            Object.keys(state).length === 1 &&
-            Object.hasOwn(state, 'modifiedAt')
-          ? Reflect.get(state, 'modifiedAt')
-          : undefined;
-    if (saved !== null && !isTimestamp(saved))
-      throw new TypeError('Invalid Apple Notes checkpoint');
-    let watermark = saved;
-    const startedAt = new Date().toISOString();
-    // ponytail: JXA scans all records; incremental filtering reduces emitted data, not source scan cost.
-    for await (const data of reader.read()) {
-      const modifiedAt: unknown = Reflect.get(data, 'modifiedAt');
-      if (!isTimestamp(modifiedAt))
-        throw new TypeError('Notes returned an invalid modifiedAt cursor');
-      if (saved !== null && modifiedAt < saved) continue;
-      yield* this.record(data, configuration);
-      // Re-read equal timestamps, and changes made during this non-atomic scan.
-      const observed = modifiedAt < startedAt ? modifiedAt : startedAt;
-      if (watermark === null || observed > watermark) watermark = observed;
-    }
-    yield {
-      type: 'STATE',
-      stream: reader.name,
-      state: { modifiedAt: watermark },
-    };
+    // ponytail: JXA scans all records; the diff reduces writes, not source scan cost.
+    const scan: AsyncIterable<NotesRecord> = reader.read();
+    for await (const message of diffSnapshot(configuration.stream, scan, state))
+      if ('type' in message) yield message;
+      else yield* this.record(message.data, configuration);
   }
 
   private async *record(
-    data: { id: string; name: string | null },
+    data: NotesRecord,
     configuration: CopyConfiguration,
   ): AsyncGenerator<SourceMessage> {
     const stream = configuration.stream.name;

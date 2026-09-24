@@ -18,10 +18,6 @@ export type Note = SchemaRecord<typeof properties>;
 
 export class NotesStream extends AppleNotesStream<typeof properties> {
   readonly name = 'notes';
-  override readonly supportedSyncModes = Object.freeze([
-    'full_refresh',
-    'incremental',
-  ] as const);
   readonly jsonSchema = notesSchema(properties);
 
   protected readonly script = `

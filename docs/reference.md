@@ -34,13 +34,12 @@ const pipeline = new Pipeline({
       id: 'notes-to-sqlite',
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      cursorField: 'modifiedAt',
       primaryKey: ['id'],
     }),
   ],
 });
 
-const results = await pipeline.run(); // [{ copy, count }, ...] in declaration order
+const results = await pipeline.run(); // [{ copy, count, deleted }, ...] in declaration order
 ```
 
 Accounts uses an explicit destination projection; notes uses inferred columns. Apple Notes exposes `accounts`, `folders`, `notes`, and `attachments` directly. `discover()` returns the same immutable descriptions for generic code that enumerates streams. Neither discovery nor constructing a declaration reads Notes or opens storage.
@@ -159,11 +158,9 @@ The state is `{ snapshot: { <primary key JSON>: <SHA-256 of the record> } }`. Ea
 
 ### Apple Notes behavior
 
-Notes and attachments support `cursorField: 'modifiedAt'`. Accounts and folders support full refresh only. Attachment reads contain metadata unless the target declares file-derived fields. Protected note content remains null.
+All four streams are [snapshot streams](#snapshot-streams): incremental copies select no `cursorField` and use `append_dedup` keyed by `id`. Each run scans and validates the full collection through JXA, writes only new and changed records, and deletes records that disappeared. A change is detected from the record's content, so edits that keep an older `modifiedAt` are still loaded. Attachment reads contain metadata unless the target declares file-derived fields; files are exported only for new or changed attachments, and a changed file whose metadata did not change is not detected. Protected note content remains null.
 
-JXA still scans and validates the full collection. Incremental filtering reduces emitted records, not scan cost. Records at the saved timestamp are replayed inclusively. The next watermark is the greatest observed timestamp capped at scan start, so changes during a scan remain eligible for replay. An empty scan preserves the previous watermark. Timestamps must be canonical UTC ISO strings with four-digit years.
-
-This reader has no deletion events or consistent database snapshot. Incremental loading does not remove deleted notes, and it can miss late/backdated changes whose timestamps precede the watermark. Use full refresh overwrite when you need to reconcile the current snapshot. These are source limitations, not deduplication behavior.
+Notes returns notes in Recently Deleted, so they remain in the export until permanently deleted. JXA reads each stream separately, without a consistent database snapshot across streams.
 
 ## Watching for changes
 
@@ -326,7 +323,6 @@ const exportPipeline = new Pipeline({
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
       primaryKey: ['id'],
-      cursorField: 'modifiedAt',
     }),
   ],
 });

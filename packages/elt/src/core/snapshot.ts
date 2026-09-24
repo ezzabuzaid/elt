@@ -1,12 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { Deduplication } from './deduplication.ts';
-import type {
-  DeleteMessage,
-  KeyValue,
-  RecordMessage,
-  StateMessage,
-} from './source.ts';
+import type { DeleteMessage, KeyValue, StateMessage } from './source.ts';
 import type { Stream } from './stream.ts';
 
 // Each key (the JSON of its primaryKey values) mapped to a fingerprint of the
@@ -21,13 +16,15 @@ const fingerprintPattern = /^[A-Za-z0-9_-]{43}$/;
 // scan with the previous snapshot, emit new or changed records, a DELETE for
 // every key that vanished, then the new snapshot as the only STATE.
 // An empty scan deletes everything, so a failed read must throw, never yield nothing.
-export async function* diffSnapshot(
+export async function* diffSnapshot<Data extends Record<string, unknown>>(
   stream: Stream,
-  records:
-    | AsyncIterable<Record<string, unknown>>
-    | Iterable<Record<string, unknown>>,
+  records: AsyncIterable<Data> | Iterable<Data>,
   state: unknown,
-): AsyncGenerator<RecordMessage | DeleteMessage | StateMessage> {
+): AsyncGenerator<
+  | { readonly stream: string; readonly data: Data }
+  | DeleteMessage
+  | StateMessage
+> {
   if (!stream.sourceDefinedCursor || !stream.emitsDeletes)
     throw new TypeError(
       `Stream ${stream.name} must declare sourceDefinedCursor and emitsDeletes to diff snapshots`,

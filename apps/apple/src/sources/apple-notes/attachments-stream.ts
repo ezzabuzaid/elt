@@ -18,10 +18,6 @@ export type Attachment = SchemaRecord<typeof properties>;
 export class AttachmentsStream extends AppleNotesStream<typeof properties> {
   readonly name = 'attachments';
   readonly supportsFileTransfer = true;
-  override readonly supportedSyncModes = Object.freeze([
-    'full_refresh',
-    'incremental',
-  ] as const);
   readonly jsonSchema = notesSchema(properties);
 
   protected readonly script = `

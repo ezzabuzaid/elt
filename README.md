@@ -128,7 +128,6 @@ const pipeline = new Pipeline({
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
       primaryKey: ['id'],
-      cursorField: 'modifiedAt',
     }),
   ],
 });
@@ -136,15 +135,15 @@ const pipeline = new Pipeline({
 await pipeline.run();
 ```
 
-The first run reads all notes. Later runs resume from the saved timestamp. `append_dedup` inserts new IDs and updates existing records when their cursor increases; equal cursors preserve the previously stored record.
+The Apple apps have no change feed, so an incremental copy compares each full scan with the snapshot saved by the previous run. The first run loads every note. Later runs write only new and changed notes and delete notes that disappeared, including edits that did not advance `modifiedAt`. These copies select no `cursorField` and need `append_dedup` keyed by `id`.
 
 Keep the copy ID and both SQLite files between runs. The checkpoint store must use a separate file from the destination. Changing the source, target, schema, or copy configuration requires a new copy ID or an explicit checkpoint reset. Reset the checkpoint if you delete or replace destination storage.
 
-**Notes still scans the full collection.** Incremental filtering reduces the records emitted, not the source scan cost. It does not reconcile deletions and can miss backdated changes. Use full-refresh overwrite when the destination must reflect the current snapshot, including deletions.
+**Notes still scans the full collection.** The comparison reduces writes, not the source scan cost. Notes returns notes in **Recently Deleted**, so they stay until permanently deleted.
 
 ### Calendar: incremental with deletions
 
-EventKit has no change feed, so Calendar loads incrementally by comparing each scan with the last one. Its copies select no `cursorField` and need `append_dedup` keyed by `id`:
+Calendar and Reminders load incrementally the same way:
 
 ```ts
 import { AppleCalendarSource } from './index.ts';
