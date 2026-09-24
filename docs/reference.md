@@ -619,7 +619,7 @@ Because a user credential is billed to the project that issued its OAuth client,
 | Stream | Extraction | Key | Notes |
 | --- | --- | --- | --- |
 | `sites` | Full refresh or snapshot | `[siteUrl]` | Properties the grant can read. `siteUnverifiedUser` entries are dropped: Google lists them, but their history cannot be read. |
-| `sitemaps` | Full refresh or snapshot | `[siteUrl, path]` | Google's report on each listed sitemap (int64 counts arrive as decimal strings; omitted counts and flags mean zero and false), plus what this connector read from the file itself: `urlsRead`, or `readError` when it could not be read. |
+| `sitemaps` | Full refresh or snapshot | `[siteUrl, path]` | Google's report on each listed sitemap (int64 counts arrive as decimal strings; `lastDownloaded` is null until Google first reads it), plus what this connector read from the file itself: `urlsRead`, or `readError` when it could not be read. |
 | `sitemapContents` | Full refresh or snapshot | `[siteUrl, sitemapPath, type]` | The per-content-type rows nested in each sitemap. |
 | `searchAnalyticsDaily` | Incremental | `[siteUrl, date, searchType]` | Site-wide totals per day **per report type**, with `searchType` as a column. |
 | `searchAnalyticsQueries` | Incremental | `[siteUrl, date, query]` | Per day and query, web results only. |
@@ -650,7 +650,7 @@ Consequences for anything querying these tables: average `position` must be weig
 #### Projection
 
 - `ApiDataRow.keys` is **positional** against requested `dimensions`; the API never names the columns. A row whose key count disagrees with the request is skipped rather than failing the copy.
-- Proto3 omits zero-valued fields, so an absent `clicks`, `impressions` or `ctr` loads as `0`. `clicks` and `impressions` are integers; a fractional count fails validation.
+- `clicks`, `impressions` and `ctr` are always present, zeros included (live Discover rows report `"clicks":0,"impressions":0,"ctr":0`). `clicks` and `impressions` are integers; a missing or fractional count fails validation.
 - Dated grains carry `settled`: false from the page's `firstIncompleteDate` on, while Google may still restate the day. The next incremental run re-reads it and the flag turns true once Google settles it.
 - `position` is **nullable**, and absent for a different reason: Discover and Google News report no rank at all, on every row including zero-traffic ones. Loading a missing rank as `0` would claim the best possible position. Verified live: all 380 Discover and all 380 Google News daily rows carry no position.
 - Sitemap `warnings`/`errors`/`submitted` are `string/int64` → parsed to integer, non-safe integers rejected.
@@ -715,7 +715,7 @@ URL inspection has no listing endpoint: each row costs one request naming one UR
 - **Discovery.** Every URL listed by every sitemap the property has (`sitemaps.list`), fetched from the site: XML url sets, sitemap indexes (followed up to 3 levels), RSS 2.0 and Atom feeds, plain-text lists, gzipped or not. Plus every page in the full 16-month search analytics history, for each configured report type. `#fragments` are stripped (Google Search indexes documents, not anchors), duplicates merge, and only URLs under the property are kept. A page that is in no sitemap and never appeared in search cannot be discovered through any Google API.
 - **Rolling refresh.** Each URL's last inspection time is kept in the stream's checkpoint. A run inspects never-inspected URLs first, then any whose last inspection is older than `inspectionRefreshHours` (default 24), stalest first; fresher URLs cost nothing. A property with more URLs than the daily quota is covered over successive days: each URL is refreshed about every ⌈URLs / 2000⌉ days.
 - **Concurrency.** `inspectionConcurrency` (default 16) requests run at once, paced under 600 starts per minute, so a quota refusal can only mean the daily quota. Live, 126 URLs took 54 seconds where one-at-a-time took about 6.6 seconds per URL.
-- **Quota.** When Google refuses for quota (`403 quotaExceeded`, or a `429` that outlasts the retries), no new request starts, the ones in flight finish, and the inspections that succeeded are committed. The source makes no further inspection request for that property until the next midnight Pacific time, when per-day Google Cloud quotas reset.
+- **Quota.** When Google refuses for quota (a `429` that outlasts the retries), no new request starts, the ones in flight finish, and the inspections that succeeded are committed. The source makes no further inspection request for that property until the next midnight Pacific time, when per-day Google Cloud quotas reset.
 - **Rejected URLs.** A `400` or `404` for one URL is loaded as a `urlInspection` row with `errorStatus` and `errorMessage` and null verdicts, and the run continues. A `401` or any other `403` would fail every URL alike, so it fails the copy.
 - **Removal.** A URL that leaves the discovered set is deleted from all three tables; an array that shrank loses its extra positions.
 - **Sharing.** One request serves all three streams: the source keeps its inspections in memory, and a stream uses one newer than what it last loaded before calling the API.
@@ -727,7 +727,6 @@ Every Search Console call retries rate limits and transient server errors, then 
 
 | Response | Retried | When retries run out |
 | --- | --- | --- |
-| `403` with reason `quotaExceeded` | No: waiting cannot refill a daily quota | `SearchConsoleQuotaError` at once |
 | `429` | Yes | `SearchConsoleQuotaError`, with `status` and `attempts` |
 | `403` with reason `rateLimitExceeded` or `userRateLimitExceeded` | Yes | `SearchConsoleQuotaError` |
 | Any other `403` (insufficient scope, disabled API) | No | The original error, unchanged |
@@ -764,6 +763,8 @@ Live verification on **2026-09-24** repeated it over the loopback consent flow, 
 - The first run found no grant, opened Google consent, stored the grant as owner-only files (`0700` directories, `0600` JSON, hashed names), then loaded all ten streams, resuming the analytics grains from the earlier checkpoint.
 - The second run reused the stored grant with no browser and finished in 80 seconds. It re-read three days (18 daily rows across six report types) from the `2026-09-21` checkpoint.
 - Every analytics table kept row count equal to distinct key count (2286 daily, 3571 query, 1514 page rows), so the re-read days replaced their rows.
+
+Live verification on **2026-09-24** of the daily inspection quota on `sc-domain:limerence.sh`: 1868 inspections succeeded after 132 earlier that day (2000 in all), then Google answered `429` with reason `rateLimitExceeded`, status `RESOURCE_EXHAUSTED`, message "Quota exceeded for sc-domain:limerence.sh." and no `Retry-After`, not the `403 quotaExceeded` its error reference lists. The pool stopped with every earlier inspection kept, and a further call reported the quota exhausted without inspecting anything.
 
 Live verification on **2026-09-24** of shared tables, target ownership and partitions, against `sc-domain:ezz.sh`, `sc-domain:january.sh` and `sc-domain:limerence.sh`:
 

@@ -1303,7 +1303,7 @@ test('a partition failure or foreign row commits nothing for any partition', asy
   assert.deepEqual(state.prepare('SELECT * FROM checkpoints').all(), []);
 });
 
-test('partition declarations and checkpoints are validated before extraction', async () => {
+test('partition declarations are validated before extraction', async () => {
   const stream = (partitionKey: string[]) =>
     new Stream({
       name: 'pages',
@@ -1345,16 +1345,6 @@ test('partition declarations and checkpoints are validated before extraction', a
   };
   await assert.rejects(read([]), /requires at least one partition/);
   await assert.rejects(read(['a', 'a']), /lists partition \["a"\] twice/);
-  for (const invalid of [
-    { partitions: {} },
-    { partitions: [{ partition: { site: 'a' } }] },
-    { partitions: [{ partition: { site: 1 }, state: null }] },
-    { partitions: [{ partition: { site: 'a' }, state: null }], extra: 1 },
-  ])
-    await assert.rejects(
-      read(['a'], invalid),
-      /Invalid partitioned checkpoint/,
-    );
 
   const partitioned = new Stream({
     name: 'pages',

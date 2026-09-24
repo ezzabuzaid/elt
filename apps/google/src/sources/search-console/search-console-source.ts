@@ -50,7 +50,6 @@ import {
 import { readSitemaps, type SitemapFetch } from './sitemap-urls.ts';
 import {
   type InspectionClock,
-  inspectionTexts,
   inspectUrls,
   systemInspectionClock,
   type UrlInspection,
@@ -547,49 +546,44 @@ export class SearchConsoleSource extends Source {
    * read a property's history, so it is not one this connector can extract.
    */
   async #readSites(): Promise<Record<string, unknown>[]> {
-    const body = await this.#api.sites();
-    return list(body, 'siteEntry')
-      .filter(
-        (entry) => text(entry, 'permissionLevel') !== 'siteUnverifiedUser',
-      )
-      .map((entry) => ({
-        permissionLevel: text(entry, 'permissionLevel'),
-        siteUrl: required(entry, 'siteUrl'),
-      }));
+    const { siteEntry = [] } = await this.#api.sites();
+    return siteEntry
+      .filter((entry) => entry.permissionLevel !== 'siteUnverifiedUser')
+      .map(({ siteUrl, permissionLevel }) => ({ permissionLevel, siteUrl }));
   }
 
   async #readSitemaps(
     name: string,
     siteUrl: string,
   ): Promise<Record<string, unknown>[]> {
-    const body = await this.#api.sitemaps(siteUrl);
-    const sitemaps = list(body, 'sitemap');
+    const { sitemap: sitemaps = [] } = await this.#api.sitemaps(siteUrl);
     if (name === 'sitemaps') {
       const reads = await readSitemaps(
         this.#fetch,
-        sitemaps.map((sitemap) => required(sitemap, 'path')),
+        sitemaps.map(({ path }) => path),
       );
       return sitemaps.map((sitemap) => ({
         siteUrl,
-        urlsRead: reads.get(required(sitemap, 'path'))?.urls?.length ?? null,
-        readError: reads.get(required(sitemap, 'path'))?.error ?? null,
-        errors: count(sitemap, 'errors'),
-        isPending: flag(sitemap, 'isPending'),
-        isSitemapsIndex: flag(sitemap, 'isSitemapsIndex'),
-        lastDownloaded: timestamp(sitemap, 'lastDownloaded'),
-        lastSubmitted: timestamp(sitemap, 'lastSubmitted'),
-        path: required(sitemap, 'path'),
-        type: text(sitemap, 'type'),
-        warnings: count(sitemap, 'warnings'),
+        path: sitemap.path,
+        type: sitemap.type,
+        lastSubmitted: instant(sitemap.lastSubmitted),
+        lastDownloaded: instant(sitemap.lastDownloaded),
+        isPending: sitemap.isPending,
+        isSitemapsIndex: sitemap.isSitemapsIndex,
+        // int64 counts arrive as decimal strings.
+        warnings: Number(sitemap.warnings),
+        errors: Number(sitemap.errors),
+        urlsRead: reads.get(sitemap.path)?.urls?.length ?? null,
+        readError: reads.get(sitemap.path)?.error ?? null,
       }));
     }
-    return sitemaps.flatMap((sitemap) =>
-      list(sitemap, 'contents').map((content) => ({
+    return sitemaps.flatMap(({ path, contents = [] }) =>
+      contents.map((content) => ({
         siteUrl,
-        indexed: optionalCount(content, 'indexed'),
-        sitemapPath: required(sitemap, 'path'),
-        submitted: count(content, 'submitted'),
-        type: required(content, 'type'),
+        sitemapPath: path,
+        type: content.type,
+        submitted: Number(content.submitted),
+        indexed: content.indexed === undefined ? null : Number(content.indexed),
       })),
     );
   }
@@ -605,7 +599,7 @@ export class SearchConsoleSource extends Source {
     state: unknown,
     siteUrl: string,
   ): AsyncGenerator<SourceMessage> {
-    const saved = readInspectionState(stream, state);
+    const saved = readInspectionState(state);
     const universe = await this.#universe(siteUrl, stream.name);
     const cached = this.#inspected.get(siteUrl) ?? new Map();
     this.#inspected.set(siteUrl, cached);
@@ -690,52 +684,48 @@ export class SearchConsoleSource extends Source {
   #inspectionRows(
     name: string,
     siteUrl: string,
-    { inspectionUrl, inspectedAt, indexStatus, result, error }: UrlInspection,
+    { inspectionUrl, inspectedAt, result, error }: UrlInspection,
     { sitemap, search }: Discovery,
   ): Record<string, unknown>[] {
+    const status = result?.indexStatusResult;
     if (name === 'urlInspection')
       return [
         {
-          ampVerdict: text(record(result, 'ampResult'), 'verdict'),
-          coverageState: text(indexStatus, 'coverageState'),
-          crawledAs: text(indexStatus, 'crawledAs'),
-          errorMessage: error?.message ?? null,
-          errorStatus: error?.status ?? null,
-          googleCanonical: text(indexStatus, 'googleCanonical'),
-          inSearchAnalytics: search,
-          inSitemap: sitemap,
-          indexingState: text(indexStatus, 'indexingState'),
-          inspectedAt,
-          inspectionResultLink: text(result, 'inspectionResultLink'),
-          inspectionUrl,
-          lastCrawlTime: timestamp(indexStatus, 'lastCrawlTime'),
-          mobileUsabilityVerdict: text(
-            record(result, 'mobileUsabilityResult'),
-            'verdict',
-          ),
-          pageFetchState: text(indexStatus, 'pageFetchState'),
-          richResultsVerdict: text(
-            record(result, 'richResultsResult'),
-            'verdict',
-          ),
-          robotsTxtState: text(indexStatus, 'robotsTxtState'),
           siteUrl,
-          userCanonical: text(indexStatus, 'userCanonical'),
-          verdict: text(indexStatus, 'verdict'),
+          inspectionUrl,
+          verdict: status?.verdict ?? null,
+          coverageState: status?.coverageState ?? null,
+          robotsTxtState: status?.robotsTxtState ?? null,
+          indexingState: status?.indexingState ?? null,
+          pageFetchState: status?.pageFetchState ?? null,
+          crawledAs: status?.crawledAs ?? null,
+          googleCanonical: status?.googleCanonical ?? null,
+          userCanonical: status?.userCanonical ?? null,
+          lastCrawlTime: instant(status?.lastCrawlTime),
+          inspectionResultLink: result?.inspectionResultLink ?? null,
+          mobileUsabilityVerdict:
+            result?.mobileUsabilityResult?.verdict ?? null,
+          richResultsVerdict: result?.richResultsResult?.verdict ?? null,
+          ampVerdict: result?.ampResult?.verdict ?? null,
+          inSitemap: sitemap,
+          inSearchAnalytics: search,
+          inspectedAt,
+          errorStatus: error?.status ?? null,
+          errorMessage: error?.message ?? null,
         },
       ];
-    const field =
-      name === 'urlInspectionSitemaps' ? 'sitemap' : 'referringUrls';
+    const values =
+      name === 'urlInspectionSitemaps'
+        ? status?.sitemap
+        : status?.referringUrls;
     const column =
       name === 'urlInspectionSitemaps' ? 'sitemap' : 'referringUrl';
-    return inspectionTexts(Reflect.get(indexStatus, field)).map(
-      (value, position) => ({
-        siteUrl,
-        inspectionUrl,
-        position,
-        [column]: value,
-      }),
-    );
+    return (values ?? []).map((value, position) => ({
+      siteUrl,
+      inspectionUrl,
+      position,
+      [column]: value,
+    }));
   }
 
   /**
@@ -765,9 +755,8 @@ export class SearchConsoleSource extends Source {
   }
 
   async #discover(siteUrl: string): Promise<Map<string, Discovery>> {
-    const listed = list(await this.#api.sitemaps(siteUrl), 'sitemap').map(
-      (sitemap) => required(sitemap, 'path'),
-    );
+    const { sitemap = [] } = await this.#api.sitemaps(siteUrl);
+    const listed = sitemap.map(({ path }) => path);
     // An unreadable sitemap is reported on the sitemaps stream; inspection
     // still covers every URL the other sources show.
     const sitemapUrls = [
@@ -844,87 +833,13 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+// The analytics checkpoint is this source's own STATE: the last settled date.
 function readCheckpoint(state: unknown): string | null {
-  if (state === null || state === undefined) return null;
-  if (
-    typeof state !== 'object' ||
-    Array.isArray(state) ||
-    Object.keys(state).length !== 1 ||
-    !Object.hasOwn(state, 'date')
-  )
-    throw new TypeError('Invalid Search Console checkpoint');
-  const date: unknown = Reflect.get(state, 'date');
-  if (!isCalendarDate(date))
-    throw new TypeError('Invalid Search Console checkpoint date');
-  return date;
+  return (state as { date: string } | null)?.date ?? null;
 }
 
-function record(value: unknown, key: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object') return {};
-  const nested: unknown = Reflect.get(value, key);
-  return nested !== null && typeof nested === 'object'
-    ? (nested as Record<string, unknown>)
-    : {};
-}
-
-function list(value: unknown, key: string): Record<string, unknown>[] {
-  if (value === null || typeof value !== 'object') return [];
-  const entries: unknown = Reflect.get(value, key);
-  if (entries === undefined) return [];
-  if (!Array.isArray(entries))
-    throw new TypeError(`Search Console returned an invalid ${key} list`);
-  return entries.map((entry: unknown) => {
-    if (entry === null || typeof entry !== 'object')
-      throw new TypeError(`Search Console returned an invalid ${key} entry`);
-    return entry as Record<string, unknown>;
-  });
-}
-
-function required(value: object, key: string): string {
-  const text: unknown = Reflect.get(value, key);
-  if (typeof text !== 'string' || !text)
-    throw new TypeError(`Search Console returned no ${key}`);
-  return text;
-}
-
-function text(value: object, key: string): string | null {
-  const found: unknown = Reflect.get(value, key);
-  if (found === undefined || found === null) return null;
-  if (typeof found !== 'string')
-    throw new TypeError(`Search Console returned an invalid ${key}`);
-  return found;
-}
-
-// int64 fields arrive as decimal strings, and proto3 omits a zero entirely.
-function count(value: object, key: string): number {
-  return optionalCount(value, key) ?? 0;
-}
-
-function optionalCount(value: object, key: string): number | null {
-  const found: unknown = Reflect.get(value, key);
-  if (found === undefined || found === null) return null;
-  const parsed = typeof found === 'string' ? Number(found) : found;
-  if (typeof parsed !== 'number' || !Number.isSafeInteger(parsed) || parsed < 0)
-    throw new TypeError(`Search Console returned an invalid ${key}`);
-  return parsed;
-}
-
-function flag(value: object, key: string): boolean {
-  const found: unknown = Reflect.get(value, key);
-  if (found === undefined || found === null) return false;
-  if (typeof found !== 'boolean')
-    throw new TypeError(`Search Console returned an invalid ${key}`);
-  return found;
-}
-
-// RFC 3339 without milliseconds is valid here, so normalize before loading.
-function timestamp(value: object, key: string): string | null {
-  const found: unknown = Reflect.get(value, key);
-  if (found === undefined || found === null) return null;
-  if (typeof found !== 'string')
-    throw new TypeError(`Search Console returned an invalid ${key}`);
-  const parsed = Date.parse(found);
-  if (!Number.isFinite(parsed))
-    throw new TypeError(`Search Console returned an unparsable ${key}`);
-  return new Date(parsed).toISOString();
+// Google reports some instants to the second (2026-09-14T19:44:28Z); they
+// load in the canonical millisecond form every other timestamp uses.
+function instant(value: string | undefined): string | null {
+  return value === undefined ? null : new Date(value).toISOString();
 }

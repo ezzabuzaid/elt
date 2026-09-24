@@ -2,6 +2,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 
 import { messageOf, statusOf } from '../../platform/google/google-errors.ts';
 import {
+  type InspectionResult,
   type SearchConsoleApi,
   SearchConsoleQuotaError,
   URL_INSPECTION_QUOTA,
@@ -10,9 +11,8 @@ import {
 export type UrlInspection = {
   readonly inspectionUrl: string;
   readonly inspectedAt: string;
-  readonly result: Record<string, unknown>;
-  readonly indexStatus: Record<string, unknown>;
-  // Set when Google rejected this one URL; the inspection has no result.
+  // Null when Google rejected this one URL; error then says why.
+  readonly result: InspectionResult | null;
   readonly error: { readonly status: number; readonly message: string } | null;
 };
 
@@ -29,14 +29,6 @@ export const systemInspectionClock: InspectionClock = {
 // A bad URL is Google's verdict on that URL alone; anything else (auth, a
 // revoked property, a server fault) would fail every URL the same way.
 const REJECTED_URL_STATUSES = new Set([400, 404]);
-
-function record(value: unknown, key: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object') return {};
-  const nested: unknown = Reflect.get(value, key);
-  return nested !== null && typeof nested === 'object'
-    ? (nested as Record<string, unknown>)
-    : {};
-}
 
 /**
  * Inspects URLs concurrently, in the given order. Each call waits seconds on
@@ -81,15 +73,13 @@ export async function inspectUrls(
       await pace();
       if (exhausted || failure !== undefined) return;
       try {
-        const body = await api.inspect(siteUrl, inspectionUrl, {
+        const { inspectionResult } = await api.inspect(siteUrl, inspectionUrl, {
           signal: controller.signal,
         });
-        const result = record(body, 'inspectionResult');
         results[index] = {
           inspectionUrl,
           inspectedAt: new Date(clock.now()).toISOString(),
-          result,
-          indexStatus: record(result, 'indexStatusResult'),
+          result: inspectionResult ?? {},
           error: null,
         };
       } catch (error) {
@@ -99,8 +89,7 @@ export async function inspectUrls(
           results[index] = {
             inspectionUrl,
             inspectedAt: new Date(clock.now()).toISOString(),
-            result: {},
-            indexStatus: {},
+            result: null,
             error: { status, message: messageOf(error) },
           };
         else if (failure === undefined) {
@@ -121,10 +110,4 @@ export async function inspectUrls(
     ),
     exhausted,
   };
-}
-
-export function inspectionTexts(values: unknown): readonly string[] {
-  return Array.isArray(values)
-    ? values.filter((value): value is string => typeof value === 'string')
-    : [];
 }

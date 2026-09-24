@@ -124,6 +124,28 @@ async function download(fetch: SitemapFetch, url: string): Promise<string> {
   }
 }
 
+// The documents a sitemap can be, as fast-xml-parser shapes them: namespace
+// prefixes removed, attributes under @, repeated elements always arrays.
+type SitemapDocument = {
+  readonly urlset?: { readonly url?: readonly { readonly loc: string }[] };
+  readonly sitemapindex?: {
+    readonly sitemap?: readonly { readonly loc: string }[];
+  };
+  readonly rss?: {
+    readonly channel?: {
+      readonly item?: readonly { readonly link?: readonly string[] }[];
+    };
+  };
+  readonly feed?: {
+    readonly entry?: readonly {
+      readonly link?: readonly {
+        readonly '@href'?: string;
+        readonly '@rel'?: string;
+      }[];
+    }[];
+  };
+};
+
 function parse(
   url: string,
   text: string,
@@ -141,41 +163,33 @@ function parse(
         );
     return { pages: lines, sitemaps: [] };
   }
-  let document: unknown;
+  let document: SitemapDocument;
   try {
     document = parser.parse(text, true);
   } catch (cause) {
     throw new SitemapError(url, describe(cause), { cause });
   }
-  const root = (name: string): unknown =>
-    document !== null && typeof document === 'object'
-      ? Reflect.get(document, name)
-      : undefined;
-  const urlset = root('urlset');
-  if (urlset !== undefined)
-    return { pages: locations(url, list(urlset, 'url')), sitemaps: [] };
-  const index = root('sitemapindex');
-  if (index !== undefined)
-    return { pages: [], sitemaps: locations(url, list(index, 'sitemap')) };
-  const rss = root('rss');
-  if (rss !== undefined)
+  const loc = ({ loc }: { loc: string }) => loc.trim();
+  if (document.urlset)
+    return { pages: (document.urlset.url ?? []).map(loc), sitemaps: [] };
+  if (document.sitemapindex)
     return {
-      pages: list(Reflect.get(Object(rss), 'channel'), 'item').flatMap((item) =>
-        texts(Reflect.get(Object(item), 'link')),
+      pages: [],
+      sitemaps: (document.sitemapindex.sitemap ?? []).map(loc),
+    };
+  if (document.rss)
+    return {
+      pages: (document.rss.channel?.item ?? []).flatMap(
+        (item) => item.link ?? [],
       ),
       sitemaps: [],
     };
-  const feed = root('feed');
-  if (feed !== undefined)
+  if (document.feed)
     return {
-      pages: list(feed, 'entry').flatMap((entry) =>
-        list(entry, 'link')
-          .filter((link) =>
-            ['alternate', undefined].includes(
-              Reflect.get(Object(link), '@rel'),
-            ),
-          )
-          .flatMap((link) => texts(Reflect.get(Object(link), '@href'))),
+      pages: (document.feed.entry ?? []).flatMap((entry) =>
+        (entry.link ?? [])
+          .filter((link) => (link['@rel'] ?? 'alternate') === 'alternate')
+          .flatMap((link) => link['@href'] ?? []),
       ),
       sitemaps: [],
     };
@@ -185,43 +199,19 @@ function parse(
   );
 }
 
-function locations(url: string, entries: readonly unknown[]): string[] {
-  return entries.map((entry) => {
-    const location: unknown = Reflect.get(Object(entry), 'loc');
-    if (typeof location !== 'string' || !location.trim())
-      throw new SitemapError(url, 'an entry has no <loc>');
-    return location.trim();
-  });
-}
-
-function list(value: unknown, key: string): unknown[] {
-  const entries: unknown =
-    value !== null && typeof value === 'object'
-      ? Reflect.get(value, key)
-      : undefined;
-  return Array.isArray(entries) ? entries : [];
-}
-
-function texts(value: unknown): string[] {
-  return (Array.isArray(value) ? value : [value]).filter(
-    (text): text is string => typeof text === 'string' && text.trim() !== '',
-  );
-}
-
 // fetch() reports every network failure as "fetch failed" and keeps the
 // reason (for example ECONNRESET) on its cause, so the chain is spelled out.
 function describe(cause: unknown): string {
   const reasons: string[] = [];
-  for (let error = cause; error !== undefined && reasons.length < 3; ) {
-    if (!(error instanceof Error)) {
-      reasons.push(String(error));
-      break;
-    }
-    const code: unknown = Reflect.get(error, 'code');
+  let error = cause as (Error & { code?: string }) | undefined;
+  for (
+    ;
+    error instanceof Error && reasons.length < 3;
+    error = error.cause as typeof error
+  )
     reasons.push(
-      typeof code === 'string' ? `${code}: ${error.message}` : error.message,
+      error.code ? `${error.code}: ${error.message}` : error.message,
     );
-    error = error.cause;
-  }
+  if (reasons.length === 0) reasons.push(String(cause));
   return reasons.join(' (') + ')'.repeat(reasons.length - 1);
 }

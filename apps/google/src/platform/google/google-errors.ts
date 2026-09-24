@@ -1,46 +1,49 @@
-// The HTTP status of a failed Google call, from a GaxiosError or a stub.
+// What a failed Google call throws (GaxiosError), as observed live: for
+// example a 429 with { error: { code, message: "Quota exceeded for
+// sc-domain:limerence.sh.", errors: [{ reason: "rateLimitExceeded" }],
+// status: "RESOURCE_EXHAUSTED" } }.
+export type GoogleError = {
+  readonly message?: string;
+  readonly status?: number;
+  readonly response?: {
+    readonly status?: number;
+    readonly headers?: Headers;
+    readonly data?: {
+      readonly error?: {
+        readonly message?: string;
+        readonly status?: string;
+        readonly errors?: readonly { readonly reason?: string }[];
+      };
+    };
+  };
+};
+
 export function statusOf(error: unknown): number | undefined {
-  if (error === null || typeof error !== 'object') return undefined;
-  const status: unknown = Reflect.get(error, 'status');
-  if (typeof status === 'number') return status;
-  const response: unknown = Reflect.get(error, 'response');
-  if (response === null || typeof response !== 'object') return undefined;
-  const code: unknown = Reflect.get(response, 'status');
-  return typeof code === 'number' ? code : undefined;
+  const failure = error as GoogleError | undefined;
+  return failure?.status ?? failure?.response?.status;
+}
+
+export function reasonsOf(error: unknown): string[] {
+  return (
+    (error as GoogleError | undefined)?.response?.data?.error?.errors?.map(
+      (entry) => entry.reason ?? '',
+    ) ?? []
+  );
 }
 
 // A 403 that means the request itself is misconfigured (API disabled, a scope
 // missing from the grant) rather than that this user may not read the file.
 export function isConfigurationError(error: unknown): boolean {
-  if (error === null || typeof error !== 'object') return false;
-  const response: unknown = Reflect.get(error, 'response');
-  const body =
-    response !== null && typeof response === 'object'
-      ? JSON.stringify(Reflect.get(response, 'data') ?? '')
-      : '';
+  const failure = error as GoogleError | undefined;
   return /accessNotConfigured|SERVICE_DISABLED|insufficientPermissions|ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficient authentication scopes/i.test(
-    `${body} ${error instanceof Error ? error.message : ''}`,
+    `${JSON.stringify(failure?.response?.data ?? '')} ${failure?.message ?? ''}`,
   );
 }
 
 // Google's own explanation of a failed call, falling back to the error text.
 export function messageOf(error: unknown): string {
-  const response: unknown =
-    error !== null && typeof error === 'object'
-      ? Reflect.get(error, 'response')
-      : undefined;
-  const body: unknown =
-    response !== null && typeof response === 'object'
-      ? Reflect.get(response, 'data')
-      : undefined;
-  const failure: unknown =
-    body !== null && typeof body === 'object'
-      ? Reflect.get(body, 'error')
-      : undefined;
-  const message: unknown =
-    failure !== null && typeof failure === 'object'
-      ? Reflect.get(failure, 'message')
-      : undefined;
-  if (typeof message === 'string' && message) return message;
-  return error instanceof Error ? error.message : String(error);
+  const failure = error as GoogleError | undefined;
+  return (
+    failure?.response?.data?.error?.message || failure?.message || String(error)
+  );
 }

@@ -51,6 +51,19 @@ function recorder(reply: (call: Call) => unknown) {
   };
 }
 
+// A sitemaps.list entry as the API returns it live.
+const sitemapEntry = (path: string) => ({
+  path,
+  lastSubmitted: '2024-07-18T14:07:25.104Z',
+  isPending: false,
+  isSitemapsIndex: false,
+  type: 'sitemap',
+  lastDownloaded: '2026-09-19T07:32:39.730Z',
+  warnings: '0',
+  errors: '0',
+  contents: [{ type: 'web', submitted: '1', indexed: '0' }],
+});
+
 const analyticsCalls = (calls: readonly Call[]) =>
   calls.filter((call) => call.url.includes('searchAnalytics/query'));
 
@@ -59,7 +72,7 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
     metadata: { firstIncompleteDate: '2026-09-21' },
     rows: [
       {
-        // clicks is absent: proto3 omits a zero rather than reporting one.
+        clicks: 0,
         impressions: 340,
         keys: ['2026-09-20', 'context compiler'],
         ctr: 0,
@@ -291,17 +304,15 @@ test('analytics pagination follows startRow until a short page', async () => {
   );
 });
 
-test('sitemaps normalize int64 text, omitted flags, and second-precision times', async () => {
+test('sitemaps convert int64 text and second-precision times', async () => {
   const { requester } = recorder(() => ({
     sitemap: [
       {
-        contents: [{ submitted: '512', type: 'WEB' }],
-        // warnings and isPending are omitted, which proto3 uses for zero/false.
+        ...sitemapEntry('https://example.com/sitemap.xml'),
+        contents: [{ submitted: '512', type: 'web' }],
         errors: '2',
         lastDownloaded: '2026-09-20T10:30:00Z',
         lastSubmitted: '2026-09-19T08:00:00.250Z',
-        path: 'https://example.com/sitemap.xml',
-        type: 'SITEMAP',
       },
     ],
   }));
@@ -356,7 +367,7 @@ test('sitemaps normalize int64 text, omitted flags, and second-precision times',
       indexed: null,
       sitemapPath: 'https://example.com/sitemap.xml',
       submitted: 512,
-      type: 'WEB',
+      type: 'web',
     },
   );
 });
@@ -364,7 +375,7 @@ test('sitemaps normalize int64 text, omitted flags, and second-precision times',
 test('inspection covers every sitemap and search URL once, shared by all three streams', async () => {
   const { requester, calls } = recorder((call) => {
     if (call.url.endsWith('/sitemaps'))
-      return { sitemap: [{ path: 'https://example.com/sitemap.xml' }] };
+      return { sitemap: [sitemapEntry('https://example.com/sitemap.xml')] };
     if (call.url.includes('searchAnalytics/query'))
       // A later startRow exhausts the range, which ends the paging loop.
       return {
@@ -737,8 +748,8 @@ test('two properties load into the same tables without deleting each other', asy
   const A = 'sc-domain:a.example';
   const B = 'sc-domain:b.example';
   const sitemaps: Record<string, unknown[]> = {
-    [A]: [{ path: 'https://a.example/sitemap.xml' }],
-    [B]: [{ path: 'https://b.example/sitemap.xml' }],
+    [A]: [sitemapEntry('https://a.example/sitemap.xml')],
+    [B]: [sitemapEntry('https://b.example/sitemap.xml')],
   };
   const { requester } = recorder((call) => {
     const site = decodeURIComponent(
@@ -1717,7 +1728,7 @@ function inspectionProperty({
           data: {
             sitemap: Object.keys(sitemaps)
               .filter((path) => !path.startsWith('!'))
-              .map((path) => ({ path })),
+              .map(sitemapEntry),
           },
         };
       if (options.url.includes('searchAnalytics/query'))
@@ -1962,20 +1973,22 @@ test('the daily quota stops inspection cleanly and resumes after Pacific midnigh
       inspect: () =>
         allowed-- > 0
           ? { verdict: 'PASS' }
-          : httpError(403, { reason: 'quotaExceeded' }),
+          : httpError(429, { reason: 'rateLimitExceeded' }),
     });
     let clock = Date.parse(start);
     const source = new SearchConsoleSource({
       ...property,
       inspectionConcurrency: 1,
       now: () => new Date(clock),
+      retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-quota-'));
 
     await inspectionRun(source, scratch.path);
-    // The refusal is not retried: a, b, then one call for c.
+    // Live, the exhausted daily quota answers 429 rateLimitExceeded with no
+    // Retry-After ("Quota exceeded for sc-domain:limerence.sh.").
     assert.deepEqual(property.inspected, [
       'https://example.com/a',
       'https://example.com/b',
@@ -2143,7 +2156,7 @@ test('inspections run concurrently, a rejected URL becomes a row, and a server e
   assert.deepEqual(state.prepare('SELECT id FROM checkpoints').all(), []);
 });
 
-test('inspection options and checkpoints are validated', async () => {
+test('inspection options are validated', () => {
   const base = {
     now: NOW,
     requester: recorder(() => ({})).requester,
@@ -2158,36 +2171,6 @@ test('inspection options and checkpoints are validated', async () => {
     assert.throws(
       () => new SearchConsoleSource({ ...base, inspectionConcurrency }),
       /inspectionConcurrency must be a whole number of at least one/,
-    );
-
-  const property = inspectionProperty({ pages: ['https://example.com/a'] });
-  const source = new SearchConsoleSource({
-    ...property,
-    now: NOW,
-    siteUrls: [SITE],
-  });
-  const destination = new SQLiteDestination({ path: ':memory:' });
-  const configuration = new Copy(source.urlInspection, destination.table('i'), {
-    id: 'i',
-    syncMode: 'incremental',
-    destinationSyncMode: 'append_dedup',
-    primaryKey: [...source.urlInspection.primaryKey],
-  }).configuration;
-  const at = NOW().toISOString();
-  for (const invalid of [
-    {},
-    { inspected: [] },
-    { inspected: { 'https://example.com/a#x': { at, rows: 1 } } },
-    { inspected: { 'https://example.com/a': { at: 'yesterday', rows: 1 } } },
-    { inspected: { 'https://example.com/a': { at, rows: 2 } } },
-  ])
-    await assert.rejects(
-      Array.fromAsync(
-        source.read(configuration, {
-          partitions: [{ partition: { siteUrl: SITE }, state: invalid }],
-        }),
-      ),
-      /Invalid URL inspection checkpoint for stream urlInspection/,
     );
 });
 

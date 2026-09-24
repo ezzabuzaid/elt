@@ -91,11 +91,17 @@ async function warehouse(siteUrls: string[], google: Google) {
       );
       return {
         data: {
-          rows: google.analytics({
-            site,
-            dimensions: (options.data?.['dimensions'] as string[]) ?? [],
-            type: String(options.data?.['type']),
-          }),
+          // Google always reports ctr, so the fake derives it as Google does.
+          rows: google
+            .analytics({
+              site,
+              dimensions: (options.data?.['dimensions'] as string[]) ?? [],
+              type: String(options.data?.['type']),
+            })
+            .map((row) => ({
+              ctr: row.impressions > 0 ? row.clicks / row.impressions : 0,
+              ...row,
+            })),
           ...(google.firstIncompleteDate && {
             metadata: { firstIncompleteDate: google.firstIncompleteDate },
           }),

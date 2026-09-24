@@ -75,70 +75,19 @@ export async function readSearchAnalytics(
   let firstIncompleteDate: string | undefined;
   let startRow = request.startRow ?? 0;
   for (;;) {
-    const page = parsePage(
-      await api.searchAnalytics(
-        siteUrl,
-        { ...request, rowLimit, startRow },
-        options,
-      ),
+    const page = await api.searchAnalytics(
+      siteUrl,
+      { ...request, rowLimit, startRow },
+      options,
     );
-    firstIncompleteDate ??= page.firstIncompleteDate;
-    rows.push(...page.rows);
-    if (page.rows.length < rowLimit) break;
-    startRow += page.rows.length;
+    firstIncompleteDate ??= page.metadata?.firstIncompleteDate;
+    // An exhausted range answers without a rows field at all.
+    const pageRows = page.rows ?? [];
+    rows.push(
+      ...pageRows.map((row) => ({ ...row, position: row.position ?? null })),
+    );
+    if (pageRows.length < rowLimit) break;
+    startRow += pageRows.length;
   }
   return { rows, ...(firstIncompleteDate ? { firstIncompleteDate } : {}) };
-}
-
-function parsePage(body: unknown): SearchAnalyticsPage {
-  if (body === null || typeof body !== 'object')
-    throw new TypeError('Search Console returned an invalid analytics page');
-  const rawRows: unknown = Reflect.get(body, 'rows');
-  // An exhausted range answers without a rows field at all.
-  if (rawRows !== undefined && !Array.isArray(rawRows))
-    throw new TypeError('Search Console returned invalid analytics rows');
-  const rows = (rawRows ?? []).map((row: unknown) => {
-    if (row === null || typeof row !== 'object')
-      throw new TypeError('Search Console returned an invalid analytics row');
-    // A query with no dimensions answers with a single keyless total row.
-    const keys: unknown = Reflect.get(row, 'keys') ?? [];
-    if (!Array.isArray(keys) || !keys.every((key) => typeof key === 'string'))
-      throw new TypeError('Search Console returned invalid analytics keys');
-    // Proto3 JSON omits a zero, so an absent count means none were recorded.
-    // Position is different: it is absent because there is no rank to report.
-    return {
-      keys: keys as readonly string[],
-      clicks: metric(row, 'clicks'),
-      impressions: metric(row, 'impressions'),
-      ctr: metric(row, 'ctr'),
-      position: optionalMetric(row, 'position'),
-    };
-  });
-  const metadata: unknown = Reflect.get(body, 'metadata');
-  const incomplete: unknown =
-    metadata !== null && typeof metadata === 'object'
-      ? Reflect.get(metadata, 'firstIncompleteDate')
-      : undefined;
-  if (incomplete !== undefined && !isCalendarDate(incomplete))
-    throw new TypeError(
-      'Search Console returned an invalid firstIncompleteDate',
-    );
-  return {
-    rows,
-    ...(typeof incomplete === 'string'
-      ? { firstIncompleteDate: incomplete }
-      : {}),
-  };
-}
-
-function metric(row: object, name: string): number {
-  return optionalMetric(row, name) ?? 0;
-}
-
-function optionalMetric(row: object, name: string): number | null {
-  const value: unknown = Reflect.get(row, name);
-  if (value === undefined || value === null) return null;
-  if (typeof value !== 'number' || !Number.isFinite(value))
-    throw new TypeError(`Search Console returned an invalid ${name}`);
-  return value;
 }

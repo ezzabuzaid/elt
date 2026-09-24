@@ -69,10 +69,7 @@ export function assertInPartition(
   value: unknown,
 ): void {
   for (const [field, expected] of Object.entries(partition)) {
-    const actual: unknown =
-      value !== null && typeof value === 'object'
-        ? Reflect.get(value, field)
-        : undefined;
+    const actual = (value as Record<string, unknown> | null)?.[field];
     if (actual !== expected)
       throw new TypeError(
         `Stream ${stream.name} record for partition ${JSON.stringify(partition)} carries ${field} ${JSON.stringify(actual)}`,
@@ -80,41 +77,18 @@ export function assertInPartition(
   }
 }
 
-// The checkpoint of a partitioned stream: each partition's own source state.
+// The checkpoint of a partitioned stream, as Source.read wrote it: each
+// partition's own source state.
 export function readPartitionStates(
   stream: Stream,
   state: unknown,
 ): Map<string, PartitionState> {
-  const saved = new Map<string, PartitionState>();
-  if (state === null) return saved;
-  const invalid = () =>
-    new TypeError(`Invalid partitioned checkpoint for stream ${stream.name}`);
-  const entries: unknown =
-    state !== null && typeof state === 'object' && !Array.isArray(state)
-      ? Reflect.get(state, 'partitions')
-      : undefined;
-  if (Object.keys(state ?? {}).length !== 1 || !Array.isArray(entries))
-    throw invalid();
   const identity = partitionIdentity(stream);
-  for (const entry of entries) {
-    if (
-      entry === null ||
-      typeof entry !== 'object' ||
-      Object.keys(entry).length !== 2 ||
-      !Object.hasOwn(entry, 'state')
-    )
-      throw invalid();
-    let read: ReturnType<typeof readPartition>;
-    try {
-      read = readPartition(identity, Reflect.get(entry, 'partition'));
-    } catch {
-      throw invalid();
-    }
-    if (saved.has(read.key)) throw invalid();
-    saved.set(read.key, {
-      partition: read.partition,
-      state: Reflect.get(entry, 'state'),
-    });
-  }
-  return saved;
+  const envelope = state as { partitions: PartitionState[] } | null;
+  return new Map(
+    (envelope?.partitions ?? []).map((entry) => [
+      identity.key(entry.partition),
+      entry,
+    ]),
+  );
 }

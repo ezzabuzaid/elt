@@ -1,6 +1,5 @@
-import { type DeleteMessage, isTimestamp, type Stream } from 'elt';
+import type { DeleteMessage, Stream } from 'elt';
 
-import { pageUrl } from './inspection-scope.ts';
 import type { UrlInspection } from './url-inspection.ts';
 
 // Where a URL was discovered for inspection.
@@ -12,49 +11,16 @@ export type Discovery = { readonly sitemap: boolean; readonly search: boolean };
 // deleted without reading the destination.
 export type Inspected = { readonly at: string; readonly rows: number };
 
-export function readInspectionState(
-  stream: Stream,
-  state: unknown,
-): Map<string, Inspected> {
-  const saved = new Map<string, Inspected>();
-  if (state === null) return saved;
-  const invalid = () =>
-    new TypeError(
-      `Invalid URL inspection checkpoint for stream ${stream.name}`,
-    );
-  const inspected: unknown =
-    state !== null && typeof state === 'object' && !Array.isArray(state)
-      ? Reflect.get(state, 'inspected')
-      : undefined;
-  if (
-    Object.keys(state ?? {}).length !== 1 ||
-    inspected === null ||
-    typeof inspected !== 'object' ||
-    Array.isArray(inspected)
-  )
-    throw invalid();
-  for (const [url, entry] of Object.entries(inspected)) {
-    const at: unknown =
-      entry !== null && typeof entry === 'object'
-        ? Reflect.get(entry, 'at')
-        : undefined;
-    const rows: unknown =
-      entry !== null && typeof entry === 'object'
-        ? Reflect.get(entry, 'rows')
-        : undefined;
-    if (
-      pageUrl(url) !== url ||
-      Object.keys(Object(entry)).length !== 2 ||
-      !isTimestamp(at) ||
-      typeof rows !== 'number' ||
-      !Number.isSafeInteger(rows) ||
-      rows < 0 ||
-      (stream.name === 'urlInspection' && rows !== 1)
-    )
-      throw invalid();
-    saved.set(url, { at, rows });
-  }
-  return saved;
+// The checkpoint this stream writes for a property: the source's own STATE,
+// so it is read as written.
+export type InspectionState = {
+  readonly inspected: Readonly<Record<string, Inspected>>;
+};
+
+export function readInspectionState(state: unknown): Map<string, Inspected> {
+  return new Map(
+    Object.entries((state as InspectionState | null)?.inspected ?? {}),
+  );
 }
 
 /**

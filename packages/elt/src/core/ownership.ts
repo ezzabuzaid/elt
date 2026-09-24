@@ -38,10 +38,9 @@ export function assertShareable(
   }
 }
 
+// Claims are what a destination stored for its own writers, read as written.
 export function readClaims(claims: unknown): WriterClaim[] {
-  if (!Array.isArray(claims) || !claims.every(isClaim))
-    throw new TypeError('Invalid target writer claims');
-  return claims;
+  return claims as WriterClaim[];
 }
 
 // Other writers' claims plus this one, in a stable order.
@@ -79,36 +78,4 @@ function describe({
   partitions,
 }: WriterClaim): string {
   return `${writer} (${destinationSyncMode}${primaryKey === null ? '' : ` on ${JSON.stringify(primaryKey)}`}${partitions === null ? '' : ` for ${JSON.stringify(partitions)}`})`;
-}
-
-function isClaim(value: unknown): value is WriterClaim {
-  if (value === null || typeof value !== 'object') return false;
-  const writer: unknown = Reflect.get(value, 'writer');
-  const destinationSyncMode: unknown = Reflect.get(
-    value,
-    'destinationSyncMode',
-  );
-  const primaryKey: unknown = Reflect.get(value, 'primaryKey');
-  const partitions: unknown = Reflect.get(value, 'partitions');
-  return (
-    typeof writer === 'string' &&
-    writer.length > 0 &&
-    ['append', 'overwrite', 'append_dedup', 'overwrite_dedup'].includes(
-      String(destinationSyncMode),
-    ) &&
-    (primaryKey === null ||
-      (Array.isArray(primaryKey) &&
-        primaryKey.every((field) => typeof field === 'string'))) &&
-    (partitions === null ||
-      (Array.isArray(partitions) &&
-        partitions.every(
-          (partition: unknown) =>
-            partition !== null &&
-            typeof partition === 'object' &&
-            !Array.isArray(partition) &&
-            Object.values(partition).every((part) =>
-              ['string', 'number', 'boolean'].includes(typeof part),
-            ),
-        )))
-  );
 }
