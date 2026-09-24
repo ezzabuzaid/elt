@@ -34,6 +34,7 @@ import {
 import { EventKit } from './platform/macos/eventkit.ts';
 import osa from './platform/macos/osa.ts';
 import { calendarScript } from './sources/apple-calendar/calendar-script.ts';
+import { parseICalendar } from './sources/apple-calendar/icalendar.ts';
 import { AttachmentsStream } from './sources/apple-notes/attachments-stream.ts';
 import { remindersScript } from './sources/apple-reminders/reminders-script.ts';
 
@@ -2225,5 +2226,120 @@ test('OSA watching closes on abort or iterator return and reports native failure
       )
       .next(),
     /native probe failure/,
+  );
+});
+
+test('iCalendar parsing unfolds lines, keeps parameters and vendor properties, and nests components', () => {
+  const bytes = (...parts: (string | number[])[]) =>
+    Buffer.concat(
+      parts.map((part) =>
+        typeof part === 'string' ? Buffer.from(part) : Buffer.from(part),
+      ),
+    );
+  const ics = bytes(
+    'BEGIN:VCALENDAR\r\nVERSION:2.0\r\n',
+    'BEGIN:VTIMEZONE\r\nTZID:Asia/Amman\r\n',
+    'BEGIN:STANDARD\r\nTZOFFSETTO:+0300\r\nEND:STANDARD\r\n',
+    'BEGIN:DAYLIGHT\r\nTZOFFSETTO:+0300\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\n',
+    'BEGIN:VEVENT\r\nUID:event-1\r\n',
+    // A fold inside "é" (0xC3 0xA9) and a tab fold.
+    'SUMMARY:Caf',
+    [0xc3],
+    '\r\n ',
+    [0xa9],
+    ' plan\r\n\tning\r\n',
+    'ATTACH;FMTTYPE=application/pdf;FILENAME="a;b:c,d.pdf":https://example.com/a\r\n',
+    'ATTENDEE;MEMBER="mailto:a@example.com","mailto:b@example.com";CN=Caret^^ ^\'Q^\' ^nline:mailto:c@example.com\r\n',
+    'X-GOOGLE-CONFERENCE;X-PARAM=1:https://meet.google.com/abc\r\n',
+    'DESCRIPTION:Raw\\, value\\nkept\r\n',
+    'BEGIN:VALARM\r\nACTION:DISPLAY\r\nEND:VALARM\r\n',
+    'END:VEVENT\r\nEND:VCALENDAR\r\n',
+  );
+
+  const calendar = parseICalendar(ics);
+  assert.equal(calendar.name, 'VCALENDAR');
+  assert.deepEqual(
+    calendar.components.map((component) => component.name),
+    ['VTIMEZONE', 'VEVENT'],
+  );
+  assert.deepEqual(
+    calendar.components[0]?.components.map((component) => component.name),
+    ['STANDARD', 'DAYLIGHT'],
+  );
+  const event = calendar.components[1];
+  assert.ok(event);
+  const property = (name: string) =>
+    event.properties.find((candidate) => candidate.name === name);
+  assert.equal(property('SUMMARY')?.value, 'Café planning');
+  assert.deepEqual(property('ATTACH'), {
+    name: 'ATTACH',
+    parameters: [
+      { name: 'FMTTYPE', values: ['application/pdf'] },
+      { name: 'FILENAME', values: ['a;b:c,d.pdf'] },
+    ],
+    value: 'https://example.com/a',
+  });
+  assert.deepEqual(property('ATTENDEE')?.parameters, [
+    {
+      name: 'MEMBER',
+      values: ['mailto:a@example.com', 'mailto:b@example.com'],
+    },
+    { name: 'CN', values: ['Caret^ "Q" \nline'] },
+  ]);
+  assert.deepEqual(property('X-GOOGLE-CONFERENCE'), {
+    name: 'X-GOOGLE-CONFERENCE',
+    parameters: [{ name: 'X-PARAM', values: ['1'] }],
+    value: 'https://meet.google.com/abc',
+  });
+  assert.equal(property('DESCRIPTION')?.value, 'Raw\\, value\\nkept');
+  assert.deepEqual(
+    event.components.map((component) => component.name),
+    ['VALARM'],
+  );
+  assert.ok(Object.isFrozen(event.properties));
+  // Bare LF line endings parse the same way.
+  assert.deepEqual(
+    parseICalendar(
+      Buffer.from(ics.toString('latin1').replaceAll('\r\n', '\n'), 'latin1'),
+    ),
+    calendar,
+  );
+});
+
+test('iCalendar parsing rejects malformed content instead of skipping it', () => {
+  const parse = (text: string) => () => parseICalendar(Buffer.from(text));
+  for (const [text, message] of [
+    ['', /no VCALENDAR/],
+    ['VERSION:2.0\r\n', /property outside a component/],
+    ['BEGIN:VEVENT\r\nEND:VEVENT\r\n', /must start with BEGIN:VCALENDAR/],
+    ['BEGIN:VCALENDAR\r\nVERSION 2.0\r\nEND:VCALENDAR\r\n', /missing colon/],
+    ['BEGIN:VCALENDAR\r\n:2.0\r\nEND:VCALENDAR\r\n', /missing property name/],
+    ['BEGIN:VCALENDAR\r\nX;=1:v\r\nEND:VCALENDAR\r\n', /invalid parameter/],
+    [
+      'BEGIN:VCALENDAR\r\nX;P="open:v\r\nEND:VCALENDAR\r\n',
+      /unterminated quoted/,
+    ],
+    ['BEGIN:VCALENDAR\r\nX;P=a"b:v\r\nEND:VCALENDAR\r\n', /misplaced quote/],
+    [
+      'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nEND:VTODO\r\n',
+      /END:VTODO does not close VEVENT/,
+    ],
+    ['BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\n', /VEVENT is not closed/],
+    [
+      'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\nBEGIN:VCALENDAR\r\n',
+      /content after the calendar ended/,
+    ],
+  ] as const)
+    assert.throws(parse(text), message);
+  assert.throws(
+    () =>
+      parseICalendar(
+        Buffer.concat([
+          Buffer.from('BEGIN:VCALENDAR\r\nX:'),
+          Buffer.from([0xff]),
+          Buffer.from('\r\nEND:VCALENDAR\r\n'),
+        ]),
+      ),
+    /not valid UTF-8/,
   );
 });
