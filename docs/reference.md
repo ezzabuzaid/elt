@@ -413,9 +413,11 @@ Calendar uses the public EventKit framework through the existing OSA bridge. It 
 
 The `calendars`, `eventMetadata`, and `excludedDates` streams also read Calendar's scripting interface and require macOS Automation access to Calendar. This can launch Calendar.app. The other streams use EventKit alone. Scripting failures and mismatched native lookups fail the copy with the original cause.
 
+The `icsComponents`, `icsProperties`, and `icsParameters` streams read each item's iCalendar export through **private** EventKit API (`EKEventStore` `ICSDataForCalendarItems:preventLineFolding:`, falling back to `:options:`). They need no Automation access. The source checks for the method first: when a macOS version lacks it, the copy fails with `CalendarIcsUnavailableError` rather than exporting nothing, and an export without any event component fails too. A macOS update can remove or change this API; select only the public streams if that matters more than ICS coverage.
+
 ### Streams
 
-All nine streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables or Markdown targets. Related collections are separate scalar rows, preserving their data without adding JSON columns to SQLite.
+All twelve streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables or Markdown targets. Related collections are separate scalar rows, preserving their data without adding JSON columns to SQLite.
 
 | Stream | Contents and relationships |
 | --- | --- |
@@ -428,6 +430,9 @@ All nine streams support full refresh and snapshot incremental (`append_dedup` k
 | `alarms` | `eventId`, position, native alarm type, relative offset in seconds, absolute date, email/sound, proximity and geographic location. |
 | `recurrenceRules` | `eventId`, position, calendar identifier, frequency, interval, first weekday, end date and occurrence count. |
 | `recurrenceRuleValues` | `ruleId`, `eventId`, component and position, integer value, optional weekday ordinal. Preserves weekdays, month/year days, year weeks, months, and set positions. |
+| `icsComponents` | One row per iCalendar component of a native item (`VCALENDAR`, `VEVENT`, `VALARM`, `VTIMEZONE`, …): `id` `[calendarId, calendarItemId, path]`, `eventMetadataId`, `parentId`, `position`, `name`, `uid`, the raw `recurrenceId` with its `recurrenceIdTimeZone` (TZID), and `eventId` when it is exact (the master of a non-recurring event). |
+| `icsProperties` | Every property except `DTSTAMP`, with its raw value: `componentId`, `position`, `name`, `value`. Includes `ATTACH`, `RRULE`, `EXDATE`, `RECURRENCE-ID`, `URL`, and vendor properties such as `X-GOOGLE-CONFERENCE` and `X-MICROSOFT-*`. |
+| `icsParameters` | One row per parameter value: `propertyId`, `componentId`, `position`, `valuePosition`, `name`, `value` (for example `ATTACH;FMTTYPE`, `ATTACH;FILENAME`, `DTSTART;TZID`). |
 
 Native enums and bitmasks remain integers. Missing optional values remain `null`; zero recurrence count means no count-based limit. Schema details are available on each stream's `jsonSchema`.
 
@@ -452,7 +457,7 @@ Full-refresh overwrite and snapshot incremental both reconcile deletions and eve
 The source preserves the EventKit and scripting fields above. These remaining capabilities require more than another source field:
 
 - **Change feed:** EventKit provides change notifications but no durable change cursor, so every incremental run still reads the whole window.
-- **Attachments, travel time, and conference metadata:** EventKit and Calendar's scripting interface do not provide attachment file export or dedicated travel/conference fields. The existing file-transfer pipeline can load staged files, but this source cannot supply those bytes. Deprecated open-file alarm URLs are also unavailable on modern macOS.
+- **Attachment bytes and travel time:** the ICS streams carry attachment references (`ATTACH` values and their parameters) and conference properties, not file contents. Exported attachment URLs can require provider context or authorization, so they are not treated as portable files. Travel time is not exported. Deprecated open-file alarm URLs are unavailable on modern macOS.
 - **Consistent multi-stream snapshots and resumable large exports:** these need additional extraction/checkpoint and pipeline support. Full refresh currently restarts a failed copy, preserving its previous destination contents until the complete replacement succeeds.
 
 See Apple's [EventKit retrieval documentation](https://developer.apple.com/documentation/eventkit/retrieving-events-and-reminders), [occurrence identity](https://developer.apple.com/documentation/eventkit/ekevent/occurrencedate), and [calendar-item identity caveats](https://developer.apple.com/documentation/eventkit/ekcalendaritem/calendaritemidentifier).
@@ -464,7 +469,24 @@ A read-only probe on macOS 26.6.2 (2026-09-21) checked Calendar's **File > Expor
 - **`.ics`:** the sample preserved raw recurrence rules, excluded dates, recurrence IDs, five attachment references, and Google/Microsoft conference properties. It contained no embedded attachment bytes; three references were HTTPS URLs and two were relative query references requiring provider context.
 - **`.icbu`:** the archive contained `Calendar.sqlitedb` and `Info.plist`. Its five attachment records had no local file paths or embedded payloads. The database included travel-time columns, but every sampled value was null, so travel-time preservation remains unverified.
 
-These exports establish a route to additional metadata, not a complete attachment backup. This source does not import either format. Reading `.ics` metadata and retrieving referenced files would require an additional extractor and, where required, provider authentication. The archive's private database schema is not a stable public API. Personal probe exports were temporary and are not repository fixtures.
+These GUI exports are not used. The ICS streams read the same iCalendar data per item through EventKit instead. The archive's private database schema is not a stable public API. Personal probe exports were temporary and are not repository fixtures.
+
+### ICS export verification
+
+On **2026-09-24** (macOS 26.6.2, Asia/Amman) read-only probes exported every item within ±180 days (960 items) and printed only property names and counts:
+
+- Both private selectors exist. No export was empty, and the largest item was 92 KB.
+- Every detached item's export carries its own `RECURRENCE-ID` with `TZID`; a recurring master's export can also include its override `VEVENT`s.
+- Vendor properties arrive intact: `X-GOOGLE-CONFERENCE` (33 events), `X-GOOGLE-CALENDAR-CONTENT-TITLE`, `X-MICROSOFT-CDO-*`, and `X-APPLE-STRUCTURED-LOCATION` with its parameters. No `ATTACH` occurred in that window, so attachment rows are covered by synthetic tests only.
+- Exporting the same items from two processes three seconds apart changed only `DTSTAMP`, for all 280 events, and never the structure. `DTSTAMP` is the export time, so the streams omit it.
+
+A live run then saved a temporary weekly event with a URL, a location and an alarm, and detached its second occurrence. It ran `events` plus the three ICS streams incrementally into SQLite:
+
+- The first run loaded everything.
+- The second run, with no changes, wrote nothing in any stream.
+- After the probe was deleted, the next run removed its three occurrences and all of its ICS rows. A fresh EventKit read confirmed the events were gone.
+
+That last run also rewrote 48 component rows of other items. Four later no-change passes, 15 seconds apart, wrote nothing, so this is attributed to concurrent calendar activity rather than to the export; the cause was not verified.
 
 ## Google Search Console
 

@@ -3,7 +3,10 @@ export {
   CalendarUnavailableError,
   RemindersUnavailableError,
 } from './platform/macos/eventkit.ts';
-export { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
+export {
+  AppleCalendarSource,
+  CalendarIcsUnavailableError,
+} from './sources/apple-calendar/apple-calendar-source.ts';
 export { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 export { NotesUnavailableError } from './sources/apple-notes/apple-notes-stream.ts';
 export { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';

@@ -21,10 +21,16 @@ function readCalendar(
     'alarms',
     'recurrenceRules',
     'recurrenceRuleValues',
+    'icsComponents',
+    'icsProperties',
+    'icsParameters',
   ];
   if (!names.includes(stream)) throw new Error('Unknown calendar stream: ' + stream);
   const wants = (name) => stream === name;
   const scripting = wants('eventMetadata') || wants('excludedDates');
+  const ics = wants('icsComponents') || wants('icsProperties') || wants('icsParameters');
+  // Per-item streams page by native item; only metadata needs Calendar scripting.
+  const paged = scripting || ics;
   const records = [];
   const emit = (name, row) => {
     if (wants(name)) records.push(row);
@@ -48,6 +54,32 @@ function readCalendar(
     if (!(value instanceof Date) || !Number.isFinite(value.getTime()))
       throw new Error('Calendar scripting returned an invalid date');
     return value.toISOString();
+  };
+  // The ICS export is private EventKit API: detect it, and fail rather than
+  // return nothing when it is missing or produces no data.
+  const exportICS = (event) => {
+    const calendarId = string(event.calendar.calendarIdentifier);
+    const calendarItemId = string(event.calendarItemIdentifier);
+    const stored = store.calendarItemWithIdentifier(calendarItemId);
+    if (isNil(stored))
+      throw new Error('EventKit could not resolve the calendar item for ICS export');
+    const responds = (selector) =>
+      typeof store.respondsToSelector === 'function' && store.respondsToSelector(selector);
+    let data;
+    if (responds('ICSDataForCalendarItems:preventLineFolding:'))
+      data = store.ICSDataForCalendarItemsPreventLineFolding($([stored]), true);
+    else if (responds('ICSDataForCalendarItems:options:'))
+      data = store.ICSDataForCalendarItemsOptions($([stored]), 0);
+    else
+      throw new Error('CALENDAR_ICS_UNAVAILABLE: EKEventStore has no ICS export on this macOS version');
+    if (isNil(data) || Number(data.length) === 0)
+      throw new Error('EventKit ICS export returned no data for ' + calendarItemId);
+    return {
+      calendarId,
+      calendarItemId,
+      recurring: array(event.recurrenceRules).length > 0 || bool(event.isDetached),
+      ics: ObjC.unwrap(data.base64EncodedStringWithOptions(0)),
+    };
   };
   const scriptingMetadata = (calendarId, calendarName, calendarItemId) => {
     const calendar = scriptingCalendar(calendarId, calendarName);
@@ -114,6 +146,9 @@ function readCalendar(
     'alarms',
     'recurrenceRules',
     'recurrenceRuleValues',
+    'icsComponents',
+    'icsProperties',
+    'icsParameters',
   ];
   if (!eventStreams.includes(stream)) return records;
 
@@ -148,7 +183,7 @@ function readCalendar(
     return overlaps;
   });
   let nextCursor = null;
-  if (scripting) {
+  if (paged) {
     const items = new Map();
     for (const event of selected) {
       const calendarId = string(event.calendar.calendarIdentifier);
@@ -163,6 +198,7 @@ function readCalendar(
     if (keys.length > page.length) nextCursor = page[page.length - 1];
     selected = page.map((key) => items.get(key));
   }
+  if (ics) return { records: selected.map(exportICS), nextCursor };
 
   for (const event of selected) {
 

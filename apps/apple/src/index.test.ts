@@ -27,6 +27,7 @@ import {
   AppleCalendarSource,
   AppleNotesSource,
   AppleRemindersSource,
+  CalendarIcsUnavailableError,
   CalendarUnavailableError,
   NotesUnavailableError,
   RemindersUnavailableError,
@@ -1956,7 +1957,7 @@ test('EventKit executes native operations without an ELT schema and rejects revo
     ['reminders', 1, RemindersUnavailableError],
   ] as const) {
     let status = 3;
-    t.mock.method(osa, 'execute', async (script: string) => {
+    const execute = t.mock.method(osa, 'execute', async (script: string) => {
       try {
         return runInNewContext(script, {
           ObjC: { import: () => {} },
@@ -1979,11 +1980,17 @@ test('EventKit executes native operations without an ELT schema and rejects revo
         });
       }
     });
-    const client = new EventKit(entity);
-    assert.deepEqual(await client.execute('return { nativeValue: 42 };'), {
-      nativeValue: 42,
-    });
-    await assert.rejects(client.execute('revoke(); return [];'), Unavailable);
+    try {
+      const client = new EventKit(entity);
+      assert.deepEqual(await client.execute('return { nativeValue: 42 };'), {
+        nativeValue: 42,
+      });
+      await assert.rejects(client.execute('revoke(); return [];'), Unavailable);
+    } finally {
+      // Each iteration mocks osa.execute again; restore before the next one so
+      // no fake survives into later tests.
+      execute.mock.restore();
+    }
   }
 });
 
@@ -2341,5 +2348,311 @@ test('iCalendar parsing rejects malformed content instead of skipping it', () =>
         ]),
       ),
     /not valid UTF-8/,
+  );
+});
+
+function icsPage(
+  items: readonly { calendarItemId: string; recurring: boolean; ics: string }[],
+) {
+  return JSON.stringify({
+    records: items.map(({ ics, ...item }) => ({
+      calendarId: 'calendar-1',
+      ...item,
+      ics: Buffer.from(ics).toString('base64'),
+    })),
+    nextCursor: null,
+  });
+}
+
+const meetingICS = [
+  'BEGIN:VCALENDAR',
+  'VERSION:2.0',
+  'BEGIN:VEVENT',
+  'UID:meeting@example.com',
+  'DTSTAMP:20260924T100000Z',
+  'SUMMARY:Review',
+  'ATTACH;FMTTYPE=application/pdf;FILENAME=agenda.pdf:https://example.com/agenda',
+  'X-GOOGLE-CONFERENCE:https://meet.google.com/abc-defg-hij',
+  'X-MICROSOFT-CDO-BUSYSTATUS:BUSY',
+  'END:VEVENT',
+  'END:VCALENDAR',
+  '',
+].join('\r\n');
+
+const seriesICS = [
+  'BEGIN:VCALENDAR',
+  'BEGIN:VEVENT',
+  'UID:series@example.com',
+  'RRULE:FREQ=WEEKLY;COUNT=3',
+  'EXDATE;TZID=Asia/Amman:20250115T090000',
+  'END:VEVENT',
+  'BEGIN:VEVENT',
+  'UID:series@example.com',
+  'RECURRENCE-ID;TZID=Asia/Amman:20250108T090000',
+  'SUMMARY:Moved',
+  'END:VEVENT',
+  'END:VCALENDAR',
+  '',
+].join('\r\n');
+
+test('Calendar ICS streams load components, raw properties and parameters with exact event links', {
+  concurrency: false,
+}, async (t) => {
+  const source = new AppleCalendarSource({
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+  });
+  t.mock.method(osa, 'execute', async () =>
+    icsPage([
+      { calendarItemId: 'meeting', recurring: false, ics: meetingICS },
+      { calendarItemId: 'series', recurring: true, ics: seriesICS },
+    ]),
+  );
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'ics.sqlite'),
+  });
+  const markdown = new MarkdownDestination({ path: join(scratch.path, 'md') });
+  const streams = [
+    source.icsComponents,
+    source.icsProperties,
+    source.icsParameters,
+  ];
+
+  const counts = await new Pipeline({
+    source,
+    destination: sqlite,
+    steps: streams.map((stream) => new Copy(stream, sqlite.table(stream.name))),
+  }).run();
+  await new Pipeline({
+    source,
+    destination: markdown,
+    steps: [new Copy(source.icsProperties, markdown.file('ics-properties.md'))],
+  }).run();
+
+  assert.deepEqual(
+    counts.map(({ count }) => count),
+    [5, 12, 4],
+  );
+  using database = new DatabaseSync(sqlite.path, { readOnly: true });
+  const components = database
+    .prepare(
+      'SELECT calendarItemId, name, uid, recurrenceId, recurrenceIdTimeZone, eventId FROM icsComponents ORDER BY id',
+    )
+    .all()
+    .map((row) => ({ ...row }));
+  assert.deepEqual(components, [
+    {
+      calendarItemId: 'meeting',
+      name: 'VCALENDAR',
+      uid: null,
+      recurrenceId: null,
+      recurrenceIdTimeZone: null,
+      eventId: null,
+    },
+    {
+      calendarItemId: 'meeting',
+      name: 'VEVENT',
+      uid: 'meeting@example.com',
+      recurrenceId: null,
+      recurrenceIdTimeZone: null,
+      eventId: JSON.stringify(['calendar-1', 'meeting', null]),
+    },
+    {
+      calendarItemId: 'series',
+      name: 'VCALENDAR',
+      uid: null,
+      recurrenceId: null,
+      recurrenceIdTimeZone: null,
+      eventId: null,
+    },
+    {
+      calendarItemId: 'series',
+      name: 'VEVENT',
+      uid: 'series@example.com',
+      recurrenceId: null,
+      recurrenceIdTimeZone: null,
+      eventId: null,
+    },
+    {
+      calendarItemId: 'series',
+      name: 'VEVENT',
+      uid: 'series@example.com',
+      recurrenceId: '20250108T090000',
+      recurrenceIdTimeZone: 'Asia/Amman',
+      eventId: null,
+    },
+  ]);
+  const value = (name: string) =>
+    database.prepare('SELECT value FROM icsProperties WHERE name = ?').get(name)
+      ?.value;
+  assert.equal(
+    value('X-GOOGLE-CONFERENCE'),
+    'https://meet.google.com/abc-defg-hij',
+  );
+  assert.equal(value('X-MICROSOFT-CDO-BUSYSTATUS'), 'BUSY');
+  assert.equal(value('ATTACH'), 'https://example.com/agenda');
+  assert.equal(value('EXDATE'), '20250115T090000');
+  // DTSTAMP is the export time, not event data.
+  assert.equal(value('DTSTAMP'), undefined);
+  assert.deepEqual(
+    database
+      .prepare(
+        "SELECT p.name AS property, q.name, q.value FROM icsParameters q JOIN icsProperties p ON p.id = q.propertyId WHERE p.name = 'ATTACH' ORDER BY q.position",
+      )
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      { property: 'ATTACH', name: 'FMTTYPE', value: 'application/pdf' },
+      { property: 'ATTACH', name: 'FILENAME', value: 'agenda.pdf' },
+    ],
+  );
+  assert.match(
+    await readFile(join(markdown.path, 'ics-properties.md'), 'utf8'),
+    /X\\-GOOGLE\\-CONFERENCE/,
+  );
+});
+
+test('Calendar ICS rejects exports without events and reports a missing private export', {
+  concurrency: false,
+}, async (t) => {
+  const source = new AppleCalendarSource({
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+  });
+  const read = () =>
+    Array.fromAsync(
+      source.read(
+        new Copy(
+          source.icsComponents,
+          new MarkdownDestination({ path: '/unused' }).file('c.md'),
+        ).configuration,
+        null,
+      ),
+    );
+  const execute = t.mock.method(osa, 'execute', async () =>
+    icsPage([
+      {
+        calendarItemId: 'empty',
+        recurring: false,
+        ics: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n',
+      },
+    ]),
+  );
+  await assert.rejects(read(), /returned no VEVENT for saved item empty/);
+  const cause = Object.assign(new Error('Command failed: osascript'), {
+    stderr:
+      'execution error: Error: CALENDAR_ICS_UNAVAILABLE: EKEventStore has no ICS export (-2700)\n',
+  });
+  execute.mock.mockImplementation(async () => {
+    throw cause;
+  });
+  await assert.rejects(read(), (error) => {
+    assert.ok(error instanceof CalendarIcsUnavailableError);
+    assert.equal(error.cause, cause);
+    return true;
+  });
+});
+
+test('Calendar JXA exports saved items only and names a missing ICS selector', {
+  concurrency: false,
+}, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+  const output = await osa.execute(`
+    ${EventKit.runtime}
+    ${calendarScript}
+    const nativeStore = $.EKEventStore.alloc.init;
+    const calendar = $.EKCalendar.calendarForEntityTypeEventStore(0, nativeStore);
+    calendar.title = 'Test calendar';
+    const event = $.EKEvent.eventWithEventStore(nativeStore);
+    event.title = 'Unsaved event';
+    event.startDate = $.NSDate.dateWithTimeIntervalSince1970(1735689600);
+    event.endDate = $.NSDate.dateWithTimeIntervalSince1970(1735693200);
+    event.calendar = calendar;
+    const base = {
+      calendarsForEntityType: () => $([calendar]),
+      predicateForEventsWithStartDateEndDateCalendars: () => $(),
+      eventsMatchingPredicate: () => $([event]),
+      calendarItemWithIdentifier: () => event,
+    };
+    const attempt = (store) => {
+      try {
+        return readCalendar(store, 'icsComponents', '2025-01-01T00:00:00.000Z', '2025-01-02T00:00:00.000Z', undefined, null);
+      } catch (error) {
+        return error.message;
+      }
+    };
+    JSON.stringify({
+      unsaved: attempt({
+        ...base,
+        respondsToSelector: (selector) => nativeStore.respondsToSelector(selector),
+        ICSDataForCalendarItemsPreventLineFolding: (items, fold) =>
+          nativeStore.ICSDataForCalendarItemsPreventLineFolding(items, fold),
+      }),
+      missing: attempt(base),
+    });
+  `);
+  const { unsaved, missing } = JSON.parse(output);
+  // EventKit exports an unsaved item as an empty calendar; the source rejects it.
+  assert.equal(unsaved.records.length, 1);
+  assert.doesNotMatch(
+    Buffer.from(unsaved.records[0].ics, 'base64').toString('utf8'),
+    /BEGIN:VEVENT/,
+  );
+  assert.match(missing, /^CALENDAR_ICS_UNAVAILABLE:/);
+});
+
+test('Calendar ICS snapshots delete a removed property with its parameters', {
+  concurrency: false,
+}, async (t) => {
+  const source = new AppleCalendarSource({
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+  });
+  let ics = meetingICS;
+  t.mock.method(osa, 'execute', async () =>
+    icsPage([{ calendarItemId: 'meeting', recurring: false, ics }]),
+  );
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'ics.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination: sqlite,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [source.icsProperties, source.icsParameters].map(
+      (stream) =>
+        new Copy(stream, sqlite.table(stream.name), {
+          id: stream.name,
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          primaryKey: ['id'],
+        }),
+    ),
+  });
+
+  await pipeline.run();
+  // The attachment is gone: everything after it shifts one position.
+  ics = meetingICS.replace(/ATTACH[^\r]*\r\n/, '');
+  assert.deepEqual(
+    (await pipeline.run()).map(({ count, deleted }) => ({ count, deleted })),
+    [
+      { count: 2, deleted: 1 },
+      { count: 0, deleted: 2 },
+    ],
+  );
+  using database = new DatabaseSync(sqlite.path, { readOnly: true });
+  assert.equal(
+    database
+      .prepare("SELECT count(*) AS n FROM icsProperties WHERE name = 'ATTACH'")
+      .get()?.n,
+    0,
+  );
+  assert.equal(
+    database.prepare('SELECT count(*) AS n FROM icsParameters').get()?.n,
+    0,
   );
 });

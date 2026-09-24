@@ -15,6 +15,7 @@ import {
   eventKitRelatedFields,
 } from '../eventkit-schema.ts';
 import { calendarScript } from './calendar-script.ts';
+import { icsRecords, isIcsStream, validateIcsExports } from './ics-records.ts';
 
 const {
   id,
@@ -75,10 +76,54 @@ const catalog = eventKitCatalog(
       excludedAt: timestamp,
       excludedDate: nullableDate,
     },
+    icsComponents: {
+      id,
+      eventMetadataId: id,
+      calendarId: id,
+      calendarItemId: id,
+      parentId: nullableText,
+      position: ordinal,
+      name: text,
+      uid: nullableText,
+      recurrenceId: nullableText,
+      recurrenceIdTimeZone: nullableText,
+      eventId: nullableText,
+    },
+    icsProperties: {
+      id,
+      componentId: id,
+      calendarId: id,
+      calendarItemId: id,
+      position: ordinal,
+      name: text,
+      value: text,
+    },
+    icsParameters: {
+      id,
+      propertyId: id,
+      componentId: id,
+      calendarId: id,
+      calendarItemId: id,
+      position: ordinal,
+      valuePosition: ordinal,
+      name: text,
+      value: text,
+    },
     ...eventKitRelatedFields('eventId'),
   },
   { snapshot: true },
 );
+
+export class CalendarIcsUnavailableError extends Error {
+  override name = 'CalendarIcsUnavailableError';
+
+  constructor(cause: unknown) {
+    super(
+      'This macOS version does not provide the private EventKit ICS export that the Calendar ICS streams read. Select the other Calendar streams, which use public EventKit.',
+      { cause },
+    );
+  }
+}
 
 export class AppleCalendarSource extends Source {
   readonly #eventKit = new EventKit('events');
@@ -97,6 +142,9 @@ export class AppleCalendarSource extends Source {
   readonly alarms = catalog.get('alarms');
   readonly recurrenceRules = catalog.get('recurrenceRules');
   readonly recurrenceRuleValues = catalog.get('recurrenceRuleValues');
+  readonly icsComponents = catalog.get('icsComponents');
+  readonly icsProperties = catalog.get('icsProperties');
+  readonly icsParameters = catalog.get('icsParameters');
 
   constructor({ startAt, endAt }: { startAt: string; endAt: string }) {
     super();
@@ -161,15 +209,31 @@ export class AppleCalendarSource extends Source {
     startAt: string,
     endAt: string,
   ): AsyncGenerator<Record<string, unknown>> {
-    const scripting =
-      stream.name === 'eventMetadata' || stream.name === 'excludedDates';
+    const ics = isIcsStream(stream.name) ? stream.name : undefined;
+    // Metadata and ICS streams page by native item with a monotonic cursor.
+    const paged =
+      stream.name === 'eventMetadata' ||
+      stream.name === 'excludedDates' ||
+      ics !== undefined;
     let cursor: string | null = null;
     do {
-      let response = await this.#eventKit.execute(`
-        ${calendarScript}
-        return readCalendar(store, ${JSON.stringify(stream.name)}, ${JSON.stringify(startAt)}, ${JSON.stringify(endAt)}${scripting ? `, undefined, ${JSON.stringify(cursor)}` : ''});
-      `);
-      if (scripting) {
+      let response: unknown;
+      try {
+        response = await this.#eventKit.execute(`
+          ${calendarScript}
+          return readCalendar(store, ${JSON.stringify(stream.name)}, ${JSON.stringify(startAt)}, ${JSON.stringify(endAt)}${paged ? `, undefined, ${JSON.stringify(cursor)}` : ''});
+        `);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          'stderr' in error &&
+          typeof error.stderr === 'string' &&
+          error.stderr.includes('CALENDAR_ICS_UNAVAILABLE')
+        )
+          throw new CalendarIcsUnavailableError(error);
+        throw error;
+      }
+      if (paged) {
         if (
           !response ||
           typeof response !== 'object' ||
@@ -183,6 +247,10 @@ export class AppleCalendarSource extends Source {
         cursor = response.nextCursor;
         response = response.records;
       }
+      if (ics !== undefined)
+        response = validateIcsExports(response).flatMap((item) =>
+          icsRecords(ics, item),
+        );
       for (const record of validateRecords(stream, response, 'EventKit')) {
         if (
           stream.name === 'events' &&
