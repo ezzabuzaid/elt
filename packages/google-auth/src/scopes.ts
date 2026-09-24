@@ -3,6 +3,10 @@ export const GOOGLE_CLOUD_PLATFORM_SCOPE =
   'https://www.googleapis.com/auth/cloud-platform';
 export const GOOGLE_SEARCH_CONSOLE_SCOPE =
   'https://www.googleapis.com/auth/webmasters.readonly';
+export const GOOGLE_DRIVE_READONLY_SCOPE =
+  'https://www.googleapis.com/auth/drive.readonly';
+export const GMAIL_READONLY_SCOPE =
+  'https://www.googleapis.com/auth/gmail.readonly';
 export const GOOGLE_ANALYTICS_SCOPE =
   'https://www.googleapis.com/auth/analytics.readonly';
 export const GOOGLE_ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
