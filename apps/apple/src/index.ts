@@ -5,6 +5,8 @@ export {
 } from './platform/macos/eventkit.ts';
 export {
   AppleCalendarSource,
+  type CalendarAttachment,
+  type CalendarAttachmentFetcher,
   CalendarIcsUnavailableError,
 } from './sources/apple-calendar/apple-calendar-source.ts';
 export { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';

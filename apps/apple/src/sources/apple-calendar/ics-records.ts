@@ -4,6 +4,7 @@ export const icsStreams = [
   'icsComponents',
   'icsProperties',
   'icsParameters',
+  'icsAttachments',
 ] as const;
 export type IcsStream = (typeof icsStreams)[number];
 
@@ -54,6 +55,7 @@ export function icsRecords(
     icsComponents: [],
     icsProperties: [],
     icsParameters: [],
+    icsAttachments: [],
   };
   const walk = (
     component: ICalComponent,
@@ -89,6 +91,25 @@ export function icsRecords(
     for (const [index, { name, value, parameters }] of properties.entries()) {
       const propertyKey = [calendarId, calendarItemId, path, index];
       const propertyId = JSON.stringify(propertyKey);
+      if (name === 'ATTACH') {
+        const parameter = (key: string) =>
+          parameters.find((candidate) => candidate.name === key)?.values[0] ??
+          null;
+        rows.icsAttachments.push({
+          id: propertyId,
+          propertyId,
+          componentId: id,
+          calendarId,
+          calendarItemId,
+          uri: value,
+          filename: parameter('X-APPLE-FILENAME') ?? parameter('FILENAME'),
+          formatType: parameter('FMTTYPE'),
+          // RFC 5545 inline content: the value is the base64 file itself.
+          inline:
+            parameter('VALUE') === 'BINARY' ||
+            parameter('ENCODING') === 'BASE64',
+        });
+      }
       rows.icsProperties.push({
         id: propertyId,
         componentId: id,

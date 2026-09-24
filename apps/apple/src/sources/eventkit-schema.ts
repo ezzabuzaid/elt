@@ -107,7 +107,10 @@ export function eventKitRelatedFields(ownerKey: 'eventId' | 'reminderId') {
 export function eventKitCatalog(
   properties: Record<string, Record<string, FieldSchema>>,
   // Snapshot streams load incrementally by diffing full scans (elt diffSnapshot).
-  { snapshot = false }: { snapshot?: boolean } = {},
+  {
+    snapshot = false,
+    fileTransfer = [],
+  }: { snapshot?: boolean; fileTransfer?: readonly string[] } = {},
 ): Catalog {
   return new Catalog(
     Object.entries(properties).map(
@@ -127,6 +130,7 @@ export function eventKitCatalog(
             sourceDefinedCursor: true,
             emitsDeletes: true,
           }),
+          ...(fileTransfer.includes(name) && { supportsFileTransfer: true }),
         }),
     ),
   );

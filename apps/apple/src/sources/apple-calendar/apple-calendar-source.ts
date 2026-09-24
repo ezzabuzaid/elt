@@ -1,3 +1,6 @@
+import { lstat, mkdtempDisposable, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { extname, join } from 'node:path';
 import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
 import {
   diffSnapshot,
@@ -98,6 +101,17 @@ const catalog = eventKitCatalog(
       name: text,
       value: text,
     },
+    icsAttachments: {
+      id,
+      propertyId: id,
+      componentId: id,
+      calendarId: id,
+      calendarItemId: id,
+      uri: text,
+      filename: nullableText,
+      formatType: nullableText,
+      inline: boolean,
+    },
     icsParameters: {
       id,
       propertyId: id,
@@ -111,8 +125,24 @@ const catalog = eventKitCatalog(
     },
     ...eventKitRelatedFields('eventId'),
   },
-  { snapshot: true },
+  { snapshot: true, fileTransfer: ['icsAttachments'] },
 );
+
+export type CalendarAttachment = {
+  readonly uri: string;
+  readonly filename: string | null;
+  readonly formatType: string | null;
+  readonly calendarId: string;
+  readonly calendarItemId: string;
+};
+
+// Writes the attachment's bytes to path and resolves true, or resolves false
+// when the file is definitively not retrievable (no access, unsupported host).
+// Any other failure must reject: it fails the copy instead of loading no file.
+export type CalendarAttachmentFetcher = (
+  attachment: CalendarAttachment,
+  path: string,
+) => Promise<boolean>;
 
 export class CalendarIcsUnavailableError extends Error {
   override name = 'CalendarIcsUnavailableError';
@@ -145,9 +175,22 @@ export class AppleCalendarSource extends Source {
   readonly icsComponents = catalog.get('icsComponents');
   readonly icsProperties = catalog.get('icsProperties');
   readonly icsParameters = catalog.get('icsParameters');
+  readonly icsAttachments = catalog.get('icsAttachments');
 
-  constructor({ startAt, endAt }: { startAt: string; endAt: string }) {
+  readonly #attachments?: CalendarAttachmentFetcher;
+
+  constructor({
+    startAt,
+    endAt,
+    attachments,
+  }: {
+    startAt: string;
+    endAt: string;
+    // Retrieves remote ATTACH files; only needed when a copy reads their bytes.
+    attachments?: CalendarAttachmentFetcher;
+  }) {
     super();
+    this.#attachments = attachments;
     if (!isTimestamp(startAt) || !isTimestamp(endAt) || startAt >= endAt)
       throw new TypeError(
         'Calendar requires canonical UTC startAt < endAt timestamps',
@@ -165,15 +208,63 @@ export class AppleCalendarSource extends Source {
   }
 
   protected override async *extract(
-    { stream, syncMode }: CopyConfiguration,
+    configuration: CopyConfiguration,
     state: unknown,
   ): AsyncGenerator<SourceMessage> {
+    const { stream, syncMode } = configuration;
     if (syncMode === 'incremental') {
-      yield* diffSnapshot(stream, this.scan(stream), state);
+      for await (const message of diffSnapshot(
+        stream,
+        this.scan(stream),
+        state,
+      ))
+        if ('type' in message) yield message;
+        else yield* this.withFile(configuration, message.data);
       return;
     }
     for await (const data of this.scan(stream))
-      yield { stream: stream.name, data };
+      yield* this.withFile(configuration, data);
+  }
+
+  // Stages an attachment's bytes when the copy reads them, like Notes attachments.
+  private async *withFile(
+    configuration: CopyConfiguration,
+    data: Record<string, unknown>,
+  ): AsyncGenerator<SourceMessage> {
+    const stream = configuration.stream.name;
+    if (stream !== 'icsAttachments' || configuration.fileReads.length === 0) {
+      yield { stream, data };
+      return;
+    }
+    const attachment = {
+      uri: String(data.uri),
+      filename: typeof data.filename === 'string' ? data.filename : null,
+      formatType: typeof data.formatType === 'string' ? data.formatType : null,
+      calendarId: String(data.calendarId),
+      calendarItemId: String(data.calendarItemId),
+    };
+    await using scratch = await mkdtempDisposable(
+      join(tmpdir(), 'mac-elt-calendar-attachment-'),
+    );
+    const extension =
+      attachment.filename === null ? '' : extname(attachment.filename);
+    const path = join(scratch.path, `content${extension}`);
+    let saved: boolean;
+    if (data.inline === true) {
+      await writeFile(path, Buffer.from(attachment.uri, 'base64'));
+      saved = true;
+    } else {
+      if (this.#attachments === undefined)
+        throw new TypeError(
+          'Reading Calendar attachment files requires an attachments fetcher: new AppleCalendarSource({ ..., attachments })',
+        );
+      saved = await this.#attachments(attachment, path);
+    }
+    if (saved && !(await lstat(path)).isFile())
+      throw new TypeError(
+        'The attachment fetcher did not write a regular file',
+      );
+    yield { stream, data, file: saved ? path : null };
   }
 
   // One complete read of the window, each record once.

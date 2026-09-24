@@ -21,6 +21,7 @@ import {
   PipelineError,
   SQLiteCheckpointStore,
   SQLiteDestination,
+  type SQLiteTable,
   Stream,
 } from 'elt';
 import {
@@ -2703,4 +2704,177 @@ test('Reminders snapshot incremental writes only changed reminders and deletes r
       .map((row) => `${row.id}:${row.name}`),
     ['r1:Buy oat milk', 'r3:Book flight'],
   );
+});
+
+const attachmentsICS = [
+  'BEGIN:VCALENDAR',
+  'BEGIN:VEVENT',
+  'UID:files@example.com',
+  'ATTACH;FMTTYPE=image/png;VALUE=URI;X-APPLE-FILENAME=diagram.png:https://drive.google.com/file/d/abc/view',
+  'ATTACH;VALUE=URI;X-APPLE-FILENAME=private.pdf:https://drive.google.com/file/d/denied/view',
+  `ATTACH;FMTTYPE=text/plain;ENCODING=BASE64;VALUE=BINARY:${Buffer.from('inline bytes').toString('base64')}`,
+  'END:VEVENT',
+  'END:VCALENDAR',
+  '',
+].join('\r\n');
+
+test('Calendar attachment files come from the fetcher, inline data, or stay null when unreachable', {
+  concurrency: false,
+}, async (t) => {
+  const fetched: string[] = [];
+  const source = new AppleCalendarSource({
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+    attachments: async ({ uri, filename, formatType }, path) => {
+      fetched.push(`${filename}:${formatType}`);
+      if (uri.includes('denied')) return false;
+      await writeFile(path, `bytes of ${filename}`);
+      return true;
+    },
+  });
+  t.mock.method(osa, 'execute', async () =>
+    icsPage([
+      { calendarItemId: 'files', recurring: false, ics: attachmentsICS },
+    ]),
+  );
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'a.sqlite'),
+  });
+  const copy = new Copy(
+    source.icsAttachments,
+    sqlite.table('attachments', (c) => [
+      c.text('filename'),
+      c.text('formatType'),
+      c.boolean('inline'),
+      c.blob('bytes').from(source.icsAttachments.file),
+    ]),
+  );
+
+  assert.deepEqual(
+    await new Pipeline({ source, destination: sqlite, steps: [copy] }).run(),
+    [{ copy, count: 3, deleted: 0 }],
+  );
+  // Inline content never reaches the fetcher.
+  assert.deepEqual(fetched, ['diagram.png:image/png', 'private.pdf:null']);
+  using database = new DatabaseSync(sqlite.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare(
+        'SELECT filename, formatType, inline, bytes FROM attachments ORDER BY rowid',
+      )
+      .all()
+      .map((row) => ({
+        ...row,
+        bytes:
+          row.bytes === null
+            ? null
+            : Buffer.from(row.bytes as Uint8Array).toString(),
+      })),
+    [
+      {
+        filename: 'diagram.png',
+        formatType: 'image/png',
+        inline: 0,
+        bytes: 'bytes of diagram.png',
+      },
+      { filename: 'private.pdf', formatType: null, inline: 0, bytes: null },
+      {
+        filename: null,
+        formatType: 'text/plain',
+        inline: 1,
+        bytes: 'inline bytes',
+      },
+    ],
+  );
+});
+
+test('Calendar attachment files need a fetcher, but attachment metadata does not', {
+  concurrency: false,
+}, async (t) => {
+  const source = new AppleCalendarSource({
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+  });
+  t.mock.method(osa, 'execute', async () =>
+    icsPage([
+      { calendarItemId: 'files', recurring: false, ics: attachmentsICS },
+    ]),
+  );
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'a.sqlite'),
+  });
+  const run = (copy: Copy<SQLiteTable>) =>
+    new Pipeline({ source, destination: sqlite, steps: [copy] }).run();
+
+  const metadata = new Copy(source.icsAttachments, sqlite.table('metadata'));
+  assert.deepEqual(await run(metadata), [
+    { copy: metadata, count: 3, deleted: 0 },
+  ]);
+  await assert.rejects(
+    run(
+      new Copy(
+        source.icsAttachments,
+        sqlite.table('files', (c) => [
+          c.text('uri'),
+          c.blob('bytes').from(source.icsAttachments.file),
+        ]),
+      ),
+    ),
+    /requires an attachments fetcher/,
+  );
+});
+
+test('Calendar incremental attachment copies fetch only new attachments and delete removed ones', {
+  concurrency: false,
+}, async (t) => {
+  let ics = attachmentsICS;
+  let fetches = 0;
+  const source = new AppleCalendarSource({
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+    attachments: async (_attachment, path) => {
+      fetches++;
+      await writeFile(path, 'bytes');
+      return true;
+    },
+  });
+  t.mock.method(osa, 'execute', async () =>
+    icsPage([{ calendarItemId: 'files', recurring: false, ics }]),
+  );
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'a.sqlite'),
+  });
+  const copy = new Copy(
+    source.icsAttachments,
+    sqlite.table('attachments', (c) => [
+      c.text('id').notNull(),
+      c.blob('bytes').from(source.icsAttachments.file),
+    ]),
+    {
+      id: 'attachments',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      primaryKey: ['id'],
+    },
+  );
+  const pipeline = new Pipeline({
+    source,
+    destination: sqlite,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 's.sqlite'),
+    }),
+    steps: [copy],
+  });
+
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 3, deleted: 0 }]);
+  assert.equal(fetches, 2);
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+  assert.equal(fetches, 2);
+  // The inline attachment is removed; the remote ones keep their positions.
+  ics = attachmentsICS.replace(/ATTACH;FMTTYPE=text\/plain[^\r]*\r\n/, '');
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 1 }]);
+  assert.equal(fetches, 2);
 });
