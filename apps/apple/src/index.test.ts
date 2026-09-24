@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
 import fs, { mkdirSync, writeFileSync } from 'node:fs';
-import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
+import {
+  mkdtempDisposable,
+  readdir,
+  readFile,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -685,12 +690,9 @@ test('Calendar validates its request range and preflights without OSA', {
     endAt: '2025-02-01T00:00:00.000Z',
   };
   const source = new AppleCalendarSource(january);
-  assert.deepEqual(JSON.parse(source.identity), {
-    type: 'apple-calendar:eventkit',
-    ...january,
-  });
-  assert.equal(new AppleCalendarSource(january).identity, source.identity);
-  assert.notEqual(
+  // A rolling window keeps one checkpoint; incremental copies delete what left it.
+  assert.equal(source.identity, 'apple-calendar:eventkit');
+  assert.equal(
     new AppleCalendarSource({ ...january, endAt: '2025-03-01T00:00:00.000Z' })
       .identity,
     source.identity,
@@ -706,22 +708,42 @@ test('Calendar validates its request range and preflights without OSA', {
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'calendar.sqlite'),
   });
-  await assert.rejects(
-    new Pipeline({
-      source,
-      destination: sqlite,
-      steps: [
-        new Copy(source.events, sqlite.table('events'), {
-          syncMode: 'incremental',
-          destinationSyncMode: 'overwrite_dedup',
-          primaryKey: ['id'],
-          cursorField: 'modifiedAt',
-          id: 'events',
-        }),
-      ],
-    }).run(),
-    /does not support incremental/,
-  );
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const snapshotCopy = {
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['id'],
+    id: 'events',
+  } as const;
+  for (const [options, message] of [
+    [
+      { destinationSyncMode: 'overwrite_dedup' },
+      /cannot use overwrite loading/,
+    ],
+    [
+      { destinationSyncMode: 'append', primaryKey: undefined },
+      /require append_dedup/,
+    ],
+    [{ cursorField: 'modifiedAt' }, /defines its own cursor; omit cursorField/],
+    [{ dedupPolicy: 'cursor_newer' }, /no cursor field to compare/],
+    [{ primaryKey: ['eventId'] }, /select primaryKey \["id"\]/],
+  ] as const)
+    await assert.rejects(
+      new Pipeline({
+        source,
+        destination: sqlite,
+        checkpoints,
+        steps: [
+          new Copy(source.events, sqlite.table('events'), {
+            ...snapshotCopy,
+            ...options,
+          } as ConstructorParameters<typeof Copy>[2]),
+        ],
+      }).run(),
+      message,
+    );
   const forged = new Stream({
     name: 'events',
     jsonSchema: source.events.jsonSchema,
@@ -833,6 +855,185 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
     (error: unknown) => error instanceof Error && error.cause === native,
   );
   assert.equal(await readFile(path, 'utf8'), previous);
+});
+
+test('Calendar snapshot incremental reconciles added, changed, moved and removed rows', {
+  concurrency: false,
+}, async (t) => {
+  const source = new AppleCalendarSource({
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+  });
+  const event = (id: string, name: string) => ({
+    ...calendarEvents(source),
+    id,
+    eventId: id,
+    name,
+  });
+  const attendee = (eventId: string, position: number, name: string) =>
+    recordFor(source.attendees, {
+      id: JSON.stringify([eventId, 'attendee', position]),
+      eventId,
+      position,
+      kind: 'attendee',
+      name,
+    });
+  let native: Record<string, Record<string, unknown>[]> = {
+    events: [event('e1', 'Standup'), event('e2', 'Review')],
+    attendees: [attendee('e1', 0, 'Ann'), attendee('e1', 1, 'Bo')],
+  };
+  t.mock.method(osa, 'execute', async (script: string) =>
+    JSON.stringify(native[streamName(script)]),
+  );
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'calendar.sqlite'),
+  });
+  const markdown = new MarkdownDestination({
+    path: join(scratch.path, 'markdown'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const snapshot = (id: string) =>
+    ({
+      id,
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      primaryKey: ['id'],
+    }) as const;
+  const toSQLite = new Pipeline({
+    source,
+    destination: sqlite,
+    checkpoints,
+    steps: [
+      new Copy(source.events, sqlite.table('events'), snapshot('events')),
+      new Copy(
+        source.attendees,
+        sqlite.table('attendees'),
+        snapshot('attendees'),
+      ),
+    ],
+  });
+  const toMarkdown = new Pipeline({
+    source,
+    destination: markdown,
+    checkpoints,
+    steps: [
+      new Copy(
+        source.events,
+        markdown.folder('events', { title: 'name' }),
+        snapshot('events-md'),
+      ),
+    ],
+  });
+  const run = async () =>
+    [...(await toSQLite.run()), ...(await toMarkdown.run())].map(
+      ({ count, deleted }) => ({ count, deleted }),
+    );
+  const loaded = async () => {
+    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    const column = (sql: string) =>
+      database
+        .prepare(sql)
+        .all()
+        .map((row) => Object.values(row).join(':'));
+    const folder = join(markdown.path, 'events');
+    const titles = await Promise.all(
+      (await readdir(folder))
+        .filter((file) => file.endsWith('.md'))
+        .map(
+          async (file) =>
+            /^## (.+)$/m.exec(await readFile(join(folder, file), 'utf8'))?.[1],
+        ),
+    );
+    return {
+      events: column('SELECT id, name FROM events ORDER BY id'),
+      attendees: column('SELECT id, name FROM attendees ORDER BY id'),
+      markdown: titles.sort(),
+    };
+  };
+
+  assert.deepEqual(await run(), [
+    { count: 2, deleted: 0 },
+    { count: 2, deleted: 0 },
+    { count: 2, deleted: 0 },
+  ]);
+  // e1 is renamed, e2 moved out of the window, e3 is new, and Bo left e1: the
+  // positional child row vanishes like any other key.
+  native = {
+    events: [event('e1', 'Daily'), event('e3', 'Planning')],
+    attendees: [attendee('e1', 0, 'Ann'), attendee('e3', 0, 'Cy')],
+  };
+  assert.deepEqual(await run(), [
+    { count: 2, deleted: 1 },
+    { count: 1, deleted: 1 },
+    { count: 2, deleted: 1 },
+  ]);
+  assert.deepEqual(await loaded(), {
+    events: ['e1:Daily', 'e3:Planning'],
+    attendees: [
+      `${JSON.stringify(['e1', 'attendee', 0])}:Ann`,
+      `${JSON.stringify(['e3', 'attendee', 0])}:Cy`,
+    ],
+    markdown: ['Daily', 'Planning'],
+  });
+  assert.deepEqual(await run(), [
+    { count: 0, deleted: 0 },
+    { count: 0, deleted: 0 },
+    { count: 0, deleted: 0 },
+  ]);
+});
+
+test('Calendar snapshots span every extraction window without spurious deletions', {
+  concurrency: false,
+}, async (t) => {
+  const source = new AppleCalendarSource({
+    startAt: '2024-01-01T00:00:00.000Z',
+    endAt: '2026-01-01T00:00:00.000Z',
+  });
+  const event = (id: string) => ({
+    ...calendarEvents(source),
+    id,
+    eventId: id,
+  });
+  // "spanning" overlaps both 365-day windows; "late" exists only in the second.
+  t.mock.method(osa, 'execute', async (script: string) => {
+    const [, windowStart] =
+      /readCalendar\(store, "events", "([^"]+)"/.exec(script) ?? [];
+    return JSON.stringify(
+      windowStart === '2024-01-01T00:00:00.000Z'
+        ? [event('spanning')]
+        : [event('spanning'), event('late')],
+    );
+  });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'calendar.sqlite'),
+  });
+  const statePath = join(scratch.path, 'state.sqlite');
+  const copy = new Copy(source.events, sqlite.table('events'), {
+    id: 'events',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['id'],
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination: sqlite,
+    checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+    steps: [copy],
+  });
+
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+  using state = new DatabaseSync(statePath, { readOnly: true });
+  const rows = state.prepare('SELECT state FROM checkpoints').all();
+  assert.equal(rows.length, 1);
+  assert.deepEqual(Object.keys(JSON.parse(String(rows[0]?.state)).snapshot), [
+    '["late"]',
+    '["spanning"]',
+  ]);
 });
 
 test('Calendar deduplicates an event returned by adjacent extraction windows', {

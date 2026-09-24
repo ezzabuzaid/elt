@@ -1,5 +1,11 @@
 import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
-import { isTimestamp, type RecordMessage, Source, validateRecords } from 'elt';
+import {
+  diffSnapshot,
+  isTimestamp,
+  Source,
+  type SourceMessage,
+  validateRecords,
+} from 'elt';
 import { EventKit } from '../../platform/macos/eventkit.ts';
 import {
   eventKitAccountFields,
@@ -23,57 +29,62 @@ const {
   location,
 } = eventKitFields;
 
-const catalog = eventKitCatalog({
-  accounts: eventKitAccountFields,
-  calendars: { ...eventKitCalendarFields, description: text },
-  events: {
-    id,
-    eventId: id,
-    calendarId: id,
-    calendarItemId: id,
-    externalId: nullableText,
-    nativeEventId: nullableText,
-    name: text,
-    body: nullableText,
-    location: nullableText,
-    url: nullableText,
-    startAt: timestamp,
-    endAt: timestamp,
-    allDay: boolean,
-    startDate: nullableDate,
-    endDate: nullableDate,
-    timeZone: nullableText,
-    createdAt: nullableTimestamp,
-    modifiedAt: nullableTimestamp,
-    occurrenceAt: nullableTimestamp,
-    occurrenceDate: nullableDate,
-    detached: boolean,
-    status: ordinal,
-    availability: integer,
-    birthdayContactId: nullableText,
-    ...location,
+const catalog = eventKitCatalog(
+  {
+    accounts: eventKitAccountFields,
+    calendars: { ...eventKitCalendarFields, description: text },
+    events: {
+      id,
+      eventId: id,
+      calendarId: id,
+      calendarItemId: id,
+      externalId: nullableText,
+      nativeEventId: nullableText,
+      name: text,
+      body: nullableText,
+      location: nullableText,
+      url: nullableText,
+      startAt: timestamp,
+      endAt: timestamp,
+      allDay: boolean,
+      startDate: nullableDate,
+      endDate: nullableDate,
+      timeZone: nullableText,
+      createdAt: nullableTimestamp,
+      modifiedAt: nullableTimestamp,
+      occurrenceAt: nullableTimestamp,
+      occurrenceDate: nullableDate,
+      detached: boolean,
+      status: ordinal,
+      availability: integer,
+      birthdayContactId: nullableText,
+      ...location,
+    },
+    eventMetadata: {
+      id,
+      calendarId: id,
+      calendarItemId: id,
+      scriptingUid: id,
+      rawRecurrence: nullableText,
+      sequence: integer,
+    },
+    excludedDates: {
+      id,
+      eventMetadataId: id,
+      position: ordinal,
+      excludedAt: timestamp,
+      excludedDate: nullableDate,
+    },
+    ...eventKitRelatedFields('eventId'),
   },
-  eventMetadata: {
-    id,
-    calendarId: id,
-    calendarItemId: id,
-    scriptingUid: id,
-    rawRecurrence: nullableText,
-    sequence: integer,
-  },
-  excludedDates: {
-    id,
-    eventMetadataId: id,
-    position: ordinal,
-    excludedAt: timestamp,
-    excludedDate: nullableDate,
-  },
-  ...eventKitRelatedFields('eventId'),
-});
+  { snapshot: true },
+);
 
 export class AppleCalendarSource extends Source {
   readonly #eventKit = new EventKit('events');
-  readonly identity: string;
+  // The window is not part of the identity: moving it keeps one checkpoint, and
+  // incremental copies delete the occurrences that left it.
+  readonly identity = 'apple-calendar:eventkit';
   protected readonly catalog = catalog;
   readonly startAt: string;
   readonly endAt: string;
@@ -95,11 +106,6 @@ export class AppleCalendarSource extends Source {
       );
     this.startAt = startAt;
     this.endAt = endAt;
-    this.identity = JSON.stringify({
-      type: 'apple-calendar:eventkit',
-      startAt,
-      endAt,
-    });
     Object.freeze(this);
   }
 
@@ -111,9 +117,19 @@ export class AppleCalendarSource extends Source {
   }
 
   protected override async *extract(
-    { stream }: CopyConfiguration,
-    _state: unknown,
-  ): AsyncGenerator<RecordMessage> {
+    { stream, syncMode }: CopyConfiguration,
+    state: unknown,
+  ): AsyncGenerator<SourceMessage> {
+    if (syncMode === 'incremental') {
+      yield* diffSnapshot(stream, this.scan(stream), state);
+      return;
+    }
+    for await (const data of this.scan(stream))
+      yield { stream: stream.name, data };
+  }
+
+  // One complete read of the window, each record once.
+  private async *scan(stream: Stream): AsyncGenerator<Record<string, unknown>> {
     const metadata = stream.name === 'accounts' || stream.name === 'calendars';
     const seen = new Set<string>();
     let startAt = this.startAt;
@@ -134,7 +150,7 @@ export class AppleCalendarSource extends Source {
           throw new TypeError('Calendar returned an invalid id');
         if (seen.has(key)) continue;
         seen.add(key);
-        yield { stream: stream.name, data };
+        yield data;
       }
       startAt = endAt;
     } while (startAt < this.endAt);

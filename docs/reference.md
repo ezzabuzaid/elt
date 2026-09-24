@@ -184,7 +184,7 @@ for await (const results of pipeline.watch({ signal: controller.signal })) {
 // Call controller.abort() from your app's stop/shutdown handler.
 ```
 
-Watching preflights the whole pipeline, subscribes before the initial synchronization, and then reruns copies whose streams receive notifications. It uses the existing copy modes: the incremental Notes recipe above remains incremental; Calendar and Reminders retain full-refresh extraction. Notifications do not provide records or turn a full-refresh source into an incremental one. `run()` remains a single execution, and the runnable Apple app still uses it.
+Watching preflights the whole pipeline, subscribes before the initial synchronization, and then reruns copies whose streams receive notifications. It uses the existing copy modes: incremental Notes and Calendar copies stay incremental, and full-refresh copies stay full refresh. Notifications do not provide records or turn a full-refresh copy into an incremental one. `run()` remains a single execution, and the runnable Apple app still uses it.
 
 The source owns change detection:
 
@@ -415,7 +415,7 @@ The `calendars`, `eventMetadata`, and `excludedDates` streams also read Calendar
 
 ### Streams
 
-All nine streams support full refresh and work with inferred SQLite tables or Markdown targets. Related collections are separate scalar rows, preserving their data without adding JSON columns to SQLite.
+All nine streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables or Markdown targets. Related collections are separate scalar rows, preserving their data without adding JSON columns to SQLite.
 
 | Stream | Contents and relationships |
 | --- | --- |
@@ -433,7 +433,7 @@ Native enums and bitmasks remain integers. Missing optional values remain `null`
 
 ### Dates and occurrence identity
 
-The required bounds are canonical UTC ISO timestamps with `startAt < endAt`. They select the half-open interval `[startAt, endAt)`: overlapping events are included; a zero-duration event is included when its start lies in the interval. The range is part of the immutable source identity. Construction, discovery, and preflight perform no native reads.
+The required bounds are canonical UTC ISO timestamps with `startAt < endAt`. They select the half-open interval `[startAt, endAt)`: overlapping events are included; a zero-duration event is included when its start lies in the interval. The range is not part of the source identity (`apple-calendar:eventkit`), so an incremental copy can move its window between runs: occurrences that leave it are deleted. Construction, discovery, and preflight perform no native reads.
 
 EventKit expands recurrence and applies deleted/rescheduled occurrence exceptions. The source queries in windows of at most 365 days to avoid EventKit's silent four-year query truncation, and removes repeated occurrence rows across window boundaries. An unbounded export is not supported because a repeating series may have no end.
 
@@ -447,11 +447,11 @@ Markdown uses the same source; for example, `new Copy(calendar.events, markdown.
 
 ### Completeness and limits
 
-Full-refresh overwrite reconciles deletions and events moved outside the selected window on the next successful run. Ordinary append retains observations. Each stream is read separately, so concurrent Calendar changes can affect relationships; the pipeline has no cross-stream snapshot or transaction. OSA still buffers at most 64 MiB per query and times out after 120 seconds; very dense windows can exceed those limits. Duplicate tracking retains occurrence/child IDs for the duration of one copy.
+Full-refresh overwrite and snapshot incremental both reconcile deletions and events moved outside the selected window on the next successful run; incremental writes only the rows that changed. Ordinary append retains observations. Child rows are keyed by position, so reordering attendees or alarms rewrites the affected rows. Each stream is read separately, so concurrent Calendar changes can affect relationships; the pipeline has no cross-stream snapshot or transaction. OSA still buffers at most 64 MiB per query and times out after 120 seconds; very dense windows can exceed those limits. Duplicate tracking retains occurrence/child IDs for the duration of one copy.
 
 The source preserves the EventKit and scripting fields above. These remaining capabilities require more than another source field:
 
-- **Incremental deletion/move reconciliation:** EventKit provides change notifications but no durable change cursor or deletion feed here. The current `SourceMessage` protocol also has no delete/tombstone message or scoped reconciliation operation. Calendar therefore rejects incremental extraction.
+- **Change feed:** EventKit provides change notifications but no durable change cursor, so every incremental run still reads the whole window.
 - **Attachments, travel time, and conference metadata:** EventKit and Calendar's scripting interface do not provide attachment file export or dedicated travel/conference fields. The existing file-transfer pipeline can load staged files, but this source cannot supply those bytes. Deprecated open-file alarm URLs are also unavailable on modern macOS.
 - **Consistent multi-stream snapshots and resumable large exports:** these need additional extraction/checkpoint and pipeline support. Full refresh currently restarts a failed copy, preserving its previous destination contents until the complete replacement succeeds.
 

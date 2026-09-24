@@ -13,7 +13,7 @@ The core uses Node.js APIs with no runtime dependencies. The included Apple conn
 | Source | Available data | Extraction | Change trigger |
 | --- | --- | --- | --- |
 | Apple Notes | Accounts, folders, notes, and attachments | Full refresh; incremental for notes and attachments | Native filesystem notifications over Notes storage |
-| Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, and scripting metadata | Full refresh within a required date range | EventKit notifications |
+| Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, and scripting metadata | Full refresh or snapshot incremental within a required date range | EventKit notifications |
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh | EventKit notifications |
 | Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection | Full refresh; incremental for the dated analytics grains | Change-gated polling (the API publishes no notification) |
 
@@ -141,6 +141,28 @@ The first run reads all notes. Later runs resume from the saved timestamp. `appe
 Keep the copy ID and both SQLite files between runs. The checkpoint store must use a separate file from the destination. Changing the source, target, schema, or copy configuration requires a new copy ID or an explicit checkpoint reset. Reset the checkpoint if you delete or replace destination storage.
 
 **Notes still scans the full collection.** Incremental filtering reduces the records emitted, not the source scan cost. It does not reconcile deletions and can miss backdated changes. Use full-refresh overwrite when the destination must reflect the current snapshot, including deletions.
+
+### Calendar: incremental with deletions
+
+EventKit has no change feed, so Calendar loads incrementally by comparing each scan with the last one. Its copies select no `cursorField` and need `append_dedup` keyed by `id`:
+
+```ts
+import { AppleCalendarSource } from './index.ts';
+
+const calendar = new AppleCalendarSource({
+  startAt: '2026-09-01T00:00:00.000Z',
+  endAt: '2026-12-01T00:00:00.000Z',
+});
+
+new Copy(calendar.events, destination.table('events'), {
+  id: 'calendar-events',
+  syncMode: 'incremental',
+  destinationSyncMode: 'append_dedup',
+  primaryKey: ['id'],
+});
+```
+
+Each run writes only new and changed rows and deletes rows that disappeared, including occurrences that moved out of the window and removed attendees or alarms. The window can move between runs without resetting the checkpoint. Calendar still reads the whole window every run. See [snapshot streams](docs/reference.md#snapshot-streams).
 
 See [checkpoint and replay semantics](docs/reference.md#incremental-extraction-and-checkpoints).
 

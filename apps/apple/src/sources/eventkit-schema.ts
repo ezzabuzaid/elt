@@ -106,6 +106,8 @@ export function eventKitRelatedFields(ownerKey: 'eventId' | 'reminderId') {
 
 export function eventKitCatalog(
   properties: Record<string, Record<string, FieldSchema>>,
+  // Snapshot streams load incrementally by diffing full scans (elt diffSnapshot).
+  { snapshot = false }: { snapshot?: boolean } = {},
 ): Catalog {
   return new Catalog(
     Object.entries(properties).map(
@@ -118,7 +120,13 @@ export function eventKitCatalog(
             required: Object.keys(fields),
           },
           primaryKey: ['id'],
-          supportedSyncModes: ['full_refresh'],
+          supportedSyncModes: snapshot
+            ? ['full_refresh', 'incremental']
+            : ['full_refresh'],
+          ...(snapshot && {
+            sourceDefinedCursor: true,
+            emitsDeletes: true,
+          }),
         }),
     ),
   );
