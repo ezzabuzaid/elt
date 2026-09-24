@@ -188,3 +188,71 @@ test('Markdown file and folder targets honor the deduplication policy', async ()
     [[19], [19], [12], [12]],
   );
 });
+
+test('a checkpoint store resumes from the last acknowledged state only', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
+  const store = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const binding = { source: 'test', target: 'records' };
+  const received: unknown[] = [];
+  const write =
+    (states: unknown[], fail = false) =>
+    async (state: unknown) => {
+      received.push(structuredClone(state));
+      if (state !== null && typeof state === 'object')
+        Reflect.set(state, 'mutated', true);
+      if (fail) throw new Error('source broke');
+      return {
+        count: states.length,
+        deleted: 0,
+        checkpoints: states.map((state) => ({
+          type: 'STATE' as const,
+          stream: 'records',
+          state,
+        })),
+      };
+    };
+
+  await store.run('copy', binding, write([{ page: 1 }, { page: 2 }]));
+  // No acknowledgement keeps the saved state, even though the input was mutated.
+  await store.run('copy', binding, write([]));
+  await assert.rejects(
+    store.run('copy', binding, write([{ page: 9 }], true)),
+    /source broke/,
+  );
+  await store.run('copy', binding, write([]));
+
+  assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 2 }]);
+});
+
+test('a changed binding is refused until the checkpoint is reset', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
+  const store = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  let called = 0;
+  const write = async (state: unknown) => {
+    called++;
+    return {
+      count: 0,
+      deleted: 0,
+      checkpoints: [
+        { type: 'STATE' as const, stream: 'records', state: { from: state } },
+      ],
+    };
+  };
+
+  await store.run('copy', { target: 'a' }, write);
+  await assert.rejects(
+    store.run('copy', { target: 'b' }, write),
+    /Checkpoint binding changed for copy; reset it or use a new copy ID/,
+  );
+  assert.equal(called, 1);
+  await store.reset('copy');
+  await store.run('copy', { target: 'b' }, async (state) => {
+    assert.equal(state, null);
+    return write(state);
+  });
+  assert.equal(called, 2);
+});

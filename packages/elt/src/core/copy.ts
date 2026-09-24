@@ -1,4 +1,4 @@
-import type { SQLiteCheckpointStore } from '../state/sqlite-checkpoint-store.ts';
+import type { CheckpointStore } from '../state/checkpoint-store.ts';
 import { CopyConfiguration } from './copy-configuration.ts';
 import type { Destination } from './destination.ts';
 import type { WriterClaim } from './ownership.ts';
@@ -55,7 +55,7 @@ export class Copy<Target extends DestinationTarget> {
   validate(
     source: Source,
     destination: Destination<Target>,
-    checkpoints?: SQLiteCheckpointStore,
+    checkpoints?: CheckpointStore,
   ): void {
     source.validate(this.configuration);
     destination.validate(this.configuration, this.to);
@@ -71,7 +71,7 @@ export class Copy<Target extends DestinationTarget> {
   async run(
     source: Source,
     destination: Destination<Target>,
-    checkpoints?: SQLiteCheckpointStore,
+    checkpoints?: CheckpointStore,
   ): Promise<WriteCount> {
     this.validate(source, destination, checkpoints);
     const write = (state: unknown) =>

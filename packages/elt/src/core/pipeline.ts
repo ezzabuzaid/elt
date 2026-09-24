@@ -1,4 +1,4 @@
-import type { SQLiteCheckpointStore } from '../state/sqlite-checkpoint-store.ts';
+import type { CheckpointStore } from '../state/checkpoint-store.ts';
 import { Copy } from './copy.ts';
 import type { Destination } from './destination.ts';
 import { assertShareable, type WriterClaim } from './ownership.ts';
@@ -33,7 +33,7 @@ export class PipelineError<Target extends DestinationTarget> extends Error {
 export class Pipeline<Target extends DestinationTarget> {
   readonly source: Source;
   readonly destination: Destination<Target>;
-  readonly checkpoints?: SQLiteCheckpointStore;
+  readonly checkpoints?: CheckpointStore;
   readonly steps: readonly Copy<Target>[];
 
   constructor({
@@ -45,7 +45,7 @@ export class Pipeline<Target extends DestinationTarget> {
     source: Source;
     destination: Destination<Target>;
     steps: readonly Copy<NoInfer<Target>>[];
-    checkpoints?: SQLiteCheckpointStore;
+    checkpoints?: CheckpointStore;
   }) {
     if (!steps.every((step) => step instanceof Copy))
       throw new TypeError('Pipeline steps must be Copy declarations');
