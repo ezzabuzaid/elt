@@ -37,6 +37,7 @@ import { EventKit } from './platform/macos/eventkit.ts';
 import osa from './platform/macos/osa.ts';
 import { calendarScript } from './sources/apple-calendar/calendar-script.ts';
 import { parseICalendar } from './sources/apple-calendar/icalendar.ts';
+import { icsStreams } from './sources/apple-calendar/ics-records.ts';
 import { AttachmentsStream } from './sources/apple-notes/attachments-stream.ts';
 import { remindersScript } from './sources/apple-reminders/reminders-script.ts';
 
@@ -2600,9 +2601,22 @@ test('Calendar JXA exports saved items only and names a missing ICS selector', {
           nativeStore.ICSDataForCalendarItemsPreventLineFolding(items, fold),
       }),
       missing: attempt(base),
+      // Every ICS stream must reach the export, not fail as an unknown stream.
+      streams: ${JSON.stringify(icsStreams)}.map((stream) => {
+        try {
+          readCalendar(base, stream, '2025-01-01T00:00:00.000Z', '2025-01-02T00:00:00.000Z', undefined, null);
+          return stream + ': exported';
+        } catch (error) {
+          return stream + ': ' + error.message.split(':')[0];
+        }
+      }),
     });
   `);
-  const { unsaved, missing } = JSON.parse(output);
+  const { unsaved, missing, streams } = JSON.parse(output);
+  assert.deepEqual(
+    streams,
+    icsStreams.map((stream) => `${stream}: CALENDAR_ICS_UNAVAILABLE`),
+  );
   // EventKit exports an unsaved item as an empty calendar; the source rejects it.
   assert.equal(unsaved.records.length, 1);
   assert.doesNotMatch(

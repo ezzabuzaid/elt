@@ -24,11 +24,12 @@ function readCalendar(
     'icsComponents',
     'icsProperties',
     'icsParameters',
+    'icsAttachments',
   ];
   if (!names.includes(stream)) throw new Error('Unknown calendar stream: ' + stream);
   const wants = (name) => stream === name;
   const scripting = wants('eventMetadata') || wants('excludedDates');
-  const ics = wants('icsComponents') || wants('icsProperties') || wants('icsParameters');
+  const ics = ['icsComponents', 'icsProperties', 'icsParameters', 'icsAttachments'].includes(stream);
   // Per-item streams page by native item; only metadata needs Calendar scripting.
   const paged = scripting || ics;
   const records = [];
@@ -149,6 +150,7 @@ function readCalendar(
     'icsComponents',
     'icsProperties',
     'icsParameters',
+    'icsAttachments',
   ];
   if (!eventStreams.includes(stream)) return records;
 
