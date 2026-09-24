@@ -57,11 +57,30 @@ try {
     destination,
     checkpoints,
     steps: [
-      new Copy(source.sites, destination.table('raw_sites')),
-      new Copy(source.sitemaps, destination.table('raw_sitemaps')),
-      new Copy(
-        source.sitemapContents,
-        destination.table('raw_sitemap_contents'),
+      // Every row carries its property, and each copy id names the property,
+      // so several properties' pipelines share these tables. Listings are
+      // complete on every read: a copy writes changes and deletes only the
+      // keys its own previous snapshot held.
+      ...(
+        [
+          [source.sites, 'raw_sites'],
+          [source.sitemaps, 'raw_sitemaps'],
+          [source.sitemapContents, 'raw_sitemap_contents'],
+          // The country and device split carries no date, so it is a trailing
+          // view diffed as a whole rather than resumed.
+          [source.searchAnalyticsCountries, 'raw_search_countries'],
+          [source.urlInspection, 'raw_url_inspection'],
+          [source.urlInspectionSitemaps, 'raw_url_inspection_sitemaps'],
+          [source.urlInspectionReferrers, 'raw_url_inspection_referrers'],
+        ] as const
+      ).map(
+        ([stream, table]) =>
+          new Copy(stream, destination.table(table), {
+            id: `${stream.name}:${siteUrl}`,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            primaryKey: [...stream.primaryKey],
+          }),
       ),
       // Each grain is its own copy: Google anonymizes rare rows, so the daily
       // totals stay authoritative while the breakdowns are only comparable
@@ -83,21 +102,6 @@ try {
             cursorField: 'date',
             primaryKey: [...stream.primaryKey],
           }),
-      ),
-      // The country and device split carries no date, so it is a trailing
-      // view that is replaced whole rather than resumed.
-      new Copy(
-        source.searchAnalyticsCountries,
-        destination.table('raw_search_countries'),
-      ),
-      new Copy(source.urlInspection, destination.table('raw_url_inspection')),
-      new Copy(
-        source.urlInspectionSitemaps,
-        destination.table('raw_url_inspection_sitemaps'),
-      ),
-      new Copy(
-        source.urlInspectionReferrers,
-        destination.table('raw_url_inspection_referrers'),
       ),
     ],
   });
@@ -125,13 +129,14 @@ try {
         coalesce(sum(queries.clicks), 0) AS query_clicks,
         coalesce(sum(queries.impressions), 0) AS query_impressions
       FROM raw_search_daily AS totals
-      LEFT JOIN raw_search_queries_daily AS queries ON queries.date = totals.date
-      WHERE totals.searchType = 'WEB'
+      LEFT JOIN raw_search_queries_daily AS queries
+        ON queries.siteUrl = totals.siteUrl AND queries.date = totals.date
+      WHERE totals.siteUrl = ? AND totals.searchType = 'WEB'
       GROUP BY totals.date, totals.clicks, totals.impressions
       ORDER BY totals.date DESC
       LIMIT 10
     `)
-      .all(),
+      .all(siteUrl),
   );
 } catch (error) {
   const cause = error instanceof PipelineError ? error.cause : error;

@@ -550,19 +550,23 @@ Because a user credential is billed to the project that issued its OAuth client,
 
 ### Streams
 
-| Stream | Extraction | Notes |
-| --- | --- | --- |
-| `sites` | Full refresh or snapshot | Properties the grant can read. `siteUnverifiedUser` entries are dropped: Google lists them, but their history cannot be read. |
-| `sitemaps` | Full refresh or snapshot | int64 counts arrive as decimal strings; omitted counts and flags mean zero and false. |
-| `sitemapContents` | Full refresh or snapshot | The per-content-type rows nested in each sitemap, keyed by `sitemapPath` and `type`. |
-| `searchAnalyticsDaily` | Incremental | Site-wide totals per day **per report type**, with `searchType` as a column. Key `[date, searchType]`. |
-| `searchAnalyticsQueries` | Incremental | Per day and query, web results only. Key `[date, query]`. |
-| `searchAnalyticsPages` | Incremental | Per day and page, web results only. Key `[date, page]`. |
-| `searchAnalyticsCountries` | Full refresh | Country and device for a trailing `breakdownMonths` window (default 3). No date dimension, so it cannot be resumed. Key `[country, device]`. |
-| `urlInspection` | Full refresh or snapshot | One request per URL. |
-| `urlInspectionSitemaps` / `urlInspectionReferrers` | Full refresh or snapshot | The arrays nested in the index status result, keyed by `inspectionUrl` and `position`. |
+| Stream | Extraction | Key | Notes |
+| --- | --- | --- | --- |
+| `sites` | Full refresh or snapshot | `[siteUrl]` | Properties the grant can read. `siteUnverifiedUser` entries are dropped: Google lists them, but their history cannot be read. |
+| `sitemaps` | Full refresh or snapshot | `[siteUrl, path]` | int64 counts arrive as decimal strings; omitted counts and flags mean zero and false. |
+| `sitemapContents` | Full refresh or snapshot | `[siteUrl, sitemapPath, type]` | The per-content-type rows nested in each sitemap. |
+| `searchAnalyticsDaily` | Incremental | `[siteUrl, date, searchType]` | Site-wide totals per day **per report type**, with `searchType` as a column. |
+| `searchAnalyticsQueries` | Incremental | `[siteUrl, date, query]` | Per day and query, web results only. |
+| `searchAnalyticsPages` | Incremental | `[siteUrl, date, page]` | Per day and page, web results only. |
+| `searchAnalyticsCountries` | Full refresh or snapshot | `[siteUrl, country, device]` | Country and device for a trailing `breakdownMonths` window (default 3). No date dimension, so it is diffed as a whole rather than resumed. |
+| `urlInspection` | Full refresh or snapshot | `[siteUrl, inspectionUrl]` | One request per URL. |
+| `urlInspectionSitemaps` / `urlInspectionReferrers` | Full refresh or snapshot | `[siteUrl, inspectionUrl, position]` | The arrays nested in the index status result. |
+
+Every row except `sites` carries the property it came from in `siteUrl`, and every key starts with it, so several properties load into the same tables. `sites` lists what the grant can read, which is the same for every property of one grant.
 
 Every read of the snapshot streams returns the complete list, so an incremental copy (`append_dedup` on the stream's key, no `cursorField`) writes only changed rows and deletes the rest; see [snapshot streams](#snapshot-streams). URL inspection covers only the current top pages by impressions, so a page that drops out of that set is deleted, exactly as a full-refresh overwrite would remove it.
+
+A full-refresh `overwrite` empties the whole table, so it cannot share one. Load several properties into shared tables with one incremental copy per property, each with an id that names the property, as the example app does: a snapshot copy deletes only keys its own previous snapshot held, and the dated grains upsert by a key that includes `siteUrl`.
 
 #### Why the grains are separate
 

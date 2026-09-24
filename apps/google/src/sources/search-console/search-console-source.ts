@@ -153,26 +153,26 @@ export class SearchConsoleSource extends Source {
     this.sitemaps = searchConsoleStream({
       name: 'sitemaps',
       fields: sitemapsFields,
-      primaryKey: ['path'],
+      primaryKey: ['siteUrl', 'path'],
       snapshot: true,
     });
     this.sitemapContents = searchConsoleStream({
       name: 'sitemapContents',
       fields: sitemapContentsFields,
-      primaryKey: ['sitemapPath', 'type'],
+      primaryKey: ['siteUrl', 'sitemapPath', 'type'],
       snapshot: true,
     });
+    // Every row carries its property, so several properties share one table.
     const grain = (name: SearchAnalyticsGrain): Stream =>
       searchConsoleStream({
         name,
         fields: searchAnalyticsFields(name),
-        primaryKey: [...searchAnalyticsGrains[name].key],
-        // Only a grain carrying the date dimension has a cursor to resume on.
-        supportedSyncModes: searchAnalyticsGrains[name].dimensions.includes(
-          'date',
-        )
-          ? ['full_refresh', 'incremental']
-          : ['full_refresh'],
+        primaryKey: ['siteUrl', ...searchAnalyticsGrains[name].key],
+        // A grain carrying the date dimension resumes on it; one without is a
+        // complete trailing view on every read, so incremental copies diff it.
+        ...(searchAnalyticsGrains[name].dimensions.includes('date')
+          ? { supportedSyncModes: ['full_refresh', 'incremental'] as const }
+          : { snapshot: true }),
       });
     this.searchAnalyticsDaily = grain('searchAnalyticsDaily');
     this.searchAnalyticsQueries = grain('searchAnalyticsQueries');
@@ -181,19 +181,19 @@ export class SearchConsoleSource extends Source {
     this.urlInspection = searchConsoleStream({
       name: 'urlInspection',
       fields: urlInspectionFields,
-      primaryKey: ['inspectionUrl'],
+      primaryKey: ['siteUrl', 'inspectionUrl'],
       snapshot: true,
     });
     this.urlInspectionSitemaps = searchConsoleStream({
       name: 'urlInspectionSitemaps',
       fields: urlInspectionSitemapsFields,
-      primaryKey: ['inspectionUrl', 'position'],
+      primaryKey: ['siteUrl', 'inspectionUrl', 'position'],
       snapshot: true,
     });
     this.urlInspectionReferrers = searchConsoleStream({
       name: 'urlInspectionReferrers',
       fields: urlInspectionReferrersFields,
-      primaryKey: ['inspectionUrl', 'position'],
+      primaryKey: ['siteUrl', 'inspectionUrl', 'position'],
       snapshot: true,
     });
     this.catalog = new Catalog([
@@ -277,8 +277,8 @@ export class SearchConsoleSource extends Source {
     }
   }
 
-  // Sites, sitemaps and inspections are complete lists on every read, so an
-  // incremental copy diffs them with the previous snapshot.
+  // Sites, sitemaps, inspections and the dateless grain are complete lists on
+  // every read, so an incremental copy diffs them with the previous snapshot.
   async *#listing(
     { stream, syncMode }: CopyConfiguration,
     state: unknown,
@@ -314,11 +314,22 @@ export class SearchConsoleSource extends Source {
   ): AsyncGenerator<SourceMessage> {
     const grain = searchAnalyticsGrains[name];
     const endDate = today(this.#now());
-    const resumable = grain.dimensions.includes('date');
-    const opening = subMonths(
-      endDate,
-      resumable ? RETENTION_MONTHS : this.breakdownMonths,
-    );
+    if (!grain.dimensions.includes('date')) {
+      const page = await readSearchAnalytics(this.#api, this.siteUrl, {
+        dataState: 'ALL',
+        dimensions: [...grain.dimensions],
+        endDate,
+        startDate: subMonths(endDate, this.breakdownMonths),
+        type: 'WEB',
+      });
+      yield* this.#listing(
+        configuration,
+        state,
+        this.#rows(name, page.rows, 'WEB'),
+      );
+      return;
+    }
+    const opening = subMonths(endDate, RETENTION_MONTHS);
     const saved = readCheckpoint(state);
     const startDate =
       configuration.syncMode === 'incremental'
@@ -363,6 +374,7 @@ export class SearchConsoleSource extends Source {
       if (row.keys.length !== dimensions.length) return [];
       return [
         {
+          siteUrl: this.siteUrl,
           ...Object.fromEntries(
             dimensions.map((dimension, index) => [dimension, row.keys[index]]),
           ),
@@ -397,6 +409,7 @@ export class SearchConsoleSource extends Source {
     const sitemaps = list(body, 'sitemap');
     if (name === 'sitemaps')
       return sitemaps.map((sitemap) => ({
+        siteUrl: this.siteUrl,
         errors: count(sitemap, 'errors'),
         isPending: flag(sitemap, 'isPending'),
         isSitemapsIndex: flag(sitemap, 'isSitemapsIndex'),
@@ -408,6 +421,7 @@ export class SearchConsoleSource extends Source {
       }));
     return sitemaps.flatMap((sitemap) =>
       list(sitemap, 'contents').map((content) => ({
+        siteUrl: this.siteUrl,
         indexed: optionalCount(content, 'indexed'),
         sitemapPath: required(sitemap, 'path'),
         submitted: count(content, 'submitted'),
@@ -449,6 +463,7 @@ export class SearchConsoleSource extends Source {
     return inspections.flatMap(({ inspectionUrl, indexStatus }) =>
       inspectionTexts(Reflect.get(indexStatus, field)).map(
         (value, position) => ({
+          siteUrl: this.siteUrl,
           inspectionUrl,
           position,
           [column]: value,

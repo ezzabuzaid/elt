@@ -95,6 +95,7 @@ export function searchAnalyticsFields(
 ): Record<string, FieldSchema> {
   const { dimensions, extra } = searchAnalyticsGrains[grain];
   return {
+    siteUrl: id,
     ...Object.fromEntries(
       dimensions.map((dimension) => [
         dimension,
@@ -112,6 +113,7 @@ export const sitesFields = {
 } satisfies Record<string, FieldSchema>;
 
 export const sitemapsFields = {
+  siteUrl: id,
   path: id,
   type: nullableText,
   lastSubmitted: nullableTimestamp,
@@ -123,6 +125,7 @@ export const sitemapsFields = {
 } satisfies Record<string, FieldSchema>;
 
 export const sitemapContentsFields = {
+  siteUrl: id,
   sitemapPath: id,
   type: text,
   submitted: ordinal,
@@ -130,8 +133,8 @@ export const sitemapContentsFields = {
 } satisfies Record<string, FieldSchema>;
 
 export const urlInspectionFields = {
-  inspectionUrl: id,
   siteUrl: id,
+  inspectionUrl: id,
   verdict: nullableText,
   coverageState: nullableText,
   robotsTxtState: nullableText,
@@ -148,12 +151,14 @@ export const urlInspectionFields = {
 } satisfies Record<string, FieldSchema>;
 
 export const urlInspectionSitemapsFields = {
+  siteUrl: id,
   inspectionUrl: id,
   position: ordinal,
   sitemap: text,
 } satisfies Record<string, FieldSchema>;
 
 export const urlInspectionReferrersFields = {
+  siteUrl: id,
   inspectionUrl: id,
   position: ordinal,
   referringUrl: text,

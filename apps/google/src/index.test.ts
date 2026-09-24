@@ -538,23 +538,29 @@ test('the history window clamps to the last day of a shorter start month', async
   assert.deepEqual(requests, ['2024-11-30']);
 });
 
-test('the country breakdown is a trailing view that cannot be resumed', async () => {
+test('the country breakdown is a trailing snapshot, diffed rather than resumed by date', async () => {
   const windows: string[] = [];
+  let rows: Record<string, unknown>[] = [
+    {
+      clicks: 3,
+      ctr: 0.1,
+      impressions: 30,
+      keys: ['usa', 'DESKTOP'],
+      position: 4,
+    },
+    {
+      clicks: 1,
+      ctr: 0.5,
+      impressions: 2,
+      keys: ['gbr', 'MOBILE'],
+      position: 7,
+    },
+    // Google's own row, with one key too few: skipped, not fatal.
+    { clicks: 9, ctr: 0.2, impressions: 90, keys: ['zzz'], position: 2 },
+  ];
   const { requester } = recorder((call) => {
     if (call.data?.['startDate']) windows.push(String(call.data['startDate']));
-    return {
-      rows: [
-        {
-          clicks: 3,
-          ctr: 0.1,
-          impressions: 30,
-          keys: ['usa', 'DESKTOP'],
-          position: 4,
-        },
-        // Google's own row, with one key too few: skipped, not fatal.
-        { clicks: 9, ctr: 0.2, impressions: 90, keys: ['zzz'], position: 2 },
-      ],
-    };
+    return { rows };
   });
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-country-'));
   const source = new SearchConsoleSource({
@@ -566,27 +572,153 @@ test('the country breakdown is a trailing view that cannot be resumed', async ()
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
   });
-
-  assert.deepEqual(source.searchAnalyticsCountries.supportedSyncModes, [
-    'full_refresh',
-  ]);
-  await new Pipeline({
+  const copy = new Copy(
+    source.searchAnalyticsCountries,
+    destination.table('countries'),
+    {
+      id: 'countries',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      primaryKey: [...source.searchAnalyticsCountries.primaryKey],
+    },
+  );
+  const pipeline = new Pipeline({
     source,
     destination,
-    steps: [
-      new Copy(source.searchAnalyticsCountries, destination.table('countries')),
-    ],
-  }).run();
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [copy],
+  });
 
-  assert.deepEqual(windows, ['2026-06-22']);
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+  rows = [
+    {
+      clicks: 4,
+      ctr: 0.1,
+      impressions: 40,
+      keys: ['usa', 'DESKTOP'],
+      position: 4,
+    },
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 1 }]);
+
+  // The window trails the clock; no date checkpoint narrows it.
+  assert.deepEqual(windows, ['2026-06-22', '2026-06-22']);
   using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
     database
-      .prepare('SELECT country, device, clicks FROM countries')
+      .prepare('SELECT siteUrl, country, device, clicks FROM countries')
       .all()
       .map((row) => ({ ...row })),
-    [{ clicks: 3, country: 'usa', device: 'DESKTOP' }],
+    [{ clicks: 4, country: 'usa', device: 'DESKTOP', siteUrl: SITE }],
   );
+});
+
+test('every stream but sites carries its property and keys by it first', async () => {
+  const source = new SearchConsoleSource({
+    now: NOW,
+    requester: recorder(() => ({})).requester,
+    siteUrl: SITE,
+  });
+
+  const unkeyed = (await source.discover()).streams.filter(
+    (stream) =>
+      stream.name !== 'sites' &&
+      (stream.primaryKey[0] !== 'siteUrl' ||
+        !Object.hasOwn(stream.jsonSchema['properties'] as object, 'siteUrl')),
+  );
+
+  assert.deepEqual(
+    unkeyed.map((stream) => stream.name),
+    [],
+  );
+});
+
+test('two properties load into the same tables without deleting each other', async () => {
+  const A = 'sc-domain:a.example';
+  const B = 'sc-domain:b.example';
+  const sitemaps: Record<string, unknown[]> = {
+    [A]: [{ path: 'https://a.example/sitemap.xml' }],
+    [B]: [{ path: 'https://b.example/sitemap.xml' }],
+  };
+  const { requester } = recorder((call) => {
+    const site = decodeURIComponent(
+      call.url.split('/sites/')[1]?.split('/')[0] ?? '',
+    );
+    if (call.url.endsWith('/sitemaps')) return { sitemap: sitemaps[site] };
+    const dimensions = call.data?.['dimensions'];
+    const keys =
+      Array.isArray(dimensions) && dimensions.includes('date')
+        ? ['2026-09-20']
+        : ['usa', 'DESKTOP'];
+    return {
+      rows: [{ clicks: 1, ctr: 0.1, impressions: 10, keys, position: 3 }],
+    };
+  });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-share-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'sc.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const pipeline = (siteUrl: string) => {
+    const source = new SearchConsoleSource({
+      now: NOW,
+      requester,
+      searchTypes: ['WEB'],
+      siteUrl,
+    });
+    const listing = (stream: typeof source.sitemaps, table: string) =>
+      new Copy(stream, destination.table(table), {
+        id: `${stream.name}:${siteUrl}`,
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: [...stream.primaryKey],
+      });
+    return new Pipeline({
+      source,
+      destination,
+      checkpoints,
+      steps: [
+        listing(source.sitemaps, 'sitemaps'),
+        new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+          id: `searchAnalyticsDaily:${siteUrl}`,
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          dedupPolicy: 'replace',
+          cursorField: 'date',
+          primaryKey: [...source.searchAnalyticsDaily.primaryKey],
+        }),
+        listing(source.searchAnalyticsCountries, 'countries'),
+      ],
+    });
+  };
+
+  await pipeline(A).run();
+  await pipeline(B).run();
+  sitemaps[A] = [];
+  const counts = (await pipeline(A).run()).map(({ copy, count, deleted }) => [
+    copy.from.name,
+    count,
+    deleted,
+  ]);
+
+  assert.deepEqual(counts, [
+    ['sitemaps', 0, 1],
+    ['searchAnalyticsDaily', 1, 0],
+    ['searchAnalyticsCountries', 0, 0],
+  ]);
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  const sites = (table: string) =>
+    database
+      .prepare(`SELECT siteUrl FROM ${table} ORDER BY siteUrl`)
+      .all()
+      .map((row) => row['siteUrl']);
+  assert.deepEqual(sites('sitemaps'), [B]);
+  assert.deepEqual(sites('daily'), [A, B]);
+  assert.deepEqual(sites('countries'), [A, B]);
 });
 
 test('an unverified property is not offered as a readable site', async () => {
