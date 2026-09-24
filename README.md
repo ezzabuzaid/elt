@@ -15,7 +15,7 @@ The core uses Node.js APIs with no runtime dependencies. Destinations beyond Mar
 | Apple Notes | Accounts, folders, notes, and attachments | Full refresh or snapshot incremental | Native filesystem notifications over Notes storage |
 | Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, scripting metadata, and each item's iCalendar (ICS) components, properties and parameters | Full refresh or snapshot incremental within a required date range | EventKit notifications |
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh or snapshot incremental | EventKit notifications |
-| Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection | Full refresh; incremental by date for the dated analytics grains and by snapshot for properties, sitemaps, the country breakdown and URL inspection; every row carries its property, so properties share tables | Change-gated polling (the API publishes no notification) |
+| Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection of every sitemap and search URL | Full refresh; incremental by date for the dated analytics grains, by snapshot for properties, sitemaps and the country breakdown, and rolling (never-inspected, then stalest, within the daily quota) for URL inspection; every row carries its property, so properties share tables | Change-gated polling (the API publishes no notification) |
 
 Every destination supports overwrite, append, and deduplication:
 

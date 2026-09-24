@@ -1,10 +1,34 @@
-import type { SearchConsoleApi } from '../../platform/google/search-console-api.ts';
+import { setTimeout as wait } from 'node:timers/promises';
+
+import { messageOf, statusOf } from '../../platform/google/google-errors.ts';
+import {
+  type SearchConsoleApi,
+  SearchConsoleQuotaError,
+  URL_INSPECTION_QUOTA,
+} from '../../platform/google/search-console-api.ts';
 
 export type UrlInspection = {
   readonly inspectionUrl: string;
+  readonly inspectedAt: string;
   readonly result: Record<string, unknown>;
   readonly indexStatus: Record<string, unknown>;
+  // Set when Google rejected this one URL; the inspection has no result.
+  readonly error: { readonly status: number; readonly message: string } | null;
 };
+
+export type InspectionClock = {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+};
+
+export const systemInspectionClock: InspectionClock = {
+  now: () => Date.now(),
+  sleep: (ms) => wait(ms),
+};
+
+// A bad URL is Google's verdict on that URL alone; anything else (auth, a
+// revoked property, a server fault) would fail every URL the same way.
+const REJECTED_URL_STATUSES = new Set([400, 404]);
 
 function record(value: unknown, key: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object') return {};
@@ -15,28 +39,88 @@ function record(value: unknown, key: string): Record<string, unknown> {
 }
 
 /**
- * Inspects each URL in turn, pausing between batches so a long list stays
- * under the per-minute ceiling. Sequential by design: the quota is per
- * property, so concurrency buys nothing and risks a burst refusal.
+ * Inspects URLs concurrently, in the given order. Each call waits seconds on
+ * Google, so the pool keeps `concurrency` in flight while pacing starts under
+ * the per-minute ceiling; a quota refusal can then only mean the daily quota.
+ * On that refusal no new call starts, the ones in flight finish, and the
+ * inspections that succeeded are returned with `exhausted` set.
  */
 export async function inspectUrls(
   api: SearchConsoleApi,
   siteUrl: string,
   urls: readonly string[],
-  { signal }: { signal?: AbortSignal } = {},
-): Promise<UrlInspection[]> {
-  const inspections: UrlInspection[] = [];
-  for (const inspectionUrl of urls) {
-    signal?.throwIfAborted();
-    const body = await api.inspect(siteUrl, inspectionUrl);
-    const result = record(body, 'inspectionResult');
-    inspections.push({
-      inspectionUrl,
-      result,
-      indexStatus: record(result, 'indexStatusResult'),
-    });
-  }
-  return inspections;
+  {
+    concurrency,
+    clock = systemInspectionClock,
+  }: { concurrency: number; clock?: InspectionClock },
+): Promise<{ inspections: UrlInspection[]; exhausted: boolean }> {
+  const results: (UrlInspection | undefined)[] = [];
+  const controller = new AbortController();
+  const starts: number[] = [];
+  let next = 0;
+  let exhausted = false;
+  let failure: { error: unknown } | undefined;
+
+  const pace = async () => {
+    for (;;) {
+      const now = clock.now();
+      while (starts.length > 0 && now - (starts[0] ?? 0) >= 60_000)
+        starts.shift();
+      if (starts.length < URL_INSPECTION_QUOTA.perMinute) {
+        starts.push(now);
+        return;
+      }
+      await clock.sleep(60_000 - (now - (starts[0] ?? 0)));
+    }
+  };
+
+  const worker = async () => {
+    while (!exhausted && failure === undefined && next < urls.length) {
+      const index = next++;
+      const inspectionUrl = urls[index] ?? '';
+      await pace();
+      if (exhausted || failure !== undefined) return;
+      try {
+        const body = await api.inspect(siteUrl, inspectionUrl, {
+          signal: controller.signal,
+        });
+        const result = record(body, 'inspectionResult');
+        results[index] = {
+          inspectionUrl,
+          inspectedAt: new Date(clock.now()).toISOString(),
+          result,
+          indexStatus: record(result, 'indexStatusResult'),
+          error: null,
+        };
+      } catch (error) {
+        const status = statusOf(error);
+        if (error instanceof SearchConsoleQuotaError) exhausted = true;
+        else if (status !== undefined && REJECTED_URL_STATUSES.has(status))
+          results[index] = {
+            inspectionUrl,
+            inspectedAt: new Date(clock.now()).toISOString(),
+            result: {},
+            indexStatus: {},
+            error: { status, message: messageOf(error) },
+          };
+        else if (failure === undefined) {
+          failure = { error };
+          controller.abort();
+        }
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, urls.length) }, worker),
+  );
+  if (failure !== undefined) throw failure.error;
+  return {
+    inspections: results.filter(
+      (inspection): inspection is UrlInspection => inspection !== undefined,
+    ),
+    exhausted,
+  };
 }
 
 export function inspectionTexts(values: unknown): readonly string[] {

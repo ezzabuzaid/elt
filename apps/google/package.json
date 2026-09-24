@@ -5,6 +5,7 @@
   "dependencies": {
     "elt": "0.0.1",
     "elt-postgresql": "0.0.1",
+    "fast-xml-parser": "^5.11.1",
     "google-auth": "0.0.1",
     "postgres": "^3.4.9"
   },

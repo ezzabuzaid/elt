@@ -619,18 +619,18 @@ Because a user credential is billed to the project that issued its OAuth client,
 | Stream | Extraction | Key | Notes |
 | --- | --- | --- | --- |
 | `sites` | Full refresh or snapshot | `[siteUrl]` | Properties the grant can read. `siteUnverifiedUser` entries are dropped: Google lists them, but their history cannot be read. |
-| `sitemaps` | Full refresh or snapshot | `[siteUrl, path]` | int64 counts arrive as decimal strings; omitted counts and flags mean zero and false. |
+| `sitemaps` | Full refresh or snapshot | `[siteUrl, path]` | Google's report on each listed sitemap (int64 counts arrive as decimal strings; omitted counts and flags mean zero and false), plus what this connector read from the file itself: `urlsRead`, or `readError` when it could not be read. |
 | `sitemapContents` | Full refresh or snapshot | `[siteUrl, sitemapPath, type]` | The per-content-type rows nested in each sitemap. |
 | `searchAnalyticsDaily` | Incremental | `[siteUrl, date, searchType]` | Site-wide totals per day **per report type**, with `searchType` as a column. |
 | `searchAnalyticsQueries` | Incremental | `[siteUrl, date, query]` | Per day and query, web results only. |
 | `searchAnalyticsPages` | Incremental | `[siteUrl, date, page]` | Per day and page, web results only. |
 | `searchAnalyticsCountries` | Full refresh or snapshot | `[siteUrl, country, device]` | Country and device for a trailing `breakdownMonths` window (default 3), stated on each row as `startDate` and `endDate`. No date dimension, so it is diffed as a whole rather than resumed. |
-| `urlInspection` | Full refresh or snapshot | `[siteUrl, inspectionUrl]` | One request per URL. |
-| `urlInspectionSitemaps` / `urlInspectionReferrers` | Full refresh or snapshot | `[siteUrl, inspectionUrl, position]` | The arrays nested in the index status result. |
+| `urlInspection` | Incremental (rolling) | `[siteUrl, inspectionUrl]` | One request per URL. `inSitemap` and `inSearchAnalytics` say where the URL was found, `inspectedAt` when; `errorStatus` and `errorMessage` are set when Google rejected the URL. |
+| `urlInspectionSitemaps` / `urlInspectionReferrers` | Incremental (rolling) | `[siteUrl, inspectionUrl, position]` | The arrays nested in the index status result. |
 
 One source reads several properties. Every stream except `sites` is a [partitioned stream](#partitioned-streams) with `partitionKey: ['siteUrl']`: each property is read with its own checkpoint, every row carries its property in `siteUrl`, and every key starts with it, so all properties share one table per stream. Adding a property backfills its history while the others resume; removing one stops reading it and keeps its rows. `sites` lists what the grant can read, which is the same for every property, so it is not partitioned.
 
-Every read of the snapshot streams returns the complete list, so an incremental copy (`append_dedup` on the stream's key, no `cursorField`) writes only changed rows and deletes the rest; see [snapshot streams](#snapshot-streams). URL inspection covers only the current top pages by impressions, so a page that drops out of that set is deleted, exactly as a full-refresh overwrite would remove it.
+Every read of the snapshot streams returns the complete list, so an incremental copy (`append_dedup` on the stream's key, no `cursorField`) writes only changed rows and deletes the rest; see [snapshot streams](#snapshot-streams). The inspection streams are rolling instead; see [URL inspection and quota](#url-inspection-and-quota).
 
 The example app lists every property in one source, so each table has one writer. Separate pipelines per property also work: give each copy an id that names its property and load incrementally, so a snapshot copy deletes only keys its own snapshot held and the dated grains upsert by keys that include `siteUrl`. A full-refresh `overwrite` empties the whole table, so the [shared-target rules](#shared-targets) refuse it next to another writer.
 
@@ -710,7 +710,16 @@ The compose stack was then started on Docker Desktop 4.92.0. The init script cre
 
 ### URL inspection and quota
 
-URL inspection has no listing endpoint: each row costs one request naming one URL, against roughly 2000 per day and 600 per minute for a property. The connector derives its URL list from a `searchAnalytics` query grouped by `page` over `inspectionWindowDays` (default 28), sorted by impressions, capped at `inspectionLimit` (default 200). Inspections run sequentially, and one batch is shared by the three `urlInspection` streams so loading all of them spends the per-URL quota once. A rate limit that outlasts the retry policy becomes `SearchConsoleQuotaError` and fails the copy rather than truncating the set.
+URL inspection has no listing endpoint: each row costs one request naming one URL, against 2000 per day and 600 per minute for a property. The connector inspects every URL it can know about for a property:
+
+- **Discovery.** Every URL listed by every sitemap the property has (`sitemaps.list`), fetched from the site: XML url sets, sitemap indexes (followed up to 3 levels), RSS 2.0 and Atom feeds, plain-text lists, gzipped or not. Plus every page in the full 16-month search analytics history, for each configured report type. `#fragments` are stripped (Google Search indexes documents, not anchors), duplicates merge, and only URLs under the property are kept. A page that is in no sitemap and never appeared in search cannot be discovered through any Google API.
+- **Rolling refresh.** Each URL's last inspection time is kept in the stream's checkpoint. A run inspects never-inspected URLs first, then any whose last inspection is older than `inspectionRefreshHours` (default 24), stalest first; fresher URLs cost nothing. A property with more URLs than the daily quota is covered over successive days: each URL is refreshed about every ⌈URLs / 2000⌉ days.
+- **Concurrency.** `inspectionConcurrency` (default 16) requests run at once, paced under 600 starts per minute, so a quota refusal can only mean the daily quota. Live, 126 URLs took 54 seconds where one-at-a-time took about 6.6 seconds per URL.
+- **Quota.** When Google refuses for quota (`403 quotaExceeded`, or a `429` that outlasts the retries), no new request starts, the ones in flight finish, and the inspections that succeeded are committed. The source makes no further inspection request for that property until the next midnight Pacific time, when per-day Google Cloud quotas reset.
+- **Rejected URLs.** A `400` or `404` for one URL is loaded as a `urlInspection` row with `errorStatus` and `errorMessage` and null verdicts, and the run continues. A `401` or any other `403` would fail every URL alike, so it fails the copy.
+- **Removal.** A URL that leaves the discovered set is deleted from all three tables; an array that shrank loses its extra positions.
+- **Sharing.** One request serves all three streams: the source keeps its inspections in memory, and a stream uses one newer than what it last loaded before calling the API.
+- **Unreadable sitemaps** do not stop inspection. Each listed sitemap's outcome is loaded on the `sitemaps` stream (`urlsRead`, `readError`), and the URLs every other source shows are still inspected. Live, `https://ezz.sh/sitemap.xml` resets TLS connections, and Google itself last read it on 2025-07-20 with one error.
 
 ### Retry
 
@@ -718,6 +727,7 @@ Every Search Console call retries rate limits and transient server errors, then 
 
 | Response | Retried | When retries run out |
 | --- | --- | --- |
+| `403` with reason `quotaExceeded` | No: waiting cannot refill a daily quota | `SearchConsoleQuotaError` at once |
 | `429` | Yes | `SearchConsoleQuotaError`, with `status` and `attempts` |
 | `403` with reason `rateLimitExceeded` or `userRateLimitExceeded` | Yes | `SearchConsoleQuotaError` |
 | Any other `403` (insufficient scope, disabled API) | No | The original error, unchanged |
@@ -730,7 +740,9 @@ google-auth-library's transport, gaxios, has its own retry, but it is off by def
 
 ### Watching
 
-Search Console publishes no change notification. `watch()` polls every `pollIntervalMs` (default six hours) and first reads a cheap summary grouped by `date`, invalidating the selected streams only when `firstIncompleteDate` moved or a day's clicks or impressions changed. A restatement that leaves daily totals identical while reshuffling the per-query breakdown is not detected by this probe.
+Search Console publishes no change notification. `watch()` polls every `pollIntervalMs` (default six hours) and first reads a cheap summary grouped by `date`, invalidating the analytics and listing streams only when `firstIncompleteDate` moved or a day's clicks or impressions changed. A restatement that leaves daily totals identical while reshuffling the per-query breakdown is not detected by this probe.
+
+Inspections do not follow traffic. The source decides when they are due: it learns each URL's last inspection from the checkpoints its own extractions receive, and wakes only the inspection streams when the next URL falls due (or at the Pacific-midnight quota reset). Selecting only inspection streams never probes analytics. An app that calls `run()` and exits has no watcher; schedule it with the operating system (cron, launchd) and each run inspects whatever is due.
 
 Aborting the watch signal cancels the probe's request and any `Retry-After` wait at once, so closing never sits out a rate-limit delay. The cancellation surfaces as the signal's `AbortError`, not the transport's wrapped error.
 

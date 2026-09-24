@@ -52,6 +52,9 @@ const RATE_LIMIT_REASONS = new Set([
   'rateLimitExceeded',
   'userRateLimitExceeded',
 ]);
+// An exhausted per-day quota: waiting seconds cannot refill it, so the call
+// fails at once as a quota error for the caller to stop on.
+const QUOTA_REASON = 'quotaExceeded';
 const TRANSIENT_STATUSES = new Set([408, 500, 502, 503, 504]);
 
 export type SearchAnalyticsRequest = {
@@ -160,7 +163,16 @@ export class SearchConsoleApi {
       } catch (cause) {
         signal?.throwIfAborted();
         const status = statusOf(cause);
-        const rateLimited = status === 429 || rateLimitReason(cause);
+        if (reasons(cause).includes(QUOTA_REASON))
+          throw new SearchConsoleQuotaError(
+            status ?? 403,
+            attempt,
+            `Search Console quota exhausted for ${method} ${path}`,
+            { cause },
+          );
+        const rateLimited =
+          status === 429 ||
+          reasons(cause).some((reason) => RATE_LIMIT_REASONS.has(reason));
         if (!rateLimited && !(status && TRANSIENT_STATUSES.has(status)))
           throw cause;
         const delay = this.#delay(cause, attempt);
@@ -216,7 +228,7 @@ function retryAfterMs(error: unknown): number | undefined {
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined;
 }
 
-function rateLimitReason(error: unknown): boolean {
+function reasons(error: unknown): string[] {
   const body: unknown = Reflect.get(responseOf(error) ?? {}, 'data');
   const failure: unknown =
     body !== null && typeof body === 'object'
@@ -226,13 +238,11 @@ function rateLimitReason(error: unknown): boolean {
     failure !== null && typeof failure === 'object'
       ? Reflect.get(failure, 'errors')
       : undefined;
-  return (
-    Array.isArray(errors) &&
-    errors.some(
-      (entry: unknown) =>
-        entry !== null &&
-        typeof entry === 'object' &&
-        RATE_LIMIT_REASONS.has(String(Reflect.get(entry, 'reason'))),
-    )
-  );
+  return Array.isArray(errors)
+    ? errors.map((entry: unknown) =>
+        entry !== null && typeof entry === 'object'
+          ? String(Reflect.get(entry, 'reason'))
+          : '',
+      )
+    : [];
 }

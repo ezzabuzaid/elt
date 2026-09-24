@@ -40,7 +40,8 @@ Keep `packages/elt` platform-independent: contracts, pipeline, destinations, che
 
 1. **The upstream has a change cursor** (a modification time or a date the API filters on): declare `incremental`, require the cursor in `validateExtraction()`, validate prior state, re-read equal cursors, and emit `STATE`. If the upstream restates facts under the same cursor, as Search Console revises recent days, copies use `dedupPolicy: 'replace'`.
 2. **No change feed, but each read is a complete list**: declare `sourceDefinedCursor: true` and `emitsDeletes: true`, and in `extract` pass one complete scan to `diffSnapshot(stream, scan, state)`. The scan must yield each key once, so deduplicate overlapping reads first. Copies then select no `cursorField` and use `append_dedup` with the stream's own `primaryKey`. Unchanged records are not written and vanished keys are deleted.
-3. **Neither**: full refresh only.
+3. **Each item must be re-fetched periodically and a quota caps the calls** (Search Console URL inspection): make the stream incremental with `sourceDefinedCursor` and `emitsDeletes`, keep each item's last fetch time in state, fetch never-fetched then stalest items until the quota refuses, commit what succeeded, and delete items that left the set. The source's `observe()` wakes the stream when the next item falls due; elt has no scheduler.
+4. **Neither**: full refresh only.
 
 - Implement `observe({ streams, signal })` with the source's change trigger; the base `watch()` checks membership first. Subscribe before yielding all selected streams once, then emit affected streams. Honor cancellation and close native resources; do not load records or persist checkpoints in the watcher.
 - Document deletion, snapshot and scan-cost limitations.

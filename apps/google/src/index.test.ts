@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type TestContext, test } from 'node:test';
+import { gzipSync } from 'node:zlib';
 
 import { Copy, Pipeline, SQLiteCheckpointStore } from 'elt';
 import { SQLiteDestination } from 'elt-sqlite';
@@ -306,6 +307,8 @@ test('sitemaps normalize int64 text, omitted flags, and second-precision times',
   }));
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-sitemap-'));
   const source = new SearchConsoleSource({
+    fetch: async () =>
+      new Response('https://example.com/a\nhttps://example.com/b\n'),
     now: NOW,
     requester,
     siteUrls: [SITE],
@@ -327,7 +330,7 @@ test('sitemaps normalize int64 text, omitted flags, and second-precision times',
     {
       ...database
         .prepare(
-          'SELECT path, errors, warnings, isPending, isSitemapsIndex, lastDownloaded, lastSubmitted FROM sitemaps',
+          'SELECT path, errors, warnings, isPending, isSitemapsIndex, lastDownloaded, lastSubmitted, urlsRead, readError FROM sitemaps',
         )
         .get(),
     },
@@ -338,6 +341,8 @@ test('sitemaps normalize int64 text, omitted flags, and second-precision times',
       lastDownloaded: '2026-09-20T10:30:00.000Z',
       lastSubmitted: '2026-09-19T08:00:00.250Z',
       path: 'https://example.com/sitemap.xml',
+      readError: null,
+      urlsRead: 2,
       warnings: 0,
     },
   );
@@ -356,29 +361,39 @@ test('sitemaps normalize int64 text, omitted flags, and second-precision times',
   );
 });
 
-test('the three urlInspection streams share one inspection batch', async () => {
+test('inspection covers every sitemap and search URL once, shared by all three streams', async () => {
   const { requester, calls } = recorder((call) => {
+    if (call.url.endsWith('/sitemaps'))
+      return { sitemap: [{ path: 'https://example.com/sitemap.xml' }] };
     if (call.url.includes('searchAnalytics/query'))
-      // Only the first page carries rows; a later startRow exhausts the range,
-      // which is what ends the connector's paging loop.
+      // A later startRow exhausts the range, which ends the paging loop.
       return {
         rows:
           Number(call.data?.['startRow'] ?? 0) > 0
             ? []
             : [
                 {
-                  clicks: 5,
-                  ctr: 0.1,
-                  impressions: 90,
-                  keys: ['https://example.com/b'],
-                  position: 3,
-                },
-                {
-                  clicks: 9,
-                  ctr: 0.2,
-                  impressions: 400,
+                  clicks: 1,
+                  ctr: 1,
+                  impressions: 9,
                   keys: ['https://example.com/a'],
                   position: 1,
+                },
+                // A sitelink anchor is the same document as its page.
+                {
+                  clicks: 0,
+                  ctr: 0,
+                  impressions: 4,
+                  keys: ['https://example.com/b#intro'],
+                  position: 2,
+                },
+                // Not under the property, so it cannot be inspected.
+                {
+                  clicks: 0,
+                  ctr: 0,
+                  impressions: 1,
+                  keys: ['https://other.org/x'],
+                  position: 9,
                 },
               ],
       };
@@ -392,78 +407,91 @@ test('the three urlInspection streams share one inspection batch', async () => {
           sitemap: ['https://example.com/sitemap.xml'],
           verdict: 'PASS',
         },
-        mobileUsabilityResult: { verdict: 'PASS' },
       },
     };
   });
+  const fetched: string[] = [];
+  const fetch = async (url: string) => {
+    fetched.push(url);
+    return new Response(
+      '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/a</loc></url><url><loc>https://example.com/c?x=1&amp;y=2</loc></url></urlset>',
+    );
+  };
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-inspect-'));
   const source = new SearchConsoleSource({
-    inspectionLimit: 2,
+    fetch,
     now: NOW,
     requester,
+    searchTypes: ['WEB'],
     siteUrls: [SITE],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'sc.sqlite'),
   });
-  await new Pipeline({
+  const pipeline = new Pipeline({
     source,
     destination,
-    steps: [
-      new Copy(source.urlInspection, destination.table('inspection')),
-      new Copy(
-        source.urlInspectionSitemaps,
-        destination.table('inspection_sitemaps'),
-      ),
-      new Copy(
-        source.urlInspectionReferrers,
-        destination.table('inspection_referrers'),
-      ),
-    ],
-  }).run();
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: (
+      [
+        [source.urlInspection, 'inspection'],
+        [source.urlInspectionSitemaps, 'inspection_sitemaps'],
+        [source.urlInspectionReferrers, 'inspection_referrers'],
+      ] as const
+    ).map(
+      ([stream, table]) =>
+        new Copy(stream, destination.table(table), {
+          id: table,
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          primaryKey: [...stream.primaryKey],
+        }),
+    ),
+  });
+  const inspected = () =>
+    calls
+      .filter((call) => call.url.endsWith('index:inspect'))
+      .map((call) => call.data?.['inspectionUrl']);
 
-  // Two URLs, inspected once each, although three streams consumed them.
-  assert.equal(
-    calls.filter((call) => call.url.endsWith('index:inspect')).length,
-    2,
-  );
+  await pipeline.run();
+  // Three distinct pages, each inspected once although three streams load it.
+  assert.deepEqual(inspected().sort(), [
+    'https://example.com/a',
+    'https://example.com/b',
+    'https://example.com/c?x=1&y=2',
+  ]);
+  assert.deepEqual(fetched, ['https://example.com/sitemap.xml']);
+  // The same day, every URL is fresh: no inspection call at all.
+  await pipeline.run();
+  assert.equal(inspected().length, 3);
+
   using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.deepEqual(
     database
       .prepare(
-        'SELECT inspectionUrl, verdict, lastCrawlTime FROM inspection ORDER BY inspectionUrl',
+        'SELECT inspectionUrl, inSitemap, inSearchAnalytics, verdict, inspectedAt FROM inspection ORDER BY inspectionUrl',
       )
       .all()
       .map((row) => ({ ...row })),
     [
-      {
-        inspectionUrl: 'https://example.com/a',
-        lastCrawlTime: '2026-09-18T04:05:06.000Z',
-        verdict: 'PASS',
-      },
-      {
-        inspectionUrl: 'https://example.com/b',
-        lastCrawlTime: '2026-09-18T04:05:06.000Z',
-        verdict: 'PASS',
-      },
-    ],
+      ['https://example.com/a', 1, 1],
+      ['https://example.com/b', 0, 1],
+      ['https://example.com/c?x=1&y=2', 1, 0],
+    ].map(([inspectionUrl, inSitemap, inSearchAnalytics]) => ({
+      inspectionUrl,
+      inSitemap,
+      inSearchAnalytics,
+      verdict: 'PASS',
+      inspectedAt: NOW().toISOString(),
+    })),
   );
-  assert.deepEqual(
-    {
-      ...database
-        .prepare('SELECT count(*) AS count FROM inspection_sitemaps')
-        .get(),
-    },
-    { count: 2 },
-  );
-  assert.deepEqual(
-    {
-      ...database
-        .prepare('SELECT count(*) AS count FROM inspection_referrers')
-        .get(),
-    },
-    { count: 2 },
-  );
+  for (const table of ['inspection_sitemaps', 'inspection_referrers'])
+    assert.equal(
+      database.prepare(`SELECT count(*) AS count FROM ${table}`).get()?.count,
+      3,
+    );
 });
 
 test('watching invalidates only when the property actually changed', async () => {
@@ -735,6 +763,7 @@ test('two properties load into the same tables without deleting each other', asy
   });
   const pipeline = (siteUrl: string) => {
     const source = new SearchConsoleSource({
+      fetch: async () => new Response(''),
       now: NOW,
       requester,
       searchTypes: ['WEB'],
@@ -1452,7 +1481,7 @@ test('one source loads every property; a newly listed one backfills while the ot
                   clicks: 1,
                   ctr: 1,
                   impressions: 1,
-                  keys: [`https://${site}/`],
+                  keys: [`https://${site.replace('sc-domain:', '')}/`],
                   position: 1,
                 },
               ],
@@ -1479,7 +1508,6 @@ test('one source loads every property; a newly listed one backfills while the ot
   });
   const run = (siteUrls: string[]) => {
     const source = new SearchConsoleSource({
-      inspectionLimit: 1,
       now: NOW,
       requester,
       searchTypes: ['WEB'],
@@ -1498,7 +1526,12 @@ test('one source loads every property; a newly listed one backfills while the ot
           cursorField: 'date',
           primaryKey: [...source.searchAnalyticsDaily.primaryKey],
         }),
-        new Copy(source.urlInspection, destination.table('inspection')),
+        new Copy(source.urlInspection, destination.table('inspection'), {
+          id: 'inspection',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          primaryKey: [...source.urlInspection.primaryKey],
+        }),
       ],
     }).run();
   };
@@ -1534,8 +1567,8 @@ test('one source loads every property; a newly listed one backfills while the ot
       .all()
       .map((row) => [row.siteUrl, row.inspectionUrl, row.verdict]),
     [
-      [A, `https://${A}/`, A],
-      [B, `https://${B}/`, B],
+      [A, 'https://a.example/', A],
+      [B, 'https://b.example/', B],
     ],
   );
 });
@@ -1660,6 +1693,597 @@ test('watching invalidates when only one of several properties changed', async (
         [A, 3],
         [B, 9],
       ],
+    );
+  } finally {
+    controller.abort();
+  }
+});
+
+// A property whose sitemaps, search pages and inspection replies a test sets.
+function inspectionProperty({
+  sitemaps = {},
+  pages = [],
+  inspect = (url: string) => ({ verdict: 'PASS', referringUrls: [url] }),
+}: {
+  sitemaps?: Record<string, string | Uint8Array | number>;
+  pages?: string[];
+  inspect?: (url: string) => Record<string, unknown> | Error;
+}) {
+  const inspected: string[] = [];
+  const requester = {
+    async request(options: { url: string; data?: Record<string, unknown> }) {
+      if (options.url.endsWith('/sitemaps'))
+        return {
+          data: {
+            sitemap: Object.keys(sitemaps)
+              .filter((path) => !path.startsWith('!'))
+              .map((path) => ({ path })),
+          },
+        };
+      if (options.url.includes('searchAnalytics/query'))
+        return {
+          data: {
+            rows:
+              Number(options.data?.['startRow'] ?? 0) > 0
+                ? []
+                : pages.map((page) => ({
+                    clicks: 0,
+                    ctr: 0,
+                    impressions: 1,
+                    keys: [page],
+                    position: 1,
+                  })),
+          },
+        };
+      const url = String(options.data?.['inspectionUrl']);
+      inspected.push(url);
+      const reply = inspect(url);
+      if (reply instanceof Error) throw reply;
+      return { data: { inspectionResult: { indexStatusResult: reply } } };
+    },
+  };
+  const fetch = async (url: string) => {
+    const body = sitemaps[url] ?? sitemaps[`!${url}`];
+    if (body === undefined) return new Response('missing', { status: 404 });
+    if (typeof body === 'number') return new Response('', { status: body });
+    return new Response(typeof body === 'string' ? body : new Uint8Array(body));
+  };
+  return { requester, fetch, inspected };
+}
+
+async function inspectionRun(
+  source: SearchConsoleSource,
+  path: string,
+  streams: readonly (
+    | 'urlInspection'
+    | 'urlInspectionSitemaps'
+    | 'urlInspectionReferrers'
+  )[] = ['urlInspection'],
+) {
+  const destination = new SQLiteDestination({ path: join(path, 'sc.sqlite') });
+  return new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(path, 'state.sqlite'),
+    }),
+    steps: streams.map(
+      (name) =>
+        new Copy(source[name], destination.table(name), {
+          id: name,
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          primaryKey: [...source[name].primaryKey],
+        }),
+    ),
+  }).run();
+}
+
+function inspectionRows(path: string, table = 'urlInspection') {
+  using database = new DatabaseSync(join(path, 'sc.sqlite'), {
+    readOnly: true,
+  });
+  return database
+    .prepare(`SELECT * FROM ${table} ORDER BY inspectionUrl`)
+    .all()
+    .map((row) => ({ ...row }));
+}
+
+test('sitemaps in every format feed the inspection universe', async () => {
+  const property = inspectionProperty({
+    sitemaps: {
+      'https://example.com/index.xml':
+        '<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>https://example.com/pages.xml.gz</loc></sitemap><sitemap><loc>https://example.com/list.txt</loc></sitemap><sitemap><loc>https://example.com/feed.rss</loc></sitemap><sitemap><loc>https://example.com/atom.xml</loc></sitemap></sitemapindex>',
+      '!https://example.com/pages.xml.gz': gzipSync(
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/q?x=1&amp;y=2</loc></url><url><loc>https://example.com/q?x=1&#38;y=2</loc></url><url><loc>https://example.com/q?x=1&#x26;y=2#top</loc></url><url><loc><![CDATA[https://example.com/c?a=1&b=2]]></loc></url></urlset>',
+      ),
+      '!https://example.com/list.txt':
+        'https://example.com/t\nhttps://blog.example.com/t\nhttps://elsewhere.org/t\n',
+      '!https://example.com/feed.rss':
+        '<rss version="2.0"><channel><item><link>https://example.com/r</link></item></channel></rss>',
+      '!https://example.com/atom.xml':
+        '<feed xmlns="http://www.w3.org/2005/Atom"><link rel="self" href="https://example.com/atom.xml"/><entry><link href="https://example.com/a"/></entry></feed>',
+    },
+  });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-sitemap-'));
+
+  await inspectionRun(
+    new SearchConsoleSource({
+      ...property,
+      now: NOW,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    }),
+    scratch.path,
+  );
+
+  // Entity forms and anchors collapse to one URL; other hosts are dropped.
+  assert.deepEqual(property.inspected.sort(), [
+    'https://blog.example.com/t',
+    'https://example.com/a',
+    'https://example.com/c?a=1&b=2',
+    'https://example.com/q?x=1&y=2',
+    'https://example.com/r',
+    'https://example.com/t',
+  ]);
+});
+
+test('an unreadable sitemap is recorded as data and inspection covers everything else', async () => {
+  const nested = (depth: number): Record<string, string> =>
+    Object.fromEntries(
+      Array.from({ length: depth }, (_, level) => [
+        `${level === 0 ? '' : '!'}https://example.com/i${level}.xml`,
+        `<sitemapindex><sitemap><loc>https://example.com/i${level + 1}.xml</loc></sitemap></sitemapindex>`,
+      ]),
+    );
+  const cases: [
+    string,
+    Record<string, string | Uint8Array | number>,
+    RegExp,
+  ][] = [
+    ['missing', { 'https://example.com/s.xml': 404 }, /HTTP 404/],
+    [
+      'malformed',
+      { 'https://example.com/s.xml': '<urlset><url><loc>x</url></urlset>' },
+      /Expected closing tag/,
+    ],
+    [
+      'an HTML page',
+      { 'https://example.com/s.xml': '<!doctype html><p>Not found</p>' },
+      /could not be read/,
+    ],
+    [
+      'corrupt gzip',
+      { 'https://example.com/s.xml': Uint8Array.of(0x1f, 0x8b, 1, 2, 3) },
+      /could not be read/,
+    ],
+    ['nested too deep', nested(5), /nest deeper than 3 levels/],
+  ];
+  for (const [label, broken, reason] of cases) {
+    const property = inspectionProperty({
+      pages: ['https://example.com/p'],
+      sitemaps: {
+        ...broken,
+        'https://example.com/good.xml': 'https://example.com/g\n',
+      },
+    });
+    await using scratch = await mkdtempDisposable(
+      join(tmpdir(), 'gsc-sitemap-'),
+    );
+    const source = new SearchConsoleSource({
+      ...property,
+      now: NOW,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'sc.sqlite'),
+    });
+
+    await new Pipeline({
+      source,
+      destination,
+      steps: [new Copy(source.sitemaps, destination.table('sitemaps'))],
+    }).run();
+    await inspectionRun(source, scratch.path);
+
+    // The good sitemap's page and the search page are still inspected.
+    assert.deepEqual(
+      property.inspected.sort(),
+      ['https://example.com/g', 'https://example.com/p'],
+      label,
+    );
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    const rows = database
+      .prepare('SELECT path, urlsRead, readError FROM sitemaps ORDER BY path')
+      .all()
+      .map((row) => ({ ...row }));
+    const good = rows.find(
+      (row) => row.path === 'https://example.com/good.xml',
+    );
+    const bad = rows.find((row) => row.path !== 'https://example.com/good.xml');
+    assert.deepEqual(
+      good,
+      { path: 'https://example.com/good.xml', urlsRead: 1, readError: null },
+      label,
+    );
+    assert.equal(bad?.urlsRead, null, label);
+    assert.match(
+      String(bad?.readError),
+      /^Sitemap https:\/\/example\.com\/\S+ could not be read/,
+      label,
+    );
+    assert.match(String(bad?.readError), reason, label);
+  }
+});
+
+test('rolling refresh inspects new URLs first, then the stalest, and skips fresh ones', async () => {
+  const pages = ['https://example.com/a', 'https://example.com/b'];
+  const property = inspectionProperty({ pages });
+  let clock = NOW().getTime();
+  const source = () =>
+    new SearchConsoleSource({
+      ...property,
+      inspectionConcurrency: 1,
+      now: () => new Date(clock),
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+  const hour = 60 * 60 * 1000;
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-roll-'));
+  const calls = async () => {
+    const before = property.inspected.length;
+    await inspectionRun(source(), scratch.path);
+    return property.inspected.slice(before);
+  };
+
+  assert.deepEqual(await calls(), pages);
+  clock += 12 * hour;
+  pages.push('https://example.com/c');
+  assert.deepEqual(await calls(), ['https://example.com/c']);
+  clock += 18 * hour;
+  pages.push('https://example.com/d');
+  // a and b are 30 h old, c only 18 h: the new d goes first, c waits.
+  assert.deepEqual(await calls(), [
+    'https://example.com/d',
+    'https://example.com/a',
+    'https://example.com/b',
+  ]);
+});
+
+test('the daily quota stops inspection cleanly and resumes after Pacific midnight', async () => {
+  for (const [start, reset] of [
+    ['2026-09-22T00:00:00.000Z', '2026-09-22T07:00:00.000Z'],
+    ['2026-12-01T12:00:00.000Z', '2026-12-02T08:00:00.000Z'],
+  ] as const) {
+    let allowed = 2;
+    const property = inspectionProperty({
+      pages: ['a', 'b', 'c', 'd'].map((page) => `https://example.com/${page}`),
+      inspect: () =>
+        allowed-- > 0
+          ? { verdict: 'PASS' }
+          : httpError(403, { reason: 'quotaExceeded' }),
+    });
+    let clock = Date.parse(start);
+    const source = new SearchConsoleSource({
+      ...property,
+      inspectionConcurrency: 1,
+      now: () => new Date(clock),
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-quota-'));
+
+    await inspectionRun(source, scratch.path);
+    // The refusal is not retried: a, b, then one call for c.
+    assert.deepEqual(property.inspected, [
+      'https://example.com/a',
+      'https://example.com/b',
+      'https://example.com/c',
+    ]);
+    assert.deepEqual(
+      inspectionRows(scratch.path).map((row) => row.inspectionUrl),
+      ['https://example.com/a', 'https://example.com/b'],
+    );
+    clock = Date.parse(reset) - 1;
+    await inspectionRun(source, scratch.path);
+    assert.equal(property.inspected.length, 3, 'no call before the reset');
+    clock = Date.parse(reset);
+    allowed = 10;
+    await inspectionRun(source, scratch.path);
+    assert.deepEqual(property.inspected.slice(3), [
+      'https://example.com/c',
+      'https://example.com/d',
+    ]);
+  }
+});
+
+test('one inspection serves all three streams, and a URL that leaves is deleted from each', async () => {
+  const pages = ['https://example.com/a', 'https://example.com/b'];
+  let referrers = 2;
+  const property = inspectionProperty({
+    pages,
+    inspect: (url) => ({
+      verdict: 'PASS',
+      sitemap: ['https://example.com/sitemap.xml'],
+      referringUrls: Array.from(
+        { length: referrers },
+        (_, n) => `${url}/r${n}`,
+      ),
+    }),
+  });
+  let clock = NOW().getTime();
+  const source = new SearchConsoleSource({
+    ...property,
+    now: () => new Date(clock),
+    searchTypes: ['WEB'],
+    siteUrls: [SITE],
+  });
+  const all = [
+    'urlInspection',
+    'urlInspectionSitemaps',
+    'urlInspectionReferrers',
+  ] as const;
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-three-'));
+
+  await inspectionRun(source, scratch.path, ['urlInspection']);
+  // The other two streams load later: they reuse the inspections already made.
+  await inspectionRun(source, scratch.path, all);
+  assert.equal(property.inspected.length, 2);
+
+  pages.pop();
+  referrers = 1;
+  clock += 25 * 60 * 60 * 1000;
+  await inspectionRun(source, scratch.path, all);
+
+  assert.equal(property.inspected.length, 3);
+  for (const table of all)
+    assert.deepEqual(
+      [
+        ...new Set(
+          inspectionRows(scratch.path, table).map((row) => row.inspectionUrl),
+        ),
+      ],
+      ['https://example.com/a'],
+      table,
+    );
+  assert.deepEqual(
+    inspectionRows(scratch.path, 'urlInspectionReferrers').map(
+      (row) => row.referringUrl,
+    ),
+    ['https://example.com/a/r0'],
+  );
+});
+
+test('inspections run concurrently, a rejected URL becomes a row, and a server error fails', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const pages = Array.from({ length: 7 }, (_, n) => `https://example.com/${n}`);
+  const requester = {
+    async request(options: { url: string; data?: Record<string, unknown> }) {
+      if (options.url.endsWith('/sitemaps')) return { data: {} };
+      if (options.url.includes('searchAnalytics/query'))
+        return {
+          data: {
+            rows:
+              Number(options.data?.['startRow'] ?? 0) > 0
+                ? []
+                : pages.map((page) => ({
+                    clicks: 0,
+                    ctr: 0,
+                    impressions: 1,
+                    keys: [page],
+                    position: 1,
+                  })),
+          },
+        };
+      const url = String(options.data?.['inspectionUrl']);
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      // Later URLs answer sooner, so completions arrive out of order.
+      await new Promise((resolve) =>
+        setTimeout(resolve, 20 - pages.indexOf(url) * 2),
+      );
+      inFlight--;
+      if (url.endsWith('/3'))
+        throw googleError(400, {
+          error: { code: 400, message: 'Invalid URL' },
+        });
+      return {
+        data: { inspectionResult: { indexStatusResult: { verdict: 'PASS' } } },
+      };
+    },
+  };
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-pool-'));
+
+  await inspectionRun(
+    new SearchConsoleSource({
+      fetch: async () => new Response(''),
+      inspectionConcurrency: 3,
+      now: NOW,
+      requester,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    }),
+    scratch.path,
+  );
+
+  assert.equal(peak, 3);
+  const rows = inspectionRows(scratch.path);
+  assert.deepEqual(
+    rows.map((row) => [row.inspectionUrl, row.verdict, row.errorStatus]),
+    pages.map((page) =>
+      page.endsWith('/3') ? [page, null, 400] : [page, 'PASS', null],
+    ),
+  );
+  assert.equal(rows[3]?.errorMessage, 'Invalid URL');
+
+  const failing = inspectionProperty({
+    pages,
+    inspect: (url) =>
+      url.endsWith('/5') ? googleError(500) : { verdict: 'PASS' },
+  });
+  await using broken = await mkdtempDisposable(join(tmpdir(), 'gsc-pool-'));
+  await assert.rejects(
+    inspectionRun(
+      new SearchConsoleSource({
+        ...failing,
+        now: NOW,
+        retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+        searchTypes: ['WEB'],
+        siteUrls: [SITE],
+      }),
+      broken.path,
+    ),
+    /status code 500/,
+  );
+  using state = new DatabaseSync(join(broken.path, 'state.sqlite'), {
+    readOnly: true,
+  });
+  assert.deepEqual(state.prepare('SELECT id FROM checkpoints').all(), []);
+});
+
+test('inspection options and checkpoints are validated', async () => {
+  const base = {
+    now: NOW,
+    requester: recorder(() => ({})).requester,
+    siteUrls: [SITE],
+  };
+  for (const inspectionRefreshHours of [0, -1, Number.NaN])
+    assert.throws(
+      () => new SearchConsoleSource({ ...base, inspectionRefreshHours }),
+      /inspectionRefreshHours must be a positive number of hours/,
+    );
+  for (const inspectionConcurrency of [0, 1.5])
+    assert.throws(
+      () => new SearchConsoleSource({ ...base, inspectionConcurrency }),
+      /inspectionConcurrency must be a whole number of at least one/,
+    );
+
+  const property = inspectionProperty({ pages: ['https://example.com/a'] });
+  const source = new SearchConsoleSource({
+    ...property,
+    now: NOW,
+    siteUrls: [SITE],
+  });
+  const destination = new SQLiteDestination({ path: ':memory:' });
+  const configuration = new Copy(source.urlInspection, destination.table('i'), {
+    id: 'i',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: [...source.urlInspection.primaryKey],
+  }).configuration;
+  const at = NOW().toISOString();
+  for (const invalid of [
+    {},
+    { inspected: [] },
+    { inspected: { 'https://example.com/a#x': { at, rows: 1 } } },
+    { inspected: { 'https://example.com/a': { at: 'yesterday', rows: 1 } } },
+    { inspected: { 'https://example.com/a': { at, rows: 2 } } },
+  ])
+    await assert.rejects(
+      Array.fromAsync(
+        source.read(configuration, {
+          partitions: [{ partition: { siteUrl: SITE }, state: invalid }],
+        }),
+      ),
+      /Invalid URL inspection checkpoint for stream urlInspection/,
+    );
+});
+
+test('watching wakes inspection streams when URLs fall due, not when traffic changes', async () => {
+  let clicks = 1;
+  const property = inspectionProperty({ pages: ['https://example.com/a'] });
+  const requester = {
+    async request(options: { url: string; data?: Record<string, unknown> }) {
+      const dimensions = options.data?.['dimensions'];
+      if (Array.isArray(dimensions) && dimensions.includes('date'))
+        return {
+          data: {
+            rows: [
+              {
+                clicks,
+                ctr: 0.1,
+                impressions: 10,
+                keys: ['2026-09-20'],
+                position: 1,
+              },
+            ],
+          },
+        };
+      return property.requester.request(options);
+    },
+  };
+  const source = new SearchConsoleSource({
+    fetch: property.fetch,
+    // 36 ms: the inspection falls due again almost at once.
+    inspectionRefreshHours: 0.00001,
+    pollIntervalMs: 5,
+    requester,
+    searchTypes: ['WEB'],
+    siteUrls: [SITE],
+  });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-due-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'sc.sqlite'),
+  });
+  const copy = (stream: typeof source.urlInspection, id: string, extra = {}) =>
+    new Copy(stream, destination.table(id), {
+      id,
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      primaryKey: [...stream.primaryKey],
+      ...extra,
+    });
+  const controller = new AbortController();
+  const watching = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [
+      copy(source.urlInspection, 'inspection'),
+      copy(source.searchAnalyticsDaily, 'daily', {
+        dedupPolicy: 'replace',
+        cursorField: 'date',
+      }),
+    ],
+  }).watch({ signal: controller.signal });
+  const passes = async (count: number) => {
+    const names: string[][] = [];
+    for (let n = 0; n < count; n++) {
+      const { value } = await watching.next();
+      names.push(
+        value
+          ? value.map(
+              (result: { copy: { from: { name: string } } }) =>
+                result.copy.from.name,
+            )
+          : [],
+      );
+    }
+    return names;
+  };
+
+  try {
+    assert.deepEqual(await passes(1), [
+      ['urlInspection', 'searchAnalyticsDaily'],
+    ]);
+    // With traffic unchanged, only the due inspection wakes the pipeline.
+    assert.deepEqual(await passes(1), [['urlInspection']]);
+    assert.ok(property.inspected.length >= 2);
+    clicks = 9;
+    const seen = await passes(4);
+    assert.ok(
+      seen.some((names) => names.includes('searchAnalyticsDaily')),
+      'a traffic change re-extracts the analytics stream',
+    );
+    assert.ok(
+      seen.every(
+        (names) =>
+          !(names.includes('searchAnalyticsDaily') && names.length === 2),
+      ) || seen.some((names) => names.length === 1),
     );
   } finally {
     controller.abort();

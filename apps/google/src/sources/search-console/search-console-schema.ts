@@ -12,6 +12,8 @@ const metric = { type: 'number', minimum: 0 } as const;
 // missing rank is unknown rather than the best possible rank.
 const nullableMetric = { type: ['number', 'null'], minimum: 0 } as const;
 const nullableTimestamp = { ...nullableText, format: 'date-time' } as const;
+const timestamp = { ...text, format: 'date-time' } as const;
+const nullableInteger = { type: ['integer', 'null'] } as const;
 // Search Console reports a PST calendar date, not an instant.
 const date = { ...id, format: 'date' } as const;
 
@@ -127,6 +129,10 @@ export const sitemapsFields = {
   isSitemapsIndex: boolean,
   warnings: ordinal,
   errors: ordinal,
+  // What this connector read from the file itself: how many page URLs, or
+  // why it could not be read. The others are Google's own report.
+  urlsRead: nullableOrdinal,
+  readError: nullableText,
 } satisfies Record<string, FieldSchema>;
 
 export const sitemapContentsFields = {
@@ -153,6 +159,15 @@ export const urlInspectionFields = {
   mobileUsabilityVerdict: nullableText,
   richResultsVerdict: nullableText,
   ampVerdict: nullableText,
+  // Where the URL was discovered: a sitemap the property lists, the search
+  // analytics history, or both.
+  inSitemap: boolean,
+  inSearchAnalytics: boolean,
+  inspectedAt: timestamp,
+  // Set when Google rejected this URL (for example 400 for a malformed URL);
+  // the verdict columns are then null.
+  errorStatus: nullableInteger,
+  errorMessage: nullableText,
 } satisfies Record<string, FieldSchema>;
 
 export const urlInspectionSitemapsFields = {
@@ -175,6 +190,7 @@ export function searchConsoleStream({
   primaryKey,
   supportedSyncModes = ['full_refresh'],
   snapshot = false,
+  rolling = false,
   partitionKey,
 }: {
   name: string;
@@ -183,6 +199,9 @@ export function searchConsoleStream({
   supportedSyncModes?: readonly SyncMode[];
   // A complete list on every read: incremental copies diff it (diffSnapshot).
   snapshot?: boolean;
+  // Each run refreshes only the items that fell due, keeping per-item state:
+  // incremental only, and deletions come from the source.
+  rolling?: boolean;
   partitionKey?: readonly string[];
 }): Stream {
   return new Stream({
@@ -193,10 +212,15 @@ export function searchConsoleStream({
       required: Object.keys(fields),
     },
     primaryKey,
-    supportedSyncModes: snapshot
-      ? ['full_refresh', 'incremental']
-      : supportedSyncModes,
-    ...(snapshot && { sourceDefinedCursor: true, emitsDeletes: true }),
+    supportedSyncModes: rolling
+      ? ['incremental']
+      : snapshot
+        ? ['full_refresh', 'incremental']
+        : supportedSyncModes,
+    ...((snapshot || rolling) && {
+      sourceDefinedCursor: true,
+      emitsDeletes: true,
+    }),
     ...(partitionKey && { partitionKey }),
   });
 }

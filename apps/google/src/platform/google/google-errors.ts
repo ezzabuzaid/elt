@@ -22,3 +22,25 @@ export function isConfigurationError(error: unknown): boolean {
     `${body} ${error instanceof Error ? error.message : ''}`,
   );
 }
+
+// Google's own explanation of a failed call, falling back to the error text.
+export function messageOf(error: unknown): string {
+  const response: unknown =
+    error !== null && typeof error === 'object'
+      ? Reflect.get(error, 'response')
+      : undefined;
+  const body: unknown =
+    response !== null && typeof response === 'object'
+      ? Reflect.get(response, 'data')
+      : undefined;
+  const failure: unknown =
+    body !== null && typeof body === 'object'
+      ? Reflect.get(body, 'error')
+      : undefined;
+  const message: unknown =
+    failure !== null && typeof failure === 'object'
+      ? Reflect.get(failure, 'message')
+      : undefined;
+  if (typeof message === 'string' && message) return message;
+  return error instanceof Error ? error.message : String(error);
+}
