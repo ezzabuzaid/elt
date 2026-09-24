@@ -18,6 +18,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   Stream,
+  validateRecords,
 } from './index.ts';
 
 test('the public ELT API copies source records into SQLite', async () => {
@@ -79,6 +80,69 @@ test('date formats accept only canonical UTC timestamps and real calendar dates'
   assert.equal(isCalendarDate('2024-02-29'), true);
   for (const value of ['2025-02-29', '2025-1-02', '2025-01-02T00:00:00.000Z'])
     assert.equal(isCalendarDate(value), false);
+});
+
+test('record validation enforces every property of the stream schema', () => {
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', minLength: 1 },
+        count: { type: 'integer', minimum: 0, maximum: 9 },
+        ratio: { type: 'number' },
+        kind: { type: 'string', enum: ['a', 'b'] },
+        done: { type: 'boolean' },
+        at: { type: ['string', 'null'], format: 'date-time' },
+        on: { type: 'string', format: 'date' },
+      },
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+  const valid = {
+    id: 'item-1',
+    count: 3,
+    ratio: 0.5,
+    kind: 'a',
+    done: false,
+    at: null,
+    on: '2024-02-29',
+  };
+
+  assert.deepEqual(validateRecords(stream, [valid], 'Test'), [valid]);
+  const rejects = (records: unknown, message: string) =>
+    assert.throws(() => validateRecords(stream, records, 'Test'), { message });
+  rejects({}, 'Test returned invalid items records');
+  rejects([null], 'Test returned an invalid items record');
+  rejects([{ ...valid, extra: 1 }], 'Test returned an invalid items record');
+  const { done: _, ...missing } = valid;
+  rejects([missing], 'Test returned an invalid items record');
+  for (const [field, value] of [
+    ['id', ''],
+    ['id', null],
+    ['count', 1.5],
+    ['count', 2 ** 53],
+    ['count', -1],
+    ['count', 10],
+    ['ratio', Number.NaN],
+    ['kind', 'c'],
+    ['done', 'false'],
+    ['at', '2025-01-02T03:04:05Z'],
+    ['on', '2025-02-29'],
+  ] as const)
+    rejects(
+      [{ ...valid, [field]: value }],
+      `Test returned invalid items.${field}`,
+    );
+  const unsupported = new Stream({
+    name: 'nested',
+    jsonSchema: { type: 'object', properties: { tags: { type: 'array' } } },
+    supportedSyncModes: ['full_refresh'],
+  });
+  assert.throws(
+    () => validateRecords(unsupported, [], 'Test'),
+    /nested\.tags declares an unsupported type/,
+  );
 });
 
 test('a source accepts only the stream objects from its own catalog', async () => {

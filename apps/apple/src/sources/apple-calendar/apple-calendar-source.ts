@@ -1,5 +1,5 @@
 import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
-import { isTimestamp, type RecordMessage, Source } from 'elt';
+import { isTimestamp, type RecordMessage, Source, validateRecords } from 'elt';
 import { EventKit } from '../../platform/macos/eventkit.ts';
 import {
   eventKitAccountFields,
@@ -7,7 +7,6 @@ import {
   eventKitCatalog,
   eventKitFields,
   eventKitRelatedFields,
-  validateEventKitRecords,
 } from '../eventkit-schema.ts';
 import { calendarScript } from './calendar-script.ts';
 
@@ -168,7 +167,7 @@ export class AppleCalendarSource extends Source {
         cursor = response.nextCursor;
         response = response.records;
       }
-      for (const record of validateEventKitRecords(stream, response)) {
+      for (const record of validateRecords(stream, response, 'EventKit')) {
         if (
           stream.name === 'events' &&
           (record.id !== record.eventId ||

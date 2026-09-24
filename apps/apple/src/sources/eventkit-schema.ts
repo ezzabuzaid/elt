@@ -1,13 +1,4 @@
-import { Catalog, isCalendarDate, isTimestamp, Stream } from 'elt';
-
-export type Field = {
-  readonly type: string | readonly string[];
-  readonly format?: string;
-  readonly minimum?: number;
-  readonly maximum?: number;
-  readonly minLength?: number;
-  readonly enum?: readonly (string | number)[];
-};
+import { Catalog, type FieldSchema, Stream } from 'elt';
 
 const text = { type: 'string' } as const;
 const id = { ...text, minLength: 1 };
@@ -16,9 +7,9 @@ const integer = { type: 'integer' } as const;
 const ordinal = { ...integer, minimum: 0 };
 const boolean = { type: 'boolean' } as const;
 const number = { type: 'number' } as const;
-const timestamp = { ...text, format: 'date-time' };
-const nullableTimestamp = { ...nullableText, format: 'date-time' };
-const nullableDate = { ...nullableText, format: 'date' };
+const timestamp = { ...text, format: 'date-time' } as const;
+const nullableTimestamp = { ...nullableText, format: 'date-time' } as const;
+const nullableDate = { ...nullableText, format: 'date' } as const;
 const color = { type: ['number', 'null'], minimum: 0, maximum: 1 } as const;
 const location = {
   locationTitle: nullableText,
@@ -110,11 +101,11 @@ export function eventKitRelatedFields(ownerKey: 'eventId' | 'reminderId') {
       value: integer,
       weekNumber: { type: ['integer', 'null'] },
     },
-  } satisfies Record<string, Record<string, Field>>;
+  } satisfies Record<string, Record<string, FieldSchema>>;
 }
 
 export function eventKitCatalog(
-  properties: Record<string, Record<string, Field>>,
+  properties: Record<string, Record<string, FieldSchema>>,
 ): Catalog {
   return new Catalog(
     Object.entries(properties).map(
@@ -131,50 +122,4 @@ export function eventKitCatalog(
         }),
     ),
   );
-}
-
-export function validateEventKitRecords(
-  stream: Stream,
-  records: unknown,
-): Record<string, unknown>[] {
-  if (!Array.isArray(records))
-    throw new TypeError(`EventKit returned invalid ${stream.name} records`);
-  const fields = stream.jsonSchema.properties as Record<string, Field>;
-  for (const record of records) {
-    if (
-      record === null ||
-      typeof record !== 'object' ||
-      Array.isArray(record) ||
-      Object.keys(record).length !== Object.keys(fields).length
-    )
-      throw new TypeError(`EventKit returned an invalid ${stream.name} record`);
-    for (const [name, field] of Object.entries(fields)) {
-      const value: unknown = Reflect.get(record, name);
-      const types = typeof field.type === 'string' ? [field.type] : field.type;
-      if (value === null && types.includes('null')) continue;
-      const valid = types.some((type) =>
-        type === 'integer'
-          ? Number.isSafeInteger(value)
-          : type === 'number'
-            ? typeof value === 'number' && Number.isFinite(value)
-            : (type === 'string' || type === 'boolean') &&
-              typeof value === type,
-      );
-      if (
-        !valid ||
-        (field.enum !== undefined &&
-          !field.enum.includes(value as string | number)) ||
-        (typeof value === 'number' &&
-          ((field.minimum !== undefined && value < field.minimum) ||
-            (field.maximum !== undefined && value > field.maximum))) ||
-        (typeof value === 'string' &&
-          field.minLength !== undefined &&
-          value.length < field.minLength) ||
-        (field.format === 'date-time' && !isTimestamp(value)) ||
-        (field.format === 'date' && !isCalendarDate(value))
-      )
-        throw new TypeError(`EventKit returned invalid ${stream.name}.${name}`);
-    }
-  }
-  return records;
 }

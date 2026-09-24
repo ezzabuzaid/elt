@@ -1,5 +1,5 @@
 import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
-import { type RecordMessage, Source } from 'elt';
+import { type RecordMessage, Source, validateRecords } from 'elt';
 import { EventKit } from '../../platform/macos/eventkit.ts';
 import {
   eventKitAccountFields,
@@ -7,7 +7,6 @@ import {
   eventKitCatalog,
   eventKitFields,
   eventKitRelatedFields,
-  validateEventKitRecords,
 } from '../eventkit-schema.ts';
 import { dateComponentNames, remindersScript } from './reminders-script.ts';
 
@@ -77,12 +76,13 @@ export class AppleRemindersSource extends Source {
     { stream }: CopyConfiguration,
     _state: unknown,
   ): AsyncGenerator<RecordMessage> {
-    const records = validateEventKitRecords(
+    const records = validateRecords(
       stream,
       await this.#eventKit.execute(`
         ${remindersScript}
         return readReminders(store, ${JSON.stringify(stream.name)});
       `),
+      'EventKit',
     );
     for (const data of records) yield { stream: stream.name, data };
   }

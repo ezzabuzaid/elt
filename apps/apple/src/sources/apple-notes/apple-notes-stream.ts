@@ -1,4 +1,10 @@
-import { Stream, type SyncMode } from 'elt';
+import {
+  type FieldSchema,
+  type SchemaRecord,
+  Stream,
+  type SyncMode,
+  validateRecords,
+} from 'elt';
 import osa from '../../platform/macos/osa.ts';
 
 export class NotesUnavailableError extends Error {
@@ -12,26 +18,42 @@ export class NotesUnavailableError extends Error {
   }
 }
 
+type Properties = Readonly<Record<string, FieldSchema>>;
+
+// Every Notes property is required; the record type follows from the schema.
+export function notesSchema<P extends Properties>(properties: P) {
+  return {
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+  } as const;
+}
+
 // Internal extractor; public discovery returns only its Stream description.
-export abstract class AppleNotesStream<T> {
+export abstract class AppleNotesStream<P extends Properties> {
   abstract readonly name: string;
-  abstract readonly jsonSchema: Readonly<Record<string, unknown>>;
+  abstract readonly jsonSchema: ReturnType<typeof notesSchema<P>>;
   readonly primaryKey = ['id'] as const;
   readonly supportedSyncModes: readonly SyncMode[] = Object.freeze([
     'full_refresh',
   ]);
   protected abstract readonly script: string;
-  protected abstract validate(records: unknown): T[];
+  #stream?: Stream;
 
   describe(): Stream {
-    return new Stream(this);
+    this.#stream ??= new Stream(this);
+    return this.#stream;
   }
 
-  async *read(): AsyncGenerator<T> {
+  async *read(): AsyncGenerator<SchemaRecord<P>> {
     const records: unknown = JSON.parse(
       await this.execute(`JSON.stringify(${this.script});`),
     );
-    yield* this.validate(records);
+    yield* validateRecords(
+      this.describe(),
+      records,
+      'Notes',
+    ) as SchemaRecord<P>[];
   }
 
   protected async execute(script: string): Promise<string> {

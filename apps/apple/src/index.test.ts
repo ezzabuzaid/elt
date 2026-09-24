@@ -266,7 +266,7 @@ test('Notes incremental extraction re-reads equal cursors and caps its watermark
   ])
     await assert.rejects(read(invalid), /Invalid Apple Notes checkpoint/);
   notes = [note('offset', '2025-01-02T00:00:00Z')];
-  await assert.rejects(read(null), /unexpected note format/);
+  await assert.rejects(read(null), /Notes returned invalid notes\.modifiedAt/);
   assert.throws(
     () =>
       new Copy(source.notes, destination.file('n.md'), {
@@ -353,14 +353,27 @@ test('Notes rejects malformed native records and keeps unavailability actionable
   ]) {
     response = [recordFor(stream)];
     assert.equal((await read(stream)).length, 1);
-    for (const malformed of [{}, [null], [recordFor(stream, { id: 1 })]]) {
+    for (const [malformed, message] of [
+      [{}, `Notes returned invalid ${stream.name} records`],
+      [[null], `Notes returned an invalid ${stream.name} record`],
+      [
+        [recordFor(stream, { id: 1 })],
+        `Notes returned invalid ${stream.name}.id`,
+      ],
+      [
+        [{ ...recordFor(stream), extra: true }],
+        `Notes returned an invalid ${stream.name} record`,
+      ],
+    ] as const) {
       response = malformed;
-      await assert.rejects(read(stream), /Notes returned an unexpected/);
+      await assert.rejects(read(stream), { message });
     }
   }
   for (const stream of [source.notes, source.attachments]) {
     response = [recordFor(stream, { createdAt: '2025-01-02T03:04:05Z' })];
-    await assert.rejects(read(stream), /Notes returned an unexpected/);
+    await assert.rejects(read(stream), {
+      message: `Notes returned invalid ${stream.name}.createdAt`,
+    });
   }
   failure = unavailable;
   await assert.rejects(read(source.notes), (error) => {

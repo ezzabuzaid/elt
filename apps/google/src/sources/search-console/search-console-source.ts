@@ -7,6 +7,7 @@ import {
   type SourceMessage,
   type SourceWatchOptions,
   type Stream,
+  validateRecords,
 } from 'elt';
 
 import {
@@ -32,7 +33,6 @@ import {
   urlInspectionFields,
   urlInspectionReferrersFields,
   urlInspectionSitemapsFields,
-  validateSearchConsoleRecords,
 } from './search-console-schema.ts';
 import { inspectionTexts, inspectUrls } from './url-inspection.ts';
 
@@ -265,7 +265,7 @@ export class SearchConsoleSource extends Source {
     stream: Stream,
     records: readonly Record<string, unknown>[],
   ): Generator<RecordMessage> {
-    for (const data of validateSearchConsoleRecords(stream, records))
+    for (const data of validateRecords(stream, records, 'Search Console'))
       yield { stream: stream.name, data };
   }
 

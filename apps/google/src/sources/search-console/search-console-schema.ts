@@ -1,13 +1,4 @@
-import { isCalendarDate, isTimestamp, Stream, type SyncMode } from 'elt';
-
-export type Field = {
-  readonly type: string | readonly string[];
-  readonly format?: string;
-  readonly minimum?: number;
-  readonly maximum?: number;
-  readonly minLength?: number;
-  readonly enum?: readonly (string | number)[];
-};
+import { type FieldSchema, Stream, type SyncMode } from 'elt';
 
 const text = { type: 'string' } as const;
 const id = { ...text, minLength: 1 };
@@ -20,9 +11,9 @@ const metric = { type: 'number', minimum: 0 } as const;
 // Feed reports omit position entirely, including on zero-traffic rows, so a
 // missing rank is unknown rather than the best possible rank.
 const nullableMetric = { type: ['number', 'null'], minimum: 0 } as const;
-const nullableTimestamp = { ...nullableText, format: 'date-time' };
+const nullableTimestamp = { ...nullableText, format: 'date-time' } as const;
 // Search Console reports a PST calendar date, not an instant.
-const date = { ...id, format: 'date' };
+const date = { ...id, format: 'date' } as const;
 
 export const searchConsoleFields = {
   text,
@@ -74,7 +65,7 @@ export type SearchAnalyticsGrain =
 export type SearchAnalyticsGrainSpec = {
   readonly dimensions: readonly SearchAnalyticsDimension[];
   readonly key: readonly string[];
-  readonly extra?: Readonly<Record<string, Field>>;
+  readonly extra?: Readonly<Record<string, FieldSchema>>;
 };
 
 export const searchAnalyticsGrains: Readonly<
@@ -101,7 +92,7 @@ export const searchAnalyticsGrains: Readonly<
 
 export function searchAnalyticsFields(
   grain: SearchAnalyticsGrain,
-): Record<string, Field> {
+): Record<string, FieldSchema> {
   const { dimensions, extra } = searchAnalyticsGrains[grain];
   return {
     ...Object.fromEntries(
@@ -118,7 +109,7 @@ export function searchAnalyticsFields(
 export const sitesFields = {
   siteUrl: id,
   permissionLevel: nullableText,
-} satisfies Record<string, Field>;
+} satisfies Record<string, FieldSchema>;
 
 export const sitemapsFields = {
   path: id,
@@ -129,14 +120,14 @@ export const sitemapsFields = {
   isSitemapsIndex: boolean,
   warnings: ordinal,
   errors: ordinal,
-} satisfies Record<string, Field>;
+} satisfies Record<string, FieldSchema>;
 
 export const sitemapContentsFields = {
   sitemapPath: id,
   type: text,
   submitted: ordinal,
   indexed: nullableOrdinal,
-} satisfies Record<string, Field>;
+} satisfies Record<string, FieldSchema>;
 
 export const urlInspectionFields = {
   inspectionUrl: id,
@@ -154,19 +145,19 @@ export const urlInspectionFields = {
   mobileUsabilityVerdict: nullableText,
   richResultsVerdict: nullableText,
   ampVerdict: nullableText,
-} satisfies Record<string, Field>;
+} satisfies Record<string, FieldSchema>;
 
 export const urlInspectionSitemapsFields = {
   inspectionUrl: id,
   position: ordinal,
   sitemap: text,
-} satisfies Record<string, Field>;
+} satisfies Record<string, FieldSchema>;
 
 export const urlInspectionReferrersFields = {
   inspectionUrl: id,
   position: ordinal,
   referringUrl: text,
-} satisfies Record<string, Field>;
+} satisfies Record<string, FieldSchema>;
 
 export function searchConsoleStream({
   name,
@@ -175,7 +166,7 @@ export function searchConsoleStream({
   supportedSyncModes = ['full_refresh'],
 }: {
   name: string;
-  fields: Record<string, Field>;
+  fields: Record<string, FieldSchema>;
   primaryKey: readonly string[];
   supportedSyncModes?: readonly SyncMode[];
 }): Stream {
@@ -189,54 +180,4 @@ export function searchConsoleStream({
     primaryKey,
     supportedSyncModes,
   });
-}
-
-// Every field is required and the record must carry exactly those fields, so a
-// projection that forgets one fails here instead of loading a null column.
-export function validateSearchConsoleRecords(
-  stream: Stream,
-  records: readonly unknown[],
-): Record<string, unknown>[] {
-  const fields = stream.jsonSchema.properties as Record<string, Field>;
-  for (const record of records) {
-    if (
-      record === null ||
-      typeof record !== 'object' ||
-      Array.isArray(record) ||
-      Object.keys(record).length !== Object.keys(fields).length
-    )
-      throw new TypeError(
-        `Search Console produced an invalid ${stream.name} record`,
-      );
-    for (const [name, field] of Object.entries(fields)) {
-      const value: unknown = Reflect.get(record, name);
-      const types = typeof field.type === 'string' ? [field.type] : field.type;
-      if (value === null && types.includes('null')) continue;
-      const valid = types.some((type) =>
-        type === 'integer'
-          ? Number.isSafeInteger(value)
-          : type === 'number'
-            ? typeof value === 'number' && Number.isFinite(value)
-            : (type === 'string' || type === 'boolean') &&
-              typeof value === type,
-      );
-      if (
-        !valid ||
-        (field.enum !== undefined &&
-          !field.enum.includes(value as string | number)) ||
-        (typeof value === 'number' &&
-          ((field.minimum !== undefined && value < field.minimum) ||
-            (field.maximum !== undefined && value > field.maximum))) ||
-        (typeof value === 'string' &&
-          field.minLength !== undefined &&
-          value.length < field.minLength) ||
-        (field.format === 'date-time' && !isTimestamp(value)) ||
-        (field.format === 'date' && !isCalendarDate(value))
-      )
-        throw new TypeError(
-          `Search Console produced an invalid ${stream.name}.${name}`,
-        );
-    }
-  }
-  return records as Record<string, unknown>[];
 }

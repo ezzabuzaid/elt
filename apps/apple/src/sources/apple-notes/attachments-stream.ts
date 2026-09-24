@@ -1,48 +1,28 @@
-import { isTimestamp } from 'elt';
-import { AppleNotesStream } from './apple-notes-stream.ts';
+import type { SchemaRecord } from 'elt';
+import { AppleNotesStream, notesSchema } from './apple-notes-stream.ts';
 
-export type Attachment = {
-  id: string;
-  name: string | null;
+const properties = {
+  id: { type: 'string' },
+  name: { type: ['string', 'null'] },
   // The container is a note; optional file extraction travels outside this metadata.
-  containerId: string;
-  contentId: string | null;
-  url: string | null;
-  createdAt: string;
-  modifiedAt: string;
-  shared: boolean;
-};
+  containerId: { type: 'string' },
+  contentId: { type: ['string', 'null'] },
+  url: { type: ['string', 'null'] },
+  createdAt: { type: 'string', format: 'date-time' },
+  modifiedAt: { type: 'string', format: 'date-time' },
+  shared: { type: 'boolean' },
+} as const;
 
-export class AttachmentsStream extends AppleNotesStream<Attachment> {
+export type Attachment = SchemaRecord<typeof properties>;
+
+export class AttachmentsStream extends AppleNotesStream<typeof properties> {
   readonly name = 'attachments';
   readonly supportsFileTransfer = true;
   override readonly supportedSyncModes = Object.freeze([
     'full_refresh',
     'incremental',
   ] as const);
-  readonly jsonSchema = {
-    type: 'object',
-    properties: {
-      id: { type: 'string' },
-      name: { type: ['string', 'null'] },
-      containerId: { type: 'string' },
-      contentId: { type: ['string', 'null'] },
-      url: { type: ['string', 'null'] },
-      createdAt: { type: 'string', format: 'date-time' },
-      modifiedAt: { type: 'string', format: 'date-time' },
-      shared: { type: 'boolean' },
-    },
-    required: [
-      'id',
-      'name',
-      'containerId',
-      'contentId',
-      'url',
-      'createdAt',
-      'modifiedAt',
-      'shared',
-    ],
-  } as const;
+  readonly jsonSchema = notesSchema(properties);
 
   protected readonly script = `
       app.attachments().map(attachment => ({
@@ -72,29 +52,5 @@ export class AttachmentsStream extends AppleNotesStream<Attachment> {
         'Notes returned an unexpected attachment export result',
       );
     return exported;
-  }
-
-  protected validate(attachments: unknown): Attachment[] {
-    if (
-      !Array.isArray(attachments) ||
-      !attachments.every(
-        (attachment) =>
-          attachment !== null &&
-          typeof attachment === 'object' &&
-          !Array.isArray(attachment) &&
-          typeof attachment.id === 'string' &&
-          (attachment.name === null || typeof attachment.name === 'string') &&
-          typeof attachment.containerId === 'string' &&
-          (attachment.contentId === null ||
-            typeof attachment.contentId === 'string') &&
-          (attachment.url === null || typeof attachment.url === 'string') &&
-          isTimestamp(attachment.createdAt) &&
-          isTimestamp(attachment.modifiedAt) &&
-          typeof attachment.shared === 'boolean',
-      )
-    )
-      throw new TypeError('Notes returned an unexpected attachment format');
-
-    return attachments;
   }
 }

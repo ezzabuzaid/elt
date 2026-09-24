@@ -10,6 +10,11 @@ export { FileRead, FileReference } from './core/file-read.ts';
 export { isCalendarDate, isTimestamp } from './core/formats.ts';
 export { type CopyResult, Pipeline, PipelineError } from './core/pipeline.ts';
 export {
+  type FieldSchema,
+  type SchemaRecord,
+  validateRecords,
+} from './core/record-validation.ts';
+export {
   type RecordMessage,
   Source,
   type SourceMessage,
