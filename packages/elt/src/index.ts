@@ -14,6 +14,7 @@ export {
   type SchemaRecord,
   validateRecords,
 } from './core/record-validation.ts';
+export { diffSnapshot, type SnapshotState } from './core/snapshot.ts';
 export {
   type DeleteMessage,
   type KeyValue,

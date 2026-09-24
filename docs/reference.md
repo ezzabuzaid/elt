@@ -127,7 +127,7 @@ Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The `count` r
 
 Incremental copies require an explicit stable `id` and a `SQLiteCheckpointStore`. Use a separate persistent SQLite state file, including when the destination is Markdown. IDs must be unique within a pipeline. Copying the same stream to two targets requires two IDs, so progress in one does not advance the other.
 
-`Source.read(configuration, previousState)` receives `null` initially. It emits `{ stream, data }` records and `{ type: 'STATE', stream, state }` checkpoints. State is losslessly JSON serializable and source-owned; destinations do not interpret it. Writers snapshot proposed state and return `WriteResult { count, checkpoints }` only after committing/publishing the complete copy. Acknowledgements retain their order; orchestration persists the last one. No acknowledgement means no advancement, even if the source mutates its input state.
+`Source.read(configuration, previousState)` receives `null` initially. It emits `{ stream, data }` records, `{ type: 'DELETE', stream, key }` deletions and `{ type: 'STATE', stream, state }` checkpoints. State is losslessly JSON serializable and source-owned; destinations do not interpret it. Writers snapshot proposed state and return `WriteResult { count, deleted, checkpoints }` only after committing/publishing the complete copy. Acknowledgements retain their order; orchestration persists the last one. No acknowledgement means no advancement, even if the source mutates its input state.
 
 The store binds each ID to the source identity, target declaration, schema and selected configuration. A changed binding fails before extraction. Use a new ID or explicitly reset progress:
 
@@ -139,6 +139,23 @@ await pipeline.run();
 Resetting append progress may duplicate data. Resetting deduplicated progress reconciles replayed records. Reset state when deleting/replacing destination storage; bindings cannot detect that content was removed. Do not share a state file between independent machines or put it inside a managed Markdown folder. Its parent directory must exist.
 
 Data and checkpoint commits are separate. If data commits but state persistence fails, retry may replay records: delivery is **at least once**. Append keeps replayed observations; deduplication reconciles them. No batching or resumable full refresh is implemented. State-file transactions serialize copies using that file; concurrent attempts fail with SQLite's lock error, and native locks release on process exit. Use separate state files for independent parallel pipelines. The state file must differ from the SQLite destination file.
+
+### Snapshot streams
+
+A source without a change feed can still load incrementally with `diffSnapshot(stream, records, state)`. The stream declares `sourceDefinedCursor` and `emitsDeletes`; the source passes one complete scan and the previous state:
+
+```ts
+protected override async *extract(configuration, state) {
+  yield* diffSnapshot(configuration.stream, this.scan(configuration.stream), state);
+}
+```
+
+The state is `{ snapshot: { <primary key JSON>: <SHA-256 of the record> } }`. Each run emits new or changed records, a `DELETE` for every key the scan no longer contains, and the new snapshot as the only `STATE`. Unchanged records produce no writes. The first run (`null` state) loads everything and deletes nothing.
+
+- **Replay:** if the checkpoint save fails after the data committed, the next run diffs against the older snapshot, re-applies the same upserts and deletions, and reaches the same rows.
+- **Failures:** an empty scan deletes every row. The source must throw on a failed read and never yield an empty collection instead. A key repeated within one scan is rejected, so a source that reads overlapping windows deduplicates first.
+- **Cost:** the source still reads everything each run; only destination writes shrink. The state holds one key and a 43-character fingerprint per row, so it grows with the stream.
+- **Reset:** resetting the checkpoint makes the next run reload everything but forgets which rows exist, so rows deleted upstream meanwhile stay behind. Reset together with clearing the target, or run a full-refresh overwrite.
 
 ### Apple Notes behavior
 

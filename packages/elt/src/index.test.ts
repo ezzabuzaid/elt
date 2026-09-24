@@ -9,6 +9,7 @@ import {
   Catalog,
   Copy,
   type CopyConfiguration,
+  diffSnapshot,
   isCalendarDate,
   isTimestamp,
   MarkdownDestination,
@@ -894,5 +895,132 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
       steps: [new Copy(plain, sqlite.table('plain'))],
     }).run(),
     /Stream items does not emit deletions/,
+  );
+});
+
+test('snapshot diffs load only changes, delete vanished keys and survive replay', async () => {
+  let rows: Record<string, unknown>[] = [];
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, name: { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  class SnapshotSource extends Source {
+    readonly identity = 'snapshot-test';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      yield* diffSnapshot(configuration.stream, rows, state);
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-snap-'));
+  const source = new SnapshotSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const statePath = join(scratch.path, 'state.sqlite');
+  const copy = new Copy(items, destination.table('items'), {
+    id: 'items',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['id'],
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+    steps: [copy],
+  });
+  const table = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT id, name, loaded_at FROM items ORDER BY id')
+      .all()
+      .map((row) => ({ ...row }));
+  };
+  const savedState = () => {
+    using database = new DatabaseSync(statePath, { readOnly: true });
+    return JSON.parse(
+      String(database.prepare('SELECT state FROM checkpoints').get()?.state),
+    );
+  };
+  const names = () => table().map(({ id, name }) => `${id}:${name}`);
+
+  rows = [
+    { id: 'a', name: 'A' },
+    { id: 'b', name: 'B' },
+    { id: 'c', name: 'C' },
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 3, deleted: 0 }]);
+  const firstState = savedState();
+  assert.deepEqual(Object.keys(firstState.snapshot), [
+    '["a"]',
+    '["b"]',
+    '["c"]',
+  ]);
+
+  rows = [
+    { name: 'A', id: 'a' },
+    { id: 'b', name: 'B2' },
+    { id: 'd', name: 'D' },
+  ];
+  // Key order does not matter: a stays unchanged; b changed, d added, c removed.
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 1 }]);
+  assert.deepEqual(names(), ['a:A', 'b:B2', 'd:D']);
+
+  const settled = table();
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+  assert.deepEqual(table(), settled);
+
+  // A checkpoint save that failed after commit replays the older state: the
+  // diff re-applies the same upserts and deletions and lands on the same rows.
+  await destination.write(
+    copy.configuration,
+    copy.to,
+    source.read(copy.configuration, firstState),
+  );
+  assert.deepEqual(names(), ['a:A', 'b:B2', 'd:D']);
+
+  const read = (state: unknown) =>
+    Array.fromAsync(source.read(copy.configuration, state));
+  for (const invalid of [
+    {},
+    { snapshot: [] },
+    { snapshot: {}, extra: true },
+    { snapshot: { '["a"]': 'short' } },
+    { snapshot: { '["a","b"]': 'A'.repeat(43) } },
+    { snapshot: { '[1]': 'A'.repeat(43) } },
+    { snapshot: { '[ "a" ]': 'A'.repeat(43) } },
+    { snapshot: { 'not json': 'A'.repeat(43) } },
+  ])
+    await assert.rejects(
+      read(invalid),
+      /Invalid snapshot checkpoint for stream items/,
+    );
+  rows = [
+    { id: 'a', name: 'A' },
+    { id: 'a', name: 'again' },
+  ];
+  await assert.rejects(read(null), /returned key \["a"\] twice in one scan/);
+  const plain = new Stream({
+    ...items,
+    sourceDefinedCursor: undefined,
+    emitsDeletes: undefined,
+  });
+  await assert.rejects(
+    Array.fromAsync(diffSnapshot(plain, [], null)),
+    /must declare sourceDefinedCursor and emitsDeletes/,
   );
 });
