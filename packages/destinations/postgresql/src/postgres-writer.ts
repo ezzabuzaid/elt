@@ -9,7 +9,8 @@ import {
   Writer,
   type WriterClaim,
 } from 'elt';
-import postgres from 'postgres';
+import type postgres from 'postgres';
+import { Connection, schemaLock } from './connection.ts';
 import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
 import type { PostgresTable } from './postgres-table.ts';
@@ -123,14 +124,14 @@ export abstract class PostgresWriter extends Writer {
   ): Promise<WriteCount> {
     let committed: WriteCount | undefined;
     try {
-      await using connection = new Connection(this.url);
+      await using connection = new Connection(this.url, 'elt');
       // ponytail: holds the write transaction during extraction; stage first if long reads hold back vacuum.
       committed = await connection.sql.begin(async (transaction) => {
         // One writer per schema at a time, as SQLite's BEGIN IMMEDIATE is one
         // per file: claims span the schema's tables. Readers never wait on it.
         await transaction.unsafe(
           'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-          [`mac-elt:${this.schema}`],
+          [schemaLock(this.schema)],
         );
         await transaction.unsafe(
           `CREATE SCHEMA IF NOT EXISTS ${quote(this.schema)}`,
@@ -180,22 +181,5 @@ export abstract class PostgresWriter extends Writer {
         );
       throw cause;
     }
-  }
-}
-
-// One session per copy, closed however the copy ends.
-class Connection implements AsyncDisposable {
-  readonly sql: postgres.Sql;
-
-  constructor(url: string) {
-    this.sql = postgres(url, {
-      max: 1,
-      onnotice: () => {},
-      connection: { application_name: 'elt' },
-    });
-  }
-
-  async [Symbol.asyncDispose](): Promise<void> {
-    await this.sql.end({ timeout: 5 });
   }
 }

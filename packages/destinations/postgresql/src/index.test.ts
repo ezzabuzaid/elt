@@ -1,22 +1,19 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempDisposable } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   Catalog,
+  CommittedWriteError,
   Copy,
   type CopyConfiguration,
   Pipeline,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
-  SQLiteCheckpointStore,
   Stream,
 } from 'elt';
 import postgres from 'postgres';
-import { PostgresDestination } from './index.ts';
+import { PostgresCheckpointStore, PostgresDestination } from './index.ts';
 
 const server =
   process.env.TEST_DATABASE_URL ??
@@ -275,7 +272,6 @@ test('append keeps every load', async () => {
 
 test('cursor_newer keeps the greatest cursor by byte order; replace keeps the newest extraction', async () => {
   await using database = await scratchDatabase();
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-pg-'));
   const stream = new Stream({
     name: 'versions',
     jsonSchema: {
@@ -294,8 +290,9 @@ test('cursor_newer keeps the greatest cursor by byte order; replace keeps the ne
     url: database.url,
     schema: 'raw',
   });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
+  const checkpoints = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
   });
   const load = (
     table: string,
@@ -366,7 +363,6 @@ test('cursor_newer keeps the greatest cursor by byte order; replace keeps the ne
 
 test('deletions remove keyed rows in source order', async () => {
   await using database = await scratchDatabase();
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-pg-'));
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -391,8 +387,9 @@ test('deletions remove keyed rows in source order', async () => {
   const pipeline = new Pipeline({
     source,
     destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
     }),
     steps: [
       new Copy(stream, destination.table('items'), {
@@ -470,7 +467,6 @@ test('a source failure commits nothing: no table, rows or claim', async () => {
 
 test('writers share a table only when each upserts by the same key over its own partitions', async () => {
   await using database = await scratchDatabase();
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-pg-'));
   const stream = new Stream({
     name: 'records',
     jsonSchema: {
@@ -499,8 +495,9 @@ test('writers share a table only when each upserts by the same key over its own 
     url: database.url,
     schema: 'raw',
   });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
+  const checkpoints = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
   });
   const upsert = (id: string, source: Owned) =>
     new Pipeline({
@@ -618,4 +615,154 @@ test('declarations are checked before any connection', () => {
     /reserved/,
   );
   assert.doesNotMatch(JSON.stringify(destination), /u:p/);
+});
+
+const acknowledged = (states: unknown[]) => ({
+  count: states.length,
+  deleted: 0,
+  checkpoints: states.map((state) => ({
+    type: 'STATE' as const,
+    stream: 'records',
+    state,
+  })),
+});
+
+test('a Postgres checkpoint store resumes from the last acknowledged state in the schema', async () => {
+  await using database = await scratchDatabase();
+  const store = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
+  });
+  const binding = { source: 'test', target: 'records' };
+  const received: unknown[] = [];
+  const write =
+    (states: unknown[], fail = false) =>
+    async (state: unknown) => {
+      received.push(structuredClone(state));
+      if (state !== null && typeof state === 'object')
+        Reflect.set(state, 'mutated', true);
+      if (fail) throw new Error('source broke');
+      return acknowledged(states);
+    };
+
+  await store.run('copy', binding, write([{ page: 1 }, { page: 2 }]));
+  await store.run('copy', binding, write([]));
+  await assert.rejects(
+    store.run('copy', binding, write([{ page: 9 }], true)),
+    /source broke/,
+  );
+  await store.run('copy', binding, write([]));
+
+  assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 2 }]);
+  assert.deepEqual(
+    [
+      ...(await database.sql`SELECT id, state::text FROM raw._mac_elt_checkpoints`),
+    ].map((row) => ({ ...row })),
+    [{ id: 'copy', state: '{"page":2}' }],
+  );
+});
+
+test('a changed binding is refused until the Postgres checkpoint is reset', async () => {
+  await using database = await scratchDatabase();
+  const store = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
+  });
+  let called = 0;
+  const write = async (state: unknown) => {
+    called++;
+    return acknowledged([{ from: state }]);
+  };
+
+  await store.run('copy', { target: 'a' }, write);
+  await assert.rejects(
+    store.run('copy', { target: 'b' }, write),
+    /Checkpoint binding changed for copy; reset it or use a new copy ID/,
+  );
+  await store.reset('copy');
+  await store.run('copy', { target: 'b' }, async (state) => {
+    assert.equal(state, null);
+    return write(state);
+  });
+
+  assert.equal(called, 2);
+});
+
+test('a checkpoint that cannot be saved after the load commits reports the committed load', async () => {
+  await using database = await scratchDatabase();
+  const store = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
+  });
+  await store.run('copy', {}, async () => acknowledged([{ page: 1 }]));
+  await database.sql.unsafe(`
+    CREATE FUNCTION raw.refuse() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$;
+    CREATE TRIGGER refuse BEFORE INSERT OR UPDATE ON raw._mac_elt_checkpoints FOR EACH ROW EXECUTE FUNCTION raw.refuse();
+  `);
+
+  const failure = await store
+    .run('copy', {}, async () => ({ ...acknowledged([{ page: 2 }]), count: 7 }))
+    .catch((error: unknown) => error);
+
+  assert.ok(failure instanceof CommittedWriteError);
+  assert.equal(failure.count, 7);
+  assert.match(String(failure.cause), /disk full/);
+});
+
+test('replications checkpoint in parallel, and one already running is refused', async () => {
+  await using database = await scratchDatabase();
+  const store = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
+  });
+  const { promise: bothStarted, resolve: release } =
+    Promise.withResolvers<void>();
+  let started = 0;
+  const waiting = async () => {
+    if (++started === 2) release();
+    await bothStarted;
+    return acknowledged([{ done: true }]);
+  };
+
+  // Both writes wait until the other has started, so both locks are held at once.
+  await Promise.all([store.run('a', {}, waiting), store.run('b', {}, waiting)]);
+  const { promise: hold, resolve: finish } = Promise.withResolvers<void>();
+  const running = store.run('a', {}, async () => {
+    await hold;
+    return acknowledged([]);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await assert.rejects(
+    store.run('a', {}, async () => acknowledged([])),
+    /Checkpoint a is in use by another run/,
+  );
+  finish();
+  await running;
+});
+
+test('checkpoint state keeps text JSONB would refuse, and the store holds no credentials', async () => {
+  await using database = await scratchDatabase();
+  const store = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
+  });
+  const state = { nul: 'a\u0000b', lone: '\ud800' };
+
+  await store.run('copy', {}, async () => acknowledged([state]));
+  let resumed: unknown;
+  await store.run('copy', {}, async (saved) => {
+    resumed = saved;
+    return acknowledged([]);
+  });
+
+  assert.deepEqual(resumed, state);
+  assert.doesNotMatch(JSON.stringify(store), /postgres:postgres/);
+  assert.throws(
+    () => new PostgresCheckpointStore({ url: 'mysql://x/y', schema: 'raw' }),
+    /postgres:\/\/ connection URL/,
+  );
+  assert.throws(
+    () => new PostgresCheckpointStore({ url: database.url, schema: 'pg_raw' }),
+    /reserved/,
+  );
 });

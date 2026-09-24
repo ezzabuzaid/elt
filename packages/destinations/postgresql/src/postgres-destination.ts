@@ -1,5 +1,6 @@
 import { type CopyConfiguration, Destination } from 'elt';
-import { identifier, quote } from './identifier.ts';
+import { schemaName, server } from './connection.ts';
+import { quote } from './identifier.ts';
 import { PostgresAppendWriter } from './postgres-append-writer.ts';
 import type { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
@@ -23,22 +24,9 @@ export class PostgresDestination extends Destination<PostgresTable> {
 
   constructor({ url, schema }: { url: string; schema: string }) {
     super();
-    const parsed = URL.parse(url);
-    if (
-      parsed === null ||
-      (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:')
-    )
-      throw new TypeError('Postgres requires a postgres:// connection URL');
-    identifier(schema, 'schema name');
-    if (/^pg_/i.test(schema))
-      throw new TypeError('Schema names starting with pg_ are reserved');
-    this.schema = schema;
+    this.#server = server(url);
+    this.schema = schemaName(schema);
     this.#url = url;
-    this.#server = {
-      host: parsed.hostname,
-      port: parsed.port,
-      database: decodeURIComponent(parsed.pathname.slice(1)),
-    };
     Object.freeze(this);
   }
 
