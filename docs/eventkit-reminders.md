@@ -46,21 +46,6 @@ An initial permission request waits at most 30 seconds. Extraction requires full
 
 All eight streams are flat scalar schemas. Date-component rows use `[reminderId, kind]`; alarm/attendee/rule rows use their parent's ID and position. These are snapshot identities, and collection reordering can change a child's ID. The source fetches each stream separately, so concurrent user edits can change relationships between copies. There is no cross-stream transaction or snapshot. OSA buffers one response up to 64 MiB and terminates after 120 seconds; a failed large export restarts its copy.
 
-## Migration
-
-Use a fresh database such as `reminders-eventkit.sqlite`, or new table names. SQLite overwrite replaces records inside an existing schema; it does not migrate columns. Update explicit projections before exporting. Use full overwrite for existing managed Markdown outputs to avoid mixing old and new IDs.
-
-| Previous scripting field | EventKit representation |
-| --- | --- |
-| Reminder/list/account `id` | Native EventKit identifiers; do not mix namespaces. Source identity is `apple-reminders:eventkit`. |
-| Reminder `containerId` | `listId`. Native parent-task hierarchy is unavailable. |
-| List `containerId` | `accountId`. Native list-group hierarchy is unavailable. |
-| `dueAt`, `allDayDueDate` | `dateComponents` rows with `kind = 'due'`; start components are also available. |
-| `remindAt` | Related `alarms` rows, preserving multiple triggers and locations. |
-| List `color` | `colorRed`, `colorGreen`, `colorBlue`, `colorAlpha` in sRGB. |
-| `flagged`, list `emblem` | Removed; no fabricated replacement values. |
-| Required creation/modification timestamps | Nullable timestamps, matching EventKit. |
-
 ## Verification
 
 The focused tests in [index.test.ts](../apps/apple/src/index.test.ts) exercise all eight streams through SQLite and Markdown, date-only/timed/floating/absent dates, completed reminders with no completion date, native coordinates, both alarm forms, all recurrence selector families, metadata-only discovery, unsupported selections, validation/permission rollback, nil versus empty fetches, cancellation, and the shared permission gate. Native fixtures are unsaved objects; tests never fetch personal reminders.

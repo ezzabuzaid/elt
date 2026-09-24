@@ -17,8 +17,7 @@ export class CopyConfiguration {
   readonly destinationSyncMode: DestinationSyncMode;
   readonly cursorField?: string;
   readonly primaryKey?: readonly string[];
-  // Left undefined when unset so this selection serializes into an unchanged
-  // checkpoint binding; every reader treats undefined as cursor_newer.
+  // Set only for deduplicating loads; cursor_newer unless the copy selects replace.
   readonly dedupPolicy?: DedupPolicy;
 
   constructor(
@@ -61,7 +60,11 @@ export class CopyConfiguration {
     this.cursorField = cursorField;
     this.primaryKey =
       primaryKey === undefined ? undefined : Object.freeze([...primaryKey]);
-    this.dedupPolicy = dedupPolicy;
+    this.dedupPolicy =
+      destinationSyncMode === 'append_dedup' ||
+      destinationSyncMode === 'overwrite_dedup'
+        ? (dedupPolicy ?? 'cursor_newer')
+        : dedupPolicy;
     Object.freeze(this);
   }
 
