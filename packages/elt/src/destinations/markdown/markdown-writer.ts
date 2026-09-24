@@ -25,6 +25,7 @@ export abstract class MarkdownWriter extends Writer {
   ): Promise<{ rows: unknown[]; count: number }> {
     // ponytail: Markdown reconciliation holds the target in memory; use an on-disk index if exports outgrow memory.
     const { deduplication } = this;
+    const replace = this.configuration.dedupPolicy === 'replace';
     const rows = new Map<string, unknown>();
     const add = (record: unknown) => {
       const key =
@@ -36,6 +37,7 @@ export abstract class MarkdownWriter extends Writer {
       if (
         saved === undefined ||
         deduplication === undefined ||
+        replace ||
         deduplication.newer(record, saved)
       )
         rows.set(key, structuredClone(record));

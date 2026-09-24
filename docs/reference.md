@@ -70,7 +70,7 @@ These combinations follow Airbyte's [documented sync modes](https://docs.airbyte
 | `cursor_newer` (default) | `WHERE excluded.<cursor> > target.<cursor>` | The cursor advances independently of identity, so a lower cursor means a stale replay. |
 | `replace` | none | The upstream restates facts it already published, so the newest extraction is authoritative. |
 
-A deduplicating copy that leaves `dedupPolicy` unset uses `cursor_newer`.
+A deduplicating copy that leaves `dedupPolicy` unset uses `cursor_newer`. Both destinations apply the policy: SQLite as the upsert guard above, Markdown when it merges each record with the previously published one or with an earlier record from the same run.
 
 Selecting `cursor_newer` with a cursor that is a member of `primaryKey` is rejected. A conflict on that key implies an equal cursor, so the guard could never fire and a restated record would load as a no-op that reports a count without changing the row. The rejection names the field and points at `replace`.
 
