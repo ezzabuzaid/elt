@@ -10,8 +10,6 @@ export type SnapshotState = {
   readonly snapshot: Readonly<Record<string, string>>;
 };
 
-const fingerprintPattern = /^[A-Za-z0-9_-]{43}$/;
-
 // Incremental reads for a source without a change feed: compare one complete
 // scan with the previous snapshot, emit new or changed records, a DELETE for
 // every key that vanished, then the new snapshot as the only STATE.
@@ -30,7 +28,7 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
       `Stream ${stream.name} must declare sourceDefinedCursor and emitsDeletes to diff snapshots`,
     );
   const deduplication = new Deduplication(stream, stream.primaryKey);
-  const previous = readSnapshot(stream, deduplication, state);
+  const previous = readSnapshot(state);
   const current = new Map<string, string>();
   for await (const data of records) {
     const key = deduplication.key(data);
@@ -55,45 +53,18 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
   yield { type: 'STATE', stream: stream.name, state: { snapshot } };
 }
 
-function readSnapshot(
-  stream: Stream,
-  deduplication: Deduplication,
-  state: unknown,
-): Map<string, string> {
-  if (state === null) return new Map();
-  const invalid = () =>
-    new TypeError(`Invalid snapshot checkpoint for stream ${stream.name}`);
-  if (
-    !isPlainObject(state) ||
-    Object.keys(state).length !== 1 ||
-    !isPlainObject(state.snapshot)
-  )
-    throw invalid();
-  const previous = new Map<string, string>();
-  for (const [key, fingerprint] of Object.entries(state.snapshot)) {
-    if (
-      typeof fingerprint !== 'string' ||
-      !fingerprintPattern.test(fingerprint)
-    )
-      throw invalid();
-    let record: Record<string, KeyValue>;
-    try {
-      record = keyObject(stream, key);
-      if (deduplication.key(record) !== key) throw invalid();
-    } catch {
-      throw invalid();
-    }
-    previous.set(key, fingerprint);
-  }
-  return previous;
+// The previous snapshot, as diffSnapshot wrote it.
+function readSnapshot(state: unknown): Map<string, string> {
+  return new Map(
+    Object.entries((state as SnapshotState | null)?.snapshot ?? {}),
+  );
 }
 
+// A snapshot key is the JSON of the primary key's values, in field order.
 function keyObject(stream: Stream, key: string): Record<string, KeyValue> {
-  const values: unknown = JSON.parse(key);
-  if (!Array.isArray(values) || values.length !== stream.primaryKey.length)
-    throw new TypeError(`Snapshot key ${key} does not match ${stream.name}`);
+  const values = JSON.parse(key) as KeyValue[];
   return Object.fromEntries(
-    stream.primaryKey.map((field, index) => [field, values[index]]),
+    values.map((value, index) => [stream.primaryKey[index] as string, value]),
   );
 }
 

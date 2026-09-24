@@ -238,8 +238,9 @@ export class AppleCalendarSource extends Source {
     }
     const attachment = {
       uri: String(data.uri),
-      filename: typeof data.filename === 'string' ? data.filename : null,
-      formatType: typeof data.formatType === 'string' ? data.formatType : null,
+      // Validated against the icsAttachments schema: nullable text.
+      filename: data.filename as string | null,
+      formatType: data.formatType as string | null,
       calendarId: String(data.calendarId),
       calendarItemId: String(data.calendarItemId),
     };
@@ -284,9 +285,8 @@ export class AppleCalendarSource extends Source {
             ),
           ).toISOString();
       for await (const data of this.readWindow(stream, startAt, endAt)) {
-        const key = data.id;
-        if (typeof key !== 'string')
-          throw new TypeError('Calendar returned an invalid id');
+        // Every Calendar stream's schema requires a text id.
+        const key = data.id as string;
         if (seen.has(key)) continue;
         seen.add(key);
         yield data;
@@ -325,18 +325,16 @@ export class AppleCalendarSource extends Source {
         throw error;
       }
       if (paged) {
-        if (
-          !response ||
-          typeof response !== 'object' ||
-          !('records' in response) ||
-          !('nextCursor' in response) ||
-          (response.nextCursor !== null &&
-            (typeof response.nextCursor !== 'string' ||
-              response.nextCursor <= (cursor ?? '')))
-        )
+        // readCalendar's page. A cursor that does not advance would page
+        // forever, so it fails the copy.
+        const page = response as {
+          records: unknown;
+          nextCursor: string | null;
+        };
+        if (page.nextCursor !== null && page.nextCursor <= (cursor ?? ''))
           throw new TypeError('Calendar returned an invalid metadata page');
-        cursor = response.nextCursor;
-        response = response.records;
+        cursor = page.nextCursor;
+        response = page.records;
       }
       if (ics !== undefined)
         response = validateIcsExports(response).flatMap((item) =>

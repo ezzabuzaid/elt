@@ -31,36 +31,13 @@ export class GoogleGrant implements GoogleOpenableGrant {
   readonly #credential: GoogleOAuthCredential;
   readonly #scopes: ReadonlySet<string>;
 
+  // The store holds other secrets too; a grant this package wrote says so in
+  // its kind. Anything else, or nothing, is no grant.
   static parse(value: unknown): GoogleGrant | undefined {
-    return GoogleGrant.#isCredential(value)
-      ? new GoogleGrant(value)
+    const credential = value as GoogleOAuthCredential | undefined;
+    return credential?.kind === 'GOOGLE_BIGQUERY_OAUTH'
+      ? new GoogleGrant(credential)
       : undefined;
-  }
-
-  static #isCredential(value: unknown): value is GoogleOAuthCredential {
-    return (
-      typeof value === 'object' &&
-      value !== null &&
-      'kind' in value &&
-      value.kind === 'GOOGLE_BIGQUERY_OAUTH' &&
-      'clientId' in value &&
-      typeof value.clientId === 'string' &&
-      (!('clientSecret' in value) ||
-        value.clientSecret === undefined ||
-        typeof value.clientSecret === 'string') &&
-      'accessToken' in value &&
-      typeof value.accessToken === 'string' &&
-      'refreshToken' in value &&
-      typeof value.refreshToken === 'string' &&
-      'expiresAt' in value &&
-      typeof value.expiresAt === 'number' &&
-      Number.isFinite(value.expiresAt) &&
-      'scope' in value &&
-      typeof value.scope === 'string' &&
-      (!('externallyManaged' in value) ||
-        value.externallyManaged === undefined ||
-        typeof value.externallyManaged === 'boolean')
-    );
   }
 
   constructor(credential: GoogleOAuthCredential) {
@@ -134,8 +111,8 @@ export class GoogleAccountGrant extends GoogleGrant {
     credential: GoogleOAuthCredential,
   ): credential is GoogleDataGrantCredential {
     return (
-      typeof credential.googleAccountId === 'string' &&
-      typeof credential.googleAccountEmail === 'string'
+      credential.googleAccountId !== undefined &&
+      credential.googleAccountEmail !== undefined
     );
   }
 
@@ -154,6 +131,15 @@ export class GoogleAccountGrant extends GoogleGrant {
   }
 }
 
+// gcloud's `authorized_user` file, as it writes one.
+type AuthorizedUserFile = {
+  readonly type?: string;
+  readonly client_id?: string;
+  readonly client_secret?: string;
+  readonly refresh_token?: string;
+  readonly account?: string;
+};
+
 /**
  * A grant read from another tool's `authorized_user` file. gcloud writes
  * `application_default_credentials.json` without an `account` field and
@@ -169,35 +155,21 @@ export class GoogleImportedGrant implements GoogleOpenableGrant {
     value: unknown,
     options: { readonly account: string; readonly scope: string },
   ): GoogleImportedGrant | undefined {
-    if (
-      typeof value !== 'object' ||
-      value === null ||
-      !('type' in value) ||
-      value.type !== 'authorized_user'
-    ) {
-      return undefined;
-    }
-    const clientId = GoogleImportedGrant.#text(value, 'client_id');
-    const clientSecret = GoogleImportedGrant.#text(value, 'client_secret');
-    const refreshToken = GoogleImportedGrant.#text(value, 'refresh_token');
+    const file = value as AuthorizedUserFile | undefined;
+    // Another tool's file: only an authorized user grant can be opened here.
+    if (file?.type !== 'authorized_user') return undefined;
+    const clientId = file.client_id?.trim();
+    const clientSecret = file.client_secret?.trim();
+    const refreshToken = file.refresh_token?.trim();
     if (!clientId || !clientSecret || !refreshToken) return undefined;
-    return new GoogleImportedGrant(
-      GoogleImportedGrant.#text(value, 'account') ?? options.account,
-      {
-        clientId,
-        clientSecret,
-        externallyManaged: true,
-        kind: 'GOOGLE_BIGQUERY_OAUTH',
-        refreshToken,
-        scope: options.scope,
-      },
-    );
-  }
-
-  static #text(value: object, key: string): string | undefined {
-    const field: unknown = Reflect.get(value, key);
-    const text = typeof field === 'string' ? field.trim() : '';
-    return text || undefined;
+    return new GoogleImportedGrant(file.account?.trim() || options.account, {
+      clientId,
+      clientSecret,
+      externallyManaged: true,
+      kind: 'GOOGLE_BIGQUERY_OAUTH',
+      refreshToken,
+      scope: options.scope,
+    });
   }
 
   constructor(account: string, credential: GoogleImportedCredential) {

@@ -824,20 +824,6 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
 
   const read = (state: unknown) =>
     Array.fromAsync(source.read(copy.configuration, state));
-  for (const invalid of [
-    {},
-    { snapshot: [] },
-    { snapshot: {}, extra: true },
-    { snapshot: { '["a"]': 'short' } },
-    { snapshot: { '["a","b"]': 'A'.repeat(43) } },
-    { snapshot: { '[1]': 'A'.repeat(43) } },
-    { snapshot: { '[ "a" ]': 'A'.repeat(43) } },
-    { snapshot: { 'not json': 'A'.repeat(43) } },
-  ])
-    await assert.rejects(
-      read(invalid),
-      /Invalid snapshot checkpoint for stream items/,
-    );
   rows = [
     { id: 'a', name: 'A' },
     { id: 'a', name: 'again' },
