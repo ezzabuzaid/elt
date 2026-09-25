@@ -211,7 +211,7 @@ class ChatSource extends Source<ChatDatabase> {
 }
 ```
 
-- **Contract:** every source implements `session(streams)`, receiving the streams the run will read. An upstream with a read transaction pins it (Messages). One without reads every selected stream up front in one change-free window and serves the copies from that snapshot (Calendar and Reminders, see [EventKit consistency](#eventkit-consistency)). A source whose streams need not agree returns an empty `AsyncDisposableStack` (Search Console).
+- **Contract:** every source implements `session(streams)`, receiving the streams the run will read. An upstream with a read transaction pins it (Messages; Contacts, once per account store). One without reads every selected stream up front in one change-free window and serves the copies from that snapshot (Calendar and Reminders, see [EventKit consistency](#eventkit-consistency)). A source whose streams need not agree returns an empty `AsyncDisposableStack` (Search Console).
 - **Failures:** an error while opening, such as a denied permission, is raised as itself, not as a `PipelineError`, since no copy has started.
 - **Lifetime:** the pipeline opens the session before its first copy and disposes it after the last, including when a copy fails. A watch opens one per invalidation batch and holds none while idle, since a long read can block the upstream's own maintenance.
 - **Standalone reads:** `Source.read(configuration, state, session)` and `Copy.run(source, destination, session, checkpoints?)` require the session; open it with `await using session = await source.session([stream])`.
@@ -559,6 +559,85 @@ Live verification on **2026-09-25** (macOS 26.6.2, Node.js 26.8.1), running the 
 - **Runs:** every stream loads in about 1 s without attachment parsing and 5.5 s with it; a second run writes nothing, and another session's five further runs wrote nothing either. Every join and Recently Deleted row references a loaded message, chat and attachment. Snapshot state is about 2.6 MB of JSON.
 - **Recently Deleted:** 3 messages, each loaded with its chat in `recoverableMessages`. 88 other messages belong to no chat and load without one.
 - **Attachments:** 6 are on disk and 32 offloaded to iCloud; the stored chunks of the 6 total 702,104 bytes, their exact `totalBytes`. They are group photos and link-preview images; Vision found text in one.
+
+## Apple Contacts
+
+```ts
+import { Copy, Pipeline } from 'elt';
+import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
+import { AppleContactsSource } from './index.ts';
+
+const source = new AppleContactsSource(); // ~/Library/Application Support/AddressBook
+const destination = new SQLiteDestination({ path: './outputs/contacts.sqlite' });
+
+await new Pipeline({
+  source,
+  destination,
+  checkpoints: new SQLiteCheckpointStore({ path: './outputs/contacts-state.sqlite' }),
+  steps: [source.contacts, source.phoneNumbers, source.emailAddresses].map(
+    (stream) =>
+      new Copy(stream, destination.table(stream.name), {
+        id: stream.name,
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: [...stream.primaryKey],
+      }),
+  ),
+}).run();
+```
+
+The source reads Contacts' own Core Data stores read-only through `node:sqlite`: `AddressBook-v22.abcddb` at the root of `~/Library/Application Support/AddressBook` (On My Mac) and one `Sources/<id>/AddressBook-v22.abcddb` per account. Contacts.app need not be open. A store or the `Sources` folder that cannot be opened (missing, or no permission) raises `ContactsUnavailableError`, and a store without a column the connector reads raises `ContactsSchemaError` naming the columns, both before any copy runs. `npx nx run apple:contacts` loads every stream incrementally into `outputs/apple-contacts.sqlite`, with photo text and bytes; `--address-book <dir>` reads another AddressBook folder and `--out <dir>` writes elsewhere.
+
+### Access
+
+macOS guards the AddressBook folder with the **Contacts** privacy service, and Full Disk Access covers it too; either works, checked against the responsible process. Contacts access prompts once for the app a terminal export runs in; a dismissed prompt is recorded as a denial and never shows again, so enable the app under **System Settings → Privacy & Security → Contacts**. A launchd job for `node` cannot answer a prompt: grant that binary Full Disk Access and run it as for [Messages](#full-disk-access):
+
+```sh
+launchctl submit -l dev.context-compiler.contacts -- \
+  "$(readlink -f "$(which node)")" "$PWD/apps/apple/dist/contacts.js" --out "$PWD/outputs"
+```
+
+Contacts.framework is not used. It needs the Contacts grant itself, which a launchd `node` cannot request, and it exposes less than the stores hold.
+
+### Streams
+
+Every stored attribute of the Core Data model (`ABAddressBook`, version `24A2` on macOS 26) loads, named as the model names it (`ZJOBTITLE` → `jobTitle`). Relationships load as the related record's `uniqueId`, which is the Contacts.framework identifier of contacts and groups (`…:ABPerson`, `…:ABGroup`). Property-list data loads as JSON and other data as base64; dates are UTC timestamps. Labels load raw: Apple's constants look like `_$!<Mobile>!$_`, while custom labels and labels written through AppleScript are plain text. Left out are Core Data's own `Z_` columns, transient attributes, values stored only to sort or search (creation and modification year and yearless offsets, `sortingFirstName`, `sortingLastName`, `nameNormalized`, `addressNormalized`, `lastFourDigits`, `ABCDContactIndex`), and sync bookkeeping (`ABCDInfo`, `ABCDDeletedRecordLog`, `CNCDChangeHistoryClient`, `CNCDProviderMetadata`, `CNCDUnifiedContactInfo`, persistent history).
+
+| Stream | Key | Contents and relationships |
+| --- | --- | --- |
+| `containers` | `id` | One per store: `source` (the `Sources` folder name, null for On My Mac), `type`, `isAll`, `remoteLocation`, `lastSyncDate`, `meContactId` (the account's "my card"), and the record fields every entity shares. |
+| `groups` | `id` | `kind` (`group`, `subscribedGroup`, `smartGroup`), `name`, `containerId`, and a smart group's archived query as JSON. |
+| `groupMembers` | `groupId`, `contactId` | Which contacts each group holds. |
+| `groupSubgroups` | `parentGroupId`, `childGroupId` | Groups nested in groups. |
+| `contacts` | `id` | `kind` (`contact`, `subscribedContact`), `containerId`, names and phonetic names, organization, department, job title, `birthdayYear`/`birthdayMonth`/`birthdayDay`, `linkId` (contacts Contacts shows as one), image metadata, `meOfContainerId`, creation and modification times, and sync fields. |
+| `notes` | `contactId` | The note's `text` and `richTextData`. |
+| `alternateBirthdays` | `contactId` | The non-Gregorian birthday: `calendarIdentifier` (such as `chinese`), `era`, `year`, `month`, `day`, `isLeapMonth`. |
+| `phoneNumbers`, `emailAddresses`, `postalAddresses`, `urlAddresses`, `socialProfiles`, `messagingAddresses`, `relatedNames`, `contactDates`, `calendarUris`, `addressingGrammars`, `likenesses` | `id` | Labeled values: `contactId`, `label`, `isPrimary`, `isPrivate`, `orderingIndex`, and each kind's fields. `messagingAddresses.service` is the service's name (`SkypeInstant`, `JabberInstant`); `contactDates` has `year`, `month`, `day`. |
+| `alertTones` | `id` | A contact's ringtone or text tone. |
+| `customPropertyValues` | `id` | A custom property's value on any record, with the property's `propertyName`, `recordType` and `valueType`. |
+| `remoteLocations` | `id` | URLs attached to any record. |
+| `unknownProperties` | `recordId`, `propertyName`, `originalLine` | vCard lines Contacts kept without understanding them; the line (base64) is part of the key, and identical lines load once. |
+| `distributionListConfigs` | `groupId`, `contactId`, `propertyName` | The email, phone or address a group uses for a member. |
+| `images` | `contactId`, `kind` | A contact's `image` and `thumbnail`: `storage` (`inline` or `external`), `externalId`, `byteLength`, `sha256`. Supports file reads. |
+
+- **Consistency:** a [session](#read-sessions) opens every store in one read transaction each, so a contact agrees with its phones, groups and photos. Stores commit independently, so two accounts are not pinned to the same instant; no relationship crosses stores.
+- **Identity:** `uniqueId`s are UUIDs, unique across stores; `Z_PK`s are local to a store and are never exported. Contacts.framework identifies an account's container as `<source>:ABAccount`, not by the container row's `id`.
+- **Dates:** Contacts stores birthdays and dates as noon UTC of the day, in year 1604 when the year is unknown; they load as `year` (null without one), `month` and `day`.
+- **Incremental:** all 24 are [snapshot streams](#snapshot-streams). Labeled values carry no modification date and deleted records leave no row; the Core Data persistent history is contactsd's to prune, not a cursor the connector owns. Each run scans every row.
+- **Photos:** Core Data keeps a photo inline (`0x01` and the bytes), staged in a temporary file removed once the record is loaded, or in its own file (`0x02` and a UUID) under `.AddressBook-v22_SUPPORT/_EXTERNAL_DATA`, read in place. `sha256` makes a replaced photo a changed record. Other encodings throw. For iCloud contacts the Mac keeps only the thumbnail; the full photo stays in iCloud (`imageReference`), and Contacts.framework reports no image data for them either.
+- **Account names:** the stores do not name their accounts; Contacts.framework takes "iCloud" or "Google" from the Accounts framework, which this source does not read. `containers.name` is null.
+- **Failures:** a store that cannot be opened stops the run instead of being read as empty, which would delete its account's rows from every target.
+- **Watching:** contactsd writes through WALs it keeps open, so `observe()` polls `PRAGMA data_version` on each store, and the `Sources` listing, every `pollIntervalMs` (default 1000). A commit or an added or removed account yields every selected stream.
+
+Live verification on **2026-09-25** (macOS 26.6.2, Node.js 26.8.1) against three stores: On My Mac with 1 contact, iCloud with 3 and Google with 410. Probes read schema, counts and masked value shapes; field values were inspected only on synthetic probe contacts, which were created through Contacts.app scripting and Contacts.framework and deleted afterwards. The test fixture uses the captured table definitions with synthetic rows.
+
+- **Schema:** the model was read from `ContactsPersistence.framework`, confirming which overloaded `ZABCDRECORD` column belongs to which entity (`ZCONTAINER` groups, `ZCONTAINER1` contacts, `ZNAME1` container name) and which data allows external storage (`imageData`, `thumbnailImageData`).
+- **Framework agreement:** for all 414 contacts, identifiers, per-contact counts of phones (470), emails (27), postal addresses (53), URLs (4), social profiles (8) and dates (1), exact thumbnail byte lengths and birthday parts equal a non-unified Contacts.framework fetch.
+- **Create, edit, delete:** probe contacts with every scriptable field loaded with the values written, including a year-less birthday and date, a Chinese-calendar birthday, custom and constant labels, Jabber and Skype addresses, a note, group membership, nested groups, and inline (37,107 bytes) and external (159,443 bytes) thumbnails. Changing a job title and removing a phone wrote that contact and one deletion. Deleting the probes removed their contacts and every child row.
+- **Photos:** 29 in the verified book: 26 thumbnails and 3 full photos, 4 stored externally. A 985 KB photo saved through Contacts.framework on an iCloud contact kept only its thumbnail locally.
+- **Runs:** the first run takes 32 s, almost all of it Vision text recognition on the photos; a second run takes 0.13 s and writes nothing. iCloud and Google syncs rewrite group and container modification times, which load as genuine changes, and runs after they settled wrote nothing.
+- **Watching:** a live watch loaded a contact saved through Contacts.framework 0.65 s after the save, and its deletion 0.55 s after that.
+- **Unverified:** the book holds no smart or subscribed groups, subscribed contacts, calendar URIs, likenesses, alert tones, custom property values, remote locations, unrecognized vCard lines or distribution list choices, so those streams are covered only by the synthetic fixture. Contacts.framework has no way to create them: a synthetic vCard with `CALURI` and an `X-` line, saved through it, stored neither, and the deprecated AddressBook framework's vCard import saved nothing. Smart groups and distribution lists need the Contacts.app interface, and unrecognized lines a vCard import confirmed in Contacts.app; those manual steps were not run. The deprecated AddressBook framework aborted (`SIGABRT`) while writing a custom property value, and cannot remove the property definition it had created, which stays in the iCloud store without values.
 
 ## Apple Reminders
 

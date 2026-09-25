@@ -16,6 +16,7 @@ The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and 
 | Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, scripting metadata, and each item's iCalendar (ICS) components, properties and parameters | Full refresh or snapshot incremental within a required date range | EventKit notifications |
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh or snapshot incremental | EventKit notifications |
 | Apple Messages | Every column of chats, handles, participants, messages (text, edits, unsends, reactions, replies), Recently Deleted, and attachments with their files | Full refresh or snapshot incremental, every stream from one consistent chat.db snapshot | Native filesystem notifications over `~/Library/Messages` |
+| Apple Contacts | Accounts, groups and memberships, contacts (names, organization, birthdays including year-less and non-Gregorian ones, flags), notes, every labeled value (phones, emails, addresses, URLs, social profiles, instant messaging, related names, dates, calendar URIs), custom and unrecognized vCard properties, and contact photos with their bytes | Full refresh or snapshot incremental, each account store read in one transaction | Commits to Contacts' own stores, and accounts added or removed |
 | Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection of every sitemap and search URL | Full refresh; incremental by date for the dated analytics grains, by snapshot for properties, sitemaps and the country breakdown, and rolling (never-inspected, then stalest, within the daily quota) for URL inspection; every row carries its property, so properties share tables | Change-gated polling (the API publishes no notification) |
 
 Every destination supports overwrite, append, and deduplication:
@@ -24,7 +25,7 @@ Every destination supports overwrite, append, and deduplication:
 - **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers.
 - **Markdown** (`elt-markdown`): one document per stream or one document per record, with managed append and deduplication.
 
-See the reference for [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Search Console streams](docs/reference.md#google-search-console), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
+See the reference for [Contacts streams](docs/reference.md#apple-contacts), [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Search Console streams](docs/reference.md#google-search-console), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
 
 ## Quick start
 
@@ -83,6 +84,8 @@ This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table'
 The repository also includes a [Notes exporter](apps/apple/src/main.ts) that loads every Notes stream incrementally, including attachment text and bytes. Run it with `npx nx run apple:start`. It writes `outputs/apple-notes.sqlite` and keeps checkpoints in `outputs/apple-notes-state.sqlite`; a second run with no changes writes nothing. `--note-store <path>` reads another `NoteStore.sqlite` and `--out <dir>` changes the output directory. Attachments without extractable text load with null `content`. Original files are stored in bounded chunks, so file size is limited only by disk.
 
 `npx nx run apple:messages` loads Apple Messages the same way into `outputs/apple-messages.sqlite`. It reads `chat.db` directly, so Messages.app need not be open, but the process running it needs Full Disk Access. See [Messages streams](docs/reference.md#apple-messages).
+
+`npx nx run apple:contacts` loads Apple Contacts into `outputs/apple-contacts.sqlite`, photos included. It reads Contacts' own stores, one per account, so Contacts.app need not be open; the process needs Contacts access or Full Disk Access. Account names (iCloud, Google) are not in those stores and do not load. See [Contacts streams](docs/reference.md#apple-contacts).
 
 ### Reminders
 
@@ -288,6 +291,7 @@ Permissions apply to the process running the export, and a sandbox can still res
 | Operation | Required access |
 | --- | --- |
 | Read or watch Apple Notes | Full Disk Access; Notes does not need to be open |
+| Read or watch Apple Contacts | Contacts access or Full Disk Access; Contacts does not need to be open |
 | Read or watch Reminders | Full Reminders access through EventKit |
 | Read or watch Calendar | Full Calendar access through EventKit |
 | Read Calendar `calendars`, `eventMetadata`, or `excludedDates` | Additional Automation access to Calendar |
