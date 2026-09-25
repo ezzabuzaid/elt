@@ -85,7 +85,7 @@ Test the source the way a user runs it, as a black box. Do not write unit tests.
 - Enter only through the app's public exports (`src/index.ts`), loaded by a real `Pipeline` into a real destination in temporary storage. Assert on what a consumer reads: rows or files, checkpoints, and what a second run writes.
 - Control only the upstream, at its outermost seam: a synthetic copy of the upstream's database, the HTTP requester, or `osa`, which crosses into `osascript`. Never import or mock the source's own modules (scripts, parsers, decoders); they are covered through the streams that use them, by feeding bad input at the seam.
 - Models: the Messages tests in `apps/apple/src/index.test.ts` (a synthetic `chat.db`, no mocks) and `apps/google/src/warehouse.test.ts` (a fake requester, scratch Postgres, read back through the agent role).
-- Use controlled inputs, never personal data. Put tests in the app's top-level `src/*.test.ts`; the `test` target runs nothing in subfolders (apple runs `index.test.ts` alone).
+- Use controlled inputs, never personal data. Put tests in the app's top-level `src/*.test.ts`; the `test` target runs nothing in subfolders.
 
 ## Writing docs
 
