@@ -1,40 +1,65 @@
 import type { SchemaRecord } from 'elt';
-import { AppleNotesStream, notesSchema } from './apple-notes-stream.ts';
+import {
+  AppleNotesStream,
+  notesFields,
+  notesSchema,
+} from './apple-notes-stream.ts';
+import {
+  flag,
+  type NoteEntry,
+  type NotesScan,
+  string,
+  time,
+} from './notes-scan.ts';
+
+const { id, nullableText, nullableTimestamp, boolean } = notesFields;
 
 const properties = {
-  id: { type: 'string' },
-  name: { type: 'string' },
-  // The container is a folder.
-  containerId: { type: 'string' },
-  body: { type: ['string', 'null'] },
-  plaintext: { type: ['string', 'null'] },
-  createdAt: { type: 'string', format: 'date-time' },
-  modifiedAt: { type: 'string', format: 'date-time' },
-  passwordProtected: { type: 'boolean' },
-  shared: { type: 'boolean' },
+  id,
+  accountId: id,
+  folderId: id,
+  title: nullableText,
+  text: nullableText,
+  markdown: nullableText,
+  createdAt: nullableTimestamp,
+  modifiedAt: nullableTimestamp,
+  pinned: boolean,
+  hasChecklist: boolean,
+  checklistInProgress: boolean,
+  locked: boolean,
+  shared: boolean,
 } as const;
 
-export type Note = SchemaRecord<typeof properties>;
-
-export class NotesStream extends AppleNotesStream<typeof properties> {
+export class NotesStream extends AppleNotesStream<
+  typeof properties,
+  NoteEntry
+> {
   readonly name = 'notes';
   readonly jsonSchema = notesSchema(properties);
 
-  protected readonly script = `
-      app.notes().map(note => {
-        const passwordProtected = note.passwordProtected();
-        return {
-          id: note.id(),
-          name: note.name(),
-          containerId: note.container().id(),
-          // Omit protected content even if the note is currently unlocked.
-          body: passwordProtected ? null : note.body(),
-          plaintext: passwordProtected ? null : note.plaintext(),
-          createdAt: note.creationDate().toISOString(),
-          modifiedAt: note.modificationDate().toISOString(),
-          passwordProtected,
-          shared: note.shared()
-        };
-      })
-  `;
+  protected rows(scan: NotesScan): readonly NoteEntry[] {
+    return scan.notes;
+  }
+
+  // A locked note's body is encrypted: it keeps its title, dates and flags.
+  protected record(
+    { row, document }: NoteEntry,
+    scan: NotesScan,
+  ): SchemaRecord<typeof properties> {
+    return {
+      id: row.ZIDENTIFIER as string,
+      accountId: row.account as string,
+      folderId: row.folder as string,
+      title: string(row.ZTITLE1),
+      text: document === null ? null : scan.text(document),
+      markdown: document === null ? null : scan.markdown(document),
+      createdAt: time(row.ZCREATIONDATE3),
+      modifiedAt: time(row.ZMODIFICATIONDATE1),
+      pinned: flag(row.ZISPINNED),
+      hasChecklist: flag(row.ZHASCHECKLIST),
+      checklistInProgress: flag(row.ZHASCHECKLISTINPROGRESS),
+      locked: flag(row.ZISPASSWORDPROTECTED),
+      shared: flag(row.shared),
+    };
+  }
 }

@@ -6,6 +6,10 @@ export {
   RemindersUnavailableError,
 } from './platform/macos/eventkit.ts';
 export {
+  NotesSchemaError,
+  NotesUnavailableError,
+} from './platform/macos/note-store.ts';
+export {
   AppleCalendarSource,
   type CalendarAttachment,
   type CalendarAttachmentFetcher,
@@ -13,5 +17,4 @@ export {
 } from './sources/apple-calendar/apple-calendar-source.ts';
 export { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
 export { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
-export { NotesUnavailableError } from './sources/apple-notes/apple-notes-stream.ts';
 export { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';

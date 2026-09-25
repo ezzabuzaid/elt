@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
-import {
-  execFile as execFileCallback,
-  execFileSync,
-  spawn,
-} from 'node:child_process';
-import fs, { mkdirSync, writeFileSync } from 'node:fs';
+import { execFile as execFileCallback, execFileSync } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import {
   mkdtempDisposable,
   readdir,
@@ -18,13 +14,8 @@ import { type TestContext, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
-import {
-  Copy,
-  type CopyConfiguration,
-  Pipeline,
-  PipelineError,
-  Stream,
-} from 'elt';
+import { gzipSync } from 'node:zlib';
+import { Copy, Pipeline, Stream } from 'elt';
 import { MarkdownDestination } from 'elt-markdown';
 import {
   SQLiteCheckpointStore,
@@ -42,6 +33,7 @@ import {
   EventKitChangingError,
   MacOSDocumentParser,
   MessagesUnavailableError,
+  NotesSchemaError,
   NotesUnavailableError,
   RemindersUnavailableError,
 } from './index.ts';
@@ -51,7 +43,6 @@ import { decodeArchive, plistJSON } from './platform/macos/plist.ts';
 import { calendarScript } from './sources/apple-calendar/calendar-script.ts';
 import { parseICalendar } from './sources/apple-calendar/icalendar.ts';
 import { icsStreams } from './sources/apple-calendar/ics-records.ts';
-import { AttachmentsStream } from './sources/apple-notes/attachments-stream.ts';
 import { remindersScript } from './sources/apple-reminders/reminders-script.ts';
 
 const execFile = promisify(execFileCallback);
@@ -110,434 +101,640 @@ function streamName(script: string): string {
   return name;
 }
 
-test('Notes adapts its records to the ELT pipeline', async () => {
-  class Notes extends AppleNotesSource {
-    protected override async *extract(configuration: CopyConfiguration) {
-      yield {
-        stream: configuration.stream.name,
-        data: { id: 'account-1', name: 'Test account', upgraded: true },
-      };
+// NoteStore.sqlite's tables as macOS 26.6.2 creates them (schema only, no
+// data), in WAL mode like the real store.
+const noteStoreSchema = `PRAGMA journal_mode = WAL;
+CREATE TABLE ZICCLOUDSYNCINGOBJECT ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZCRYPTOITERATIONCOUNT INTEGER, ZHASMISSINGKEYCHAINITEM INTEGER, ZISPASSWORDPROTECTED INTEGER, ZISRECOVERINGFROMTRASH INTEGER, ZISSHAREDIRTY INTEGER, ZMARKEDFORDELETION INTEGER, ZMINIMUMSUPPORTEDNOTESVERSION INTEGER, ZNEEDSINITIALFETCHFROMCLOUD INTEGER, ZNEEDSTOBEFETCHEDFROMCLOUD INTEGER, ZNEEDSTOFETCHUSERSPECIFICRECORDASSETS INTEGER, ZNEEDSTOSAVEUSERSPECIFICRECORD INTEGER, ZNEEDSTOUPDATEUSERSPECIFICRECORDREFERENCEACTIONS INTEGER, ZCLOUDSTATE INTEGER, ZINVITATION INTEGER, ZLOCKEDNOTESMODE INTEGER, ZSUPPORTSV1NEO INTEGER, ZACCOUNT INTEGER, ZCHECKEDFORLOCATION INTEGER, ZDIDRUNPAPERFORMDETECTION INTEGER, ZFILESIZE INTEGER, ZHANDWRITINGSUMMARYVERSION INTEGER, ZHASMARKUPDATA INTEGER, ZHASPAPERFORM INTEGER, ZIMAGECLASSIFICATIONSUMMARYVERSION INTEGER, ZIMAGEFILTERTYPE INTEGER, ZNEEDSINITIALRELATIONSHIPSETUP INTEGER, ZNEEDSTRANSCRIPTION INTEGER, ZOCRSUMMARYVERSION INTEGER, ZORIENTATION INTEGER, ZSECTION INTEGER, ZURLEXPIRED INTEGER, ZACCOUNT1 INTEGER, ZLOCATION INTEGER, ZMEDIA INTEGER, ZNOTE INTEGER, ZNOTEUSINGTITLEFORNOTETITLE INTEGER, ZPARENTATTACHMENT INTEGER, ZAPPEARANCETYPE INTEGER, ZSCALEWHENDRAWING INTEGER, ZVERSION INTEGER, ZVERSIONOUTOFDATE INTEGER, ZATTACHMENT INTEGER, ZSTATE INTEGER, ZACCOUNT2 INTEGER, ZACCOUNT3 INTEGER, ZMENTIONNOTIFICATIONATTEMPTCOUNT INTEGER, ZMENTIONNOTIFICATIONSTATE INTEGER, ZACCOUNT4 INTEGER, ZNOTE1 INTEGER, ZPARENTATTACHMENT1 INTEGER, ZTYPE INTEGER, ZACCOUNT5 INTEGER, ZACCOUNT6 INTEGER, ZATTACHMENT1 INTEGER, ZATTACHMENTVIEWTYPE INTEGER, ZHASCHECKLIST INTEGER, ZHASCHECKLISTINPROGRESS INTEGER, ZHASEMPHASIS INTEGER, ZHASSYSTEMTEXTATTACHMENTS INTEGER, ZISPINNED INTEGER, ZISSYSTEMPAPER INTEGER, ZLEGACYNOTEWASPLAINTEXT INTEGER, ZNOTEHASCHANGES INTEGER, ZPAPERSTYLETYPE INTEGER, ZPREFERREDBACKGROUNDTYPE INTEGER, ZACCOUNT7 INTEGER, ZFOLDER INTEGER, ZNOTEDATA INTEGER, ZTITLESOURCEATTACHMENT INTEGER, ZDATEHEADERSTYPE INTEGER, ZSORTORDER INTEGER, ZOWNER INTEGER, ZACCOUNTTYPE INTEGER, ZDIDCHOOSETOMIGRATE INTEGER, ZDIDFINISHMIGRATION INTEGER, ZDIDMIGRATEONMAC INTEGER, ZSERVERSIDEUPDATETASKFAILURECOUNT INTEGER, ZSTOREDATASEPARATELY INTEGER, ZACCOUNTDATA INTEGER, ZCUSTOMNOTESORTTYPEVALUE INTEGER, ZFOLDERTYPE INTEGER, ZIMPORTEDFROMLEGACY INTEGER, ZACCOUNT8 INTEGER, ZPARENT INTEGER, ZCREATIONDATE TIMESTAMP, ZCROPPINGQUADBOTTOMLEFTX FLOAT, ZCROPPINGQUADBOTTOMLEFTY FLOAT, ZCROPPINGQUADBOTTOMRIGHTX FLOAT, ZCROPPINGQUADBOTTOMRIGHTY FLOAT, ZCROPPINGQUADTOPLEFTX FLOAT, ZCROPPINGQUADTOPLEFTY FLOAT, ZCROPPINGQUADTOPRIGHTX FLOAT, ZCROPPINGQUADTOPRIGHTY FLOAT, ZDURATION FLOAT, ZMODIFICATIONDATE TIMESTAMP, ZORIGINX FLOAT, ZORIGINY FLOAT, ZPREVIEWUPDATEDATE TIMESTAMP, ZSIZEHEIGHT FLOAT, ZSIZEWIDTH FLOAT, ZHEIGHT FLOAT, ZMODIFIEDDATE TIMESTAMP, ZSCALE FLOAT, ZWIDTH FLOAT, ZSTATEMODIFICATIONDATE TIMESTAMP, ZCREATIONDATE1 TIMESTAMP, ZCREATIONDATE2 TIMESTAMP, ZMODIFICATIONDATEATIMPORT TIMESTAMP, ZCREATIONDATE3 TIMESTAMP, ZFOLDERMODIFICATIONDATE TIMESTAMP, ZLASTACTIVITYRECENTUPDATESVIEWEDDATE TIMESTAMP, ZLASTACTIVITYSUMMARYVIEWEDDATE TIMESTAMP, ZLASTATTRIBUTIONSVIEWEDDATE TIMESTAMP, ZLASTNOTIFIEDDATE TIMESTAMP, ZLASTOPENEDDATE TIMESTAMP, ZLASTVIEWEDMODIFICATIONDATE TIMESTAMP, ZLEGACYMODIFICATIONDATEATIMPORT TIMESTAMP, ZMODIFICATIONDATE1 TIMESTAMP, ZLASTSYNCDATE TIMESTAMP, ZCUSTOMNOTESORTTYPEMODIFICATIONDATE TIMESTAMP, ZDATEFORLASTTITLEMODIFICATION TIMESTAMP, ZPARENTMODIFICATIONDATE TIMESTAMP, ZIDENTIFIER VARCHAR, ZPASSWORDHINT VARCHAR, ZZONEOWNERNAME VARCHAR, ZADDITIONALINDEXABLETEXT VARCHAR, ZFALLBACKIMAGEGENERATION VARCHAR, ZFALLBACKPDFGENERATION VARCHAR, ZFALLBACKSUBTITLEIOS VARCHAR, ZFALLBACKSUBTITLEMAC VARCHAR, ZFALLBACKTITLE VARCHAR, ZHANDWRITINGSUMMARY VARCHAR, ZIMAGECLASSIFICATIONSUMMARY VARCHAR, ZOCRSUMMARY VARCHAR, ZPAPERBUNDLEGENERATION VARCHAR, ZREMOTEFILEURLSTRING VARCHAR, ZSUMMARY VARCHAR, ZTITLE VARCHAR, ZTYPEUTI VARCHAR, ZURLSTRING VARCHAR, ZUSERTITLE VARCHAR, ZGENERATION VARCHAR, ZDEVICEIDENTIFIER VARCHAR, ZDISPLAYTEXT VARCHAR, ZSTANDARDIZEDCONTENT VARCHAR, ZALTTEXT VARCHAR, ZTOKENCONTENTIDENTIFIER VARCHAR, ZTYPEUTI1 VARCHAR, ZCONTENTHASHATIMPORT VARCHAR, ZFILENAME VARCHAR, ZGENERATION1 VARCHAR, ZHOSTAPPLICATIONIDENTIFIER VARCHAR, ZLEGACYCONTENTHASHATIMPORT VARCHAR, ZLEGACYIMPORTDEVICEIDENTIFIER VARCHAR, ZLEGACYMANAGEDOBJECTIDURIREPRESENTATION VARCHAR, ZSELECTEDINKCOLORSTRING VARCHAR, ZSELECTEDINKIDENTIFIER VARCHAR, ZSNIPPET VARCHAR, ZTHUMBNAILATTACHMENTIDENTIFIER VARCHAR, ZTITLE1 VARCHAR, ZWIDGETSNIPPET VARCHAR, ZACCOUNTNAMEFORACCOUNTLISTSORTING VARCHAR, ZNESTEDTITLEFORSORTING VARCHAR, ZNAME VARCHAR, ZSERVERSIDEUPDATETASKLASTATTEMPTEDBUILD VARCHAR, ZSERVERSIDEUPDATETASKLASTATTEMPTEDVERSION VARCHAR, ZSERVERSIDEUPDATETASKLASTCOMPLETEDBUILD VARCHAR, ZSERVERSIDEUPDATETASKLASTCOMPLETEDVERSION VARCHAR, ZUSERRECORDNAME VARCHAR, ZSMARTFOLDERQUERYJSON VARCHAR, ZTITLE2 VARCHAR, ZATTRIBUTEDSNIPPET BLOB, ZATTRIBUTEDTITLE BLOB, ZREPLICAIDTOBUNDLEIDENTIFIER BLOB, ZACTIVITYEVENTSDATA BLOB, ZASSETCRYPTOINITIALIZATIONVECTOR BLOB, ZASSETCRYPTOTAG BLOB, ZCRYPTOINITIALIZATIONVECTOR BLOB, ZCRYPTOSALT BLOB, ZCRYPTOTAG BLOB, ZCRYPTOWRAPPEDKEY BLOB, ZENCRYPTEDVALUESJSON BLOB, ZREPLICAIDTONOTESVERSIONDATA BLOB, ZSERVERRECORDDATA BLOB, ZSERVERSHAREDATA BLOB, ZUNAPPLIEDENCRYPTEDRECORDDATA BLOB, ZUSERSPECIFICSERVERRECORDDATA BLOB, ZCRYPTOPASSPHRASEVERIFIER BLOB, ZMERGEABLEDATA BLOB, ZFALLBACKIMAGECRYPTOINITIALIZATIONVECTOR BLOB, ZFALLBACKIMAGECRYPTOTAG BLOB, ZFALLBACKPDFCRYPTOINITIALIZATIONVECTOR BLOB, ZFALLBACKPDFCRYPTOTAG BLOB, ZLINKPRESENTATIONARCHIVEDMETADATA BLOB, ZMARKUPMODELDATA BLOB, ZMERGEABLEDATA1 BLOB, ZMERGEABLEPREFERREDVIEWSIZE BLOB, ZMETADATADATA BLOB, ZSYNAPSEDATA BLOB, ZTEMPORARYTRANSCRIPTDATA BLOB, ZCRYPTOMETADATAINITIALIZATIONVECTOR BLOB, ZCRYPTOMETADATATAG BLOB, ZENCRYPTEDMETADATA BLOB, ZMETADATA BLOB, ZLASTNOTIFIEDTIMESTAMPDATA BLOB, ZLASTVIEWEDTIMESTAMPDATA BLOB, ZOUTLINESTATEDATA BLOB, ZREPLICAIDTOUSERIDDICTDATA BLOB, ZCRYPTOVERIFIER BLOB, ZSERVERSIDEUPDATETASKCONTINUATIONTOKEN BLOB, ZMERGEABLEDATA2 BLOB );
+CREATE TABLE ZICLOCATION ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZPLACEUPDATED INTEGER, ZATTACHMENT INTEGER, ZLATITUDE FLOAT, ZLONGITUDE FLOAT, ZPLACEMARKDATA BLOB );
+CREATE TABLE ZICNOTEDATA ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZNOTE INTEGER, ZCRYPTOINITIALIZATIONVECTOR BLOB, ZCRYPTOTAG BLOB, ZDATA BLOB );
+CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME VARCHAR, Z_SUPER INTEGER, Z_MAX INTEGER);`;
+
+// Entities as the real store numbers them in Z_PRIMARYKEY.
+const noteEntities = {
+  ICAccount: 14,
+  ICAttachment: 5,
+  ICFolder: 15,
+  ICInlineAttachment: 9,
+  ICMedia: 11,
+  ICNote: 12,
+} as const;
+
+// A 2×2 table (a1 b1 / a2 b2) as Notes saved it: a gzipped CRDT document.
+const noteTable = Buffer.from(
+  'H4sIAAAAAAAAE7VVW2jTYBRusq7Lss7F6DaNMjHeRsZKjXhBJzhao9OuStt5HdM0/Z2pWTLTdE4fFCuigogXHCoiMkHBPeh8UJCp+OCD0yGoTIYPvil4x9uDL3rSyzRLQcH5k/TkfOf7z5/v/On5CQf9sIxwUA7mXhnpIp3wiDGr40GCYjjCQc9kp3uzozbPT24wLgKjcS8GtgBsAdhCsARYF9hSxk2Smdzg4UxtvIbAmFkETk9jp/pCETGqIJ+mJNtUv6wjyZA1NYC2GBEtJLduNZhHWAp7gJHdGLmLDNCuD3f64GKodELzzdO2GksjGCA4k7bVOFNBEhD7AaMMeMPPHE5g5k2PB4nUq6/rAq/PNuo3jpV/3OsfXAQoRlPz0eu+/m5h/alU/3Nx4MoyejpJkbjXlOVksoVKI0WAuHLIb6xCG6sohzDuOEngUBwnjY/wcItXYPGc/7sSh1eWxluq/JcuDBh6Z/zW+UwlBrw14eYvQu0VrPOtwQ1qWY0kKCq2aHQDUjKiEiaLtLHceStRaPFcFq/I4hHMTD6TvwSyjbHkLwZk7HD+HA9mecssPPPDpIZ5zaENNB6d/U+1nAAf9PgJ2ApqbXddDy8JVfs98X3XvcsfZ7Pzo5O95+3g0Lt+4XtKPrN4W2nXS4tG2qZxnFWjOEoatwvuz5tahNS1y8/uLMB71Wz2UdJ4/dzd3qlNS8jbGzuOLG85HWcJOYZUQzZ2shWSnq9hsM4EUrawLkkPaTsSbHFTU4O/QY2hTrZY0jPcBFsiIUXJOlylpLV5xPZ2BXl8IX/EEwwHk21RpOcJhA1dVlu5clvAXIWrGAFDR0uCw1Xb8BBqlRMG0huTiiGvEZUkCiAxYXDT/oJpWx2W0RHiJuaFg1rMPiMY9ouGmB9G3OxfsKoZKOFp8PkULRkL71QlUL8qGodK10OxO2AblnbAdvyuMDdFAD3mjDBSMhsTNszkrJ0ZidQnY7IWQpKmx8zy1vyZ4xF0sbXNXHpGPnJEF9WEpMvtRhhlaJUjadnjxh6A+WaAp45i9w9Nqgt8O80Unjt4YaiZp/pmvXfseCKUX2vcPP8ANecrbzszeGpy7Fst39X47HLlmynvT/ac4G0nCE99unk1dWOgfs/xFyW7I3Vje3lbx+WpQGioap7csO9i9FX53M9Pf/C2/rtwMsmQtrekcfjvQCf/CfJmFaHRBwAA',
+  'base64',
+);
+
+// Protocol Buffers encoding for note bodies: varints and length-delimited
+// fields are all a topotext.String needs.
+const protobuf = {
+  varint(value: number): number[] {
+    const bytes: number[] = [];
+    let rest = value;
+    while (rest > 0x7f) {
+      bytes.push((rest & 0x7f) | 0x80);
+      rest = Math.floor(rest / 128);
     }
-  }
+    bytes.push(rest);
+    return bytes;
+  },
+  number(field: number, value: number): number[] {
+    return [...protobuf.varint(field << 3), ...protobuf.varint(value)];
+  },
+  bytes(field: number, value: Uint8Array | string | number[]): number[] {
+    const bytes =
+      typeof value === 'string' ? [...Buffer.from(value, 'utf8')] : [...value];
+    return [
+      ...protobuf.varint((field << 3) | 2),
+      ...protobuf.varint(bytes.length),
+      ...bytes,
+    ];
+  },
+};
 
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-test-'));
-  const source = new Notes();
+type NoteRun = {
+  text: string;
+  style?: number;
+  todo?: { id: string; done: boolean };
+  bold?: boolean;
+  link?: string;
+  attachment?: { id: string; type: string };
+};
+
+// A note body as Notes stores it: versioned_document.Document > Version >
+// topotext.String { string, attribute runs }, gzipped.
+const noteBody = (runs: NoteRun[]) => {
+  const text = runs.map((run) => run.text).join('');
+  const string = [
+    ...protobuf.bytes(2, text),
+    ...runs.flatMap((run) =>
+      protobuf.bytes(5, [
+        ...protobuf.number(1, run.text.length),
+        ...(run.style === undefined && run.todo === undefined
+          ? []
+          : protobuf.bytes(2, [
+              ...(run.style === undefined ? [] : protobuf.number(1, run.style)),
+              ...(run.todo === undefined
+                ? []
+                : protobuf.bytes(5, [
+                    ...protobuf.bytes(1, Buffer.from(run.todo.id, 'hex')),
+                    ...protobuf.number(2, run.todo.done ? 1 : 0),
+                  ])),
+            ])),
+        ...(run.bold ? protobuf.number(5, 1) : []),
+        ...(run.link === undefined ? [] : protobuf.bytes(9, run.link)),
+        ...(run.attachment === undefined
+          ? []
+          : protobuf.bytes(12, [
+              ...protobuf.bytes(1, run.attachment.id),
+              ...protobuf.bytes(2, run.attachment.type),
+            ])),
+      ]),
+    ),
+  ];
+  return gzipSync(
+    Uint8Array.from(
+      protobuf.bytes(2, [
+        ...protobuf.number(1, 0),
+        ...protobuf.bytes(3, string),
+      ]),
+    ),
+  );
+};
+
+// Core Data dates: seconds since 2001-01-01.
+const coreDataSeconds = (iso: string) =>
+  (Date.parse(iso) - Date.UTC(2001, 0, 1)) / 1000;
+
+const richNote = [
+  { text: 'Groceries\n', style: 0, bold: true },
+  { text: 'Milk\n', style: 103, todo: { id: 'aa'.repeat(16), done: true } },
+  { text: 'Eggs\n', style: 103, todo: { id: 'bb'.repeat(16), done: false } },
+  { text: 'Buy ' },
+  { text: 'fresh', bold: true },
+  { text: '\nsee ' },
+  { text: 'site', link: 'https://example.com/list' },
+  { text: '\n' },
+  { text: '￼', attachment: { id: 'ATT-FILE', type: 'public.plain-text' } },
+  { text: '\n' },
+  {
+    text: '￼',
+    attachment: { id: 'ATT-TABLE', type: 'com.apple.notes.table' },
+  },
+  { text: '\ntag ' },
+  {
+    text: '￼',
+    attachment: {
+      id: 'INLINE-TAG',
+      type: 'com.apple.notes.inlinetextattachment.hashtag',
+    },
+  },
+  { text: '\nlink ' },
+  {
+    text: '\ufffc',
+    attachment: {
+      id: 'INLINE-LINK',
+      type: 'com.apple.notes.inlinetextattachment.link',
+    },
+  },
+  { text: '\n' },
+];
+
+// A store with a formatted note (checklist, link, file, table, tag), a
+// locked note, a note in Recently Deleted, a cloud placeholder and a row
+// Notes marked for deletion. The file attachment's bytes sit where Notes
+// keeps media; the photo's do not, as when iCloud has not downloaded it.
+const noteStoreFixture = async (directory: string) => {
+  const path = join(directory, 'NoteStore.sqlite');
+  const media = join(
+    directory,
+    'Accounts',
+    'ACCOUNT-1',
+    'Media',
+    'MEDIA-FILE',
+    '1_GEN',
+  );
+  mkdirSync(media, { recursive: true });
+  await writeFile(join(media, 'list.txt'), 'attached words');
+  using database = new DatabaseSync(path);
+  database.exec(noteStoreSchema);
+  const entity = database.prepare(
+    'INSERT INTO Z_PRIMARYKEY (Z_ENT, Z_NAME) VALUES (?, ?)',
+  );
+  for (const [name, id] of Object.entries(noteEntities)) entity.run(id, name);
+  const created = coreDataSeconds('2025-01-02T03:04:05.006Z');
+  const modified = coreDataSeconds('2025-02-03T04:05:06.007Z');
+  database.exec(`
+    INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZNAME, ZACCOUNTTYPE) VALUES (1, 14, 'ACCOUNT-1', 'iCloud', 1);
+    INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE2, ZACCOUNT8, ZFOLDERTYPE, ZPARENT) VALUES
+      (2, 15, 'FOLDER-NOTES', 'Notes', 1, 0, NULL),
+      (3, 15, 'FOLDER-TRASH', 'Recently Deleted', 1, 1, NULL),
+      (4, 15, 'FOLDER-CHILD', 'Child', 1, 0, 2);
+    INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7, ZNOTEDATA, ZCREATIONDATE3, ZMODIFICATIONDATE1, ZISPINNED, ZISPASSWORDPROTECTED, ZHASCHECKLIST, ZHASCHECKLISTINPROGRESS) VALUES
+      (5, 12, 'NOTE-RICH', 'Groceries', 2, 1, 1, ${created}, ${modified}, 1, 0, 1, 1),
+      (6, 12, 'NOTE-LOCKED', 'Secret', 2, 1, 2, ${created}, ${modified}, 0, 1, 0, 0),
+      (7, 12, 'NOTE-PLACEHOLDER', NULL, NULL, 1, 3, NULL, NULL, 0, 0, 0, 0),
+      (8, 12, 'NOTE-TRASHED', 'Old', 3, 1, 4, ${created}, ${modified}, 0, 0, 0, 0);
+    INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZNOTE, ZACCOUNT1, ZMEDIA, ZTYPEUTI, ZFILESIZE, ZCREATIONDATE, ZMODIFICATIONDATE, ZOCRSUMMARY, ZMARKEDFORDELETION) VALUES
+      (9, 5, 'ATT-FILE', 5, 1, 10, 'public.plain-text', 14, ${created}, ${modified}, NULL, 0),
+      (11, 5, 'ATT-TABLE', 5, 1, NULL, 'com.apple.notes.table', 0, ${created}, ${modified}, NULL, 0),
+      (12, 5, 'ATT-PHOTO', 5, 1, 13, 'public.jpeg', 2048, ${created}, ${modified}, 'photo words', 0),
+      (14, 5, 'ATT-LOCKED', 6, 1, NULL, 'public.jpeg', 10, ${created}, ${modified}, 'secret words', 0),
+      (16, 5, 'ATT-PURGED', 5, 1, NULL, 'public.jpeg', 10, ${created}, ${modified}, NULL, 1);
+    INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZFILENAME, ZGENERATION1, ZACCOUNT6, ZATTACHMENT1) VALUES
+      (10, 11, 'MEDIA-FILE', 'list.txt', '1_GEN', 1, 9),
+      (13, 11, 'MEDIA-PHOTO', 'photo.jpg', '1_GEN', 1, 12);
+    INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZNOTE1, ZTYPEUTI1, ZALTTEXT, ZTOKENCONTENTIDENTIFIER, ZCREATIONDATE2) VALUES
+      (15, 9, 'INLINE-TAG', 5, 'com.apple.notes.inlinetextattachment.hashtag', '#food', 'FOOD', ${created}),
+      (17, 9, 'INLINE-LINK', 5, 'com.apple.notes.inlinetextattachment.link', 'Old', 'applenotes:note/note-trashed', ${created});
+    INSERT INTO ZICLOCATION (ZATTACHMENT, ZLATITUDE, ZLONGITUDE) VALUES (12, 52.52, 13.405);
+  `);
+  database
+    .prepare(
+      'UPDATE ZICCLOUDSYNCINGOBJECT SET ZMERGEABLEDATA1 = ? WHERE Z_PK = 11',
+    )
+    .run(noteTable);
+  const data = database.prepare(
+    'INSERT INTO ZICNOTEDATA (Z_PK, ZNOTE, ZDATA) VALUES (?, ?, ?)',
+  );
+  data.run(1, 5, noteBody(richNote));
+  data.run(2, 6, Uint8Array.from([1, 2, 3]));
+  data.run(3, 7, noteBody([{ text: 'not downloaded\n' }]));
+  data.run(4, 8, noteBody([{ text: 'Old\nthrown away\n' }]));
+  return path;
+};
+
+const noteRows = (path: string, sql: string) => {
+  using database = new DatabaseSync(path, { readOnly: true });
+  return database
+    .prepare(sql)
+    .all()
+    .map((row) => ({ ...row }));
+};
+
+const notesPipeline = (source: AppleNotesSource, directory: string) => {
   const destination = new SQLiteDestination({
-    path: join(scratch.path, 'notes.sqlite'),
+    path: join(directory, 'notes.sqlite'),
   });
-  const copy = new Copy(source.accounts, destination.table('accounts'));
-  const results = await new Pipeline({
-    source,
+  return {
     destination,
-    steps: [copy],
-  }).run();
+    pipeline: new Pipeline({
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: join(directory, 'notes-state.sqlite'),
+      }),
+      steps: [
+        source.accounts,
+        source.folders,
+        source.notes,
+        source.inlineAttachments,
+        source.attachments,
+      ].map(
+        (stream) =>
+          new Copy(
+            stream,
+            stream.supportsFileTransfer
+              ? destination.table(stream.name, (columns) => [
+                  ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                  columns.blob('bytes').from(stream.file),
+                ])
+              : destination.table(stream.name),
+            {
+              id: stream.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              primaryKey: [...stream.primaryKey],
+            },
+          ),
+      ),
+    }),
+  };
+};
 
-  assert.deepEqual(results, [{ copy, count: 1, deleted: 0 }]);
-  using database = new DatabaseSync(destination.path, { readOnly: true });
-  const row = database.prepare('SELECT id, name FROM accounts').get();
-  assert.ok(row);
-  assert.deepEqual({ ...row }, { id: 'account-1', name: 'Test account' });
+test('Notes exports every stream from its store, skipping cloud placeholders and locked content', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const source = new AppleNotesSource({
+    path: await noteStoreFixture(scratch.path),
+  });
+  const { destination, pipeline } = notesPipeline(source, scratch.path);
+
+  const results = await pipeline.run();
+
+  const rows = (sql: string) => noteRows(destination.path, sql);
+  assert.deepEqual(
+    results.map(({ copy, count }) => [copy.from.name, count]),
+    [
+      ['accounts', 1],
+      ['folders', 3],
+      ['notes', 3],
+      ['inlineAttachments', 2],
+      ['attachments', 4],
+    ],
+  );
+  assert.deepEqual(rows('SELECT id, name, type FROM accounts'), [
+    { id: 'ACCOUNT-1', name: 'iCloud', type: 1 },
+  ]);
+  assert.deepEqual(
+    rows('SELECT id, accountId, parentId, name, type FROM folders ORDER BY id'),
+    [
+      {
+        id: 'FOLDER-CHILD',
+        accountId: 'ACCOUNT-1',
+        parentId: 'FOLDER-NOTES',
+        name: 'Child',
+        type: 0,
+      },
+      {
+        id: 'FOLDER-NOTES',
+        accountId: 'ACCOUNT-1',
+        parentId: null,
+        name: 'Notes',
+        type: 0,
+      },
+      {
+        id: 'FOLDER-TRASH',
+        accountId: 'ACCOUNT-1',
+        parentId: null,
+        name: 'Recently Deleted',
+        type: 1,
+      },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      'SELECT id, folderId, title, text, markdown, createdAt, modifiedAt, pinned, hasChecklist, checklistInProgress, locked FROM notes ORDER BY id',
+    ),
+    [
+      {
+        id: 'NOTE-LOCKED',
+        folderId: 'FOLDER-NOTES',
+        title: 'Secret',
+        text: null,
+        markdown: null,
+        createdAt: '2025-01-02T03:04:05.006Z',
+        modifiedAt: '2025-02-03T04:05:06.007Z',
+        pinned: 0,
+        hasChecklist: 0,
+        checklistInProgress: 0,
+        locked: 1,
+      },
+      {
+        id: 'NOTE-RICH',
+        folderId: 'FOLDER-NOTES',
+        title: 'Groceries',
+        text: 'Groceries\nMilk\nEggs\nBuy fresh\nsee site\n\n\ntag #food\nlink Old',
+        markdown: [
+          '# Groceries',
+          '- [x] Milk',
+          '- [ ] Eggs',
+          'Buy **fresh**',
+          'see [site](<https://example.com/list>)',
+          '[list.txt](attachment:ATT-FILE)',
+          '',
+          '| a1 | b1 |',
+          '| --- | --- |',
+          '| a2 | b2 |',
+          '',
+          'tag #food',
+          'link [Old](<applenotes:note/note-trashed>)',
+        ].join('\n'),
+        createdAt: '2025-01-02T03:04:05.006Z',
+        modifiedAt: '2025-02-03T04:05:06.007Z',
+        pinned: 1,
+        hasChecklist: 1,
+        checklistInProgress: 1,
+        locked: 0,
+      },
+      {
+        id: 'NOTE-TRASHED',
+        folderId: 'FOLDER-TRASH',
+        title: 'Old',
+        text: 'Old\nthrown away',
+        markdown: 'Old\nthrown away',
+        createdAt: '2025-01-02T03:04:05.006Z',
+        modifiedAt: '2025-02-03T04:05:06.007Z',
+        pinned: 0,
+        hasChecklist: 0,
+        checklistInProgress: 0,
+        locked: 0,
+      },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      'SELECT id, noteId, type, text, target FROM inlineAttachments ORDER BY id',
+    ),
+    [
+      {
+        id: 'INLINE-LINK',
+        noteId: 'NOTE-RICH',
+        type: 'com.apple.notes.inlinetextattachment.link',
+        text: 'Old',
+        target: 'applenotes:note/note-trashed',
+      },
+      {
+        id: 'INLINE-TAG',
+        noteId: 'NOTE-RICH',
+        type: 'com.apple.notes.inlinetextattachment.hashtag',
+        text: '#food',
+        target: 'FOOD',
+      },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      'SELECT id, noteId, type, filename, ocrText, latitude, longitude, availableLocally, CAST(bytes AS TEXT) AS content FROM attachments ORDER BY id',
+    ).map(({ content, ...row }) => ({ ...row, hasBytes: content !== null })),
+    [
+      {
+        id: 'ATT-FILE',
+        noteId: 'NOTE-RICH',
+        type: 'public.plain-text',
+        filename: 'list.txt',
+        ocrText: null,
+        latitude: null,
+        longitude: null,
+        availableLocally: 1,
+        hasBytes: true,
+      },
+      {
+        id: 'ATT-LOCKED',
+        noteId: 'NOTE-LOCKED',
+        type: 'public.jpeg',
+        filename: null,
+        ocrText: null,
+        latitude: null,
+        longitude: null,
+        availableLocally: 0,
+        hasBytes: false,
+      },
+      {
+        id: 'ATT-PHOTO',
+        noteId: 'NOTE-RICH',
+        type: 'public.jpeg',
+        filename: 'photo.jpg',
+        ocrText: 'photo words',
+        latitude: 52.52,
+        longitude: 13.405,
+        availableLocally: 0,
+        hasBytes: false,
+      },
+      {
+        id: 'ATT-TABLE',
+        noteId: 'NOTE-RICH',
+        type: 'com.apple.notes.table',
+        filename: null,
+        ocrText: null,
+        latitude: null,
+        longitude: null,
+        availableLocally: 0,
+        hasBytes: false,
+      },
+    ],
+  );
 });
 
-test('Notes uses native file availability and rolls back actual export failures', async (t) => {
-  const source = new AppleNotesSource();
-  const nativeError = Object.assign(new Error('Command failed: osascript'), {
-    stderr:
-      'execution error: Error: Error: AppleEvent handler failed. (-10000)\n',
-  });
-  const records = [
-    recordFor(source.attachments, { id: 'file-1', name: 'example.txt' }),
-    recordFor(source.attachments, { id: 'embedded-1', name: null }),
-    recordFor(source.attachments, { id: 'url-1', url: 'https://example.com' }),
-    recordFor(source.attachments, { id: 'locked-1' }),
-  ];
-  const stagedPaths: string[] = [];
-  t.mock.method(osa, 'execute', async (script: string) => {
-    if (!script.includes('app.save')) return JSON.stringify(records);
-    return runInNewContext(script, {
-      Application: () => ({
-        running: () => true,
-        attachments: {
-          byId: (id: string) => ({
-            id,
-            container: () => ({ passwordProtected: () => id === 'locked-1' }),
-            url: () => (id === 'url-1' ? 'https://example.com' : null),
-            contents: () => (id === 'embedded-1' ? null : {}),
-          }),
-        },
-        save: (attachment: { id: string }, options: { in: string }) => {
-          if (attachment.id !== 'file-1') throw nativeError;
-          writeFileSync(options.in, 'example');
-        },
-      }),
-      Path: (path: string) => {
-        stagedPaths.push(path);
-        return path;
-      },
-    }) as string;
-  });
+test('Notes loads edits and deletions incrementally and a repeat run writes nothing', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'notes.sqlite'),
+  const path = await noteStoreFixture(scratch.path);
+  const source = new AppleNotesSource({ path });
+  const { pipeline } = notesPipeline(source, scratch.path);
+  const counts = async () =>
+    Object.fromEntries(
+      (await pipeline.run()).map(({ copy, count, deleted }) => [
+        copy.from.name,
+        [count, deleted],
+      ]),
+    );
+
+  await pipeline.run();
+  const unchanged = await counts();
+  {
+    using notes = new DatabaseSync(path);
+    notes
+      .prepare('UPDATE ZICNOTEDATA SET ZDATA = ? WHERE Z_PK = 4')
+      .run(noteBody([{ text: 'Old\nrestored\n' }]));
+    notes.exec(
+      "UPDATE ZICCLOUDSYNCINGOBJECT SET ZMARKEDFORDELETION = 1 WHERE ZIDENTIFIER IN ('ATT-PHOTO', 'NOTE-LOCKED')",
+    );
+  }
+  const changed = await counts();
+
+  assert.deepEqual(unchanged, {
+    accounts: [0, 0],
+    folders: [0, 0],
+    notes: [0, 0],
+    inlineAttachments: [0, 0],
+    attachments: [0, 0],
   });
+  assert.deepEqual(changed, {
+    accounts: [0, 0],
+    folders: [0, 0],
+    notes: [1, 1],
+    inlineAttachments: [0, 0],
+    attachments: [0, 2],
+  });
+});
+
+test('a Notes session reads one snapshot while Notes keeps writing', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const path = await noteStoreFixture(scratch.path);
+  const source = new AppleNotesSource({ path });
   const copy = new Copy(
-    source.attachments,
-    destination.table('attachments', (c) => [
-      c.text('id'),
-      c.blob('bytes').from(source.attachments.file),
-    ]),
+    source.notes,
+    new SQLiteDestination({ path: join(scratch.path, 'out.sqlite') }).table(
+      'notes',
+    ),
   );
-  const pipeline = new Pipeline({ source, destination, steps: [copy] });
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 4, deleted: 0 }]);
-  using database = new DatabaseSync(destination.path);
-  const rows = () =>
-    database
-      .prepare(
-        'SELECT id, (SELECT c.bytes FROM "_mac_elt_files_attachments_bytes" c WHERE c.file = a.bytes AND c.n = 0) AS bytes FROM attachments a',
+  const ids = async (session: Awaited<ReturnType<typeof source.session>>) =>
+    (await Array.fromAsync(source.read(copy.configuration, null, session)))
+      .map((message) =>
+        'data' in message ? Reflect.get(Object(message.data), 'id') : null,
       )
-      .all()
-      .map((row) => ({ ...row }));
-  const expected = [
-    { id: 'file-1', bytes: new Uint8Array(Buffer.from('example')) },
-    ...['embedded-1', 'url-1', 'locked-1'].map((id) => ({ id, bytes: null })),
-  ];
-  assert.deepEqual(rows(), expected);
-  records.push(
-    recordFor(source.attachments, { id: 'broken-1', name: 'broken.txt' }),
-  );
-  await assert.rejects(pipeline.run(), (error) => {
-    assert.ok(error instanceof PipelineError);
-    assert.equal(error.failedCopy, copy);
-    assert.equal(error.cause, nativeError);
+      .sort();
+
+  const pinned = await (async () => {
+    await using session = await source.session();
+    const before = await ids(session);
+    {
+      using notes = new DatabaseSync(path);
+      notes.exec(
+        "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
+      );
+    }
+    return { before, during: await ids(session) };
+  })();
+  const after = await (async () => {
+    await using session = await source.session();
+    return ids(session);
+  })();
+
+  assert.deepEqual(pinned.during, pinned.before);
+  assert.deepEqual(after, [...pinned.before, 'NOTE-NEW'].sort());
+});
+
+test('Notes names Full Disk Access when its store cannot be opened and refuses an unknown layout', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const unknown = join(scratch.path, 'NoteStore.sqlite');
+  {
+    using database = new DatabaseSync(unknown);
+    database.exec(
+      'CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER, Z_NAME VARCHAR); CREATE TABLE ZICNOTEDATA (Z_PK INTEGER, ZDATA BLOB); CREATE TABLE ZICLOCATION (ZATTACHMENT INTEGER, ZLATITUDE FLOAT, ZLONGITUDE FLOAT); CREATE TABLE ZICCLOUDSYNCINGOBJECT (Z_PK INTEGER, Z_ENT INTEGER, ZIDENTIFIER VARCHAR)',
+    );
+  }
+  const missing = new AppleNotesSource({
+    path: join(scratch.path, 'missing', 'NoteStore.sqlite'),
+  });
+  const other = new AppleNotesSource({ path: unknown });
+
+  const opening = missing.session();
+  const reading = other.session();
+
+  await assert.rejects(opening, (error) => {
+    assert.ok(error instanceof NotesUnavailableError);
+    assert.match(error.message, /Full Disk Access/);
+    assert.ok(error.cause instanceof Error);
     return true;
   });
-  assert.deepEqual(rows(), expected);
-  for (const path of stagedPaths)
-    await assert.rejects(readFile(path), { code: 'ENOENT' });
+  await assert.rejects(reading, (error) => {
+    assert.ok(error instanceof NotesSchemaError);
+    assert.match(error.message, /ZICCLOUDSYNCINGOBJECT\.ZTITLE1/);
+    return true;
+  });
 });
 
-test('Notes becoming unavailable during attachment export retains its actionable error', async (t) => {
-  const cause = Object.assign(new Error('Command failed: osascript'), {
-    stderr: 'execution error: Error: NOTES_UNAVAILABLE (-2700)\n',
-  });
-  t.mock.method(osa, 'execute', async () => {
-    throw cause;
-  });
-  await assert.rejects(
-    new AttachmentsStream().save('attachment-1', '/unused'),
-    (error) => {
-      assert.ok(error instanceof NotesUnavailableError);
-      assert.equal(error.cause, cause);
-      return true;
-    },
-  );
-});
-
-test('Notes incremental copies skip unchanged notes, catch backdated edits and delete removed notes', async (t) => {
-  const source = new AppleNotesSource();
-  const note = (id: string, body: string, modifiedAt = timestamp) =>
-    recordFor(source.notes, { id, body, modifiedAt });
-  let notes = [note('first', 'one'), note('second', 'two')];
-  t.mock.method(osa, 'execute', async () => JSON.stringify(notes));
+test('a Notes watch keeps Notes running and loads each commit while Notes keeps its store open', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'notes.sqlite'),
-  });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
-  });
-  const copy = new Copy(source.notes, destination.table('notes'), {
-    id: 'notes',
-    syncMode: 'incremental',
-    destinationSyncMode: 'append_dedup',
-    primaryKey: ['id'],
-  });
-  const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy],
-  });
-  const rows = () => {
-    using database = new DatabaseSync(destination.path, { readOnly: true });
-    return database
-      .prepare('SELECT id, body FROM notes ORDER BY id')
-      .all()
-      .map((row) => `${row.id}:${row.body}`);
-  };
-
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
-  // second changes without advancing modifiedAt, which a cursor would miss.
-  notes = [
-    note('first', 'one'),
-    note('second', 'two, edited', '2020-01-01T00:00:00.000Z'),
-    note('third', 'three'),
-  ];
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
-  notes = [
-    note('second', 'two, edited', '2020-01-01T00:00:00.000Z'),
-    note('third', 'three'),
-  ];
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 1 }]);
-  assert.deepEqual(rows(), ['second:two, edited', 'third:three']);
-  assert.throws(
-    () =>
-      new Copy(source.notes, destination.table('notes'), {
-        id: 'notes',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
-        cursorField: 'modifiedAt',
-      }).validate(source, destination, checkpoints),
-    /defines its own cursor; omit cursorField/,
-  );
-});
-
-test('Notes incremental attachment copies export files only for changed attachments', async (t) => {
-  const source = new AppleNotesSource();
-  const unchanged = recordFor(source.attachments, { id: 'a1', name: 'a.txt' });
-  let attachments = [
-    unchanged,
-    recordFor(source.attachments, { id: 'a2', name: 'b.txt' }),
-  ];
-  const saved: string[] = [];
-  t.mock.method(osa, 'execute', async (script: string) => {
-    if (!script.includes('app.save')) return JSON.stringify(attachments);
-    return runInNewContext(script, {
-      Application: () => ({
-        running: () => true,
-        attachments: {
-          byId: (id: string) => ({
-            id,
-            container: () => ({ passwordProtected: () => false }),
-            url: () => null,
-            contents: () => ({}),
-          }),
-        },
-        save: (attachment: { id: string }, options: { in: string }) => {
-          saved.push(attachment.id);
-          writeFileSync(options.in, `bytes of ${attachment.id}`);
-        },
-      }),
-      Path: (path: string) => path,
-    }) as string;
-  });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'notes.sqlite'),
-  });
-  const copy = new Copy(
-    source.attachments,
-    destination.table('attachments', (c) => [
-      c.text('id'),
-      c.blob('bytes').from(source.attachments.file),
-    ]),
-    {
-      id: 'attachments',
-      syncMode: 'incremental',
-      destinationSyncMode: 'append_dedup',
-      primaryKey: ['id'],
+  const path = await noteStoreFixture(scratch.path);
+  let launches = 0;
+  const source = new AppleNotesSource({
+    path,
+    pollIntervalMs: 20,
+    launchIntervalMs: 50,
+    launch: async () => {
+      launches++;
     },
-  );
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
   const pipeline = new Pipeline({
     source,
     destination,
     checkpoints: new SQLiteCheckpointStore({
       path: join(scratch.path, 'state.sqlite'),
     }),
-    steps: [copy],
-  });
-
-  await pipeline.run();
-  attachments = [
-    unchanged,
-    recordFor(source.attachments, { id: 'a2', name: 'b-renamed.txt' }),
-  ];
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 0 }]);
-  assert.deepEqual(saved, ['a1', 'a2', 'a2']);
-});
-
-test('Notes rejects malformed native records and keeps unavailability actionable on read', async (t) => {
-  const source = new AppleNotesSource();
-  let response: unknown;
-  const unavailable = Object.assign(new Error('Command failed: osascript'), {
-    stderr: 'execution error: Error: NOTES_UNAVAILABLE (-2700)\n',
-  });
-  let failure: Error | undefined;
-  t.mock.method(osa, 'execute', async () => {
-    if (failure) throw failure;
-    return JSON.stringify(response);
-  });
-  const destination = new MarkdownDestination({ path: '/unused' });
-  const read = (stream: Stream) =>
-    Array.fromAsync(
-      source.read(
-        new Copy(stream, destination.file(`${stream.name}.md`)).configuration,
-        null,
-      ),
-    );
-
-  for (const stream of [
-    source.accounts,
-    source.folders,
-    source.notes,
-    source.attachments,
-  ]) {
-    response = [recordFor(stream)];
-    assert.equal((await read(stream)).length, 1);
-    for (const [malformed, message] of [
-      [{}, `Notes returned invalid ${stream.name} records`],
-      [[null], `Notes returned an invalid ${stream.name} record`],
-      [
-        [recordFor(stream, { id: 1 })],
-        `Notes returned invalid ${stream.name}.id`,
-      ],
-      [
-        [{ ...recordFor(stream), extra: true }],
-        `Notes returned an invalid ${stream.name} record`,
-      ],
-    ] as const) {
-      response = malformed;
-      await assert.rejects(read(stream), { message });
-    }
-  }
-  for (const stream of [source.notes, source.attachments]) {
-    response = [recordFor(stream, { createdAt: '2025-01-02T03:04:05Z' })];
-    await assert.rejects(read(stream), {
-      message: `Notes returned invalid ${stream.name}.createdAt`,
-    });
-  }
-  failure = unavailable;
-  await assert.rejects(read(source.notes), (error) => {
-    assert.ok(error instanceof NotesUnavailableError);
-    assert.equal(error.cause, unavailable);
-    return true;
-  });
-});
-
-test('Notes JXA projection omits protected content and preserves absent attachment metadata', async (t) => {
-  const source = new AppleNotesSource();
-  const date = new Date(timestamp);
-  const note = (id: string, passwordProtected: boolean) => ({
-    id: () => id,
-    name: () => id,
-    container: () => ({ id: () => 'folder-1' }),
-    passwordProtected: () => passwordProtected,
-    body: () => '<p>secret</p>',
-    plaintext: () => 'secret',
-    creationDate: () => date,
-    modificationDate: () => date,
-    shared: () => false,
-  });
-  t.mock.method(
-    osa,
-    'execute',
-    async (script: string) =>
-      runInNewContext(script, {
-        Application: () => ({
-          running: () => true,
-          notes: () => [note('open', false), note('locked', true)],
-          attachments: () => [
-            {
-              id: () => 'attachment-1',
-              name: () => undefined,
-              container: () => ({ id: () => 'open' }),
-              contentIdentifier: () => undefined,
-              url: () => undefined,
-              creationDate: () => date,
-              modificationDate: () => date,
-              shared: () => true,
-            },
-          ],
-        }),
-      }) as string,
-  );
-  const destination = new MarkdownDestination({ path: '/unused' });
-  const read = (stream: Stream) =>
-    Array.fromAsync(
-      source.read(
-        new Copy(stream, destination.file('x.md')).configuration,
-        null,
-      ),
-    );
-  const projected = (id: string, passwordProtected: boolean) => ({
-    stream: 'notes',
-    data: {
-      id,
-      name: id,
-      containerId: 'folder-1',
-      body: passwordProtected ? null : '<p>secret</p>',
-      plaintext: passwordProtected ? null : 'secret',
-      createdAt: timestamp,
-      modifiedAt: timestamp,
-      passwordProtected,
-      shared: false,
-    },
-  });
-
-  assert.deepEqual(await read(source.notes), [
-    projected('open', false),
-    projected('locked', true),
-  ]);
-  assert.deepEqual(await read(source.attachments), [
-    {
-      stream: 'attachments',
-      data: {
-        id: 'attachment-1',
-        name: null,
-        containerId: 'open',
-        contentId: null,
-        url: null,
-        createdAt: timestamp,
-        modifiedAt: timestamp,
-        shared: true,
-      },
-    },
-  ]);
-});
-
-test('Notes rejects an attachment export that is not a regular file', async (t) => {
-  const source = new AppleNotesSource();
-  t.mock.method(osa, 'execute', async (script: string) => {
-    if (!script.includes('app.save'))
-      return JSON.stringify([
-        recordFor(source.attachments, { id: 'bundle-1', name: 'a.pages' }),
-      ]);
-    return runInNewContext(script, {
-      Application: () => ({
-        running: () => true,
-        attachments: {
-          byId: () => ({
-            container: () => ({ passwordProtected: () => false }),
-            url: () => null,
-            contents: () => ({}),
-          }),
-        },
-        save: (_attachment: unknown, options: { in: string }) =>
-          mkdirSync(options.in),
+    steps: [
+      new Copy(source.notes, destination.table('notes'), {
+        id: 'notes',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
       }),
-      Path: (path: string) => path,
-    }) as string;
+    ],
   });
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'notes.sqlite'),
-  });
-  const copy = new Copy(
-    source.attachments,
-    destination.table('attachments', (c) => [
-      c.text('id'),
-      c.blob('bytes').from(source.attachments.file),
-    ]),
-  );
+  // Notes holds its connection, and so its WAL, open the whole time.
+  using notes = new DatabaseSync(path);
+  const controller = new AbortController();
+  const batches: number[] = [];
 
-  await assert.rejects(
-    new Pipeline({ source, destination, steps: [copy] }).run(),
-    (error) => {
-      assert.ok(error instanceof PipelineError);
-      assert.match(String(error.cause), /regular attachment file/);
-      return true;
-    },
+  for await (const results of pipeline.watch({ signal: controller.signal })) {
+    batches.push(results[0]?.count ?? -1);
+    if (batches.length === 1)
+      notes.exec(
+        "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
+      );
+    else setTimeout(() => controller.abort(), 200);
+  }
+
+  assert.deepEqual(batches, [3, 1]);
+  // Once at the start, then again on the interval while the watch runs.
+  assert.ok(launches > 1);
+});
+
+test('the Notes exporter loads every stream end to end and a second run writes nothing', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const store = await noteStoreFixture(scratch.path);
+  const out = join(scratch.path, 'out');
+  const exporter = fileURLToPath(new URL('./main.js', import.meta.url));
+  const run = () =>
+    execFile(process.execPath, [exporter, '--note-store', store, '--out', out]);
+  const tables = () =>
+    noteRows(
+      join(out, 'apple-notes.sqlite'),
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'raw_%' ORDER BY name",
+    ).map(({ name }) => {
+      const [row] = noteRows(
+        join(out, 'apple-notes.sqlite'),
+        `SELECT count(*) AS rows, max(loaded_at) AS loadedAt FROM "${String(name)}"`,
+      );
+      return { name, rows: row?.rows, loadedAt: row?.loadedAt };
+    });
+
+  const first = await run();
+  const loaded = tables();
+  const second = await run();
+
+  assert.match(first.stdout, /Loaded Apple Notes/);
+  assert.deepEqual(
+    loaded.map(({ name, rows }) => [name, rows]),
+    [
+      ['raw_accounts', 1],
+      ['raw_attachments', 4],
+      ['raw_folders', 3],
+      ['raw_inlineAttachments', 2],
+      ['raw_notes', 3],
+    ],
+  );
+  assert.match(second.stdout, /Loaded Apple Notes/);
+  assert.deepEqual(tables(), loaded);
+  assert.deepEqual(
+    noteRows(
+      join(out, 'apple-notes.sqlite'),
+      'SELECT id, content FROM raw_attachments WHERE bytes IS NOT NULL',
+    ),
+    [{ id: 'ATT-FILE', content: 'attached words' }],
   );
 });
 
@@ -2087,75 +2284,6 @@ test('EventKit permission gate requests the correct entity and refuses incomplet
   }
 });
 
-test('Notes subscribes before its initial invalidation and reacts to native filesystem changes', {
-  timeout: 10_000,
-}, async (t) => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-watch-'));
-  const nativeWatch = fs.watch;
-  const source = new AppleNotesSource();
-  const controller = new AbortController();
-  try {
-    const closed = Promise.withResolvers<void>();
-    t.mock.method(
-      fs,
-      'watch',
-      (path: fs.PathLike, options: fs.WatchOptionsWithStringEncoding) => {
-        assert.match(
-          String(path),
-          /Library\/Group Containers\/group\.com\.apple\.notes$/,
-        );
-        const watcher = nativeWatch(scratch.path, options);
-        watcher.once('close', () => closed.resolve());
-        return watcher;
-      },
-    );
-    await using watching = source.watch({
-      streams: [source.notes],
-      signal: controller.signal,
-    });
-    assert.deepEqual(await watching.next(), {
-      value: [source.notes],
-      done: false,
-    });
-    const [changed] = await Promise.all([
-      watching.next(),
-      writeFile(join(scratch.path, 'NoteStore.sqlite-wal'), 'test change'),
-    ]);
-    assert.deepEqual(changed, { value: [source.notes], done: false });
-    controller.abort();
-    // Abort may follow already queued native events, so drain until cancellation.
-    await assert.rejects(
-      async () => {
-        for await (const _ of watching) {
-        }
-      },
-      { name: 'AbortError' },
-    );
-    await closed.promise;
-  } finally {
-    controller.abort();
-  }
-});
-
-test('Notes watcher permission failures preserve their cause and do not fall back to polling', async (t) => {
-  const cause = Object.assign(new Error('Access denied'), { code: 'EPERM' });
-  const start = t.mock.method(fs, 'watch', () => {
-    throw cause;
-  });
-  const source = new AppleNotesSource();
-  const watching = source.watch({
-    streams: [source.notes],
-    signal: new AbortController().signal,
-  });
-  await assert.rejects(watching.next(), (error) => {
-    assert.ok(error instanceof Error);
-    assert.match(error.message, /Full Disk Access/);
-    assert.equal(error.cause, cause);
-    return true;
-  });
-  assert.equal(start.mock.callCount(), 1);
-});
-
 test('Calendar and Reminders watch native EventKit notifications without reading personal data', {
   timeout: 10_000,
 }, async (t) => {
@@ -2558,8 +2686,10 @@ test('Calendar ICS rejects exports without events and reports a missing private 
           new MarkdownDestination({ path: '/unused' }).file('c.md'),
         ).configuration,
         null,
+        session,
       ),
     );
+  };
   const execute = t.mock.method(osa, 'execute', async () =>
     icsPage([
       {

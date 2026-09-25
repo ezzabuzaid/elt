@@ -5,20 +5,16 @@ import {
   type SyncMode,
   validateRecords,
 } from 'elt';
-import osa from '../../platform/macos/osa.ts';
-
-export class NotesUnavailableError extends Error {
-  override name = 'NotesUnavailableError';
-
-  constructor(cause: unknown) {
-    super(
-      'Apple Notes is closed or inaccessible. Open Notes; if it is already open, run outside the sandbox that blocks macOS automation.',
-      { cause },
-    );
-  }
-}
+import { eventKitFields } from '../eventkit-schema.ts';
+import type { NotesScan } from './notes-scan.ts';
 
 type Properties = Readonly<Record<string, FieldSchema>>;
+
+export const notesFields = {
+  ...eventKitFields,
+  nullableId: { type: ['string', 'null'], minLength: 1 },
+  nullableNumber: { type: ['number', 'null'] },
+} as const;
 
 // Every Notes property is required; the record type follows from the schema.
 export function notesSchema<P extends Properties>(properties: P) {
@@ -29,19 +25,28 @@ export function notesSchema<P extends Properties>(properties: P) {
   } as const;
 }
 
-// Internal extractor; public discovery returns only its Stream description.
-export abstract class AppleNotesStream<P extends Properties> {
+// What the source needs from any Notes stream, whatever its record type.
+export type NotesReader = {
+  describe(): Stream;
+  read(scan: NotesScan): Promise<Record<string, unknown>[]>;
+  file(record: Record<string, unknown>, scan: NotesScan): string | null;
+};
+
+// A Notes stream: its description, and how its records come out of a run's
+// scan. Reading is the same for every stream — pick the rows, project each,
+// validate against the schema — so streams supply only those two steps.
+// Public discovery returns only the Stream description.
+export abstract class AppleNotesStream<P extends Properties, Row> {
   abstract readonly name: string;
   abstract readonly jsonSchema: ReturnType<typeof notesSchema<P>>;
-  readonly primaryKey = ['id'] as const;
+  readonly primaryKey: readonly string[] = ['id'];
   readonly supportedSyncModes: readonly SyncMode[] = Object.freeze([
     'full_refresh',
     'incremental',
   ]);
-  // Notes has no change feed: incremental reads diff each full scan (diffSnapshot).
+  // Every read is the whole store, so incremental copies diff snapshots.
   readonly sourceDefinedCursor = true;
   readonly emitsDeletes = true;
-  protected abstract readonly script: string;
   #stream?: Stream;
 
   describe(): Stream {
@@ -49,33 +54,26 @@ export abstract class AppleNotesStream<P extends Properties> {
     return this.#stream;
   }
 
-  async *read(): AsyncGenerator<SchemaRecord<P>> {
-    const records: unknown = JSON.parse(
-      await this.execute(`JSON.stringify(${this.script});`),
+  async read(scan: NotesScan): Promise<SchemaRecord<P>[]> {
+    const records = await Promise.all(
+      this.rows(scan).map((row) => this.record(row, scan)),
     );
-    yield* validateRecords(
+    return validateRecords(
       this.describe(),
       records,
       'Notes',
     ) as SchemaRecord<P>[];
   }
 
-  protected async execute(script: string): Promise<string> {
-    try {
-      return await osa.execute(`
-        const app = Application('/System/Applications/Notes.app');
-        if (!app.running()) throw new Error('NOTES_UNAVAILABLE');
-        ${script}
-      `);
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        'stderr' in error &&
-        typeof error.stderr === 'string' &&
-        error.stderr.includes('NOTES_UNAVAILABLE')
-      )
-        throw new NotesUnavailableError(error);
-      throw error;
-    }
+  // The file a record carries, for streams that support file reads.
+  file(_record: SchemaRecord<P>, _scan: NotesScan): string | null {
+    return null;
   }
+
+  protected abstract rows(scan: NotesScan): readonly Row[];
+
+  protected abstract record(
+    row: Row,
+    scan: NotesScan,
+  ): SchemaRecord<P> | Promise<SchemaRecord<P>>;
 }

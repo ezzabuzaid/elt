@@ -38,7 +38,7 @@ const pipeline = new Pipeline({
 const results = await pipeline.run(); // [{ copy, count, deleted }, ...] in declaration order
 ```
 
-Accounts uses an explicit destination projection; notes uses inferred columns. Apple Notes exposes `accounts`, `folders`, `notes`, and `attachments` directly. `discover()` returns the same immutable descriptions for generic code that enumerates streams. Neither discovery nor constructing a declaration reads Notes or opens storage.
+Accounts uses an explicit destination projection; notes uses inferred columns. Apple Notes exposes `accounts`, `folders`, `notes`, `inlineAttachments`, and `attachments` directly. `discover()` returns the same immutable descriptions for generic code that enumerates streams. Neither discovery nor constructing a declaration reads Notes or opens storage.
 
 ## Sync modes
 
@@ -83,8 +83,7 @@ new Copy(source.searchAnalytics, destination.table('raw_search_analytics'), {
 Capabilities are immutable metadata:
 
 ```ts
-notes.accounts.supportedSyncModes; // ['full_refresh']
-notes.notes.supportedSyncModes;    // ['full_refresh', 'incremental']
+notes.notes.supportedSyncModes; // ['full_refresh', 'incremental']
 sqlite.supportedDestinationSyncModes;
 // ['overwrite', 'append', 'append_dedup', 'overwrite_dedup']
 ```
@@ -223,9 +222,27 @@ EventKit has no read transaction, so Calendar and Reminders sessions read optimi
 
 ### Apple Notes behavior
 
-All four streams are [snapshot streams](#snapshot-streams): incremental copies select no `cursorField` and use `append_dedup` keyed by `id`. Each run scans and validates the full collection through JXA, writes only new and changed records, and deletes records that disappeared. A change is detected from the record's content, so edits that keep an older `modifiedAt` are still loaded. Attachment reads contain metadata unless the target declares file-derived fields; files are exported only for new or changed attachments, and a changed file whose metadata did not change is not detected. Protected note content remains null.
+The source reads Notes' own Core Data store, `~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite`, read-only under Full Disk Access; Notes does not need to be open. Each run reads every selected stream inside one SQLite read transaction, so notes, attachments and folders come from the same moment. Note bodies are gzipped protobuf documents and tables are gzipped CRDT documents; both are decoded in-process.
 
-Notes returns notes in Recently Deleted, so they remain in the export until permanently deleted. JXA reads each stream separately, without a consistent database snapshot across streams.
+| Stream | Key | Contents |
+| --- | --- | --- |
+| `accounts` | `[id]` | Name and Notes' numeric account `type`. |
+| `folders` | `[id]` | Account, parent folder (nested folders), name, `type` (`1` is Recently Deleted), a smart folder's query, and whether it is shared. |
+| `notes` | `[id]` | Folder, account, title, plain `text`, `markdown`, created and modified times, `pinned`, Notes' own `hasChecklist` and `checklistInProgress` flags, `locked`, `shared`. |
+| `inlineAttachments` | `[id]` | Tags, mentions, links to other notes and calculation results as Notes stores them: `type` is Notes' identifier (for example `com.apple.notes.inlinetextattachment.hashtag`), `text` is what the note shows (`#travel`), and `target` what it points at: a tag's normalized name (`TRAVEL`), or for a link to another note that note's `applenotes:note/<id>` URL. |
+| `attachments` | `[id]` | Type identifier, title, file name, URL, Notes' summary, recognized text (`ocrText`, `handwritingText`), image labels, audio `transcript`, size, duration, dimensions, location, times, and `availableLocally`. Supports file reads. |
+
+A note's content lives in one place, its `markdown`: checklists render as `- [x]` items and tables as Markdown tables where they sit in the note. They are not repeated as separate streams.
+
+`markdown` renders Notes' paragraph styles and runs: Title, Heading and Subheading as `#`, `##` and `###`; bullet, dashed, numbered and checklist lists with their indentation; Monospaced as fenced code; block quotes; bold, italic, strikethrough and links. Underline, fonts and colors have no Markdown form and are dropped. A table is rendered in place, an inline tag or mention as its text, a link to another note as `[title](<applenotes:note/…>)`, and a file as `[name](attachment:<id>)` naming its `attachments` row. `text` is the note's visible text with inline tags and mentions kept and file placeholders removed.
+
+All streams are [snapshot streams](#snapshot-streams): incremental copies select no `cursorField` and use `append_dedup` keyed by the stream's key. Each run reads the whole store, writes only new and changed records, and deletes records that disappeared, including rows Notes marks for deletion. Reading is cheap: the store is local SQLite, so a run over thousands of notes takes milliseconds before decoding.
+
+Notes in Recently Deleted are notes in that folder, so they remain in the export until permanently deleted. Notes that Notes has listed but not yet downloaded from iCloud have no folder, title or dates; they are left out until they arrive. A locked note keeps its title, dates and flags; its text and Markdown stay out, and its attachments keep only their type, name, size and times.
+
+Only Notes syncs iCloud notes on the Mac. While Notes is closed, the store holds what Notes last synced: edits made on other devices reach it the next time Notes runs, which a [Notes watch](#watching-for-changes) arranges by launching Notes hidden.
+
+The store's layout changes between macOS releases. The source reads the macOS 26 layout and checks every column it uses before reading; a store without one fails with `NotesSchemaError` naming the missing columns rather than loading misplaced fields. A store that cannot be opened (missing, or no Full Disk Access) fails with `NotesUnavailableError`.
 
 ## Watching for changes
 
@@ -251,7 +268,7 @@ Watching preflights the whole pipeline, subscribes before the initial synchroniz
 The source owns change detection:
 
 - **Calendar and Reminders:** a persistent OSA process subscribes to native `EKEventStoreChangedNotification` notifications. These invalidate all selected streams because EventKit does not identify individual changes. The notification covers the whole event store, so a Calendar edit also re-extracts a Reminders watch, and a Reminders edit also re-extracts a Calendar watch. The existing EventKit permission requirements apply. Full-refresh overwrite reconciles deletions on the next successful pass.
-- **Notes:** Node's native `fs.watch` watches `~/Library/Group Containers/group.com.apple.notes` recursively and triggers the existing JXA reader. This is a filesystem invalidation hint over private Notes storage, not a public note-change subscription. It can also fire for unrelated storage activity, and signals concern persisted changes rather than every keystroke. It requires access to that protected directory, potentially Full Disk Access for the host process, as well as the existing Notes Automation permission for extraction. Denied access fails with an actionable error; there is no polling fallback. The reader still scans the collection, and incremental mode still does not remove deleted notes.
+- **Notes:** the watcher opens its own read-only connection to `NoteStore.sqlite` and checks `PRAGMA data_version` every second (`pollIntervalMs`); it changes with every commit another connection makes, so each save Notes commits invalidates every selected stream. Filesystem notifications are not used: Notes keeps the store and its WAL open, and FSEvents reports a write only when the file closes, which verification showed arrives when Notes quits. Because only Notes syncs iCloud notes, the watch keeps Notes running: it launches Notes hidden and in the background (`open -g -j`) when it starts and, every `launchIntervalMs` (30 s), again if Notes has stopped. It cannot tell your quit from macOS closing a hidden Notes, which happens when the system frees disk space (seen twice on a 99% full disk, within minutes of a hidden launch), so it relaunches in both cases. A running Notes is left as it is. Watching needs the same Full Disk Access as reading.
 
 Runs are serial. Notifications received during extraction or while the caller handles a result are coalesced into a pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. Every yielded result has completed loading and checkpoint persistence; `count` and `deleted` still count accepted observations, including deduplication no-ops and absent keys. A load failure raises `PipelineError`; a watcher failure is propagated. No automatic retries or periodic reconciliation are added.
 
@@ -261,17 +278,36 @@ Custom sources declare a `catalog` and implement `observe({ streams, signal }): 
 
 Automated verification covers actual filesystem events in temporary storage, native EventKit observer delivery using process-local notifications without personal data, and destination/checkpoint visibility before results are yielded. The native filesystem test requires an environment that permits filesystem notifications; this host's sandbox reports `EMFILE` even for a single temporary-directory watcher, while the same probe succeeds outside it.
 
-Live verification on **2026-09-22**, using **macOS 26.6.2 and Node.js 26.8.1**, exercised the existing sources, `Pipeline.watch()`, `Copy`, and temporary SQLite destinations without mocking notifications or extraction. Calendar and Reminders each completed four observed passes: initial sync, creation, update, and deletion. Their mutations were real EventKit writes from separate OSA processes. Notes mutations were made through the Notes GUI; its successful run completed 26 passes because filesystem notifications also fire for intermediate and unrelated storage changes. SQLite assertions ran after the watcher yielded completed loads.
+Live verification on **2026-09-22**, using **macOS 26.6.2 and Node.js 26.8.1**, exercised the existing sources, `Pipeline.watch()`, `Copy`, and temporary SQLite destinations without mocking notifications or extraction. Calendar and Reminders each completed four observed passes: initial sync, creation, update, and deletion. Their mutations were real EventKit writes from separate OSA processes. SQLite assertions ran after the watcher yielded completed loads.
 
 | Source stream | Live assertions |
 | --- | --- |
 | Calendar `events` | A uniquely labeled event appeared, its changed title and start time reached SQLite, and deleting it removed the exported row. The fixed occurrence window was `2026-09-22T00:00:00.000Z` to `2026-09-23T00:00:00.000Z`. |
 | Reminders `reminders` | A uniquely labeled reminder appeared, its changed title and completed status reached SQLite, and deleting it removed the exported row. |
-| Notes `notes` | A uniquely labeled note appeared, its edited body reached SQLite, and permanently deleting it from Recently Deleted removed the exported row. |
 
-Watchers were closed after verification. The Calendar test event, temporary Reminders list, both Notes test records, and temporary databases were removed. EventKit cleanup was checked through fresh native reads; Notes cleanup was confirmed in its UI and the successful run's SQLite output. Existing user records were not modified. This live pass covered the primary streams and SQLite; Calendar/Reminders GUI edits, other streams, and Markdown were not exercised live.
+Watchers were closed after verification. The Calendar test event, temporary Reminders list, and temporary databases were removed. EventKit cleanup was checked through fresh native reads. Existing user records were not modified. This live pass covered the primary streams and SQLite; Calendar/Reminders GUI edits, other streams, and Markdown were not exercised live.
 
-**Notes access and deletion semantics:** the initial storage probe returned `EPERM` even outside the sandbox. Opening Notes and granting the host process Full Disk Access resolved it. Normal deletion moves a note to Recently Deleted, which remains visible through `app.notes()` and therefore remains in the export. Full-refresh overwrite removes the exported row after permanent deletion. The first live probe timed out while investigating this distinction; a second run verified the complete create/update/permanent-delete sequence. This does not change incremental extraction's existing lack of deletion reconciliation.
+**Notes live verification** on **2026-09-25**, macOS 26.6.2 and Node.js 26.8.1, against the real store with Notes closed, the process holding Full Disk Access:
+
+- Without Full Disk Access the group container cannot even be listed (`EPERM`); with it, the store opens read-only while Notes is closed or running.
+- Only Notes writes note and iCloud-sync data: every persistent-history transaction on note, folder, account and server-change-token entities came from `com.apple.Notes`. With Notes closed the store does not change; an edit made on an iPhone reached the store only after Notes was launched hidden, and the watch loaded it within a second of Notes committing it.
+- Recursive filesystem notifications on the container did not report Notes' WAL writes while Notes ran; the event arrived when Notes quit. Per-commit `data_version` polling saw every commit.
+- A hidden launch (`open -g -j`) left the frontmost app in front and put no Notes window on screen, and Notes synced on launch. macOS closed the hidden Notes twice within minutes to free disk space on a 99% full disk; the watch relaunched it hidden on its next check.
+- The exporter loaded every stream; a second run with no changes wrote nothing. Temporary notes made for the probe (formatted text, a table, and PNG, PDF, M4A, TXT and ZIP attachments) matched what was created: headings and emphasis, lists, the table's cells, each file's bytes, and text parsed from the PDF and TXT.
+- Ten of the store's note rows were placeholders for notes not yet downloaded from iCloud (no folder, title or dates); the export leaves them out and then equals what Notes shows.
+- A Markdown file imported into Notes produced real Title, Heading, Subheading, checklist (one done, one open), Monospaced, block quote and table formatting; the export rendered each as its Markdown form and set `hasChecklist` and `checklistInProgress`. A hashtag typed into a note became an `inlineAttachments` row (`#macEltTag`, target `MACELTTAG`) and appeared in the note's `text` and `markdown`. The watch loaded each edit within seconds of Notes saving it.
+- The probe notes and folders were deleted afterwards and purged from Recently Deleted; the store then marked them for deletion.
+
+- A link to another note, made through Notes' `>>` picker, became an `inlineAttachments` row of type `com.apple.notes.inlinetextattachment.link` whose target is the linked note's `applenotes:note/<id>` URL, and rendered in `markdown` as a Markdown link to it. A pasted web address became a link in the text.
+
+Not verified live, each for a stated reason:
+
+- **Audio recordings and transcripts, locked notes, rich web-link previews:** Notes keeps Record Audio, Lock Note and Share disabled unless a person has the note focused, so scripts cannot start them. Locking also needs the Notes password.
+- **Scans and sketches:** Notes on the Mac inserts them only from an iPhone or iPad camera or pencil.
+- **Mentions:** they exist only in a note shared with another iCloud user.
+- **Locations:** added only through the Maps share sheet.
+
+Checklists, tags, tables and a locked note were also read from Apple-made macOS 26 sample stores. The unverified kinds are read as the published format describes them; to verify one, create it in a Notes folder and run the exporter.
 
 ## Attachment files and document parsing
 
@@ -282,7 +318,7 @@ const attachmentCopy = new Copy(
   notes.attachments,
   sqlite.table('attachments', c => [
     c.text('id'),
-    c.text('containerId'),
+    c.text('noteId'),
     c.text('content').from(notes.attachments.file).parse(new MacOSDocumentParser()),
     c.blob('bytes').from(notes.attachments.file),
   ]),
@@ -393,7 +429,7 @@ const exportPipeline = new Pipeline({
   checkpoints,
   steps: [
     new Copy(notes.accounts, markdown.file('accounts.md', { title: 'name' })),
-    new Copy(notes.notes, markdown.folder('notes', { title: 'name' }), {
+    new Copy(notes.notes, markdown.folder('notes', { title: 'title' }), {
       id: 'notes-to-markdown',
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',

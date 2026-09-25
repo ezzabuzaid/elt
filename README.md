@@ -12,7 +12,7 @@ The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and 
 
 | Source | Available data | Extraction | Change trigger |
 | --- | --- | --- | --- |
-| Apple Notes | Accounts, folders, notes, and attachments | Full refresh or snapshot incremental | Native filesystem notifications over Notes storage |
+| Apple Notes | Accounts, folders, notes (text and Markdown, with checklists and tables), inline tags, mentions and note links, and attachments | Full refresh or snapshot incremental | Commits to Notes' own store; keeps Notes running hidden so iCloud changes arrive |
 | Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, scripting metadata, and each item's iCalendar (ICS) components, properties and parameters | Full refresh or snapshot incremental within a required date range | EventKit notifications |
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh or snapshot incremental | EventKit notifications |
 | Apple Messages | Every column of chats, handles, participants, messages (text, edits, unsends, reactions, replies), Recently Deleted, and attachments with their files | Full refresh or snapshot incremental, every stream from one consistent chat.db snapshot | Native filesystem notifications over `~/Library/Messages` |
@@ -38,7 +38,7 @@ cd elt
 npm ci
 ```
 
-Open Notes and allow the process running your script to access it through **System Settings → Privacy & Security → Automation** when prompted.
+The Notes connector reads Notes' own store, `NoteStore.sqlite`, so Notes does not need to be open. macOS protects that store: allow the process running your script **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access**.
 
 Create `apps/apple/src/example.ts`:
 
@@ -76,11 +76,11 @@ npx nx run apple:build
 node apps/apple/dist/example.js
 ```
 
-This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table's contents with the current snapshot. Columns are inferred from the source schema. Password-protected note bodies remain `null`.
+This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table's contents with the current snapshot. Columns are inferred from the source schema. Locked notes keep their title and dates; their text and Markdown remain `null`. Only Notes syncs iCloud notes on the Mac, so a run reads what Notes last synced; edits from other devices arrive once Notes runs.
 
 `Copy` defaults to `full_refresh` extraction and `overwrite` loading. Creating a pipeline performs no extraction; `run()` executes it once and returns `{ copy, count, deleted }` results after loading. `count` is accepted input records, including deduplication no-ops, and `deleted` is accepted deletions, including keys that were already absent; neither is the number of changed rows.
 
-The repository also includes a [Notes exporter](apps/apple/src/main.ts) that loads accounts, folders, notes, and attachment metadata, text, and bytes. Run it with `npx nx run apple:start`. It writes `outputs/apple-notes.sqlite`. Attachments without extractable text (photos, for example) load with null `content`; export failures stop the affected copy. Original files are stored in bounded chunks, so file size is limited only by disk.
+The repository also includes a [Notes exporter](apps/apple/src/main.ts) that loads every Notes stream incrementally, including attachment text and bytes. Run it with `npx nx run apple:start`. It writes `outputs/apple-notes.sqlite` and keeps checkpoints in `outputs/apple-notes-state.sqlite`; a second run with no changes writes nothing. `--note-store <path>` reads another `NoteStore.sqlite` and `--out <dir>` changes the output directory. Attachments without extractable text load with null `content`. Original files are stored in bounded chunks, so file size is limited only by disk.
 
 `npx nx run apple:messages` loads Apple Messages the same way into `outputs/apple-messages.sqlite`. It reads `chat.db` directly, so Messages.app need not be open, but the process running it needs Full Disk Access. See [Messages streams](docs/reference.md#apple-messages).
 
@@ -145,7 +145,7 @@ The Apple apps have no change feed, so an incremental copy compares each full sc
 
 Keep the copy ID and both SQLite files between runs. The checkpoint store must use a separate file from the destination. A Postgres destination keeps its checkpoints beside the data instead, with `PostgresCheckpointStore` from `elt-postgresql`; see [checkpoint stores](docs/reference.md#checkpoint-stores). Changing the source, target, schema, or copy configuration requires a new copy ID or an explicit checkpoint reset. Reset the checkpoint if you delete or replace destination storage.
 
-**Notes still scans the full collection.** The comparison reduces writes, not the source scan cost. Notes returns notes in **Recently Deleted**, so they stay until permanently deleted.
+**Notes reads its whole store on each run.** That takes milliseconds for thousands of notes; the comparison reduces writes. Notes in **Recently Deleted** are notes in that folder, so they stay until permanently deleted.
 
 ### Calendar: incremental with deletions
 
@@ -191,11 +191,11 @@ for await (const results of pipeline.watch({ signal: controller.signal })) {
 
 Watching subscribes before the initial sync, then reruns affected copies when the source signals a change. Runs never overlap within one watcher. Changes received during a run or while you handle its results remain pending for another pass. The loop body is for application work after a sync; it does not need to extract or load anything.
 
-Triggers are source-specific. Calendar and Reminders use EventKit notifications, which cover the whole event store: an edit in either app reruns watched copies of both. Notes watches its protected storage directory using native filesystem notifications, which can also fire for unrelated storage activity. Notes watching may require **Full Disk Access** for the host process, in addition to Automation permission for reading. Access failures are reported; there is no polling fallback.
+Triggers are source-specific. Calendar and Reminders use EventKit notifications, which cover the whole event store: an edit in either app reruns watched copies of both. Notes checks its store's SQLite `data_version` every second, which changes with each commit Notes makes; filesystem notifications miss those commits while Notes keeps the store open. Only Notes syncs iCloud notes, so a Notes watch keeps Notes running: it launches Notes hidden and in the background when it starts, and every 30 seconds relaunches it the same way if it has stopped, whether you quit it or macOS closed it to free disk space. A Notes you have open is left as it is. Notes watching needs the same **Full Disk Access** as reading.
 
 Calling `controller.abort()` stops observation and lets the current pass finish. Breaking the loop also closes the watcher. Watchers preserve the configured extraction mode and do not add retries, periodic reconciliation, or a durable change feed.
 
-Live verification confirmed that Notes GUI edits and Calendar/Reminders writes through EventKit in a separate process reach SQLite through `Pipeline.watch()`: creation, updates, and removal were checked. Notes in **Recently Deleted** remain exported until permanently deleted. Native observer delivery and temporary-filesystem notifications are also tested. See [watching behavior and verification limits](docs/reference.md#watching-for-changes).
+Live verification confirmed that Calendar/Reminders writes through EventKit in a separate process reach SQLite through `Pipeline.watch()`: creation, updates, and removal were checked. A Notes edit made on an iPhone reached SQLite through a Notes watch once the watch had Notes running, and the watch relaunched Notes after it was closed. Native observer delivery and temporary-filesystem notifications are also tested. See [watching behavior and verification limits](docs/reference.md#watching-for-changes).
 
 ## Markdown exports
 
@@ -210,12 +210,12 @@ await new Pipeline({
   source,
   destination: markdown,
   steps: [
-    new Copy(source.notes, markdown.folder('notes', { title: 'name' })),
+    new Copy(source.notes, markdown.folder('notes', { title: 'title' })),
   ],
 }).run();
 ```
 
-`folder()` creates one document per record. Use `markdown.file('notes.md', { title: 'name' })` for one combined document. Both support incremental deduplication with the same copy options and a separate checkpoint store.
+`folder()` creates one document per record. Use `markdown.file('notes.md', { title: 'title' })` for one combined document. Both support incremental deduplication with the same copy options and a separate checkpoint store.
 
 Generated Markdown retains canonical record data for subsequent appends and reconciliation. Treat these files as managed output: manual edits are replaced. See [Markdown storage and recovery](docs/reference.md#markdown-destination).
 
@@ -230,7 +230,7 @@ const attachments = new Copy(
   source.attachments,
   destination.table('attachments', columns => [
     columns.text('id'),
-    columns.text('containerId'),
+    columns.text('noteId'),
     columns.text('content')
       .from(source.attachments.file)
       .parse(new MacOSDocumentParser()),
@@ -241,7 +241,7 @@ const attachments = new Copy(
 await new Pipeline({ source, destination, steps: [attachments] }).run();
 ```
 
-Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser supports PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, and WordML. It does not perform OCR. Unsupported formats and actual export/parse failures fail the copy; attachments without an exportable native file retain metadata with `null` content and bytes.
+Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, text in images through Vision, and speech in audio. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and bytes. Tables have no file; their cells are in the note's `markdown`.
 
 See [file declarations, parsing, and attachment limitations](docs/reference.md#attachment-files-and-document-parsing).
 
@@ -287,8 +287,7 @@ Permissions apply to the process running the export, and a sandbox can still res
 
 | Operation | Required access |
 | --- | --- |
-| Read Apple Notes | Notes open; Automation access to Notes |
-| Watch Apple Notes | Access to its protected storage directory; may require Full Disk Access |
+| Read or watch Apple Notes | Full Disk Access; Notes does not need to be open |
 | Read or watch Reminders | Full Reminders access through EventKit |
 | Read or watch Calendar | Full Calendar access through EventKit |
 | Read Calendar `calendars`, `eventMetadata`, or `excludedDates` | Additional Automation access to Calendar |

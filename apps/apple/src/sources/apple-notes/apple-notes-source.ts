@@ -1,38 +1,79 @@
-import { on } from 'node:events';
-import fs from 'node:fs';
-import { lstat, mkdtempDisposable } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
-import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
-import { Catalog, diffSnapshot, Source, type SourceMessage } from 'elt';
+import { join } from 'node:path';
+import { setInterval } from 'node:timers/promises';
+import type {
+  CopyConfiguration,
+  SourceMessage,
+  SourceWatchOptions,
+  Stream,
+} from 'elt';
+import { Catalog, diffSnapshot, Source } from 'elt';
+import {
+  NoteStore,
+  NoteStoreVersion,
+  notesContainer,
+} from '../../platform/macos/note-store.ts';
+import { launchNotesHidden } from '../../platform/macos/notes-app.ts';
 import { AccountsStream } from './accounts-stream.ts';
+import type { NotesReader } from './apple-notes-stream.ts';
 import { AttachmentsStream } from './attachments-stream.ts';
 import { FoldersStream } from './folders-stream.ts';
+import { InlineAttachmentsStream } from './inline-attachments-stream.ts';
+import { NotesScan, requiredColumns } from './notes-scan.ts';
 import { NotesStream } from './notes-stream.ts';
 
-type NotesRecord = { id: string; name: string | null };
-
-const readers = Object.freeze({
+const readers = {
   accounts: new AccountsStream(),
   folders: new FoldersStream(),
   notes: new NotesStream(),
+  inlineAttachments: new InlineAttachmentsStream(),
   attachments: new AttachmentsStream(),
-});
+} satisfies Record<string, NotesReader>;
 const catalog = new Catalog(
   Object.values(readers).map((reader) => reader.describe()),
 );
 
-export class AppleNotesSource extends Source {
-  readonly identity = 'apple-notes:local';
+// Reads Notes' own store, NoteStore.sqlite, so Notes.app need not run to
+// export. Only Notes.app syncs iCloud notes, so a watch keeps it running,
+// hidden.
+export class AppleNotesSource extends Source<NotesScan> {
+  readonly identity: string;
   protected readonly catalog = catalog;
-  readonly accounts = catalog.get('accounts');
-  readonly folders = catalog.get('folders');
-  readonly notes = catalog.get('notes');
-  readonly attachments = catalog.get('attachments');
+  readonly accounts = readers.accounts.describe();
+  readonly folders = readers.folders.describe();
+  readonly notes = readers.notes.describe();
+  readonly inlineAttachments = readers.inlineAttachments.describe();
+  readonly attachments = readers.attachments.describe();
 
-  constructor() {
+  readonly path: string;
+  readonly pollIntervalMs: number;
+  readonly launchIntervalMs: number;
+  readonly launch: () => Promise<unknown>;
+
+  constructor({
+    path = join(notesContainer, 'NoteStore.sqlite'),
+    // How often a watch checks the store for commits.
+    pollIntervalMs = 1000,
+    // How often a watch makes sure Notes runs: macOS closes a hidden Notes
+    // when it frees disk space, and only Notes syncs iCloud notes.
+    launchIntervalMs = 30_000,
+    launch = launchNotesHidden,
+  }: {
+    path?: string;
+    pollIntervalMs?: number;
+    launchIntervalMs?: number;
+    launch?: () => Promise<unknown>;
+  } = {}) {
     super();
+    this.path = path;
+    this.pollIntervalMs = pollIntervalMs;
+    this.launchIntervalMs = launchIntervalMs;
+    this.launch = launch;
+    this.identity = `apple-notes:${path}`;
     Object.freeze(this);
+  }
+
+  override async session(): Promise<NotesScan> {
+    return new NotesScan(await NoteStore.open(this.path, requiredColumns));
   }
 
   protected override async *observe({
@@ -40,69 +81,50 @@ export class AppleNotesSource extends Source {
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
-    // Native filesystem invalidations, not a public Notes change feed. Re-read through JXA.
-    const path = join(
-      homedir(),
-      'Library/Group Containers/group.com.apple.notes',
-    );
+    using version = new NoteStoreVersion(this.path);
+    let seen = version.current;
+    await this.launch();
+    let nextLaunch = Date.now() + this.launchIntervalMs;
+    yield streams;
     try {
-      const watcher = fs.watch(path, { recursive: true, signal });
-      try {
-        await using changes = on(watcher, 'change', { signal });
+      for await (const _ of setInterval(this.pollIntervalMs, undefined, {
+        signal,
+      })) {
+        if (Date.now() >= nextLaunch) {
+          await this.launch();
+          nextLaunch = Date.now() + this.launchIntervalMs;
+        }
+        const current = version.current;
+        if (current === seen) continue;
+        seen = current;
         yield streams;
-        for await (const _ of changes) yield streams;
-      } finally {
-        watcher.close();
       }
-    } catch (cause) {
-      if (
-        cause instanceof Error &&
-        'code' in cause &&
-        (cause.code === 'EPERM' || cause.code === 'EACCES')
-      )
-        throw new Error(
-          `Apple Notes watching cannot access ${path}. Allow the host process Full Disk Access in System Settings > Privacy & Security and run outside a sandbox that blocks this directory.`,
-          { cause },
-        );
-      throw cause;
+    } catch (error) {
+      if (!(error instanceof Error && error.name === 'AbortError')) throw error;
     }
   }
 
   protected override async *extract(
     configuration: CopyConfiguration,
     state: unknown,
+    _partition: null,
+    scan: NotesScan,
   ): AsyncGenerator<SourceMessage> {
-    const reader = readers[configuration.stream.name as keyof typeof readers];
-    if (configuration.syncMode === 'full_refresh') {
-      for await (const data of reader.read())
-        yield* this.record(data, configuration);
-      return;
+    const { stream } = configuration;
+    const reader: NotesReader = readers[stream.name as keyof typeof readers];
+    const records = await reader.read(scan);
+    const messages =
+      configuration.syncMode === 'incremental'
+        ? diffSnapshot(stream, records, state)
+        : records.map((data) => ({ stream: stream.name, data }));
+    for await (const message of messages) {
+      if ('type' in message || configuration.fileReads.length === 0)
+        yield message;
+      else
+        yield {
+          ...message,
+          file: reader.file(message.data, scan),
+        };
     }
-    // ponytail: JXA scans all records; the diff reduces writes, not source scan cost.
-    const scan: AsyncIterable<NotesRecord> = reader.read();
-    for await (const message of diffSnapshot(configuration.stream, scan, state))
-      if ('type' in message) yield message;
-      else yield* this.record(message.data, configuration);
-  }
-
-  private async *record(
-    data: NotesRecord,
-    configuration: CopyConfiguration,
-  ): AsyncGenerator<SourceMessage> {
-    const stream = configuration.stream.name;
-    if (configuration.fileReads.length === 0) {
-      yield { stream, data };
-      return;
-    }
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'mac-elt-attachment-'),
-    );
-    // Notes may supply no filename. Keep that fact in metadata; never use a source path.
-    const extension = data.name === null ? '' : extname(data.name);
-    const path = join(scratch.path, `content${extension}`);
-    const exported = await readers.attachments.save(data.id, path);
-    if (exported && !(await lstat(path)).isFile())
-      throw new TypeError('Notes did not export a regular attachment file');
-    yield { stream, data, file: exported ? path : null };
   }
 }
