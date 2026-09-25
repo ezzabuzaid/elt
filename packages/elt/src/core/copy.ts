@@ -65,8 +65,8 @@ export class Copy<Target extends DestinationTarget> {
   async run(
     source: Source,
     destination: Destination<Target>,
+    session: AsyncDisposable,
     checkpoints?: CheckpointStore,
-    session?: AsyncDisposable,
   ): Promise<WriteCount> {
     this.validate(source, destination, checkpoints);
     const write = (state: unknown) =>

@@ -55,7 +55,7 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
     Object.freeze(this);
   }
 
-  protected override open(): Promise<ChatDatabase> {
+  override session(): Promise<ChatDatabase> {
     return ChatDatabase.open(this.path);
   }
 

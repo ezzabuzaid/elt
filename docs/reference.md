@@ -202,7 +202,7 @@ Every copy in one `Pipeline.run()` reads through one source session, so related 
 
 ```ts
 class ChatSource extends Source<ChatDatabase> {
-  protected override open(streams) {
+  override session(streams) {
     return ChatDatabase.open(this.path); // AsyncDisposable
   }
 
@@ -212,11 +212,10 @@ class ChatSource extends Source<ChatDatabase> {
 }
 ```
 
-- **Opening:** `source.session(streams)` checks that the streams are the source's own, then calls the source's `open(streams)` with the streams the run will read. An upstream with a read transaction pins it (Messages). One without reads every selected stream up front in one change-free window and serves the copies from that snapshot (Calendar and Reminders, see [EventKit consistency](#eventkit-consistency)).
-- **Default:** `open()` returns a no-op, so a source that does not override it behaves as before.
+- **Contract:** every source implements `session(streams)`, receiving the streams the run will read. An upstream with a read transaction pins it (Messages). One without reads every selected stream up front in one change-free window and serves the copies from that snapshot (Calendar and Reminders, see [EventKit consistency](#eventkit-consistency)). A source whose streams need not agree returns an empty `AsyncDisposableStack` (Search Console).
 - **Failures:** an error while opening, such as a denied permission, is raised as itself, not as a `PipelineError`, since no copy has started.
 - **Lifetime:** the pipeline opens the session before its first copy and disposes it after the last, including when a copy fails. A watch opens one per invalidation batch and holds none while idle, since a long read can block the upstream's own maintenance.
-- **Standalone reads:** `Copy.run` and `Source.read` without a session open one for that read's stream and dispose it when it ends.
+- **Standalone reads:** `Source.read(configuration, state, session)` and `Copy.run(source, destination, session, checkpoints?)` require the session; open it with `await using session = await source.session([stream])`.
 
 #### EventKit consistency
 

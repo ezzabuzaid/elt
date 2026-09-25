@@ -2549,8 +2549,9 @@ test('Calendar ICS rejects exports without events and reports a missing private 
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
   });
-  const read = () =>
-    Array.fromAsync(
+  const read = async () => {
+    await using session = await source.session([source.icsComponents]);
+    return await Array.fromAsync(
       source.read(
         new Copy(
           source.icsComponents,
@@ -3507,7 +3508,7 @@ test('a Messages session reads one snapshot while Messages keeps writing', async
       'messages',
     ),
   );
-  const guids = async (session?: Awaited<ReturnType<typeof source.session>>) =>
+  const guids = async (session: Awaited<ReturnType<typeof source.session>>) =>
     (await Array.fromAsync(source.read(copy.configuration, null, session)))
       .map((message) =>
         'data' in message ? Reflect.get(Object(message.data), 'guid') : null,
@@ -3515,7 +3516,7 @@ test('a Messages session reads one snapshot while Messages keeps writing', async
       .sort();
 
   const pinned = await (async () => {
-    await using session = await source.session([source.messages]);
+    await using session = await source.session();
     const before = await guids(session);
     {
       using chat = new DatabaseSync(path);
@@ -3523,7 +3524,10 @@ test('a Messages session reads one snapshot while Messages keeps writing', async
     }
     return { before, during: await guids(session) };
   })();
-  const after = await guids();
+  const after = await (async () => {
+    await using session = await source.session();
+    return guids(session);
+  })();
 
   assert.deepEqual(pinned.during, pinned.before);
   assert.deepEqual(after, [...pinned.before, 'm-new'].sort());
@@ -3532,7 +3536,7 @@ test('a Messages session reads one snapshot while Messages keeps writing', async
 test('Messages names Full Disk Access when chat.db cannot be opened', async () => {
   const source = new AppleMessagesSource(join(tmpdir(), 'missing', 'chat.db'));
 
-  const opening = source.session([source.messages]);
+  const opening = source.session();
 
   await assert.rejects(opening, (error) => {
     assert.ok(error instanceof MessagesUnavailableError);

@@ -175,8 +175,8 @@ export class Pipeline<Target extends DestinationTarget> {
         const { count, deleted } = await copy.run(
           this.source,
           this.destination,
-          this.checkpoints,
           session,
+          this.checkpoints,
         );
         results.push({ copy, count, deleted });
       } catch (cause) {

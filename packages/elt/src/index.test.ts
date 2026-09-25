@@ -117,7 +117,7 @@ class SessionSource extends Source<AsyncDisposable & { readonly id: number }> {
 
   readonly sessionStreams: string[][] = [];
 
-  protected override async open(streams: readonly Stream[]) {
+  override async session(streams: readonly Stream[]) {
     const id = this.opened.length + 1;
     this.opened.push(id);
     this.sessionStreams.push(streams.map((stream) => stream.name));
@@ -239,15 +239,4 @@ test('a watch opens one session per batch and holds none while idle', async () =
     { stream: 'right', session: 1 },
     { stream: 'right', session: 2 },
   ]);
-});
-
-test('a read without a session opens its own and closes it', async () => {
-  const source = new SessionSource();
-  const copy = new Copy(source.left, new NamedTarget('unused'));
-
-  await Array.fromAsync(source.read(copy.configuration, null));
-
-  assert.deepEqual(source.opened, [1]);
-  assert.deepEqual(source.closed, [1]);
-  assert.deepEqual(source.sessionStreams, [['left']]);
 });

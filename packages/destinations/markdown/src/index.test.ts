@@ -23,6 +23,10 @@ import {
 test('Markdown file and folder targets honor the deduplication policy', async () => {
   let clicks = 12;
   class RestatingSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'markdown-restating-test';
     readonly metrics = new Stream({
       name: 'metrics',
@@ -128,6 +132,10 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
     emitsDeletes: true,
   });
   class DeletingSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'deleting-test';
     protected readonly catalog = new Catalog([items]);
     protected override async *observe({ streams }: SourceWatchOptions) {
@@ -217,6 +225,10 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
 
 test('a target has one writer, even when another loads only its own partitions', async () => {
   class Records extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     extracted = 0;
     readonly records = new Stream({
       name: 'records',

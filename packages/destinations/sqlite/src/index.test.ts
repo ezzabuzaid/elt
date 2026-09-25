@@ -29,6 +29,10 @@ import {
 
 test('the public ELT API copies source records into SQLite', async () => {
   class TestSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'test';
     readonly records = new Stream({
       name: 'records',
@@ -76,6 +80,10 @@ test('the public ELT API copies source records into SQLite', async () => {
 
 test('a source accepts only the stream objects from its own catalog', async () => {
   class OwnedSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'owned-test';
     readonly records = new Stream({
       name: 'records',
@@ -134,6 +142,10 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   let version = 1;
   const previousStates: unknown[] = [];
   class WatchingSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'watch-test';
     readonly records = new Stream({
       name: 'records',
@@ -309,6 +321,10 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
 
 test('a cursor inside the primary key is rejected unless the policy replaces', async () => {
   class MetricsSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'metrics-test';
     readonly metrics = new Stream({
       name: 'metrics',
@@ -405,6 +421,10 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
 test('replace loads a restated fact that cursor_newer discards', async () => {
   let clicks = 12;
   class RestatingSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'restating-test';
     readonly metrics = new Stream({
       name: 'metrics',
@@ -508,6 +528,10 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
     emitsDeletes: true,
   });
   class DeletingSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'deleting-test';
     protected readonly catalog = new Catalog([items]);
     protected override async *observe({ streams }: SourceWatchOptions) {
@@ -592,6 +616,10 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
   const items = selectable();
   let messages: SourceMessage[] = [];
   class DeletingSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'deleting-rules-test';
     protected readonly catalog = new Catalog([items]);
     protected override async *observe({ streams }: SourceWatchOptions) {
@@ -701,6 +729,10 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     emitsDeletes: true,
   });
   class SnapshotSource extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'snapshot-test';
     protected readonly catalog = new Catalog([items]);
     protected override async *observe({ streams }: SourceWatchOptions) {
@@ -775,16 +807,17 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
 
   // A checkpoint save that failed after commit replays the older state: the
   // diff re-applies the same upserts and deletions and lands on the same rows.
+  await using session = await source.session();
   await destination.write(
     copy.configuration,
     copy.to,
-    source.read(copy.configuration, firstState),
+    source.read(copy.configuration, firstState, session),
     copy.writer(source),
   );
   assert.deepEqual(names(), ['a:A', 'b:B2', 'd:D']);
 
   const read = (state: unknown) =>
-    Array.fromAsync(source.read(copy.configuration, state));
+    Array.fromAsync(source.read(copy.configuration, state, session));
   rows = [
     { id: 'a', name: 'A' },
     { id: 'a', name: 'again' },
@@ -803,6 +836,10 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
 
 test('a target has one writer, even when another loads only its own partitions', async () => {
   class Records extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     extracted = 0;
     readonly records = new Stream({
       name: 'records',
@@ -903,6 +940,10 @@ test('a target has one writer, even when another loads only its own partitions',
 
 test('a writer may change its own mode, and dropping a target releases it', async () => {
   class Records extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly records = new Stream({
       name: 'records',
       jsonSchema: {
@@ -977,6 +1018,10 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
 test('a pipeline refuses two writers of one target before running any', async () => {
   let extracted = 0;
   class Records extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
     readonly identity = 'records';
     readonly records = new Stream({
       name: 'records',
@@ -1057,6 +1102,10 @@ test('a pipeline refuses two writers of one target before running any', async ()
 });
 
 class Sites extends Source {
+  override async session() {
+    return new AsyncDisposableStack();
+  }
+
   readonly identity = 'sites';
   readonly received: [string, unknown][] = [];
   readonly pages = new Stream({
@@ -1243,9 +1292,10 @@ test('partition declarations are validated before extraction', async () => {
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
-  const read = (sites: string[], state: unknown = null) => {
+  const read = async (sites: string[]) => {
     const source = new Sites(sites, { a: [] });
-    return Array.fromAsync(
+    await using session = await source.session();
+    return await Array.fromAsync(
       source.read(
         new Copy(source.pages, destination.table('pages'), {
           id: 'pages',
@@ -1253,7 +1303,8 @@ test('partition declarations are validated before extraction', async () => {
           destinationSyncMode: 'append_dedup',
           primaryKey: ['site', 'path'],
         }).configuration,
-        state,
+        null,
+        session,
       ),
     );
   };
@@ -1284,6 +1335,10 @@ test('partition declarations are validated before extraction', async () => {
 });
 
 class FileSource extends Source {
+  override async session() {
+    return new AsyncDisposableStack();
+  }
+
   readonly identity = 'file-test';
   readonly files: Stream;
   protected readonly catalog: Catalog;

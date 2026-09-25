@@ -44,10 +44,6 @@ export type DeleteMessage = {
 
 export type SourceMessage = RecordMessage | StateMessage | DeleteMessage;
 
-const noSession: AsyncDisposable = Object.freeze({
-  async [Symbol.asyncDispose]() {},
-});
-
 // Every copy in one pipeline run reads through one session, so related
 // streams see the same moment of the source.
 export abstract class Source<
@@ -76,18 +72,10 @@ export abstract class Source<
     yield* this.observe(options);
   }
 
-  // One consistent view of the upstream for reading these streams.
-  async session(streams: readonly Stream[]): Promise<Session> {
-    for (const stream of streams) this.member(stream);
-    return this.open(streams);
-  }
-
-  // A source whose streams must agree with each other pins one consistent view
-  // of its upstream here: a read transaction, or every selected stream read
-  // up front. Sources that declare a Session type must override it.
-  protected async open(_streams: readonly Stream[]): Promise<Session> {
-    return noSession as Session;
-  }
+  // One consistent view of the upstream for reading these streams: a read
+  // transaction, or every stream read up front. A source whose streams need
+  // not agree returns an empty AsyncDisposableStack.
+  abstract session(streams: readonly Stream[]): Promise<Session>;
 
   // Source-specific selection rules, checked without I/O.
   protected validateExtraction(_configuration: CopyConfiguration): void {}
@@ -116,20 +104,16 @@ export abstract class Source<
   }
 
   // Must be lazy: the destination prepares its target before pulling records.
-  // Without a session, the read opens its own and closes it when it ends.
   async *read(
     configuration: CopyConfiguration,
     state: unknown,
-    session?: Session,
+    session: Session,
   ): AsyncGenerator<SourceMessage> {
     this.validate(configuration);
-    await using owned =
-      session === undefined ? await this.session([configuration.stream]) : null;
-    const reading = session ?? (owned as Session);
     const messages =
       configuration.stream.partitionKey === undefined
-        ? this.extract(configuration, state, null, reading)
-        : this.partitioned(configuration, state, reading);
+        ? this.extract(configuration, state, null, session)
+        : this.partitioned(configuration, state, session);
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0) {
         yield message;

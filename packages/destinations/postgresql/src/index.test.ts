@@ -48,6 +48,10 @@ async function scratchDatabase() {
 
 // Emits whatever the test sets on `messages`, then an empty checkpoint.
 class Messages extends Source {
+  override async session() {
+    return new AsyncDisposableStack();
+  }
+
   messages: SourceMessage[] = [];
   extracted = 0;
   protected readonly catalog: Catalog;
