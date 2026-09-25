@@ -818,7 +818,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     copy.configuration,
     copy.to,
     source.read(copy.configuration, firstState),
-    copy.claim(source),
+    copy.writer(source),
   );
   assert.deepEqual(names(), ['a:A', 'b:B2', 'd:D']);
 
@@ -840,7 +840,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
   );
 });
 
-test('writers share a target only when each upserts by the same key over its own partitions', async () => {
+test('a target has one writer, even when another loads only its own partitions', async () => {
   class Records extends Source {
     extracted = 0;
     readonly records = new Stream({
@@ -886,7 +886,7 @@ test('writers share a target only when each upserts by the same key over its own
     checkpoints: SQLiteCheckpointStore,
     loaded: () => Promise<number>,
   ) => {
-    const upsert = (id: string, primaryKey: string[], source: Records) =>
+    const upsert = (id: string, source: Records) =>
       new Pipeline({
         source,
         destination,
@@ -897,36 +897,30 @@ test('writers share a target only when each upserts by the same key over its own
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
             cursorField: 'version',
-            primaryKey,
+            primaryKey: ['owner', 'id'],
           }),
         ],
       }).run();
+    const other = new Records('b', 'b');
     const late = new Records('late', 'c');
-    const again = new Records('again', 'a');
 
-    await upsert('a', ['owner', 'id'], new Records('a', 'a'));
-    await upsert('b', ['owner', 'id'], new Records('b', 'b'));
+    await upsert('a', new Records('a', 'a'));
+    await upsert('a', new Records('a', 'a'));
+    await assert.rejects(
+      upsert('b', other),
+      /Target records is written by \{"copy":"a"\}; \{"copy":"b"\} cannot write it/,
+    );
     await assert.rejects(
       new Pipeline({
         source: late,
         destination,
         steps: [new Copy(late.records, target())],
       }).run(),
-      /is written by \{"copy":"a"\} \(append_dedup on \["owner","id"\] for \[\{"owner":"a"\}\]\); \{"source":"late","stream":"records"\} \(overwrite for \[\{"owner":"c"\}\]\) cannot share it/,
-    );
-    await assert.rejects(
-      upsert('by-name', ['owner', 'name'], late),
-      /\{"copy":"by-name"\} \(append_dedup on \["owner","name"\] for \[\{"owner":"c"\}\]\) cannot share it/,
-    );
-    // Same key, but owner a is already loaded by writer a: a snapshot delete
-    // from either would remove the other's row.
-    await assert.rejects(
-      upsert('again', ['owner', 'id'], again),
-      /\{"copy":"again"\} \(append_dedup on \["owner","id"\] for \[\{"owner":"a"\}\]\) cannot share it/,
+      /\{"source":"late","stream":"records"\} cannot write it/,
     );
 
-    assert.equal(late.extracted + again.extracted, 0);
-    assert.equal(await loaded(), 2);
+    assert.equal(other.extracted + late.extracted, 0);
+    assert.equal(await loaded(), 1);
   };
 
   {
@@ -942,32 +936,6 @@ test('writers share a target only when each upserts by the same key over its own
         using database = new DatabaseSync(destination.path, { readOnly: true });
         return database.prepare('SELECT id FROM records').all().length;
       },
-    );
-  }
-  {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-own-'));
-    const destination = new MarkdownDestination({ path: scratch.path });
-    await scenario<MarkdownFile | MarkdownFolder>(
-      destination,
-      () => destination.file('records.md'),
-      new SQLiteCheckpointStore({ path: join(scratch.path, 'state.sqlite') }),
-      async () =>
-        (await readFile(join(scratch.path, 'records.md'), 'utf8')).match(
-          /mac-elt-record/g,
-        )?.length ?? 0,
-    );
-  }
-  {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-own-'));
-    const destination = new MarkdownDestination({ path: scratch.path });
-    await scenario<MarkdownFile | MarkdownFolder>(
-      destination,
-      () => destination.folder('records'),
-      new SQLiteCheckpointStore({ path: join(scratch.path, 'state.sqlite') }),
-      async () =>
-        (await readdir(join(scratch.path, 'records'))).filter((name) =>
-          name.endsWith('.md'),
-        ).length,
     );
   }
 });
@@ -1026,7 +994,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
   }).run();
   await assert.rejects(
     overwrite(second),
-    /Target Records is written by \{"source":"first","stream":"records"\} \(overwrite_dedup on \["id"\]\)/,
+    /Target Records is written by \{"source":"first","stream":"records"\}; \{"source":"second","stream":"records"\} cannot write it/,
   );
   {
     using database = new DatabaseSync(destination.path);
@@ -1045,7 +1013,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
   assert.throws(() => destination.table('_MAC_ELT_writers'), /reserved/);
 });
 
-test('a pipeline refuses copies that cannot share a target before running any', async () => {
+test('a pipeline refuses two writers of one target before running any', async () => {
   let extracted = 0;
   class Records extends Source {
     readonly identity = 'records';
@@ -1106,8 +1074,7 @@ test('a pipeline refuses copies that cannot share a target before running any', 
       cursorField: 'version',
       primaryKey: ['id'],
     });
-  // An unpartitioned stream may hold any key, so two same-key writers of it
-  // could still delete each other's rows.
+  // Two copies of one stream with the same key are still two writers.
   const twins = new Pipeline({
     source,
     destination,
@@ -1119,11 +1086,11 @@ test('a pipeline refuses copies that cannot share a target before running any', 
 
   await assert.rejects(
     pipeline.run(),
-    /Target records is written by \{"copy":"upsert"\}/,
+    /Target records is written by \{"copy":"upsert"\}; \{"copy":"log"\} cannot write it/,
   );
   await assert.rejects(
     twins.run(),
-    /\{"copy":"one"\} \(append_dedup on \["id"\]\); \{"copy":"two"\}/,
+    /\{"copy":"one"\}; \{"copy":"two"\} cannot write it/,
   );
   assert.equal(extracted, 0);
 });

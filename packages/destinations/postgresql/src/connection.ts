@@ -44,7 +44,7 @@ export function schemaName(schema: string): string {
   return schema;
 }
 
-// Serializes everything elt writes into one schema: loads, claims, DDL.
+// Serializes everything elt writes into one schema: loads, owners, DDL.
 export function schemaLock(schema: string): string {
   return `mac-elt:${schema}`;
 }

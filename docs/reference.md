@@ -100,21 +100,15 @@ A stream that declares `emitsDeletes` can send `DELETE` messages during incremen
 
 Records and deletions apply in the order the source emits them, and deleting an absent key is a no-op, so replaying a run is safe. A deletion is rejected when the stream does not declare `emitsDeletes`, when its key is malformed, or when the load does not deduplicate. Results report accepted deletions as `deleted`, separately from `count`.
 
-### Shared targets
+### Target ownership
 
-Every destination records which writers load each target, stored with the target and committed with the load. A writer is the copy's `id`, or the source identity and stream name for a copy without one; its claim also records its mode, key, and the [partitions](#partitioned-streams) it loads. Before a copy extracts or changes anything, the target checks its claim against the other writers':
+A target has one writer, as in Airbyte, where one stream owns one table and ["more than one Airbyte connection to sync to the same destination stream… isn't permitted"](https://github.com/airbytehq/airbyte/blob/65c1b23b53ca4929ff18adbc3a3ef92666a3fffe/docs/platform/using-airbyte/configuring-schema.md#L42-L54). An overwrite empties the whole target and a snapshot copy deletes keys it once saw, so a second writer's rows would be lost.
 
-| Writers of one target | Allowed |
-| --- | --- |
-| All `append_dedup` on the same `primaryKey`, in the same order, over disjoint partitions | Yes. Each upserts and deletes only keys inside its own partitions, so none removes or shadows another's rows. |
-| `append_dedup` on the same key, but sharing a partition or not partitioned | No. A snapshot copy deletes keys it once saw, which can be keys the other writer loads, and an unpartitioned writer may hold any key. |
-| Any `overwrite` or `overwrite_dedup` | No. It empties the whole target, including the other writers' rows. |
-| Any `append` | No. An append log cannot tell its rows apart from another writer's. |
-| `append_dedup` on different keys | No. One target holds one deduplication key. |
+A writer is the copy's `id`, or the source identity and stream name for a copy without one. Every destination records the writer of each target, stored with the target and committed with its first load. Before a copy extracts or changes anything, the target refuses any other writer with `TargetOwnedError`, which names both. A pipeline refuses two writers of one target among its own copies before running any. The owning writer may change its own mode or key.
 
-A refused copy fails before extraction and leaves the target unchanged; a pipeline also refuses such a pair among its own copies before running any. The error names both writers, their modes and keys. A writer may change its own mode or key. To reassign a target, drop it: a dropped SQLite table or a deleted Markdown file or folder releases its claims, and the next load starts from scratch. SQLite keeps claims in the reserved `_mac_elt_writers` table; Markdown keeps them in the file's header comment or the folder's marker file.
+To reassign a target, drop it: a dropped SQLite or Postgres table, or a deleted Markdown file or folder, releases its writer, and the next load starts from scratch. SQLite and Postgres keep writers in the reserved `_mac_elt_writers` table; Markdown keeps it in the file's header comment or the folder's marker file.
 
-Several properties or accounts can therefore share tables either through one partitioned source, which is one writer, or through one pipeline per property whose source lists only that property.
+Several properties or accounts share tables through one [partitioned source](#partitioned-streams), which is one writer.
 
 ## Identity, cursors, and schemas
 
@@ -377,7 +371,7 @@ await exportPipeline.run();
 
 `file()` stores the stream in one document; `folder()` stores one record per document. Both retain every record field, including nested JSON. The optional title field supplies headings; otherwise headings use record positions. Values are escaped Markdown text; HTML stays text. Non-JSON values fail instead of being silently discarded or coerced.
 
-Managed v3 documents include a writer-claims comment and base64-encoded JSON record comments alongside their visible sections. Append and deduplication read these canonical records, without parsing rendered Markdown or using a SQL sidecar. These comments are not encryption. Generated files are owned by the export; manual edits are replaced. Earlier layouts have no compatibility reader or migration.
+Managed v3 documents include a writer comment and base64-encoded JSON record comments alongside their visible sections. Append and deduplication read these canonical records, without parsing rendered Markdown or using a SQL sidecar. These comments are not encryption. Generated files are owned by the export; manual edits are replaced. Earlier layouts have no compatibility reader or migration.
 
 Ordinary overwrite/append requires no key. Folder filenames represent record occurrences, so repeated source IDs remain separate. Deduplicated folders hash the selected key values instead; title changes do not change identity. The old `folder({ key })` option is removed: selected deduplication keys belong to the copy. Reconciliation currently holds the target in memory and republishes its complete contents.
 
@@ -410,7 +404,7 @@ Each copy is one transaction that holds a per-schema advisory lock, so writers t
 - Records are inserted in batches of 1000, sent as one JSON parameter and cast per column. Every row of a copy shares one `loaded_at` (`TIMESTAMPTZ`), the transaction's start time.
 - Deduplication upserts on a unique index named after the table and key (`_mac_elt_dedup_<hash>`). The index is created once and rebuilt only when the key changes. Within a batch, one row per key is kept, as applying the batch row by row would: `replace` keeps the last and `cursor_newer` keeps the first with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`).
 - Deletions apply in source order: pending records are written first.
-- Writer claims live in `<schema>._mac_elt_writers` and follow the [shared-target rules](#shared-targets).
+- The writer of each table lives in `<schema>._mac_elt_writers` and follows the [target ownership](#target-ownership) rule.
 
 Existing tables are not migrated: a deduplicating load checks that stored key and cursor columns keep their types and fails otherwise. Keep checkpoints in the same schema with `PostgresCheckpointStore` ([checkpoint stores](#checkpoint-stores)).
 
@@ -641,7 +635,7 @@ One source reads several properties. Every stream except `sites` is a [partition
 
 Every read of the snapshot streams returns the complete list, so an incremental copy (`append_dedup` on the stream's key, no `cursorField`) writes only changed rows and deletes the rest; see [snapshot streams](#snapshot-streams). The inspection streams are rolling instead; see [URL inspection and quota](#url-inspection-and-quota).
 
-The example app lists every property in one source, so each table has one writer. Separate pipelines per property also work: give each copy an id that names its property and load incrementally, so a snapshot copy deletes only keys its own snapshot held and the dated grains upsert by keys that include `siteUrl`. A full-refresh `overwrite` empties the whole table, so the [shared-target rules](#shared-targets) refuse it next to another writer.
+The example app lists every property in one source, so each table has one [writer](#target-ownership). To add a property, add it to that source's list; a second pipeline into the same tables is refused.
 
 #### Why the grains are separate
 
@@ -775,12 +769,9 @@ Live verification on **2026-09-24** repeated it over the loopback consent flow, 
 
 Live verification on **2026-09-24** of the daily inspection quota on `sc-domain:limerence.sh`: 1868 inspections succeeded after 132 earlier that day (2000 in all), then Google answered `429` with reason `rateLimitExceeded`, status `RESOURCE_EXHAUSTED`, message "Quota exceeded for sc-domain:limerence.sh." and no `Retry-After`, not the `403 quotaExceeded` its error reference lists. The pool stopped with every earlier inspection kept, and a further call reported the quota exhausted without inspecting anything.
 
-Live verification on **2026-09-24** of shared tables, target ownership and partitions, against `sc-domain:ezz.sh`, `sc-domain:january.sh` and `sc-domain:limerence.sh`:
+Live verification on **2026-09-24** of partitions: one source listing `sc-domain:ezz.sh`, `sc-domain:january.sh` and `sc-domain:limerence.sh` loaded every table in one run, with one checkpoint per stream holding a `{ partitions: [...] }` entry per property.
 
-- Two per-property pipelines loaded `ezz.sh` then `january.sh` into the same file: every table held both properties (for example 2292 and 2934 daily rows), and the second load left the first property's rows untouched.
-- A full-refresh `overwrite` copy pointed at the shared `raw_sitemaps` was refused before extraction, naming the `append_dedup` writer that owns it; both properties' rows remained.
-- One source listing all three properties loaded every table in one run, with one checkpoint per stream holding a `{ partitions: [...] }` entry per property and one writer claim per table.
-- A second pipeline covering `ezz.sh` and `limerence.sh` was refused on a table where `ezz.sh` already had a writer, while separate `ezz.sh` and `january.sh` pipelines shared it.
+Live verification on **2026-09-25** of target ownership against `sc-domain:ezz.sh`: after the old `_mac_elt_writers` table was dropped, one run recreated it as `(target, writer)` with one row per table, each owned by its copy id (for example `sitemaps ← {"copy":"sitemaps"}`). A second copy from another source into `sitemaps` failed with `TargetOwnedError` naming both writers, extracted nothing, and left its row count unchanged.
 
 Not exercised live: `watch()` over a real polling interval, Markdown destinations, a property large enough to page past 25000 rows, and the quota ceiling on URL inspection.
 

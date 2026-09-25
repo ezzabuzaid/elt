@@ -682,7 +682,7 @@ test('every stream but sites carries its property and keys by it first', async (
   );
 });
 
-test('two properties load into the same tables without deleting each other', async () => {
+test('two properties share tables through one source without deleting each other', async () => {
   const A = 'sc-domain:a.example';
   const B = 'sc-domain:b.example';
   const sitemaps: Record<string, unknown[]> = {
@@ -705,17 +705,17 @@ test('two properties load into the same tables without deleting each other', asy
   });
   await using warehouse = await scratchWarehouse();
   const { destination, checkpoints, sql } = warehouse;
-  const pipeline = (siteUrl: string) => {
+  const pipeline = (siteUrls: string[], name = 'search-console') => {
     const source = new SearchConsoleSource({
       fetch: async () => new Response(''),
       now: NOW,
       requester,
       searchTypes: ['WEB'],
-      siteUrls: [siteUrl],
+      siteUrls,
     });
     const listing = (stream: typeof source.sitemaps, table: string) =>
       new Copy(stream, destination.table(table), {
-        id: `${stream.name}:${siteUrl}`,
+        id: `${name}:${stream.name}`,
         syncMode: 'incremental',
         destinationSyncMode: 'append_dedup',
         primaryKey: [...stream.primaryKey],
@@ -727,7 +727,7 @@ test('two properties load into the same tables without deleting each other', asy
       steps: [
         listing(source.sitemaps, 'sitemaps'),
         new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
-          id: `searchAnalyticsDaily:${siteUrl}`,
+          id: `${name}:searchAnalyticsDaily`,
           syncMode: 'incremental',
           destinationSyncMode: 'append_dedup',
           dedupPolicy: 'replace',
@@ -739,20 +739,23 @@ test('two properties load into the same tables without deleting each other', asy
     });
   };
 
-  await pipeline(A).run();
-  await pipeline(B).run();
+  await pipeline([A, B]).run();
   sitemaps[A] = [];
-  const counts = (await pipeline(A).run()).map(({ copy, count, deleted }) => [
-    copy.from.name,
-    count,
-    deleted,
-  ]);
+  const counts = (await pipeline([A, B]).run()).map(
+    ({ copy, count, deleted }) => [copy.from.name, count, deleted],
+  );
 
   assert.deepEqual(counts, [
     ['sitemaps', 0, 1],
-    ['searchAnalyticsDaily', 1, 0],
+    ['searchAnalyticsDaily', 2, 0],
     ['searchAnalyticsCountries', 0, 0],
   ]);
+  // A second pipeline is a second writer, even for a property the first
+  // does not list.
+  await assert.rejects(
+    pipeline(['sc-domain:c.example'], 'other').run(),
+    /Target sitemaps is written by \{"copy":"search-console:sitemaps"\}; \{"copy":"other:sitemaps"\} cannot write it/,
+  );
   const sites = async (table: string) =>
     (await sql`SELECT "siteUrl" FROM ${sql(table)} ORDER BY "siteUrl"`).map(
       (row) => row.siteUrl,

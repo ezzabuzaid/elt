@@ -1,6 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { CopyConfiguration } from './copy-configuration.ts';
-import type { WriterClaim } from './ownership.ts';
 import type { SourceMessage } from './source.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import type { WriteResult, Writer } from './writer.ts';
@@ -17,7 +16,7 @@ export abstract class Destination<Target extends DestinationTarget> {
 
   abstract identity(target: Target): string;
 
-  // The stored object a target names; targets at one location share its writer claims.
+  // The stored object a target names; targets at one location share its writer.
   abstract location(target: Target): string;
 
   // Validate declarations without storage I/O; destinations check their own targets.
@@ -48,14 +47,13 @@ export abstract class Destination<Target extends DestinationTarget> {
     target: Target,
   ): Writer;
 
-  // claim names the writer across runs and what it loads; the target refuses
-  // a writer that could delete or shadow rows another writer owns.
+  // writer names the copy across runs; the target refuses any other writer.
   async write(
     configuration: CopyConfiguration,
     target: Target,
     records: AsyncIterable<SourceMessage>,
-    claim: WriterClaim,
+    writer: string,
   ): Promise<WriteResult> {
-    return this.createWriter(configuration, target).write(records, claim);
+    return this.createWriter(configuration, target).write(records, writer);
   }
 }

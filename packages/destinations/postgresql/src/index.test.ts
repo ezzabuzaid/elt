@@ -426,7 +426,7 @@ test('deletions remove keyed rows in source order', async () => {
   );
 });
 
-test('a source failure commits nothing: no table, rows or claim', async () => {
+test('a source failure commits nothing: no table, rows or owner', async () => {
   await using database = await scratchDatabase();
   const stream = new Stream({
     name: 'items',
@@ -465,7 +465,7 @@ test('a source failure commits nothing: no table, rows or claim', async () => {
   );
 });
 
-test('writers share a table only when each upserts by the same key over its own partitions', async () => {
+test('a table has one writer, even when another loads only its own partitions', async () => {
   await using database = await scratchDatabase();
   const stream = new Stream({
     name: 'records',
@@ -514,26 +514,30 @@ test('writers share a table only when each upserts by the same key over its own 
         }),
       ],
     }).run();
+  const other = new Owned('b');
   const late = new Owned('c');
 
   await upsert('a', new Owned('a'));
-  await upsert('b', new Owned('b'));
+  await upsert('a', new Owned('a'));
+  await assert.rejects(
+    upsert('b', other),
+    /Target records is written by \{"copy":"a"\}; \{"copy":"b"\} cannot write it/,
+  );
   await assert.rejects(
     new Pipeline({
       source: late,
       destination,
       steps: [new Copy(stream, destination.table('records'))],
     }).run(),
-    /is written by \{"copy":"a"\}.*\(overwrite for \[\{"owner":"c"\}\]\) cannot share it/,
+    /\{"source":"c","stream":"records"\} cannot write it/,
   );
-  await assert.rejects(upsert('again', new Owned('a')), /cannot share it/);
 
-  assert.equal(late.extracted, 0);
+  assert.equal(other.extracted + late.extracted, 0);
   assert.deepEqual(
     (await database.sql`SELECT owner FROM raw.records ORDER BY owner`).map(
       (row) => row.owner,
     ),
-    ['a', 'b'],
+    ['a'],
   );
   await database.sql`DROP TABLE raw.records`;
   await new Pipeline({

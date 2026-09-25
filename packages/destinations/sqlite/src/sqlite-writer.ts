@@ -2,13 +2,11 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type { KeyValue, Stream } from 'elt';
 import {
-  assertShareable,
   CommittedWriteError,
-  readClaims,
+  TargetOwnedError,
   type WriteCount,
   type WriteOperation,
   Writer,
-  type WriterClaim,
 } from 'elt';
 import type { SQLiteTable } from './sqlite-table.ts';
 
@@ -48,53 +46,31 @@ export abstract class SQLiteWriter extends Writer {
     return undefined;
   }
 
-  // Claims live beside the tables they guard and commit with the load. A
-  // dropped table releases its claims, since nothing it held remains.
-  private claim(database: DatabaseSync, claim: WriterClaim): void {
+  // The owner lives beside the table it guards and commits with the load. A
+  // dropped table releases it, since nothing it held remains.
+  private own(database: DatabaseSync, writer: string): void {
     database.exec(
-      'CREATE TABLE IF NOT EXISTS "_mac_elt_writers" ("target" TEXT NOT NULL, "writer" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL, "primary_key" TEXT, "partitions" TEXT, PRIMARY KEY ("target", "writer")) STRICT',
+      'CREATE TABLE IF NOT EXISTS "_mac_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT',
     );
     database.exec(
       `DELETE FROM "_mac_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`,
     );
-    const rows = database
-      .prepare(
-        'SELECT "writer", "destination_sync_mode" AS "destinationSyncMode", "primary_key" AS "primaryKey", "partitions" FROM "_mac_elt_writers" WHERE "target" = ?',
-      )
-      .all(this.table.location);
-    assertShareable(
-      this.table.name,
-      readClaims(
-        rows.map((row) => ({
-          ...row,
-          primaryKey:
-            typeof row.primaryKey === 'string'
-              ? JSON.parse(row.primaryKey)
-              : null,
-          partitions:
-            typeof row.partitions === 'string'
-              ? JSON.parse(row.partitions)
-              : null,
-        })),
-      ),
-      claim,
-    );
-    database
-      .prepare(
-        'INSERT INTO "_mac_elt_writers" ("target", "writer", "destination_sync_mode", "primary_key", "partitions") VALUES (?, ?, ?, ?, ?) ON CONFLICT ("target", "writer") DO UPDATE SET "destination_sync_mode" = excluded."destination_sync_mode", "primary_key" = excluded."primary_key", "partitions" = excluded."partitions"',
-      )
-      .run(
-        this.table.location,
-        claim.writer,
-        claim.destinationSyncMode,
-        claim.primaryKey === null ? null : JSON.stringify(claim.primaryKey),
-        claim.partitions === null ? null : JSON.stringify(claim.partitions),
-      );
+    const owner = database
+      .prepare('SELECT "writer" FROM "_mac_elt_writers" WHERE "target" = ?')
+      .get(this.table.location)?.writer;
+    if (owner === undefined)
+      database
+        .prepare(
+          'INSERT INTO "_mac_elt_writers" ("target", "writer") VALUES (?, ?)',
+        )
+        .run(this.table.location, writer);
+    else if (owner !== writer)
+      throw new TargetOwnedError(this.table.name, String(owner), writer);
   }
 
   protected override async writeRecords(
     operations: AsyncIterable<WriteOperation>,
-    claim: WriterClaim,
+    writer: string,
   ): Promise<WriteCount> {
     let committed: WriteCount | undefined;
     try {
@@ -102,7 +78,7 @@ export abstract class SQLiteWriter extends Writer {
       // ponytail: holds the write transaction during extraction; stage first if long reads block other writers.
       database.exec('BEGIN IMMEDIATE');
       try {
-        this.claim(database, claim);
+        this.own(database, writer);
         // Only this library-owned mode index is replaced; explicit SQL constraints remain authoritative.
         database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
         this.initialize(database);

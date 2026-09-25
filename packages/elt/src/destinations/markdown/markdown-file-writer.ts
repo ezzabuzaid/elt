@@ -9,12 +9,8 @@ import {
 import { join } from 'node:path';
 import type { CopyConfiguration } from '../../core/copy-configuration.ts';
 import {
-  assertShareable,
-  type WriterClaim,
-  withClaim,
-} from '../../core/ownership.ts';
-import {
   CommittedWriteError,
+  TargetOwnedError,
   type WriteCount,
   type WriteOperation,
 } from '../../core/writer.ts';
@@ -34,7 +30,7 @@ export class MarkdownFileWriter extends MarkdownWriter {
 
   protected override async writeRecords(
     operations: AsyncIterable<WriteOperation>,
-    claim: WriterClaim,
+    writer: string,
   ): Promise<WriteCount> {
     let committed: WriteCount | undefined;
     try {
@@ -47,9 +43,10 @@ export class MarkdownFileWriter extends MarkdownWriter {
         const existing = (await this.assertManagedFile(path))
           ? await readFile(path, 'utf8')
           : undefined;
-        const claims =
-          existing === undefined ? [] : MarkdownDocument.claims(existing);
-        assertShareable(target.name, claims, claim);
+        const owner =
+          existing === undefined ? undefined : MarkdownDocument.writer(existing);
+        if (owner !== undefined && owner !== writer)
+          throw new TargetOwnedError(target.name, owner, writer);
         const previous =
           existing !== undefined &&
           (this.configuration.destinationSyncMode === 'append' ||
@@ -67,7 +64,7 @@ export class MarkdownFileWriter extends MarkdownWriter {
         {
           await using file = await open(stagedPath, 'wx', 0o600);
           await file.writeFile(
-            target.document.header(stream, withClaim(claims, claim)),
+            target.document.header(stream, writer),
           );
           for (const [index, record] of rows.entries())
             await file.writeFile(target.document.render(record, index + 1));

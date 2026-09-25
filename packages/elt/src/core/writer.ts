@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { WriterClaim } from './ownership.ts';
 import type { KeyValue, SourceMessage, StateMessage } from './source.ts';
 import type { Stream } from './stream.ts';
 
@@ -21,6 +20,18 @@ export class CommittedWriteError extends Error {
   }
 }
 
+// A target has one writer, as in Airbyte: an overwrite replaces the whole
+// target and a snapshot deletes keys it once saw, so a second writer's rows
+// would be lost. Dropping the target releases it.
+export class TargetOwnedError extends TypeError {
+  override name = 'TargetOwnedError';
+  constructor(target: string, owner: string, writer: string) {
+    super(
+      `Target ${target} is written by ${owner}; ${writer} cannot write it. A target has one writer; drop the target to reassign it.`,
+    );
+  }
+}
+
 export type WriteResult = WriteCount & {
   readonly checkpoints: readonly StateMessage[];
 };
@@ -39,22 +50,22 @@ export abstract class Writer {
 
   async write(
     messages: AsyncIterable<SourceMessage>,
-    claim: WriterClaim,
+    writer: string,
   ): Promise<WriteResult> {
     const checkpoints: StateMessage[] = [];
     const written = await this.writeRecords(
       this.validateMessages(messages, checkpoints),
-      claim,
+      writer,
     );
     // Every current writer commits the whole copy before resolving. No early acknowledgement.
     return { ...written, checkpoints };
   }
 
-  // Check and record claim against the target's other writers before
-  // extracting or changing anything, in the same commit as the load.
+  // Refuse a target another writer owns, before extracting or changing
+  // anything, and record writer as its owner in the same commit as the load.
   protected abstract writeRecords(
     operations: AsyncIterable<WriteOperation>,
-    claim: WriterClaim,
+    writer: string,
   ): Promise<WriteCount>;
 
   private async *validateMessages(

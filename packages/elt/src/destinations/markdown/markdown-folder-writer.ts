@@ -14,12 +14,8 @@ import {
 import { join } from 'node:path';
 import type { CopyConfiguration } from '../../core/copy-configuration.ts';
 import {
-  assertShareable,
-  type WriterClaim,
-  withClaim,
-} from '../../core/ownership.ts';
-import {
   CommittedWriteError,
+  TargetOwnedError,
   type WriteCount,
   type WriteOperation,
 } from '../../core/writer.ts';
@@ -39,7 +35,7 @@ export class MarkdownFolderWriter extends MarkdownWriter {
 
   protected override async writeRecords(
     operations: AsyncIterable<WriteOperation>,
-    claim: WriterClaim,
+    writer: string,
   ): Promise<WriteCount> {
     let committed: WriteCount | undefined;
     try {
@@ -51,12 +47,13 @@ export class MarkdownFolderWriter extends MarkdownWriter {
       await mkdir(lock);
       try {
         const existsBefore = await this.assertManagedFolder(path);
-        const claims = existsBefore
-          ? MarkdownFolder.claims(
+        const owner = existsBefore
+          ? MarkdownFolder.writer(
               await readFile(join(path, MarkdownFolder.markerName), 'utf8'),
             )
-          : [];
-        assertShareable(target.name, claims, claim);
+          : undefined;
+        if (owner !== undefined && owner !== writer)
+          throw new TargetOwnedError(target.name, owner, writer);
         const previousRows: unknown[] = [];
         if (
           existsBefore &&
@@ -85,7 +82,7 @@ export class MarkdownFolderWriter extends MarkdownWriter {
           await mkdir(next, { mode: 0o700 });
           await writeFile(
             join(next, MarkdownFolder.markerName),
-            MarkdownFolder.markerFor(withClaim(claims, claim)),
+            MarkdownFolder.markerFor(writer),
             { flag: 'wx', mode: 0o600 },
           );
           for (const [index, record] of rows.entries()) {
@@ -165,7 +162,7 @@ export class MarkdownFolderWriter extends MarkdownWriter {
       )
     )
       throw new TypeError('Refusing to replace an unmanaged Markdown folder');
-    MarkdownFolder.claims(
+    MarkdownFolder.writer(
       await readFile(join(path, MarkdownFolder.markerName), 'utf8'),
     );
     for (const entry of entries) {

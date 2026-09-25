@@ -1,13 +1,11 @@
 import {
-  assertShareable,
   CommittedWriteError,
   type KeyValue,
-  readClaims,
   type Stream,
+  TargetOwnedError,
   type WriteCount,
   type WriteOperation,
   Writer,
-  type WriterClaim,
 } from 'elt';
 import type postgres from 'postgres';
 import { Connection, schemaLock } from './connection.ts';
@@ -83,44 +81,33 @@ export abstract class PostgresWriter extends Writer {
     return rows.map((row) => String(row.indexname));
   }
 
-  // Claims live beside the tables they guard and commit with the load. A
-  // dropped table releases its claims, since nothing it held remains.
-  private async claim(
-    transaction: Transaction,
-    claim: WriterClaim,
-  ): Promise<void> {
+  // The owner lives beside the table it guards and commits with the load. A
+  // dropped table releases it, since nothing it held remains.
+  private async own(transaction: Transaction, writer: string): Promise<void> {
     const writers = `${quote(this.schema)}."_mac_elt_writers"`;
     await transaction.unsafe(
-      `CREATE TABLE IF NOT EXISTS ${writers} ("target" TEXT NOT NULL, "writer" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL, "primary_key" JSONB, "partitions" JSONB, PRIMARY KEY ("target", "writer"))`,
+      `CREATE TABLE IF NOT EXISTS ${writers} ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL)`,
     );
     await transaction.unsafe(
       `DELETE FROM ${writers} WHERE to_regclass(format('%I.%I', $1::text, "target")) IS NULL`,
       [this.schema],
     );
-    const rows = await transaction.unsafe(
-      `SELECT "writer", "destination_sync_mode" AS "destinationSyncMode", "primary_key" AS "primaryKey", "partitions" FROM ${writers} WHERE "target" = $1`,
+    const [row] = await transaction.unsafe(
+      `SELECT "writer" FROM ${writers} WHERE "target" = $1`,
       [this.table.name],
     );
-    assertShareable(
-      this.table.name,
-      readClaims(rows.map((row) => ({ ...row }))),
-      claim,
-    );
-    await transaction.unsafe(
-      `INSERT INTO ${writers} ("target", "writer", "destination_sync_mode", "primary_key", "partitions") VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb) ON CONFLICT ("target", "writer") DO UPDATE SET "destination_sync_mode" = excluded."destination_sync_mode", "primary_key" = excluded."primary_key", "partitions" = excluded."partitions"`,
-      [
-        this.table.name,
-        claim.writer,
-        claim.destinationSyncMode,
-        claim.primaryKey === null ? null : JSON.stringify(claim.primaryKey),
-        claim.partitions === null ? null : JSON.stringify(claim.partitions),
-      ],
-    );
+    if (row === undefined)
+      await transaction.unsafe(
+        `INSERT INTO ${writers} ("target", "writer") VALUES ($1, $2)`,
+        [this.table.name, writer],
+      );
+    else if (row.writer !== writer)
+      throw new TargetOwnedError(this.table.name, String(row.writer), writer);
   }
 
   protected override async writeRecords(
     operations: AsyncIterable<WriteOperation>,
-    claim: WriterClaim,
+    writer: string,
   ): Promise<WriteCount> {
     let committed: WriteCount | undefined;
     try {
@@ -128,7 +115,7 @@ export abstract class PostgresWriter extends Writer {
       // ponytail: holds the write transaction during extraction; stage first if long reads hold back vacuum.
       committed = await connection.sql.begin(async (transaction) => {
         // One writer per schema at a time, as SQLite's BEGIN IMMEDIATE is one
-        // per file: claims span the schema's tables. Readers never wait on it.
+        // per file: owners span the schema's tables. Readers never wait on it.
         await transaction.unsafe(
           'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
           [schemaLock(this.schema)],
@@ -136,7 +123,7 @@ export abstract class PostgresWriter extends Writer {
         await transaction.unsafe(
           `CREATE SCHEMA IF NOT EXISTS ${quote(this.schema)}`,
         );
-        await this.claim(transaction, claim);
+        await this.own(transaction, writer);
         await this.initialize(transaction);
         const remove = this.deletion(transaction);
         const insert = this.insertSQL;

@@ -71,16 +71,6 @@ export abstract class Source {
   // Source-specific selection rules, checked without I/O.
   protected validateExtraction(_configuration: CopyConfiguration): void {}
 
-  // What a copy of this stream loads: its partitions, or null when the stream
-  // is not partitioned. Target ownership compares these between writers.
-  partitionsOf(stream: Stream): readonly Partition[] | null {
-    const member = this.member(stream);
-    if (member.partitionKey === undefined) return null;
-    const partitions = this.partitions(member);
-    assertPartitions(member, partitions);
-    return partitions;
-  }
-
   // The partitions a partitioned stream is read as, derived from configuration
   // without I/O. The list is not part of the identity: adding or removing a
   // partition keeps every other partition's checkpoint.

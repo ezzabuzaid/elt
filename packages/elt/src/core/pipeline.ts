@@ -1,10 +1,13 @@
 import type { CheckpointStore } from '../state/checkpoint-store.ts';
 import { Copy } from './copy.ts';
 import type { Destination } from './destination.ts';
-import { assertShareable, type WriterClaim } from './ownership.ts';
 import type { Source } from './source.ts';
 import type { Target as DestinationTarget } from './target.ts';
-import { CommittedWriteError, type WriteCount } from './writer.ts';
+import {
+  CommittedWriteError,
+  TargetOwnedError,
+  type WriteCount,
+} from './writer.ts';
 
 // count is accepted records, deleted is accepted deletions.
 export type CopyResult<Target extends DestinationTarget> = WriteCount & {
@@ -145,15 +148,16 @@ export class Pipeline<Target extends DestinationTarget> {
       throw new TypeError('Pipeline copy IDs must be distinct');
     for (const copy of this.steps)
       copy.validate(this.source, this.destination, this.checkpoints);
-    // Copies into one target must be able to share it, so an incompatible
-    // pair fails before any copy runs rather than after the first commits.
-    const claims = new Map<string, WriterClaim[]>();
+    // Two copies with different writers into one target fail before any copy
+    // runs rather than after the first commits.
+    const writers = new Map<string, string>();
     for (const copy of this.steps) {
       const location = this.destination.location(copy.to);
-      const claim = copy.claim(this.source);
-      const existing = claims.get(location) ?? [];
-      assertShareable(location, existing, claim);
-      claims.set(location, [...existing, claim]);
+      const writer = copy.writer(this.source);
+      const owner = writers.get(location);
+      if (owner !== undefined && owner !== writer)
+        throw new TargetOwnedError(location, owner, writer);
+      writers.set(location, writer);
     }
   }
 

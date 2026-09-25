@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from 'node:util';
-import { readClaims, type WriterClaim } from '../../core/ownership.ts';
 import type { Stream } from '../../core/stream.ts';
 
 // Rendering is shared by whole-stream files and individual-record files.
@@ -15,26 +14,23 @@ export class MarkdownDocument {
     Object.freeze(this);
   }
 
-  // A whole-stream document carries its writer claims; a per-record document does not.
-  header(stream: Stream, claims?: readonly WriterClaim[]): string {
-    const writers =
-      claims === undefined
+  // A whole-stream document carries its writer; a per-record document does not.
+  header(stream: Stream, writer?: string): string {
+    const owner =
+      writer === undefined
         ? ''
-        : `<!-- mac-elt-writers:${Buffer.from(JSON.stringify(claims)).toString('base64')} -->\n`;
-    return `${MarkdownDocument.marker}${writers}# ${this.escape(stream.name.replaceAll(/\s+/g, ' '))}\n\n`;
+        : `<!-- mac-elt-writer:${Buffer.from(writer).toString('base64')} -->\n`;
+    return `${MarkdownDocument.marker}${owner}# ${this.escape(stream.name.replaceAll(/\s+/g, ' '))}\n\n`;
   }
 
-  static claims(document: string): WriterClaim[] {
-    const match = /^<!-- mac-elt-writers:([A-Za-z0-9+/=]*) -->$/m.exec(
-      document,
-    );
+  static writer(document: string): string {
+    const match = /^<!-- mac-elt-writer:([A-Za-z0-9+/=]+) -->$/m.exec(document);
     const encoded = match?.[1];
-    if (encoded === undefined)
-      throw new TypeError('Missing Markdown writer claims');
+    if (encoded === undefined) throw new TypeError('Missing Markdown writer');
     const bytes = Buffer.from(encoded, 'base64');
     if (bytes.toString('base64') !== encoded)
-      throw new TypeError('Invalid Markdown writer claims');
-    return readClaims(JSON.parse(bytes.toString('utf8')));
+      throw new TypeError('Invalid Markdown writer');
+    return bytes.toString('utf8');
   }
 
   render(data: unknown, index: number): string {
