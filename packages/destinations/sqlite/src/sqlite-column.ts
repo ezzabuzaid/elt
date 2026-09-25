@@ -94,8 +94,13 @@ export class SQLiteColumn {
     return `"${this.name.replaceAll('"', '""')}"`;
   }
 
+  // Original file bytes live in a chunk table; the column keeps the file's id.
+  get storesFile(): boolean {
+    return this.kind === 'blob' && this.fileRead !== undefined;
+  }
+
   get storageType(): string {
-    return storageTypes[this.kind];
+    return this.storesFile ? 'INTEGER' : storageTypes[this.kind];
   }
 
   get definition(): string {
@@ -129,7 +134,12 @@ export class SQLiteColumn {
         if (typeof value === 'number' && Number.isFinite(value)) return value;
         break;
       case 'blob':
-        if (value instanceof Uint8Array) return value;
+        if (
+          this.storesFile
+            ? Number.isSafeInteger(value)
+            : value instanceof Uint8Array
+        )
+          return value as number | Uint8Array;
     }
     throw new TypeError(
       `Column "${this.name}" requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,

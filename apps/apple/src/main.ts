@@ -60,7 +60,11 @@ try {
         notes.name AS note,
         attachments.name AS attachment,
         attachments.content,
-        length(attachments.bytes) AS byte_length
+        (
+          SELECT sum(length(chunks.bytes))
+          FROM "_mac_elt_files_raw_attachments_bytes" AS chunks
+          WHERE chunks.file = attachments.bytes
+        ) AS byte_length
       FROM raw_attachments AS attachments
       LEFT JOIN raw_notes AS notes ON notes.id = attachments.containerId
       ORDER BY notes.name, attachments.name, attachments.id

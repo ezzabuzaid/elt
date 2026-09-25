@@ -9,7 +9,7 @@ import {
   type SourceMessage,
   validateRecords,
 } from 'elt';
-import { EventKit } from '../../platform/macos/eventkit.ts';
+import { EventKit, EventKitSnapshot } from '../../platform/macos/eventkit.ts';
 import {
   eventKitAccountFields,
   eventKitCalendarFields,
@@ -155,7 +155,7 @@ export class CalendarIcsUnavailableError extends Error {
   }
 }
 
-export class AppleCalendarSource extends Source {
+export class AppleCalendarSource extends Source<EventKitSnapshot> {
   readonly #eventKit = new EventKit('events');
   // The window is not part of the identity: moving it keeps one checkpoint, and
   // incremental copies delete the occurrences that left it.
@@ -207,23 +207,36 @@ export class AppleCalendarSource extends Source {
     for await (const _ of this.#eventKit.watch(signal)) yield streams;
   }
 
+  // Every selected stream from one change-free window, so occurrences match
+  // their calendars and ICS rows their items.
+  protected override async open(
+    streams: readonly Stream[],
+  ): Promise<EventKitSnapshot> {
+    return new EventKitSnapshot(
+      await this.#eventKit.consistently(async () => {
+        const records = new Map<string, Record<string, unknown>[]>();
+        for (const stream of streams)
+          records.set(stream.name, await Array.fromAsync(this.scan(stream)));
+        return records;
+      }),
+    );
+  }
+
   protected override async *extract(
     configuration: CopyConfiguration,
     state: unknown,
+    _partition: null,
+    snapshot: EventKitSnapshot,
   ): AsyncGenerator<SourceMessage> {
     const { stream, syncMode } = configuration;
+    const records = snapshot.of(stream.name);
     if (syncMode === 'incremental') {
-      for await (const message of diffSnapshot(
-        stream,
-        this.scan(stream),
-        state,
-      ))
+      for await (const message of diffSnapshot(stream, records, state))
         if ('type' in message) yield message;
         else yield* this.withFile(configuration, message.data);
       return;
     }
-    for await (const data of this.scan(stream))
-      yield* this.withFile(configuration, data);
+    for (const data of records) yield* this.withFile(configuration, data);
   }
 
   // Stages an attachment's bytes when the copy reads them, like Notes attachments.

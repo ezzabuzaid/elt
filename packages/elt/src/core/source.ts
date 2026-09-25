@@ -1,7 +1,7 @@
-import { readFile } from 'node:fs/promises';
 import type { Catalog } from './catalog.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { DocumentParser } from './document-parser.ts';
+import { FileContent } from './file-content.ts';
 import {
   assertInPartition,
   assertPartitions,
@@ -44,7 +44,15 @@ export type DeleteMessage = {
 
 export type SourceMessage = RecordMessage | StateMessage | DeleteMessage;
 
-export abstract class Source {
+const noSession: AsyncDisposable = Object.freeze({
+  async [Symbol.asyncDispose]() {},
+});
+
+// Every copy in one pipeline run reads through one session, so related
+// streams see the same moment of the source.
+export abstract class Source<
+  Session extends AsyncDisposable = AsyncDisposable,
+> {
   abstract readonly identity: string;
   // Metadata only. Selections must use these exact Stream objects: a stream's
   // schema shapes the destination, so a matching name is not enough.
@@ -66,6 +74,19 @@ export abstract class Source {
   async *watch(options: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     for (const stream of options.streams) this.member(stream);
     yield* this.observe(options);
+  }
+
+  // One consistent view of the upstream for reading these streams.
+  async session(streams: readonly Stream[]): Promise<Session> {
+    for (const stream of streams) this.member(stream);
+    return this.open(streams);
+  }
+
+  // A source whose streams must agree with each other pins one consistent view
+  // of its upstream here: a read transaction, or every selected stream read
+  // up front. Sources that declare a Session type must override it.
+  protected async open(_streams: readonly Stream[]): Promise<Session> {
+    return noSession as Session;
   }
 
   // Source-specific selection rules, checked without I/O.
@@ -95,15 +116,20 @@ export abstract class Source {
   }
 
   // Must be lazy: the destination prepares its target before pulling records.
+  // Without a session, the read opens its own and closes it when it ends.
   async *read(
     configuration: CopyConfiguration,
     state: unknown,
+    session?: Session,
   ): AsyncGenerator<SourceMessage> {
     this.validate(configuration);
+    await using owned =
+      session === undefined ? await this.session([configuration.stream]) : null;
+    const reading = session ?? (owned as Session);
     const messages =
       configuration.stream.partitionKey === undefined
-        ? this.extract(configuration, state, null)
-        : this.partitioned(configuration, state);
+        ? this.extract(configuration, state, null, reading)
+        : this.partitioned(configuration, state, reading);
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0) {
         yield message;
@@ -123,7 +149,7 @@ export abstract class Source {
       const output = { ...data };
       const values = new Map<
         DocumentParser | undefined,
-        Promise<string | Uint8Array>
+        Promise<string | null> | FileContent
       >();
       for (const read of configuration.fileReads) {
         if (
@@ -132,20 +158,23 @@ export abstract class Source {
           )
         )
           throw new TypeError('File field collides with source metadata');
-        let value: string | Uint8Array | null = null;
+        let value: string | FileContent | null = null;
         if (message.file !== null) {
           let pending = values.get(read.parser);
           if (pending === undefined) {
-            // ponytail: binary fields hold a whole file in memory; use external storage for large files.
             pending =
               read.parser === undefined
-                ? readFile(message.file)
+                ? new FileContent(message.file)
                 : read.parser.parse(message.file);
             values.set(read.parser, pending);
           }
           value = await pending;
-          if (read.parser !== undefined && typeof value !== 'string')
-            throw new TypeError('Document parser must return text');
+          if (
+            read.parser !== undefined &&
+            value !== null &&
+            typeof value !== 'string'
+          )
+            throw new TypeError('Document parser must return text or null');
         }
         Object.defineProperty(output, read.name, { value, enumerable: true });
       }
@@ -159,6 +188,7 @@ export abstract class Source {
   private async *partitioned(
     configuration: CopyConfiguration,
     state: unknown,
+    session: Session,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const incremental = configuration.syncMode === 'incremental';
@@ -174,6 +204,7 @@ export abstract class Source {
         configuration,
         latest?.state ?? null,
         partition,
+        session,
       )) {
         if ('type' in message && message.type === 'STATE') {
           latest = { partition, state: message.state };
@@ -200,5 +231,6 @@ export abstract class Source {
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
+    session: Session,
   ): AsyncIterable<SourceMessage>;
 }

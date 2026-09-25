@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import osa from './osa.ts';
 
 export class CalendarUnavailableError extends Error {
@@ -20,6 +21,32 @@ export class RemindersUnavailableError extends Error {
       { cause },
     );
   }
+}
+
+export class EventKitChangingError extends Error {
+  override name = 'EventKitChangingError';
+
+  constructor(entity: string, attempts: number) {
+    super(
+      `EventKit ${entity} changed during each of ${attempts} consistent reads; run the export again when edits settle.`,
+    );
+  }
+}
+
+// Every selected stream's records, read in one change-free window.
+export class EventKitSnapshot implements AsyncDisposable {
+  constructor(
+    readonly records: ReadonlyMap<string, readonly Record<string, unknown>[]>,
+  ) {}
+
+  of(stream: string): readonly Record<string, unknown>[] {
+    const records = this.records.get(stream);
+    if (records === undefined)
+      throw new TypeError(`Stream ${stream} was not read in this session`);
+    return records;
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {}
 }
 
 export class EventKit {
@@ -64,6 +91,41 @@ function requireEventKitAccess(store, entityType, marker) {
       );
     } catch (error) {
       throw this.unavailable(error);
+    }
+  }
+
+  // EventKit has no read transaction. Reads run while a watcher counts
+  // EKEventStoreChangedNotification and repeat when a change arrived during
+  // them or within settleMs after, the notification's delivery delay.
+  async consistently<T>(
+    read: () => Promise<T>,
+    { settleMs = 250, attempts = 5 } = {},
+  ): Promise<T> {
+    const controller = new AbortController();
+    const changes = this.watch(controller.signal)[Symbol.asyncIterator]();
+    let count = 0;
+    let failure: { error: unknown } | undefined;
+    // The watcher's first notification only confirms the subscription.
+    await changes.next();
+    const counting = (async () => {
+      try {
+        while (!(await changes.next()).done) count++;
+      } catch (error) {
+        if (!controller.signal.aborted) failure = { error };
+      }
+    })();
+    try {
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const before = count;
+        const value = await read();
+        await sleep(settleMs);
+        if (failure !== undefined) throw failure.error;
+        if (count === before) return value;
+      }
+      throw new EventKitChangingError(this.entity, attempts);
+    } finally {
+      controller.abort();
+      await counting;
     }
   }
 

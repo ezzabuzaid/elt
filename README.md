@@ -15,6 +15,7 @@ The core uses Node.js APIs with no runtime dependencies. Destinations beyond Mar
 | Apple Notes | Accounts, folders, notes, and attachments | Full refresh or snapshot incremental | Native filesystem notifications over Notes storage |
 | Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, scripting metadata, and each item's iCalendar (ICS) components, properties and parameters | Full refresh or snapshot incremental within a required date range | EventKit notifications |
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh or snapshot incremental | EventKit notifications |
+| Apple Messages | Every column of chats, handles, participants, messages (text, edits, unsends, reactions, replies), Recently Deleted, and attachments with their files | Full refresh or snapshot incremental, every stream from one consistent chat.db snapshot | Native filesystem notifications over `~/Library/Messages` |
 | Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection of every sitemap and search URL | Full refresh; incremental by date for the dated analytics grains, by snapshot for properties, sitemaps and the country breakdown, and rolling (never-inspected, then stalest, within the daily quota) for URL inspection; every row carries its property, so properties share tables | Change-gated polling (the API publishes no notification) |
 
 Every destination supports overwrite, append, and deduplication:
@@ -79,7 +80,9 @@ This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table'
 
 `Copy` defaults to `full_refresh` extraction and `overwrite` loading. Creating a pipeline performs no extraction; `run()` executes it once and returns `{ copy, count, deleted }` results after loading. `count` is accepted input records, including deduplication no-ops, and `deleted` is accepted deletions, including keys that were already absent; neither is the number of changed rows.
 
-The repository also includes a [Notes exporter](apps/apple/src/main.ts) that loads accounts, folders, notes, and attachment metadata, text, and bytes. Run it with `npx nx run apple:start`. It writes `outputs/apple-notes.sqlite`; unsupported attachment formats or export failures stop the affected copy.
+The repository also includes a [Notes exporter](apps/apple/src/main.ts) that loads accounts, folders, notes, and attachment metadata, text, and bytes. Run it with `npx nx run apple:start`. It writes `outputs/apple-notes.sqlite`. Attachments without extractable text (photos, for example) load with null `content`; export failures stop the affected copy. Original files are stored in bounded chunks, so file size is limited only by disk.
+
+`npx nx run apple:messages` loads Apple Messages the same way into `outputs/apple-messages.sqlite`. It reads `chat.db` directly, so Messages.app need not be open, but the process running it needs Full Disk Access. See [Messages streams](docs/reference.md#apple-messages).
 
 ### Reminders
 

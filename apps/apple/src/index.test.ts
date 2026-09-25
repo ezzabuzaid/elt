@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { execFile as execFileCallback } from 'node:child_process';
+import {
+  execFile as execFileCallback,
+  execFileSync,
+  spawn,
+} from 'node:child_process';
 import fs, { mkdirSync, writeFileSync } from 'node:fs';
 import {
   mkdtempDisposable,
@@ -10,7 +14,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { test } from 'node:test';
+import { type TestContext, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import {
@@ -22,18 +27,27 @@ import {
   SQLiteCheckpointStore,
   Stream,
 } from 'elt';
-import { SQLiteDestination, type SQLiteTable } from 'elt-sqlite';
+import {
+  SQLiteColumns,
+  SQLiteDestination,
+  type SQLiteTable,
+} from 'elt-sqlite';
 import {
   AppleCalendarSource,
+  AppleMessagesSource,
   AppleNotesSource,
   AppleRemindersSource,
   CalendarIcsUnavailableError,
   CalendarUnavailableError,
+  EventKitChangingError,
+  MacOSDocumentParser,
+  MessagesUnavailableError,
   NotesUnavailableError,
   RemindersUnavailableError,
 } from './index.ts';
 import { EventKit } from './platform/macos/eventkit.ts';
 import osa from './platform/macos/osa.ts';
+import { decodeArchive, plistJSON } from './platform/macos/plist.ts';
 import { calendarScript } from './sources/apple-calendar/calendar-script.ts';
 import { parseICalendar } from './sources/apple-calendar/icalendar.ts';
 import { icsStreams } from './sources/apple-calendar/ics-records.ts';
@@ -178,7 +192,9 @@ test('Notes uses native file availability and rolls back actual export failures'
   using database = new DatabaseSync(destination.path);
   const rows = () =>
     database
-      .prepare('SELECT id, bytes FROM attachments')
+      .prepare(
+        'SELECT id, (SELECT c.bytes FROM "_mac_elt_files_attachments_bytes" c WHERE c.file = a.bytes AND c.n = 0) AS bytes FROM attachments a',
+      )
       .all()
       .map((row) => ({ ...row }));
   const expected = [
@@ -528,6 +544,7 @@ test('Notes rejects an attachment export that is not a regular file', async (t) 
 test('Calendar extracts every scalar stream into SQLite and Markdown', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
@@ -687,6 +704,7 @@ test('Calendar extracts every scalar stream into SQLite and Markdown', {
 test('Calendar validates its request range and preflights without OSA', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   assert.throws(
     () => new AppleCalendarSource({ startAt: timestamp, endAt: timestamp }),
     /startAt < endAt/,
@@ -776,6 +794,7 @@ test('Calendar validates its request range and preflights without OSA', {
 test('Calendar rejects malformed records and preserves prior Markdown on native failures', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
@@ -850,10 +869,9 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
   };
   await assert.rejects(
     run(),
+    // The session reads before any copy starts, so nothing wraps the error.
     (error: unknown) =>
-      error instanceof Error &&
-      error.cause instanceof CalendarUnavailableError &&
-      error.cause.cause === unavailable,
+      error instanceof CalendarUnavailableError && error.cause === unavailable,
   );
   assert.equal(await readFile(path, 'utf8'), previous);
 
@@ -861,16 +879,14 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
   response = async () => {
     throw native;
   };
-  await assert.rejects(
-    run(),
-    (error: unknown) => error instanceof Error && error.cause === native,
-  );
+  await assert.rejects(run(), (error: unknown) => error === native);
   assert.equal(await readFile(path, 'utf8'), previous);
 });
 
 test('Calendar snapshot incremental reconciles added, changed, moved and removed rows', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
@@ -999,6 +1015,7 @@ test('Calendar snapshot incremental reconciles added, changed, moved and removed
 test('Calendar snapshots span every extraction window without spurious deletions', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2024-01-01T00:00:00.000Z',
     endAt: '2026-01-01T00:00:00.000Z',
@@ -1050,6 +1067,7 @@ test('Calendar snapshots span every extraction window without spurious deletions
 test('Calendar deduplicates an event returned by adjacent extraction windows', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2024-01-01T00:00:00.000Z',
     endAt: '2026-01-01T00:00:00.000Z',
@@ -1098,6 +1116,7 @@ test('Calendar deduplicates an event returned by adjacent extraction windows', {
 test('Calendar continues empty metadata pages and rejects a stalled cursor', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
@@ -1491,6 +1510,7 @@ test('Calendar occurrence keys survive rescheduling and preserve all-day dates',
 test('Reminders EventKit projects native records through every SQLite and Markdown stream', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
   const source = new AppleRemindersSource();
   const streams = (await source.discover()).streams;
@@ -1832,6 +1852,7 @@ test('Reminders JXA keeps each date component set intact and rejects unidentifie
 test('Reminders rejects unsupported selections and preserves targets on invalid data or access failure', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleRemindersSource();
   let response = JSON.stringify([
     recordFor(source.reminders, { id: 'reminder-1', listId: 'list-1' }),
@@ -1906,18 +1927,14 @@ test('Reminders rejects unsupported selections and preserves targets on invalid 
     });
     await assert.rejects(
       run(),
+      // The session reads before any copy starts, so nothing wraps the error.
       (error: unknown) =>
-        error instanceof Error &&
-        error.cause instanceof RemindersUnavailableError &&
-        error.cause.cause === failure,
+        error instanceof RemindersUnavailableError && error.cause === failure,
     );
     assert.equal(await readFile(path, 'utf8'), previous);
   }
   failure = new Error('EventKit reminder fetch timed out');
-  await assert.rejects(
-    run(),
-    (error: unknown) => error instanceof Error && error.cause === failure,
-  );
+  await assert.rejects(run(), (error: unknown) => error === failure);
   assert.equal(await readFile(path, 'utf8'), previous);
   failure = undefined;
   response = '[]';
@@ -2408,6 +2425,7 @@ const seriesICS = [
 test('Calendar ICS streams load components, raw properties and parameters with exact event links', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
@@ -2526,6 +2544,7 @@ test('Calendar ICS streams load components, raw properties and parameters with e
 test('Calendar ICS rejects exports without events and reports a missing private export', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
@@ -2628,6 +2647,7 @@ test('Calendar JXA exports saved items only and names a missing ICS selector', {
 test('Calendar ICS snapshots delete a removed property with its parameters', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
@@ -2681,6 +2701,7 @@ test('Calendar ICS snapshots delete a removed property with its parameters', {
 });
 
 test('Reminders snapshot incremental writes only changed reminders and deletes removed ones', async (t) => {
+  quietEventKit(t);
   const source = new AppleRemindersSource();
   const reminder = (id: string, name: string) =>
     recordFor(source.reminders, { id, listId: 'list-1', name });
@@ -2734,6 +2755,7 @@ const attachmentsICS = [
 test('Calendar attachment files come from the fetcher, inline data, or stay null when unreachable', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const fetched: string[] = [];
   const source = new AppleCalendarSource({
     startAt: '2025-01-01T00:00:00.000Z',
@@ -2774,7 +2796,7 @@ test('Calendar attachment files come from the fetcher, inline data, or stay null
   assert.deepEqual(
     database
       .prepare(
-        'SELECT filename, formatType, inline, bytes FROM attachments ORDER BY rowid',
+        'SELECT filename, formatType, inline, (SELECT c.bytes FROM "_mac_elt_files_attachments_bytes" c WHERE c.file = a.bytes AND c.n = 0) AS bytes FROM attachments a ORDER BY a.rowid',
       )
       .all()
       .map((row) => ({
@@ -2805,6 +2827,7 @@ test('Calendar attachment files come from the fetcher, inline data, or stay null
 test('Calendar attachment files need a fetcher, but attachment metadata does not', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   const source = new AppleCalendarSource({
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
@@ -2842,6 +2865,7 @@ test('Calendar attachment files need a fetcher, but attachment metadata does not
 test('Calendar incremental attachment copies fetch only new attachments and delete removed ones', {
   concurrency: false,
 }, async (t) => {
+  quietEventKit(t);
   let ics = attachmentsICS;
   let fetches = 0;
   const source = new AppleCalendarSource({
@@ -2890,4 +2914,852 @@ test('Calendar incremental attachment copies fetch only new attachments and dele
   ics = attachmentsICS.replace(/ATTACH;FMTTYPE=text\/plain[^\r]*\r\n/, '');
   assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 1 }]);
   assert.equal(fetches, 2);
+});
+
+// One empty page: a valid PDF with no text layer.
+const blankPdf = (() => {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>',
+  ];
+  let body = '%PDF-1.4\n';
+  const offsets = objects.map((object, index) => {
+    const offset = body.length;
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    return offset;
+  });
+  const xref = body.length;
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return body;
+})();
+
+// A PNG of the given line of text, drawn by AppKit, or a blank one.
+const renderedText = (path: string, text: string | null) =>
+  execFileSync('/usr/bin/osascript', [
+    '-l',
+    'JavaScript',
+    '-e',
+    `ObjC.import('AppKit');
+    const image = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, 640, 160, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
+    const context = $.NSGraphicsContext.graphicsContextWithBitmapImageRep(image);
+    $.NSGraphicsContext.saveGraphicsState;
+    $.NSGraphicsContext.setCurrentContext(context);
+    $.NSColor.whiteColor.setFill;
+    $.NSRectFill($.NSMakeRect(0, 0, 640, 160));
+    const text = ${JSON.stringify(text)};
+    if (text !== null) {
+      const attributes = $.NSMutableDictionary.alloc.init;
+      attributes.setObjectForKey($.NSFont.systemFontOfSize(40), $.NSFontAttributeName);
+      attributes.setObjectForKey($.NSColor.blackColor, $.NSForegroundColorAttributeName);
+      $(text).drawAtPointWithAttributes($.NSMakePoint(20, 60), attributes);
+    }
+    context.flushGraphics;
+    $.NSGraphicsContext.restoreGraphicsState;
+    image.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $()).writeToFileAtomically(${JSON.stringify(path)}, true);`,
+  ]);
+
+test('the document parser reads every attachment kind and throws only on unreadable files', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-parse-'));
+  const file = async (name: string, content: string | Uint8Array) => {
+    const path = join(scratch.path, name);
+    await writeFile(path, content);
+    return path;
+  };
+  const photo = join(scratch.path, 'receipt.png');
+  renderedText(photo, 'Invoice 4821 due Friday');
+  const heic = join(scratch.path, 'receipt.heic');
+  execFileSync('/usr/bin/sips', ['-s', 'format', 'heic', photo, '--out', heic]);
+  const blank = join(scratch.path, 'blank.png');
+  renderedText(blank, null);
+  const card =
+    'BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nTEL:+15550100\nEND:VCARD\n';
+  const parser = new MacOSDocumentParser();
+
+  const parsed = {
+    photo: await parser.parse(photo),
+    heic: await parser.parse(heic),
+    noExtension: await parser.parse(
+      await file('GroupPhotoImage', await readFile(heic)),
+    ),
+    blankImage: await parser.parse(blank),
+    blankPdf: await parser.parse(await file('blank.pdf', blankPdf)),
+    text: await parser.parse(await file('note.txt', 'hello')),
+    card: await parser.parse(await file('Ada.vcf', card)),
+    location: await parser.parse(await file('CL.loc.vcf', card)),
+    video: await parser.parse(await file('clip.mov', Uint8Array.of(0, 1, 2))),
+    unknown: await parser.parse(
+      await file('pluginPayloadAttachment', Uint8Array.of(9, 9, 9, 9)),
+    ),
+  };
+  const corruptPdf = parser.parse(await file('corrupt.pdf', 'not a pdf'));
+  const corruptImage = parser.parse(
+    await file('corrupt.heic', Uint8Array.of(0, 1, 2)),
+  );
+
+  assert.deepEqual(parsed, {
+    photo: 'Invoice 4821 due Friday',
+    heic: 'Invoice 4821 due Friday',
+    noExtension: 'Invoice 4821 due Friday',
+    blankImage: null,
+    blankPdf: null,
+    text: 'hello',
+    card,
+    location: card,
+    video: null,
+    unknown: null,
+  });
+  await assert.rejects(corruptPdf, /Cannot read PDF/);
+  await assert.rejects(corruptImage, /Cannot read image/);
+});
+
+// A chat.db with Messages' own table definitions, captured from macOS 26.6.2
+// (schema only, no data), in WAL mode like the real file.
+const chatSchema = `
+  PRAGMA journal_mode = WAL;
+  CREATE TABLE chat (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, guid TEXT UNIQUE NOT NULL, style INTEGER, state INTEGER, account_id TEXT, properties BLOB, chat_identifier TEXT, service_name TEXT, room_name TEXT, account_login TEXT, is_archived INTEGER DEFAULT 0, last_addressed_handle TEXT, display_name TEXT, group_id TEXT, is_filtered INTEGER DEFAULT 0, successful_query INTEGER, engram_id TEXT, server_change_token TEXT, ck_sync_state INTEGER DEFAULT 0, original_group_id TEXT, last_read_message_timestamp INTEGER DEFAULT 0, cloudkit_record_id TEXT, last_addressed_sim_id TEXT, is_blackholed INTEGER DEFAULT 0, syndication_date INTEGER DEFAULT 0, syndication_type INTEGER DEFAULT 0, is_recovered INTEGER DEFAULT 0, is_deleting_incoming_messages INTEGER DEFAULT 0, is_pending_review INTEGER DEFAULT 0);
+  CREATE TABLE handle (ROWID INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE, id TEXT NOT NULL, country TEXT, service TEXT NOT NULL, uncanonicalized_id TEXT, person_centric_id TEXT, UNIQUE (id, service) );
+  CREATE TABLE message (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, guid TEXT UNIQUE NOT NULL, text TEXT, replace INTEGER DEFAULT 0, service_center TEXT, handle_id INTEGER DEFAULT 0, subject TEXT, country TEXT, attributedBody BLOB, version INTEGER DEFAULT 0, type INTEGER DEFAULT 0, service TEXT, account TEXT, account_guid TEXT, error INTEGER DEFAULT 0, date INTEGER, date_read INTEGER, date_delivered INTEGER, is_delivered INTEGER DEFAULT 0, is_finished INTEGER DEFAULT 0, is_emote INTEGER DEFAULT 0, is_from_me INTEGER DEFAULT 0, is_empty INTEGER DEFAULT 0, is_delayed INTEGER DEFAULT 0, is_auto_reply INTEGER DEFAULT 0, is_prepared INTEGER DEFAULT 0, is_read INTEGER DEFAULT 0, is_system_message INTEGER DEFAULT 0, is_sent INTEGER DEFAULT 0, has_dd_results INTEGER DEFAULT 0, is_service_message INTEGER DEFAULT 0, is_forward INTEGER DEFAULT 0, was_downgraded INTEGER DEFAULT 0, is_archive INTEGER DEFAULT 0, cache_has_attachments INTEGER DEFAULT 0, cache_roomnames TEXT, was_data_detected INTEGER DEFAULT 0, was_deduplicated INTEGER DEFAULT 0, is_audio_message INTEGER DEFAULT 0, is_played INTEGER DEFAULT 0, date_played INTEGER, item_type INTEGER DEFAULT 0, other_handle INTEGER DEFAULT 0, group_title TEXT, group_action_type INTEGER DEFAULT 0, share_status INTEGER DEFAULT 0, share_direction INTEGER DEFAULT 0, is_expirable INTEGER DEFAULT 0, expire_state INTEGER DEFAULT 0, message_action_type INTEGER DEFAULT 0, message_source INTEGER DEFAULT 0, associated_message_guid TEXT, associated_message_type INTEGER DEFAULT 0, balloon_bundle_id TEXT, payload_data BLOB, expressive_send_style_id TEXT, associated_message_range_location INTEGER DEFAULT 0, associated_message_range_length INTEGER DEFAULT 0, time_expressive_send_played INTEGER, message_summary_info BLOB, ck_sync_state INTEGER DEFAULT 0, ck_record_id TEXT, ck_record_change_tag TEXT, destination_caller_id TEXT, is_corrupt INTEGER DEFAULT 0, reply_to_guid TEXT, sort_id INTEGER, is_spam INTEGER DEFAULT 0, has_unseen_mention INTEGER DEFAULT 0, thread_originator_guid TEXT, thread_originator_part TEXT, syndication_ranges TEXT, synced_syndication_ranges TEXT, was_delivered_quietly INTEGER DEFAULT 0, did_notify_recipient INTEGER DEFAULT 0, date_retracted INTEGER, date_edited INTEGER, was_detonated INTEGER DEFAULT 0, part_count INTEGER, is_stewie INTEGER DEFAULT 0, is_sos INTEGER DEFAULT 0, is_critical INTEGER DEFAULT 0, bia_reference_id TEXT, is_kt_verified INTEGER DEFAULT 0, fallback_hash TEXT, associated_message_emoji TEXT, is_pending_satellite_send INTEGER DEFAULT 0, needs_relay INTEGER DEFAULT 0, schedule_type INTEGER DEFAULT 0, schedule_state INTEGER DEFAULT 0, sent_or_received_off_grid INTEGER DEFAULT 0, date_recovered INTEGER DEFAULT 0, is_time_sensitive INTEGER DEFAULT 0, ck_chat_id TEXT, index_state INTEGER DEFAULT 0);
+  CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY AUTOINCREMENT, guid TEXT UNIQUE NOT NULL, created_date INTEGER DEFAULT 0, start_date INTEGER DEFAULT 0, filename TEXT, uti TEXT, mime_type TEXT, transfer_state INTEGER DEFAULT 0, is_outgoing INTEGER DEFAULT 0, user_info BLOB, transfer_name TEXT, total_bytes INTEGER DEFAULT 0, is_sticker INTEGER DEFAULT 0, sticker_user_info BLOB, attribution_info BLOB, hide_attachment INTEGER DEFAULT 0, ck_sync_state INTEGER DEFAULT 0, ck_server_change_token_blob BLOB, ck_record_id TEXT, original_guid TEXT UNIQUE NOT NULL, is_commsafety_sensitive INTEGER DEFAULT 0, emoji_image_content_identifier TEXT, emoji_image_short_description TEXT, preview_generation_state INTEGER DEFAULT 0);
+  CREATE TABLE chat_message_join (chat_id INTEGER REFERENCES chat (ROWID) ON DELETE CASCADE, message_id INTEGER REFERENCES message (ROWID) ON DELETE CASCADE, message_date INTEGER DEFAULT 0, index_state INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (chat_id, message_id));
+  CREATE TABLE chat_handle_join (chat_id INTEGER REFERENCES chat (ROWID) ON DELETE CASCADE, handle_id INTEGER REFERENCES handle (ROWID) ON DELETE CASCADE, UNIQUE(chat_id, handle_id));
+  CREATE TABLE message_attachment_join (message_id INTEGER REFERENCES message (ROWID) ON DELETE CASCADE, attachment_id INTEGER REFERENCES attachment (ROWID) ON DELETE CASCADE, UNIQUE(message_id, attachment_id));
+  CREATE TABLE chat_recoverable_message_join (chat_id INTEGER REFERENCES chat (ROWID) ON DELETE CASCADE, message_id INTEGER REFERENCES message (ROWID) ON DELETE CASCADE, delete_date INTEGER, ck_sync_state INTEGER DEFAULT 0, PRIMARY KEY (chat_id, message_id), CHECK (delete_date != 0));
+  CREATE TABLE recoverable_message_part (chat_id INTEGER REFERENCES chat (ROWID) ON DELETE CASCADE, message_id INTEGER REFERENCES message (ROWID) ON DELETE CASCADE, part_index INTEGER, delete_date INTEGER, part_text BLOB NOT NULL, ck_sync_state INTEGER DEFAULT 0, PRIMARY KEY (chat_id, message_id, part_index), CHECK (delete_date != 0));
+  CREATE TABLE chat_lookup (identifier TEXT NOT NULL, domain TEXT NOT NULL, chat INTEGER NOT NULL REFERENCES chat(ROWID) ON UPDATE CASCADE ON DELETE CASCADE, priority INTEGER DEFAULT 0, UNIQUE (identifier, domain));
+  CREATE TABLE chat_service (service TEXT NOT NULL, chat INTEGER NOT NULL REFERENCES chat(ROWID) ON UPDATE CASCADE ON DELETE CASCADE, UNIQUE (service, chat));
+`;
+
+// A binary property list, encoded by plutil from XML.
+const binaryPlist = (xml: string) =>
+  execFileSync('/usr/bin/plutil', ['-convert', 'binary1', '-o', '-', '-'], {
+    input: `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${xml}</plist>`,
+  });
+
+// A link preview as Messages stores it in payload_data, archived by
+// NSKeyedArchiver around a real LPLinkMetadata.
+const linkPayload = () =>
+  Buffer.from(
+    execFileSync(
+      '/usr/bin/osascript',
+      [
+        '-l',
+        'JavaScript',
+        '-e',
+        `ObjC.import('LinkPresentation');
+        const metadata = $.LPLinkMetadata.alloc.init;
+        metadata.URL = $.NSURL.URLWithString('https://example.com/article');
+        metadata.originalURL = $.NSURL.URLWithString('https://example.com/a');
+        metadata.title = 'An article';
+        metadata.siteName = 'Example';
+        const root = $.NSMutableDictionary.alloc.init;
+        root.setObjectForKey(metadata, 'richLinkMetadata');
+        ObjC.unwrap($.NSKeyedArchiver.archivedDataWithRootObjectRequiringSecureCodingError(root, false, null).base64EncodedStringWithOptions(0));`,
+      ],
+      { encoding: 'utf8' },
+    ),
+    'base64',
+  );
+
+// An NSAttributedString in typedstream form, as Messages archives a body.
+const archivedText = (text: string) => {
+  const bytes = Buffer.from(text);
+  const length =
+    bytes.length < 0x80
+      ? [bytes.length]
+      : [0x81, bytes.length & 0xff, bytes.length >> 8];
+  return Buffer.concat([
+    Buffer.from(
+      '\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@\x84\x84\x84\x12NSAttributedString\x00\x84\x84\x08NSObject\x00\x85\x92\x84\x84\x84\x08NSString\x01\x94\x84\x01+',
+      'latin1',
+    ),
+    Buffer.from(length),
+    bytes,
+    Buffer.from('\x86\x84\x02iI\x01', 'latin1'),
+  ]);
+};
+
+// Nanoseconds since 2001-01-01 UTC, Messages' modern time unit.
+const appleNanoseconds = (iso: string) =>
+  BigInt(Date.parse(iso) - Date.UTC(2001, 0, 1)) * 1_000_000n;
+
+const chatFixture = async (directory: string) => {
+  const path = join(directory, 'chat.db');
+  const attachment = join(directory, 'note.txt');
+  await writeFile(attachment, 'attached words');
+  using database = new DatabaseSync(path);
+  database.exec(chatSchema);
+  database.exec(`
+    INSERT INTO chat (ROWID, guid, chat_identifier, service_name, display_name, group_id, style) VALUES (1, 'iMessage;-;+15550100', '+15550100', 'iMessage', '', 'group-1', 45);
+    INSERT INTO handle VALUES (1, '+15550100', 'US', 'iMessage', '5550100', 'person-1');
+    INSERT INTO chat_lookup VALUES ('+15550100', 'phone', 1, 0);
+    INSERT INTO chat_service VALUES ('iMessage', 1);
+    INSERT INTO chat_handle_join VALUES (1, 1);
+    INSERT INTO attachment (ROWID, guid, original_guid, created_date, filename, mime_type, transfer_name, total_bytes)
+      VALUES (1, 'att-local', 'att-local', 757000000, '${attachment}', 'text/plain', 'note.txt', 14),
+             (2, 'att-offloaded', 'att-offloaded', 757000000, '${join(directory, 'gone.heic')}', 'image/heic', 'gone.heic', 900);
+  `);
+  const insert = database.prepare(
+    'INSERT INTO message (ROWID, guid, text, attributedBody, handle_id, is_from_me, date, associated_message_guid, associated_message_type, cache_has_attachments, service) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)',
+  );
+  insert.run(
+    1,
+    'm-plain',
+    'hello',
+    null,
+    0,
+    appleNanoseconds('2025-01-02T03:04:05.006Z'),
+    null,
+    0,
+    0,
+    'iMessage',
+  );
+  insert.run(
+    2,
+    'm-archived',
+    null,
+    archivedText('é'.repeat(100)),
+    1,
+    appleNanoseconds('2025-01-02T03:05:00.000Z'),
+    null,
+    0,
+    1,
+    'iMessage',
+  );
+  insert.run(
+    3,
+    'm-reaction',
+    null,
+    null,
+    1,
+    appleNanoseconds('2025-01-02T03:06:00.000Z'),
+    'p:0/m-plain',
+    2000,
+    0,
+    'iMessage',
+  );
+  // Histories from before macOS 10.13 stored whole seconds.
+  insert.run(4, 'm-old', 'from 2016', null, 0, 500000000, null, 0, 0, 'SMS');
+  insert.run(
+    5,
+    'm-deleted',
+    'regretted',
+    null,
+    1,
+    appleNanoseconds('2025-01-02T03:07:00.000Z'),
+    null,
+    0,
+    0,
+    'iMessage',
+  );
+  // Edit history as Messages keeps it: part 0's versions, each a time in
+  // seconds since 2001 and an archived body. date_edited can stay 0.
+  database
+    .prepare(
+      "UPDATE message SET message_summary_info = ? WHERE guid = 'm-plain'",
+    )
+    .run(
+      binaryPlist(
+        `<dict><key>ec</key><dict><key>0</key><array><dict><key>d</key><real>757393445.006</real><key>t</key><data>${archivedText('helo').toString('base64')}</data></dict><dict><key>d</key><real>757393460.5</real><key>t</key><data>${archivedText('hello').toString('base64')}</data></dict></array></dict><key>ust</key><true/></dict>`,
+      ),
+    );
+  database
+    .prepare(
+      "INSERT INTO message (ROWID, guid, text, handle_id, date, balloon_bundle_id, payload_data) VALUES (6, 'm-link', 'https://example.com/a', 1, ?, 'com.apple.messages.URLBalloonProvider', ?)",
+    )
+    .run(appleNanoseconds('2025-01-02T03:08:00.000Z'), linkPayload());
+  database.exec(`
+    INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, 1), (1, 2), (1, 3), (1, 4), (1, 6);
+    INSERT INTO message_attachment_join VALUES (2, 1), (2, 2);
+  `);
+  // Recently Deleted: the row stays in message, its chat link moves here.
+  database
+    .prepare(
+      'INSERT INTO chat_recoverable_message_join (chat_id, message_id, delete_date) VALUES (1, 5, ?)',
+    )
+    .run(appleNanoseconds('2025-01-02T04:00:00.000Z'));
+  database
+    .prepare(
+      'INSERT INTO recoverable_message_part (chat_id, message_id, part_index, delete_date, part_text) VALUES (1, 5, 0, ?, ?)',
+    )
+    .run(
+      appleNanoseconds('2025-01-02T04:00:00.000Z'),
+      archivedText('regretted'),
+    );
+  return path;
+};
+
+const messagesRows = (path: string, sql: string) => {
+  using database = new DatabaseSync(path, { readOnly: true });
+  return database
+    .prepare(sql)
+    .all()
+    .map((row) => ({ ...row }));
+};
+
+test('Messages exports every stream by guid, decodes archived text and streams local attachments', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-messages-'),
+  );
+  const source = new AppleMessagesSource(await chatFixture(scratch.path));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const plain = (await source.discover()).streams
+    .filter((stream) => stream !== source.attachments)
+    .map((stream) => new Copy(stream, destination.table(stream.name)));
+  const attachments = new Copy(
+    source.attachments,
+    destination.table('attachments', (c) => [
+      ...SQLiteColumns.fromSchema(source.attachments.jsonSchema),
+      c
+        .text('content')
+        .from(source.attachments.file)
+        .parse(new MacOSDocumentParser()),
+      c.blob('bytes').from(source.attachments.file),
+    ]),
+  );
+
+  const results = await new Pipeline({
+    source,
+    destination,
+    steps: [...plain, attachments],
+  }).run();
+
+  assert.deepEqual(
+    results.map(({ copy, count }) => [copy.from.name, count]),
+    [
+      ['chats', 1],
+      ['handles', 1],
+      ['chatLookups', 1],
+      ['chatServices', 1],
+      ['chatHandles', 1],
+      ['messages', 6],
+      ['chatMessages', 5],
+      ['linkPreviews', 1],
+      ['messageEdits', 2],
+      ['recoverableMessages', 1],
+      ['recoverableMessageParts', 1],
+      ['messageAttachments', 2],
+      ['attachments', 2],
+    ],
+  );
+  const out = destination.path;
+  assert.deepEqual(
+    messagesRows(
+      out,
+      'SELECT guid, text, handle, isFromMe, date, associatedMessageGuid, associatedMessageType, cacheHasAttachments, attributedBody IS NOT NULL AS archived FROM messages ORDER BY date',
+    ),
+    [
+      {
+        guid: 'm-old',
+        text: 'from 2016',
+        handle: '+15550100',
+        isFromMe: 0,
+        date: '2016-11-05T00:53:20.000Z',
+        associatedMessageGuid: null,
+        associatedMessageType: 0,
+        cacheHasAttachments: 0,
+        archived: 0,
+      },
+      {
+        guid: 'm-plain',
+        text: 'hello',
+        handle: '+15550100',
+        isFromMe: 0,
+        date: '2025-01-02T03:04:05.006Z',
+        associatedMessageGuid: null,
+        associatedMessageType: 0,
+        cacheHasAttachments: 0,
+        archived: 0,
+      },
+      {
+        guid: 'm-archived',
+        text: 'é'.repeat(100),
+        handle: '+15550100',
+        isFromMe: 1,
+        date: '2025-01-02T03:05:00.000Z',
+        associatedMessageGuid: null,
+        associatedMessageType: 0,
+        cacheHasAttachments: 1,
+        archived: 1,
+      },
+      {
+        guid: 'm-reaction',
+        text: null,
+        handle: '+15550100',
+        isFromMe: 1,
+        date: '2025-01-02T03:06:00.000Z',
+        associatedMessageGuid: 'p:0/m-plain',
+        associatedMessageType: 2000,
+        cacheHasAttachments: 0,
+        archived: 0,
+      },
+      {
+        guid: 'm-deleted',
+        text: 'regretted',
+        handle: '+15550100',
+        isFromMe: 1,
+        date: '2025-01-02T03:07:00.000Z',
+        associatedMessageGuid: null,
+        associatedMessageType: 0,
+        cacheHasAttachments: 0,
+        archived: 0,
+      },
+      {
+        guid: 'm-link',
+        text: 'https://example.com/a',
+        handle: '+15550100',
+        isFromMe: 0,
+        date: '2025-01-02T03:08:00.000Z',
+        associatedMessageGuid: null,
+        associatedMessageType: 0,
+        cacheHasAttachments: 0,
+        archived: 0,
+      },
+    ],
+  );
+  assert.deepEqual(
+    messagesRows(
+      out,
+      'SELECT messageGuid, url, originalUrl, title, summary, siteName, json_extract(metadata, \'$."$class"\') AS class FROM linkPreviews',
+    ),
+    [
+      {
+        messageGuid: 'm-link',
+        url: 'https://example.com/article',
+        originalUrl: 'https://example.com/a',
+        title: 'An article',
+        summary: null,
+        siteName: 'Example',
+        class: 'LPLinkMetadata',
+      },
+    ],
+  );
+  assert.deepEqual(
+    messagesRows(
+      out,
+      'SELECT messageGuid, partIndex, version, editedAt, text FROM messageEdits ORDER BY version',
+    ),
+    [
+      {
+        messageGuid: 'm-plain',
+        partIndex: 0,
+        version: 0,
+        editedAt: '2025-01-01T03:04:05.006Z',
+        text: 'helo',
+      },
+      {
+        messageGuid: 'm-plain',
+        partIndex: 0,
+        version: 1,
+        editedAt: '2025-01-01T03:04:20.500Z',
+        text: 'hello',
+      },
+    ],
+  );
+  assert.deepEqual(
+    messagesRows(
+      out,
+      "SELECT json_extract(messageSummaryInfo, '$.ust') AS ust, json_type(messageSummaryInfo, '$.ec.0[0].t') AS body FROM messages WHERE guid = 'm-plain'",
+    ),
+    [{ ust: 1, body: 'text' }],
+  );
+  assert.deepEqual(
+    messagesRows(
+      out,
+      'SELECT r.chatGuid, r.messageGuid, r.deleteDate, p.partIndex, p.partText IS NOT NULL AS archivedPart FROM recoverableMessages r JOIN recoverableMessageParts p USING (messageGuid)',
+    ),
+    [
+      {
+        chatGuid: 'iMessage;-;+15550100',
+        messageGuid: 'm-deleted',
+        deleteDate: '2025-01-02T04:00:00.000Z',
+        partIndex: 0,
+        archivedPart: 1,
+      },
+    ],
+  );
+  assert.deepEqual(
+    messagesRows(
+      out,
+      'SELECT a.guid, a.availableLocally, a.content, (SELECT c.bytes FROM "_mac_elt_files_attachments_bytes" c WHERE c.file = a.bytes) AS bytes FROM attachments a ORDER BY a.guid',
+    ),
+    [
+      {
+        guid: 'att-local',
+        availableLocally: 1,
+        content: 'attached words',
+        bytes: new Uint8Array(Buffer.from('attached words')),
+      },
+      {
+        guid: 'att-offloaded',
+        availableLocally: 0,
+        content: null,
+        bytes: null,
+      },
+    ],
+  );
+  assert.deepEqual(
+    messagesRows(
+      out,
+      'SELECT messageGuid, attachmentGuid FROM messageAttachments ORDER BY attachmentGuid',
+    ),
+    [
+      { messageGuid: 'm-archived', attachmentGuid: 'att-local' },
+      { messageGuid: 'm-archived', attachmentGuid: 'att-offloaded' },
+    ],
+  );
+});
+
+test('Messages loads edits and unsends incrementally and deletes removed messages', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-messages-'),
+  );
+  const path = await chatFixture(scratch.path);
+  const source = new AppleMessagesSource(path);
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const copy = new Copy(source.messages, destination.table('messages'), {
+    id: 'messages',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['guid'],
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [copy],
+  });
+
+  await pipeline.run();
+  const unchanged = await pipeline.run();
+  {
+    using chat = new DatabaseSync(path);
+    chat
+      .prepare(
+        "UPDATE message SET text = 'hello again', date_edited = ? WHERE guid = 'm-plain'",
+      )
+      .run(appleNanoseconds('2025-01-03T00:00:00.000Z'));
+    chat
+      .prepare(
+        "UPDATE message SET date_retracted = ? WHERE guid = 'm-archived'",
+      )
+      .run(appleNanoseconds('2025-01-03T00:01:00.000Z'));
+    chat.exec("DELETE FROM message WHERE guid = 'm-old'");
+  }
+  const changed = await pipeline.run();
+
+  assert.deepEqual(
+    [unchanged, changed].map((results) =>
+      results.map(({ count, deleted }) => ({ count, deleted })),
+    ),
+    [[{ count: 0, deleted: 0 }], [{ count: 2, deleted: 1 }]],
+  );
+  assert.deepEqual(
+    messagesRows(
+      destination.path,
+      'SELECT guid, text, dateEdited, dateRetracted FROM messages ORDER BY guid',
+    ),
+    [
+      {
+        guid: 'm-archived',
+        text: 'é'.repeat(100),
+        dateEdited: null,
+        dateRetracted: '2025-01-03T00:01:00.000Z',
+      },
+      {
+        guid: 'm-deleted',
+        text: 'regretted',
+        dateEdited: null,
+        dateRetracted: null,
+      },
+      {
+        guid: 'm-link',
+        text: 'https://example.com/a',
+        dateEdited: null,
+        dateRetracted: null,
+      },
+      {
+        guid: 'm-plain',
+        text: 'hello again',
+        dateEdited: '2025-01-03T00:00:00.000Z',
+        dateRetracted: null,
+      },
+      { guid: 'm-reaction', text: null, dateEdited: null, dateRetracted: null },
+    ],
+  );
+});
+
+test('a Messages session reads one snapshot while Messages keeps writing', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-messages-'),
+  );
+  const path = await chatFixture(scratch.path);
+  const source = new AppleMessagesSource(path);
+  const copy = new Copy(
+    source.messages,
+    new SQLiteDestination({ path: join(scratch.path, 'out.sqlite') }).table(
+      'messages',
+    ),
+  );
+  const guids = async (session?: Awaited<ReturnType<typeof source.session>>) =>
+    (await Array.fromAsync(source.read(copy.configuration, null, session)))
+      .map((message) =>
+        'data' in message ? Reflect.get(Object(message.data), 'guid') : null,
+      )
+      .sort();
+
+  const pinned = await (async () => {
+    await using session = await source.session([source.messages]);
+    const before = await guids(session);
+    {
+      using chat = new DatabaseSync(path);
+      chat.exec("INSERT INTO message (guid, text) VALUES ('m-new', 'arrived')");
+    }
+    return { before, during: await guids(session) };
+  })();
+  const after = await guids();
+
+  assert.deepEqual(pinned.during, pinned.before);
+  assert.deepEqual(after, [...pinned.before, 'm-new'].sort());
+});
+
+test('Messages names Full Disk Access when chat.db cannot be opened', async () => {
+  const source = new AppleMessagesSource(join(tmpdir(), 'missing', 'chat.db'));
+
+  const opening = source.session([source.messages]);
+
+  await assert.rejects(opening, (error) => {
+    assert.ok(error instanceof MessagesUnavailableError);
+    assert.match(error.message, /Full Disk Access/);
+    assert.ok(error.cause instanceof Error);
+    return true;
+  });
+});
+
+// EventKit sessions subscribe to change notifications; this one reports the
+// subscription and then no change, so reads settle on the first attempt.
+const quietEventKit = (t: TestContext) =>
+  t.mock.method(
+    osa,
+    'watch',
+    async function* (_script: string, signal: AbortSignal) {
+      yield 'changed';
+      await new Promise((resolve) => signal.addEventListener('abort', resolve));
+    },
+  );
+
+const execFileAsync = promisify(execFileCallback);
+
+test('property lists decode as Foundation wrote them', () => {
+  const plain = binaryPlist(
+    '<dict><key>ascii</key><string>hello</string><key>unicode</key><string>é 😀</string><key>big</key><integer>9007199254740993</integer><key>negative</key><integer>-5</integer><key>real</key><real>1.5</real><key>yes</key><true/><key>when</key><date>2025-01-02T03:04:05Z</date><key>bytes</key><data>AQID</data><key>list</key><array><integer>1</integer><string>two</string></array></dict>',
+  );
+  const keyed = Buffer.from(
+    execFileSync(
+      '/usr/bin/osascript',
+      [
+        '-l',
+        'JavaScript',
+        '-e',
+        `const root = $.NSMutableDictionary.alloc.init;
+        root.setObjectForKey($.NSDate.dateWithTimeIntervalSince1970(1735787045), 'when');
+        root.setObjectForKey($.NSUUID.alloc.initWithUUIDString('12345678-9ABC-DEF0-1234-56789ABCDEF0'), 'id');
+        root.setObjectForKey($.NSArray.arrayWithArray($(['a', 'b'])), 'items');
+        root.setObjectForKey($('abc').dataUsingEncoding($.NSUTF8StringEncoding), 'bytes');
+        root.setObjectForKey($.NSURL.URLWithStringRelativeToURL('page', $.NSURL.URLWithString('https://example.com/dir/')), 'url');
+        ObjC.unwrap($.NSKeyedArchiver.archivedDataWithRootObjectRequiringSecureCodingError(root, false, null).base64EncodedStringWithOptions(0));`,
+      ],
+      { encoding: 'utf8' },
+    ),
+    'base64',
+  );
+
+  const decoded = [plain, keyed].map((bytes) =>
+    JSON.parse(plistJSON(decodeArchive(bytes))),
+  );
+
+  assert.deepEqual(decoded, [
+    {
+      ascii: 'hello',
+      unicode: 'é 😀',
+      big: '9007199254740993',
+      negative: -5,
+      real: 1.5,
+      yes: true,
+      when: '2025-01-02T03:04:05.000Z',
+      bytes: 'AQID',
+      list: [1, 'two'],
+    },
+    {
+      when: '2025-01-02T03:04:05.000Z',
+      id: '12345678-9ABC-DEF0-1234-56789ABCDEF0',
+      items: ['a', 'b'],
+      bytes: 'YWJj',
+      url: 'https://example.com/dir/page',
+    },
+  ]);
+});
+
+test('an EventKit session reads again when a change arrives during the read', async (t) => {
+  let change = () => {};
+  t.mock.method(
+    osa,
+    'watch',
+    async function* (_script: string, signal: AbortSignal) {
+      yield 'changed';
+      await new Promise<void>((resolve) => {
+        change = resolve;
+      });
+      yield 'changed';
+      await new Promise((resolve) => signal.addEventListener('abort', resolve));
+    },
+  );
+  const reads: string[] = [];
+  const source = new AppleRemindersSource();
+  t.mock.method(osa, 'execute', async () => {
+    const version = reads.length === 0 ? 'before' : 'after';
+    reads.push(version);
+    // Another app edits Reminders while the first read runs.
+    if (version === 'before') change();
+    return JSON.stringify([{ ...recordFor(source.accounts), name: version }]);
+  });
+
+  await using snapshot = await source.session([source.accounts]);
+
+  assert.deepEqual(reads, ['before', 'after']);
+  assert.deepEqual(
+    snapshot.of('accounts').map((account) => account.name),
+    ['after'],
+  );
+});
+
+test('an EventKit session gives up when every read sees a change', async (t) => {
+  t.mock.method(
+    osa,
+    'watch',
+    async function* (_script: string, signal: AbortSignal) {
+      yield 'changed';
+      while (!signal.aborted) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        yield 'changed';
+      }
+    },
+  );
+  const source = new AppleRemindersSource();
+  const execute = t.mock.method(osa, 'execute', async () =>
+    JSON.stringify([recordFor(source.accounts)]),
+  );
+
+  const opening = source.session([source.accounts]);
+
+  await assert.rejects(opening, EventKitChangingError);
+  assert.equal(execute.mock.callCount(), 5);
+});
+
+test('a Messages watch loads each commit Messages makes while it keeps chat.db open', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-messages-'),
+  );
+  const path = await chatFixture(scratch.path);
+  const source = new AppleMessagesSource(path, 20);
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [
+      new Copy(source.messages, destination.table('messages'), {
+        id: 'messages',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['guid'],
+      }),
+    ],
+  });
+  // Messages holds its connection, and so its WAL, open the whole time.
+  using messages = new DatabaseSync(path);
+  const controller = new AbortController();
+  const batches: number[] = [];
+
+  for await (const results of pipeline.watch({ signal: controller.signal })) {
+    batches.push(results[0]?.count ?? -1);
+    if (batches.length === 1)
+      messages.exec(
+        "INSERT INTO message (guid, text) VALUES ('m-new', 'arrived')",
+      );
+    else setTimeout(() => controller.abort(), 200);
+  }
+
+  assert.deepEqual(batches, [6, 1]);
+});
+
+test('the Messages exporter loads every stream end to end and a second run writes nothing', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-messages-'),
+  );
+  const chatDb = await chatFixture(scratch.path);
+  const out = join(scratch.path, 'out');
+  const exporter = fileURLToPath(new URL('./messages.js', import.meta.url));
+  const run = () =>
+    execFileAsync(process.execPath, [
+      exporter,
+      '--chat-db',
+      chatDb,
+      '--out',
+      out,
+    ]);
+  const tables = () =>
+    messagesRows(
+      join(out, 'apple-messages.sqlite'),
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'raw_%' ORDER BY name",
+    ).map(({ name }) => {
+      const [row] = messagesRows(
+        join(out, 'apple-messages.sqlite'),
+        `SELECT count(*) AS rows, max(loaded_at) AS loadedAt FROM "${String(name)}"`,
+      );
+      return { name, rows: row?.rows, loadedAt: row?.loadedAt };
+    });
+
+  const first = await run();
+  const loaded = tables();
+  const second = await run();
+
+  assert.match(first.stdout, /Loaded Apple Messages/);
+  assert.deepEqual(
+    loaded.map(({ name, rows }) => [name, rows]),
+    [
+      ['raw_attachments', 2],
+      ['raw_chatHandles', 1],
+      ['raw_chatLookups', 1],
+      ['raw_chatMessages', 5],
+      ['raw_chatServices', 1],
+      ['raw_chats', 1],
+      ['raw_handles', 1],
+      ['raw_linkPreviews', 1],
+      ['raw_messageAttachments', 2],
+      ['raw_messageEdits', 2],
+      ['raw_messages', 6],
+      ['raw_recoverableMessageParts', 1],
+      ['raw_recoverableMessages', 1],
+    ],
+  );
+  assert.match(second.stdout, /Loaded Apple Messages/);
+  assert.deepEqual(tables(), loaded);
+  assert.deepEqual(
+    messagesRows(
+      join(out, 'apple-messages.sqlite'),
+      'SELECT guid, content FROM raw_attachments WHERE bytes IS NOT NULL',
+    ),
+    [{ guid: 'att-local', content: 'attached words' }],
+  );
 });

@@ -1,6 +1,6 @@
 import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
 import { diffSnapshot, Source, type SourceMessage, validateRecords } from 'elt';
-import { EventKit } from '../../platform/macos/eventkit.ts';
+import { EventKit, EventKitSnapshot } from '../../platform/macos/eventkit.ts';
 import {
   eventKitAccountFields,
   eventKitCalendarFields,
@@ -50,7 +50,7 @@ const catalog = eventKitCatalog(
 );
 
 // Adapter: native EventKit records enter the existing Source/Copy/Pipeline contract.
-export class AppleRemindersSource extends Source {
+export class AppleRemindersSource extends Source<EventKitSnapshot> {
   readonly #eventKit = new EventKit('reminders');
   readonly identity = 'apple-reminders:eventkit';
   protected readonly catalog = catalog;
@@ -75,18 +75,38 @@ export class AppleRemindersSource extends Source {
     for await (const _ of this.#eventKit.watch(signal)) yield streams;
   }
 
+  // Every selected stream from one change-free window, so reminders match
+  // their lists and alarms their reminders.
+  protected override async open(
+    streams: readonly Stream[],
+  ): Promise<EventKitSnapshot> {
+    return new EventKitSnapshot(
+      await this.#eventKit.consistently(async () => {
+        const records = new Map<string, Record<string, unknown>[]>();
+        for (const stream of streams)
+          records.set(
+            stream.name,
+            validateRecords(
+              stream,
+              await this.#eventKit.execute(`
+                ${remindersScript}
+                return readReminders(store, ${JSON.stringify(stream.name)});
+              `),
+              'EventKit',
+            ),
+          );
+        return records;
+      }),
+    );
+  }
+
   protected override async *extract(
     { stream, syncMode }: CopyConfiguration,
     state: unknown,
+    _partition: null,
+    snapshot: EventKitSnapshot,
   ): AsyncGenerator<SourceMessage> {
-    const records = validateRecords(
-      stream,
-      await this.#eventKit.execute(`
-        ${remindersScript}
-        return readReminders(store, ${JSON.stringify(stream.name)});
-      `),
-      'EventKit',
-    );
+    const records = snapshot.of(stream.name);
     if (syncMode === 'incremental') yield* diffSnapshot(stream, records, state);
     else for (const data of records) yield { stream: stream.name, data };
   }

@@ -21,6 +21,10 @@
       "dependsOn": ["build"],
       "command": "node apps/apple/dist/main.js"
     },
+    "messages": {
+      "dependsOn": ["build"],
+      "command": "node apps/apple/dist/messages.js"
+    },
     "test": {
       "dependsOn": ["build"],
       "command": "node --test apps/apple/dist/index.test.js"

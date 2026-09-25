@@ -7,6 +7,7 @@ import {
   Catalog,
   Copy,
   type CopyConfiguration,
+  Destination,
   isCalendarDate,
   isTimestamp,
   MarkdownDestination,
@@ -15,7 +16,10 @@ import {
   type SourceWatchOptions,
   SQLiteCheckpointStore,
   Stream,
+  Target,
   validateRecords,
+  type WriteOperation,
+  Writer,
 } from './index.ts';
 
 test('date formats accept only canonical UTC timestamps and real calendar dates', () => {
@@ -255,4 +259,162 @@ test('a changed binding is refused until the checkpoint is reset', async () => {
     return write(state);
   });
   assert.equal(called, 2);
+});
+
+class SessionSource extends Source<AsyncDisposable & { readonly id: number }> {
+  readonly identity = 'session-test';
+  readonly opened: number[] = [];
+  readonly closed: number[] = [];
+  readonly readers: { stream: string; session: number }[] = [];
+  readonly left = new Stream({
+    name: 'left',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    supportedSyncModes: ['full_refresh'],
+  });
+  readonly right = new Stream({
+    name: 'right',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    supportedSyncModes: ['full_refresh'],
+  });
+  protected readonly catalog = new Catalog([this.left, this.right]);
+
+  constructor(readonly failing?: string) {
+    super();
+  }
+
+  readonly sessionStreams: string[][] = [];
+
+  protected override async open(streams: readonly Stream[]) {
+    const id = this.opened.length + 1;
+    this.opened.push(id);
+    this.sessionStreams.push(streams.map((stream) => stream.name));
+    return {
+      id,
+      [Symbol.asyncDispose]: async () => {
+        this.closed.push(id);
+      },
+    };
+  }
+
+  protected override async *observe({ streams }: SourceWatchOptions) {
+    yield streams;
+    yield [this.right];
+  }
+
+  protected override async *extract(
+    configuration: CopyConfiguration,
+    _state: unknown,
+    _partition: null,
+    session: AsyncDisposable & { readonly id: number },
+  ) {
+    const stream = configuration.stream.name;
+    this.readers.push({ stream, session: session.id });
+    if (stream === this.failing) throw new Error(`${stream} failed`);
+    yield { stream, data: { id: `${stream}-${session.id}` } };
+  }
+}
+
+class NamedTarget extends Target {
+  constructor(readonly name: string) {
+    super();
+  }
+}
+
+class DrainingWriter extends Writer {
+  protected override async writeRecords(
+    operations: AsyncIterable<WriteOperation>,
+  ) {
+    return { count: (await Array.fromAsync(operations)).length, deleted: 0 };
+  }
+}
+
+// Consumes every record and keeps none, so these tests observe only the pipeline.
+class DrainingDestination extends Destination<NamedTarget> {
+  readonly supportedDestinationSyncModes = Object.freeze([
+    'overwrite',
+  ] as const);
+
+  override identity(target: NamedTarget): string {
+    return target.name;
+  }
+
+  override location(target: NamedTarget): string {
+    return target.name;
+  }
+
+  override createWriter(
+    configuration: CopyConfiguration,
+    target: NamedTarget,
+  ): Writer {
+    this.validateConfiguration(configuration, target);
+    return new DrainingWriter(configuration.stream);
+  }
+}
+
+const sessionPipeline = (source: SessionSource) =>
+  new Pipeline({
+    source,
+    destination: new DrainingDestination(),
+    steps: [
+      new Copy(source.left, new NamedTarget('left')),
+      new Copy(source.right, new NamedTarget('right')),
+    ],
+  });
+
+test('every copy in a pipeline run reads through one session, closed after the run', async () => {
+  const source = new SessionSource();
+  const pipeline = sessionPipeline(source);
+
+  await pipeline.run();
+  await pipeline.run();
+
+  assert.deepEqual(source.readers, [
+    { stream: 'left', session: 1 },
+    { stream: 'right', session: 1 },
+    { stream: 'left', session: 2 },
+    { stream: 'right', session: 2 },
+  ]);
+  assert.deepEqual(source.closed, [1, 2]);
+  assert.deepEqual(source.sessionStreams, [
+    ['left', 'right'],
+    ['left', 'right'],
+  ]);
+});
+
+test('a failed copy still closes the run session', async () => {
+  const source = new SessionSource('right');
+  const pipeline = sessionPipeline(source);
+
+  await assert.rejects(pipeline.run(), { name: 'PipelineError' });
+
+  assert.deepEqual(source.opened, [1]);
+  assert.deepEqual(source.closed, [1]);
+});
+
+test('a watch opens one session per batch and holds none while idle', async () => {
+  const source = new SessionSource();
+  const pipeline = sessionPipeline(source);
+  const held: number[] = [];
+
+  for await (const _ of pipeline.watch({ signal: AbortSignal.timeout(5000) }))
+    held.push(source.opened.length - source.closed.length);
+
+  assert.deepEqual(held, [0, 0]);
+  assert.deepEqual(source.sessionStreams, [['left', 'right'], ['right']]);
+  assert.deepEqual(source.readers, [
+    { stream: 'left', session: 1 },
+    { stream: 'right', session: 1 },
+    { stream: 'right', session: 2 },
+  ]);
+});
+
+test('a read without a session opens its own and closes it', async () => {
+  const source = new SessionSource();
+  const copy = new Copy(source.left, new NamedTarget('unused'));
+
+  await Array.fromAsync(source.read(copy.configuration, null));
+
+  assert.deepEqual(source.opened, [1]);
+  assert.deepEqual(source.closed, [1]);
+  assert.deepEqual(source.sessionStreams, [['left']]);
 });

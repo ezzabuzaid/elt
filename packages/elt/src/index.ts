@@ -7,6 +7,7 @@ export {
 export type { Deduplication } from './core/deduplication.ts';
 export { Destination, type DestinationSyncMode } from './core/destination.ts';
 export { DocumentParser } from './core/document-parser.ts';
+export { FileContent } from './core/file-content.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
 export { isCalendarDate, isTimestamp } from './core/formats.ts';
 export type { Partition, PartitionState } from './core/partition.ts';

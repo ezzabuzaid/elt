@@ -3,11 +3,13 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type { KeyValue, Stream } from 'elt';
 import {
   CommittedWriteError,
+  FileContent,
   TargetOwnedError,
   type WriteCount,
   type WriteOperation,
   Writer,
 } from 'elt';
+import { SQLiteFileStore } from './sqlite-file-store.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
 export abstract class SQLiteWriter extends Writer {
@@ -81,6 +83,14 @@ export abstract class SQLiteWriter extends Writer {
         this.own(database, writer);
         // Only this library-owned mode index is replaced; explicit SQL constraints remain authoritative.
         database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
+        database.exec(this.table.createTableSQL);
+        // Triggers must exist before initialize, whose DELETE clears old chunks.
+        const stores = this.table.columns
+          .filter((column) => column.storesFile)
+          .map((column) => ({
+            column,
+            store: new SQLiteFileStore(database, this.table, column),
+          }));
         this.initialize(database);
         const insert = database.prepare(this.insertSQL);
         const remove = this.deletion(database);
@@ -89,7 +99,19 @@ export abstract class SQLiteWriter extends Writer {
         let deleted = 0;
         for await (const operation of operations) {
           if (operation.type === 'RECORD') {
-            insert.run(...this.encode(operation.data), loadedAt);
+            const saved: { store: SQLiteFileStore; file: number }[] = [];
+            let data = operation.data;
+            for (const { column, store } of stores) {
+              const content: unknown = Reflect.get(Object(data), column.name);
+              if (!(content instanceof FileContent)) continue;
+              const file = await store.save(content);
+              saved.push({ store, file });
+              data = { ...Object(data), [column.name]: file };
+            }
+            const { changes } = insert.run(...this.encode(data), loadedAt);
+            // A deduplication guard kept the loaded row; its files are unused.
+            if (changes === 0)
+              for (const { store, file } of saved) store.discard(file);
             count++;
           } else {
             if (remove === undefined)

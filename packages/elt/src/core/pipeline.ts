@@ -165,12 +165,18 @@ export class Pipeline<Target extends DestinationTarget> {
     steps: readonly Copy<Target>[],
   ): Promise<CopyResult<Target>[]> {
     const results: CopyResult<Target>[] = [];
+    // Opened per run, never held between watch batches: a long read can block
+    // the upstream's own maintenance, such as SQLite WAL checkpoints.
+    await using session = await this.source.session([
+      ...new Set(steps.map((copy) => copy.from)),
+    ]);
     for (const copy of steps) {
       try {
         const { count, deleted } = await copy.run(
           this.source,
           this.destination,
           this.checkpoints,
+          session,
         );
         results.push({ copy, count, deleted });
       } catch (cause) {

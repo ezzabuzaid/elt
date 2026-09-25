@@ -196,6 +196,32 @@ protected override async *extract(configuration, state, partition) {
 
 Partitions are declared without I/O: `partitionKey` fields must be distinct non-null scalar members of the primary key, and the list must be non-empty with no repeats.
 
+### Read sessions
+
+Every copy in one `Pipeline.run()` reads through one source session, so related streams describe the same moment of the source. Without it, copies run one after another and a join stream can reference a row its parent stream never saw.
+
+```ts
+class ChatSource extends Source<ChatDatabase> {
+  protected override open(streams) {
+    return ChatDatabase.open(this.path); // AsyncDisposable
+  }
+
+  protected override async *extract(configuration, state, partition, database) {
+    // database is the run's session
+  }
+}
+```
+
+- **Opening:** `source.session(streams)` checks that the streams are the source's own, then calls the source's `open(streams)` with the streams the run will read. An upstream with a read transaction pins it (Messages). One without reads every selected stream up front in one change-free window and serves the copies from that snapshot (Calendar and Reminders, see [EventKit consistency](#eventkit-consistency)).
+- **Default:** `open()` returns a no-op, so a source that does not override it behaves as before.
+- **Failures:** an error while opening, such as a denied permission, is raised as itself, not as a `PipelineError`, since no copy has started.
+- **Lifetime:** the pipeline opens the session before its first copy and disposes it after the last, including when a copy fails. A watch opens one per invalidation batch and holds none while idle, since a long read can block the upstream's own maintenance.
+- **Standalone reads:** `Copy.run` and `Source.read` without a session open one for that read's stream and dispose it when it ends.
+
+#### EventKit consistency
+
+EventKit has no read transaction, so Calendar and Reminders sessions read optimistically: a watcher subscribes to `EKEventStoreChangedNotification`, every selected stream is read, and the reads repeat if a change arrived during them or within 250 ms after, the notification's delivery delay. Five disturbed attempts in a row raise `EventKitChangingError`. The snapshot holds the selected streams' records in memory for the run. Verified on 2026-09-25 against real stores: Reminders read all 8 streams in 2.1 s and Calendar 9 streams over two months in one attempt (244 s, the existing per-call EventKit cost of about 19 s).
+
 ### Apple Notes behavior
 
 All four streams are [snapshot streams](#snapshot-streams): incremental copies select no `cursorField` and use `append_dedup` keyed by `id`. Each run scans and validates the full collection through JXA, writes only new and changed records, and deletes records that disappeared. A change is detected from the record's content, so edits that keep an older `modifiedAt` are still loaded. Attachment reads contain metadata unless the target declares file-derived fields; files are exported only for new or changed attachments, and a changed file whose metadata did not change is not detected. Protected note content remains null.
@@ -274,9 +300,19 @@ await new Pipeline({
 }).run();
 ```
 
-This stores the selected source metadata, parsed `content` as TEXT, and the original file in the `bytes` BLOB column. All are committed together. The original attachment ID and containing note ID remain available for joins. Append preserves each observation and its bytes; deduplication keeps the text and bytes belonging to the winning cursor.
+This stores the selected source metadata, parsed `content` as TEXT, and the original file under the `bytes` column. All are committed together. The original attachment ID and containing note ID remain available for joins. Append preserves each observation and its bytes; deduplication keeps the text and bytes belonging to the winning cursor.
 
-The columns declare what to extract and where to store it. `Copy` collects those declarations; `Source.read()` performs the file reads and parsing. SQLite receives ordinary record values and binds them to native TEXT/BLOB columns. Omitting the BLOB column avoids retaining the original file; omitting all file-derived columns avoids exporting files altogether.
+The columns declare what to extract and where to store it. `Copy` collects those declarations; `Source.read()` performs the parsing and hands original files to the destination as a `FileContent`, which is read in bounded chunks and never held whole in memory. Omitting the BLOB column avoids retaining the original file; omitting all file-derived columns avoids exporting files altogether.
+
+SQLite stores an original file in chunks, because one BLOB is capped at 1,000,000,000 bytes (`SQLITE_MAX_LENGTH` in Node's build) and a whole-file value would sit in memory. The `bytes` column holds an INTEGER file id, and the table `_mac_elt_files_<table>_<column>` holds `(file, n, bytes)` rows of up to 4 MiB, `n` counting from 0. An empty file has one empty chunk. Triggers remove a row's chunks in the same transaction whenever the row is deleted, overwritten or replaced, and a record that a deduplication guard rejects stores none. Read a file back in order:
+
+```sql
+SELECT c.bytes FROM "_mac_elt_files_attachments_bytes" AS c
+WHERE c.file = (SELECT bytes FROM attachments WHERE id = ?)
+ORDER BY c.n;
+```
+
+Verified on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a 1.5 GB file loaded as 358 chunks in 3.3 s with a peak RSS of 137 MiB, and the reassembled chunks matched the file's SHA-256.
 
 ```ts
 // Text only, under a destination field name you choose.
@@ -292,7 +328,7 @@ new Copy(notes.attachments, sqlite.table('originals', c => [
 ]));
 ```
 
-A bare table still infers the discovered metadata schema. To include all metadata alongside file-derived columns, spread `SQLiteColumns.fromSchema(notes.attachments.jsonSchema)` into the columns array. A plain `c.blob('bytes')` reads a record's existing `bytes` field. `.from(file)` selects the original source file; `.parse(parser)` requests its text representation. Unparsed file reads require a BLOB column; parsed files require a TEXT column. The existing `.notNull()` and `.primaryKey()` constraints apply to both. Incompatible types, another stream's file reference, and fields colliding with source metadata or `loaded_at` fail before extraction.
+A bare table still infers the discovered metadata schema. To include all metadata alongside file-derived columns, spread `SQLiteColumns.fromSchema(notes.attachments.jsonSchema)` into the columns array. A plain `c.blob('bytes')` reads a record's existing `bytes` field into an inline BLOB. `.from(file)` selects the original source file; `.parse(parser)` requests its text representation. Unparsed file reads require a BLOB column; parsed files require a TEXT column. The existing `.notNull()` and `.primaryKey()` constraints apply to both. Incompatible types, another stream's file reference, and fields colliding with source metadata or `loaded_at` fail before extraction.
 
 `notes.attachments.file` is an immutable source reference, not a path. Other Notes streams reject file access. All declarations remain immutable and perform no I/O; the discovered source schema is never rewritten to describe destination fields. A file can supply multiple named representations in one copy. Each record is exported once; requests using the same parser instance share one parse, and original-byte requests share one read. Separate copies retain separate extraction and checkpoint progress.
 
@@ -310,13 +346,13 @@ Markdown accepts parsed text fields and rejects unparsed binary requests before 
 
 This follows Airbyte's source-side parser and staged-file concepts: its [file parser Strategy](https://github.com/airbytehq/airbyte-python-cdk/blob/f77450f74def59598cda8e1e9a4e975031710c18/airbyte_cdk/sources/file_based/file_types/file_type_parser.py) interprets files, while [file transfer](https://docs.airbyte.com/platform/using-airbyte/sync-files-and-records) moves original content with metadata. Our parser emits plain text, not Airbyte's Markdown conversion, and we do not claim its complete format/OCR support or wire compatibility.
 
-`MacOSDocumentParser` uses native PDFKit for PDFs with a text layer and native `textutil` for TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, and WordML. It selects the format from the filename extension, preserves text/Markdown content, and strips rich formatting when converting other formats to plain text. HTML conversion does not load external resources. Images, PowerPoint, OCR, locked PDFs, and files without a supported extension are not supported. PDFs with no extractable text and corrupt or unsupported documents fail the copy; there is no implicit skip policy. PDF parsing uses the existing OSA command's 64 MiB output buffer and 120-second timeout. Text conversion uses Node's native `execFile` defaults (1 MiB output limit and no timeout).
+`MacOSDocumentParser` uses native PDFKit for PDFs with a text layer and native `textutil` for TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, and WordML. It selects the format from the filename extension, preserves text/Markdown content, and strips rich formatting when converting other formats to plain text. HTML conversion does not load external resources. Images (JPEG, PNG, GIF, HEIC/HEIF, TIFF, BMP, ICO, WebP) go through Vision's accurate text recognition, one line per observation. Voice recordings are not transcribed: macOS grants Speech Recognition only to an app bundle that declares why it asks, which neither `node` nor `osascript` is. vCards, including Messages' `.loc.vcf` locations, load as their text. A file without a known extension is identified by its leading bytes. Audio, video, unknown formats, locked PDFs, PDFs without a text layer and images without recognizable text parse to `null`, so the field loads as null and the copy continues. A file that cannot be read (a PDF that cannot be opened, an image Vision cannot decode, a `textutil` error) fails the copy. The parser's identity is `macos-document-v2`. PDF parsing uses the existing OSA command's 64 MiB output buffer and 120-second timeout. Text conversion uses Node's native `execFile` defaults (1 MiB output limit and no timeout).
 
 Notes exports through its scripting `save` command into a disposable staging directory. We never read its private database or treat an attachment's URL as a download URL. URL attachments, attachments inside password-protected notes, and objects whose native `contents` property is missing retain metadata with null content/bytes. The `contents` property is used only to check file availability; `save` still performs the export. Actual export errors fail the copy. An unnamed attachment with file contents can be requested as an original file, but the native parser cannot choose its format without an extension. Sources do not invent missing filenames or claim an unsuccessful export succeeded.
 
-`Source.read()` is the shared template method. Source implementations provide protected `extract(configuration, state)`, yielding metadata, optional staged file paths, and state. The source resolves `configuration.fileReads` into named text or byte values before yielding records to the destination. Staging paths stay inside extraction; writers reject any leaked path. The source cleans staging on success, cancellation, and failure. Binary fields hold each complete file in memory; large files require a different storage strategy.
+`Source.read()` is the shared template method. Source implementations provide protected `extract(configuration, state, partition, session)`, yielding metadata, optional file paths, and state. The source resolves `configuration.fileReads` into parsed text or a `FileContent` before yielding records to the destination. A path must stay readable until the consumer advances past its record: a staged copy the source cleans up afterwards, or the original file when copying it would be costly (Messages hands over its attachment files). Writers reject any leaked path.
 
-Extend `DocumentParser` with `parse(path): Promise<string>` for another parsing implementation. Give it a stable identity that includes its version and relevant configuration; keep the implementation/configuration immutable and parse without modifying the staged file. A parser does not depend on Notes or SQLite. Parser identity participates in the copy's checkpoint binding; changing it requires a new copy ID or explicit checkpoint reset. Source keys and cursors remain metadata fields, and acknowledgement still waits for complete destination commit.
+Extend `DocumentParser` with `parse(path): Promise<string | null>` for another parsing implementation. Return `null` when the file has no text the parser can represent, and throw only when reading it failed. Give it a stable identity that includes its version and relevant configuration; keep the implementation/configuration immutable and parse without modifying the staged file. A parser does not depend on Notes or SQLite. Parser identity participates in the copy's checkpoint binding; changing it requires a new copy ID or explicit checkpoint reset. Source keys and cursors remain metadata fields, and acknowledgement still waits for complete destination commit.
 
 The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 in the consuming application. Parsing does not create a search index. No query API or general transformation step is part of this library.
 
@@ -407,6 +443,87 @@ Each copy is one transaction that holds a per-schema advisory lock, so writers t
 - The writer of each table lives in `<schema>._mac_elt_writers` and follows the [target ownership](#target-ownership) rule.
 
 Existing tables are not migrated: a deduplicating load checks that stored key and cursor columns keep their types and fails otherwise. Keep checkpoints in the same schema with `PostgresCheckpointStore` ([checkpoint stores](#checkpoint-stores)).
+
+## Apple Messages
+
+```ts
+import { Copy, Pipeline } from 'elt';
+import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
+import { AppleMessagesSource } from './index.ts';
+
+const source = new AppleMessagesSource(); // ~/Library/Messages/chat.db
+const destination = new SQLiteDestination({ path: './outputs/messages.sqlite' });
+
+await new Pipeline({
+  source,
+  destination,
+  checkpoints: new SQLiteCheckpointStore({ path: './outputs/messages-state.sqlite' }),
+  steps: [source.messages, source.chatMessages].map(
+    (stream) =>
+      new Copy(stream, destination.table(stream.name), {
+        id: stream.name,
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: [...stream.primaryKey],
+      }),
+  ),
+}).run();
+```
+
+The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messages.app need not be open. A missing file or a denied grant raises `MessagesUnavailableError` before any copy runs, with the SQLite error as `cause`. `npx nx run apple:messages` loads every stream incrementally into `outputs/apple-messages.sqlite`, with attachment text and bytes; `--chat-db <path>` reads another database and `--out <dir>` writes elsewhere.
+
+### Full Disk Access
+
+Messages keeps its history only in `~/Library/Messages/chat.db`; it has no public API for reading messages. macOS guards that folder with **Full Disk Access** and checks it against the *responsible* process: the terminal app for anything started from a terminal, or the process launchd started. Run the export as a launchd job for the `node` binary itself, never through a shell (the shell would become the responsible process), and grant that binary Full Disk Access:
+
+```sh
+launchctl submit -l dev.context-compiler.messages -- \
+  "$(readlink -f "$(which node)")" "$PWD/apps/apple/dist/messages.js" --out "$PWD/outputs"
+```
+
+Homebrew's `node` is ad-hoc signed, so macOS ties the grant to that exact build: after `brew upgrade node` the export fails with `MessagesUnavailableError` until the new binary is granted again.
+
+### Streams
+
+Every column of Messages' own tables loads, named in camelCase (`is_from_me` → `isFromMe`); foreign `ROWID`s become the related row's `guid`. Archived Foundation values (binary property lists and `NSKeyedArchiver` graphs) load as JSON text, with data as base64 and dates as ISO timestamps; `attributedBody`, a typedstream, stays base64. Only iCloud sync and task bookkeeping (`deleted_messages`, `sync_*`, `kvtable`, `persistent_tasks`, `message_processing_task`, `index_state_metrics`, `_SqliteDatabaseProperties`) is left out.
+
+| Stream | Key | Contents and relationships |
+| --- | --- | --- |
+| `chats` | `guid` | All 28 `chat` columns: identifier, service, display name, group id, style, archived and filtered flags, last read time, and `properties` as JSON. |
+| `handles` | `id`, `service` | Phone numbers and email addresses per service, with country and person-centric id. |
+| `chatLookups` | `identifier`, `domain` | The identifiers Messages resolves to each chat, with priority. |
+| `chatServices` | `chatGuid`, `service` | Every service a chat runs over. |
+| `chatHandles` | `chatGuid`, `handleId`, `handleService` | Participants of each chat. |
+| `messages` | `guid` | All 92 `message` columns plus the sender and other handle (`handle`, `handleService`, `otherHandle`, `otherHandleService`): text, direction, sent/read/delivered/edited/unsent/played/recovered times, reactions, replies, effects and flags; `messageSummaryInfo` and `payloadData` as JSON, `attributedBody` as base64. |
+| `chatMessages` | `chatGuid`, `messageGuid` | Which chat each message belongs to, with the join's `messageDate`. |
+| `linkPreviews` | `messageGuid` | The rich link a URL message shows, from its `payloadData` archive: `url`, `originalUrl`, `title`, `summary`, `siteName`, `itemType`, `creator`, and the whole `LPLinkMetadata` as JSON. |
+| `messageEdits` | `messageGuid`, `partIndex`, `version` | Every version of an edited message part, oldest first, from `messageSummaryInfo.ec`: `editedAt`, the decoded `text`, and the raw entry as JSON. Version 0 is the original. |
+| `recoverableMessages` | `chatGuid`, `messageGuid` | Recently Deleted: the chat a deleted message came from and its `deleteDate`. Messages keeps the row in `messages` but removes it from `chatMessages`. |
+| `recoverableMessageParts` | `chatGuid`, `messageGuid`, `partIndex` | Deleted parts of a message, with `partText`. |
+| `attachments` | `guid` | All 23 `attachment` columns (path, transfer name, MIME type, UTI, size, dates, flags, archived info as JSON) and `availableLocally`. Supports file reads. |
+| `messageAttachments` | `messageGuid`, `attachmentGuid` | Which message carries each attachment. |
+
+- **Consistency:** every stream in a run reads through one [session](#read-sessions), a read transaction on `chat.db`. The database runs in WAL mode, so all streams see one snapshot however Messages writes meanwhile.
+- **Identity:** rows and relationships use `guid`s. `ROWID`s are local and change when Messages in iCloud rebuilds the database.
+- **Incremental:** all thirteen are [snapshot streams](#snapshot-streams). Edits, unsends and read receipts change old rows and chat.db has no modification column, so each run scans every row, loads the changed ones, and deletes rows that disappeared.
+- **Text:** recent macOS versions store the body only in `attributedBody`, an `NSAttributedString` in typedstream form. `text` falls back to its first string, and the archived value is kept verbatim.
+- **Edits:** `date_edited` is not a reliable edit marker; Messages left it empty on edited messages in the verified history. `messageEdits` reads the edit history itself.
+- **Times:** chat.db counts from 2001-01-01 UTC, in nanoseconds for message dates and in seconds for attachment dates, edit entries and older histories. Both become UTC timestamps; `0` becomes null.
+- **Attachments:** a file is read from its original path, never copied to staging. `MacOSDocumentParser` gives each kind its text: documents convert, images (including files without an extension, identified by their bytes) go through Vision text recognition, contact and location cards load as their vCard text, and voice messages and video load null. A file offloaded to iCloud has `availableLocally: false` and null file fields; no public API downloads it, but when Messages does, the flag changes and the next run loads its bytes and text.
+- **Watching:** Messages writes through a WAL it keeps open, and FSEvents reports such a file only when it closes, so `observe()` polls `PRAGMA data_version` on its own read-only connection (every `pollIntervalMs`, default 1000). Every commit, including an attachment finishing its download, changes it.
+
+Live verification on **2026-09-25** (macOS 26.6.2, Node.js 26.8.1), running the exporter as a launchd job for a `node` binary granted Full Disk Access, against a history of 12,567 messages, 468 chats, 472 handles and 41 attachments. Probes read schema, counts and aggregates only; no message content left the machine or entered the repository. The test fixture uses the captured table definitions with synthetic rows, and its archives are encoded by `plutil` and `NSKeyedArchiver`.
+
+- **Schema:** every column of the eleven tables is exported, checked against `PRAGMA table_info`. `handle` is `UNIQUE (id, service)`, `chat_lookup` `UNIQUE (identifier, domain)`, `chat_service` `UNIQUE (service, chat)`; `guid`s have no duplicates; the flags read as non-null booleans have no nulls.
+- **Access:** a read-only open works while Messages holds the WAL (`chat.db` 34.8 MB, `-wal` 424 KB).
+- **Text:** 11,435 messages (91%) store their body only in `attributedBody`. All 12,567 archived bodies decode, and in the 1,132 rows that also have `text` the decoded string matches it exactly.
+- **Archives:** every stored archive is a binary property list (12,545 `message_summary_info`, 24 `payload_data`, 212 chat `properties`, attachment info) and decodes; `plutil` agrees with the decoder on a real key containing a control character (`cmmS\u0010`).
+- **Edits:** 3 messages carry an edit history, 2 versions each, although their `date_edited` is null; version 0's time equals the message's `date`.
+- **Link previews:** 22, all with URL, original URL and title; 16 with a summary, 17 with a site name.
+- **Times:** message times are nanoseconds (2017 to 2026); attachment `created_date` and edit times are seconds. All convert.
+- **Runs:** every stream loads in about 1 s without attachment parsing and 5.5 s with it; a second run writes nothing, and another session's five further runs wrote nothing either. Every join and Recently Deleted row references a loaded message, chat and attachment. Snapshot state is about 2.6 MB of JSON.
+- **Recently Deleted:** 3 messages, each loaded with its chat in `recoverableMessages`. 88 other messages belong to no chat and load without one.
+- **Attachments:** 6 are on disk and 32 offloaded to iCloud; the stored chunks of the 6 total 702,104 bytes, their exact `totalBytes`. They are group photos and link-preview images; Vision found text in one.
 
 ## Apple Reminders
 

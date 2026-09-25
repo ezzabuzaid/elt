@@ -66,13 +66,14 @@ export class Copy<Target extends DestinationTarget> {
     source: Source,
     destination: Destination<Target>,
     checkpoints?: CheckpointStore,
+    session?: AsyncDisposable,
   ): Promise<WriteCount> {
     this.validate(source, destination, checkpoints);
     const write = (state: unknown) =>
       destination.write(
         this.configuration,
         this.to,
-        source.read(this.configuration, state),
+        source.read(this.configuration, state, session),
         this.writer(source),
       );
     if (this.configuration.syncMode === 'incremental') {

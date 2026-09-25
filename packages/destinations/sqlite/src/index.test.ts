@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
-import { mkdtempDisposable, readdir, readFile } from 'node:fs/promises';
+import {
+  mkdtempDisposable,
+  readdir,
+  readFile,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -1320,4 +1326,210 @@ test('partition declarations are validated before extraction', async () => {
       }).configuration.validateSelection(),
     /partitioned by \["site"\]; select a primaryKey that includes them/,
   );
+});
+
+class FileSource extends Source {
+  readonly identity = 'file-test';
+  readonly files: Stream;
+  protected readonly catalog: Catalog;
+
+  constructor(
+    readonly staging: string,
+    public contents: Record<string, { version: number; bytes: Uint8Array }>,
+    readonly snapshot = true,
+  ) {
+    super();
+    this.files = new Stream({
+      name: 'files',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      },
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      primaryKey: ['id'],
+      supportsFileTransfer: true,
+      ...(snapshot ? { sourceDefinedCursor: true, emitsDeletes: true } : {}),
+    });
+    this.catalog = new Catalog([this.files]);
+  }
+
+  protected override async *observe({ streams }: SourceWatchOptions) {
+    yield streams;
+  }
+
+  protected override async *extract(
+    configuration: CopyConfiguration,
+    state: unknown,
+  ) {
+    const scan = Object.entries(this.contents).map(([id, { version }]) => ({
+      id,
+      version,
+    }));
+    const messages =
+      this.snapshot && configuration.syncMode === 'incremental'
+        ? diffSnapshot(configuration.stream, scan, state)
+        : scan.map((data) => ({ stream: 'files', data }));
+    for await (const message of messages) {
+      if ('type' in message) {
+        yield message;
+        continue;
+      }
+      const path = join(this.staging, `${message.data.id}.bin`);
+      await writeFile(path, this.contents[message.data.id]?.bytes ?? '');
+      yield { stream: 'files', data: message.data, file: path };
+    }
+  }
+}
+
+const sha256 = (bytes: Uint8Array) =>
+  createHash('sha256').update(bytes).digest('hex');
+
+// Each loaded file's chunk sizes and reassembled hash, plus chunks no row references.
+const storedFiles = (path: string) => {
+  using database = new DatabaseSync(path, { readOnly: true });
+  const chunks = database
+    .prepare(
+      'SELECT f.id, c.bytes FROM files f JOIN "_mac_elt_files_files_bytes" c ON c.file = f.bytes ORDER BY f.id, c.n',
+    )
+    .all()
+    .map((row) => ({ id: String(row.id), bytes: row.bytes as Uint8Array }));
+  const files = Object.fromEntries(
+    [...Map.groupBy(chunks, (row) => row.id)].map(([id, rows]) => [
+      id,
+      {
+        chunks: rows.map((row) => row.bytes.length),
+        sha256: sha256(Buffer.concat(rows.map((row) => row.bytes))),
+      },
+    ]),
+  );
+  const orphans = database
+    .prepare(
+      'SELECT count(*) AS n FROM "_mac_elt_files_files_bytes" WHERE file NOT IN (SELECT bytes FROM files WHERE bytes IS NOT NULL)',
+    )
+    .get()?.n;
+  return { files, orphans };
+};
+
+const fileTable = (destination: SQLiteDestination, source: FileSource) =>
+  destination.table('files', (c) => [
+    c.text('id'),
+    c.integer('version'),
+    c.blob('bytes').from(source.files.file),
+  ]);
+
+test('file bytes load as bounded chunks that leave with their row', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+  const large = new Uint8Array(9 * 1024 * 1024 + 3).map((_, i) => i % 251);
+  const small = Buffer.from('small');
+  const source = new FileSource(scratch.path, {
+    empty: { version: 1, bytes: new Uint8Array() },
+    small: { version: 1, bytes: small },
+    large: { version: 1, bytes: large },
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'files.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [
+      new Copy(source.files, fileTable(destination, source), {
+        id: 'files',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+      }),
+    ],
+  });
+
+  await pipeline.run();
+  const first = storedFiles(destination.path);
+  source.contents = {
+    small: { version: 2, bytes: Buffer.from('changed') },
+    large: { version: 1, bytes: large },
+  };
+  await pipeline.run();
+  const second = storedFiles(destination.path);
+
+  const mib = 4 * 1024 * 1024;
+  assert.deepEqual(first, {
+    files: {
+      empty: { chunks: [0], sha256: sha256(new Uint8Array()) },
+      large: { chunks: [mib, mib, 1024 * 1024 + 3], sha256: sha256(large) },
+      small: { chunks: [5], sha256: sha256(small) },
+    },
+    orphans: 0,
+  });
+  assert.deepEqual(second, {
+    files: {
+      large: first.files.large,
+      small: { chunks: [7], sha256: sha256(Buffer.from('changed')) },
+    },
+    orphans: 0,
+  });
+});
+
+test("an overwrite removes the previous load's files", async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+  const source = new FileSource(scratch.path, {
+    a: { version: 1, bytes: Buffer.from('aye') },
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'files.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    steps: [new Copy(source.files, fileTable(destination, source))],
+  });
+
+  await pipeline.run();
+  source.contents = { b: { version: 1, bytes: Buffer.from('bee') } };
+  await pipeline.run();
+
+  assert.deepEqual(storedFiles(destination.path), {
+    files: { b: { chunks: [3], sha256: sha256(Buffer.from('bee')) } },
+    orphans: 0,
+  });
+});
+
+test('a record the cursor guard rejects leaves no stored file behind', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+  const source = new FileSource(
+    scratch.path,
+    { a: { version: 2, bytes: Buffer.from('two') } },
+    false,
+  );
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'files.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [
+      new Copy(source.files, fileTable(destination, source), {
+        id: 'files',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+        cursorField: 'version',
+        dedupPolicy: 'cursor_newer',
+      }),
+    ],
+  });
+
+  await pipeline.run();
+  source.contents = { a: { version: 1, bytes: Buffer.from('one') } };
+  await pipeline.run();
+
+  assert.deepEqual(storedFiles(destination.path), {
+    files: { a: { chunks: [3], sha256: sha256(Buffer.from('two')) } },
+    orphans: 0,
+  });
 });
