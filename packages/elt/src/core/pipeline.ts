@@ -71,14 +71,17 @@ export class Pipeline<Target extends DestinationTarget> {
 
   async run(): Promise<CopyResult<Target>[]> {
     this.validate();
-    return this.runSteps(this.steps);
+    const outcomes = await this.runSteps(this.steps);
+    if (outcomes.some(({ failures }) => failures.length > 0))
+      throw new PipelineError(outcomes);
+    return outcomes.map(({ failures: _, ...result }) => result);
   }
 
   async *watch({
     signal,
   }: {
     signal: AbortSignal;
-  }): AsyncGenerator<CopyResult<Target>[]> {
+  }): AsyncGenerator<CopyOutcome<Target>[]> {
     this.validate();
     if (signal.aborted || this.steps.length === 0) return;
     const controller = new AbortController();
@@ -141,6 +144,8 @@ export class Pipeline<Target extends DestinationTarget> {
         const steps = this.steps.filter((copy) => pending.has(copy.from.name));
         pending.clear();
         wake = Promise.withResolvers<void>();
+        // Like a schedule after a failed sync, watching goes on: each batch
+        // reports what did not load, and a later invalidation retries it.
         yield await this.runSteps(steps);
       }
       if (failed) throw failure;
@@ -171,9 +176,10 @@ export class Pipeline<Target extends DestinationTarget> {
     }
   }
 
+  // Runs every copy, as Airbyte runs every stream after one fails.
   private async runSteps(
     steps: readonly Copy<Target>[],
-  ): Promise<CopyResult<Target>[]> {
+  ): Promise<CopyOutcome<Target>[]> {
     const results: CopyOutcome<Target>[] = [];
     // Opened per run, never held between watch batches: a long read can block
     // the upstream's own maintenance, such as SQLite WAL checkpoints.
@@ -196,8 +202,6 @@ export class Pipeline<Target extends DestinationTarget> {
         results.push(error.result);
       }
     }
-    if (results.some(({ failures }) => failures.length > 0))
-      throw new PipelineError(results);
-    return results.map(({ failures: _, ...result }) => result);
+    return results;
   }
 }

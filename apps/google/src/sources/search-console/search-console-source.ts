@@ -11,6 +11,7 @@ import {
   type Stream,
   validateRecords,
 } from 'elt';
+import { messageOf } from '../../platform/google/google-errors.ts';
 
 import {
   type RetryPolicy,
@@ -793,32 +794,40 @@ export class SearchConsoleSource extends Source {
   }
 
   // One probe per property; a change in any of them invalidates the streams.
+  // A property whose probe fails is part of the fingerprint, not the end of
+  // watching: when it starts or stops failing, the extraction that follows
+  // reports it or loads it, while the other properties keep being watched.
   async #fingerprint(signal: AbortSignal): Promise<string> {
     const probes = [];
     for (const siteUrl of this.siteUrls) {
       signal.throwIfAborted();
       const endDate = today(this.#now());
-      const page = await readSearchAnalytics(
-        this.#api,
-        siteUrl,
-        {
-          dataState: 'ALL',
-          dimensions: ['date'],
-          endDate,
-          startDate: addDays(endDate, -PROBE_DAYS),
-          type: 'WEB',
-        },
-        { signal },
-      );
-      probes.push({
-        siteUrl,
-        firstIncompleteDate: page.firstIncompleteDate ?? null,
-        rows: page.rows.map((row) => [
-          row.keys[0],
-          row.clicks,
-          row.impressions,
-        ]),
-      });
+      try {
+        const page = await readSearchAnalytics(
+          this.#api,
+          siteUrl,
+          {
+            dataState: 'ALL',
+            dimensions: ['date'],
+            endDate,
+            startDate: addDays(endDate, -PROBE_DAYS),
+            type: 'WEB',
+          },
+          { signal },
+        );
+        probes.push({
+          siteUrl,
+          firstIncompleteDate: page.firstIncompleteDate ?? null,
+          rows: page.rows.map((row) => [
+            row.keys[0],
+            row.clicks,
+            row.impressions,
+          ]),
+        });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        probes.push({ siteUrl, failed: messageOf(error) });
+      }
     }
     return JSON.stringify(probes);
   }

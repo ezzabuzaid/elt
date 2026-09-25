@@ -223,8 +223,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     changes.emit('change', [source.records]);
   });
   assert.deepEqual((await watching.next()).value, [
-    { copy, count: 1, deleted: 0 },
-    { copy: other, count: 1, deleted: 0 },
+    { copy, count: 1, deleted: 0, failures: [] },
+    { copy: other, count: 1, deleted: 0, failures: [] },
   ]);
   using database = new DatabaseSync(destination.path, { readOnly: true });
   using state = new DatabaseSync(checkpoints.path, { readOnly: true });
@@ -241,7 +241,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   assert.equal(loadedVersion(), 1);
   assert.deepEqual(savedVersion(), { version: 1 });
   assert.deepEqual((await watching.next()).value, [
-    { copy, count: 1, deleted: 0 },
+    { copy, count: 1, deleted: 0, failures: [] },
   ]);
   assert.equal(loadedVersion(), 2);
   assert.deepEqual(savedVersion(), { version: 2 });
@@ -251,7 +251,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   version = 3;
   changes.emit('change', [source.records]);
   for await (const results of watching) {
-    assert.deepEqual(results, [{ copy, count: 1, deleted: 0 }]);
+    assert.deepEqual(results, [{ copy, count: 1, deleted: 0, failures: [] }]);
     assert.equal(loadedVersion(), 3);
     assert.deepEqual(savedVersion(), { version: 3 });
     break;
@@ -268,13 +268,33 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   assert.deepEqual(await idle, { value: undefined, done: true });
   assert.equal(changes.listenerCount('change'), 0);
 
-  const failed = pipeline.watch({ signal: new AbortController().signal });
+  // A batch that does not load is reported, and watching goes on, as a
+  // schedule does after a failed sync.
+  const failing = new AbortController();
+  const failed = pipeline.watch({ signal: failing.signal });
   await failed.next();
   version = Number.NaN;
   changes.emit('change', [source.records]);
-  await assert.rejects(failed.next(), PipelineError);
+  const incomplete = await failed.next();
+  if (incomplete.done) assert.fail('watching ended on a failed batch');
+  assert.ok(
+    incomplete.value.some(({ failures }) => failures.length > 0),
+    'the failed batch reports its failure',
+  );
   assert.equal(loadedVersion(), 3);
   assert.deepEqual(savedVersion(), { version: 3 });
+  assert.equal(changes.listenerCount('change'), 1);
+  version = 4;
+  changes.emit('change', [source.records]);
+  const recovered = await failed.next();
+  if (recovered.done) assert.fail('watching ended before the retry');
+  assert.deepEqual(
+    recovered.value.map(({ failures }) => failures),
+    [[]],
+  );
+  assert.equal(loadedVersion(), 4);
+  failing.abort();
+  assert.deepEqual(await failed.next(), { value: undefined, done: true });
   assert.equal(changes.listenerCount('change'), 0);
 
   version = 4;
@@ -296,8 +316,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const inFlight = pipeline.watch({ signal: stopping.signal });
   reads.once('read', () => stopping.abort());
   assert.deepEqual((await inFlight.next()).value, [
-    { copy, count: 1, deleted: 0 },
-    { copy: other, count: 1, deleted: 0 },
+    { copy, count: 1, deleted: 0, failures: [] },
+    { copy: other, count: 1, deleted: 0, failures: [] },
   ]);
   assert.equal(loadedVersion(), 5);
   assert.deepEqual(savedVersion(), { version: 5 });

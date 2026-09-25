@@ -493,7 +493,7 @@ test('watching invalidates only when the property actually changed', async () =>
 
   try {
     assert.deepEqual((await watching.next()).value, [
-      { copy, count: 1, deleted: 0 },
+      { copy, count: 1, deleted: 0, failures: [] },
     ]);
     const afterFirst = calls.length;
     // The property is unchanged, so ticks probe without ever extracting.
@@ -501,7 +501,7 @@ test('watching invalidates only when the property actually changed', async () =>
     assert.ok(calls.length > afterFirst, 'the watcher keeps probing');
     clicks = 19;
     assert.deepEqual((await watching.next()).value, [
-      { copy, count: 1, deleted: 0 },
+      { copy, count: 1, deleted: 0, failures: [] },
     ]);
     const [row] = await sql`SELECT clicks::int FROM rows`;
     assert.equal(row?.clicks, 19);
@@ -1170,7 +1170,7 @@ test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
   });
 
   assert.deepEqual((await watching.next()).value, [
-    { copy, count: 1, deleted: 0 },
+    { copy, count: 1, deleted: 0, failures: [] },
   ]);
   loaded = true;
   await limited.promise;
@@ -1609,7 +1609,7 @@ test('watching invalidates when only one of several properties changed', async (
 
   try {
     assert.deepEqual((await watching.next()).value, [
-      { copy, count: 2, deleted: 0 },
+      { copy, count: 2, deleted: 0, failures: [] },
     ]);
     const probed = calls.length;
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1620,7 +1620,7 @@ test('watching invalidates when only one of several properties changed', async (
     );
     clicks[B] = 9;
     assert.deepEqual((await watching.next()).value, [
-      { copy, count: 2, deleted: 0 },
+      { copy, count: 2, deleted: 0, failures: [] },
     ]);
     assert.deepEqual(
       (
@@ -1631,6 +1631,94 @@ test('watching invalidates when only one of several properties changed', async (
         [B, 9],
       ],
     );
+  } finally {
+    controller.abort();
+  }
+});
+
+test('a property without permission is reported in each batch while watching goes on for the others', async () => {
+  const A = 'sc-domain:a.example';
+  const B = 'sc-domain:b.example';
+  const clicks: Record<string, number> = { [A]: 3, [B]: 7 };
+  let denied = true;
+  const { requester } = recorder((call) => {
+    if (denied && siteOf(call) === B)
+      throw googleError(403, {
+        error: {
+          message: `User does not have sufficient permission for site '${B}'.`,
+          errors: [{ reason: 'forbidden' }],
+        },
+      });
+    return {
+      metadata: { firstIncompleteDate: '2026-09-21' },
+      rows: [
+        {
+          clicks: clicks[siteOf(call)],
+          ctr: 0.1,
+          impressions: 30,
+          keys: ['2026-09-20'],
+          position: 2,
+        },
+      ],
+    };
+  });
+  await using warehouse = await scratchWarehouse();
+  const { destination, checkpoints, sql } = warehouse;
+  const source = new SearchConsoleSource({
+    now: NOW,
+    pollIntervalMs: 1,
+    requester,
+    retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    searchTypes: ['WEB'],
+    siteUrls: [A, B],
+  });
+  const copy = new Copy(
+    source.searchAnalyticsDaily,
+    destination.table('rows'),
+    {
+      id: 'rows',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      dedupPolicy: 'replace',
+      cursorField: 'date',
+      primaryKey: [...source.searchAnalyticsDaily.primaryKey],
+    },
+  );
+  const controller = new AbortController();
+  const watching = new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [copy],
+  }).watch({ signal: controller.signal });
+  const batch = async () => {
+    const next = await watching.next();
+    if (next.done) assert.fail('watching ended');
+    const [outcome] = next.value;
+    return {
+      count: outcome?.count,
+      failed: outcome?.failures.map(({ partition, error }) => [
+        partition?.siteUrl,
+        String(error).includes('status code 403'),
+      ]),
+    };
+  };
+  const loaded = async () =>
+    (await sql`SELECT "siteUrl", clicks::int FROM rows ORDER BY "siteUrl"`).map(
+      (row) => [row.siteUrl, row.clicks],
+    );
+
+  try {
+    assert.deepEqual(await batch(), { count: 1, failed: [[B, true]] });
+    clicks[A] = 5;
+    assert.deepEqual(await batch(), { count: 1, failed: [[B, true]] });
+    assert.deepEqual(await loaded(), [[A, 5]]);
+    denied = false;
+    assert.deepEqual(await batch(), { count: 2, failed: [] });
+    assert.deepEqual(await loaded(), [
+      [A, 5],
+      [B, 7],
+    ]);
   } finally {
     controller.abort();
   }
