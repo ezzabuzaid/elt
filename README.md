@@ -325,10 +325,10 @@ Run the Search Console example with `GOOGLE_OAUTH_CLIENT_ID=… GOOGLE_OAUTH_CLI
 
 Build with `npx nx run apple:build` before running Apple scripts. Nx builds the `elt` dependency first. Run the generated JavaScript: Node's default TypeScript stripping does not support the parameter properties used here.
 
-To add a connector, follow the [source-authoring guide](SKILL.md). Implement discovery, validation, extraction, and change watching on `Source`; keep `Stream` as immutable metadata and reuse the pipeline's loading and checkpoint handling.
+To add a connector, follow the [source-authoring guide](.claude/skills/add-elt-source/SKILL.md). Implement discovery, validation, extraction, and change watching on `Source`; keep `Stream` as immutable metadata and reuse the pipeline's loading and checkpoint handling.
 
 ## Documentation
 
 - [API and behavior reference](docs/reference.md): schemas, keys, cursors, checkpoints, attachments, storage guarantees, and complete connector details.
 - [EventKit Reminders notes](docs/eventkit-reminders.md): native API findings and implementation decisions.
-- [Source-authoring guide](SKILL.md): repository conventions for implementing connectors.
+- [Source-authoring guide](.claude/skills/add-elt-source/SKILL.md): repository conventions for implementing connectors.
