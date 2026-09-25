@@ -37,12 +37,8 @@ export {
   type WriteResult,
   Writer,
 } from './core/writer.ts';
-export { MarkdownDestination } from './destinations/markdown/markdown-destination.ts';
-export { MarkdownFile } from './destinations/markdown/markdown-file.ts';
-export { MarkdownFolder } from './destinations/markdown/markdown-folder.ts';
 export {
   type CheckpointSession,
   CheckpointStore,
   type StoredCheckpoint,
 } from './state/checkpoint-store.ts';
-export { SQLiteCheckpointStore } from './state/sqlite-checkpoint-store.ts';

@@ -1,5 +1,5 @@
-import type { FileRead } from '../../core/file-read.ts';
-import { Target } from '../../core/target.ts';
+import type { FileRead } from 'elt';
+import { Target } from 'elt';
 import { MarkdownDocument } from './markdown-document.ts';
 
 // One stream becomes one document; each record becomes a section.

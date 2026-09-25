@@ -5,5 +5,8 @@
   "dependencies": {
     "elt": "0.0.1",
     "elt-sqlite": "0.0.1"
+  },
+  "devDependencies": {
+    "elt-markdown": "0.0.1"
   }
 }

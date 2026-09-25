@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
-import type { CopyConfiguration } from '../../core/copy-configuration.ts';
-import { Destination } from '../../core/destination.ts';
+import type { CopyConfiguration } from 'elt';
+import { Destination } from 'elt';
 import { MarkdownFile } from './markdown-file.ts';
 import { MarkdownFileWriter } from './markdown-file-writer.ts';
 import { MarkdownFolder } from './markdown-folder.ts';

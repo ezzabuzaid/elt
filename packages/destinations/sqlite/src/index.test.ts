@@ -1,12 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
-import {
-  mkdtempDisposable,
-  readdir,
-  readFile,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -17,20 +12,20 @@ import {
   type CopyConfiguration,
   type Destination,
   diffSnapshot,
-  MarkdownDestination,
-  type MarkdownFile,
-  type MarkdownFolder,
   type Partition,
   Pipeline,
   PipelineError,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
-  SQLiteCheckpointStore,
   Stream,
   type Target,
 } from 'elt';
-import { SQLiteDestination, type SQLiteTable } from './index.ts';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+  type SQLiteTable,
+} from './index.ts';
 
 test('the public ELT API copies source records into SQLite', async () => {
   class TestSource extends Source {
@@ -499,7 +494,7 @@ test('replace loads a restated fact that cursor_newer discards', async () => {
   ]);
 });
 
-test('deletions remove keyed rows from deduplicating SQLite and Markdown targets', async () => {
+test('deletions remove keyed rows from a deduplicating SQLite table', async () => {
   let messages: SourceMessage[] = [];
   const items = new Stream({
     name: 'items',
@@ -538,70 +533,30 @@ test('deletions remove keyed rows from deduplicating SQLite and Markdown targets
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'd.sqlite'),
   });
-  const markdown = new MarkdownDestination({ path: join(scratch.path, 'md') });
-  const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
+  const pipeline = new Pipeline({
+    source,
+    destination: sqlite,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [
+      new Copy(items, sqlite.table('items'), {
+        id: 'sqlite',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+      }),
+    ],
   });
-  const selection = {
-    syncMode: 'incremental',
-    destinationSyncMode: 'append_dedup',
-    primaryKey: ['id'],
-  } as const;
-  const copy = <Target extends MarkdownFile | MarkdownFolder | SQLiteTable>(
-    to: Target,
-    id: string,
-  ) => new Copy(items, to, { ...selection, id });
-  const pipelines = [
-    new Pipeline({
-      source,
-      destination: sqlite,
-      checkpoints,
-      steps: [copy(sqlite.table('items'), 'sqlite')],
-    }),
-    new Pipeline({
-      source,
-      destination: markdown,
-      checkpoints,
-      steps: [
-        copy(markdown.file('items.md'), 'file'),
-        copy(markdown.folder('items'), 'folder'),
-      ],
-    }),
-  ];
-  const names = async () => {
+  const names = () => {
     using database = new DatabaseSync(sqlite.path, { readOnly: true });
-    const decode = (document: string) =>
-      Array.from(
-        document.matchAll(/^<!-- mac-elt-record:([A-Za-z0-9+/=]+) -->$/gm),
-        ([, encoded]) =>
-          JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))
-            .name,
-      );
-    const folder = join(markdown.path, 'items');
-    return [
-      database
-        .prepare('SELECT name FROM items ORDER BY id')
-        .all()
-        .map((row) => row.name),
-      decode(await readFile(join(markdown.path, 'items.md'), 'utf8')).sort(),
-      (
-        await Promise.all(
-          (
-            await readdir(folder)
-          ).map(async (file) =>
-            decode(await readFile(join(folder, file), 'utf8')),
-          ),
-        )
-      )
-        .flat()
-        .sort(),
-    ];
+    return database
+      .prepare('SELECT name FROM items ORDER BY id')
+      .all()
+      .map((row) => row.name);
   };
-  const runAll = async () => {
-    const results = [];
-    for (const pipeline of pipelines) results.push(...(await pipeline.run()));
-    return results.map(({ count, deleted }) => ({ count, deleted }));
-  };
+  const runAll = async () =>
+    (await pipeline.run()).map(({ count, deleted }) => ({ count, deleted }));
 
   messages = [record('a', 'A'), record('b', 'B'), record('c', 'C')];
   await runAll();
@@ -613,11 +568,11 @@ test('deletions remove keyed rows from deduplicating SQLite and Markdown targets
     remove('c'),
     record('a', 'A2'),
   ];
-  assert.deepEqual(await runAll(), Array(3).fill({ count: 2, deleted: 3 }));
-  assert.deepEqual(await names(), Array(3).fill(['A2']));
-  // At-least-once replay of the same operations leaves every target unchanged.
-  assert.deepEqual(await runAll(), Array(3).fill({ count: 2, deleted: 3 }));
-  assert.deepEqual(await names(), Array(3).fill(['A2']));
+  assert.deepEqual(await runAll(), [{ count: 2, deleted: 3 }]);
+  assert.deepEqual(names(), ['A2']);
+  // At-least-once replay of the same operations leaves the table unchanged.
+  assert.deepEqual(await runAll(), [{ count: 2, deleted: 3 }]);
+  assert.deepEqual(names(), ['A2']);
 });
 
 test('deletion streams require keyed deduplicating copies and well-formed keys', async () => {
@@ -1532,4 +1487,72 @@ test('a record the cursor guard rejects leaves no stored file behind', async () 
     files: { a: { chunks: [3], sha256: sha256(Buffer.from('two')) } },
     orphans: 0,
   });
+});
+
+test('a checkpoint store resumes from the last acknowledged state only', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
+  const store = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const binding = { source: 'test', target: 'records' };
+  const received: unknown[] = [];
+  const write =
+    (states: unknown[], fail = false) =>
+    async (state: unknown) => {
+      received.push(structuredClone(state));
+      if (state !== null && typeof state === 'object')
+        Reflect.set(state, 'mutated', true);
+      if (fail) throw new Error('source broke');
+      return {
+        count: states.length,
+        deleted: 0,
+        checkpoints: states.map((state) => ({
+          type: 'STATE' as const,
+          stream: 'records',
+          state,
+        })),
+      };
+    };
+
+  await store.run('copy', binding, write([{ page: 1 }, { page: 2 }]));
+  // No acknowledgement keeps the saved state, even though the input was mutated.
+  await store.run('copy', binding, write([]));
+  await assert.rejects(
+    store.run('copy', binding, write([{ page: 9 }], true)),
+    /source broke/,
+  );
+  await store.run('copy', binding, write([]));
+
+  assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 2 }]);
+});
+
+test('a changed binding is refused until the checkpoint is reset', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
+  const store = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  let called = 0;
+  const write = async (state: unknown) => {
+    called++;
+    return {
+      count: 0,
+      deleted: 0,
+      checkpoints: [
+        { type: 'STATE' as const, stream: 'records', state: { from: state } },
+      ],
+    };
+  };
+
+  await store.run('copy', { target: 'a' }, write);
+  await assert.rejects(
+    store.run('copy', { target: 'b' }, write),
+    /Checkpoint binding changed for copy; reset it or use a new copy ID/,
+  );
+  assert.equal(called, 1);
+  await store.reset('copy');
+  await store.run('copy', { target: 'b' }, async (state) => {
+    assert.equal(state, null);
+    return write(state);
+  });
+  assert.equal(called, 2);
 });

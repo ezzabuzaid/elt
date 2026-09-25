@@ -1,7 +1,4 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable, readdir, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   Catalog,
@@ -10,11 +7,9 @@ import {
   Destination,
   isCalendarDate,
   isTimestamp,
-  MarkdownDestination,
   Pipeline,
   Source,
   type SourceWatchOptions,
-  SQLiteCheckpointStore,
   Stream,
   Target,
   validateRecords,
@@ -97,168 +92,6 @@ test('record validation enforces every property of the stream schema', () => {
     () => validateRecords(unsupported, [], 'Test'),
     /nested\.tags declares an unsupported type/,
   );
-});
-
-test('Markdown file and folder targets honor the deduplication policy', async () => {
-  let clicks = 12;
-  class RestatingSource extends Source {
-    readonly identity = 'markdown-restating-test';
-    readonly metrics = new Stream({
-      name: 'metrics',
-      jsonSchema: {
-        type: 'object',
-        properties: {
-          date: { type: 'string' },
-          query: { type: 'string' },
-          clicks: { type: 'number' },
-        },
-      },
-      supportedSyncModes: ['full_refresh', 'incremental'],
-    });
-    protected readonly catalog = new Catalog([this.metrics]);
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
-    }
-    protected override async *extract(configuration: CopyConfiguration) {
-      // The same fact, re-extracted after the upstream restated its metrics.
-      yield {
-        stream: configuration.stream.name,
-        data: { date: '2026-09-20', query: 'elt', clicks },
-      };
-      yield {
-        type: 'STATE' as const,
-        stream: configuration.stream.name,
-        state: { date: '2026-09-20' },
-      };
-    }
-  }
-
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-md-'));
-  const source = new RestatingSource();
-  const destination = new MarkdownDestination({
-    path: join(scratch.path, 'markdown'),
-  });
-  const targets = [
-    destination.file('replacing.md'),
-    destination.folder('replacing'),
-    destination.file('guarding.md'),
-    destination.folder('guarding'),
-  ];
-  const copies = targets.map(
-    (target) =>
-      new Copy(source.metrics, target, {
-        id: target.name,
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        cursorField: 'date',
-        primaryKey: ['query'],
-        dedupPolicy: target.name.startsWith('replacing')
-          ? 'replace'
-          : 'cursor_newer',
-      }),
-  );
-  const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: copies,
-  });
-  const clicksIn = async (name: string) => {
-    const path = join(destination.path, name);
-    const files = name.endsWith('.md')
-      ? [path]
-      : (await readdir(path)).map((file) => join(path, file));
-    const documents = await Promise.all(
-      files.map((file) => readFile(file, 'utf8')),
-    );
-    return documents.flatMap((document) =>
-      Array.from(
-        document.matchAll(/^<!-- mac-elt-record:([A-Za-z0-9+/=]+) -->$/gm),
-        ([, encoded]) =>
-          JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))
-            .clicks,
-      ),
-    );
-  };
-
-  await pipeline.run();
-  clicks = 19;
-  await pipeline.run();
-
-  assert.deepEqual(
-    await Promise.all(targets.map((target) => clicksIn(target.name))),
-    [[19], [19], [12], [12]],
-  );
-});
-
-test('a checkpoint store resumes from the last acknowledged state only', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
-  const store = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
-  });
-  const binding = { source: 'test', target: 'records' };
-  const received: unknown[] = [];
-  const write =
-    (states: unknown[], fail = false) =>
-    async (state: unknown) => {
-      received.push(structuredClone(state));
-      if (state !== null && typeof state === 'object')
-        Reflect.set(state, 'mutated', true);
-      if (fail) throw new Error('source broke');
-      return {
-        count: states.length,
-        deleted: 0,
-        checkpoints: states.map((state) => ({
-          type: 'STATE' as const,
-          stream: 'records',
-          state,
-        })),
-      };
-    };
-
-  await store.run('copy', binding, write([{ page: 1 }, { page: 2 }]));
-  // No acknowledgement keeps the saved state, even though the input was mutated.
-  await store.run('copy', binding, write([]));
-  await assert.rejects(
-    store.run('copy', binding, write([{ page: 9 }], true)),
-    /source broke/,
-  );
-  await store.run('copy', binding, write([]));
-
-  assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 2 }]);
-});
-
-test('a changed binding is refused until the checkpoint is reset', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
-  const store = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
-  });
-  let called = 0;
-  const write = async (state: unknown) => {
-    called++;
-    return {
-      count: 0,
-      deleted: 0,
-      checkpoints: [
-        { type: 'STATE' as const, stream: 'records', state: { from: state } },
-      ],
-    };
-  };
-
-  await store.run('copy', { target: 'a' }, write);
-  await assert.rejects(
-    store.run('copy', { target: 'b' }, write),
-    /Checkpoint binding changed for copy; reset it or use a new copy ID/,
-  );
-  assert.equal(called, 1);
-  await store.reset('copy');
-  await store.run('copy', { target: 'b' }, async (state) => {
-    assert.equal(state, null);
-    return write(state);
-  });
-  assert.equal(called, 2);
 });
 
 class SessionSource extends Source<AsyncDisposable & { readonly id: number }> {

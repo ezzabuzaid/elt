@@ -6,11 +6,11 @@ Detailed sync, storage, connector, and failure contracts for `elt`.
 
 ## Working example
 
-The examples below live inside `apps/apple/src`: import pipeline types from `elt`, the SQLite destination from `elt-sqlite`, and Apple connectors from the app's `./index.ts`. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
+The examples below live inside `apps/apple/src`: import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and Apple connectors from the app's `./index.ts`. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
 
 ```ts
-import { Copy, Pipeline, SQLiteCheckpointStore } from 'elt';
-import { SQLiteDestination } from 'elt-sqlite';
+import { Copy, Pipeline } from 'elt';
+import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
 import { AppleNotesSource } from './index.ts';
 
 const notes = new AppleNotesSource();
@@ -151,7 +151,7 @@ State belongs to the orchestration, not the destination, as in Airbyte: a writer
 
 | Store | Keeps state in | Concurrency |
 | --- | --- | --- |
-| `SQLiteCheckpointStore({ path })` from `elt` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | One transaction per file: copies sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Use separate files for independent parallel pipelines. |
+| `SQLiteCheckpointStore({ path })` from `elt-sqlite` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | One transaction per file: copies sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Use separate files for independent parallel pipelines. |
 | `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._mac_elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | An advisory lock per copy `id`: different ids run in parallel, a second run of one id fails with "in use by another run". The table is created in its own committed transaction under the writers' schema lock, so a writer never waits on an idle checkpoint transaction. Each incremental copy holds two connections, and the checkpoint one idles in its transaction while the load runs, so the loading role must not have an `idle_in_transaction_session_timeout`. |
 
 ### Snapshot streams
@@ -385,7 +385,7 @@ SQLite holds its transaction during extraction. Long reads can block other write
 ## Markdown destination
 
 ```ts
-import { MarkdownDestination } from 'elt';
+import { MarkdownDestination } from 'elt-markdown';
 
 const markdown = new MarkdownDestination({ path: './exports' });
 const exportPipeline = new Pipeline({

@@ -1,11 +1,6 @@
 import { lstat, open } from 'node:fs/promises';
-import type { CopyConfiguration } from '../../core/copy-configuration.ts';
-import type { Deduplication } from '../../core/deduplication.ts';
-import {
-  type WriteCount,
-  type WriteOperation,
-  Writer,
-} from '../../core/writer.ts';
+import type { CopyConfiguration, Deduplication } from 'elt';
+import { type WriteCount, type WriteOperation, Writer } from 'elt';
 import { MarkdownDocument } from './markdown-document.ts';
 
 export abstract class MarkdownWriter extends Writer {

@@ -4,7 +4,7 @@
 
 `elt` is a TypeScript library for declaring and running ELT pipelines. Connect a source stream to a destination with `Copy`, then execute the transfers with `Pipeline`. It supports full refresh, incremental loading with persistent checkpoints, native change watching, and attachment extraction.
 
-The core uses Node.js APIs with no runtime dependencies. Destinations beyond Markdown are their own packages: `elt-sqlite`, and `elt-postgresql`, which adds the `postgres` driver. The included Apple connectors use macOS scripting and EventKit; the Google connectors call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
+The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and has no runtime dependencies. Each destination is its own package, together with its checkpoint store: `elt-sqlite`, `elt-markdown`, and `elt-postgresql`, which adds the `postgres` driver. The included Apple connectors use macOS scripting and EventKit; the Google connectors call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
 
 [Quick start](#quick-start) · [Incremental sync](#incremental-sync) · [Watch for changes](#watch-for-changes) · [Reference](docs/reference.md)
 
@@ -22,7 +22,7 @@ Every destination supports overwrite, append, and deduplication:
 
 - **SQLite** (`elt-sqlite`): strict tables with inferred or explicitly selected columns, including text and attachment bytes.
 - **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers.
-- **Markdown:** one document per stream or one document per record, with managed append and deduplication.
+- **Markdown** (`elt-markdown`): one document per stream or one document per record, with managed append and deduplication.
 
 See the reference for [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Search Console streams](docs/reference.md#google-search-console), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
 
@@ -118,7 +118,7 @@ A full-refresh overwrite also removes deleted reminders; an incremental copy (`a
 To retain the latest version of each note across runs, keep the quick-start imports and source/destination setup, then replace the pipeline declaration and execution with:
 
 ```ts
-import { SQLiteCheckpointStore } from 'elt';
+import { SQLiteCheckpointStore } from 'elt-sqlite';
 
 const checkpoints = new SQLiteCheckpointStore({
   path: './outputs/checkpoints.sqlite',
@@ -202,7 +202,7 @@ Live verification confirmed that Notes GUI edits and Calendar/Reminders writes t
 Using the `source` from the quick start, create a separate pipeline with a Markdown destination:
 
 ```ts
-import { MarkdownDestination } from 'elt';
+import { MarkdownDestination } from 'elt-markdown';
 
 const markdown = new MarkdownDestination({ path: './outputs/markdown' });
 
@@ -298,9 +298,10 @@ Manage permissions in **System Settings → Privacy & Security**. Calendar and R
 ## Development
 
 ```text
-packages/elt/                     Core contracts, pipelines, the Markdown destination, and checkpoint storage
-packages/destinations/sqlite/     SQLite destination (elt-sqlite)
-packages/destinations/postgresql/ Postgres destination (elt-postgresql)
+packages/elt/                     Core contracts, pipelines, and the checkpoint protocol
+packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-sqlite)
+packages/destinations/markdown/   Markdown destination (elt-markdown)
+packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
 apps/apple/            Apple connectors, native bridges, document parser, and example app
 apps/google/           Google connectors and example app

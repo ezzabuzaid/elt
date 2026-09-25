@@ -12,13 +12,13 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CopyConfiguration } from '../../core/copy-configuration.ts';
+import type { CopyConfiguration } from 'elt';
 import {
   CommittedWriteError,
   TargetOwnedError,
   type WriteCount,
   type WriteOperation,
-} from '../../core/writer.ts';
+} from 'elt';
 import { MarkdownDocument } from './markdown-document.ts';
 import { MarkdownFolder } from './markdown-folder.ts';
 import { MarkdownWriter } from './markdown-writer.ts';

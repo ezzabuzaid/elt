@@ -7,13 +7,13 @@ import {
   rmdir,
 } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CopyConfiguration } from '../../core/copy-configuration.ts';
+import type { CopyConfiguration } from 'elt';
 import {
   CommittedWriteError,
   TargetOwnedError,
   type WriteCount,
   type WriteOperation,
-} from '../../core/writer.ts';
+} from 'elt';
 import { MarkdownDocument } from './markdown-document.ts';
 import type { MarkdownFile } from './markdown-file.ts';
 import { MarkdownWriter } from './markdown-writer.ts';
@@ -44,7 +44,9 @@ export class MarkdownFileWriter extends MarkdownWriter {
           ? await readFile(path, 'utf8')
           : undefined;
         const owner =
-          existing === undefined ? undefined : MarkdownDocument.writer(existing);
+          existing === undefined
+            ? undefined
+            : MarkdownDocument.writer(existing);
         if (owner !== undefined && owner !== writer)
           throw new TargetOwnedError(target.name, owner, writer);
         const previous =
@@ -63,9 +65,7 @@ export class MarkdownFileWriter extends MarkdownWriter {
         const stagedPath = join(staging.path, target.name);
         {
           await using file = await open(stagedPath, 'wx', 0o600);
-          await file.writeFile(
-            target.document.header(stream, writer),
-          );
+          await file.writeFile(target.document.header(stream, writer));
           for (const [index, record] of rows.entries())
             await file.writeFile(target.document.render(record, index + 1));
         }

@@ -1,0 +1,25 @@
+{
+  "name": "elt-markdown",
+  "sourceRoot": "packages/destinations/markdown/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "command": "tsc -p packages/destinations/markdown/tsconfig.json",
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "biome check --write packages/destinations/markdown/src packages/destinations/markdown/package.json packages/destinations/markdown/project.json packages/destinations/markdown/tsconfig.json",
+          "tsc -p packages/destinations/markdown/tsconfig.json --noEmit"
+        ],
+        "parallel": false
+      }
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test packages/destinations/markdown/dist/*.test.js"
+    }
+  }
+}

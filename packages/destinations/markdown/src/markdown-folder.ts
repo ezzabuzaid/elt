@@ -1,4 +1,4 @@
-import { Target } from '../../core/target.ts';
+import { Target } from 'elt';
 import { MarkdownDocument } from './markdown-document.ts';
 import type { MarkdownFile } from './markdown-file.ts';
 
