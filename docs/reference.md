@@ -105,7 +105,7 @@ A target has one writer, as in Airbyte, where one stream owns one table and ["mo
 
 A writer is the copy's `id`, or the source identity and stream name for a copy without one. Every destination records the writer of each target, stored with the target and committed with its first load. Before a copy extracts or changes anything, the target refuses any other writer with `TargetOwnedError`, which names both. A pipeline refuses two writers of one target among its own copies before running any. The owning writer may change its own mode or key.
 
-To reassign a target, drop it: a dropped SQLite or Postgres table, or a deleted Markdown file or folder, releases its writer, and the next load starts from scratch. SQLite and Postgres keep writers in the reserved `_mac_elt_writers` table; Markdown keeps it in the file's header comment or the folder's marker file.
+To reset or reassign a target, clear it with its owning copy, as with Airbyte's Clear: `pipeline.clear()` (or `pipeline.clear([copy])`) empties each target, releases its writer and removes the copy's checkpoint, so the next run reloads from scratch. A SQL table is emptied rather than dropped, so views built on it, such as the warehouse marts, keep working; a Markdown file or folder is removed. Clearing refuses a target another writer owns. A target dropped by hand also releases its writer, but a copy that still has a checkpoint for it fails with `TargetMissingError` before extracting, since resuming would load only what changed since the checkpoint; clear the copy to reload it. SQLite and Postgres keep writers in the reserved `_mac_elt_writers` table; Markdown keeps it in the file's header comment or the folder's marker file.
 
 Several properties or accounts share tables through one [partitioned source](#partitioned-streams), which is one writer.
 
@@ -131,7 +131,9 @@ Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The `count` r
 
 Incremental copies require an explicit stable `id` and a [checkpoint store](#checkpoint-stores). IDs must be unique within a pipeline. Copying the same stream to two targets requires two IDs, so progress in one does not advance the other.
 
-`Source.read(configuration, previousState)` receives `null` initially. It emits `{ stream, data }` records, `{ type: 'DELETE', stream, key }` deletions and `{ type: 'STATE', stream, state }` checkpoints. State is losslessly JSON serializable and source-owned; destinations do not interpret it. Writers snapshot proposed state and return `WriteResult { count, deleted, checkpoints }` only after committing/publishing the complete copy. Acknowledgements retain their order; orchestration persists the last one. No acknowledgement means no advancement, even if the source mutates its input state.
+`Source.read(configuration, previousState)` receives `null` initially. It emits `{ stream, data }` records, `{ type: 'DELETE', stream, key }` deletions and `{ type: 'STATE', stream, state }` checkpoints. State is losslessly JSON serializable and source-owned; destinations do not interpret it.
+
+Each checkpoint is a commit point, as in Airbyte: the writer commits everything before it, then acknowledges it, and the store saves it before the load continues. A run that fails later keeps every checkpoint it acknowledged and resumes from the last one. No acknowledgement means no advancement, even if the source mutates its input state. When `extract` throws, `Source.read` ends that read with a `ReadFailure` (Airbyte's error trace) instead of throwing; the writer discards what that read applied since its last checkpoint and commits nothing more until the next one. A connector signals a failed read by throwing, never by yielding nothing. A full refresh carries no checkpoints, so it commits once at the end and any failure keeps the previous target.
 
 The store binds each ID to the source identity, target declaration, schema and selected configuration. A changed binding fails before extraction. Use a new ID or explicitly reset progress:
 
@@ -140,18 +142,18 @@ await checkpoints.reset('notes-to-sqlite'); // Next read starts from null; desti
 await pipeline.run();
 ```
 
-Resetting append progress may duplicate data. Resetting deduplicated progress reconciles replayed records. Reset state when deleting/replacing destination storage; bindings cannot detect that content was removed. Do not share a state file between independent machines or put it inside a managed Markdown folder. Its parent directory must exist.
+`reset` keeps the loaded rows, as Airbyte's refresh that keeps records: resetting append progress may duplicate data, and resetting deduplicated progress reconciles replayed records. To drop the rows too, [clear the copy](#target-ownership). Do not share a state file between independent machines or put it inside a managed Markdown folder. Its parent directory must exist.
 
-Data and checkpoint commits are separate. If data commits but state persistence fails, retry may replay records: delivery is **at least once**. Append keeps replayed observations; deduplication reconciles them. No batching or resumable full refresh is implemented.
+A checkpoint is saved after its rows commit, in a separate store. If the rows commit but the save fails, the copy reports that failure with the committed counts, and the next run replays from the last saved checkpoint: delivery is **at least once**. Append keeps replayed observations; deduplication reconciles them. Resumable full refresh is not implemented.
 
 ### Checkpoint stores
 
-State belongs to the orchestration, not the destination, as in Airbyte: a writer acknowledges a source's checkpoints only after its load commits, and `Copy` hands the last one to the store. Any store works with any destination. `CheckpointStore` owns that protocol (the binding check, the cloned input state, advancing only on an acknowledgement, `CommittedWriteError` after a committed load). A store supplies a locked session and `async reset(id)`.
+State belongs to the orchestration, not the destination, as in Airbyte, so any store works with any destination, including one that cannot hold state itself: a writer acknowledges each checkpoint only after the rows before it are durable, and `Copy` saves each acknowledgement. `CheckpointStore` owns that protocol (the binding check, the cloned input state, advancing only on an acknowledgement, `reset` and `clear`). A store supplies a session that holds the copy's lock for the whole run and whose `save` is durable when it resolves.
 
 | Store | Keeps state in | Concurrency |
 | --- | --- | --- |
-| `SQLiteCheckpointStore({ path })` from `elt-sqlite` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | One transaction per file: copies sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Use separate files for independent parallel pipelines. |
-| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._mac_elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | An advisory lock per copy `id`: different ids run in parallel, a second run of one id fails with "in use by another run". The table is created in its own committed transaction under the writers' schema lock, so a writer never waits on an idle checkpoint transaction. Each incremental copy holds two connections, and the checkpoint one idles in its transaction while the load runs, so the loading role must not have an `idle_in_transaction_session_timeout`. |
+| `SQLiteCheckpointStore({ path })` from `elt-sqlite` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | The file's write lock, held for the run and retaken in the same step as each save commits: copies sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Use separate files for independent parallel pipelines. |
+| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._mac_elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | A session advisory lock per copy `id` on its own connection: different ids run in parallel, a second run of one id fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the writers' schema lock. |
 
 ### Snapshot streams
 
@@ -184,13 +186,13 @@ protected override async *extract(configuration, state, partition) {
 }
 ```
 
-`Source.read` calls `extract` once per partition, in the listed order, and keeps each partition's state apart. The checkpoint is `{ partitions: [{ partition, state }] }`, owned by the library:
+`Source.read` calls `extract` once per partition, in the listed order, and keeps each partition's state apart. The checkpoint is `{ partitions: [{ partition, state }] }`, owned by the library. Each time a partition checkpoints, the library emits the whole envelope, holding that partition's new state and every other listed partition's latest one, so each partition commits as it finishes:
 
 - **New partition:** it receives `null` and starts from the source's normal beginning, for example a full history backfill, while the others resume.
-- **Removed partition:** it leaves the checkpoint; its rows stay loaded. Reading it again later starts it from `null`.
+- **Removed partition:** it leaves the next checkpoint; its rows stay loaded. Reading it again later starts it from `null`.
 - **Identity:** the partition list is not part of the source identity or the checkpoint binding, so adding or removing a partition never invalidates the others' checkpoints.
-- **Rows:** every record and every `DELETE` key must carry its partition's values; a row naming another partition, or none, fails the copy. Deduplicating copies must include the `partitionKey` fields in their `primaryKey`.
-- **Failures:** a copy is one transaction, so a failing partition rolls back every partition's rows and checkpoint.
+- **Rows:** every record and every `DELETE` key must carry its partition's values; a row naming another partition, or none, fails that partition. Deduplicating copies must include the `partitionKey` fields in their `primaryKey`.
+- **Failures:** as in Airbyte, a failing partition does not stop the others. Its rows since its last checkpoint are discarded and it keeps its saved state, so the next run retries it from there; the other partitions commit and advance. The copy then reports the failed partitions, and the run fails naming each one. A failing partition is never skipped silently.
 - **Full refresh:** partitions are read the same way without state, and an overwrite replaces the whole target with every listed partition.
 
 Partitions are declared without I/O: `partitionKey` fields must be distinct non-null scalar members of the primary key, and the list must be non-empty with no repeats.
@@ -270,7 +272,7 @@ The source owns change detection:
 - **Calendar and Reminders:** a persistent OSA process subscribes to native `EKEventStoreChangedNotification` notifications. These invalidate all selected streams because EventKit does not identify individual changes. The notification covers the whole event store, so a Calendar edit also re-extracts a Reminders watch, and a Reminders edit also re-extracts a Calendar watch. The existing EventKit permission requirements apply. Full-refresh overwrite reconciles deletions on the next successful pass.
 - **Notes:** the watcher opens its own read-only connection to `NoteStore.sqlite` and checks `PRAGMA data_version` every second (`pollIntervalMs`); it changes with every commit another connection makes, so each save Notes commits invalidates every selected stream. Filesystem notifications are not used: Notes keeps the store and its WAL open, and FSEvents reports a write only when the file closes, which verification showed arrives when Notes quits. Because only Notes syncs iCloud notes, the watch keeps Notes running: it launches Notes hidden and in the background (`open -g -j`) when it starts and, every `launchIntervalMs` (30 s), again if Notes has stopped. It cannot tell your quit from macOS closing a hidden Notes, which happens when the system frees disk space (seen twice on a 99% full disk, within minutes of a hidden launch), so it relaunches in both cases. A running Notes is left as it is. Watching needs the same Full Disk Access as reading.
 
-Runs are serial. Notifications received during extraction or while the caller handles a result are coalesced into a pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. Every yielded result has completed loading and checkpoint persistence; `count` and `deleted` still count accepted observations, including deduplication no-ops and absent keys. A load failure raises `PipelineError`; a watcher failure is propagated. No automatic retries or periodic reconciliation are added.
+Runs are serial. Notifications received during extraction or while the caller handles a result are coalesced into a pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. Every yielded result has completed loading and checkpoint persistence; `count` and `deleted` still count accepted observations, including deduplication no-ops and absent keys. A batch with any incomplete copy raises `PipelineError` after running every copy in it, keeping what they committed; a watcher failure is propagated. No automatic retries or periodic reconciliation are added.
 
 Aborting stops native observation, lets an in-flight pass finish and yield its result, and prevents another pass. Breaking the loop also closes the watcher. A new watch session subscribes and performs an initial pass again, using the saved checkpoints. Notifications themselves are not durable, and the source's existing snapshot/cursor limitations still apply.
 
@@ -387,7 +389,7 @@ Notes exports through its scripting `save` command into a disposable staging dir
 
 `Source.read()` is the shared template method. Source implementations provide protected `extract(configuration, state, partition, session)`, yielding metadata, optional file paths, and state. The source resolves `configuration.fileReads` into parsed text or a `FileContent` before yielding records to the destination. A path must stay readable until the consumer advances past its record: a staged copy the source cleans up afterwards, or the original file when copying it would be costly (Messages hands over its attachment files). Writers reject any leaked path.
 
-Extend `DocumentParser` with `parse(path): Promise<string | null>` for another parsing implementation. Return `null` when the file has no text the parser can represent, and throw only when reading it failed. Give it a stable identity that includes its version and relevant configuration; keep the implementation/configuration immutable and parse without modifying the staged file. A parser does not depend on Notes or SQLite. Parser identity participates in the copy's checkpoint binding; changing it requires a new copy ID or explicit checkpoint reset. Source keys and cursors remain metadata fields, and acknowledgement still waits for complete destination commit.
+Extend `DocumentParser` with `parse(path): Promise<string | null>` for another parsing implementation. Return `null` when the file has no text the parser can represent, and throw only when reading it failed. Give it a stable identity that includes its version and relevant configuration; keep the implementation/configuration immutable and parse without modifying the staged file. A parser does not depend on Notes or SQLite. Parser identity participates in the copy's checkpoint binding; changing it requires a new copy ID or explicit checkpoint reset. Source keys and cursors remain metadata fields, and a checkpoint is still acknowledged only after the rows before it commit.
 
 The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 in the consuming application. Parsing does not create a search index. No query API or general transformation step is part of this library.
 
@@ -395,23 +397,25 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 
 `Pipeline.run()` preflights every copy before executing any of them. Unknown streams, unsupported combinations, invalid schema declarations, missing keys/cursors/IDs/state store, and duplicate copy IDs fail without extraction or storage creation. Preflight uses metadata; storage permissions, existing constraints and record values are checked during execution. Standalone `Copy.run(source, destination, checkpoints?)` validates too.
 
-Copies then execute in declaration order. Each SQLite copy opens its own handle and transaction; each Markdown copy stages its complete output. Errors before commit/publication preserve the previous output for that copy. Empty overwrite clears it; empty append preserves existing records. Earlier copies remain committed if a later copy fails. There is no pipeline-wide rollback.
+Copies then execute in declaration order, and, as in Airbyte, every copy runs even when an earlier one fails. Each copy commits at its checkpoints, so an incremental copy that fails keeps what it committed; a full refresh commits once, so a failure keeps the previous target. Empty overwrite clears it; empty append preserves existing records. There is no pipeline-wide rollback.
+
+When any copy is incomplete, `run()` throws one `PipelineError` after the last copy:
 
 ```ts
 import { PipelineError } from 'elt';
 
 try {
-  await pipeline.run();
+  await pipeline.run(); // [{ copy, count, deleted }] when every copy completed.
 } catch (error) {
   if (!(error instanceof PipelineError)) throw error; // Preflight errors are direct.
-  console.log(error.completed);  // Earlier successful { copy, count, deleted } results.
-  console.log(error.failedCopy); // The copy that stopped execution.
-  console.log(error.committed);  // { count, deleted } if it committed before an error.
-  console.error(error.cause);        // Original error, or CommittedWriteError with its cause.
+  for (const { copy, count, deleted, failures } of error.results)
+    for (const { partition, error: cause } of failures)
+      console.error(copy.id, partition, cause); // partition is null for the whole copy.
+  console.error(error.cause); // The first failure.
 }
 ```
 
-A cleanup error after publication, or a checkpoint-save error after data commit, is reported as `CommittedWriteError`. Such a failure does not imply data rollback. A count of zero also covers a committed empty input. Later copies are not executed.
+`PipelineError` is an `AggregateError`: `errors` holds every failure and `results` holds every copy's committed `count` and `deleted` beside its `failures`. A failure after rows committed, such as a checkpoint that could not be saved or a cleanup error after publication, is reported the same way with the committed counts; it does not imply rollback. A count of zero also covers a committed empty input. Standalone `Copy.run` throws `CopyError` with the same `result`.
 
 Declarations are frozen and reusable. `Destination.createWriter(configuration, target)` selects a storage-specific strategy without I/O. Writers own connections, files, counters, and publication. `Copy`/`Pipeline` contain no SQL/filesystem loading branches. `Source.identity` and `Destination.identity(target)` provide stable checkpoint bindings; custom implementations must distinguish different source instances/targets/configuration domains.
 
@@ -448,7 +452,7 @@ Ordinary overwrite/append requires no key. Folder filenames represent record occ
 
 Target names use lowercase letters, digits, hyphens and underscores, beginning with a letter; files additionally end in `.md`. Nested paths and traversal are rejected. Only regular managed files, or managed folders containing only generated record files, can be replaced. Unmanaged files, subdirectories and symlinks are protected; siblings stay untouched.
 
-A file publishes with a rename after staging and closing. A folder moves the old directory to a backup before publishing the staged directory. If publication fails, it restores the backup; if restoration also fails, it preserves the sole backup and reports its location. Folder switching has a brief path gap between renames. Publication is not a filesystem-wide or power-loss transaction.
+An incremental copy publishes the whole target at each checkpoint, so a later failure keeps what earlier checkpoints published; a full refresh publishes once. A file publishes with a rename after staging and closing. A folder moves the old directory to a backup before publishing the staged directory. If publication fails, it restores the backup; if restoration also fails, it preserves the sole backup and reports its location. Folder switching has a brief path gap between renames. Publication is not a filesystem-wide or power-loss transaction.
 
 An exclusive `.markdown-<target>.lock` directory prevents cooperating concurrent writes to either layout. Normal completion/failure removes staging and locks unless a recovery backup must remain. Abrupt termination can leave staging, a backup and a stale lock; inspect and restore the backup before removing the lock and retrying.
 
@@ -469,10 +473,10 @@ Inferred columns follow the stream schema, and unlike SQLite the string formats 
 
 Explicit columns use `columns.text/integer/real/boolean/date/timestamp(field)` with `.notNull()` and `.primaryKey()`. File reads are not supported. Identifiers are case-sensitive and limited to 63 bytes, because Postgres would silently truncate a longer one; `_mac_elt_` names and a `loaded_at` column are reserved, and `pg_` schemas are refused.
 
-Each copy is one transaction that holds a per-schema advisory lock, so writers to one schema run one at a time. Readers never wait on the lock:
+A copy commits at each checkpoint; every transaction holds a per-schema advisory lock, so writers to one schema run one at a time. Readers never wait on the lock:
 
-- Overwrite empties the table with `DELETE`, not `TRUNCATE`, because the transaction stays open while the source is read and `TRUNCATE` would block readers for all of it. Until commit, readers see the previous load.
-- Records are inserted in batches of 1000, sent as one JSON parameter and cast per column. Every row of a copy shares one `loaded_at` (`TIMESTAMPTZ`), the transaction's start time.
+- Overwrite empties the table with `DELETE`, not `TRUNCATE`, because the transaction stays open while the source is read and `TRUNCATE` would block readers for all of it. A full refresh has no checkpoints, so until it commits, readers see the previous load.
+- Records are inserted in batches of 1000, sent as one JSON parameter and cast per column. Every row of a copy shares one `loaded_at` (`TIMESTAMPTZ`), its first transaction's start time, across all its commits.
 - Deduplication upserts on a unique index named after the table and key (`_mac_elt_dedup_<hash>`). The index is created once and rebuilt only when the key changes. Within a batch, one row per key is kept, as applying the batch row by row would: `replace` keeps the last and `cursor_newer` keeps the first with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`).
 - Deletions apply in source order: pending records are written first.
 - The writer of each table lives in `<schema>._mac_elt_writers` and follows the [target ownership](#target-ownership) rule.
@@ -1003,6 +1007,11 @@ Live verification on **2026-09-24** of the daily inspection quota on `sc-domain:
 Live verification on **2026-09-24** of partitions: one source listing `sc-domain:ezz.sh`, `sc-domain:january.sh` and `sc-domain:limerence.sh` loaded every table in one run, with one checkpoint per stream holding a `{ partitions: [...] }` entry per property.
 
 Live verification on **2026-09-25** of target ownership against `sc-domain:ezz.sh`: after the old `_mac_elt_writers` table was dropped, one run recreated it as `(target, writer)` with one row per table, each owned by its copy id (for example `sitemaps ← {"copy":"sitemaps"}`). A second copy from another source into `sitemaps` failed with `TargetOwnedError` naming both writers, extracted nothing, and left its row count unchanged.
+
+Live verification on **2026-09-25** of failure isolation and clear, against `sc-domain:ezz.sh`:
+
+- A run listing `sc-domain:ezz.sh` and `sc-domain:example.com` (no permission) ran every stream. `ezz.sh` loaded and checkpointed (for example 24 daily and 78 query rows), each partitioned stream reported `example.com` with Google's "User does not have sufficient permission for site 'sc-domain:example.com'", the run failed, and no `example.com` row or checkpoint entry was written. The next run with `ezz.sh` alone completed.
+- Clearing the `sitemaps` copy emptied its table, owner row and checkpoint while `marts.search_console_sitemaps`, a view on it, kept working; the next run reloaded it from scratch. Dropping the table instead is refused by Postgres because of that view, which is why clear empties SQL tables.
 
 Not exercised live: `watch()` over a real polling interval, Markdown destinations, a property large enough to page past 25000 rows, and the quota ceiling on URL inspection.
 

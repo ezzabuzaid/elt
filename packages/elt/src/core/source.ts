@@ -44,6 +44,21 @@ export type DeleteMessage = {
 
 export type SourceMessage = RecordMessage | StateMessage | DeleteMessage;
 
+// A read that failed, for one partition or, when partition is null, the whole
+// stream: Airbyte's error trace. Only Source.read creates it, from what
+// extract threw; a connector signals failure by throwing.
+export class ReadFailure {
+  constructor(
+    readonly stream: string,
+    readonly partition: Partition | null,
+    readonly error: unknown,
+  ) {
+    Object.freeze(this);
+  }
+}
+
+export type ReadMessage = SourceMessage | ReadFailure;
+
 // Every copy in one pipeline run reads through one session, so related
 // streams see the same moment of the source.
 export abstract class Source<
@@ -104,16 +119,37 @@ export abstract class Source<
   }
 
   // Must be lazy: the destination prepares its target before pulling records.
+  // Each checkpoint is a commit point. A full refresh carries none, so it
+  // loads all or nothing; an incremental read that fails keeps what earlier
+  // checkpoints committed.
   async *read(
     configuration: CopyConfiguration,
     state: unknown,
     session: Session,
-  ): AsyncGenerator<SourceMessage> {
+  ): AsyncGenerator<ReadMessage> {
     this.validate(configuration);
-    const messages =
-      configuration.stream.partitionKey === undefined
-        ? this.extract(configuration, state, null, session)
-        : this.partitioned(configuration, state, session);
+    if (configuration.stream.partitionKey !== undefined) {
+      yield* this.partitioned(configuration, state, session);
+      return;
+    }
+    const incremental = configuration.syncMode === 'incremental';
+    try {
+      for await (const message of this.resolved(
+        configuration,
+        this.extract(configuration, state, null, session),
+      ))
+        if (incremental || !('type' in message) || message.type !== 'STATE')
+          yield message;
+    } catch (error) {
+      yield new ReadFailure(configuration.stream.name, null, error);
+    }
+  }
+
+  // Replaces each record's staging path with the file reads it asked for.
+  private async *resolved(
+    configuration: CopyConfiguration,
+    messages: AsyncIterable<SourceMessage>,
+  ): AsyncGenerator<SourceMessage> {
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0) {
         yield message;
@@ -167,48 +203,63 @@ export abstract class Source<
   }
 
   // Reads each partition with its own saved state: null for a partition not
-  // seen before, so it starts from the source's normal beginning. Partitions
-  // no longer listed drop out of the checkpoint; their rows stay loaded.
+  // seen before, so it starts from the source's normal beginning. Every
+  // checkpoint carries all listed partitions' latest states, so a partition
+  // not yet read, or one that failed, keeps what it had. Partitions no longer
+  // listed drop out of the next checkpoint; their rows stay loaded.
   private async *partitioned(
     configuration: CopyConfiguration,
     state: unknown,
     session: Session,
-  ): AsyncGenerator<SourceMessage> {
+  ): AsyncGenerator<ReadMessage> {
     const { stream } = configuration;
     const incremental = configuration.syncMode === 'incremental';
     const saved = incremental
       ? readPartitionStates(stream, state)
       : new Map<string, PartitionState>();
     const identity = partitionIdentity(stream);
-    const states: PartitionState[] = [];
-    for (const listed of this.partitions(stream)) {
-      const { key, partition } = readPartition(identity, listed);
-      let latest = saved.get(key);
-      for await (const message of this.extract(
-        configuration,
-        latest?.state ?? null,
-        partition,
-        session,
-      )) {
-        if ('type' in message && message.type === 'STATE') {
-          latest = { partition, state: message.state };
-          continue;
+    const listed = this.partitions(stream).map((entry) =>
+      readPartition(identity, entry),
+    );
+    const latest = new Map(saved);
+    for (const { key, partition } of listed) {
+      try {
+        for await (const message of this.resolved(
+          configuration,
+          this.extract(
+            configuration,
+            saved.get(key)?.state ?? null,
+            partition,
+            session,
+          ),
+        )) {
+          if ('type' in message && message.type === 'STATE') {
+            if (!incremental) continue;
+            latest.set(key, { partition, state: message.state });
+            yield {
+              type: 'STATE',
+              stream: stream.name,
+              state: {
+                partitions: listed.flatMap(
+                  (entry) => latest.get(entry.key) ?? [],
+                ),
+              },
+            };
+            continue;
+          }
+          assertInPartition(
+            stream,
+            partition,
+            'type' in message ? message.key : message.data,
+          );
+          yield message;
         }
-        assertInPartition(
-          stream,
-          partition,
-          'type' in message ? message.key : message.data,
-        );
-        yield message;
+      } catch (error) {
+        yield new ReadFailure(stream.name, partition, error);
+        // A full refresh commits nothing after a failure; stop reading.
+        if (!incremental) return;
       }
-      if (latest !== undefined) states.push(latest);
     }
-    if (incremental)
-      yield {
-        type: 'STATE',
-        stream: stream.name,
-        state: { partitions: states },
-      };
   }
 
   protected abstract extract(

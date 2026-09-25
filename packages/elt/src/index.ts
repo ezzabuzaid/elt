@@ -1,5 +1,10 @@
 export { Catalog } from './core/catalog.ts';
-export { Copy } from './core/copy.ts';
+export {
+  Copy,
+  CopyError,
+  type CopyOutcome,
+  type CopyResult,
+} from './core/copy.ts';
 export {
   CopyConfiguration,
   type DedupPolicy,
@@ -11,7 +16,7 @@ export { FileContent } from './core/file-content.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
 export { isCalendarDate, isTimestamp } from './core/formats.ts';
 export type { Partition, PartitionState } from './core/partition.ts';
-export { type CopyResult, Pipeline, PipelineError } from './core/pipeline.ts';
+export { Pipeline, PipelineError } from './core/pipeline.ts';
 export {
   type FieldSchema,
   type SchemaRecord,
@@ -21,6 +26,8 @@ export { diffSnapshot, type SnapshotState } from './core/snapshot.ts';
 export {
   type DeleteMessage,
   type KeyValue,
+  ReadFailure,
+  type ReadMessage,
   type RecordMessage,
   Source,
   type SourceMessage,
@@ -30,10 +37,13 @@ export {
 export { Stream, type SyncMode } from './core/stream.ts';
 export { Target } from './core/target.ts';
 export {
-  CommittedWriteError,
+  type Load,
+  type LoadFailure,
+  TargetMissingError,
   TargetOwnedError,
   type WriteCount,
   type WriteOperation,
+  type WriteOptions,
   type WriteResult,
   Writer,
 } from './core/writer.ts';

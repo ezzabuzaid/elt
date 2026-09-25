@@ -1,8 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { CopyConfiguration } from './copy-configuration.ts';
-import type { SourceMessage } from './source.ts';
+import type { ReadMessage } from './source.ts';
 import type { Target as DestinationTarget } from './target.ts';
-import type { WriteResult, Writer } from './writer.ts';
+import type { WriteOptions, WriteResult, Writer } from './writer.ts';
 
 // Recognized warehouse modes; each destination advertises only its implemented subset.
 export type DestinationSyncMode =
@@ -47,13 +47,20 @@ export abstract class Destination<Target extends DestinationTarget> {
     target: Target,
   ): Writer;
 
-  // writer names the copy across runs; the target refuses any other writer.
   async write(
     configuration: CopyConfiguration,
     target: Target,
-    records: AsyncIterable<SourceMessage>,
-    writer: string,
+    records: AsyncIterable<ReadMessage>,
+    options: WriteOptions,
   ): Promise<WriteResult> {
-    return this.createWriter(configuration, target).write(records, writer);
+    return this.createWriter(configuration, target).write(records, options);
+  }
+
+  async clear(
+    configuration: CopyConfiguration,
+    target: Target,
+    writer: string,
+  ): Promise<void> {
+    await this.createWriter(configuration, target).clear(writer);
   }
 }

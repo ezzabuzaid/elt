@@ -14,11 +14,6 @@ export class SQLiteCheckpointStore extends CheckpointStore {
     Object.freeze(this);
   }
 
-  override async reset(id: string): Promise<void> {
-    using database = this.open();
-    database.prepare('DELETE FROM checkpoints WHERE id = ?').run(id);
-  }
-
   protected override async session<T>(
     id: string,
     work: (session: CheckpointSession) => Promise<T>,
@@ -27,6 +22,13 @@ export class SQLiteCheckpointStore extends CheckpointStore {
     // ponytail: one state file serializes copies; use separate files if parallel replication is required.
     // Native locks release on process exit. Contention fails without blocking the JS event loop.
     database.exec('BEGIN IMMEDIATE');
+    // Commits and takes the lock back in one synchronous step, so each save
+    // is durable while no other run can slip in.
+    const durable = (statement: string, ...values: string[]) => {
+      database.prepare(statement).run(...values);
+      database.exec('COMMIT');
+      database.exec('BEGIN IMMEDIATE');
+    };
     try {
       const result = await work({
         read: async () => {
@@ -37,13 +39,14 @@ export class SQLiteCheckpointStore extends CheckpointStore {
             ? undefined
             : { binding: String(saved.binding), state: String(saved.state) };
         },
-        save: async ({ binding, state }) => {
-          database
-            .prepare(
-              'INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state',
-            )
-            .run(id, binding, state);
-        },
+        save: async ({ binding, state }) =>
+          durable(
+            'INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state',
+            id,
+            binding,
+            state,
+          ),
+        remove: async () => durable('DELETE FROM checkpoints WHERE id = ?', id),
       });
       database.exec('COMMIT');
       return result;

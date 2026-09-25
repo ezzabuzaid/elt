@@ -15,11 +15,13 @@ import {
   type Partition,
   Pipeline,
   PipelineError,
+  ReadFailure,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
   Stream,
   type Target,
+  TargetOwnedError,
 } from 'elt';
 import {
   SQLiteCheckpointStore,
@@ -812,7 +814,11 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     copy.configuration,
     copy.to,
     source.read(copy.configuration, firstState, session),
-    copy.writer(source),
+    {
+      writer: copy.writer(source),
+      resuming: true,
+      acknowledge: async () => {},
+    },
   );
   assert.deepEqual(names(), ['a:A', 'b:B2', 'd:D']);
 
@@ -822,7 +828,11 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     { id: 'a', name: 'A' },
     { id: 'a', name: 'again' },
   ];
-  await assert.rejects(read(null), /returned key \["a"\] twice in one scan/);
+  // A failed read ends the stream with a failure the writer discards, never a
+  // partial scan that would delete keys.
+  const failure = (await read(null)).at(-1);
+  assert.ok(failure instanceof ReadFailure);
+  assert.match(String(failure.error), /returned key \["a"\] twice in one scan/);
   const plain = new Stream({
     ...items,
     sourceDefinedCursor: undefined,
@@ -1128,7 +1138,7 @@ class Sites extends Source {
   protected readonly catalog = new Catalog([this.pages]);
   constructor(
     public sites: string[],
-    public pagesOf: Record<string, Record<string, unknown>[]>,
+    public pagesOf: Record<string, Iterable<Record<string, unknown>>>,
   ) {
     super();
   }
@@ -1218,52 +1228,189 @@ test('a partitioned stream resumes each partition from its own state', async () 
   );
 });
 
-test('a partition failure or foreign row commits nothing for any partition', async () => {
+test('a failing partition loads nothing and keeps its checkpoint, while the other partitions commit', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  const page = (site: string, path: string, views = 1) => ({
+    site,
+    path,
+    views,
+  });
+  const source = new Sites(['a', 'b', 'c'], {
+    a: [page('a', '/1')],
+    b: [page('b', '/1'), page('b', '/2')],
+    c: [page('c', '/1')],
+  });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
   const checkpoints = new SQLiteCheckpointStore({
     path: join(scratch.path, 'state.sqlite'),
   });
-  const run = (source: Sites) =>
-    new Pipeline({
-      source,
-      destination,
-      checkpoints,
-      steps: [
-        new Copy(source.pages, destination.table('pages'), {
-          id: 'pages',
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          primaryKey: ['site', 'path'],
-        }),
-      ],
-    }).run();
+  const copy = new Copy(source.pages, destination.table('pages'), {
+    id: 'pages',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['site', 'path'],
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [copy],
+  });
+  const rows = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT site, path, views FROM pages ORDER BY site, path')
+      .all()
+      .map((row) => `${row.site}${row.path}=${row.views}`);
+  };
+  const saved = () => {
+    using state = new DatabaseSync(checkpoints.path, { readOnly: true });
+    const { partitions } = JSON.parse(
+      String(state.prepare('SELECT state FROM checkpoints').get()?.state),
+    );
+    return new Map<string, unknown>(
+      partitions.map((entry: { partition: Partition; state: unknown }) => [
+        entry.partition.site,
+        entry.state,
+      ]),
+    );
+  };
+  await pipeline.run();
+  const before = saved();
 
-  await assert.rejects(
-    run(new Sites(['a', 'b'], { a: [{ site: 'a', path: '/', views: 1 }] })),
-    /site b is down/,
-  );
-  await assert.rejects(
-    run(
-      new Sites(['a', 'b'], {
-        a: [{ site: 'a', path: '/', views: 1 }],
-        b: [{ site: 'a', path: '/other', views: 1 }],
-      }),
-    ),
-    /record for partition \{"site":"b"\} carries site "a"/,
+  // a changes; b's scan breaks after one changed page; c emits a row of a.
+  source.pagesOf.a = [page('a', '/1', 2)];
+  source.pagesOf.b = (function* () {
+    yield page('b', '/1', 9);
+    throw new Error('scan of b broke');
+  })();
+  source.pagesOf.c = [page('a', '/stray')];
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the failed partitions'),
+    (error: unknown) => error,
   );
 
-  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.match(error.message, /pages \{"site":"b"\}: scan of b broke/);
+  assert.match(
+    error.message,
+    /record for partition \{"site":"c"\} carries site "a"/,
+  );
+  const [result] = error.results;
+  assert.deepEqual([result?.count, result?.deleted], [1, 0]);
   assert.deepEqual(
-    database
-      .prepare("SELECT name FROM sqlite_schema WHERE name = 'pages'")
-      .all(),
-    [],
+    result?.failures.map(({ partition }) => partition),
+    [{ site: 'b' }, { site: 'c' }],
   );
-  using state = new DatabaseSync(checkpoints.path, { readOnly: true });
-  assert.deepEqual(state.prepare('SELECT * FROM checkpoints').all(), []);
+  // b's half scan neither changed nor deleted anything.
+  assert.deepEqual(rows(), ['a/1=2', 'b/1=1', 'b/2=1', 'c/1=1']);
+  const after = saved();
+  assert.notDeepEqual(after.get('a'), before.get('a'));
+  assert.deepEqual(after.get('b'), before.get('b'));
+  assert.deepEqual(after.get('c'), before.get('c'));
+
+  source.pagesOf.b = [page('b', '/1', 9)];
+  source.pagesOf.c = [page('c', '/1')];
+  source.received.length = 0;
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 1 }]);
+  assert.deepEqual(
+    source.received.map(([site, state]) => [site, state === null]),
+    [
+      ['a', false],
+      ['b', false],
+      ['c', false],
+    ],
+  );
+  assert.deepEqual(rows(), ['a/1=2', 'b/1=9', 'c/1=1']);
+});
+
+test('clear drops a target with its checkpoint, and a target dropped by hand is refused until cleared', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  const source = new Sites(['a'], { a: [{ site: 'a', path: '/', views: 1 }] });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const copy = (id: string) =>
+    new Copy(source.pages, destination.table('pages'), {
+      id,
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      primaryKey: ['site', 'path'],
+    });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [copy('pages')],
+  });
+  const saved = () => {
+    using state = new DatabaseSync(checkpoints.path, { readOnly: true });
+    return state.prepare('SELECT id FROM checkpoints').all().length;
+  };
+  await pipeline.run();
+
+  // Resuming from the checkpoint would load only what changed since it.
+  {
+    using database = new DatabaseSync(destination.path);
+    database.exec('DROP TABLE pages');
+  }
+  source.received.length = 0;
+  await assert.rejects(
+    pipeline.run(),
+    /Target pages was dropped, but \{"copy":"pages"\} still has a checkpoint; clear the copy/,
+  );
+  assert.deepEqual(source.received, []);
+  const other = new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [copy('other')],
+  });
+  await assert.rejects(other.clear(), TargetOwnedError);
+  assert.equal(saved(), 1);
+
+  await pipeline.clear();
+  assert.equal(saved(), 0);
+  await pipeline.run();
+
+  assert.deepEqual(source.received, [['a', null]]);
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.equal(database.prepare('SELECT * FROM pages').all().length, 1);
+});
+
+test('a full refresh whose partition fails keeps the previous table', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
+  const source = new Sites(['a', 'b'], {
+    a: [{ site: 'a', path: '/', views: 1 }],
+    b: [{ site: 'b', path: '/', views: 1 }],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    steps: [new Copy(source.pages, destination.table('pages'))],
+  });
+  const rows = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT site, views FROM pages ORDER BY site')
+      .all()
+      .map((row) => `${row.site}=${row.views}`);
+  };
+  await pipeline.run();
+
+  source.pagesOf.a = [{ site: 'a', path: '/', views: 2 }];
+  delete source.pagesOf.b;
+  await assert.rejects(pipeline.run(), /pages \{"site":"b"\}: site b is down/);
+
+  assert.deepEqual(rows(), ['a=1', 'b=1']);
 });
 
 test('partition declarations are validated before extraction', async () => {
@@ -1544,41 +1691,44 @@ test('a record the cursor guard rejects leaves no stored file behind', async () 
   });
 });
 
-test('a checkpoint store resumes from the last acknowledged state only', async () => {
+test('a checkpoint store keeps each acknowledged state, durable at once, and holds its lock for the run', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
-  const store = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
-  });
+  const path = join(scratch.path, 'state.sqlite');
+  const store = new SQLiteCheckpointStore({ path });
   const binding = { source: 'test', target: 'records' };
   const received: unknown[] = [];
-  const write =
-    (states: unknown[], fail = false) =>
-    async (state: unknown) => {
+  const run = (states: unknown[], fail = false) =>
+    store.run('copy', binding, async (state, save) => {
       received.push(structuredClone(state));
       if (state !== null && typeof state === 'object')
         Reflect.set(state, 'mutated', true);
+      for (const next of states) await save(next);
       if (fail) throw new Error('source broke');
-      return {
-        count: states.length,
-        deleted: 0,
-        checkpoints: states.map((state) => ({
-          type: 'STATE' as const,
-          stream: 'records',
-          state,
-        })),
-      };
-    };
+    });
+  const saved = () => {
+    using database = new DatabaseSync(path, { readOnly: true });
+    return database
+      .prepare('SELECT state FROM checkpoints WHERE id = ?')
+      .get('copy')?.state;
+  };
 
-  await store.run('copy', binding, write([{ page: 1 }, { page: 2 }]));
+  await run([{ page: 1 }, { page: 2 }]);
   // No acknowledgement keeps the saved state, even though the input was mutated.
-  await store.run('copy', binding, write([]));
-  await assert.rejects(
-    store.run('copy', binding, write([{ page: 9 }], true)),
-    /source broke/,
-  );
-  await store.run('copy', binding, write([]));
+  await run([]);
+  // What was acknowledged before a failure stays saved.
+  await assert.rejects(run([{ page: 3 }], true), /source broke/);
+  await store.run('copy', binding, async (state, save) => {
+    assert.deepEqual(state, { page: 3 });
+    await save({ page: 4 });
+    assert.equal(saved(), JSON.stringify({ page: 4 }));
+    await assert.rejects(
+      store.run('copy', binding, async () => {}),
+      /database is locked/,
+    );
+  });
+  await run([]);
 
-  assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 2 }]);
+  assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 4 }]);
 });
 
 test('a changed binding is refused until the checkpoint is reset', async () => {
@@ -1587,27 +1737,24 @@ test('a changed binding is refused until the checkpoint is reset', async () => {
     path: join(scratch.path, 'state.sqlite'),
   });
   let called = 0;
-  const write = async (state: unknown) => {
+  const work = async (
+    state: unknown,
+    save: (state: unknown) => Promise<void>,
+  ) => {
     called++;
-    return {
-      count: 0,
-      deleted: 0,
-      checkpoints: [
-        { type: 'STATE' as const, stream: 'records', state: { from: state } },
-      ],
-    };
+    await save({ from: state });
   };
 
-  await store.run('copy', { target: 'a' }, write);
+  await store.run('copy', { target: 'a' }, work);
   await assert.rejects(
-    store.run('copy', { target: 'b' }, write),
+    store.run('copy', { target: 'b' }, work),
     /Checkpoint binding changed for copy; reset it or use a new copy ID/,
   );
   assert.equal(called, 1);
   await store.reset('copy');
-  await store.run('copy', { target: 'b' }, async (state) => {
+  await store.run('copy', { target: 'b' }, async (state, save) => {
     assert.equal(state, null);
-    return write(state);
+    await work(state, save);
   });
   assert.equal(called, 2);
 });

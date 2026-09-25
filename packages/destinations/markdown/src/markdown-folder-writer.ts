@@ -8,17 +8,10 @@ import {
   readFile,
   rename,
   rm,
-  rmdir,
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CopyConfiguration } from 'elt';
-import {
-  CommittedWriteError,
-  TargetOwnedError,
-  type WriteCount,
-  type WriteOperation,
-} from 'elt';
 import { MarkdownDocument } from './markdown-document.ts';
 import { MarkdownFolder } from './markdown-folder.ts';
 import { MarkdownWriter } from './markdown-writer.ts';
@@ -33,112 +26,82 @@ export class MarkdownFolderWriter extends MarkdownWriter {
     Object.freeze(this);
   }
 
-  protected override async writeRecords(
-    operations: AsyncIterable<WriteOperation>,
+  protected override get name(): string {
+    return this.target.name;
+  }
+
+  protected override async read() {
+    const path = join(this.path, this.target.name);
+    if (!(await this.assertManagedFolder(path))) return { rows: [] };
+    const rows: unknown[] = [];
+    for (const name of (await readdir(path)).sort()) {
+      if (name === MarkdownFolder.markerName) continue;
+      rows.push(
+        ...MarkdownDocument.records(await readFile(join(path, name), 'utf8')),
+      );
+    }
+    return {
+      owner: MarkdownFolder.writer(
+        await readFile(join(path, MarkdownFolder.markerName), 'utf8'),
+      ),
+      rows,
+    };
+  }
+
+  protected override async publish(
+    rows: readonly unknown[],
     writer: string,
-  ): Promise<WriteCount> {
-    let committed: WriteCount | undefined;
+  ): Promise<void> {
+    const { stream, target, deduplication } = this;
+    const path = join(this.path, target.name);
+    const staging = await mkdtemp(join(this.path, '.markdown-'));
+    const next = join(staging, 'next');
+    const previous = join(staging, 'previous');
+    let preserveBackup = false;
     try {
-      const { stream, target } = this;
-      const path = join(this.path, target.name);
-      await mkdir(this.path, { recursive: true });
-      const lock = join(this.path, `.markdown-${target.name}.lock`);
-      // An exclusive directory prevents two cooperating writers from swapping the same folder.
-      await mkdir(lock);
+      await mkdir(next, { mode: 0o700 });
+      await writeFile(
+        join(next, MarkdownFolder.markerName),
+        MarkdownFolder.markerFor(writer),
+        { flag: 'wx', mode: 0o600 },
+      );
+      for (const [index, record] of rows.entries()) {
+        const document =
+          target.document.header(stream) + target.document.render(record, 1);
+        // Plain modes identify occurrences; deduplication identifies logical keys.
+        const identity =
+          deduplication !== undefined
+            ? createHash('sha256')
+                .update(deduplication.key(record))
+                .digest('hex')
+            : index.toString(16).padStart(64, '0');
+        await writeFile(join(next, `${identity}.md`), document, {
+          flag: 'wx',
+          mode: 0o600,
+        });
+      }
+      const exists = await this.assertManagedFolder(path);
+      // ponytail: two renames leave a brief path gap; use generation pointers if readers need an atomic folder switch.
+      if (exists) await rename(path, previous);
       try {
-        const existsBefore = await this.assertManagedFolder(path);
-        const owner = existsBefore
-          ? MarkdownFolder.writer(
-              await readFile(join(path, MarkdownFolder.markerName), 'utf8'),
-            )
-          : undefined;
-        if (owner !== undefined && owner !== writer)
-          throw new TargetOwnedError(target.name, owner, writer);
-        const previousRows: unknown[] = [];
-        if (
-          existsBefore &&
-          (this.configuration.destinationSyncMode === 'append' ||
-            this.configuration.destinationSyncMode === 'append_dedup')
-        ) {
-          for (const name of (await readdir(path)).sort()) {
-            if (name === MarkdownFolder.markerName) continue;
-            previousRows.push(
-              ...MarkdownDocument.records(
-                await readFile(join(path, name), 'utf8'),
-              ),
+        await rename(next, path);
+      } catch (error) {
+        if (exists) {
+          try {
+            await rename(previous, path);
+          } catch (restoreError) {
+            preserveBackup = true;
+            throw new AggregateError(
+              [error, restoreError],
+              `Folder publication and restoration failed; previous export retained at ${previous}`,
             );
           }
         }
-        const { rows, count, deleted } = await this.collect(
-          operations,
-          previousRows,
-        );
-        const { deduplication } = this;
-        const staging = await mkdtemp(join(this.path, '.markdown-'));
-        const next = join(staging, 'next');
-        const previous = join(staging, 'previous');
-        let preserveBackup = false;
-        try {
-          await mkdir(next, { mode: 0o700 });
-          await writeFile(
-            join(next, MarkdownFolder.markerName),
-            MarkdownFolder.markerFor(writer),
-            { flag: 'wx', mode: 0o600 },
-          );
-          for (const [index, record] of rows.entries()) {
-            const document =
-              target.document.header(stream) +
-              target.document.render(record, 1);
-            // Plain modes identify occurrences; deduplication identifies logical keys.
-            const identity =
-              deduplication !== undefined
-                ? createHash('sha256')
-                    .update(deduplication.key(record))
-                    .digest('hex')
-                : index.toString(16).padStart(64, '0');
-            const filename = `${identity}.md`;
-            await writeFile(join(next, filename), document, {
-              flag: 'wx',
-              mode: 0o600,
-            });
-          }
-          const exists = await this.assertManagedFolder(path);
-          // ponytail: two renames leave a brief path gap; use generation pointers if readers need an atomic folder switch.
-          if (exists) await rename(path, previous);
-          try {
-            await rename(next, path);
-          } catch (error) {
-            if (exists) {
-              try {
-                await rename(previous, path);
-              } catch (restoreError) {
-                preserveBackup = true;
-                throw new AggregateError(
-                  [error, restoreError],
-                  `Folder publication and restoration failed; previous export retained at ${previous}`,
-                );
-              }
-            }
-            throw error;
-          }
-          committed = { count, deleted };
-          return committed;
-        } finally {
-          // Never dispose the only remaining copy when restoration fails.
-          if (!preserveBackup)
-            await rm(staging, { recursive: true, force: true });
-        }
-      } finally {
-        await rmdir(lock);
+        throw error;
       }
-    } catch (cause) {
-      if (committed !== undefined)
-        throw new CommittedWriteError(
-          committed,
-          'Destination committed, but cleanup failed; retry may replay records',
-          cause,
-        );
-      throw cause;
+    } finally {
+      // Never dispose the only remaining copy when restoration fails.
+      if (!preserveBackup) await rm(staging, { recursive: true, force: true });
     }
   }
 

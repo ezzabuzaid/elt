@@ -3,10 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import {
   Catalog,
-  CommittedWriteError,
   Copy,
   type CopyConfiguration,
   Pipeline,
+  PipelineError,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -625,15 +625,12 @@ test('declarations are checked before any connection', () => {
   assert.doesNotMatch(JSON.stringify(destination), /u:p/);
 });
 
-const acknowledged = (states: unknown[]) => ({
-  count: states.length,
-  deleted: 0,
-  checkpoints: states.map((state) => ({
-    type: 'STATE' as const,
-    stream: 'records',
-    state,
-  })),
-});
+// Work that acknowledges each state in turn, as a load commits them.
+const acknowledging =
+  (states: unknown[]) =>
+  async (_state: unknown, save: (state: unknown) => Promise<void>) => {
+    for (const state of states) await save(state);
+  };
 
 test('a Postgres checkpoint store resumes from the last acknowledged state in the schema', async () => {
   await using database = await scratchDatabase();
@@ -645,28 +642,29 @@ test('a Postgres checkpoint store resumes from the last acknowledged state in th
   const received: unknown[] = [];
   const write =
     (states: unknown[], fail = false) =>
-    async (state: unknown) => {
+    async (state: unknown, save: (state: unknown) => Promise<void>) => {
       received.push(structuredClone(state));
       if (state !== null && typeof state === 'object')
         Reflect.set(state, 'mutated', true);
+      await acknowledging(states)(state, save);
       if (fail) throw new Error('source broke');
-      return acknowledged(states);
     };
 
   await store.run('copy', binding, write([{ page: 1 }, { page: 2 }]));
   await store.run('copy', binding, write([]));
+  // What was acknowledged before a failure stays saved.
   await assert.rejects(
-    store.run('copy', binding, write([{ page: 9 }], true)),
+    store.run('copy', binding, write([{ page: 3 }], true)),
     /source broke/,
   );
   await store.run('copy', binding, write([]));
 
-  assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 2 }]);
+  assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 3 }]);
   assert.deepEqual(
     [
       ...(await database.sql`SELECT id, state::text FROM raw._mac_elt_checkpoints`),
     ].map((row) => ({ ...row })),
-    [{ id: 'copy', state: '{"page":2}' }],
+    [{ id: 'copy', state: '{"page":3}' }],
   );
 });
 
@@ -677,9 +675,12 @@ test('a changed binding is refused until the Postgres checkpoint is reset', asyn
     schema: 'raw',
   });
   let called = 0;
-  const write = async (state: unknown) => {
+  const write = async (
+    state: unknown,
+    save: (state: unknown) => Promise<void>,
+  ) => {
     called++;
-    return acknowledged([{ from: state }]);
+    await save({ from: state });
   };
 
   await store.run('copy', { target: 'a' }, write);
@@ -688,33 +689,148 @@ test('a changed binding is refused until the Postgres checkpoint is reset', asyn
     /Checkpoint binding changed for copy; reset it or use a new copy ID/,
   );
   await store.reset('copy');
-  await store.run('copy', { target: 'b' }, async (state) => {
+  await store.run('copy', { target: 'b' }, async (state, save) => {
     assert.equal(state, null);
-    return write(state);
+    await write(state, save);
   });
 
   assert.equal(called, 2);
 });
 
-test('a checkpoint that cannot be saved after the load commits reports the committed load', async () => {
+test('a checkpoint that cannot be saved after its rows commit is reported with the committed rows', async () => {
   await using database = await scratchDatabase();
-  const store = new PostgresCheckpointStore({
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'integer' } },
+      required: ['id'],
+    },
+    primaryKey: ['id'],
+    sourceDefinedCursor: true,
+    supportedSyncModes: ['full_refresh', 'incremental'],
+  });
+  const source = new Messages(stream);
+  const destination = new PostgresDestination({
     url: database.url,
     schema: 'raw',
   });
-  await store.run('copy', {}, async () => acknowledged([{ page: 1 }]));
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
+    }),
+    steps: [
+      new Copy(stream, destination.table('items'), {
+        id: 'items',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+      }),
+    ],
+  });
+  source.messages = rows(stream, [{ id: 1 }]);
+  await pipeline.run();
   await database.sql.unsafe(`
     CREATE FUNCTION raw.refuse() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$;
     CREATE TRIGGER refuse BEFORE INSERT OR UPDATE ON raw._mac_elt_checkpoints FOR EACH ROW EXECUTE FUNCTION raw.refuse();
   `);
+  source.messages = rows(stream, [{ id: 2 }, { id: 3 }]);
 
-  const failure = await store
-    .run('copy', {}, async () => ({ ...acknowledged([{ page: 2 }]), count: 7 }))
-    .catch((error: unknown) => error);
+  const failure = await pipeline.run().then(
+    () => assert.fail('run should report the unsaved checkpoint'),
+    (error: unknown) => error,
+  );
 
-  assert.ok(failure instanceof CommittedWriteError);
-  assert.equal(failure.count, 7);
-  assert.match(String(failure.cause), /disk full/);
+  assert.ok(failure instanceof PipelineError, String(failure));
+  assert.equal(failure.results[0]?.count, 2);
+  assert.match(
+    String(failure.cause),
+    /was not saved after the destination committed/,
+  );
+  assert.match(String((failure.cause as Error).cause), /disk full/);
+  assert.deepEqual(
+    (await database.sql`SELECT id FROM raw.items ORDER BY id`).map(
+      (row) => row.id,
+    ),
+    ['1', '2', '3'],
+  );
+});
+
+test('a copy commits at each checkpoint, its rows share one loaded_at, and no checkpoint transaction idles meanwhile', async () => {
+  await using database = await scratchDatabase();
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'integer' } },
+      required: ['id'],
+    },
+    primaryKey: ['id'],
+    sourceDefinedCursor: true,
+    supportedSyncModes: ['full_refresh', 'incremental'],
+  });
+  const { promise: hold, resolve: release } = Promise.withResolvers<void>();
+  const { promise: held, resolve: holding } = Promise.withResolvers<void>();
+  class Paused extends Messages {
+    protected override async *extract() {
+      yield { stream: 'items', data: { id: 1 } };
+      yield { type: 'STATE' as const, stream: 'items', state: { page: 1 } };
+      holding();
+      await hold;
+      yield { stream: 'items', data: { id: 2 } };
+      yield { type: 'STATE' as const, stream: 'items', state: { page: 2 } };
+    }
+  }
+  const source = new Paused(stream);
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const running = new Pipeline({
+    source,
+    destination,
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
+    }),
+    steps: [
+      new Copy(stream, destination.table('items'), {
+        id: 'items',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+      }),
+    ],
+  }).run();
+
+  await held;
+  // The first checkpoint's rows and state are already visible mid-load.
+  const midway = {
+    rows: (await database.sql`SELECT id FROM raw.items`).map((row) => row.id),
+    state: (
+      await database.sql`SELECT state::text FROM raw._mac_elt_checkpoints`
+    ).map((row) => row.state),
+    checkpoints: (
+      await database.sql`SELECT state FROM pg_stat_activity WHERE application_name = 'elt-checkpoints' AND datname = current_database()`
+    ).map((row) => row.state),
+  };
+  release();
+  await running;
+
+  assert.deepEqual(midway, {
+    rows: ['1'],
+    state: ['{"page":1}'],
+    checkpoints: ['idle'],
+  });
+  assert.deepEqual(
+    (
+      await database.sql`SELECT count(DISTINCT loaded_at)::int AS n, count(*)::int AS rows FROM raw.items`
+    ).map((row) => ({ ...row })),
+    [{ n: 1, rows: 2 }],
+  );
 });
 
 test('replications checkpoint in parallel, and one already running is refused', async () => {
@@ -726,10 +842,13 @@ test('replications checkpoint in parallel, and one already running is refused', 
   const { promise: bothStarted, resolve: release } =
     Promise.withResolvers<void>();
   let started = 0;
-  const waiting = async () => {
+  const waiting = async (
+    state: unknown,
+    save: (state: unknown) => Promise<void>,
+  ) => {
     if (++started === 2) release();
     await bothStarted;
-    return acknowledged([{ done: true }]);
+    await acknowledging([{ done: true }])(state, save);
   };
 
   // Both writes wait until the other has started, so both locks are held at once.
@@ -737,11 +856,10 @@ test('replications checkpoint in parallel, and one already running is refused', 
   const { promise: hold, resolve: finish } = Promise.withResolvers<void>();
   const running = store.run('a', {}, async () => {
     await hold;
-    return acknowledged([]);
   });
   await new Promise((resolve) => setTimeout(resolve, 200));
   await assert.rejects(
-    store.run('a', {}, async () => acknowledged([])),
+    store.run('a', {}, async () => {}),
     /Checkpoint a is in use by another run/,
   );
   finish();
@@ -756,11 +874,10 @@ test('checkpoint state keeps text JSONB would refuse, and the store holds no cre
   });
   const state = { nul: 'a\u0000b', lone: '\ud800' };
 
-  await store.run('copy', {}, async () => acknowledged([state]));
+  await store.run('copy', {}, acknowledging([state]));
   let resumed: unknown;
   await store.run('copy', {}, async (saved) => {
     resumed = saved;
-    return acknowledged([]);
   });
 
   assert.deepEqual(resumed, state);
@@ -773,4 +890,84 @@ test('checkpoint state keeps text JSONB would refuse, and the store holds no cre
     () => new PostgresCheckpointStore({ url: database.url, schema: 'pg_raw' }),
     /reserved/,
   );
+});
+
+test('clear empties a table and keeps views on it, releasing its owner and checkpoint; a table dropped by hand is refused until cleared', async () => {
+  await using database = await scratchDatabase();
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'integer' } },
+      required: ['id'],
+    },
+    primaryKey: ['id'],
+    sourceDefinedCursor: true,
+    supportedSyncModes: ['full_refresh', 'incremental'],
+  });
+  const source = new Messages(stream);
+  source.messages = rows(stream, [{ id: 1 }]);
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
+    }),
+    steps: [
+      new Copy(stream, destination.table('items'), {
+        id: 'items',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+      }),
+    ],
+  });
+  const control = async () => ({
+    rows: (await database.sql`SELECT count(*)::int AS n FROM raw.items`).map(
+      (row) => row.n,
+    ),
+    owners: (await database.sql`SELECT target FROM raw._mac_elt_writers`).map(
+      (row) => row.target,
+    ),
+    checkpoints: (
+      await database.sql`SELECT id FROM raw._mac_elt_checkpoints`
+    ).map((row) => row.id),
+  });
+  await pipeline.run();
+  await database.sql`CREATE VIEW raw.items_view AS SELECT id FROM raw.items`;
+
+  await pipeline.clear();
+  assert.deepEqual(await control(), { rows: [0], owners: [], checkpoints: [] });
+  await pipeline.run();
+  assert.deepEqual(await control(), {
+    rows: [1],
+    owners: ['items'],
+    checkpoints: ['items'],
+  });
+  assert.deepEqual(
+    (await database.sql`SELECT id FROM raw.items_view`).map((row) => row.id),
+    ['1'],
+  );
+
+  await database.sql`DROP VIEW raw.items_view`;
+  await database.sql`DROP TABLE raw.items`;
+  const extracted = source.extracted;
+  await assert.rejects(
+    pipeline.run(),
+    /Target items was dropped, but \{"copy":"items"\} still has a checkpoint/,
+  );
+  assert.equal(source.extracted, extracted);
+
+  await pipeline.clear();
+  await pipeline.run();
+  assert.deepEqual(await control(), {
+    rows: [1],
+    owners: ['items'],
+    checkpoints: ['items'],
+  });
 });

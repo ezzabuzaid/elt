@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable, readdir, readFile } from 'node:fs/promises';
+import { mkdtempDisposable, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -7,7 +7,9 @@ import {
   Catalog,
   Copy,
   type CopyConfiguration,
+  type Partition,
   Pipeline,
+  PipelineError,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -336,4 +338,152 @@ test('a target has one writer, even when another loads only its own partitions',
         ).length,
     );
   }
+});
+
+test('Markdown publishes at each checkpoint and never publishes a failing partition', async () => {
+  class Sites extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'sites';
+    readonly down = new Set<string>();
+    readonly pages = new Stream({
+      name: 'pages',
+      jsonSchema: {
+        type: 'object',
+        properties: { site: { type: 'string' }, views: { type: 'integer' } },
+        required: ['site', 'views'],
+      },
+      primaryKey: ['site'],
+      partitionKey: ['site'],
+      sourceDefinedCursor: true,
+      supportedSyncModes: ['incremental'],
+    });
+    protected readonly catalog = new Catalog([this.pages]);
+    protected override partitions() {
+      return [{ site: 'a' }, { site: 'b' }];
+    }
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      _state: unknown,
+      partition: Partition | null,
+    ) {
+      const site = String(partition?.site);
+      yield { stream: 'pages', data: { site, views: 1 } };
+      if (this.down.has(site)) throw new Error(`${site} is down`);
+      yield { type: 'STATE' as const, stream: 'pages', state: { site } };
+    }
+  }
+  const load = async (
+    target: (destination: MarkdownDestination) => MarkdownFile | MarkdownFolder,
+    published: (path: string) => Promise<number>,
+  ) => {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-md-'));
+    const source = new Sites();
+    source.down.add('b');
+    const destination = new MarkdownDestination({ path: scratch.path });
+    const error = await new Pipeline({
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: join(scratch.path, 'state.sqlite'),
+      }),
+      steps: [
+        new Copy(source.pages, target(destination), {
+          id: 'pages',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          primaryKey: ['site'],
+        }),
+      ],
+    })
+      .run()
+      .then(
+        () => assert.fail('run should report the failed partition'),
+        (error: unknown) => error,
+      );
+    assert.ok(error instanceof PipelineError, String(error));
+    assert.match(error.message, /\{"site":"b"\}: b is down/);
+    assert.equal(await published(scratch.path), 1);
+  };
+
+  await load(
+    (destination) => destination.file('pages.md'),
+    async (path) =>
+      (await readFile(join(path, 'pages.md'), 'utf8')).match(/mac-elt-record/g)
+        ?.length ?? 0,
+  );
+  await load(
+    (destination) => destination.folder('pages'),
+    async (path) =>
+      (await readdir(join(path, 'pages'))).filter((name) =>
+        name.endsWith('.md'),
+      ).length,
+  );
+});
+
+test('clearing a Markdown target drops it with its checkpoint, and a deleted one is refused until cleared', async () => {
+  class Pages extends Source {
+    override async session() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'pages';
+    readonly pages = new Stream({
+      name: 'pages',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+      primaryKey: ['id'],
+      sourceDefinedCursor: true,
+      supportedSyncModes: ['incremental'],
+    });
+    protected readonly catalog = new Catalog([this.pages]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      if (state === null) yield { stream: 'pages', data: { id: 'first' } };
+      yield { type: 'STATE' as const, stream: 'pages', state: { seen: true } };
+    }
+  }
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-md-'));
+  const source = new Pages();
+  const destination = new MarkdownDestination({ path: scratch.path });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [
+      new Copy(source.pages, destination.file('pages.md'), {
+        id: 'pages',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+      }),
+    ],
+  });
+  const records = async () =>
+    (await readFile(join(scratch.path, 'pages.md'), 'utf8')).match(
+      /mac-elt-record/g,
+    )?.length ?? 0;
+  await pipeline.run();
+
+  await rm(join(scratch.path, 'pages.md'));
+  await assert.rejects(pipeline.run(), /Target pages\.md was dropped/);
+  await pipeline.clear();
+  await pipeline.run();
+
+  assert.equal(await records(), 1);
 });

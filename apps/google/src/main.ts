@@ -46,7 +46,9 @@ try {
     url: warehouseUrl,
     schema: raw,
   });
-  const results = await new Pipeline({
+  // Every copy runs even when one property fails; a failed property keeps its
+  // checkpoint and is retried from there on the next run.
+  const outcomes = await new Pipeline({
     source,
     destination,
     checkpoints: new PostgresCheckpointStore({
@@ -54,16 +56,45 @@ try {
       schema: raw,
     }),
     steps: searchConsoleCopies(source, (name) => destination.table(name)),
-  }).run();
+  })
+    .run()
+    .then(
+      (results) => results.map((result) => ({ ...result, failures: [] })),
+      (error: unknown) => {
+        if (
+          !(error instanceof PipelineError) ||
+          error.cause instanceof MissingClientError ||
+          error.cause instanceof OAuthCallbackTimeoutError
+        )
+          throw error;
+        return error.results;
+      },
+    );
   console.table(
-    results.map(({ copy, count, deleted }) => ({
+    outcomes.map(({ copy, count, deleted, failures }) => ({
       stream: copy.from.name,
       table: copy.to.name,
       count,
       deleted,
+      status:
+        failures.length === 0
+          ? 'complete'
+          : `failed: ${failures.map(({ partition }) => partition?.siteUrl ?? 'all properties').join(', ')}`,
     })),
   );
-  console.log(`Loaded Search Console for ${siteUrls.join(', ')} into ${raw}`);
+  const failures = outcomes.flatMap(({ copy, failures }) =>
+    failures.map(
+      ({ partition, error }) =>
+        `${copy.from.name} ${partition?.siteUrl ?? 'all properties'}: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
+  for (const failure of failures) console.error(failure);
+  console.log(
+    failures.length === 0
+      ? `Loaded Search Console for ${siteUrls.join(', ')} into ${raw}`
+      : `Loaded Search Console into ${raw} with ${failures.length} failed stream and property pairs; they resume from their last checkpoint next run`,
+  );
+  if (failures.length > 0) process.exitCode = 1;
   const sql = postgres(warehouseUrl, { max: 1, onnotice: () => {} });
   try {
     await installWarehouse(sql, { reader });

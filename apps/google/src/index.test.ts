@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
-import { Copy, Pipeline } from 'elt';
+import { Copy, Pipeline, PipelineError } from 'elt';
 import { GOOGLE_SEARCH_CONSOLE_SCOPE } from 'google-auth';
 import { LoginTicket, OAuth2Client } from 'google-auth-library';
 
@@ -1497,11 +1497,18 @@ test('one source loads every property; a newly listed one backfills while the ot
   );
 });
 
-test('a property that keeps failing commits nothing for any property', async () => {
+test('a property without permission is reported by name while the others load and checkpoint', async () => {
   const A = 'sc-domain:a.example';
   const B = 'sc-domain:b.example';
+  let denied = true;
   const { requester } = recorder((call) => {
-    if (siteOf(call) === B) throw googleError(500);
+    if (denied && siteOf(call) === B)
+      throw googleError(403, {
+        error: {
+          message: `User does not have sufficient permission for site '${B}'.`,
+          errors: [{ reason: 'forbidden' }],
+        },
+      });
     return {
       rows: [
         {
@@ -1523,30 +1530,50 @@ test('a property that keeps failing commits nothing for any property', async () 
     searchTypes: ['WEB'],
     siteUrls: [A, B],
   });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [
+      new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+        id: 'daily',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        dedupPolicy: 'replace',
+        cursorField: 'date',
+        primaryKey: [...source.searchAnalyticsDaily.primaryKey],
+      }),
+    ],
+  });
+  const loaded = async () =>
+    (await sql`SELECT DISTINCT "siteUrl" FROM daily ORDER BY "siteUrl"`).map(
+      (row) => row.siteUrl,
+    );
+  const saved = async () =>
+    (await sql`SELECT state FROM _mac_elt_checkpoints`).flatMap(({ state }) =>
+      (
+        state as { partitions: { partition: { siteUrl: string } }[] }
+      ).partitions.map(({ partition }) => partition.siteUrl),
+    );
 
-  await assert.rejects(
-    new Pipeline({
-      source,
-      destination,
-      checkpoints,
-      steps: [
-        new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
-          id: 'daily',
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          dedupPolicy: 'replace',
-          cursorField: 'date',
-          primaryKey: [...source.searchAnalyticsDaily.primaryKey],
-        }),
-      ],
-    }).run(),
-    /status code 500/,
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the property without permission'),
+    (error: unknown) => error,
   );
 
-  const [daily] =
-    await sql`SELECT to_regclass('google_search_console.daily')::text AS name`;
-  assert.equal(daily?.name, null);
-  assert.deepEqual([...(await sql`SELECT id FROM _mac_elt_checkpoints`)], []);
+  // Never skipped silently: the run fails and names the property.
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.match(
+    error.message,
+    /daily \{"siteUrl":"sc-domain:b\.example"\}: .*status code 403/,
+  );
+  assert.deepEqual(await loaded(), [A]);
+  assert.deepEqual(await saved(), [A]);
+
+  denied = false;
+  await pipeline.run();
+  assert.deepEqual(await loaded(), [A, B]);
+  assert.deepEqual(await saved(), [A, B]);
 });
 
 test('watching invalidates when only one of several properties changed', async () => {

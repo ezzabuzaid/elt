@@ -2,14 +2,20 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   Catalog,
+  type CheckpointSession,
+  CheckpointStore,
   Copy,
   type CopyConfiguration,
   Destination,
   isCalendarDate,
   isTimestamp,
+  type Load,
+  type Partition,
   Pipeline,
+  PipelineError,
   Source,
   type SourceWatchOptions,
+  type StoredCheckpoint,
   Stream,
   Target,
   validateRecords,
@@ -153,19 +159,50 @@ class NamedTarget extends Target {
   }
 }
 
-class DrainingWriter extends Writer {
-  protected override async writeRecords(
-    operations: AsyncIterable<WriteOperation>,
+// Logs each step of the load protocol and keeps no rows, so these tests
+// observe only what the engine asks of a destination.
+class RecordingWriter extends Writer {
+  constructor(
+    stream: Stream,
+    readonly log: string[],
   ) {
-    return { count: (await Array.fromAsync(operations)).length, deleted: 0 };
+    super(stream);
+  }
+
+  protected override async open(): Promise<Load> {
+    const { log } = this;
+    log.push('open');
+    return {
+      apply: async (operation: WriteOperation) => {
+        log.push(
+          operation.type === 'RECORD'
+            ? `apply ${JSON.stringify(operation.data)}`
+            : 'delete',
+        );
+      },
+      commit: async () => {
+        log.push('commit');
+      },
+      discard: async () => {
+        log.push('discard');
+      },
+      [Symbol.asyncDispose]: async () => {
+        log.push('close');
+      },
+    };
+  }
+
+  override async clear(): Promise<void> {
+    this.log.push('clear');
   }
 }
 
-// Consumes every record and keeps none, so these tests observe only the pipeline.
 class DrainingDestination extends Destination<NamedTarget> {
   readonly supportedDestinationSyncModes = Object.freeze([
     'overwrite',
+    'append',
   ] as const);
+  readonly log: string[] = [];
 
   override identity(target: NamedTarget): string {
     return target.name;
@@ -180,7 +217,7 @@ class DrainingDestination extends Destination<NamedTarget> {
     target: NamedTarget,
   ): Writer {
     this.validateConfiguration(configuration, target);
-    return new DrainingWriter(configuration.stream);
+    return new RecordingWriter(configuration.stream, this.log);
   }
 }
 
@@ -214,14 +251,198 @@ test('every copy in a pipeline run reads through one session, closed after the r
   ]);
 });
 
-test('a failed copy still closes the run session', async () => {
-  const source = new SessionSource('right');
+test('a failed copy does not stop later copies, and the run reports it at the end', async () => {
+  const source = new SessionSource('left');
   const pipeline = sessionPipeline(source);
 
-  await assert.rejects(pipeline.run(), { name: 'PipelineError' });
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the failed copy'),
+    (error: unknown) => error,
+  );
 
-  assert.deepEqual(source.opened, [1]);
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.match(error.message, /did not load completely: left: left failed/);
+  assert.equal((error.cause as Error).message, 'left failed');
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.from.name,
+      count,
+      failures.map(({ partition }) => partition),
+    ]),
+    [
+      ['left', 0, [null]],
+      ['right', 1, []],
+    ],
+  );
+  assert.deepEqual(source.readers, [
+    { stream: 'left', session: 1 },
+    { stream: 'right', session: 1 },
+  ]);
   assert.deepEqual(source.closed, [1]);
+});
+
+class MemoryCheckpoints extends CheckpointStore {
+  readonly saved = new Map<string, StoredCheckpoint>();
+
+  constructor(readonly log: string[]) {
+    super();
+  }
+
+  protected override async session<T>(
+    id: string,
+    work: (session: CheckpointSession) => Promise<T>,
+  ): Promise<T> {
+    return work({
+      read: async () => this.saved.get(id),
+      save: async (checkpoint) => {
+        this.log.push(`save ${checkpoint.state}`);
+        this.saved.set(id, checkpoint);
+      },
+      remove: async () => {
+        this.saved.delete(id);
+      },
+    });
+  }
+}
+
+// Reads one record per site, then a checkpoint naming the run; sites listed
+// in down fail after emitting their record.
+class Sites extends Source {
+  readonly identity = 'sites';
+  readonly down = new Set<string>();
+  readonly received: [string, unknown][] = [];
+  readonly pages = new Stream({
+    name: 'pages',
+    jsonSchema: {
+      type: 'object',
+      properties: { site: { type: 'string' }, run: { type: 'integer' } },
+    },
+    primaryKey: ['site'],
+    partitionKey: ['site'],
+    sourceDefinedCursor: true,
+    supportedSyncModes: ['full_refresh', 'incremental'],
+  });
+  protected readonly catalog = new Catalog([this.pages]);
+  run = 1;
+
+  override async session() {
+    return new AsyncDisposableStack();
+  }
+
+  protected override partitions() {
+    return ['a', 'b', 'c'].map((site) => ({ site }));
+  }
+
+  protected override async *observe({ streams }: SourceWatchOptions) {
+    yield streams;
+  }
+
+  protected override async *extract(
+    configuration: CopyConfiguration,
+    state: unknown,
+    partition: Partition | null,
+  ) {
+    const site = String(partition?.site);
+    this.received.push([site, state]);
+    yield { stream: 'pages', data: { site, run: this.run } };
+    if (this.down.has(site)) throw new Error(`${site} is down`);
+    yield { type: 'STATE' as const, stream: 'pages', state: { run: this.run } };
+  }
+}
+
+test('each checkpoint commits its partition, and a failing partition keeps its last checkpoint while the others load', async () => {
+  const source = new Sites();
+  const destination = new DrainingDestination();
+  const checkpoints = new MemoryCheckpoints(destination.log);
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [
+      new Copy(source.pages, new NamedTarget('pages'), {
+        id: 'pages',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append',
+      }),
+    ],
+  });
+  source.down.add('b');
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the failed partition'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.match(error.message, /pages \{"site":"b"\}: b is down/);
+  const [result] = error.results;
+  assert.equal(result?.count, 2);
+  assert.deepEqual(
+    result?.failures.map(({ partition }) => partition),
+    [{ site: 'b' }],
+  );
+  const a = { partition: { site: 'a' }, state: { run: 1 } };
+  const c = { partition: { site: 'c' }, state: { run: 1 } };
+  assert.deepEqual(destination.log, [
+    'open',
+    'apply {"site":"a","run":1}',
+    'commit',
+    `save ${JSON.stringify({ partitions: [a] })}`,
+    'apply {"site":"b","run":1}',
+    'discard',
+    'apply {"site":"c","run":1}',
+    'commit',
+    `save ${JSON.stringify({ partitions: [a, c] })}`,
+    'close',
+  ]);
+
+  source.down.clear();
+  source.run = 2;
+  source.received.length = 0;
+  await pipeline.run();
+
+  assert.deepEqual(source.received, [
+    ['a', { run: 1 }],
+    ['b', null],
+    ['c', { run: 1 }],
+  ]);
+  assert.deepEqual(JSON.parse(checkpoints.saved.get('pages')?.state ?? ''), {
+    partitions: ['a', 'b', 'c'].map((site) => ({
+      partition: { site },
+      state: { run: 2 },
+    })),
+  });
+});
+
+test('a full refresh commits once, and a failing partition commits nothing', async () => {
+  const source = new Sites();
+  const destination = new DrainingDestination();
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    steps: [new Copy(source.pages, new NamedTarget('pages'))],
+  });
+
+  await pipeline.run();
+  assert.deepEqual(destination.log, [
+    'open',
+    'apply {"site":"a","run":1}',
+    'apply {"site":"b","run":1}',
+    'apply {"site":"c","run":1}',
+    'commit',
+    'close',
+  ]);
+
+  destination.log.length = 0;
+  source.down.add('b');
+  await assert.rejects(pipeline.run(), PipelineError);
+  assert.deepEqual(destination.log, [
+    'open',
+    'apply {"site":"a","run":1}',
+    'apply {"site":"b","run":1}',
+    'discard',
+    'close',
+  ]);
 });
 
 test('a watch opens one session per batch and holds none while idle', async () => {
