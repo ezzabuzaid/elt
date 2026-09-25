@@ -21,13 +21,13 @@ import { runInNewContext } from 'node:vm';
 import {
   Copy,
   type CopyConfiguration,
-  MarkdownDestination,
   Pipeline,
   PipelineError,
-  SQLiteCheckpointStore,
   Stream,
 } from 'elt';
+import { MarkdownDestination } from 'elt-markdown';
 import {
+  SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   type SQLiteTable,

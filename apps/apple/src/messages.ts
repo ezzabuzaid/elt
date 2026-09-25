@@ -1,13 +1,12 @@
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { Copy, Pipeline, PipelineError } from 'elt';
 import {
-  Copy,
-  Pipeline,
-  PipelineError,
   SQLiteCheckpointStore,
-} from 'elt';
-import { SQLiteColumns, SQLiteDestination } from 'elt-sqlite';
+  SQLiteColumns,
+  SQLiteDestination,
+} from 'elt-sqlite';
 import {
   AppleMessagesSource,
   MacOSDocumentParser,
