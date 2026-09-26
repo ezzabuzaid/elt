@@ -1,15 +1,12 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  GoogleConsent,
-  GoogleGrantOpener,
-  GoogleGrantRevokedError,
-  GoogleGrantVault,
-  GoogleOAuthApp,
-  type GoogleRequester,
-} from 'google-auth';
-
+import { GoogleOAuthApp } from '../../app.ts';
+import { GoogleConsent } from '../../consent.ts';
+import { GoogleGrantRevokedError } from '../../errors.ts';
+import { GoogleGrantOpener } from '../../grant-opener.ts';
+import { GoogleGrantVault } from '../../grant-vault.ts';
+import type { GoogleRequester } from '../../requester.ts';
 import { GrantFiles } from './grant-files.ts';
 import { listenForCallback } from './loopback-callback.ts';
 import { openBrowser as openInBrowser } from './open-browser.ts';

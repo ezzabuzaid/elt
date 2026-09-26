@@ -1,46 +1,57 @@
 import { writeFile } from 'node:fs/promises';
 
-import type { GoogleRequester } from 'google-auth';
+import { type GoogleRequester, reasonsOf, statusOf } from 'google-auth';
 
-import {
-  isConfigurationError,
-  statusOf,
-} from '../../platform/google/google-errors.ts';
+import type { CalendarAttachmentFetcher } from './apple-calendar-source.ts';
 
 const DRIVE = 'https://www.googleapis.com/drive/v3/files';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
-// Structurally the attachment an Apple Calendar fetcher receives; this app does
-// not import the Apple one.
-export type CalendarAttachmentReference = { readonly uri: string };
+// 403 reasons that mean this account may not have the file. Any other 403
+// (rate limits, a disabled API, a scope missing from the grant) rejects, so a
+// throttled run fails instead of loading null bytes.
+const NO_ACCESS = new Set([
+  'forbidden',
+  'insufficientFilePermissions',
+  'appNotAuthorizedToFile',
+  'domainPolicy',
+  'cannotDownloadAbusiveFile',
+  // Drive exports a Google Docs file only up to 10 MB, and exports no folder.
+  'exportSizeLimitExceeded',
+  'cannotExportFile',
+]);
+
+type DriveFile = { readonly fileId: string; readonly resourceKey?: string };
 
 type GoogleAttachment =
-  | { readonly kind: 'drive'; readonly fileId: string }
+  | ({ readonly kind: 'drive' } & DriveFile)
   | { readonly kind: 'gmail'; readonly id: string; readonly partId: string };
 
 /**
  * Downloads Calendar ATTACH references that point into Google: Drive files
- * (native Docs, Sheets and Slides exported as PDF) and Gmail message
- * attachments (Calendar stores them as `?view=att&th=…&attid=0.N`). Resolves
- * false for any other URL and for a file this account cannot open; a disabled
- * API, a missing scope or any other failure rejects.
+ * (native Docs, Sheets and Slides exported as PDF, shortcuts followed to their
+ * target) and Gmail message attachments (Calendar stores them as
+ * `?view=att&th=…&attid=0.N`). Resolves false for any other URL and for a file
+ * this account cannot open; every other failure rejects.
  */
-export function googleCalendarAttachments(requester: GoogleRequester) {
-  return async (
-    { uri }: CalendarAttachmentReference,
-    path: string,
-  ): Promise<boolean> => {
+export function googleCalendarAttachments(
+  requester: GoogleRequester,
+): CalendarAttachmentFetcher {
+  return async ({ uri }, path) => {
     const attachment = parseGoogleAttachment(uri);
     if (attachment === undefined) return false;
     let bytes: Uint8Array;
     try {
       bytes =
         attachment.kind === 'drive'
-          ? await driveFile(requester, attachment.fileId)
+          ? await driveFile(requester, attachment)
           : await gmailAttachment(requester, attachment.id, attachment.partId);
     } catch (error) {
       const status = statusOf(error);
-      if (status === 404 || (status === 403 && !isConfigurationError(error)))
+      if (
+        status === 404 ||
+        (status === 403 && reasonsOf(error).some((r) => NO_ACCESS.has(r)))
+      )
         return false;
       throw error;
     }
@@ -49,9 +60,7 @@ export function googleCalendarAttachments(requester: GoogleRequester) {
   };
 }
 
-export function parseGoogleAttachment(
-  uri: string,
-): GoogleAttachment | undefined {
+function parseGoogleAttachment(uri: string): GoogleAttachment | undefined {
   if (uri.startsWith('?')) {
     const query = new URLSearchParams(uri.slice(1));
     const id = query.get('th');
@@ -61,36 +70,51 @@ export function parseGoogleAttachment(
     // Gmail numbers attachments from the message root "0"; the API omits it.
     return { kind: 'gmail', id, partId: attid.slice(2) };
   }
-  let url: URL;
-  try {
-    url = new URL(uri);
-  } catch {
-    return undefined;
-  }
+  if (!URL.canParse(uri)) return undefined;
+  const url = new URL(uri);
   if (url.hostname !== 'drive.google.com' && url.hostname !== 'docs.google.com')
     return undefined;
   const fileId =
     /\/d\/([A-Za-z0-9_-]+)/.exec(url.pathname)?.[1] ??
     url.searchParams.get('id');
-  return fileId ? { kind: 'drive', fileId } : undefined;
+  if (!fileId) return undefined;
+  // A link-shared file's URL carries the key Drive needs to open it.
+  const resourceKey = url.searchParams.get('resourcekey');
+  return { kind: 'drive', fileId, ...(resourceKey ? { resourceKey } : {}) };
 }
 
 async function driveFile(
   requester: GoogleRequester,
-  fileId: string,
+  { fileId, resourceKey }: DriveFile,
 ): Promise<Uint8Array> {
-  const file = encodeURIComponent(fileId);
+  const file = `${DRIVE}/${encodeURIComponent(fileId)}`;
+  const headers = resourceKey
+    ? { 'X-Goog-Drive-Resource-Keys': `${fileId}/${resourceKey}` }
+    : undefined;
   const metadata = await requester.request({
-    url: `${DRIVE}/${file}?fields=mimeType&supportsAllDrives=true`,
+    url: `${file}?fields=mimeType,shortcutDetails&supportsAllDrives=true`,
+    ...(headers ? { headers } : {}),
   });
   const mimeType = field(metadata.data, 'mimeType');
+  if (mimeType === 'application/vnd.google-apps.shortcut') {
+    const shortcut = field(metadata.data, 'shortcutDetails');
+    const targetId = field(shortcut, 'targetId');
+    const targetKey = field(shortcut, 'targetResourceKey');
+    if (typeof targetId !== 'string')
+      throw new TypeError(`Drive shortcut ${fileId} has no target`);
+    return driveFile(requester, {
+      fileId: targetId,
+      ...(typeof targetKey === 'string' ? { resourceKey: targetKey } : {}),
+    });
+  }
   const response = await requester.request({
     url:
       typeof mimeType === 'string' &&
       mimeType.startsWith('application/vnd.google-apps.')
-        ? `${DRIVE}/${file}/export?mimeType=application%2Fpdf`
-        : `${DRIVE}/${file}?alt=media&supportsAllDrives=true`,
+        ? `${file}/export?mimeType=application%2Fpdf`
+        : `${file}?alt=media&supportsAllDrives=true`,
     responseType: 'arraybuffer',
+    ...(headers ? { headers } : {}),
   });
   if (!(response.data instanceof ArrayBuffer))
     throw new TypeError(`Drive returned no file content for ${fileId}`);

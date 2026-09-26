@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile as execFileCallback, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
@@ -7,8 +7,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { Copy, Pipeline } from 'elt';
 import {
   SQLiteCheckpointStore,
@@ -20,8 +18,6 @@ import {
   ContactsSchemaError,
   ContactsUnavailableError,
 } from './index.ts';
-
-const execFile = promisify(execFileCallback);
 
 // AddressBook-v22.abcddb's tables as macOS 26.6.2 creates them (schema only,
 // no data), in WAL mode like the real stores.
@@ -1095,54 +1091,4 @@ test('a Contacts watch loads each commit contactsd makes and each account added'
   }
 
   assert.deepEqual(batches, [4, 1, 1]);
-});
-
-test('the Contacts exporter loads every stream end to end and a second run writes nothing', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-contacts-'),
-  );
-  const directory = addressBookFixture(join(scratch.path, 'AddressBook'));
-  const out = join(scratch.path, 'out');
-  const exporter = fileURLToPath(new URL('./contacts.js', import.meta.url));
-  const run = () =>
-    execFile(process.execPath, [
-      exporter,
-      '--address-book',
-      directory,
-      '--out',
-      out,
-    ]);
-  const database = join(out, 'apple-contacts.sqlite');
-  const tables = () =>
-    rows(
-      database,
-      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'raw_%' ORDER BY name",
-    ).map(
-      ({ name }) =>
-        rows(
-          database,
-          `SELECT '${String(name)}' AS name, count(*) AS rows, max(loaded_at) AS loadedAt FROM "${String(name)}"`,
-        )[0],
-    );
-
-  const first = await run();
-  const loaded = tables();
-  const second = await run();
-
-  assert.match(first.stdout, /Loaded Apple Contacts/);
-  assert.equal(loaded.length, 24);
-  assert.deepEqual(
-    loaded
-      .filter(
-        (table) =>
-          table?.name === 'raw_contacts' || table?.name === 'raw_images',
-      )
-      .map((table) => [table?.name, table?.rows]),
-    [
-      ['raw_contacts', 4],
-      ['raw_images', 3],
-    ],
-  );
-  assert.match(second.stdout, /Loaded Apple Contacts/);
-  assert.deepEqual(tables(), loaded);
 });

@@ -13,7 +13,7 @@ The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and 
 | Source | Available data | Extraction | Change trigger |
 | --- | --- | --- | --- |
 | Apple Notes | Accounts, folders, notes (text and Markdown, with checklists and tables), inline tags, mentions and note links, and attachments | Full refresh or snapshot incremental | Commits to Notes' own store; keeps Notes running hidden so iCloud changes arrive |
-| Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, scripting metadata, and each item's iCalendar (ICS) components, properties and parameters | Full refresh or snapshot incremental within a required date range | EventKit notifications |
+| Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, and each item's iCalendar (ICS) components, properties and parameters | Full refresh or snapshot incremental within a required date range | EventKit notifications |
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh or snapshot incremental | EventKit notifications |
 | Apple Messages | Every column of chats, handles, participants, messages (text, edits, unsends, reactions, replies), Recently Deleted, and attachments with their files | Full refresh or snapshot incremental, every stream from one consistent chat.db snapshot | Native filesystem notifications over `~/Library/Messages` |
 | Apple Contacts | Accounts, groups and memberships, contacts (names, organization, birthdays including year-less and non-Gregorian ones, flags), notes, every labeled value (phones, emails, addresses, URLs, social profiles, instant messaging, related names, dates, calendar URIs), custom and unrecognized vCard properties, and contact photos with their bytes | Full refresh or snapshot incremental, each account store read in one transaction | Commits to Contacts' own stores, and accounts added or removed |
@@ -81,11 +81,9 @@ This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table'
 
 `Copy` defaults to `full_refresh` extraction and `overwrite` loading. Creating a pipeline performs no extraction; `run()` executes it once and returns `{ copy, count, deleted }` results after loading. `count` is accepted input records, including deduplication no-ops, and `deleted` is accepted deletions, including keys that were already absent; neither is the number of changed rows.
 
-The repository also includes a [Notes exporter](apps/apple/src/main.ts) that loads every Notes stream incrementally, including attachment text and bytes. Run it with `npx nx run apple:start`. It writes `outputs/apple-notes.sqlite` and keeps checkpoints in `outputs/apple-notes-state.sqlite`; a second run with no changes writes nothing. `--note-store <path>` reads another `NoteStore.sqlite` and `--out <dir>` changes the output directory. Attachments without extractable text load with null `content`. Original files are stored in bounded chunks, so file size is limited only by disk.
+The repository also includes an [Apple exporter](apps/apple/src/main.ts) that loads every stream of every Apple connector incrementally: Notes, Messages, Contacts, Calendar and Reminders. Run it with `npx nx run apple:start`. Each connector writes `outputs/apple-<name>.sqlite` (for example `outputs/apple-notes.sqlite`) and keeps checkpoints in `outputs/apple-<name>-state.sqlite`; a second run with no changes writes nothing. Streams with files load their text as `content` and their original bytes as `bytes`; files without extractable text load with null `content`. Original files are stored in bounded chunks, so file size is limited only by disk.
 
-`npx nx run apple:messages` loads Apple Messages the same way into `outputs/apple-messages.sqlite`. It reads `chat.db` directly, so Messages.app need not be open, but the process running it needs Full Disk Access. See [Messages streams](docs/reference.md#apple-messages).
-
-`npx nx run apple:contacts` loads Apple Contacts into `outputs/apple-contacts.sqlite`, photos included. It reads Contacts' own stores, one per account, so Contacts.app need not be open; the process needs Contacts access or Full Disk Access. Account names (iCloud, Google) are not in those stores and do not load. See [Contacts streams](docs/reference.md#apple-contacts).
+Each connector reads the app's own store at its default location, and each needs its own grant for the process running the export: Notes and Messages need Full Disk Access; Contacts needs Contacts access or Full Disk Access; Calendar and Reminders need full Calendar and Reminders access, and Calendar's `calendars` stream also needs Automation access to Calendar. A connector the process cannot read is reported, the others still load, and the run exits with status 1; a stream that fails is reported by name and resumes from its checkpoint next run. Calendar loads occurrences from 2000-01-01 to a year after the run and downloads attachments stored in Google Drive and Gmail, so the run needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first run opens a browser for consent. See [Messages streams](docs/reference.md#apple-messages) and [Contacts streams](docs/reference.md#apple-contacts); Contacts account names (iCloud, Google) are not in its stores and do not load.
 
 ### Reminders
 
@@ -294,7 +292,7 @@ Permissions apply to the process running the export, and a sandbox can still res
 | Read or watch Apple Contacts | Contacts access or Full Disk Access; Contacts does not need to be open |
 | Read or watch Reminders | Full Reminders access through EventKit |
 | Read or watch Calendar | Full Calendar access through EventKit |
-| Read Calendar `calendars`, `eventMetadata`, or `excludedDates` | Additional Automation access to Calendar |
+| Read Calendar `calendars` | Additional Automation access to Calendar |
 
 Manage permissions in **System Settings → Privacy & Security**. Calendar and Reminders request access on the first native operation if it is undecided. Packaged hosts must provide the relevant usage descriptions and sandbox entitlements; see the [connector reference](docs/reference.md#apple-reminders).
 

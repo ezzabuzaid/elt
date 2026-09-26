@@ -31,15 +31,6 @@ export function reasonsOf(error: unknown): string[] {
   );
 }
 
-// A 403 that means the request itself is misconfigured (API disabled, a scope
-// missing from the grant) rather than that this user may not read the file.
-export function isConfigurationError(error: unknown): boolean {
-  const failure = error as GoogleError | undefined;
-  return /accessNotConfigured|SERVICE_DISABLED|insufficientPermissions|ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficient authentication scopes/i.test(
-    `${JSON.stringify(failure?.response?.data ?? '')} ${failure?.message ?? ''}`,
-  );
-}
-
 // Google's own explanation of a failed call, falling back to the error text.
 export function messageOf(error: unknown): string {
   const failure = error as GoogleError | undefined;

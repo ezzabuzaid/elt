@@ -16,6 +16,7 @@ export interface GoogleRequester {
     readonly method?: 'GET' | 'POST';
     readonly data?: Record<string, unknown>;
     readonly signal?: AbortSignal;
+    readonly headers?: Readonly<Record<string, string>>;
     // 'arraybuffer' returns a file download's bytes instead of parsed JSON.
     readonly responseType?: 'json' | 'arraybuffer';
   }): Promise<{ readonly data: unknown }>;

@@ -1,7 +1,11 @@
 import { setTimeout as wait } from 'node:timers/promises';
 
-import type { GoogleRequester } from 'google-auth';
-import { type GoogleError, reasonsOf, statusOf } from './google-errors.ts';
+import {
+  type GoogleError,
+  type GoogleRequester,
+  reasonsOf,
+  statusOf,
+} from 'google-auth';
 
 const BASE = 'https://searchconsole.googleapis.com/';
 

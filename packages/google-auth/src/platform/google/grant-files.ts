@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
+import type { GoogleOAuthCredential } from '../../credential.ts';
 import type {
   GoogleActiveGrantPointer,
   GoogleGrantVaultStore,
-  GoogleOAuthCredential,
-} from 'google-auth';
+} from '../../grant-store.ts';
 
 /**
  * Grants as owner-only JSON files under one directory, the same posture gcloud

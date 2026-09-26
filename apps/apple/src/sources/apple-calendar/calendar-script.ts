@@ -15,8 +15,6 @@ function readCalendar(
     'accounts',
     'calendars',
     'events',
-    'eventMetadata',
-    'excludedDates',
     'attendees',
     'alarms',
     'recurrenceRules',
@@ -28,10 +26,7 @@ function readCalendar(
   ];
   if (!names.includes(stream)) throw new Error('Unknown calendar stream: ' + stream);
   const wants = (name) => stream === name;
-  const scripting = wants('eventMetadata') || wants('excludedDates');
   const ics = ['icsComponents', 'icsProperties', 'icsParameters', 'icsAttachments'].includes(stream);
-  // Per-item streams page by native item; only metadata needs Calendar scripting.
-  const paged = scripting || ics;
   const records = [];
   const emit = (name, row) => {
     if (wants(name)) records.push(row);
@@ -50,11 +45,6 @@ function readCalendar(
       throw new Error('Calendar scripting lookup did not match EventKit calendar ' + calendarId);
     scriptingCalendars.set(key, calendar);
     return calendar;
-  };
-  const scriptingTimestamp = (value) => {
-    if (!(value instanceof Date) || !Number.isFinite(value.getTime()))
-      throw new Error('Calendar scripting returned an invalid date');
-    return value.toISOString();
   };
   // The ICS export is private EventKit API: detect it, and fail rather than
   // return nothing when it is missing or produces no data.
@@ -82,54 +72,6 @@ function readCalendar(
       ics: ObjC.unwrap(data.base64EncodedStringWithOptions(0)),
     };
   };
-  const scriptingMetadata = (calendarId, calendarName, calendarItemId) => {
-    const calendar = scriptingCalendar(calendarId, calendarName);
-    // Read all scripting fields in one Apple Event per native item.
-    const scriptingEvent = calendar.events.byId(calendarItemId).properties();
-    const scriptingUid = scriptingEvent.uid;
-    if (typeof scriptingUid !== 'string' || !scriptingUid)
-      throw new Error('Calendar scripting returned an invalid event UID');
-    const stored = store.calendarItemWithIdentifier(calendarItemId);
-    if (
-      isNil(stored) ||
-      string(stored.calendarItemIdentifier) !== calendarItemId ||
-      string(stored.calendar.calendarIdentifier) !== calendarId
-    )
-      throw new Error('EventKit could not resolve the calendar item for scripting');
-    const detached = bool(stored.isDetached);
-    if (!detached && scriptingUid !== calendarItemId)
-      throw new Error('Calendar scripting event UID did not match EventKit item');
-    const startAt = timestamp(stored.startDate);
-    const endAt = timestamp(stored.endDate);
-    if (
-      startAt === null ||
-      endAt === null ||
-      scriptingTimestamp(scriptingEvent.startDate) !== startAt ||
-      scriptingTimestamp(scriptingEvent.endDate) !== endAt
-    )
-      throw new Error('Calendar scripting event did not match EventKit dates');
-    const resolved = store.calendarItemWithIdentifier(scriptingUid);
-    if (
-      isNil(resolved) ||
-      string(resolved.calendar.calendarIdentifier) !== calendarId ||
-      string(resolved.calendarItemIdentifier) !== scriptingUid ||
-      (!detached &&
-        !isNil(stored.calendarItemExternalIdentifier) &&
-        string(resolved.calendarItemExternalIdentifier) !==
-          string(stored.calendarItemExternalIdentifier))
-    )
-      throw new Error('Calendar scripting event did not resolve to the EventKit calendar item');
-    const rawRecurrence = scriptingEvent.recurrence;
-    if (rawRecurrence !== null && typeof rawRecurrence !== 'string')
-      throw new Error('Calendar scripting returned an invalid recurrence');
-    const sequence = scriptingEvent.sequence;
-    if (!Number.isSafeInteger(sequence))
-      throw new Error('Calendar scripting returned an invalid event sequence');
-    const excluded = scriptingEvent.excludedDates;
-    if (!Array.isArray(excluded))
-      throw new Error('Calendar scripting returned invalid excluded dates');
-    return { scriptingUid, rawRecurrence, sequence, excluded };
-  };
   if (wants('accounts')) return eventKit.accounts(store);
   if (wants('calendars'))
     return eventKit.calendars(store, 0).map((calendar) => ({
@@ -141,8 +83,6 @@ function readCalendar(
 
   const eventStreams = [
     'events',
-    'eventMetadata',
-    'excludedDates',
     'attendees',
     'alarms',
     'recurrenceRules',
@@ -173,7 +113,7 @@ function readCalendar(
   );
   const events = store.eventsMatchingPredicate(predicate);
   if (isNil(events)) throw new Error('EventKit event query failed');
-  let selected = array(events).filter((event) => {
+  const selected = array(events).filter((event) => {
     const startMs = milliseconds(event.startDate);
     const endMs = milliseconds(event.endDate);
     if (startMs === null || endMs === null)
@@ -184,8 +124,7 @@ function readCalendar(
         : startMs < rangeEndMs && endMs > rangeStartMs;
     return overlaps;
   });
-  let nextCursor = null;
-  if (paged) {
+  if (ics) {
     const items = new Map();
     for (const event of selected) {
       const calendarId = string(event.calendar.calendarIdentifier);
@@ -195,15 +134,15 @@ function readCalendar(
       items.set(JSON.stringify([calendarId, calendarItemId]), event);
     }
     const keys = Array.from(items.keys()).sort().filter((key) => after === null || key > after);
-    // Bound expensive Calendar Apple Events by item count, independent of date density.
+    // Bound each ICS response by item count, independent of date density.
     const page = keys.slice(0, 100);
-    if (keys.length > page.length) nextCursor = page[page.length - 1];
-    selected = page.map((key) => items.get(key));
+    return {
+      records: page.map((key) => exportICS(items.get(key))),
+      nextCursor: keys.length > page.length ? page[page.length - 1] : null,
+    };
   }
-  if (ics) return { records: selected.map(exportICS), nextCursor };
 
   for (const event of selected) {
-
     const allDay = bool(event.isAllDay);
     const rules = array(event.recurrenceRules);
     const recurring = rules.length > 0 || bool(event.isDetached);
@@ -222,9 +161,6 @@ function readCalendar(
       throw new Error('EventKit event has no calendar or item identifier');
     const eventId = JSON.stringify([calendarId, calendarItemId, occurrenceKey]);
     const eventLocation = location(event.structuredLocation);
-    const calendarName = string(event.calendar.title);
-    if (typeof calendarName !== 'string')
-      throw new Error('EventKit event calendar has no valid name');
 
     if (wants('events'))
       emit('events', {
@@ -258,39 +194,8 @@ function readCalendar(
         radius: eventLocation.radius,
       });
 
-    if (scripting) {
-      const id = JSON.stringify([calendarId, calendarItemId]);
-      const metadata = scriptingMetadata(
-        calendarId,
-        calendarName,
-        calendarItemId,
-      );
-      if (wants('eventMetadata'))
-        emit('eventMetadata', {
-          id,
-          calendarId,
-          calendarItemId,
-          scriptingUid: metadata.scriptingUid,
-          rawRecurrence: metadata.rawRecurrence,
-          sequence: metadata.sequence,
-        });
-      if (wants('excludedDates'))
-        for (const [position, excluded] of metadata.excluded.entries()) {
-          const excludedAt = scriptingTimestamp(excluded);
-          emit('excludedDates', {
-            id: JSON.stringify([id, position]),
-            eventMetadataId: id,
-            position,
-            excludedAt,
-            excludedDate: allDay
-              ? dateOnly($.NSDate.dateWithTimeIntervalSince1970(Date.parse(excludedAt) / 1000))
-              : null,
-          });
-        }
-    }
-
     records.push(...eventKit.related(event, eventId, 'eventId', stream));
   }
-  return scripting ? { records, nextCursor } : records;
+  return records;
 }
 `;

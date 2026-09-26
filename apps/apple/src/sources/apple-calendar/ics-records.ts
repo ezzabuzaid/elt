@@ -69,7 +69,6 @@ export function icsRecords(
     const recurrence = property('RECURRENCE-ID');
     rows.icsComponents.push({
       id,
-      eventMetadataId: JSON.stringify([calendarId, calendarItemId]),
       calendarId,
       calendarItemId,
       parentId,
@@ -136,6 +135,19 @@ export function icsRecords(
     for (const [index, child] of component.components.entries())
       walk(child, `${path}.${index}`, id, index);
   };
-  walk(calendar, '0', null, 0);
+  walk(inContentOrder(calendar), '0', null, 0);
   return rows[stream];
+}
+
+// EventKit's export lists sibling components (a series' exceptions, their
+// alarms) in a different order in each process (verified live), so they are
+// numbered in content order: an unchanged item exports identical rows.
+// Properties and parameters keep their export order, which is stable.
+function inContentOrder(component: ICalComponent): ICalComponent {
+  const components = component.components
+    .map(inContentOrder)
+    .map((child) => [JSON.stringify(child), child] as const)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([, child]) => child);
+  return { ...component, components };
 }

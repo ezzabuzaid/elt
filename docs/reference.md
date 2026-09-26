@@ -509,7 +509,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messages.app need not be open. A missing file or a denied grant raises `MessagesUnavailableError` before any copy runs, with the SQLite error as `cause`. `npx nx run apple:messages` loads every stream incrementally into `outputs/apple-messages.sqlite`, with attachment text and bytes; `--chat-db <path>` reads another database and `--out <dir>` writes elsewhere.
+The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messages.app need not be open. A missing file or a denied grant raises `MessagesUnavailableError` before any copy runs, with the SQLite error as `cause`. `npx nx run apple:start` loads every stream incrementally into `outputs/apple-messages.sqlite`, with attachment text and bytes.
 
 ### Full Disk Access
 
@@ -590,7 +590,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads Contacts' own Core Data stores read-only through `node:sqlite`: `AddressBook-v22.abcddb` at the root of `~/Library/Application Support/AddressBook` (On My Mac) and one `Sources/<id>/AddressBook-v22.abcddb` per account. Contacts.app need not be open. A store or the `Sources` folder that cannot be opened (missing, or no permission) raises `ContactsUnavailableError`, and a store without a column the connector reads raises `ContactsSchemaError` naming the columns, both before any copy runs. `npx nx run apple:contacts` loads every stream incrementally into `outputs/apple-contacts.sqlite`, with photo text and bytes; `--address-book <dir>` reads another AddressBook folder and `--out <dir>` writes elsewhere.
+The source reads Contacts' own Core Data stores read-only through `node:sqlite`: `AddressBook-v22.abcddb` at the root of `~/Library/Application Support/AddressBook` (On My Mac) and one `Sources/<id>/AddressBook-v22.abcddb` per account. Contacts.app need not be open. A store or the `Sources` folder that cannot be opened (missing, or no permission) raises `ContactsUnavailableError`, and a store without a column the connector reads raises `ContactsSchemaError` naming the columns, both before any copy runs. `npx nx run apple:start` loads every stream incrementally into `outputs/apple-contacts.sqlite`, with photo text and bytes.
 
 ### Access
 
@@ -681,7 +681,7 @@ Date components preserve undefined values as `null`, including missing clock com
 
 Native enum values remain integers. Alarm proximity is `0` (none), `1` (arrival), or `2` (departure); a radius of `0` asks the system to choose a radius. Recurrence frequency is `0` (daily), `1` (weekly), `2` (monthly), or `3` (yearly). A zero recurrence count means no count-based limit. Only the next incomplete reminder in a recurring series is exposed by Apple; the source does not invent future occurrences or deliver notifications.
 
-EventKit IDs can change after a full server sync; external identifiers are not universally unique or stable across providers/devices. Child IDs identify positions within the current snapshot. Full-refresh overwrite and snapshot incremental both reconcile deletions; incremental still fetches every reminder each run, because EventKit offers no change feed. Streams are queried independently, without a cross-stream snapshot or pipeline-wide transaction. OSA buffers each complete response up to 64 MiB and has a 120-second process timeout; large collections can exceed those limits.
+EventKit IDs can change after a full server sync; external identifiers are not universally unique or stable across providers/devices. Child IDs identify positions within the current snapshot; attendees and alarms are numbered in content order (see [Calendar completeness](#completeness-and-limits)). Full-refresh overwrite and snapshot incremental both reconcile deletions; incremental still fetches every reminder each run, because EventKit offers no change feed. Streams are queried independently, without a cross-stream snapshot or pipeline-wide transaction. OSA buffers each complete response up to 64 MiB and has a 120-second process timeout; large collections can exceed those limits.
 
 See the [EventKit research and implementation notes](eventkit-reminders.md) for API evidence, design choices, verification, and migration details.
 
@@ -711,26 +711,24 @@ await new Pipeline({
 
 Calendar uses the public EventKit framework through the existing OSA bridge. It needs macOS 14 or later and full Calendar access for the process running the export. The first extraction requests access if it is undecided or write-only, waiting up to 30 seconds. If permission is denied, restricted, or still pending, `CalendarUnavailableError` preserves the native cause and explains how to enable access. A sandbox can block access even when macOS permission is granted. Permission failures never become empty successful exports.
 
-The `calendars`, `eventMetadata`, and `excludedDates` streams also read Calendar's scripting interface and require macOS Automation access to Calendar. This can launch Calendar.app. The other streams use EventKit alone. Scripting failures and mismatched native lookups fail the copy with the original cause.
+The `calendars` stream also reads each calendar's description through Calendar's scripting interface and requires macOS Automation access to Calendar. This can launch Calendar.app. The other streams use EventKit alone. Scripting failures and mismatched native lookups fail the copy with the original cause.
 
 The `icsComponents`, `icsProperties`, and `icsParameters` streams read each item's iCalendar export through **private** EventKit API (`EKEventStore` `ICSDataForCalendarItems:preventLineFolding:`, falling back to `:options:`). They need no Automation access. The source checks for the method first: when a macOS version lacks it, the copy fails with `CalendarIcsUnavailableError` rather than exporting nothing, and an export without any event component fails too. A macOS update can remove or change this API; select only the public streams if that matters more than ICS coverage.
 
 ### Streams
 
-All thirteen streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables or Markdown targets. Related collections are separate scalar rows, preserving their data without adding JSON columns to SQLite.
+All eleven streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables or Markdown targets. Related collections are separate scalar rows, preserving their data without adding JSON columns to SQLite.
 
 | Stream | Contents and relationships |
 | --- | --- |
 | `accounts` | EventKit sources: identifier, name, native source type, delegate flag. |
 | `calendars` | Identifier, `accountId`, name, scripting description, native type, write/subscription/immutability flags, sRGB components, supported availability and entity masks. |
 | `events` | Expanded occurrences: native identifiers, `calendarId`, title/body/location/URL, start/end, all-day dates, time zone, creation/modification dates, original occurrence date, detached flag, status/availability, birthday contact identifier, geographic location. |
-| `eventMetadata` | One row per selected native calendar item: `calendarId`, `calendarItemId`, returned `scriptingUid`, raw recurrence string (or null), and sequence number. Join to occurrences using both `calendarId` and `calendarItemId`. |
-| `excludedDates` | `eventMetadataId`, position, excluded instant (`excludedAt`), and local `excludedDate` for all-day items. These are recurrence metadata and may lie outside the selected occurrence window. |
 | `attendees` | `eventId`, position, participant name/URL, native status/role/type, current-user flag. `kind` distinguishes attendees from the organizer. |
 | `alarms` | `eventId`, position, native alarm type, relative offset in seconds, absolute date, email/sound, proximity and geographic location. |
 | `recurrenceRules` | `eventId`, position, calendar identifier, frequency, interval, first weekday, end date and occurrence count. |
 | `recurrenceRuleValues` | `ruleId`, `eventId`, component and position, integer value, optional weekday ordinal. Preserves weekdays, month/year days, year weeks, months, and set positions. |
-| `icsComponents` | One row per iCalendar component of a native item (`VCALENDAR`, `VEVENT`, `VALARM`, `VTIMEZONE`, …): `id` `[calendarId, calendarItemId, path]`, `eventMetadataId`, `parentId`, `position`, `name`, `uid`, the raw `recurrenceId` with its `recurrenceIdTimeZone` (TZID), and `eventId` when it is exact (the master of a non-recurring event). |
+| `icsComponents` | One row per iCalendar component of a native item (`VCALENDAR`, `VEVENT`, `VALARM`, `VTIMEZONE`, …): `id` `[calendarId, calendarItemId, path]`, `parentId`, `position`, `name`, `uid`, the raw `recurrenceId` with its `recurrenceIdTimeZone` (TZID), and `eventId` when it is exact (the master of a non-recurring event). |
 | `icsProperties` | Every property except `DTSTAMP`, with its raw value: `componentId`, `position`, `name`, `value`. Includes `ATTACH`, `RRULE`, `EXDATE`, `RECURRENCE-ID`, `URL`, and vendor properties such as `X-GOOGLE-CONFERENCE` and `X-MICROSOFT-*`. |
 | `icsAttachments` | One row per `ATTACH`: `uri` (raw), `filename` (`X-APPLE-FILENAME` or `FILENAME`), `formatType` (`FMTTYPE`), `inline`. Supports file transfer: inline base64 content is decoded locally; remote references are downloaded by the `attachments` fetcher given to `AppleCalendarSource`, and a file the fetcher reports as unreachable loads as `null`. |
 | `icsParameters` | One row per parameter value: `propertyId`, `componentId`, `position`, `valuePosition`, `name`, `value` (for example `ATTACH;FMTTYPE`, `ATTACH;FILENAME`, `DTSTART;TZID`). |
@@ -747,18 +745,20 @@ EventKit expands recurrence and applies deleted/rescheduled occurrence exception
 
 The event `id` (also exposed as `eventId`) combines the calendar identifier, local calendar-item identifier, and the original occurrence date for repeating/detached events. It uses the native original date rather than the rescheduled start; all-day occurrence keys use a calendar date. Native event and external identifiers remain separate fields. EventKit identifiers can change after moves or full server syncs, so these are local extraction identities, not permanent cross-device IDs. Child IDs add the collection kind/component and position; they identify snapshot rows, not independently stable native objects.
 
-Scripting metadata uses native identifier lookups, never title-based matching. Its `id` is the JSON tuple `[calendarId, calendarItemId]`; expanded occurrences of the same native item share one metadata row. Each scripting query reads at most 100 native items, continuing by identifier even when an excluded-date page is empty. Scripting dates are checked against the stored EventKit item, whose start may precede the occurrence window. For detached events, Calendar returns the parent series' `scriptingUid` and raw recurrence, but the detached item's own sequence and excluded-date list. The returned scripting UID is therefore kept separate from `calendarItemId`.
+Per-item recurrence metadata comes from the ICS streams: each native item's `UID`, `SEQUENCE`, raw `RRULE` and `EXDATE` are `icsProperties` rows (an `EXDATE`'s `TZID` is an `icsParameters` row), and a detached item's `VEVENT` carries its series `UID` with a `RECURRENCE-ID`. The structured rules are also in `recurrenceRules` and `recurrenceRuleValues` through public EventKit. Each ICS query exports at most 100 native items, continuing by item identifier even when a page yields no rows.
+
+Calendar's scripting interface is not read per event. A live comparison on **2026-09-25** (macOS 26.6.2) over 2,786 native items from 2000-01-01 to 2027-09-25 found that its event properties added nothing the ICS export lacks: its UID is EventKit's `calendarItemIdentifier` (the series' for the 140 detached items), its recurrence string re-serializes the same rule (adding `INTERVAL=1`, changing `WKST`), its sequence matched `SEQUENCE`, and its excluded dates covered 67 series where `EXDATE` covered 127. It cost about 55 ms per event for each property, batched or not: 17 minutes for six properties of 3,337 events, against about 35 seconds for the ICS export.
 
 Markdown uses the same source; for example, `new Copy(calendar.events, markdown.folder('events', { title: 'name' }))`. Use lowercase target names such as `recurrence-rules` for camel-cased streams.
 
 ### Completeness and limits
 
-Full-refresh overwrite and snapshot incremental both reconcile deletions and events moved outside the selected window on the next successful run; incremental writes only the rows that changed. Ordinary append retains observations. Child rows are keyed by position, so reordering attendees or alarms rewrites the affected rows. Each stream is read separately, so concurrent Calendar changes can affect relationships; the pipeline has no cross-stream snapshot or transaction. OSA still buffers at most 64 MiB per query and times out after 120 seconds; very dense windows can exceed those limits. Duplicate tracking retains occurrence/child IDs for the duration of one copy.
+Full-refresh overwrite and snapshot incremental both reconcile deletions and events moved outside the selected window on the next successful run; incremental writes only the rows that changed. Ordinary append retains observations. Child rows are keyed by position in content order, not EventKit's order: EventKit returns an item's attendees and alarms, and its ICS export an item's sibling components (a series' exceptions and their alarms), in a different order in each process. A live check on **2026-09-25** (macOS 26.6.2) found two runs minutes apart with no edits rewriting 2,600 attendee, 684 alarm and 1,294 ICS component rows, each event's set identical and only reordered; property and parameter order was stable. Attendees are ordered by URL, name, role and type (not status, so a reply updates its row in place), alarms by all their fields, and ICS components by their content. Adding or editing a child can renumber its siblings. Each stream is read separately, so concurrent Calendar changes can affect relationships; the pipeline has no cross-stream snapshot or transaction. OSA still buffers at most 64 MiB per query and times out after 120 seconds; very dense windows can exceed those limits. Duplicate tracking retains occurrence/child IDs for the duration of one copy.
 
-The source preserves the EventKit and scripting fields above. These remaining capabilities require more than another source field:
+The source preserves the EventKit fields above. These remaining capabilities require more than another source field:
 
 - **Change feed:** EventKit provides change notifications but no durable change cursor, so every incremental run still reads the whole window.
-- **Attachment bytes and travel time:** the ICS streams carry attachment references (`ATTACH` values and their parameters) and conference properties, not file contents. Exported attachment URLs can require provider context or authorization, so they are not treated as portable files. Travel time is not exported. Deprecated open-file alarm URLs are unavailable on modern macOS.
+- **Attachment bytes and travel time:** attachment files load only through the `attachments` fetcher, because exported references need provider authorization. `googleCalendarAttachments(requester)` downloads Drive files (native Google files as PDF, shortcuts followed, link-shared files with their resource key) and Gmail attachment references, given a `google-auth` requester with Drive and Gmail read scopes. It resolves false for other URLs and for files the account cannot open, including Google files too large to export as PDF (10 MB); rate limits and configuration errors reject. Travel time is not exported. Deprecated open-file alarm URLs are unavailable on modern macOS.
 - **Consistent multi-stream snapshots and resumable large exports:** these need additional extraction/checkpoint and pipeline support. Full refresh currently restarts a failed copy, preserving its previous destination contents until the complete replacement succeeds.
 
 See Apple's [EventKit retrieval documentation](https://developer.apple.com/documentation/eventkit/retrieving-events-and-reminders), [occurrence identity](https://developer.apple.com/documentation/eventkit/ekevent/occurrencedate), and [calendar-item identity caveats](https://developer.apple.com/documentation/eventkit/ekcalendaritem/calendaritemidentifier).
@@ -774,7 +774,7 @@ These GUI exports are not used. The ICS streams read the same iCalendar data per
 
 ### Attachment files
 
-`icsAttachments` reads attachment bytes only when the target asks for them, and remote references need a fetcher. For Google calendars, `googleCalendarAttachments` from the Google app downloads Drive files (native Docs, Sheets and Slides as PDF) and Gmail message attachments. It needs a grant with `drive.readonly` and `gmail.readonly` from an OAuth client whose project enables the Drive and Gmail APIs:
+`icsAttachments` reads attachment bytes only when the target asks for them, and remote references need a fetcher. For Google calendars, the Apple app's `googleCalendarAttachments` downloads Drive files (native Docs, Sheets and Slides as PDF, shortcuts followed to their target, link-shared files with their resource key) and Gmail message attachments. It needs a `googleSession` from `google-auth` whose grant has `drive.readonly` and `gmail.readonly`, from an OAuth client whose project enables the Drive and Gmail APIs. A 403 loads the file as null only when Drive or Gmail says the account may not open it; a rate limit, a disabled API or a missing scope fails the copy, which resumes next run. `npx nx run apple:start` wires it up this way:
 
 ```ts
 const requester = await googleSession({
@@ -817,7 +817,7 @@ That last run also rewrote 48 component rows of other items. Four later no-chang
 
 `SearchConsoleSource` reads one property through the `searchconsole:v1` API. `sites`, `sitemaps` and `searchAnalytics` are served under the original `webmasters/v3` path prefix; URL inspection is served from `v1` on the same host.
 
-Construct it with an authenticated requester from `googleSession`:
+Construct it with an authenticated requester from `googleSession` in `google-auth`:
 
 ```ts
 const requester = await googleSession({

@@ -1,14 +1,16 @@
 import { Pipeline, PipelineError } from 'elt';
 import { PostgresCheckpointStore, PostgresDestination } from 'elt-postgresql';
-import { GOOGLE_SEARCH_CONSOLE_SCOPE } from 'google-auth';
+import {
+  GOOGLE_SEARCH_CONSOLE_SCOPE,
+  googleSession,
+  grantDirectory,
+  OAuthCallbackTimeoutError,
+} from 'google-auth';
 import postgres from 'postgres';
 
 import {
-  googleSession,
-  grantDirectory,
   installSearchConsoleMarts,
   installWarehouse,
-  OAuthCallbackTimeoutError,
   SearchConsoleSource,
   searchConsoleCopies,
 } from './index.ts';

@@ -64,24 +64,8 @@ const catalog = eventKitCatalog(
       birthdayContactId: nullableText,
       ...location,
     },
-    eventMetadata: {
-      id,
-      calendarId: id,
-      calendarItemId: id,
-      scriptingUid: id,
-      rawRecurrence: nullableText,
-      sequence: integer,
-    },
-    excludedDates: {
-      id,
-      eventMetadataId: id,
-      position: ordinal,
-      excludedAt: timestamp,
-      excludedDate: nullableDate,
-    },
     icsComponents: {
       id,
-      eventMetadataId: id,
       calendarId: id,
       calendarItemId: id,
       parentId: nullableText,
@@ -166,8 +150,6 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
   readonly accounts = catalog.get('accounts');
   readonly calendars = catalog.get('calendars');
   readonly events = catalog.get('events');
-  readonly eventMetadata = catalog.get('eventMetadata');
-  readonly excludedDates = catalog.get('excludedDates');
   readonly attendees = catalog.get('attendees');
   readonly alarms = catalog.get('alarms');
   readonly recurrenceRules = catalog.get('recurrenceRules');
@@ -314,11 +296,8 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
     endAt: string,
   ): AsyncGenerator<Record<string, unknown>> {
     const ics = isIcsStream(stream.name) ? stream.name : undefined;
-    // Metadata and ICS streams page by native item with a monotonic cursor.
-    const paged =
-      stream.name === 'eventMetadata' ||
-      stream.name === 'excludedDates' ||
-      ics !== undefined;
+    // ICS streams page by native item with a monotonic cursor.
+    const paged = ics !== undefined;
     let cursor: string | null = null;
     do {
       let response: unknown;
@@ -345,7 +324,7 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
           nextCursor: string | null;
         };
         if (page.nextCursor !== null && page.nextCursor <= (cursor ?? ''))
-          throw new TypeError('Calendar returned an invalid metadata page');
+          throw new TypeError('Calendar returned an invalid ICS page');
         cursor = page.nextCursor;
         response = page.records;
       }

@@ -109,7 +109,7 @@ Test the source the way a user runs it, as a black box. Do not write unit tests.
 - Every stream the upstream exposes is extracted and every attachment kind it holds is handled. Nothing is silently capped, sampled, or windowed.
 - A capability the source needed but `elt` lacked is added to `elt`, not worked around in the source. Finding those gaps is the point of each new source. Other changes stay specific to the requested source.
 - Typecheck and tests pass for every touched project, and for every project if `packages/elt` changed, because every destination and app depends on it.
-- The source works end to end against the real upstream, not only against the controlled upstream the tests use. Run the entry point a user runs (`nx run <app>:start`, or the source's own target such as `apple:messages`) into a real destination, then inspect the actual output: tables or files, checkpoints, and a second run with no upstream changes that behaves as the sync strategy promises (a snapshot stream writes nothing).
+- The source works end to end against the real upstream, not only against the controlled upstream the tests use. Run the entry point a user runs (`nx run <app>:start`) into a real destination, then inspect the actual output: tables or files, checkpoints, and a second run with no upstream changes that behaves as the sync strategy promises (a snapshot stream writes nothing).
 - Live checks are run, not deferred. Behavior counts as unverified only when the environment cannot produce it, and a backlog item does not replace the check.
 - Every agent-backlog item opened during the work, and every open item related to the source, is closed.
 - Each gotcha above is checked against the diff.

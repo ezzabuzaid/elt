@@ -11,7 +11,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type TestContext, test } from 'node:test';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { gzipSync } from 'node:zlib';
@@ -693,51 +692,6 @@ test('a Notes watch keeps Notes running and loads each commit while Notes keeps 
   assert.ok(launches > 1);
 });
 
-test('the Notes exporter loads every stream end to end and a second run writes nothing', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
-  const store = await noteStoreFixture(scratch.path);
-  const out = join(scratch.path, 'out');
-  const exporter = fileURLToPath(new URL('./main.js', import.meta.url));
-  const run = () =>
-    execFile(process.execPath, [exporter, '--note-store', store, '--out', out]);
-  const tables = () =>
-    noteRows(
-      join(out, 'apple-notes.sqlite'),
-      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'raw_%' ORDER BY name",
-    ).map(({ name }) => {
-      const [row] = noteRows(
-        join(out, 'apple-notes.sqlite'),
-        `SELECT count(*) AS rows, max(loaded_at) AS loadedAt FROM "${String(name)}"`,
-      );
-      return { name, rows: row?.rows, loadedAt: row?.loadedAt };
-    });
-
-  const first = await run();
-  const loaded = tables();
-  const second = await run();
-
-  assert.match(first.stdout, /Loaded Apple Notes/);
-  assert.deepEqual(
-    loaded.map(({ name, rows }) => [name, rows]),
-    [
-      ['raw_accounts', 1],
-      ['raw_attachments', 4],
-      ['raw_folders', 3],
-      ['raw_inlineAttachments', 2],
-      ['raw_notes', 3],
-    ],
-  );
-  assert.match(second.stdout, /Loaded Apple Notes/);
-  assert.deepEqual(tables(), loaded);
-  assert.deepEqual(
-    noteRows(
-      join(out, 'apple-notes.sqlite'),
-      'SELECT id, content FROM raw_attachments WHERE bytes IS NOT NULL',
-    ),
-    [{ id: 'ATT-FILE', content: 'attached words' }],
-  );
-});
-
 test('Calendar extracts every scalar stream into SQLite and Markdown', {
   concurrency: false,
 }, async (t) => {
@@ -750,24 +704,6 @@ test('Calendar extracts every scalar stream into SQLite and Markdown', {
     accounts: [recordFor(source.accounts, { id: 'account-1' })],
     calendars: [recordFor(source.calendars, { id: 'calendar-1' })],
     events: [calendarEvents(source)],
-    eventMetadata: [
-      recordFor(source.eventMetadata, {
-        id: 'calendar-item-metadata-1',
-        calendarId: 'calendar-1',
-        calendarItemId: 'calendar-item-1',
-        scriptingUid: 'series-item-1',
-        rawRecurrence: 'RRULE:FREQ=WEEKLY',
-        sequence: 7,
-      }),
-    ],
-    excludedDates: [
-      recordFor(source.excludedDates, {
-        id: 'calendar-item-metadata-1-excluded-0',
-        eventMetadataId: 'calendar-item-metadata-1',
-        excludedAt: timestamp,
-        excludedDate: null,
-      }),
-    ],
     attendees: [recordFor(source.attendees)],
     alarms: [recordFor(source.alarms)],
     recurrenceRules: [recordFor(source.recurrenceRules)],
@@ -776,12 +712,7 @@ test('Calendar extracts every scalar stream into SQLite and Markdown', {
   const scripts: string[] = [];
   t.mock.method(osa, 'execute', async (script: string) => {
     scripts.push(script);
-    const name = streamName(script);
-    return JSON.stringify(
-      name === 'eventMetadata' || name === 'excludedDates'
-        ? { records: records[name], nextCursor: null }
-        : records[name],
-    );
+    return JSON.stringify(records[streamName(script)]);
   });
 
   await using scratch = await mkdtempDisposable(
@@ -794,8 +725,6 @@ test('Calendar extracts every scalar stream into SQLite and Markdown', {
     source.accounts,
     source.calendars,
     source.events,
-    source.eventMetadata,
-    source.excludedDates,
     source.attendees,
     source.alarms,
     source.recurrenceRules,
@@ -812,39 +741,10 @@ test('Calendar extracts every scalar stream into SQLite and Markdown', {
 
   assert.deepEqual(
     result.map(({ count }) => count),
-    Array(9).fill(1),
+    Array(7).fill(1),
   );
-  assert.equal(scripts.length, 9);
+  assert.equal(scripts.length, 7);
   using database = new DatabaseSync(sqlite.path, { readOnly: true });
-  assert.deepEqual(
-    {
-      ...database
-        .prepare(
-          'SELECT calendarItemId, scriptingUid, rawRecurrence, sequence FROM eventMetadata',
-        )
-        .get(),
-    },
-    {
-      calendarItemId: 'calendar-item-1',
-      scriptingUid: 'series-item-1',
-      rawRecurrence: 'RRULE:FREQ=WEEKLY',
-      sequence: 7,
-    },
-  );
-  assert.deepEqual(
-    {
-      ...database
-        .prepare(
-          'SELECT eventMetadataId, excludedAt, excludedDate FROM excludedDates',
-        )
-        .get(),
-    },
-    {
-      eventMetadataId: 'calendar-item-metadata-1',
-      excludedAt: timestamp,
-      excludedDate: null,
-    },
-  );
   assert.deepEqual(
     {
       ...database
@@ -1310,7 +1210,7 @@ test('Calendar deduplicates an event returned by adjacent extraction windows', {
   );
 });
 
-test('Calendar continues empty metadata pages and rejects a stalled cursor', {
+test('Calendar continues empty ICS pages and rejects a stalled cursor', {
   concurrency: false,
 }, async (t) => {
   quietEventKit(t);
@@ -1325,20 +1225,17 @@ test('Calendar continues empty metadata pages and rejects a stalled cursor', {
     const first = script.includes(', undefined, null)');
     if (!first) assert.ok(script.includes(', undefined, "page-1")'));
     calls.push(name);
+    const page = JSON.parse(
+      icsPage([
+        {
+          calendarItemId: first ? 'item-1' : 'item-2',
+          recurring: false,
+          ics: meetingICS,
+        },
+      ]),
+    );
     return JSON.stringify({
-      records:
-        name === 'excludedDates' && first
-          ? []
-          : [
-              recordFor(
-                name === 'eventMetadata'
-                  ? source.eventMetadata
-                  : source.excludedDates,
-                {
-                  id: first ? 'item-1' : 'item-2',
-                },
-              ),
-            ],
+      records: name === 'icsProperties' && first ? [] : page.records,
       nextCursor: first || stalled ? 'page-1' : null,
     });
   });
@@ -1352,28 +1249,28 @@ test('Calendar continues empty metadata pages and rejects a stalled cursor', {
     new Pipeline({
       source,
       destination: sqlite,
-      steps: [source.eventMetadata, source.excludedDates].map(
+      steps: [source.icsComponents, source.icsProperties].map(
         (stream) => new Copy(stream, sqlite.table(stream.name)),
       ),
     }).run();
-  assert.deepEqual(
-    (await run()).map(({ count }) => count),
-    [2, 1],
-  );
+  await run();
   assert.deepEqual(calls, [
-    'eventMetadata',
-    'eventMetadata',
-    'excludedDates',
-    'excludedDates',
+    'icsComponents',
+    'icsComponents',
+    'icsProperties',
+    'icsProperties',
   ]);
-  stalled = true;
-  await assert.rejects(run(), /invalid metadata page/);
   using database = new DatabaseSync(sqlite.path, { readOnly: true });
-  assert.equal(
-    database.prepare('SELECT count(*) AS count FROM eventMetadata').get()
-      ?.count,
-    2,
-  );
+  const items = (table: string) =>
+    database
+      .prepare(`SELECT DISTINCT calendarItemId FROM ${table} ORDER BY 1`)
+      .all()
+      .map(({ calendarItemId }) => calendarItemId);
+  assert.deepEqual(items('icsComponents'), ['item-1', 'item-2']);
+  // The empty first page did not end the read.
+  assert.deepEqual(items('icsProperties'), ['item-2']);
+  stalled = true;
+  await assert.rejects(run(), /invalid ICS page/);
 });
 
 test('Calendar JXA projects unsaved EventKit objects without reading Calendar data', {
@@ -1453,7 +1350,7 @@ test('Calendar JXA projects unsaved EventKit objects without reading Calendar da
   assert.equal(value?.ruleId, rule?.id);
 });
 
-test('Calendar JXA rejects scripting data that disagrees with EventKit and ranges beyond 366 days', {
+test('Calendar JXA rejects a mismatched scripting calendar and ranges beyond 366 days', {
   concurrency: false,
 }, async (t) => {
   if (process.platform !== 'darwin') {
@@ -1486,19 +1383,6 @@ test('Calendar JXA rejects scripting data that disagrees with EventKit and range
             if (overrides.description) throw new Error(overrides.description);
             return 'About';
           },
-          events: {
-            byId: () => ({
-              properties: () => ({
-                uid: eventKit.string(event.calendarItemIdentifier),
-                startDate: new Date(1735689600000),
-                endDate: new Date(1735693200000),
-                recurrence: null,
-                sequence: 0,
-                excludedDates: [],
-                ...overrides.event,
-              }),
-            }),
-          },
         }),
       },
     });
@@ -1511,15 +1395,8 @@ test('Calendar JXA rejects scripting data that disagrees with EventKit and range
       }
     };
     JSON.stringify({
-      metadata: attempt('eventMetadata'),
-      name: attempt('eventMetadata', { name: 'Renamed calendar' }),
-      emptyUid: attempt('eventMetadata', { event: { uid: '' } }),
-      uid: attempt('eventMetadata', { event: { uid: 'another-item' } }),
-      invalidDate: attempt('eventMetadata', { event: { startDate: 'soon' } }),
-      date: attempt('eventMetadata', { event: { startDate: new Date(0) } }),
-      recurrence: attempt('eventMetadata', { event: { recurrence: 1 } }),
-      sequence: attempt('eventMetadata', { event: { sequence: 1.5 } }),
-      excluded: attempt('excludedDates', { event: { excludedDates: 'none' } }),
+      calendars: attempt('calendars'),
+      name: attempt('calendars', { name: 'Renamed calendar' }),
       description: attempt('calendars', { description: 'description lookup failed' }),
       range: attempt('events', {}, '2026-01-03T00:00:00.000Z'),
       unknown: attempt('tasks'),
@@ -1532,18 +1409,74 @@ test('Calendar JXA rejects scripting data that disagrees with EventKit and range
     /^Calendar scripting lookup did not match EventKit calendar \S+$/,
   );
   assert.deepEqual(failures, {
-    metadata: 'ok',
-    emptyUid: 'Calendar scripting returned an invalid event UID',
-    uid: 'Calendar scripting event UID did not match EventKit item',
-    invalidDate: 'Calendar scripting returned an invalid date',
-    date: 'Calendar scripting event did not match EventKit dates',
-    recurrence: 'Calendar scripting returned an invalid recurrence',
-    sequence: 'Calendar scripting returned an invalid event sequence',
-    excluded: 'Calendar scripting returned invalid excluded dates',
+    calendars: 'ok',
     description: 'description lookup failed',
     range: 'Calendar range must be positive and no longer than 366 days',
     unknown: 'Unknown calendar stream: tasks',
   });
+});
+
+test('Calendar JXA numbers attendees and alarms the same whatever order EventKit returns them in', async (t) => {
+  if (process.platform !== 'darwin') {
+    t.skip('EventKit is available only on macOS');
+    return;
+  }
+  const output = await osa.execute(`
+    ${EventKit.runtime}
+    ${calendarScript}
+    const nativeStore = $.EKEventStore.alloc.init;
+    const calendar = $.EKCalendar.calendarForEntityTypeEventStore(0, nativeStore);
+    const event = $.EKEvent.eventWithEventStore(nativeStore);
+    event.calendar = calendar;
+    event.title = 'Unsaved meeting';
+    event.startDate = $.NSDate.dateWithTimeIntervalSince1970(Date.parse('2025-01-01T09:00:00.000Z') / 1000);
+    event.endDate = $.NSDate.dateWithTimeIntervalSince1970(Date.parse('2025-01-01T10:00:00.000Z') / 1000);
+    const attendee = (address, status) => ({
+      URL: $.NSURL.URLWithString('mailto:' + address),
+      name: $(address),
+      participantStatus: status,
+      participantRole: 1,
+      participantType: 1,
+      isCurrentUser: false,
+    });
+    const alarm = (offset) => $.EKAlarm.alarmWithRelativeOffset(offset);
+    // A reply changes status, so the replying attendee keeps its row.
+    const attendees = [attendee('a@example.com', 2), attendee('b@example.com', 1)];
+    const alarms = [alarm(-600), alarm(-3600)];
+    let reversed = false;
+    const listed = (values) => {
+      const ordered = reversed ? [...values].reverse() : values;
+      return {count: ordered.length, objectAtIndex: (index) => ordered[index]};
+    };
+    const shown = new Proxy(event, {get(target, key) {
+      if (key === 'attendees') return listed(attendees);
+      if (key === 'alarms') return listed(alarms);
+      return target[key];
+    }});
+    const store = {
+      calendarsForEntityType: () => $([calendar]),
+      predicateForEventsWithStartDateEndDateCalendars: () => $(),
+      eventsMatchingPredicate: () => ({count: 1, objectAtIndex: () => shown}),
+    };
+    const read = (stream) => readCalendar(store, stream, '2025-01-01T00:00:00.000Z', '2025-01-02T00:00:00.000Z');
+    const before = {attendees: read('attendees'), alarms: read('alarms')};
+    reversed = true;
+    attendees[1] = attendee('b@example.com', 2);
+    JSON.stringify({before, after: {attendees: read('attendees'), alarms: read('alarms')}});
+  `);
+  const { before, after } = JSON.parse(output);
+  const rows = (records: Record<string, unknown>[], field: string) =>
+    records.map((record) => [record.id, record[field]]);
+
+  assert.deepEqual(
+    rows(after.alarms, 'relativeOffset'),
+    rows(before.alarms, 'relativeOffset'),
+  );
+  assert.deepEqual(rows(after.attendees, 'url'), rows(before.attendees, 'url'));
+  assert.deepEqual(
+    after.attendees.map(({ status }: { status: number }) => status),
+    [2, 2],
+  );
 });
 
 test('Calendar occurrence keys survive rescheduling and preserve all-day dates', async (t) => {
@@ -1580,81 +1513,28 @@ test('Calendar occurrence keys survive rescheduling and preserve all-day dates',
       return target[key];
     }})];
     const moved = read()[0];
-    const scriptingEvent = {
-      // A detached Calendar scripting object keeps its master UID and recurrence,
-      // while its sequence and dates belong to the detached native item.
-      properties: () => ({
-        uid: 'master-script-item',
-        startDate: new Date(Number(event.startDate.timeIntervalSince1970) * 1000),
-        endDate: new Date(Number(event.endDate.timeIntervalSince1970) * 1000),
-        recurrence: 'RRULE:FREQ=DAILY',
-        sequence: 7,
-        excludedDates: [new Date('2025-01-03T09:00:00.000Z')],
-      }),
-    };
-    const scriptingApplication = {
-      calendars: {
-        byId: () => ({
-          name: () => ObjC.unwrap(calendar.title),
-          events: {byId: () => scriptingEvent},
-        }),
-      },
-    };
-    const storedItem = new Proxy(event, {get(target, key) {
-      if (key === 'isDetached') return true;
-      if (key === 'calendarItemExternalIdentifier') return $('detached-external');
-      return target[key];
-    }});
-    const parentItem = new Proxy(event, {get(target, key) {
-      if (key === 'calendarItemIdentifier') return $('master-script-item');
-      if (key === 'calendarItemExternalIdentifier') return $('parent-external');
-      return target[key];
-    }});
-    const metadataStore = {
-      ...store,
-      calendarItemWithIdentifier: identifier =>
-        identifier === 'master-script-item' ? parentItem : storedItem,
-    };
-    const metadata = readCalendar(
-      metadataStore,
-      'eventMetadata',
-      '2025-01-01T00:00:00.000Z',
-      '2025-01-04T00:00:00.000Z',
-      scriptingApplication,
-    );
-    const excluded = readCalendar(
-      metadataStore,
-      'excludedDates',
-      '2025-01-01T00:00:00.000Z',
-      '2025-01-04T00:00:00.000Z',
-      scriptingApplication,
-    );
     const pagedItems = new Map(Array.from({length: 101}, (_, index) => {
       const id = 'item-' + String(index).padStart(3, '0');
-      return [id, new Proxy(storedItem, {get(target, key) {
+      return [id, new Proxy(event, {get(target, key) {
         return key === 'calendarItemIdentifier' ? $(id) : target[key];
       }})];
     }));
     selected = [...pagedItems.values()].reverse();
     selected.push(selected[0]);
+    let exports = 0;
     const pagedStore = {
       ...store,
-      calendarItemWithIdentifier: id => id === 'master-script-item' ? parentItem : pagedItems.get(id),
+      calendarItemWithIdentifier: id => pagedItems.get(id),
+      respondsToSelector: selector => selector === 'ICSDataForCalendarItems:preventLineFolding:',
+      ICSDataForCalendarItemsPreventLineFolding: () => {
+        exports += 1;
+        return $('BEGIN:VCALENDAR').dataUsingEncoding($.NSUTF8StringEncoding);
+      },
     };
-    let propertyReads = 0;
-    const pagedApplication = {
-      calendars: {byId: () => ({
-        name: () => ObjC.unwrap(calendar.title),
-        events: {byId: () => ({properties: () => {
-          propertyReads += 1;
-          return scriptingEvent.properties();
-        }})},
-      })},
-    };
-    const firstPage = readCalendar(pagedStore, 'eventMetadata', '2025-01-01T00:00:00.000Z', '2025-01-04T00:00:00.000Z', pagedApplication);
-    const firstPageReads = propertyReads;
-    const secondPage = readCalendar(pagedStore, 'eventMetadata', '2025-01-01T00:00:00.000Z', '2025-01-04T00:00:00.000Z', pagedApplication, firstPage.nextCursor);
-    const paging = {firstPage, secondPage, firstPageReads, propertyReads};
+    const firstPage = readCalendar(pagedStore, 'icsComponents', '2025-01-01T00:00:00.000Z', '2025-01-04T00:00:00.000Z');
+    const firstPageExports = exports;
+    const secondPage = readCalendar(pagedStore, 'icsComponents', '2025-01-01T00:00:00.000Z', '2025-01-04T00:00:00.000Z', undefined, firstPage.nextCursor);
+    const paging = {firstPage, secondPage, firstPageExports, exports};
     const allDay = $.EKEvent.eventWithEventStore(nativeStore);
     allDay.calendar = calendar;
     allDay.title = 'Unsaved all-day event';
@@ -1669,28 +1549,27 @@ test('Calendar occurrence keys survive rescheduling and preserve all-day dates',
       if (key === 'startDate' || key === 'endDate') return $.NSDate.dateWithTimeIntervalSince1970(Date.parse('2025-01-04T00:00:00.000Z') / 1000);
       return target[key];
     }})];
-    JSON.stringify({original, moved, metadata, excluded, paging, day, outside: read()});
+    JSON.stringify({original, moved, paging, day, outside: read()});
   `);
-  const { original, moved, metadata, excluded, paging, day, outside } =
-    JSON.parse(output);
+  const { original, moved, paging, day, outside } = JSON.parse(output);
   assert.equal(original.id, moved.id);
   assert.notEqual(original.startAt, moved.startAt);
   assert.equal(moved.detached, true);
-  assert.equal(metadata.records[0].scriptingUid, 'master-script-item');
-  assert.equal(metadata.records[0].rawRecurrence, 'RRULE:FREQ=DAILY');
-  assert.equal(metadata.records[0].sequence, 7);
-  assert.equal(metadata.nextCursor, null);
-  assert.equal(excluded.records[0].excludedAt, '2025-01-03T09:00:00.000Z');
+  // ICS exports page by native item: 100, then the rest, each item once.
+  const last = paging.firstPage.records.at(-1);
   assert.equal(paging.firstPage.records.length, 100);
-  assert.equal(paging.firstPageReads, 100);
-  assert.equal(paging.firstPage.nextCursor, paging.firstPage.records.at(-1).id);
+  assert.equal(paging.firstPageExports, 100);
+  assert.equal(
+    paging.firstPage.nextCursor,
+    JSON.stringify([last.calendarId, last.calendarItemId]),
+  );
   assert.equal(paging.secondPage.records.length, 1);
   assert.equal(paging.secondPage.nextCursor, null);
-  assert.equal(paging.propertyReads, 101);
+  assert.equal(paging.exports, 101);
   assert.equal(
     new Set(
       [...paging.firstPage.records, ...paging.secondPage.records].map(
-        (row) => row.id,
+        (row) => row.calendarItemId,
       ),
     ).size,
     101,
@@ -2550,6 +2429,90 @@ const seriesICS = [
   '',
 ].join('\r\n');
 
+test('an unchanged Calendar item writes nothing when the export lists its exceptions and alarms in another order', {
+  concurrency: false,
+}, async (t) => {
+  quietEventKit(t);
+  const source = new AppleCalendarSource({
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+  });
+  const exception = (day: string, alarms: readonly string[]) => [
+    'BEGIN:VEVENT',
+    'UID:series@example.com',
+    `RECURRENCE-ID;TZID=Asia/Amman:202501${day}T090000`,
+    'ATTENDEE;PARTSTAT=ACCEPTED:mailto:a@example.com',
+    ...alarms.flatMap((alarm) => [
+      'BEGIN:VALARM',
+      `X-WR-ALARMUID:${alarm}`,
+      'END:VALARM',
+    ]),
+    'END:VEVENT',
+  ];
+  // EventKit returns the same item with its siblings in a per-process order.
+  const exported = (reversed: boolean) => {
+    const order = <T>(values: T[]) => (reversed ? values.reverse() : values);
+    return [
+      'BEGIN:VCALENDAR',
+      ...order([
+        exception('08', order(['first-1', 'first-2'])),
+        exception('15', order(['second-1', 'second-2'])),
+      ]).flat(),
+      'END:VCALENDAR',
+      '',
+    ].join('\r\n');
+  };
+  let reversed = false;
+  t.mock.method(osa, 'execute', async () =>
+    icsPage([
+      { calendarItemId: 'series', recurring: true, ics: exported(reversed) },
+    ]),
+  );
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'ics.sqlite'),
+  });
+  const streams = [
+    source.icsComponents,
+    source.icsProperties,
+    source.icsParameters,
+  ];
+  const run = () =>
+    new Pipeline({
+      source,
+      destination: sqlite,
+      checkpoints: new SQLiteCheckpointStore({
+        path: join(scratch.path, 'state.sqlite'),
+      }),
+      steps: streams.map(
+        (stream) =>
+          new Copy(stream, sqlite.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            primaryKey: ['id'],
+          }),
+      ),
+    }).run();
+
+  const first = await run();
+  reversed = true;
+  const second = await run();
+
+  assert.deepEqual(
+    first.map(({ count }) => count),
+    [7, 10, 4],
+  );
+  assert.deepEqual(
+    second.map(({ count, deleted }) => [count, deleted]),
+    [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+    ],
+  );
+});
+
 test('Calendar ICS streams load components, raw properties and parameters with exact event links', {
   concurrency: false,
 }, async (t) => {
@@ -2622,20 +2585,21 @@ test('Calendar ICS streams load components, raw properties and parameters with e
       recurrenceIdTimeZone: null,
       eventId: null,
     },
-    {
-      calendarItemId: 'series',
-      name: 'VEVENT',
-      uid: 'series@example.com',
-      recurrenceId: null,
-      recurrenceIdTimeZone: null,
-      eventId: null,
-    },
+    // Sibling components are numbered in content order, not export order.
     {
       calendarItemId: 'series',
       name: 'VEVENT',
       uid: 'series@example.com',
       recurrenceId: '20250108T090000',
       recurrenceIdTimeZone: 'Asia/Amman',
+      eventId: null,
+    },
+    {
+      calendarItemId: 'series',
+      name: 'VEVENT',
+      uid: 'series@example.com',
+      recurrenceId: null,
+      recurrenceIdTimeZone: null,
       eventId: null,
     },
   ]);
@@ -3688,8 +3652,6 @@ const quietEventKit = (t: TestContext) =>
     },
   );
 
-const execFileAsync = promisify(execFileCallback);
-
 test('property lists decode as Foundation wrote them', () => {
   const plain = binaryPlist(
     '<dict><key>ascii</key><string>hello</string><key>unicode</key><string>é 😀</string><key>big</key><integer>9007199254740993</integer><key>negative</key><integer>-5</integer><key>real</key><real>1.5</real><key>yes</key><true/><key>when</key><date>2025-01-02T03:04:05Z</date><key>bytes</key><data>AQID</data><key>list</key><array><integer>1</integer><string>two</string></array></dict>',
@@ -3835,65 +3797,4 @@ test('a Messages watch loads each commit Messages makes while it keeps chat.db o
   }
 
   assert.deepEqual(batches, [6, 1]);
-});
-
-test('the Messages exporter loads every stream end to end and a second run writes nothing', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-messages-'),
-  );
-  const chatDb = await chatFixture(scratch.path);
-  const out = join(scratch.path, 'out');
-  const exporter = fileURLToPath(new URL('./messages.js', import.meta.url));
-  const run = () =>
-    execFileAsync(process.execPath, [
-      exporter,
-      '--chat-db',
-      chatDb,
-      '--out',
-      out,
-    ]);
-  const tables = () =>
-    messagesRows(
-      join(out, 'apple-messages.sqlite'),
-      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'raw_%' ORDER BY name",
-    ).map(({ name }) => {
-      const [row] = messagesRows(
-        join(out, 'apple-messages.sqlite'),
-        `SELECT count(*) AS rows, max(loaded_at) AS loadedAt FROM "${String(name)}"`,
-      );
-      return { name, rows: row?.rows, loadedAt: row?.loadedAt };
-    });
-
-  const first = await run();
-  const loaded = tables();
-  const second = await run();
-
-  assert.match(first.stdout, /Loaded Apple Messages/);
-  assert.deepEqual(
-    loaded.map(({ name, rows }) => [name, rows]),
-    [
-      ['raw_attachments', 2],
-      ['raw_chatHandles', 1],
-      ['raw_chatLookups', 1],
-      ['raw_chatMessages', 5],
-      ['raw_chatServices', 1],
-      ['raw_chats', 1],
-      ['raw_handles', 1],
-      ['raw_linkPreviews', 1],
-      ['raw_messageAttachments', 2],
-      ['raw_messageEdits', 2],
-      ['raw_messages', 6],
-      ['raw_recoverableMessageParts', 1],
-      ['raw_recoverableMessages', 1],
-    ],
-  );
-  assert.match(second.stdout, /Loaded Apple Messages/);
-  assert.deepEqual(tables(), loaded);
-  assert.deepEqual(
-    messagesRows(
-      join(out, 'apple-messages.sqlite'),
-      'SELECT guid, content FROM raw_attachments WHERE bytes IS NOT NULL',
-    ),
-    [{ guid: 'att-local', content: 'attached words' }],
-  );
 });

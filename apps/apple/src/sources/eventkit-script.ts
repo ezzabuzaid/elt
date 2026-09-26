@@ -146,6 +146,13 @@ const eventKit = (() => {
 
     return records;
   };
+  // EventKit returns an item's attendees and alarms in a different order in
+  // each process (verified live), so positions follow their content instead.
+  const inContentOrder = (values, key) =>
+    values
+      .map((value) => [JSON.stringify(key(value)), value])
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([, value]) => value);
   const related = (item, itemId, ownerKey, stream) => {
     if (!['attendees', 'alarms', 'recurrenceRules', 'recurrenceRuleValues'].includes(stream)) return [];
     const wants = name => name === stream;
@@ -155,28 +162,43 @@ const eventKit = (() => {
     if (wants('attendees')) {
       if (ownerKey === 'eventId' && !isNil(item.organizer))
         records.push(participant(itemId, ownerKey, item.organizer, 'organizer', 0));
-      for (const [position, value] of array(item.attendees).entries())
+      // A reply changes status, so status does not order attendees.
+      const attendees = inContentOrder(array(item.attendees), (value) => [
+        url(value.URL),
+        string(value.name),
+        number(value.participantRole),
+        number(value.participantType),
+      ]);
+      for (const [position, value] of attendees.entries())
         records.push(participant(itemId, ownerKey, value, 'attendee', position));
     }
-    if (wants('alarms'))
-      for (const [position, alarm] of array(item.alarms).entries()) {
-        const alarmLocation = location(alarm.structuredLocation);
+    if (wants('alarms')) {
+      const alarms = inContentOrder(
+        array(item.alarms).map((alarm) => {
+          const alarmLocation = location(alarm.structuredLocation);
+          return {
+            type: number(alarm.type),
+            relativeOffset: number(alarm.relativeOffset),
+            absoluteAt: timestamp(alarm.absoluteDate),
+            emailAddress: string(alarm.emailAddress),
+            soundName: string(alarm.soundName),
+            proximity: number(alarm.proximity),
+            locationTitle: alarmLocation.title,
+            latitude: alarmLocation.latitude,
+            longitude: alarmLocation.longitude,
+            radius: alarmLocation.radius,
+          };
+        }),
+        (alarm) => Object.values(alarm),
+      );
+      for (const [position, alarm] of alarms.entries())
         emit('alarms', {
           id: JSON.stringify([itemId, position]),
           [ownerKey]: itemId,
           position,
-          type: number(alarm.type),
-          relativeOffset: number(alarm.relativeOffset),
-          absoluteAt: timestamp(alarm.absoluteDate),
-          emailAddress: string(alarm.emailAddress),
-          soundName: string(alarm.soundName),
-          proximity: number(alarm.proximity),
-          locationTitle: alarmLocation.title,
-          latitude: alarmLocation.latitude,
-          longitude: alarmLocation.longitude,
-          radius: alarmLocation.radius,
+          ...alarm,
         });
-      }
+    }
 
     if (wants('recurrenceRules') || wants('recurrenceRuleValues'))
       for (const [position, rule] of rules.entries()) {

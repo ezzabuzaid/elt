@@ -11,7 +11,7 @@ import {
   type Stream,
   validateRecords,
 } from 'elt';
-import { messageOf } from '../../platform/google/google-errors.ts';
+import { messageOf } from 'google-auth';
 
 import {
   type RetryPolicy,
