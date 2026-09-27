@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
-import { Copy, Pipeline } from 'elt';
+import { Copy, Pipeline, PipelineError } from 'elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
@@ -18,6 +18,23 @@ import {
   ContactsSchemaError,
   ContactsUnavailableError,
 } from './index.ts';
+
+// Reads the source's first stream, which opens its address books.
+const readFirst = async (source: AppleContactsSource) => {
+  const [stream] = (await source.discover()).streams;
+  if (stream === undefined) throw new TypeError('Contacts has no streams');
+  return Array.fromAsync(
+    source.read(
+      [
+        new Copy(
+          stream,
+          new SQLiteDestination({ path: ':memory:' }).table(stream.name),
+        ).configuration,
+      ],
+      new Map(),
+    ),
+  );
+};
 
 // AddressBook-v22.abcddb's tables as macOS 26.6.2 creates them (schema only,
 // no data), in WAL mode like the real stores.
@@ -938,10 +955,12 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
   await pipeline.run();
   rmSync(join(directory, 'Sources/ACCOUNT-B/AddressBook-v22.abcddb'));
 
+  // Opening the read fails, so every copy reports it, as the run's cause.
   await assert.rejects(pipeline.run(), (error: Error) => {
-    assert.ok(error instanceof ContactsUnavailableError);
+    assert.ok(error instanceof PipelineError, String(error));
+    assert.ok(error.cause instanceof ContactsUnavailableError);
     assert.match(
-      error.message,
+      error.cause.message,
       /ACCOUNT-B.*Contacts access or Full Disk Access/,
     );
     return true;
@@ -951,7 +970,7 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
     4,
   );
   await assert.rejects(
-    new AppleContactsSource(join(scratch.path, 'missing')).session(),
+    readFirst(new AppleContactsSource(join(scratch.path, 'missing'))),
     ContactsUnavailableError,
   );
 });
@@ -969,7 +988,7 @@ test('Contacts names the columns it needs when a store has another layout', asyn
   }
 
   await assert.rejects(
-    new AppleContactsSource(directory).session(),
+    readFirst(new AppleContactsSource(directory)),
     (error: Error) => {
       assert.ok(error instanceof ContactsSchemaError);
       assert.match(error.message, /ACCOUNT-A.*ZABCDPHONENUMBER\.ZFULLNUMBER/);
@@ -993,7 +1012,7 @@ test('Contacts refuses a store whose entities it does not know instead of readin
   }
 
   await assert.rejects(
-    new AppleContactsSource(directory).session(),
+    readFirst(new AppleContactsSource(directory)),
     (error: Error) => {
       assert.ok(error instanceof ContactsSchemaError);
       assert.match(error.message, /ACCOUNT-B.*entity ABCDContact/);

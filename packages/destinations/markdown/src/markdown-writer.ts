@@ -1,6 +1,6 @@
 import { lstat, mkdir, open, rm, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CopyConfiguration, Deduplication, Load } from 'elt';
+import type { CopyConfiguration, Deduplication, Stage } from 'elt';
 import { TargetMissingError, TargetOwnedError, Writer } from 'elt';
 import { MarkdownDocument } from './markdown-document.ts';
 
@@ -50,10 +50,15 @@ export abstract class MarkdownWriter extends Writer {
     return { [Symbol.asyncDispose]: () => rmdir(lock) };
   }
 
-  protected override async open(
-    writer: string,
-    resuming: boolean,
-  ): Promise<Load> {
+  // Each target is its own file or folder, so its in-memory rows are already
+  // this stream's stage: a commit publishes only this target.
+  async prepare({
+    writer,
+    resuming,
+  }: {
+    writer: string;
+    resuming: boolean;
+  }): Promise<Stage> {
     const lock = await this.lock();
     try {
       const { owner, rows } = await this.read();

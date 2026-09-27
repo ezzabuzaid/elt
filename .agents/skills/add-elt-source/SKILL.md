@@ -30,7 +30,7 @@ Copy this checklist into your response and tick it off as you go:
   - **Apple Reminders**: EventKit, one fetch per stream, snapshot incremental.
   - **Apple Calendar**: bounded occurrence windows, paged per-item reads, related scalar streams, a feature-detected private API (ICS).
   - **Apple Notes**: the upstream's own Core Data SQLite store read-only; one template-method class per stream (`AppleNotesStream`) over a per-run scan that decodes protobuf note bodies and tables once; original-path attachment files; a `data_version` watch that keeps the app running hidden.
-  - **Apple Messages**: the upstream's own SQLite database read-only, one read session per run, composite keys, original-path attachment files.
+  - **Apple Messages**: the upstream's own SQLite database read-only, one read context per run, composite keys, original-path attachment files.
   - **Google Search Console** (`apps/google`): REST through `google-auth`, a date cursor with restated facts (`dedupPolicy: 'replace'`), polling `observe()`, quota-bound per-item refetch.
 
 ## Probing
@@ -47,8 +47,8 @@ Copy this checklist into your response and tick it off as you go:
 
 - Declare streams in a module-level `catalog` so instances share stream objects unless configuration changes the streams. Give the source a stable `identity` that distinguishes extraction configurations.
 - One instance reading several properties or accounts: declare `partitionKey` on the streams, list partitions in `partitions(stream)` from configuration, and read the one `extract` receives. Put the partition fields in every record and every primary key.
-- Every source implements `session(streams)`. Related streams (a join stream and its parents) return an `AsyncDisposable` that pins one consistent upstream view, such as a SQLite read transaction; independent streams return `new AsyncDisposableStack()`. `extract` receives it as its fourth argument. Hold nothing in it between runs.
-- Put source-specific selection rules in `validateExtraction()`, without I/O. Implement a lazy `extract(configuration, state, partition, session)` yielding `{ stream, data }`, `DELETE` and `STATE` messages through the shared `Source.read()` path. Each `STATE` is a commit point: the destination commits every row before it and the checkpoint is saved, so emit one only when everything before it is final. A read that fails must throw; the engine reports that partition, keeps its checkpoint, and goes on with the others.
+- Every source implements `protected open(streams)`: one run is one `Source.read` over every selected stream, and `open` returns the `AsyncDisposable` context it reads through. Related streams (a join stream and its parents) pin one consistent upstream view, such as a SQLite read transaction; independent streams return `new AsyncDisposableStack()`. `extract` receives it as its fourth argument. Hold nothing in it between runs. Raise `protected concurrency` only when several extracts can share the context at once.
+- Put source-specific selection rules in `validateExtraction()`, without I/O. Implement a lazy `extract(configuration, state, partition, context)` yielding `{ stream, data }`, `DELETE` and `STATE` messages through the shared `Source.read()` path. Each `STATE` is a commit point: the destination commits every row before it and the checkpoint is saved, so emit one only when everything before it is final. A read that fails must throw; the engine reports that partition, keeps its checkpoint, and goes on with the others.
 
 ### Records
 

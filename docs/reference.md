@@ -129,11 +129,11 @@ Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The `count` r
 
 ## Incremental extraction and checkpoints
 
-Incremental copies require an explicit stable `id` and a [checkpoint store](#checkpoint-stores). IDs must be unique within a pipeline. Copying the same stream to two targets requires two IDs, so progress in one does not advance the other.
+Incremental copies require an explicit stable `id` and a [checkpoint store](#checkpoint-stores). IDs must be unique within a pipeline, and each ID's progress is its own. A pipeline copies each stream once, so loading one stream into two targets takes two pipelines with two IDs (see [Read context](#read-context)).
 
-`Source.read(configuration, previousState)` receives `null` initially. It emits `{ stream, data }` records, `{ type: 'DELETE', stream, key }` deletions and `{ type: 'STATE', stream, state }` checkpoints. State is losslessly JSON serializable and source-owned; destinations do not interpret it.
+`Source.read(catalog, states)` hands each incremental stream its saved state, `null` on its first run, and `extract` receives it as `state`. `extract` emits `{ stream, data }` records, `{ type: 'DELETE', stream, key }` deletions and `{ type: 'STATE', stream, state }` checkpoints. Their text must be well-formed Unicode: a string or field name with a lone surrogate fails its stream, because SQLite and Markdown would store it as U+FFFD and Postgres refuses it. State is losslessly JSON serializable and source-owned; destinations do not interpret it.
 
-Each checkpoint is a commit point, as in Airbyte: the writer commits everything before it, then acknowledges it, and the store saves it before the load continues. A run that fails later keeps every checkpoint it acknowledged and resumes from the last one. No acknowledgement means no advancement, even if the source mutates its input state. When `extract` throws, `Source.read` ends that read with a `ReadFailure` (Airbyte's error trace) instead of throwing; the writer discards what that read applied since its last checkpoint and commits nothing more until the next one. A connector signals a failed read by throwing, never by yielding nothing. A full refresh carries no checkpoints, so it commits once at the end and any failure keeps the previous target.
+Each checkpoint is a commit point, as in Airbyte: the writer commits everything before it, then acknowledges it, and the store saves it before the load continues. A run that fails later keeps every checkpoint it acknowledged and resumes from the last one. No acknowledgement means no advancement, even if the source mutates its input state. When `extract` throws, `Source.read` reports a `FAILED` stream status (Airbyte's error trace) for that partition or stream instead of throwing; the stream's stage discards what it staged since its last checkpoint and commits nothing more until the next one. A connector signals a failed read by throwing, never by yielding nothing. A full refresh carries no checkpoints, so it commits once at the end and any failure keeps the previous target.
 
 The store binds each ID to the source identity, target declaration, schema and selected configuration. A changed binding fails before extraction. Use a new ID or explicitly reset progress:
 
@@ -148,12 +148,12 @@ A checkpoint is saved after its rows commit, in a separate store. If the rows co
 
 ### Checkpoint stores
 
-State belongs to the orchestration, not the destination, as in Airbyte, so any store works with any destination, including one that cannot hold state itself: a writer acknowledges each checkpoint only after the rows before it are durable, and `Copy` saves each acknowledgement. `CheckpointStore` owns that protocol (the binding check, the cloned input state, advancing only on an acknowledgement, `reset` and `clear`). A store supplies a session that holds the copy's lock for the whole run and whose `save` is durable when it resolves.
+State belongs to the orchestration, not the destination, as in Airbyte, so any store works with any destination, including one that cannot hold state itself: the replication saves each checkpoint only after its stream's rows before it committed. `CheckpointStore.run(bindings, work)` owns that protocol for every incremental copy of a run at once (the binding check per copy, the cloned input state, advancing only on a commit, `reset` and `clear`). A store supplies a session that holds every copy's lock for the whole run and whose `save` is durable when it resolves.
 
 | Store | Keeps state in | Concurrency |
 | --- | --- | --- |
-| `SQLiteCheckpointStore({ path })` from `elt-sqlite` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | The file's write lock, held for the run and retaken in the same step as each save commits: copies sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Use separate files for independent parallel pipelines. |
-| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._mac_elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | A session advisory lock per copy `id` on its own connection: different ids run in parallel, a second run of one id fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the writers' schema lock. |
+| `SQLiteCheckpointStore({ path })` from `elt-sqlite` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | The file's write lock, held for the run and retaken in the same step as each save commits: runs sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Use separate files for independent parallel pipelines. |
+| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._mac_elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | A session advisory lock per copy `id` on its own connection, taken in sorted order: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the writers' schema lock. |
 
 ### Snapshot streams
 
@@ -197,30 +197,32 @@ protected override async *extract(configuration, state, partition) {
 
 Partitions are declared without I/O: `partitionKey` fields must be distinct non-null scalar members of the primary key, and the list must be non-empty with no repeats.
 
-### Read sessions
+### Read context
 
-Every copy in one `Pipeline.run()` reads through one source session, so related streams describe the same moment of the source. Without it, copies run one after another and a join stream can reference a row its parent stream never saw.
+One `Pipeline.run()` is one `Source.read(catalog, states)` over every copy's stream, as Airbyte's `read(config, catalog, state)`. The source opens one context for the whole read, so related streams describe the same moment of the source; separate reads would let a join stream reference a row its parent stream never saw.
 
 ```ts
 class ChatSource extends Source<ChatDatabase> {
-  override session(streams) {
-    return ChatDatabase.open(this.path); // AsyncDisposable
+  protected override open(streams) {
+    return ChatDatabase.open(this.path); // AsyncDisposable, disposed when the read ends
   }
 
   protected override async *extract(configuration, state, partition, database) {
-    // database is the run's session
+    // database is the read's context
   }
 }
 ```
 
-- **Contract:** every source implements `session(streams)`, receiving the streams the run will read. An upstream with a read transaction pins it (Messages; Contacts, once per account store). One without reads every selected stream up front in one change-free window and serves the copies from that snapshot (Calendar and Reminders, see [EventKit consistency](#eventkit-consistency)). A source whose streams need not agree returns an empty `AsyncDisposableStack` (Search Console).
-- **Failures:** an error while opening, such as a denied permission, is raised as itself, not as a `PipelineError`, since no copy has started.
-- **Lifetime:** the pipeline opens the session before its first copy and disposes it after the last, including when a copy fails. A watch opens one per invalidation batch and holds none while idle, since a long read can block the upstream's own maintenance.
-- **Standalone reads:** `Source.read(configuration, state, session)` and `Copy.run(source, destination, session, checkpoints?)` require the session; open it with `await using session = await source.session([stream])`.
+- **Contract:** every source implements `open(streams)`, receiving the streams the read covers. An upstream with a read transaction pins it (Messages; Notes; Contacts, once per account store). One without reads every selected stream up front in one change-free window and serves the streams from that snapshot (Calendar and Reminders, see [EventKit consistency](#eventkit-consistency)). A source whose streams need not agree returns an empty `AsyncDisposableStack` (Search Console).
+- **Stream status:** each stream reads as `STARTED`, its messages, then `ENDED`; a partition or stream that failed adds `FAILED` with its error. Only `Source.read` creates a `StreamStatus`; one yielded by `extract` fails its stream with a `TypeError`, as does a message naming any stream but the one being extracted, so a stream can never write into a sibling's target.
+- **Interleaving:** `protected concurrency` (default 1) sets how many streams read at once; their messages interleave. A stream is asked for its next message only after the consumer took its last one, so a record's file stays valid until the consumer advances. A source that raises it reads its context from several extracts together. Partitions of one stream always read one after another.
+- **Lifetime:** the context opens when the read starts and closes when it ends, including when it fails. A watch reads once per invalidation batch and holds nothing while idle, since a long read can block the upstream's own maintenance.
+- **Failures:** a context that cannot open (a denied permission, a missing store) fails every copy of the run; `PipelineError.cause` is the error.
+- **One copy per stream:** a pipeline copies each stream once, as Airbyte's configured catalog lists each stream once. To load one stream into two targets, use two pipelines.
 
 #### EventKit consistency
 
-EventKit has no read transaction, so Calendar and Reminders sessions read optimistically: a watcher subscribes to `EKEventStoreChangedNotification`, every selected stream is read, and the reads repeat if a change arrived during them or within 250 ms after, the notification's delivery delay. Five disturbed attempts in a row raise `EventKitChangingError`. The snapshot holds the selected streams' records in memory for the run. Verified on 2026-09-25 against real stores: Reminders read all 8 streams in 2.1 s and Calendar 9 streams over two months in one attempt (244 s, the existing per-call EventKit cost of about 19 s).
+EventKit has no read transaction, so Calendar and Reminders contexts read optimistically: a watcher subscribes to `EKEventStoreChangedNotification`, every selected stream is read, and the reads repeat if a change arrived during them or within 250 ms after, the notification's delivery delay. Five disturbed attempts in a row raise `EventKitChangingError`. The snapshot holds the selected streams' records in memory for the run. Verified on 2026-09-25 against real stores: Reminders read all 8 streams in 2.1 s and Calendar 9 streams over two months in one attempt (244 s, the existing per-call EventKit cost of about 19 s).
 
 ### Apple Notes behavior
 
@@ -387,7 +389,7 @@ This follows Airbyte's source-side parser and staged-file concepts: its [file pa
 
 Notes exports through its scripting `save` command into a disposable staging directory. We never read its private database or treat an attachment's URL as a download URL. URL attachments, attachments inside password-protected notes, and objects whose native `contents` property is missing retain metadata with null content/bytes. The `contents` property is used only to check file availability; `save` still performs the export. Actual export errors fail the copy. An unnamed attachment with file contents can be requested as an original file, but the native parser cannot choose its format without an extension. Sources do not invent missing filenames or claim an unsuccessful export succeeded.
 
-`Source.read()` is the shared template method. Source implementations provide protected `extract(configuration, state, partition, session)`, yielding metadata, optional file paths, and state. The source resolves `configuration.fileReads` into parsed text or a `FileContent` before yielding records to the destination. A path must stay readable until the consumer advances past its record: a staged copy the source cleans up afterwards, or the original file when copying it would be costly (Messages hands over its attachment files). Writers reject any leaked path.
+`Source.read()` is the shared template method. Source implementations provide protected `extract(configuration, state, partition, context)`, yielding metadata, optional file paths, and state. The source resolves `configuration.fileReads` into parsed text or a `FileContent` before yielding records to the destination. A path must stay readable until the consumer advances past its record: a staged copy the source cleans up afterwards, or the original file when copying it would be costly (Messages hands over its attachment files). Destinations reject any leaked path.
 
 Extend `DocumentParser` with `parse(path): Promise<string | null>` for another parsing implementation. Return `null` when the file has no text the parser can represent, and throw only when reading it failed. Give it a stable identity that includes its version and relevant configuration; keep the implementation/configuration immutable and parse without modifying the staged file. A parser does not depend on Notes or SQLite. Parser identity participates in the copy's checkpoint binding; changing it requires a new copy ID or explicit checkpoint reset. Source keys and cursors remain metadata fields, and a checkpoint is still acknowledged only after the rows before it commit.
 
@@ -395,11 +397,13 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 
 ## Execution and failures
 
-`Pipeline.run()` preflights every copy before executing any of them. Unknown streams, unsupported combinations, invalid schema declarations, missing keys/cursors/IDs/state store, and duplicate copy IDs fail without extraction or storage creation. Preflight uses metadata; storage permissions, existing constraints and record values are checked during execution. Standalone `Copy.run(source, destination, checkpoints?)` validates too.
+`Pipeline.run()` preflights every copy before executing any of them. Unknown streams, unsupported combinations, invalid schema declarations, missing keys/cursors/IDs/state store, and duplicate copy IDs fail without extraction or storage creation. Preflight uses metadata; storage permissions, existing constraints and record values are checked during execution.
 
-Copies then execute in declaration order, and, as in Airbyte, every copy runs even when an earlier one fails. Each copy commits at its checkpoints, so an incremental copy that fails keeps what it committed; a full refresh commits once, so a failure keeps the previous target. Empty overwrite clears it; empty append preserves existing records. There is no pipeline-wide rollback.
+A run then locks every incremental copy's checkpoint, opens one load on the destination, and prepares every target before reading anything: a copy whose target is refused (another writer's, or dropped while its copy resumes) fails and reads nothing. One read then covers the remaining copies. As in Airbyte, every copy runs even when another fails. Each stream stages its operations apart from the others and commits them at its own checkpoints, so an incremental copy that fails keeps what it committed and publishes nothing it staged since; a full refresh commits once, when its stream ends, so a failure keeps the previous target. Empty overwrite clears it; empty append preserves existing records. There is no pipeline-wide rollback.
 
-When any copy is incomplete, `run()` throws one `PipelineError` after the last copy:
+Verified live on 2026-09-26 (macOS 26.6.2) with the Apple exporter run twice against real stores: the first run loaded every stream (Messages 12,573 messages, Calendar 10,941 events) in 203 s; the second, 168 s, wrote nothing for Notes, Messages, Contacts and Reminders, and for Calendar only 2 events (with 1 alarm and 2 recurrence rules) that had just entered its one-year window, and 1 account EventKit listed for the first time. A run killed mid-write left a hot journal that SQLite rolled back on the next open; nothing it staged was published. The Search Console exporter completed every stream into the Postgres warehouse the same day.
+
+When any copy is incomplete, `run()` throws one `PipelineError` once the read ends:
 
 ```ts
 import { PipelineError } from 'elt';
@@ -415,11 +419,11 @@ try {
 }
 ```
 
-`PipelineError` is an `AggregateError`: `errors` holds every failure and `results` holds every copy's committed `count` and `deleted` beside its `failures`. A failure after rows committed, such as a checkpoint that could not be saved or a cleanup error after publication, is reported the same way with the committed counts; it does not imply rollback. A count of zero also covers a committed empty input. Standalone `Copy.run` throws `CopyError` with the same `result`.
+`PipelineError` is an `AggregateError`: `errors` holds every failure and `results` holds every copy's committed `count` and `deleted` beside its `failures`. A failure after rows committed, such as a checkpoint that could not be saved or a cleanup error after publication, is reported the same way with the committed counts; it does not imply rollback. A count of zero also covers a committed empty input.
 
-Declarations are frozen and reusable. `Destination.createWriter(configuration, target)` selects a storage-specific strategy without I/O. Writers own connections, files, counters, and publication. `Copy`/`Pipeline` contain no SQL/filesystem loading branches. `Source.identity` and `Destination.identity(target)` provide stable checkpoint bindings; custom implementations must distinguish different source instances/targets/configuration domains.
+Declarations are frozen and reusable. `Destination.createWriter(configuration, target)` selects a storage-specific strategy without I/O; `Destination.load()` opens the run's one hold on storage, and `load.prepare(configuration, target, { writer, resuming })` gives each stream its `Stage` (`apply`, `commit`, `discard`). Destinations own connections, files, and publication. `Copy`/`Pipeline` contain no SQL/filesystem loading branches. `Source.identity` and `Destination.identity(target)` provide stable checkpoint bindings; custom implementations must distinguish different source instances/targets/configuration domains.
 
-SQLite holds its transaction during extraction. Long reads can block other writers. `:memory:` is allowed only for full refresh; each copy's database disappears when its handle closes, so it cannot safely retain incremental progress.
+SQLite holds one write transaction for the whole run, retaking the lock in the same step as each commit, so long reads block other writers to the file. Each stream stages its operations in a connection-private `TEMP` table: another stream's commit never publishes them and a crash leaves nothing behind. A commit merges one stream's staged operations into its table, with the result of applying them one at a time: a staged `DELETE` removes its key, only records after a key's last `DELETE` count, `replace` keeps the last and `cursor_newer` the first with the greatest cursor. Original files stream straight into the chunk table; chunks no row references are deleted after each merge and swept when a later run prepares the table or it is cleared. `:memory:` is allowed only for full refresh; the run's database disappears when its handle closes, so it cannot safely retain incremental progress.
 
 ## Markdown destination
 
@@ -471,14 +475,16 @@ Inferred columns follow the stream schema, and unlike SQLite the string formats 
 | `number` | `DOUBLE PRECISION` |
 | `boolean` | `BOOLEAN` |
 
+ISO dates count years astronomically and Postgres does not, so year `0000` loads as `0001 BC`, the same day; every other year is written as given.
+
 Explicit columns use `columns.text/integer/real/boolean/date/timestamp(field)` with `.notNull()` and `.primaryKey()`. File reads are not supported. Identifiers are case-sensitive and limited to 63 bytes, because Postgres would silently truncate a longer one; `_mac_elt_` names and a `loaded_at` column are reserved, and `pg_` schemas are refused.
 
-A copy commits at each checkpoint; every transaction holds a per-schema advisory lock, so writers to one schema run one at a time. Readers never wait on the lock:
+A run holds one connection and one write transaction on the schema, under a per-schema advisory lock retaken after each commit, so writers to one schema run one at a time. Readers never wait on the lock. Each stream stages its operations in a session-private `TEMP` table and commits them at its own checkpoints:
 
-- Overwrite empties the table with `DELETE`, not `TRUNCATE`, because the transaction stays open while the source is read and `TRUNCATE` would block readers for all of it. A full refresh has no checkpoints, so until it commits, readers see the previous load.
-- Records are inserted in batches of 1000, sent as one JSON parameter and cast per column. Every row of a copy shares one `loaded_at` (`TIMESTAMPTZ`), its first transaction's start time, across all its commits.
-- Deduplication upserts on a unique index named after the table and key (`_mac_elt_dedup_<hash>`). The index is created once and rebuilt only when the key changes. Within a batch, one row per key is kept, as applying the batch row by row would: `replace` keeps the last and `cursor_newer` keeps the first with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`).
-- Deletions apply in source order: pending records are written first.
+- Operations reach the stage in batches of 1000, sent as one JSON parameter and cast per column. Every statement runs under a savepoint, because a failed statement aborts a Postgres transaction and would otherwise erase the other streams' stages.
+- A commit merges one stream's stage into its table with the result of applying its operations one at a time: staged `DELETE`s remove their keys, only records after a key's last `DELETE` count, `replace` keeps the last and `cursor_newer` the first with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`). Every row of a run shares one `loaded_at` (`TIMESTAMPTZ`).
+- Overwrite empties the table with `DELETE`, not `TRUNCATE`, at its stream's commit: `TRUNCATE`'s exclusive lock would block readers for the rest of the run. Until then readers see the previous load.
+- Deduplication upserts on a unique index named after the table and key (`_mac_elt_dedup_<hash>`). The index is created once and rebuilt only when the key changes; a replacing load builds it after emptying the table.
 - The writer of each table lives in `<schema>._mac_elt_writers` and follows the [target ownership](#target-ownership) rule.
 
 Existing tables are not migrated: a deduplicating load checks that stored key and cursor columns keep their types and fails otherwise. Keep checkpoints in the same schema with `PostgresCheckpointStore` ([checkpoint stores](#checkpoint-stores)).
@@ -542,7 +548,7 @@ Every column of Messages' own tables loads, named in camelCase (`is_from_me` →
 | `attachments` | `guid` | All 23 `attachment` columns (path, transfer name, MIME type, UTI, size, dates, flags, archived info as JSON) and `availableLocally`. Supports file reads. |
 | `messageAttachments` | `messageGuid`, `attachmentGuid` | Which message carries each attachment. |
 
-- **Consistency:** every stream in a run reads through one [session](#read-sessions), a read transaction on `chat.db`. The database runs in WAL mode, so all streams see one snapshot however Messages writes meanwhile.
+- **Consistency:** every stream in a run reads through one [read context](#read-context), a read transaction on `chat.db`. The database runs in WAL mode, so all streams see one snapshot however Messages writes meanwhile.
 - **Identity:** rows and relationships use `guid`s. `ROWID`s are local and change when Messages in iCloud rebuilds the database.
 - **Incremental:** all thirteen are [snapshot streams](#snapshot-streams). Edits, unsends and read receipts change old rows and chat.db has no modification column, so each run scans every row, loads the changed ones, and deletes rows that disappeared.
 - **Text:** recent macOS versions store the body only in `attributedBody`, an `NSAttributedString` in typedstream form. `text` falls back to its first string, and the archived value is kept verbatim.
@@ -624,7 +630,7 @@ Every stored attribute of the Core Data model (`ABAddressBook`, version `24A2` o
 | `distributionListConfigs` | `groupId`, `contactId`, `propertyName` | The email, phone or address a group uses for a member. |
 | `images` | `contactId`, `kind` | A contact's `image` and `thumbnail`: `storage` (`inline` or `external`), `externalId`, `byteLength`, `sha256`. Supports file reads. |
 
-- **Consistency:** a [session](#read-sessions) opens every store in one read transaction each, so a contact agrees with its phones, groups and photos. Stores commit independently, so two accounts are not pinned to the same instant; no relationship crosses stores.
+- **Consistency:** the [read context](#read-context) opens every store in one read transaction each, so a contact agrees with its phones, groups and photos. Stores commit independently, so two accounts are not pinned to the same instant; no relationship crosses stores.
 - **Identity:** `uniqueId`s are UUIDs, unique across stores; `Z_PK`s are local to a store and are never exported. Contacts.framework identifies an account's container as `<source>:ABAccount`, not by the container row's `id`.
 - **Dates:** Contacts stores birthdays and dates as noon UTC of the day, in year 1604 when the year is unknown; they load as `year` (null without one), `month` and `day`.
 - **Incremental:** all 24 are [snapshot streams](#snapshot-streams). Labeled values carry no modification date and deleted records leave no row; the Core Data persistent history is contactsd's to prune, not a cursor the connector owns. Each run scans every row.
@@ -681,7 +687,7 @@ Date components preserve undefined values as `null`, including missing clock com
 
 Native enum values remain integers. Alarm proximity is `0` (none), `1` (arrival), or `2` (departure); a radius of `0` asks the system to choose a radius. Recurrence frequency is `0` (daily), `1` (weekly), `2` (monthly), or `3` (yearly). A zero recurrence count means no count-based limit. Only the next incomplete reminder in a recurring series is exposed by Apple; the source does not invent future occurrences or deliver notifications.
 
-EventKit IDs can change after a full server sync; external identifiers are not universally unique or stable across providers/devices. Child IDs identify positions within the current snapshot; attendees and alarms are numbered in content order (see [Calendar completeness](#completeness-and-limits)). Full-refresh overwrite and snapshot incremental both reconcile deletions; incremental still fetches every reminder each run, because EventKit offers no change feed. Streams are queried independently, without a cross-stream snapshot or pipeline-wide transaction. OSA buffers each complete response up to 64 MiB and has a 120-second process timeout; large collections can exceed those limits.
+EventKit IDs can change after a full server sync; external identifiers are not universally unique or stable across providers/devices. Child IDs identify positions within the current snapshot; attendees and alarms are numbered in content order (see [Calendar completeness](#completeness-and-limits)). Full-refresh overwrite and snapshot incremental both reconcile deletions; incremental still fetches every reminder each run, because EventKit offers no change feed. Every selected stream comes from one change-free snapshot (see [EventKit consistency](#eventkit-consistency)); the destination still commits each stream on its own, with no pipeline-wide transaction. OSA buffers each complete response up to 64 MiB and has a 120-second process timeout; large collections can exceed those limits.
 
 See the [EventKit research and implementation notes](eventkit-reminders.md) for API evidence, design choices, verification, and migration details.
 
@@ -753,13 +759,13 @@ Markdown uses the same source; for example, `new Copy(calendar.events, markdown.
 
 ### Completeness and limits
 
-Full-refresh overwrite and snapshot incremental both reconcile deletions and events moved outside the selected window on the next successful run; incremental writes only the rows that changed. Ordinary append retains observations. Child rows are keyed by position in content order, not EventKit's order: EventKit returns an item's attendees and alarms, and its ICS export an item's sibling components (a series' exceptions and their alarms), in a different order in each process. A live check on **2026-09-25** (macOS 26.6.2) found two runs minutes apart with no edits rewriting 2,600 attendee, 684 alarm and 1,294 ICS component rows, each event's set identical and only reordered; property and parameter order was stable. Attendees are ordered by URL, name, role and type (not status, so a reply updates its row in place), alarms by all their fields, and ICS components by their content. Adding or editing a child can renumber its siblings. Each stream is read separately, so concurrent Calendar changes can affect relationships; the pipeline has no cross-stream snapshot or transaction. OSA still buffers at most 64 MiB per query and times out after 120 seconds; very dense windows can exceed those limits. Duplicate tracking retains occurrence/child IDs for the duration of one copy.
+Full-refresh overwrite and snapshot incremental both reconcile deletions and events moved outside the selected window on the next successful run; incremental writes only the rows that changed. Ordinary append retains observations. Child rows are keyed by position in content order, not EventKit's order: EventKit returns an item's attendees and alarms, and its ICS export an item's sibling components (a series' exceptions and their alarms), in a different order in each process. A live check on **2026-09-25** (macOS 26.6.2) found two runs minutes apart with no edits rewriting 2,600 attendee, 684 alarm and 1,294 ICS component rows, each event's set identical and only reordered; property and parameter order was stable. Attendees are ordered by URL, name, role and type (not status, so a reply updates its row in place), alarms by all their fields, and ICS components by their content. Adding or editing a child can renumber its siblings. Every selected stream comes from one change-free snapshot (see [EventKit consistency](#eventkit-consistency)), so relationships between streams agree; the destination still commits each stream on its own. OSA still buffers at most 64 MiB per query and times out after 120 seconds; very dense windows can exceed those limits. Duplicate tracking retains occurrence/child IDs for the duration of one copy.
 
 The source preserves the EventKit fields above. These remaining capabilities require more than another source field:
 
 - **Change feed:** EventKit provides change notifications but no durable change cursor, so every incremental run still reads the whole window.
 - **Attachment bytes and travel time:** attachment files load only through the `attachments` fetcher, because exported references need provider authorization. `googleCalendarAttachments(requester)` downloads Drive files (native Google files as PDF, shortcuts followed, link-shared files with their resource key) and Gmail attachment references, given a `google-auth` requester with Drive and Gmail read scopes. It resolves false for other URLs and for files the account cannot open, including Google files too large to export as PDF (10 MB); rate limits and configuration errors reject. Travel time is not exported. Deprecated open-file alarm URLs are unavailable on modern macOS.
-- **Consistent multi-stream snapshots and resumable large exports:** these need additional extraction/checkpoint and pipeline support. Full refresh currently restarts a failed copy, preserving its previous destination contents until the complete replacement succeeds.
+- **Resumable large exports:** these need additional extraction and checkpoint support. Full refresh currently restarts a failed copy, preserving its previous destination contents until the complete replacement succeeds.
 
 See Apple's [EventKit retrieval documentation](https://developer.apple.com/documentation/eventkit/retrieving-events-and-reminders), [occurrence identity](https://developer.apple.com/documentation/eventkit/ekevent/occurrencedate), and [calendar-item identity caveats](https://developer.apple.com/documentation/eventkit/ekcalendaritem/calendaritemidentifier).
 

@@ -9,8 +9,17 @@ export class SQLiteOverwriteWriter extends SQLiteWriter {
     Object.freeze(this);
   }
 
-  protected override initialize(database: DatabaseSync): void {
-    database.exec(this.table.createTableSQL);
-    database.exec(`DELETE FROM ${this.table.quotedName}`);
+  protected override get replaces(): boolean {
+    return true;
+  }
+
+  protected override initialize(): void {}
+
+  protected override merge(
+    database: DatabaseSync,
+    stage: string,
+    loadedAt: string,
+  ): void {
+    this.append(database, stage, loadedAt);
   }
 }

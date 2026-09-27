@@ -14,7 +14,15 @@ import { type TestContext, test } from 'node:test';
 import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { gzipSync } from 'node:zlib';
-import { Copy, Pipeline, Stream } from 'elt';
+import {
+  Copy,
+  Pipeline,
+  PipelineError,
+  type ReadMessage,
+  type Source,
+  Stream,
+  StreamStatus,
+} from 'elt';
 import { MarkdownDestination } from 'elt-markdown';
 import {
   SQLiteCheckpointStore,
@@ -576,41 +584,67 @@ test('Notes loads edits and deletions incrementally and a repeat run writes noth
   });
 });
 
-test('a Notes session reads one snapshot while Notes keeps writing', async () => {
+// The configured stream a full-refresh copy of stream reads.
+const configured = (stream: Stream) =>
+  new Copy(
+    stream,
+    new SQLiteDestination({ path: ':memory:' }).table(stream.name),
+  ).configuration;
+
+// One read of first then second, with a write committed between them; returns
+// what second read and what a later read sees.
+const acrossStreams = async (
+  source: Source,
+  [first, second]: [Stream, Stream],
+  write: () => void,
+  field: string,
+) => {
+  const values = (messages: readonly ReadMessage[]) =>
+    messages
+      .flatMap((message) =>
+        'data' in message && message.stream === second.name
+          ? [Reflect.get(Object(message.data), field)]
+          : [],
+      )
+      .sort();
+  const pinned: ReadMessage[] = [];
+  for await (const message of source.read(
+    [configured(first), configured(second)],
+    new Map(),
+  )) {
+    pinned.push(message);
+    if (
+      message instanceof StreamStatus &&
+      message.stream === first.name &&
+      message.status === 'ENDED'
+    )
+      write();
+  }
+  const later = await Array.fromAsync(
+    source.read([configured(second)], new Map()),
+  );
+  return { during: values(pinned), after: values(later) };
+};
+
+test('one Notes read sees one moment of the store while Notes keeps writing', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
   const path = await noteStoreFixture(scratch.path);
   const source = new AppleNotesSource({ path });
-  const copy = new Copy(
-    source.notes,
-    new SQLiteDestination({ path: join(scratch.path, 'out.sqlite') }).table(
-      'notes',
-    ),
-  );
-  const ids = async (session: Awaited<ReturnType<typeof source.session>>) =>
-    (await Array.fromAsync(source.read(copy.configuration, null, session)))
-      .map((message) =>
-        'data' in message ? Reflect.get(Object(message.data), 'id') : null,
-      )
-      .sort();
 
-  const pinned = await (async () => {
-    await using session = await source.session();
-    const before = await ids(session);
-    {
+  const { during, after } = await acrossStreams(
+    source,
+    [source.folders, source.notes],
+    () => {
       using notes = new DatabaseSync(path);
       notes.exec(
         "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
       );
-    }
-    return { before, during: await ids(session) };
-  })();
-  const after = await (async () => {
-    await using session = await source.session();
-    return ids(session);
-  })();
+    },
+    'id',
+  );
 
-  assert.deepEqual(pinned.during, pinned.before);
-  assert.deepEqual(after, [...pinned.before, 'NOTE-NEW'].sort());
+  assert.ok(!during.includes('NOTE-NEW'));
+  assert.deepEqual(after, [...during, 'NOTE-NEW'].sort());
 });
 
 test('Notes names Full Disk Access when its store cannot be opened and refuses an unknown layout', async () => {
@@ -627,8 +661,12 @@ test('Notes names Full Disk Access when its store cannot be opened and refuses a
   });
   const other = new AppleNotesSource({ path: unknown });
 
-  const opening = missing.session();
-  const reading = other.session();
+  const opening = Array.fromAsync(
+    missing.read([configured(missing.notes)], new Map()),
+  );
+  const reading = Array.fromAsync(
+    other.read([configured(other.notes)], new Map()),
+  );
 
   await assert.rejects(opening, (error) => {
     assert.ok(error instanceof NotesUnavailableError);
@@ -966,9 +1004,11 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
   };
   await assert.rejects(
     run(),
-    // The session reads before any copy starts, so nothing wraps the error.
+    // Opening the read fails, so every copy reports it, as the run's cause.
     (error: unknown) =>
-      error instanceof CalendarUnavailableError && error.cause === unavailable,
+      error instanceof PipelineError &&
+      error.cause instanceof CalendarUnavailableError &&
+      error.cause.cause === unavailable,
   );
   assert.equal(await readFile(path, 'utf8'), previous);
 
@@ -976,7 +1016,11 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
   response = async () => {
     throw native;
   };
-  await assert.rejects(run(), (error: unknown) => error === native);
+  await assert.rejects(
+    run(),
+    (error: unknown) =>
+      error instanceof PipelineError && error.cause === native,
+  );
   assert.equal(await readFile(path, 'utf8'), previous);
 });
 
@@ -2003,14 +2047,20 @@ test('Reminders rejects unsupported selections and preserves targets on invalid 
     });
     await assert.rejects(
       run(),
-      // The session reads before any copy starts, so nothing wraps the error.
+      // Opening the read fails, so every copy reports it, as the run's cause.
       (error: unknown) =>
-        error instanceof RemindersUnavailableError && error.cause === failure,
+        error instanceof PipelineError &&
+        error.cause instanceof RemindersUnavailableError &&
+        error.cause.cause === failure,
     );
     assert.equal(await readFile(path, 'utf8'), previous);
   }
   failure = new Error('EventKit reminder fetch timed out');
-  await assert.rejects(run(), (error: unknown) => error === failure);
+  await assert.rejects(
+    run(),
+    (error: unknown) =>
+      error instanceof PipelineError && error.cause === failure,
+  );
   assert.equal(await readFile(path, 'utf8'), previous);
   failure = undefined;
   response = '[]';
@@ -2641,19 +2691,8 @@ test('Calendar ICS rejects exports without events and reports a missing private 
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-02-01T00:00:00.000Z',
   });
-  const read = async () => {
-    await using session = await source.session([source.icsComponents]);
-    return await Array.fromAsync(
-      source.read(
-        new Copy(
-          source.icsComponents,
-          new MarkdownDestination({ path: '/unused' }).file('c.md'),
-        ).configuration,
-        null,
-        session,
-      ),
-    );
-  };
+  const read = () =>
+    Array.fromAsync(source.read([configured(source.icsComponents)], new Map()));
   const execute = t.mock.method(osa, 'execute', async () =>
     icsPage([
       {
@@ -3590,47 +3629,32 @@ test('Messages loads edits and unsends incrementally and deletes removed message
   );
 });
 
-test('a Messages session reads one snapshot while Messages keeps writing', async () => {
+test('one Messages read sees one moment of chat.db while Messages keeps writing', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-messages-'),
   );
   const path = await chatFixture(scratch.path);
   const source = new AppleMessagesSource(path);
-  const copy = new Copy(
-    source.messages,
-    new SQLiteDestination({ path: join(scratch.path, 'out.sqlite') }).table(
-      'messages',
-    ),
-  );
-  const guids = async (session: Awaited<ReturnType<typeof source.session>>) =>
-    (await Array.fromAsync(source.read(copy.configuration, null, session)))
-      .map((message) =>
-        'data' in message ? Reflect.get(Object(message.data), 'guid') : null,
-      )
-      .sort();
-
-  const pinned = await (async () => {
-    await using session = await source.session();
-    const before = await guids(session);
-    {
+  const { during, after } = await acrossStreams(
+    source,
+    [source.handles, source.messages],
+    () => {
       using chat = new DatabaseSync(path);
       chat.exec("INSERT INTO message (guid, text) VALUES ('m-new', 'arrived')");
-    }
-    return { before, during: await guids(session) };
-  })();
-  const after = await (async () => {
-    await using session = await source.session();
-    return guids(session);
-  })();
+    },
+    'guid',
+  );
 
-  assert.deepEqual(pinned.during, pinned.before);
-  assert.deepEqual(after, [...pinned.before, 'm-new'].sort());
+  assert.ok(!during.includes('m-new'));
+  assert.deepEqual(after, [...during, 'm-new'].sort());
 });
 
 test('Messages names Full Disk Access when chat.db cannot be opened', async () => {
   const source = new AppleMessagesSource(join(tmpdir(), 'missing', 'chat.db'));
 
-  const opening = source.session();
+  const opening = Array.fromAsync(
+    source.read([configured(source.messages)], new Map()),
+  );
 
   await assert.rejects(opening, (error) => {
     assert.ok(error instanceof MessagesUnavailableError);
@@ -3726,11 +3750,15 @@ test('an EventKit session reads again when a change arrives during the read', as
     return JSON.stringify([{ ...recordFor(source.accounts), name: version }]);
   });
 
-  await using snapshot = await source.session([source.accounts]);
+  const messages = await Array.fromAsync(
+    source.read([configured(source.accounts)], new Map()),
+  );
 
   assert.deepEqual(reads, ['before', 'after']);
   assert.deepEqual(
-    snapshot.of('accounts').map((account) => account.name),
+    messages.flatMap((message) =>
+      'data' in message ? [Reflect.get(Object(message.data), 'name')] : [],
+    ),
     ['after'],
   );
 });
@@ -3752,7 +3780,9 @@ test('an EventKit session gives up when every read sees a change', async (t) => 
     JSON.stringify([recordFor(source.accounts)]),
   );
 
-  const opening = source.session([source.accounts]);
+  const opening = Array.fromAsync(
+    source.read([configured(source.accounts)], new Map()),
+  );
 
   await assert.rejects(opening, EventKitChangingError);
   assert.equal(execute.mock.callCount(), 5);

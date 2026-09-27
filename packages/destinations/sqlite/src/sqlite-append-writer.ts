@@ -9,7 +9,13 @@ export class SQLiteAppendWriter extends SQLiteWriter {
     Object.freeze(this);
   }
 
-  protected override initialize(database: DatabaseSync): void {
-    database.exec(this.table.createTableSQL);
+  protected override initialize(): void {}
+
+  protected override merge(
+    database: DatabaseSync,
+    stage: string,
+    loadedAt: string,
+  ): void {
+    this.append(database, stage, loadedAt);
   }
 }

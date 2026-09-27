@@ -1,4 +1,4 @@
-import { type CopyConfiguration, Destination } from 'elt';
+import { type CopyConfiguration, Destination, type Load } from 'elt';
 import { schemaName, server } from './connection.ts';
 import { quote } from './identifier.ts';
 import { PostgresAppendWriter } from './postgres-append-writer.ts';
@@ -7,7 +7,7 @@ import { PostgresColumns } from './postgres-columns.ts';
 import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts';
 import { PostgresOverwriteWriter } from './postgres-overwrite-writer.ts';
 import { PostgresTable } from './postgres-table.ts';
-import type { PostgresWriter } from './postgres-writer.ts';
+import { PostgresLoad, type PostgresWriter } from './postgres-writer.ts';
 
 // Loads into one schema of one database. The URL carries credentials, so it
 // stays private and out of identity(), which is persisted with checkpoints.
@@ -41,6 +41,16 @@ export class PostgresDestination extends Destination<PostgresTable> {
 
   override location(target: PostgresTable): string {
     return `${quote(this.schema)}.${target.quotedName}`;
+  }
+
+  // One connection and one write transaction for the whole run.
+  override async load(): Promise<Load<PostgresTable>> {
+    const load = await PostgresLoad.open(this.#url, this.schema);
+    return {
+      prepare: (configuration, target, binding) =>
+        this.createWriter(configuration, target).prepare(load, binding),
+      [Symbol.asyncDispose]: () => load[Symbol.asyncDispose](),
+    };
   }
 
   table(

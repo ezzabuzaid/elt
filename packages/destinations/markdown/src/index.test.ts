@@ -25,7 +25,7 @@ import {
 test('Markdown file and folder targets honor the deduplication policy', async () => {
   let clicks = 12;
   class RestatingSource extends Source {
-    override async session() {
+    protected override async open() {
       return new AsyncDisposableStack();
     }
 
@@ -84,14 +84,19 @@ test('Markdown file and folder targets honor the deduplication policy', async ()
           : 'cursor_newer',
       }),
   );
-  const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: copies,
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
   });
+  // A read copies each stream once, so each target of metrics has its own pipeline.
+  const run = async () => {
+    for (const copy of copies)
+      await new Pipeline({
+        source,
+        destination,
+        checkpoints,
+        steps: [copy],
+      }).run();
+  };
   const clicksIn = async (name: string) => {
     const path = join(destination.path, name);
     const files = name.endsWith('.md')
@@ -110,9 +115,9 @@ test('Markdown file and folder targets honor the deduplication policy', async ()
     );
   };
 
-  await pipeline.run();
+  await run();
   clicks = 19;
-  await pipeline.run();
+  await run();
 
   assert.deepEqual(
     await Promise.all(targets.map((target) => clicksIn(target.name))),
@@ -134,7 +139,7 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
     emitsDeletes: true,
   });
   class DeletingSource extends Source {
-    override async session() {
+    protected override async open() {
       return new AsyncDisposableStack();
     }
 
@@ -169,18 +174,19 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
     destinationSyncMode: 'append_dedup',
     primaryKey: ['id'],
   } as const;
-  const pipeline = new Pipeline({
-    source,
-    destination: markdown,
-    checkpoints,
-    steps: [
-      new Copy(items, markdown.file('items.md'), { ...selection, id: 'file' }),
-      new Copy(items, markdown.folder('items'), {
-        ...selection,
-        id: 'folder',
+  // A read copies each stream once, so each target of items has its own pipeline.
+  const pipelines = [
+    new Copy(items, markdown.file('items.md'), { ...selection, id: 'file' }),
+    new Copy(items, markdown.folder('items'), { ...selection, id: 'folder' }),
+  ].map(
+    (copy) =>
+      new Pipeline({
+        source,
+        destination: markdown,
+        checkpoints,
+        steps: [copy],
       }),
-    ],
-  });
+  );
   const names = async () => {
     const decode = (document: string) =>
       Array.from(
@@ -205,8 +211,13 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
         .sort(),
     ];
   };
-  const runAll = async () =>
-    (await pipeline.run()).map(({ count, deleted }) => ({ count, deleted }));
+  const runAll = async () => {
+    const results = [];
+    for (const pipeline of pipelines)
+      for (const { count, deleted } of await pipeline.run())
+        results.push({ count, deleted });
+    return results;
+  };
 
   messages = [record('a', 'A'), record('b', 'B'), record('c', 'C')];
   await runAll();
@@ -227,7 +238,7 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
 
 test('a target has one writer, even when another loads only its own partitions', async () => {
   class Records extends Source {
-    override async session() {
+    protected override async open() {
       return new AsyncDisposableStack();
     }
 
@@ -342,7 +353,7 @@ test('a target has one writer, even when another loads only its own partitions',
 
 test('Markdown publishes at each checkpoint and never publishes a failing partition', async () => {
   class Sites extends Source {
-    override async session() {
+    protected override async open() {
       return new AsyncDisposableStack();
     }
 
@@ -428,7 +439,7 @@ test('Markdown publishes at each checkpoint and never publishes a failing partit
 
 test('clearing a Markdown target drops it with its checkpoint, and a deleted one is refused until cleared', async () => {
   class Pages extends Source {
-    override async session() {
+    protected override async open() {
       return new AsyncDisposableStack();
     }
 
@@ -486,4 +497,141 @@ test('clearing a Markdown target drops it with its checkpoint, and a deleted one
   await pipeline.run();
 
   assert.equal(await records(), 1);
+});
+
+test('one run loads a file and a folder together: a stream that fails keeps its published target and checkpoint while its sibling commits, and a rerun converges', async () => {
+  const keyed = (name: string) =>
+    new Stream({
+      name,
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+      primaryKey: ['id'],
+      sourceDefinedCursor: true,
+      supportedSyncModes: ['incremental'],
+    });
+  // tasks stages a record, notes commits, and only then does tasks fail. Each
+  // gate opens when the consumer asks for a stream's next message, so the
+  // order holds without timers.
+  class Crossing extends Source {
+    readonly identity = 'crossing';
+    readonly notes = keyed('notes');
+    readonly tasks = keyed('tasks');
+    protected readonly catalog = new Catalog([this.notes, this.tasks]);
+    protected override readonly concurrency = 2;
+    batch = 0;
+    failing = false;
+    readonly resumed: string[] = [];
+    #staged = Promise.withResolvers<void>();
+    #committed = Promise.withResolvers<void>();
+
+    protected override async open() {
+      this.#staged = Promise.withResolvers<void>();
+      this.#committed = Promise.withResolvers<void>();
+      return new AsyncDisposableStack();
+    }
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      const name = configuration.stream.name;
+      this.resumed.push(`${name} from ${JSON.stringify(state)}`);
+      if (name === 'notes') {
+        await this.#staged.promise;
+        yield { stream: name, data: { id: `n${this.batch}` } };
+        yield { type: 'STATE' as const, stream: name, state: this.batch };
+        this.#committed.resolve();
+        return;
+      }
+      yield { stream: name, data: { id: `t${this.batch}` } };
+      this.#staged.resolve();
+      if (this.failing) {
+        await this.#committed.promise;
+        throw new Error('tasks upstream');
+      }
+      yield { type: 'STATE' as const, stream: name, state: this.batch };
+    }
+  }
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-md-'));
+  const source = new Crossing();
+  const destination = new MarkdownDestination({ path: scratch.path });
+  const selection = (id: string) =>
+    ({
+      id,
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      primaryKey: ['id'],
+    }) as const;
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    }),
+    steps: [
+      new Copy(source.notes, destination.file('notes.md'), selection('notes')),
+      new Copy(source.tasks, destination.folder('tasks'), selection('tasks')),
+    ],
+  });
+  const ids = (document: string) =>
+    Array.from(
+      document.matchAll(/^<!-- mac-elt-record:([A-Za-z0-9+/=]+) -->$/gm),
+      ([, encoded]) =>
+        String(
+          JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))
+            .id,
+        ),
+    );
+  const published = async () => {
+    const folder = join(scratch.path, 'tasks');
+    const documents = await Promise.all(
+      (await readdir(folder)).map((file) =>
+        readFile(join(folder, file), 'utf8'),
+      ),
+    );
+    return {
+      notes: ids(await readFile(join(scratch.path, 'notes.md'), 'utf8')).sort(),
+      tasks: documents.flatMap(ids).sort(),
+    };
+  };
+  source.batch = 1;
+  await pipeline.run();
+  source.batch = 2;
+  source.failing = true;
+
+  const error = await pipeline.run().then(
+    () => assert.fail('tasks should fail the run'),
+    (error: unknown) => error,
+  );
+  const afterFailure = await published();
+  source.failing = false;
+  source.resumed.length = 0;
+  await pipeline.run();
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.from.name,
+      count,
+      failures.length,
+    ]),
+    [
+      ['notes', 1, 0],
+      ['tasks', 0, 1],
+    ],
+  );
+  assert.deepEqual(afterFailure, { notes: ['n1', 'n2'], tasks: ['t1'] });
+  // The rerun resumes notes from its new checkpoint and tasks from its old one.
+  assert.deepEqual(source.resumed.sort(), ['notes from 2', 'tasks from 1']);
+  assert.deepEqual(await published(), {
+    notes: ['n1', 'n2'],
+    tasks: ['t1', 't2'],
+  });
 });

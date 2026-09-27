@@ -1,12 +1,12 @@
 import type { CheckpointStore } from '../state/checkpoint-store.ts';
 import {
   Copy,
-  CopyError,
   type CopyOutcome,
   type CopyResult,
   describeFailures,
 } from './copy.ts';
 import type { Destination } from './destination.ts';
+import { replicate } from './replication.ts';
 import type { Source } from './source.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import { TargetOwnedError } from './writer.ts';
@@ -161,6 +161,11 @@ export class Pipeline<Target extends DestinationTarget> {
       .filter((id) => id !== undefined);
     if (new Set(ids).size !== ids.length)
       throw new TypeError('Pipeline copy IDs must be distinct');
+    // One read routes messages and states by stream, as Airbyte's configured
+    // catalog lists each stream once.
+    const streams = this.steps.map((copy) => copy.from.name);
+    if (new Set(streams).size !== streams.length)
+      throw new TypeError('A pipeline copies each stream once');
     for (const copy of this.steps)
       copy.validate(this.source, this.destination, this.checkpoints);
     // Two copies with different writers into one target fail before any copy
@@ -176,32 +181,11 @@ export class Pipeline<Target extends DestinationTarget> {
     }
   }
 
-  // Runs every copy, as Airbyte runs every stream after one fails.
-  private async runSteps(
+  // One read per run, never held between watch batches: a long read can
+  // block the upstream's own maintenance, such as SQLite WAL checkpoints.
+  private runSteps(
     steps: readonly Copy<Target>[],
   ): Promise<CopyOutcome<Target>[]> {
-    const results: CopyOutcome<Target>[] = [];
-    // Opened per run, never held between watch batches: a long read can block
-    // the upstream's own maintenance, such as SQLite WAL checkpoints.
-    await using session = await this.source.session([
-      ...new Set(steps.map((copy) => copy.from)),
-    ]);
-    for (const copy of steps) {
-      try {
-        results.push({
-          ...(await copy.run(
-            this.source,
-            this.destination,
-            session,
-            this.checkpoints,
-          )),
-          failures: [],
-        });
-      } catch (error) {
-        if (!(error instanceof CopyError)) throw error;
-        results.push(error.result);
-      }
-    }
-    return results;
+    return replicate(this.source, this.destination, this.checkpoints, steps);
   }
 }

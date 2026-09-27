@@ -1,16 +1,15 @@
 export { Catalog } from './core/catalog.ts';
-export {
-  Copy,
-  CopyError,
-  type CopyOutcome,
-  type CopyResult,
-} from './core/copy.ts';
+export { Copy, type CopyOutcome, type CopyResult } from './core/copy.ts';
 export {
   CopyConfiguration,
   type DedupPolicy,
 } from './core/copy-configuration.ts';
 export type { Deduplication } from './core/deduplication.ts';
-export { Destination, type DestinationSyncMode } from './core/destination.ts';
+export {
+  Destination,
+  type DestinationSyncMode,
+  type Load,
+} from './core/destination.ts';
 export { DocumentParser } from './core/document-parser.ts';
 export { FileContent } from './core/file-content.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
@@ -26,28 +25,27 @@ export { diffSnapshot, type SnapshotState } from './core/snapshot.ts';
 export {
   type DeleteMessage,
   type KeyValue,
-  ReadFailure,
   type ReadMessage,
   type RecordMessage,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
   type StateMessage,
+  StreamStatus,
 } from './core/source.ts';
 export { Stream, type SyncMode } from './core/stream.ts';
 export { Target } from './core/target.ts';
 export {
-  type Load,
   type LoadFailure,
+  type Stage,
   TargetMissingError,
   TargetOwnedError,
   type WriteCount,
   type WriteOperation,
-  type WriteOptions,
-  type WriteResult,
   Writer,
 } from './core/writer.ts';
 export {
+  type CheckpointRun,
   type CheckpointSession,
   CheckpointStore,
   type StoredCheckpoint,

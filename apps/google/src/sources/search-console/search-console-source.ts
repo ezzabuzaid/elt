@@ -323,7 +323,7 @@ export class SearchConsoleSource extends Source {
    * checkpoints its own extractions received.
    */
   // Each stream is an independent API read; there is no snapshot to pin.
-  override async session(): Promise<AsyncDisposableStack> {
+  protected override async open(): Promise<AsyncDisposableStack> {
     return new AsyncDisposableStack();
   }
 

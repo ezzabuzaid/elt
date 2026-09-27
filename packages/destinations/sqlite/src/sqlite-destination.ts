@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
-import type { CopyConfiguration } from 'elt';
+import { DatabaseSync } from 'node:sqlite';
+import type { CopyConfiguration, Load } from 'elt';
 import { Destination } from 'elt';
 import { SQLiteAppendWriter } from './sqlite-append-writer.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
@@ -31,6 +32,34 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
 
   override location(target: SQLiteTable): string {
     return target.location;
+  }
+
+  // One connection and one write transaction for the whole run; each commit
+  // takes the lock straight back.
+  override async load(): Promise<Load<SQLiteTable>> {
+    const database = new DatabaseSync(this.path);
+    try {
+      database.exec('BEGIN IMMEDIATE');
+    } catch (error) {
+      database.close();
+      throw error;
+    }
+    const loadedAt = new Date().toISOString();
+    return {
+      prepare: async (configuration, target, binding) =>
+        this.createWriter(configuration, target).prepare(
+          database,
+          binding,
+          loadedAt,
+        ),
+      [Symbol.asyncDispose]: async () => {
+        try {
+          if (database.isTransaction) database.exec('ROLLBACK');
+        } finally {
+          database.close();
+        }
+      },
+    };
   }
 
   table(

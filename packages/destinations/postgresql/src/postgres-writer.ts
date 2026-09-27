@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import {
   type KeyValue,
-  type Load,
+  type Stage,
   type Stream,
   TargetMissingError,
   TargetOwnedError,
@@ -15,13 +16,91 @@ import type { PostgresTable } from './postgres-table.ts';
 // The load's one connection; statements run inside its open transaction.
 export type Transaction = postgres.Sql;
 
-// A record, validated and encoded on arrival, awaiting its batch.
-export type Pending = {
-  readonly record: unknown;
-  readonly row: EncodedValue[];
-};
-
 const batchSize = 1000;
+export const seq = '"_mac_elt_seq"';
+export const op = '"_mac_elt_op"';
+
+// A run's one connection and write transaction for a schema, shared by every
+// stream's stage. The schema lock serializes everything elt writes there, as
+// SQLite's BEGIN IMMEDIATE does per file; readers never wait on it.
+// ponytail: holds the write transaction during extraction; stage elsewhere if long reads hold back vacuum.
+export class PostgresLoad implements AsyncDisposable {
+  readonly #connection: Connection;
+  readonly loadedAt: string;
+  #open = false;
+
+  private constructor(
+    connection: Connection,
+    readonly schema: string,
+    loadedAt: string,
+  ) {
+    this.#connection = connection;
+    this.loadedAt = loadedAt;
+  }
+
+  get sql(): Transaction {
+    return this.#connection.sql;
+  }
+
+  static async open(url: string, schema: string): Promise<PostgresLoad> {
+    const connection = new Connection(url, 'elt');
+    try {
+      const [clock] = await connection.sql.unsafe(
+        'SELECT clock_timestamp()::text AS "loadedAt"',
+      );
+      const load = new PostgresLoad(
+        connection,
+        schema,
+        String(clock?.loadedAt),
+      );
+      await load.#begin();
+      await load.sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(schema)}`);
+      return load;
+    } catch (error) {
+      await connection[Symbol.asyncDispose]();
+      throw error;
+    }
+  }
+
+  async #begin(): Promise<void> {
+    await this.sql.unsafe('BEGIN');
+    this.#open = true;
+    await this.sql.unsafe(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [schemaLock(this.schema)],
+    );
+  }
+
+  // Makes everything merged so far durable, then takes the lock back.
+  async commit(): Promise<void> {
+    await this.sql.unsafe('COMMIT');
+    this.#open = false;
+    await this.#begin();
+  }
+
+  // Any failed statement aborts a Postgres transaction; the savepoint keeps
+  // that failure from erasing the other streams' stages.
+  async savepoint<T>(name: string, work: () => Promise<T>): Promise<T> {
+    await this.sql.unsafe(`SAVEPOINT ${name}`);
+    try {
+      const result = await work();
+      await this.sql.unsafe(`RELEASE SAVEPOINT ${name}`);
+      return result;
+    } catch (error) {
+      await this.sql.unsafe(`ROLLBACK TO SAVEPOINT ${name}`);
+      await this.sql.unsafe(`RELEASE SAVEPOINT ${name}`);
+      throw error;
+    }
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    try {
+      if (this.#open) await this.sql.unsafe('ROLLBACK');
+    } finally {
+      await this.#connection[Symbol.asyncDispose]();
+    }
+  }
+}
 
 export abstract class PostgresWriter extends Writer {
   constructor(
@@ -45,32 +124,46 @@ export abstract class PostgresWriter extends Writer {
     return `CREATE TABLE IF NOT EXISTS ${this.qualifiedName} (${this.table.columns.map((column) => column.definition).join(', ')}, "loaded_at" TIMESTAMPTZ NOT NULL)`;
   }
 
-  // One JSON parameter per batch, cast back per column: no bind-parameter
-  // limit. Parameters are declared text so the driver sends them as given
-  // instead of re-serializing by type. $2 is the copy's one loaded_at, kept
-  // across its commits so a load's rows share it.
-  protected get insertSQL(): string {
-    const { columns } = this.table;
-    return `INSERT INTO ${this.qualifiedName} AS "_mac_elt_target" (${[...columns.map((column) => column.quotedName), '"loaded_at"'].join(', ')}) SELECT ${[...columns.map((column, index) => `(row->>${index})::${column.storageType}`), '$2::text::timestamptz'].join(', ')} FROM json_array_elements($1::text::json) AS row`;
+  protected get fields(): string[] {
+    return [
+      ...this.table.columns.map((column) => column.quotedName),
+      '"loaded_at"',
+    ];
   }
 
   protected encode(record: unknown): EncodedValue[] {
     return this.table.columns.map((column) => column.encode(record));
   }
 
-  // A batch is applied as one statement; a deduplicating load keeps one row
-  // per key, since one statement cannot upsert a key twice.
-  protected collapse(pending: readonly Pending[]): readonly Pending[] {
-    return pending;
+  // Only a load that identifies rows by key can remove one: the key's values,
+  // at their columns, and null elsewhere.
+  protected deletionRow(
+    _key: Readonly<Record<string, KeyValue>>,
+  ): EncodedValue[] {
+    throw new TypeError('Only deduplicating loads can apply deletions');
   }
 
-  // Only a load that identifies rows by key can remove one.
-  protected deletion(
-    _transaction: Transaction,
-  ):
-    | ((key: Readonly<Record<string, KeyValue>>) => Promise<unknown>)
-    | undefined {
-    return undefined;
+  // An overwrite replaces the target at its first commit.
+  protected get replaces(): boolean {
+    return false;
+  }
+
+  // Empties the target a replacing commit is about to fill.
+  protected async replace(sql: Transaction): Promise<void> {
+    await sql.unsafe(`DELETE FROM ${this.qualifiedName}`);
+  }
+
+  // Moves the staged operations into the target; every row of a run shares
+  // its loaded_at.
+  protected async merge(
+    sql: Transaction,
+    stage: string,
+    loadedAt: string,
+  ): Promise<void> {
+    await sql.unsafe(
+      `INSERT INTO ${this.qualifiedName} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, $1::text::timestamptz FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
+      [loadedAt],
+    );
   }
 
   // The existing library-owned dedup indexes on this table.
@@ -141,33 +234,19 @@ export abstract class PostgresWriter extends Writer {
     });
   }
 
-  protected override async open(
-    writer: string,
-    resuming: boolean,
-  ): Promise<Load> {
-    const connection = new Connection(this.url, 'elt');
-    const { sql } = connection;
-    let open = false;
-    // One writer per schema at a time, as SQLite's BEGIN IMMEDIATE is one
-    // per file: owners span the schema's tables. Readers never wait on it.
-    // ponytail: holds the write transaction during extraction; stage first if long reads hold back vacuum.
-    const begin = async () => {
-      await sql.unsafe('BEGIN');
-      open = true;
-      await sql.unsafe(
-        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-        [schemaLock(this.schema)],
-      );
-    };
-    const close = async () => {
-      try {
-        if (open) await sql.unsafe('ROLLBACK');
-      } finally {
-        await connection[Symbol.asyncDispose]();
-      }
-    };
-    try {
-      await begin();
+  // One stream's load inside the run's shared transaction. Operations wait in
+  // a session-private TEMP stage, so another stream's commit never publishes
+  // them and a crash leaves nothing behind; commit merges them into the target
+  // with the result of applying them one at a time.
+  async prepare(
+    load: PostgresLoad,
+    { writer, resuming }: { writer: string; resuming: boolean },
+  ): Promise<Stage> {
+    const { sql } = load;
+    const stage = quote(
+      `_mac_elt_stage_${createHash('sha256').update(this.qualifiedName).digest('hex').slice(0, 40)}`,
+    );
+    await load.savepoint('prepare', async () => {
       if (resuming) {
         const [table] = await sql.unsafe(
           'SELECT to_regclass($1) IS NOT NULL AS "exists"',
@@ -176,60 +255,58 @@ export abstract class PostgresWriter extends Writer {
         if (table?.exists !== true)
           throw new TargetMissingError(this.table.name, writer);
       }
-      await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(this.schema)}`);
       await this.own(sql, writer);
       await this.initialize(sql);
-      const [clock] = await sql.unsafe(
-        'SELECT transaction_timestamp()::text AS "loadedAt"',
+      await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${stage}`);
+      await sql.unsafe(
+        `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
       );
-      const loadedAt = String(clock?.loadedAt);
-      // Each unit runs in a savepoint, so discarding a failed read never
-      // undoes the owner record and schema this transaction prepared.
-      await sql.unsafe('SAVEPOINT unit');
-      const remove = this.deletion(sql);
-      const insert = this.insertSQL;
-      let pending: Pending[] = [];
-      const flush = async () => {
-        if (pending.length === 0) return;
-        const rows = this.collapse(pending).map(({ row }) => row);
-        pending = [];
-        await sql.unsafe(insert, [JSON.stringify(rows), loadedAt]);
-      };
-      return {
-        apply: async (operation) => {
-          if (!open) {
-            await begin();
-            await sql.unsafe('SAVEPOINT unit');
-          }
-          if (operation.type === 'RECORD') {
-            pending.push({
-              record: operation.data,
-              row: this.encode(operation.data),
-            });
-            if (pending.length >= batchSize) await flush();
-            return;
-          }
-          if (remove === undefined)
-            throw new TypeError('Only deduplicating loads can apply deletions');
-          // Deletions apply in source order relative to the records before them.
-          await flush();
-          await remove(operation.key);
-        },
-        commit: async () => {
-          if (!open) return;
-          await flush();
-          await sql.unsafe('COMMIT');
-          open = false;
-        },
-        discard: async () => {
-          pending = [];
-          if (open) await sql.unsafe('ROLLBACK TO SAVEPOINT unit');
-        },
-        [Symbol.asyncDispose]: close,
-      };
-    } catch (error) {
-      await close();
-      throw error;
-    }
+    });
+    const { columns } = this.table;
+    // One JSON parameter per batch, cast back per column: no bind-parameter
+    // limit. Declared text so the driver sends it as given.
+    const insert = `INSERT INTO ${stage} (${seq}, ${op}, ${columns.map((column) => column.quotedName).join(', ')}) SELECT (row->>0)::bigint, row->>1, ${columns.map((column, index) => `(row->>${index + 2})::${column.storageType}`).join(', ')} FROM json_array_elements($1::text::json) AS row`;
+    let pending: EncodedValue[][] = [];
+    let next = 0;
+    const flush = async () => {
+      if (pending.length === 0) return;
+      const rows = pending;
+      pending = [];
+      await load.savepoint('flush', () =>
+        sql.unsafe(insert, [JSON.stringify(rows)]),
+      );
+    };
+    const drop = async () => {
+      pending = [];
+      await load.savepoint('drop', () => sql.unsafe(`TRUNCATE ${stage}`));
+    };
+    let replaced = false;
+    return {
+      apply: async (operation) => {
+        const row =
+          operation.type === 'RECORD'
+            ? this.encode(operation.data)
+            : this.deletionRow(operation.key);
+        pending.push([next++, operation.type === 'RECORD' ? 'R' : 'D', ...row]);
+        if (pending.length >= batchSize) await flush();
+      },
+      commit: async () => {
+        await flush();
+        await load.savepoint('merge', async () => {
+          if (this.replaces && !replaced) await this.replace(sql);
+          await this.merge(sql, stage, load.loadedAt);
+          await sql.unsafe(`TRUNCATE ${stage}`);
+        });
+        replaced = true;
+        await load.commit();
+      },
+      discard: drop,
+      [Symbol.asyncDispose]: async () => {
+        await drop();
+        await load.savepoint('drop', () =>
+          sql.unsafe(`DROP TABLE pg_temp.${stage}`),
+        );
+      },
+    };
   }
 }

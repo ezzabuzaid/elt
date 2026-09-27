@@ -13,10 +13,14 @@ import {
   type Partition,
   Pipeline,
   PipelineError,
+  type ReadMessage,
   Source,
+  type SourceMessage,
   type SourceWatchOptions,
+  type Stage,
   type StoredCheckpoint,
   Stream,
+  StreamStatus,
   Target,
   validateRecords,
   type WriteOperation,
@@ -100,33 +104,60 @@ test('record validation enforces every property of the stream schema', () => {
   );
 });
 
-class SessionSource extends Source<AsyncDisposable & { readonly id: number }> {
-  readonly identity = 'session-test';
+type ReadContext = AsyncDisposable & { readonly id: number };
+
+// One scripted extract step: a message to emit or an error to throw. A
+// StreamStatus plays a connector that reports status itself, which only
+// Source.read may do.
+type Step = SourceMessage | StreamStatus | Error;
+
+const idStream = (name: string) =>
+  new Stream({
+    name,
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    sourceDefinedCursor: true,
+    supportedSyncModes: ['full_refresh', 'incremental'],
+  });
+
+const record = (stream: string, id: string): SourceMessage => ({
+  stream,
+  data: { id },
+});
+
+const checkpoint = (stream: string, at: number): SourceMessage => ({
+  type: 'STATE',
+  stream,
+  state: { at },
+});
+
+class ContextSource extends Source<ReadContext> {
+  readonly identity = 'context-test';
   readonly opened: number[] = [];
   readonly closed: number[] = [];
-  readonly readers: { stream: string; session: number }[] = [];
-  readonly left = new Stream({
-    name: 'left',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
-    supportedSyncModes: ['full_refresh'],
-  });
-  readonly right = new Stream({
-    name: 'right',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
-    supportedSyncModes: ['full_refresh'],
-  });
-  protected readonly catalog = new Catalog([this.left, this.right]);
+  readonly contextStreams: string[][] = [];
+  readonly readers: { stream: string; context: number }[] = [];
+  readonly left = idStream('left');
+  readonly middle = idStream('middle');
+  readonly right = idStream('right');
+  protected readonly catalog = new Catalog([
+    this.left,
+    this.middle,
+    this.right,
+  ]);
 
-  constructor(readonly failing?: string) {
+  // A stream without a script emits one record naming the read context.
+  constructor(
+    readonly scripts: Readonly<Record<string, readonly Step[]>> = {},
+  ) {
     super();
   }
 
-  readonly sessionStreams: string[][] = [];
-
-  override async session(streams: readonly Stream[]) {
+  protected override async open(
+    streams: readonly Stream[],
+  ): Promise<ReadContext> {
     const id = this.opened.length + 1;
     this.opened.push(id);
-    this.sessionStreams.push(streams.map((stream) => stream.name));
+    this.contextStreams.push(streams.map((stream) => stream.name));
     return {
       id,
       [Symbol.asyncDispose]: async () => {
@@ -144,12 +175,26 @@ class SessionSource extends Source<AsyncDisposable & { readonly id: number }> {
     configuration: CopyConfiguration,
     _state: unknown,
     _partition: null,
-    session: AsyncDisposable & { readonly id: number },
+    context: ReadContext,
   ) {
     const stream = configuration.stream.name;
-    this.readers.push({ stream, session: session.id });
-    if (stream === this.failing) throw new Error(`${stream} failed`);
-    yield { stream, data: { id: `${stream}-${session.id}` } };
+    this.readers.push({ stream, context: context.id });
+    for (const step of this.scripts[stream] ?? [
+      record(stream, `${stream}-${context.id}`),
+    ]) {
+      if (step instanceof Error) throw step;
+      yield step as SourceMessage;
+    }
+  }
+}
+
+class LockedSource extends ContextSource {
+  constructor(readonly refusal: Error) {
+    super();
+  }
+
+  protected override async open(): Promise<ReadContext> {
+    throw this.refusal;
   }
 }
 
@@ -165,12 +210,13 @@ class RecordingWriter extends Writer {
   constructor(
     stream: Stream,
     readonly log: string[],
+    readonly refusal?: Error,
   ) {
     super(stream);
   }
 
-  protected override async open(): Promise<Load> {
-    const { log } = this;
+  async open(): Promise<Stage> {
+    const { log, refusal } = this;
     log.push('open');
     return {
       apply: async (operation: WriteOperation) => {
@@ -182,6 +228,7 @@ class RecordingWriter extends Writer {
       },
       commit: async () => {
         log.push('commit');
+        if (refusal !== undefined) throw refusal;
       },
       discard: async () => {
         log.push('discard');
@@ -203,6 +250,8 @@ class DrainingDestination extends Destination<NamedTarget> {
     'append',
   ] as const);
   readonly log: string[] = [];
+  // Targets whose stage commit throws the mapped error.
+  readonly refusing = new Map<string, Error>();
 
   override identity(target: NamedTarget): string {
     return target.name;
@@ -215,45 +264,60 @@ class DrainingDestination extends Destination<NamedTarget> {
   override createWriter(
     configuration: CopyConfiguration,
     target: NamedTarget,
-  ): Writer {
+  ): RecordingWriter {
     this.validateConfiguration(configuration, target);
-    return new RecordingWriter(configuration.stream, this.log);
+    return new RecordingWriter(
+      configuration.stream,
+      this.log,
+      this.refusing.get(target.name),
+    );
+  }
+
+  override async load(): Promise<Load<NamedTarget>> {
+    return {
+      prepare: (configuration, target) =>
+        this.createWriter(configuration, target).open(),
+      [Symbol.asyncDispose]: async () => {},
+    };
   }
 }
 
-const sessionPipeline = (source: SessionSource) =>
+const contextPipeline = (
+  source: ContextSource,
+  destination = new DrainingDestination(),
+) =>
   new Pipeline({
     source,
-    destination: new DrainingDestination(),
+    destination,
     steps: [
       new Copy(source.left, new NamedTarget('left')),
       new Copy(source.right, new NamedTarget('right')),
     ],
   });
 
-test('every copy in a pipeline run reads through one session, closed after the run', async () => {
-  const source = new SessionSource();
-  const pipeline = sessionPipeline(source);
+test('one read per run covers every copy inside one source context, closed after the run', async () => {
+  const source = new ContextSource();
+  const pipeline = contextPipeline(source);
 
   await pipeline.run();
   await pipeline.run();
 
   assert.deepEqual(source.readers, [
-    { stream: 'left', session: 1 },
-    { stream: 'right', session: 1 },
-    { stream: 'left', session: 2 },
-    { stream: 'right', session: 2 },
+    { stream: 'left', context: 1 },
+    { stream: 'right', context: 1 },
+    { stream: 'left', context: 2 },
+    { stream: 'right', context: 2 },
   ]);
   assert.deepEqual(source.closed, [1, 2]);
-  assert.deepEqual(source.sessionStreams, [
+  assert.deepEqual(source.contextStreams, [
     ['left', 'right'],
     ['left', 'right'],
   ]);
 });
 
 test('a failed copy does not stop later copies, and the run reports it at the end', async () => {
-  const source = new SessionSource('left');
-  const pipeline = sessionPipeline(source);
+  const source = new ContextSource({ left: [new Error('left failed')] });
+  const pipeline = contextPipeline(source);
 
   const error = await pipeline.run().then(
     () => assert.fail('run should report the failed copy'),
@@ -275,30 +339,34 @@ test('a failed copy does not stop later copies, and the run reports it at the en
     ],
   );
   assert.deepEqual(source.readers, [
-    { stream: 'left', session: 1 },
-    { stream: 'right', session: 1 },
+    { stream: 'left', context: 1 },
+    { stream: 'right', context: 1 },
   ]);
   assert.deepEqual(source.closed, [1]);
 });
 
 class MemoryCheckpoints extends CheckpointStore {
   readonly saved = new Map<string, StoredCheckpoint>();
+  // Ids whose save throws the mapped error.
+  readonly refusing = new Map<string, Error>();
 
   constructor(readonly log: string[]) {
     super();
   }
 
   protected override async session<T>(
-    id: string,
+    _ids: readonly string[],
     work: (session: CheckpointSession) => Promise<T>,
   ): Promise<T> {
     return work({
-      read: async () => this.saved.get(id),
-      save: async (checkpoint) => {
+      read: async (id) => this.saved.get(id),
+      save: async (id, checkpoint) => {
+        const refusal = this.refusing.get(id);
+        if (refusal !== undefined) throw refusal;
         this.log.push(`save ${checkpoint.state}`);
         this.saved.set(id, checkpoint);
       },
-      remove: async () => {
+      remove: async (id) => {
         this.saved.delete(id);
       },
     });
@@ -325,7 +393,7 @@ class Sites extends Source {
   protected readonly catalog = new Catalog([this.pages]);
   run = 1;
 
-  override async session() {
+  protected override async open() {
     return new AsyncDisposableStack();
   }
 
@@ -338,7 +406,7 @@ class Sites extends Source {
   }
 
   protected override async *extract(
-    configuration: CopyConfiguration,
+    _configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
   ) {
@@ -445,19 +513,390 @@ test('a full refresh commits once, and a failing partition commits nothing', asy
   ]);
 });
 
-test('a watch opens one session per batch and holds none while idle', async () => {
-  const source = new SessionSource();
-  const pipeline = sessionPipeline(source);
+test('a watch opens one read context per batch and holds none while idle', async () => {
+  const source = new ContextSource();
+  const pipeline = contextPipeline(source);
   const held: number[] = [];
 
   for await (const _ of pipeline.watch({ signal: AbortSignal.timeout(5000) }))
     held.push(source.opened.length - source.closed.length);
 
   assert.deepEqual(held, [0, 0]);
-  assert.deepEqual(source.sessionStreams, [['left', 'right'], ['right']]);
+  assert.deepEqual(source.contextStreams, [['left', 'right'], ['right']]);
   assert.deepEqual(source.readers, [
-    { stream: 'left', session: 1 },
-    { stream: 'right', session: 1 },
-    { stream: 'right', session: 2 },
+    { stream: 'left', context: 1 },
+    { stream: 'right', context: 1 },
+    { stream: 'right', context: 2 },
+  ]);
+});
+
+test('an empty full refresh still commits, so an overwrite clears its target', async () => {
+  const source = new ContextSource({ left: [] });
+  const destination = new DrainingDestination();
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    steps: [
+      new Copy(source.left, new NamedTarget('left'), {
+        syncMode: 'full_refresh',
+        destinationSyncMode: 'overwrite',
+      }),
+    ],
+  });
+
+  const results = await pipeline.run();
+
+  assert.deepEqual(
+    results.map(({ count, deleted }) => [count, deleted]),
+    [[0, 0]],
+  );
+  assert.deepEqual(destination.log, ['open', 'commit', 'close']);
+});
+
+test('a read context that does not open fails every copy with its error, and nothing is read or committed', async () => {
+  const refusal = new Error('upstream is locked');
+  const source = new LockedSource(refusal);
+  const destination = new DrainingDestination();
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    steps: [
+      new Copy(source.left, new NamedTarget('left')),
+      new Copy(source.right, new NamedTarget('right')),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the unopened read'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.equal(error.cause, refusal);
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.from.name,
+      count,
+      failures,
+    ]),
+    [
+      ['left', 0, [{ partition: null, error: refusal }]],
+      ['right', 0, [{ partition: null, error: refusal }]],
+    ],
+  );
+  assert.deepEqual(source.readers, []);
+  assert.deepEqual(destination.log, ['open', 'open', 'close', 'close']);
+});
+
+test('a pipeline that copies one stream twice is refused before anything is prepared or read', async () => {
+  const source = new ContextSource();
+  const destination = new DrainingDestination();
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    steps: [
+      new Copy(source.left, new NamedTarget('left')),
+      new Copy(source.left, new NamedTarget('left-again')),
+    ],
+  });
+
+  await assert.rejects(pipeline.run(), {
+    name: 'TypeError',
+    message: 'A pipeline copies each stream once',
+  });
+
+  assert.deepEqual(source.opened, []);
+  assert.deepEqual(destination.log, []);
+});
+
+const incrementalPipeline = (
+  source: ContextSource,
+  destination: DrainingDestination,
+  checkpoints: MemoryCheckpoints,
+) =>
+  new Pipeline({
+    source,
+    destination,
+    checkpoints,
+    steps: [source.left, source.right].map(
+      (stream) =>
+        new Copy(stream, new NamedTarget(stream.name), {
+          id: stream.name,
+          syncMode: 'incremental',
+          destinationSyncMode: 'append',
+        }),
+    ),
+  });
+
+test('a stage that fails to commit fails only its stream: its later messages are ignored while the sibling commits and saves its checkpoint', async () => {
+  const refusal = new Error('left target is read-only');
+  const source = new ContextSource({
+    left: [
+      record('left', 'left-1'),
+      checkpoint('left', 1),
+      record('left', 'left-2'),
+      checkpoint('left', 2),
+    ],
+    right: [record('right', 'right-1'), checkpoint('right', 1)],
+  });
+  const destination = new DrainingDestination();
+  destination.refusing.set('left', refusal);
+  const checkpoints = new MemoryCheckpoints(destination.log);
+  const pipeline = incrementalPipeline(source, destination, checkpoints);
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the failed commit'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.id,
+      count,
+      failures,
+    ]),
+    [
+      ['left', 0, [{ partition: null, error: refusal }]],
+      ['right', 1, []],
+    ],
+  );
+  assert.deepEqual(destination.log, [
+    'open',
+    'open',
+    'apply {"id":"left-1"}',
+    'commit',
+    'close',
+    'apply {"id":"right-1"}',
+    'commit',
+    'save {"at":1}',
+    'close',
+  ]);
+  assert.deepEqual([...checkpoints.saved.keys()], ['right']);
+});
+
+test('a checkpoint that fails to save fails only its stream, which keeps what it committed, while the sibling loads', async () => {
+  const refusal = new Error('checkpoint store is offline');
+  const source = new ContextSource({
+    left: [
+      record('left', 'left-1'),
+      checkpoint('left', 1),
+      record('left', 'left-2'),
+      checkpoint('left', 2),
+    ],
+    right: [record('right', 'right-1'), checkpoint('right', 1)],
+  });
+  const destination = new DrainingDestination();
+  const checkpoints = new MemoryCheckpoints(destination.log);
+  checkpoints.refusing.set('left', refusal);
+  const pipeline = incrementalPipeline(source, destination, checkpoints);
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the unsaved checkpoint'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  const [left, right] = error.results;
+  assert.equal(left?.count, 1);
+  assert.equal(left?.failures.length, 1);
+  const failure = left?.failures[0]?.error;
+  assert.ok(failure instanceof Error, String(failure));
+  assert.match(failure.message, /Checkpoint left was not saved/);
+  assert.equal(failure.cause, refusal);
+  assert.deepEqual([right?.count, right?.failures], [1, []]);
+  assert.deepEqual(destination.log, [
+    'open',
+    'open',
+    'apply {"id":"left-1"}',
+    'commit',
+    'close',
+    'apply {"id":"right-1"}',
+    'commit',
+    'save {"at":1}',
+    'close',
+  ]);
+  assert.deepEqual([...checkpoints.saved.keys()], ['right']);
+});
+
+test('a checkpoint whose state has a lone surrogate fails its stream before anything since the last one commits', async () => {
+  const source = new ContextSource({
+    left: [
+      record('left', 'left-1'),
+      checkpoint('left', 1),
+      record('left', 'left-2'),
+      { type: 'STATE', stream: 'left', state: { cursor: 'cut \uD83D' } },
+    ],
+    right: [record('right', 'right-1'), checkpoint('right', 1)],
+  });
+  const destination = new DrainingDestination();
+  const checkpoints = new MemoryCheckpoints(destination.log);
+  const pipeline = incrementalPipeline(source, destination, checkpoints);
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should refuse the malformed state'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.from.name,
+      count,
+      failures.map(({ error }) => String(error)),
+    ]),
+    [
+      [
+        'left',
+        1,
+        ['TypeError: Checkpoint state field cursor has a lone surrogate'],
+      ],
+      ['right', 1, []],
+    ],
+  );
+  assert.deepEqual(
+    [...checkpoints.saved].map(([id, { state }]) => [id, state]),
+    [
+      ['left', '{"at":1}'],
+      ['right', '{"at":1}'],
+    ],
+  );
+});
+
+test("an extract that emits another stream's message fails only its own stream, and the sibling's target never sees it", async () => {
+  const source = new ContextSource({
+    middle: [record('right', 'stray'), record('middle', 'middle-1')],
+  });
+  const destination = new DrainingDestination();
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    steps: [source.left, source.middle, source.right].map(
+      (stream) => new Copy(stream, new NamedTarget(stream.name)),
+    ),
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the stray message'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.from.name,
+      count,
+      failures.map(({ error }) => String(error)),
+    ]),
+    [
+      ['left', 1, []],
+      ['middle', 0, ['TypeError: Extract for middle emitted right']],
+      ['right', 1, []],
+    ],
+  );
+  assert.deepEqual(destination.log, [
+    'open',
+    'open',
+    'open',
+    'apply {"id":"left-1"}',
+    'commit',
+    'close',
+    'discard',
+    'close',
+    'apply {"id":"right-1"}',
+    'commit',
+    'close',
+  ]);
+});
+
+test('a read that breaks fails every stream it had not ended, while a stream that ended keeps its commit', async () => {
+  // The read itself fails between streams, outside any one stream's extract.
+  class BreakingSource extends ContextSource {
+    override async *read(
+      catalog: readonly CopyConfiguration[],
+      states: ReadonlyMap<string, unknown>,
+    ): AsyncGenerator<ReadMessage> {
+      for await (const message of super.read(catalog, states)) {
+        yield message;
+        if (message instanceof StreamStatus && message.stream === 'middle')
+          throw new Error('read broke');
+      }
+    }
+  }
+  const source = new BreakingSource();
+  const destination = new DrainingDestination();
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    steps: [source.left, source.middle, source.right].map(
+      (stream) => new Copy(stream, new NamedTarget(stream.name)),
+    ),
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the broken read'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.from.name,
+      count,
+      failures.map(({ error }) => String(error)),
+    ]),
+    [
+      ['left', 1, []],
+      ['middle', 0, ['Error: read broke']],
+      ['right', 0, ['Error: read broke']],
+    ],
+  );
+  assert.deepEqual(source.readers, [{ stream: 'left', context: 1 }]);
+  assert.deepEqual(source.closed, [1]);
+  assert.deepEqual(destination.log, [
+    'open',
+    'open',
+    'open',
+    'apply {"id":"left-1"}',
+    'commit',
+    'close',
+    'close',
+    'close',
+  ]);
+});
+
+test('a connector that reports its own stream status fails that stream, not its sibling', async () => {
+  const source = new ContextSource({
+    left: [record('left', 'left-1'), new StreamStatus('left', 'ENDED')],
+  });
+  const destination = new DrainingDestination();
+  const pipeline = contextPipeline(source, destination);
+
+  const error = await pipeline.run().then(
+    () => assert.fail('run should report the misbehaving connector'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  const [left, right] = error.results;
+  assert.equal(left?.count, 0);
+  assert.equal(left?.failures.length, 1);
+  const failure = left?.failures[0];
+  assert.equal(failure?.partition, null);
+  assert.ok(failure?.error instanceof TypeError, String(failure?.error));
+  assert.match(
+    failure.error.message,
+    /Only Source\.read reports stream status/,
+  );
+  assert.deepEqual([right?.count, right?.failures], [1, []]);
+  assert.deepEqual(destination.log, [
+    'open',
+    'open',
+    'apply {"id":"left-1"}',
+    'discard',
+    'close',
+    'apply {"id":"right-1"}',
+    'commit',
+    'close',
   ]);
 });

@@ -4,7 +4,7 @@ import type { Destination } from './destination.ts';
 import type { Source } from './source.ts';
 import type { Stream } from './stream.ts';
 import { Target as DestinationTarget } from './target.ts';
-import type { LoadFailure, WriteCount, WriteResult } from './writer.ts';
+import type { LoadFailure, WriteCount } from './writer.ts';
 
 // A copy that loaded completely: what the destination committed.
 export type CopyResult<Target extends DestinationTarget> = WriteCount & {
@@ -16,20 +16,6 @@ export type CopyOutcome<Target extends DestinationTarget> =
   CopyResult<Target> & {
     readonly failures: readonly LoadFailure[];
   };
-
-// Names every partition, or the whole copy, that did not load.
-export class CopyError<
-  Target extends DestinationTarget,
-> extends AggregateError {
-  override name = 'CopyError';
-  constructor(readonly result: CopyOutcome<Target>) {
-    super(
-      result.failures.map(({ error }) => error),
-      `Copy did not load completely: ${describeFailures(result)}`,
-      { cause: result.failures[0]?.error },
-    );
-  }
-}
 
 export function describeFailures<Target extends DestinationTarget>({
   copy,
@@ -112,55 +98,5 @@ export class Copy<Target extends DestinationTarget> {
     if (this.id !== undefined && checkpoints !== undefined)
       await checkpoints.clear(this.id, drop);
     else await drop();
-  }
-
-  // Airbyte's replication worker: reads from the source, has the destination
-  // commit at each checkpoint, and saves each checkpoint it acknowledged.
-  async run(
-    source: Source,
-    destination: Destination<Target>,
-    session: AsyncDisposable,
-    checkpoints?: CheckpointStore,
-  ): Promise<CopyResult<Target>> {
-    this.validate(source, destination, checkpoints);
-    const writer = this.writer(source);
-    const load = (
-      state: unknown,
-      acknowledge: (state: unknown) => Promise<void>,
-    ) =>
-      destination.write(
-        this.configuration,
-        this.to,
-        source.read(this.configuration, state, session),
-        { writer, resuming: state !== null, acknowledge },
-      );
-    let written: WriteResult;
-    try {
-      if (this.configuration.syncMode === 'incremental') {
-        if (this.id === undefined || checkpoints === undefined)
-          throw new TypeError(
-            'Incremental copies require a stable id and checkpoint store',
-          );
-        written = await checkpoints.run(
-          this.id,
-          {
-            source: source.identity,
-            target: destination.identity(this.to),
-            configuration: this.configuration,
-          },
-          load,
-        );
-      } else written = await load(null, async () => {});
-    } catch (error) {
-      written = {
-        count: 0,
-        deleted: 0,
-        failures: [{ partition: null, error }],
-      };
-    }
-    const { failures, ...committed } = written;
-    if (failures.length > 0)
-      throw new CopyError({ copy: this, ...committed, failures });
-    return { copy: this, ...committed };
   }
 }

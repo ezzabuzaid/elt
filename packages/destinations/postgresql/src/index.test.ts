@@ -5,6 +5,8 @@ import {
   Catalog,
   Copy,
   type CopyConfiguration,
+  diffSnapshot,
+  type Partition,
   Pipeline,
   PipelineError,
   Source,
@@ -48,7 +50,7 @@ async function scratchDatabase() {
 
 // Emits whatever the test sets on `messages`, then an empty checkpoint.
 class Messages extends Source {
-  override async session() {
+  protected override async open() {
     return new AsyncDisposableStack();
   }
 
@@ -625,12 +627,8 @@ test('declarations are checked before any connection', () => {
   assert.doesNotMatch(JSON.stringify(destination), /u:p/);
 });
 
-// Work that acknowledges each state in turn, as a load commits them.
-const acknowledging =
-  (states: unknown[]) =>
-  async (_state: unknown, save: (state: unknown) => Promise<void>) => {
-    for (const state of states) await save(state);
-  };
+// One copy's checkpoint binding, as a run of that copy alone passes it.
+const only = (id: string, binding: object = {}) => new Map([[id, binding]]);
 
 test('a Postgres checkpoint store resumes from the last acknowledged state in the schema', async () => {
   await using database = await scratchDatabase();
@@ -638,26 +636,23 @@ test('a Postgres checkpoint store resumes from the last acknowledged state in th
     url: database.url,
     schema: 'raw',
   });
-  const binding = { source: 'test', target: 'records' };
+  const bindings = only('copy', { source: 'test', target: 'records' });
   const received: unknown[] = [];
-  const write =
-    (states: unknown[], fail = false) =>
-    async (state: unknown, save: (state: unknown) => Promise<void>) => {
+  const run = (states: unknown[], fail = false) =>
+    store.run(bindings, async (checkpoints) => {
+      const state = checkpoints.state('copy');
       received.push(structuredClone(state));
       if (state !== null && typeof state === 'object')
         Reflect.set(state, 'mutated', true);
-      await acknowledging(states)(state, save);
+      for (const next of states) await checkpoints.save('copy', next);
       if (fail) throw new Error('source broke');
-    };
+    });
 
-  await store.run('copy', binding, write([{ page: 1 }, { page: 2 }]));
-  await store.run('copy', binding, write([]));
+  await run([{ page: 1 }, { page: 2 }]);
+  await run([]);
   // What was acknowledged before a failure stays saved.
-  await assert.rejects(
-    store.run('copy', binding, write([{ page: 3 }], true)),
-    /source broke/,
-  );
-  await store.run('copy', binding, write([]));
+  await assert.rejects(run([{ page: 3 }], true), /source broke/);
+  await run([]);
 
   assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 3 }]);
   assert.deepEqual(
@@ -674,27 +669,22 @@ test('a changed binding is refused until the Postgres checkpoint is reset', asyn
     url: database.url,
     schema: 'raw',
   });
-  let called = 0;
-  const write = async (
-    state: unknown,
-    save: (state: unknown) => Promise<void>,
-  ) => {
-    called++;
-    await save({ from: state });
-  };
+  const save = (target: string) =>
+    store.run(only('copy', { target }), async (checkpoints) =>
+      checkpoints.save('copy', { from: checkpoints.state('copy') }),
+    );
 
-  await store.run('copy', { target: 'a' }, write);
+  await save('a');
   await assert.rejects(
-    store.run('copy', { target: 'b' }, write),
+    save('b'),
     /Checkpoint binding changed for copy; reset it or use a new copy ID/,
   );
   await store.reset('copy');
-  await store.run('copy', { target: 'b' }, async (state, save) => {
-    assert.equal(state, null);
-    await write(state, save);
-  });
+  const resumed = await store.run(only('copy', { target: 'b' }), async (c) =>
+    c.state('copy'),
+  );
 
-  assert.equal(called, 2);
+  assert.equal(resumed, null);
 });
 
 test('a checkpoint that cannot be saved after its rows commit is reported with the committed rows', async () => {
@@ -842,26 +832,32 @@ test('replications checkpoint in parallel, and one already running is refused', 
   const { promise: bothStarted, resolve: release } =
     Promise.withResolvers<void>();
   let started = 0;
-  const waiting = async (
-    state: unknown,
-    save: (state: unknown) => Promise<void>,
-  ) => {
-    if (++started === 2) release();
-    await bothStarted;
-    await acknowledging([{ done: true }])(state, save);
-  };
+  const waiting = (id: string) =>
+    store.run(only(id), async (checkpoints) => {
+      if (++started === 2) release();
+      await bothStarted;
+      await checkpoints.save(id, { done: true });
+    });
 
-  // Both writes wait until the other has started, so both locks are held at once.
-  await Promise.all([store.run('a', {}, waiting), store.run('b', {}, waiting)]);
+  // Both runs wait until the other has started, so both locks are held at once.
+  await Promise.all([waiting('a'), waiting('b')]);
   const { promise: hold, resolve: finish } = Promise.withResolvers<void>();
-  const running = store.run('a', {}, async () => {
+  const running = store.run(only('b'), async () => {
     await hold;
   });
   await new Promise((resolve) => setTimeout(resolve, 200));
+  // A run of a and b fails on b and releases a, which a later run can take.
   await assert.rejects(
-    store.run('a', {}, async () => {}),
-    /Checkpoint a is in use by another run/,
+    store.run(
+      new Map([
+        ['a', {}],
+        ['b', {}],
+      ]),
+      async () => {},
+    ),
+    /Checkpoint b is in use by another run/,
   );
+  await store.run(only('a'), async () => {});
   finish();
   await running;
 });
@@ -874,11 +870,12 @@ test('checkpoint state keeps text JSONB would refuse, and the store holds no cre
   });
   const state = { nul: 'a\u0000b', lone: '\ud800' };
 
-  await store.run('copy', {}, acknowledging([state]));
-  let resumed: unknown;
-  await store.run('copy', {}, async (saved) => {
-    resumed = saved;
-  });
+  await store.run(only('copy'), (checkpoints) =>
+    checkpoints.save('copy', state),
+  );
+  const resumed = await store.run(only('copy'), async (checkpoints) =>
+    checkpoints.state('copy'),
+  );
 
   assert.deepEqual(resumed, state);
   assert.doesNotMatch(JSON.stringify(store), /postgres:postgres/);
@@ -970,4 +967,533 @@ test('clear empties a table and keeps views on it, releasing its owner and check
     owners: ['items'],
     checkpoints: ['items'],
   });
+});
+
+// A stream of { id, version } rows keyed by id, deletable.
+const scripted = (name: string, { snapshot = true } = {}) =>
+  new Stream({
+    name,
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      required: ['id', 'version'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: snapshot ? true : undefined,
+    emitsDeletes: true,
+  });
+
+// One entry of a script: a message to emit, an Error to throw there, or a
+// step to run (and await) once the consumer took the entry before it.
+type Scripted = SourceMessage | Error | (() => unknown);
+
+// Reads what a test scripts for each stream, up to concurrency streams at once.
+class ScriptedSource extends Source {
+  readonly identity = 'scripted';
+  protected readonly catalog: Catalog;
+  protected override readonly concurrency: number;
+
+  constructor(
+    streams: readonly Stream[],
+    public scripts: Record<string, readonly Scripted[]>,
+    { concurrency = 1 } = {},
+  ) {
+    super();
+    this.catalog = new Catalog(streams);
+    this.concurrency = concurrency;
+  }
+
+  protected override async open() {
+    return new AsyncDisposableStack();
+  }
+
+  protected override async *observe({ streams }: SourceWatchOptions) {
+    yield streams;
+  }
+
+  protected override async *extract(
+    configuration: CopyConfiguration,
+    _state: unknown,
+    _partition: Partition | null,
+  ): AsyncGenerator<SourceMessage> {
+    yield* this.play(configuration.stream.name);
+  }
+
+  protected async *play(script: string) {
+    for (const entry of this.scripts[script] ?? []) {
+      if (entry instanceof Error) throw entry;
+      if (typeof entry === 'function') await entry();
+      else yield entry;
+    }
+  }
+}
+
+const record = (stream: string, id: string, version: number) => ({
+  stream,
+  data: { id, version },
+});
+const checkpoint = (stream: string, state: unknown) => ({
+  type: 'STATE' as const,
+  stream,
+  state,
+});
+const removal = (stream: string, id: string) => ({
+  type: 'DELETE' as const,
+  stream,
+  key: { id },
+});
+// More records than one flush holds, so some already sit in the stage table.
+const flushed = (stream: string, prefix: string) =>
+  Array.from({ length: 1500 }, (_, index) =>
+    record(stream, `${prefix}${index}`, 1),
+  );
+
+const incremental = (id: string) =>
+  ({
+    id,
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    primaryKey: ['id'],
+  }) as const;
+
+const loaded = async (database: { sql: postgres.Sql }, table: string) =>
+  (
+    await database.sql.unsafe(
+      `SELECT id, version::int FROM raw.${table} ORDER BY id COLLATE "C"`,
+    )
+  ).map(({ id, version }) => `${id}:${version}`);
+
+const savedStates = async (database: { sql: postgres.Sql }) =>
+  (
+    await database.sql`SELECT id, state::text FROM raw._mac_elt_checkpoints ORDER BY id`
+  ).map(({ id, state }) => `${id}=${state}`);
+
+test('a stream that fails publishes none of its staged rows while its sibling commits, and a failing overwrite keeps the old table', async () => {
+  await using database = await scratchDatabase();
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const broken = scripted('broken');
+  const good = scripted('good');
+  const snapshot = scripted('snapshot');
+  const source = new ScriptedSource([broken, good, snapshot], {
+    snapshot: [record('snapshot', 'old', 1)],
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
+    }),
+    steps: [
+      new Copy(broken, destination.table('broken'), incremental('broken')),
+      new Copy(good, destination.table('good'), incremental('good')),
+      new Copy(snapshot, destination.table('snapshot')),
+    ],
+  });
+  await pipeline.run();
+
+  source.scripts = {
+    broken: [...flushed('broken', 'b'), new Error('broken upstream')],
+    good: [record('good', 'g1', 1), checkpoint('good', { page: 1 })],
+    snapshot: [...flushed('snapshot', 'new'), new Error('snapshot upstream')],
+  };
+  const error = await pipeline.run().then(
+    () => assert.fail('the broken streams should fail the run'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.from.name,
+      count,
+      failures.length,
+    ]),
+    [
+      ['broken', 0, 1],
+      ['good', 1, 0],
+      ['snapshot', 0, 1],
+    ],
+  );
+  assert.deepEqual(await loaded(database, 'broken'), []);
+  assert.deepEqual(await loaded(database, 'good'), ['g1:1']);
+  assert.deepEqual(await loaded(database, 'snapshot'), ['old:1']);
+  assert.deepEqual(await savedStates(database), ['good={"page":1}']);
+});
+
+test("a failing partition's flushed rows are discarded while the next partition commits", async () => {
+  await using database = await scratchDatabase();
+  const pages = new Stream({
+    name: 'pages',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        site: { type: 'string' },
+        id: { type: 'string' },
+        version: { type: 'integer' },
+      },
+      required: ['site', 'id', 'version'],
+    },
+    primaryKey: ['site', 'id'],
+    partitionKey: ['site'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+  });
+  class Sites extends ScriptedSource {
+    protected override partitions() {
+      return [{ site: 'a' }, { site: 'b' }];
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      _state: unknown,
+      partition: Partition | null,
+    ) {
+      yield* this.play(`${configuration.stream.name}/${partition?.site}`);
+    }
+  }
+  const page = (site: string, id: string) => ({
+    stream: 'pages',
+    data: { site, id, version: 1 },
+  });
+  const source = new Sites([pages], {
+    'pages/a': [
+      ...Array.from({ length: 1500 }, (_, index) => page('a', String(index))),
+      new Error('scan of a broke'),
+    ],
+    'pages/b': [page('b', '1'), checkpoint('pages', { page: 1 })],
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+
+  const error = await new Pipeline({
+    source,
+    destination,
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
+    }),
+    steps: [
+      new Copy(pages, destination.table('pages'), {
+        id: 'pages',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['site', 'id'],
+      }),
+    ],
+  })
+    .run()
+    .then(
+      () => assert.fail('partition a should fail the run'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  const [result] = error.results;
+  assert.equal(result?.count, 1);
+  assert.deepEqual(
+    result?.failures.map(({ partition }) => partition),
+    [{ site: 'a' }],
+  );
+  assert.deepEqual(
+    (await database.sql`SELECT site, id FROM raw.pages`).map(
+      ({ site, id }) => `${site}/${id}`,
+    ),
+    ['b/1'],
+  );
+  assert.deepEqual(await savedStates(database), [
+    'pages={"partitions":[{"partition":{"site":"b"},"state":{"page":1}}]}',
+  ]);
+});
+
+test('a staged unit merges like its operations applied one at a time, under replace and cursor_newer', async () => {
+  await using database = await scratchDatabase();
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const script = (stream: string) => [
+    record(stream, 'a', 1),
+    removal(stream, 'a'),
+    record(stream, 'a', 2),
+    record(stream, 'b', 1),
+    removal(stream, 'b'),
+    record(stream, 'c', 5),
+    record(stream, 'c', 3),
+    record(stream, 'd', 4),
+    record(stream, 'd', 4),
+    checkpoint(stream, { page: 1 }),
+  ];
+  const replacing = scripted('replacing');
+  // cursor_newer needs a cursor the copy selects, not a source-defined one.
+  const guarded = scripted('guarded', { snapshot: false });
+  const source = new ScriptedSource([replacing, guarded], {
+    replacing: script('replacing'),
+    guarded: script('guarded'),
+  });
+
+  await new Pipeline({
+    source,
+    destination,
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
+    }),
+    steps: [
+      new Copy(
+        replacing,
+        destination.table('replacing'),
+        incremental('replacing'),
+      ),
+      new Copy(guarded, destination.table('guarded'), {
+        ...incremental('guarded'),
+        cursorField: 'version',
+        dedupPolicy: 'cursor_newer',
+      }),
+    ],
+  }).run();
+
+  // Sequentially: a is deleted then reloaded at 2; b ends deleted; replace
+  // keeps each key's last record, cursor_newer its greatest cursor.
+  assert.deepEqual(await loaded(database, 'replacing'), ['a:2', 'c:3', 'd:4']);
+  assert.deepEqual(await loaded(database, 'guarded'), ['a:2', 'c:5', 'd:4']);
+});
+
+test('a checkpoint lost between commit and save replays to the same rows', async () => {
+  await using database = await scratchDatabase();
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, name: { type: 'string' } },
+      required: ['id', 'name'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  class Snapshots extends ScriptedSource {
+    rows: Record<string, unknown>[] = [];
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      yield* diffSnapshot(configuration.stream, this.rows, state);
+    }
+  }
+  const source = new Snapshots([items], {});
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
+    }),
+    steps: [new Copy(items, destination.table('items'), incremental('items'))],
+  });
+  const names = async () =>
+    (await database.sql`SELECT id, name FROM raw.items ORDER BY id`).map(
+      ({ id, name }) => `${id}:${name}`,
+    );
+  source.rows = [
+    { id: 'a', name: 'A' },
+    { id: 'b', name: 'B' },
+    { id: 'c', name: 'C' },
+  ];
+  await pipeline.run();
+  const [first] =
+    await database.sql`SELECT state::text FROM raw._mac_elt_checkpoints`;
+  source.rows = [
+    { id: 'a', name: 'A' },
+    { id: 'b', name: 'B2' },
+    { id: 'd', name: 'D' },
+  ];
+  await pipeline.run();
+  const settled = { rows: await names(), states: await savedStates(database) };
+
+  // The second run's rows committed but its checkpoint was never saved.
+  await database.sql`UPDATE raw._mac_elt_checkpoints SET state = ${first?.state}::text::json`;
+  const [replay] = await pipeline.run();
+
+  assert.deepEqual(settled.rows, ['a:A', 'b:B2', 'd:D']);
+  assert.deepEqual([replay?.count, replay?.deleted], [2, 1]);
+  assert.deepEqual(
+    { rows: await names(), states: await savedStates(database) },
+    settled,
+  );
+});
+
+test("a statement that fails in one stream's merge does not erase a sibling's stage", async () => {
+  await using database = await scratchDatabase();
+  const staged = scripted('staged');
+  const dated = new Stream({
+    name: 'dated',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        on: { type: 'string', format: 'date' },
+      },
+      required: ['id', 'on'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+  });
+  const source = new ScriptedSource(
+    [staged, dated],
+    {
+      staged: [checkpoint('staged', { page: 0 })],
+      dated: [
+        { stream: 'dated', data: { id: 'a', on: '2026-01-01' } },
+        checkpoint('dated', { page: 0 }),
+      ],
+    },
+    { concurrency: 2 },
+  );
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
+    }),
+    steps: [
+      new Copy(staged, destination.table('staged'), incremental('staged')),
+      new Copy(dated, destination.table('dated'), incremental('dated')),
+    ],
+  });
+  await pipeline.run();
+  // A constraint someone added to the table stays authoritative.
+  await database.sql.unsafe(
+    `ALTER TABLE raw.dated ADD CONSTRAINT recent CHECK ("on" >= '2000-01-01')`,
+  );
+  const { promise: stagedRows, resolve: rowsStaged } =
+    Promise.withResolvers<void>();
+  const { promise: datedFailed, resolve: failDated } =
+    Promise.withResolvers<void>();
+  const { promise: stagedCommitted, resolve: commitStaged } =
+    Promise.withResolvers<void>();
+  // staged flushes 1000 rows into its stage; dated's merge then breaks the
+  // constraint; only then does staged reach its checkpoint.
+  source.scripts = {
+    staged: [
+      ...flushed('staged', 's'),
+      () => {
+        rowsStaged();
+        return datedFailed;
+      },
+      checkpoint('staged', { page: 1 }),
+      commitStaged,
+    ],
+    dated: [
+      () => stagedRows,
+      { stream: 'dated', data: { id: 'b', on: '1999-12-31' } },
+      checkpoint('dated', { page: 1 }),
+      () => {
+        failDated();
+        return stagedCommitted;
+      },
+    ],
+  };
+
+  const error = await pipeline.run().then(
+    () => assert.fail('dated should fail the run'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.equal((await loaded(database, 'staged')).length, 1500);
+  assert.deepEqual(
+    [...(await database.sql`SELECT id FROM raw.dated`)],
+    [{ id: 'a' }],
+  );
+  assert.deepEqual(await savedStates(database), [
+    'dated={"page":0}',
+    'staged={"page":1}',
+  ]);
+  assert.match(
+    String(error.results[1]?.failures[0]?.error),
+    /violates check constraint "recent"/,
+  );
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.from.name,
+      count,
+      failures.length,
+    ]),
+    [
+      ['staged', 1500, 0],
+      ['dated', 0, 1],
+    ],
+  );
+});
+
+test('year 0000, which ISO counts astronomically, loads as 1 BC, and year 0001 stays AD', async () => {
+  await using database = await scratchDatabase();
+  const moments = new Stream({
+    name: 'moments',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        on: { type: 'string', format: 'date' },
+        at: { type: 'string', format: 'date-time' },
+      },
+      required: ['id', 'on', 'at'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  const source = new ScriptedSource([moments], {
+    moments: [
+      {
+        stream: 'moments',
+        data: { id: 'leap', on: '0000-02-29', at: '0000-06-01T12:00:00.000Z' },
+      },
+      {
+        stream: 'moments',
+        data: { id: 'first', on: '0001-01-01', at: '0001-01-01T00:00:00.000Z' },
+      },
+    ],
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+
+  await new Pipeline({
+    source,
+    destination,
+    steps: [new Copy(moments, destination.table('moments'))],
+  }).run();
+
+  assert.deepEqual(
+    [
+      ...(await database.sql`
+        SELECT id,
+          "on" = '0001-02-29 BC'::date AS "onBC",
+          "at" = '0001-06-01 12:00:00+00 BC'::timestamptz AS "atBC",
+          "on" - 1 = '0001-12-31 BC'::date AS "dayBefore"
+        FROM raw.moments ORDER BY id`),
+    ],
+    [
+      { id: 'first', onBC: false, atBC: false, dayBefore: true },
+      { id: 'leap', onBC: true, atBC: true, dayBefore: false },
+    ],
+  );
 });

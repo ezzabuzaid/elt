@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import type { CopyConfiguration } from 'elt';
+import type { CopyConfiguration, Load } from 'elt';
 import { Destination } from 'elt';
 import { MarkdownFile } from './markdown-file.ts';
 import { MarkdownFileWriter } from './markdown-file-writer.ts';
@@ -32,6 +32,14 @@ export class MarkdownDestination extends Destination<
 
   override location(target: MarkdownFile | MarkdownFolder): string {
     return target.name;
+  }
+
+  override async load(): Promise<Load<MarkdownFile | MarkdownFolder>> {
+    return {
+      prepare: (configuration, target, binding) =>
+        this.createWriter(configuration, target).prepare(binding),
+      [Symbol.asyncDispose]: async () => {},
+    };
   }
 
   file(

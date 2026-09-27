@@ -23,6 +23,12 @@ const dataTypes = {
 // A value the batch insert can carry through JSON and cast back to the column type.
 export type EncodedValue = string | number | boolean | null;
 
+// ISO years count astronomically, so year 0000 is 1 BC, which Postgres spells
+// as year 0001 with a BC suffix; every other year reads the same in both.
+function postgresYear(value: string): string {
+  return value.startsWith('0000-') ? `0001${value.slice(4)} BC` : value;
+}
+
 export class PostgresColumn {
   readonly name: string;
   readonly kind: keyof typeof storageTypes;
@@ -110,10 +116,10 @@ export class PostgresColumn {
         if (typeof value === 'number' && Number.isFinite(value)) return value;
         break;
       case 'date':
-        if (isCalendarDate(value)) return value;
+        if (isCalendarDate(value)) return postgresYear(value);
         break;
       case 'timestamp':
-        if (isTimestamp(value)) return value;
+        if (isTimestamp(value)) return postgresYear(value);
     }
     throw new TypeError(
       `Column "${this.name}" requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,

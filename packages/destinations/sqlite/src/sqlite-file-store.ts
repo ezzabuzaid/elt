@@ -13,7 +13,6 @@ export class SQLiteFileStore {
   readonly name: string;
   readonly #next: StatementSync;
   readonly #insert: StatementSync;
-  readonly #discard: StatementSync;
 
   constructor(
     database: DatabaseSync,
@@ -37,7 +36,6 @@ export class SQLiteFileStore {
     this.#insert = database.prepare(
       `INSERT INTO ${chunks} ("file", "n", "bytes") VALUES (?, ?, ?)`,
     );
-    this.#discard = database.prepare(`DELETE FROM ${chunks} WHERE "file" = ?`);
   }
 
   static tableName(table: SQLiteTable, column: SQLiteColumn): string {
@@ -52,9 +50,5 @@ export class SQLiteFileStore {
       this.#insert.run(file, n++, chunk);
     if (n === 0) this.#insert.run(file, 0, new Uint8Array());
     return file;
-  }
-
-  discard(file: number): void {
-    this.#discard.run(file);
   }
 }

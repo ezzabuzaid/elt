@@ -5,8 +5,9 @@ import type { EncodedValue, PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import type { PostgresTable } from './postgres-table.ts';
 import {
-  type Pending,
+  op,
   PostgresWriter,
+  seq,
   type Transaction,
 } from './postgres-writer.ts';
 
@@ -61,10 +62,12 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
       .slice(0, 40)}`;
   }
 
+  protected override get replaces(): boolean {
+    return this.configuration.destinationSyncMode === 'overwrite_dedup';
+  }
+
   protected override async initialize(transaction: Transaction): Promise<void> {
     await transaction.unsafe(this.createTableSQL);
-    if (this.configuration.destinationSyncMode === 'overwrite_dedup')
-      await transaction.unsafe(`DELETE FROM ${this.qualifiedName}`);
     const existing = await transaction.unsafe(
       'SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2',
       [this.schema, this.table.name],
@@ -82,6 +85,12 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
         throw new TypeError(
           `Existing deduplication column ${column.name} has an incompatible storage type`,
         );
+    // A replacing load keeps none of these rows: its index is built once the
+    // commit has emptied the table.
+    if (this.replaces) {
+      await this.dropOtherIndexes(transaction);
+      return;
+    }
     const nulls = await transaction.unsafe(
       `SELECT 1 FROM ${this.qualifiedName} WHERE ${tracked.map((column) => `${column.quotedName} IS NULL`).join(' OR ')} LIMIT 1`,
     );
@@ -89,31 +98,60 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
       throw new TypeError(
         'Existing deduplication keys and cursors must be non-null',
       );
+    await this.index(transaction);
+  }
+
+  protected override async replace(transaction: Transaction): Promise<void> {
+    await super.replace(transaction);
+    await this.index(transaction);
+  }
+
+  private async dropOtherIndexes(transaction: Transaction): Promise<void> {
     for (const index of await this.dedupIndexes(transaction))
       if (index !== this.dedupIndex)
         await transaction.unsafe(
           `DROP INDEX ${quote(this.schema)}.${quote(index)}`,
         );
+  }
+
+  private async index(transaction: Transaction): Promise<void> {
+    await this.dropOtherIndexes(transaction);
     await transaction.unsafe(
       `CREATE UNIQUE INDEX IF NOT EXISTS ${quote(this.dedupIndex)} ON ${this.qualifiedName} (${this.keys.map((column) => column.quotedName).join(', ')})`,
     );
   }
 
-  protected override get insertSQL(): string {
-    const fields = [
-      ...this.table.columns.map((column) => column.quotedName),
-      '"loaded_at"',
-    ];
-    // replace lets the newest extraction win, so a restated fact overwrites the
-    // loaded one; cursor_newer keeps the guard that rejects out-of-order replay.
-    // Text cursors compare by bytes, as SQLite's BINARY and Markdown do.
+  // The result of applying the staged operations one at a time: a staged
+  // DELETE removes its key, and only records after a key's last DELETE count.
+  // replace keeps the newest extraction, so a restated fact overwrites the
+  // loaded one; cursor_newer keeps the greatest cursor (the first on ties) and
+  // the guard that rejects out-of-order replay. Text cursors compare by bytes,
+  // as SQLite's BINARY and Markdown do.
+  protected override async merge(
+    sql: Transaction,
+    stage: string,
+    loadedAt: string,
+  ): Promise<void> {
+    const keys = this.keys.map((column) => column.quotedName);
+    const same = (left: string, right: string) =>
+      keys.map((key) => `${left}.${key} = ${right}.${key}`).join(' AND ');
+    await sql.unsafe(
+      `DELETE FROM ${this.qualifiedName} AS "_mac_elt_target" USING (SELECT DISTINCT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D') AS "deleted" WHERE ${same('"_mac_elt_target"', '"deleted"')}`,
+    );
     const { cursor } = this;
+    const guarded =
+      this.configuration.dedupPolicy !== 'replace' && cursor !== undefined;
     const collate = cursor?.kind === 'text' ? ' COLLATE "C"' : '';
-    const guard =
-      this.configuration.dedupPolicy === 'replace' || cursor === undefined
-        ? ''
-        : ` WHERE excluded.${cursor.quotedName}${collate} > "_mac_elt_target".${cursor.quotedName}${collate}`;
-    return `${super.insertSQL} ON CONFLICT (${this.keys.map((column) => column.quotedName).join(', ')}) DO UPDATE SET ${fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guard}`;
+    const order = guarded
+      ? `"staged".${cursor.quotedName}${collate} DESC, "staged".${seq}`
+      : `"staged".${seq} DESC`;
+    const columns = this.table.columns.map((column) => column.quotedName);
+    await sql.unsafe(
+      `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".*, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_mac_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) ` +
+        `INSERT INTO ${this.qualifiedName} AS "_mac_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, $1::text::timestamptz FROM "ranked" WHERE "_mac_elt_rank" = 1 ORDER BY ${seq} ` +
+        `ON CONFLICT (${keys.join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName}${collate} > "_mac_elt_target".${cursor.quotedName}${collate}` : ''}`,
+      [loadedAt],
+    );
   }
 
   protected override encode(record: unknown): EncodedValue[] {
@@ -122,35 +160,12 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     return super.encode(record);
   }
 
-  // The row each key would hold after applying the batch one row at a time,
-  // decided as Markdown decides it; the statement's guard then compares the
-  // winner with the stored row.
-  protected override collapse(pending: readonly Pending[]): readonly Pending[] {
-    const replace = this.configuration.dedupPolicy === 'replace';
-    const winners = new Map<string, Pending>();
-    for (const entry of pending) {
-      const key = this.deduplication.key(entry.record);
-      const saved = winners.get(key);
-      if (
-        saved === undefined ||
-        replace ||
-        this.deduplication.newer(entry.record, saved.record)
-      )
-        winners.set(key, entry);
-    }
-    return [...winners.values()];
-  }
-
-  protected override deletion(
-    transaction: Transaction,
-  ): (key: Readonly<Record<string, KeyValue>>) => Promise<unknown> {
-    const statement = `DELETE FROM ${this.qualifiedName} WHERE ${this.keys.map((column, index) => `${column.quotedName} = $${index + 1}::text::${column.storageType}`).join(' AND ')}`;
-    return (key) => {
-      this.deduplication.key(key);
-      return transaction.unsafe(
-        statement,
-        this.keys.map((column) => String(column.encode(key))),
-      );
-    };
+  protected override deletionRow(
+    key: Readonly<Record<string, KeyValue>>,
+  ): EncodedValue[] {
+    this.deduplication.key(key);
+    return this.table.columns.map((column) =>
+      this.keys.includes(column) ? column.encode(key) : null,
+    );
   }
 }

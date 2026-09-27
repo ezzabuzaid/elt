@@ -23,27 +23,32 @@ export class PostgresCheckpointStore extends CheckpointStore {
     return `${quote(this.schema)}."_mac_elt_checkpoints"`;
   }
 
-  // The run's lock is a session lock on its own connection, so no
-  // transaction stays open while the load runs; each save autocommits.
+  // Each replication's lock is a session lock on the run's own connection, so
+  // no transaction stays open while the load runs; each save autocommits.
   protected override async session<T>(
-    id: string,
+    ids: readonly string[],
     work: (session: CheckpointSession) => Promise<T>,
   ): Promise<T> {
     await using connection = new Connection(this.#url, 'elt-checkpoints');
     const { sql } = connection;
     await this.#create(sql);
     // Two-key locks never collide with the writers' one-key schema lock. A
-    // replication already running fails fast; others run in parallel.
-    const key = [`mac-elt-checkpoints:${this.schema}`, id];
-    const [lock] = await sql.unsafe(
-      'SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS "locked"',
-      key,
-    );
-    if (lock?.locked !== true)
-      throw new TypeError(`Checkpoint ${id} is in use by another run`);
+    // replication already running fails the run fast; others run in parallel.
+    // Taken in sorted order, so two runs never wait on each other.
+    const namespace = `mac-elt-checkpoints:${this.schema}`;
+    const held: string[] = [];
     try {
+      for (const id of ids) {
+        const [lock] = await sql.unsafe(
+          'SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS "locked"',
+          [namespace, id],
+        );
+        if (lock?.locked !== true)
+          throw new TypeError(`Checkpoint ${id} is in use by another run`);
+        held.push(id);
+      }
       return await work({
-        read: async () => {
+        read: async (id) => {
           const [saved] = await sql.unsafe(
             `SELECT "binding"::text AS "binding", "state"::text AS "state" FROM ${this.#table} WHERE "id" = $1`,
             [id],
@@ -52,21 +57,22 @@ export class PostgresCheckpointStore extends CheckpointStore {
             ? undefined
             : { binding: String(saved.binding), state: String(saved.state) };
         },
-        save: async ({ binding, state }) => {
+        save: async (id, { binding, state }) => {
           await sql.unsafe(
             `INSERT INTO ${this.#table} ("id", "binding", "state") VALUES ($1, $2::text::json, $3::text::json) ON CONFLICT ("id") DO UPDATE SET "state" = excluded."state"`,
             [id, binding, state],
           );
         },
-        remove: async () => {
+        remove: async (id) => {
           await sql.unsafe(`DELETE FROM ${this.#table} WHERE "id" = $1`, [id]);
         },
       });
     } finally {
-      await sql.unsafe(
-        'SELECT pg_advisory_unlock(hashtext($1), hashtext($2))',
-        key,
-      );
+      for (const id of held)
+        await sql.unsafe(
+          'SELECT pg_advisory_unlock(hashtext($1), hashtext($2))',
+          [namespace, id],
+        );
     }
   }
 

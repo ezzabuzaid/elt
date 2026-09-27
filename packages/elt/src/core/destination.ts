@@ -1,8 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { CopyConfiguration } from './copy-configuration.ts';
-import type { ReadMessage } from './source.ts';
 import type { Target as DestinationTarget } from './target.ts';
-import type { WriteOptions, WriteResult, Writer } from './writer.ts';
+import type { Stage, Writer } from './writer.ts';
 
 // Recognized warehouse modes; each destination advertises only its implemented subset.
 export type DestinationSyncMode =
@@ -10,6 +9,20 @@ export type DestinationSyncMode =
   | 'overwrite'
   | 'append_dedup'
   | 'overwrite_dedup';
+
+// One run's hold on a destination: one transaction every stream's stage
+// shares. As in Airbyte, a checkpoint is a commit point, and a stage commits
+// only its own stream's operations, so a failed stream never publishes rows.
+// prepare refuses a target another writer owns (writer names the copy across
+// runs), or one dropped while its copy resumes from a checkpoint, before
+// anything is read.
+export type Load<Target extends DestinationTarget> = AsyncDisposable & {
+  prepare(
+    configuration: CopyConfiguration,
+    target: Target,
+    binding: { readonly writer: string; readonly resuming: boolean },
+  ): Promise<Stage>;
+};
 
 export abstract class Destination<Target extends DestinationTarget> {
   abstract readonly supportedDestinationSyncModes: readonly DestinationSyncMode[];
@@ -47,14 +60,7 @@ export abstract class Destination<Target extends DestinationTarget> {
     target: Target,
   ): Writer;
 
-  async write(
-    configuration: CopyConfiguration,
-    target: Target,
-    records: AsyncIterable<ReadMessage>,
-    options: WriteOptions,
-  ): Promise<WriteResult> {
-    return this.createWriter(configuration, target).write(records, options);
-  }
+  abstract load(): Promise<Load<Target>>;
 
   async clear(
     configuration: CopyConfiguration,

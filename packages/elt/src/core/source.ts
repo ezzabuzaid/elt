@@ -44,30 +44,38 @@ export type DeleteMessage = {
 
 export type SourceMessage = RecordMessage | StateMessage | DeleteMessage;
 
-// A read that failed, for one partition or, when partition is null, the whole
-// stream: Airbyte's error trace. Only Source.read creates it, from what
-// extract threw; a connector signals failure by throwing.
-export class ReadFailure {
+// Where a stream's read stands, as Airbyte's stream status: STARTED before its
+// first message; FAILED when one partition, or the whole stream when
+// partition is null, did not read; ENDED after its last message. Only
+// Source.read creates it, from what extract threw; a connector signals
+// failure by throwing.
+export class StreamStatus {
   constructor(
     readonly stream: string,
-    readonly partition: Partition | null,
-    readonly error: unknown,
+    readonly status: 'STARTED' | 'FAILED' | 'ENDED',
+    readonly partition: Partition | null = null,
+    readonly error: unknown = undefined,
   ) {
     Object.freeze(this);
   }
 }
 
-export type ReadMessage = SourceMessage | ReadFailure;
+export type ReadMessage = SourceMessage | StreamStatus;
 
-// Every copy in one pipeline run reads through one session, so related
-// streams see the same moment of the source.
+// Airbyte's read(config, catalog, state): one read covers every selected
+// stream, inside one context the source opens for it, so related streams see
+// the same moment of the upstream.
 export abstract class Source<
-  Session extends AsyncDisposable = AsyncDisposable,
+  Context extends AsyncDisposable = AsyncDisposable,
 > {
   abstract readonly identity: string;
   // Metadata only. Selections must use these exact Stream objects: a stream's
   // schema shapes the destination, so a matching name is not enough.
   protected abstract readonly catalog: Catalog;
+
+  // How many streams one read reads at once; their messages interleave. A
+  // source raising it reads its context from several extracts together.
+  protected readonly concurrency: number = 1;
 
   async discover(): Promise<Catalog> {
     return this.catalog;
@@ -90,7 +98,7 @@ export abstract class Source<
   // One consistent view of the upstream for reading these streams: a read
   // transaction, or every stream read up front. A source whose streams need
   // not agree returns an empty AsyncDisposableStack.
-  abstract session(streams: readonly Stream[]): Promise<Session>;
+  protected abstract open(streams: readonly Stream[]): Promise<Context>;
 
   // Source-specific selection rules, checked without I/O.
   protected validateExtraction(_configuration: CopyConfiguration): void {}
@@ -118,47 +126,122 @@ export abstract class Source<
     return stream;
   }
 
-  // Must be lazy: the destination prepares its target before pulling records.
+  // Must be lazy: the destination prepares its targets before pulling records.
   // Each checkpoint is a commit point. A full refresh carries none, so it
   // loads all or nothing; an incremental read that fails keeps what earlier
-  // checkpoints committed.
+  // checkpoints committed. states holds each incremental stream's saved state.
   async *read(
-    configuration: CopyConfiguration,
-    state: unknown,
-    session: Session,
+    catalog: readonly CopyConfiguration[],
+    states: ReadonlyMap<string, unknown>,
   ): AsyncGenerator<ReadMessage> {
-    this.validate(configuration);
-    if (configuration.stream.partitionKey !== undefined) {
-      yield* this.partitioned(configuration, state, session);
-      return;
-    }
-    const incremental = configuration.syncMode === 'incremental';
+    for (const configuration of catalog) this.validate(configuration);
+    if (
+      new Set(catalog.map(({ stream }) => stream.name)).size !== catalog.length
+    )
+      throw new TypeError('A read selects each stream once');
+    await using context = await this.open(catalog.map(({ stream }) => stream));
+    yield* this.#interleaved(
+      catalog.map((configuration) =>
+        this.#stream(
+          configuration,
+          states.get(configuration.stream.name) ?? null,
+          context,
+        ),
+      ),
+    );
+  }
+
+  // Up to concurrency streams read together, each message yielded as it
+  // arrives. A stream is asked for its next message only after the consumer
+  // took its last one, so a staged file stays valid until the consumer
+  // advances, whichever stream it came from.
+  async *#interleaved(
+    streams: readonly AsyncGenerator<ReadMessage>[],
+  ): AsyncGenerator<ReadMessage> {
+    if (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)
+      throw new TypeError('Source concurrency must be a positive integer');
+    const waiting = [...streams];
+    const reading = new Map<
+      AsyncGenerator<ReadMessage>,
+      Promise<{
+        stream: AsyncGenerator<ReadMessage>;
+        result: IteratorResult<ReadMessage>;
+      }>
+    >();
+    const next = (stream: AsyncGenerator<ReadMessage>) =>
+      reading.set(
+        stream,
+        stream.next().then((result) => ({ stream, result })),
+      );
+    const start = () => {
+      const stream = waiting.shift();
+      if (stream !== undefined) next(stream);
+    };
     try {
-      for await (const message of this.resolved(
-        configuration,
-        this.extract(configuration, state, null, session),
-      ))
-        if (incremental || !('type' in message) || message.type !== 'STATE')
-          yield message;
-    } catch (error) {
-      yield new ReadFailure(configuration.stream.name, null, error);
+      while (reading.size < this.concurrency && waiting.length > 0) start();
+      while (reading.size > 0) {
+        const { stream, result } = await Promise.race(reading.values());
+        reading.delete(stream);
+        if (result.done) {
+          start();
+          continue;
+        }
+        yield result.value;
+        next(stream);
+      }
+    } finally {
+      for (const [stream, pending] of reading) {
+        await pending.catch(() => undefined);
+        await stream.return(undefined);
+      }
+      for (const stream of waiting) await stream.return(undefined);
     }
   }
 
-  // Replaces each record's staging path with the file reads it asked for.
+  async *#stream(
+    configuration: CopyConfiguration,
+    state: unknown,
+    context: Context,
+  ): AsyncGenerator<ReadMessage> {
+    const { name } = configuration.stream;
+    yield new StreamStatus(name, 'STARTED');
+    if (configuration.stream.partitionKey !== undefined)
+      yield* this.partitioned(configuration, state, context);
+    else {
+      const incremental = configuration.syncMode === 'incremental';
+      try {
+        for await (const message of this.resolved(
+          configuration,
+          this.extract(configuration, state, null, context),
+        ))
+          if (incremental || !('type' in message) || message.type !== 'STATE')
+            yield message;
+      } catch (error) {
+        yield new StreamStatus(name, 'FAILED', null, error);
+      }
+    }
+    yield new StreamStatus(name, 'ENDED');
+  }
+
+  // Keeps each message to the stream whose extract emitted it, and replaces
+  // each record's staging path with the file reads it asked for.
   private async *resolved(
     configuration: CopyConfiguration,
     messages: AsyncIterable<SourceMessage>,
   ): AsyncGenerator<SourceMessage> {
     for await (const message of messages) {
+      if (message instanceof StreamStatus)
+        throw new TypeError(
+          'Only Source.read reports stream status; extract signals failure by throwing',
+        );
+      if (message.stream !== configuration.stream.name)
+        throw new TypeError(
+          `Extract for ${configuration.stream.name} emitted ${message.stream}`,
+        );
       if ('type' in message || configuration.fileReads.length === 0) {
         yield message;
         continue;
       }
-      if (message.stream !== configuration.stream.name)
-        throw new TypeError(
-          `Source emitted an unselected stream: ${message.stream}`,
-        );
       if (message.file !== null && typeof message.file !== 'string')
         throw new TypeError(
           'File extraction must supply a staging path or explicit null',
@@ -210,7 +293,7 @@ export abstract class Source<
   private async *partitioned(
     configuration: CopyConfiguration,
     state: unknown,
-    session: Session,
+    context: Context,
   ): AsyncGenerator<ReadMessage> {
     const { stream } = configuration;
     const incremental = configuration.syncMode === 'incremental';
@@ -230,7 +313,7 @@ export abstract class Source<
             configuration,
             saved.get(key)?.state ?? null,
             partition,
-            session,
+            context,
           ),
         )) {
           if ('type' in message && message.type === 'STATE') {
@@ -255,7 +338,7 @@ export abstract class Source<
           yield message;
         }
       } catch (error) {
-        yield new ReadFailure(stream.name, partition, error);
+        yield new StreamStatus(stream.name, 'FAILED', partition, error);
         // A full refresh commits nothing after a failure; stop reading.
         if (!incremental) return;
       }
@@ -266,6 +349,6 @@ export abstract class Source<
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
-    session: Session,
+    context: Context,
   ): AsyncIterable<SourceMessage>;
 }

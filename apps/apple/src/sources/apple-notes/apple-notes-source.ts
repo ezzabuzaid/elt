@@ -72,7 +72,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     Object.freeze(this);
   }
 
-  override async session(): Promise<NotesScan> {
+  protected override async open(): Promise<NotesScan> {
     return new NotesScan(await NoteStore.open(this.path, requiredColumns));
   }
 

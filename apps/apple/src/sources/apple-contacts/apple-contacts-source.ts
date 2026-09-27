@@ -79,7 +79,7 @@ export class AppleContactsSource extends Source<AddressBook> {
     Object.freeze(this);
   }
 
-  override session(): Promise<AddressBook> {
+  protected override open(): Promise<AddressBook> {
     return AddressBook.open(this.directory, requiredSchema);
   }
 

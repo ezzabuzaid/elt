@@ -191,7 +191,7 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
 
   // Every selected stream from one change-free window, so occurrences match
   // their calendars and ICS rows their items.
-  override async session(
+  protected override async open(
     streams: readonly Stream[],
   ): Promise<EventKitSnapshot> {
     return new EventKitSnapshot(

@@ -275,10 +275,10 @@ A cursor that is itself part of the primary key is equal on every conflict, so `
 
 ## Failure behavior
 
-- Copies execute in order. Each checkpoint is a commit point: the destination commits the rows before it, then the checkpoint is saved. A full refresh commits once, so a failure keeps its previous output.
+- One run is one source read over every copy's stream; streams may interleave, and each stages its rows apart from the others. Each checkpoint is a commit point: the destination commits the rows before it, then the checkpoint is saved. A full refresh commits once, so a failure keeps its previous output.
 - Data and state commits are separate, so delivery is **at least once**: retries can replay records since the last saved checkpoint. Deduplication reconciles replayed versions.
 - Every copy runs even when one fails, and a failing partition does not stop the others: each checkpoint commits, and the rest resume from theirs next run. `PipelineError` then lists every copy's committed counts and failures; it never implies rollback of what committed.
-- There is no pipeline-wide transaction, consistent snapshot across streams, automatic schema migration, or resumable full refresh.
+- There is no pipeline-wide rollback, automatic schema migration, or resumable full refresh. Streams agree with each other where the source pins one view of its upstream (Messages, Notes, Contacts, Calendar, Reminders); Search Console's streams are read independently.
 
 See [execution and error handling](docs/reference.md#execution-and-failures).
 
