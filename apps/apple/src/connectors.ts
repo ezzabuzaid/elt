@@ -1,11 +1,9 @@
-import { mkdir } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
 import { Copy, Pipeline, type Source } from 'elt';
 import {
-  SQLiteCheckpointStore,
-  SQLiteColumns,
-  SQLiteDestination,
-} from 'elt-sqlite';
+  PostgresCheckpointStore,
+  PostgresColumns,
+  PostgresDestination,
+} from 'elt-postgresql';
 import {
   GMAIL_READONLY_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE,
@@ -22,7 +20,7 @@ import { AppleMessagesSource } from './sources/apple-messages/apple-messages-sou
 import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
 
-const out = resolve('outputs');
+const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
 
 // These sources all support snapshot incremental sync. Other connectors can
 // register their own pipeline with different sync modes or destinations.
@@ -31,16 +29,18 @@ function apple(name: string, createSource: () => Source | Promise<Source>) {
     name: `apple-${name}`,
     async run() {
       const source = await createSource();
-      await mkdir(out, { recursive: true });
-      const destination = new SQLiteDestination({
-        path: join(out, `apple-${name}.sqlite`),
+      const schema = `apple_${name}`;
+      const destination = new PostgresDestination({
+        url: warehouseUrl,
+        schema,
       });
       const { streams } = await source.discover();
       await new Pipeline({
         source,
         destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(out, `apple-${name}-state.sqlite`),
+        checkpoints: new PostgresCheckpointStore({
+          url: warehouseUrl,
+          schema,
         }),
         steps: streams.map(
           (stream) =>
@@ -48,7 +48,7 @@ function apple(name: string, createSource: () => Source | Promise<Source>) {
               stream,
               stream.supportsFileTransfer
                 ? destination.table(`raw_${stream.name}`, (columns) => [
-                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                    ...PostgresColumns.fromSchema(stream.jsonSchema),
                     columns
                       .text('content')
                       .from(stream.file)

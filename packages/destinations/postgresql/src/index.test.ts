@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   Catalog,
   Copy,
   type CopyConfiguration,
+  DocumentParser,
   diffSnapshot,
   type Partition,
   Pipeline,
@@ -16,6 +20,7 @@ import {
 } from 'elt';
 import postgres from 'postgres';
 import { PostgresCheckpointStore, PostgresDestination } from './index.ts';
+import { PostgresFileStore } from './postgres-file-store.ts';
 
 const server =
   process.env.TEST_DATABASE_URL ??
@@ -77,6 +82,168 @@ class Messages extends Source {
 
 const rows = (stream: Stream, data: readonly object[]): SourceMessage[] =>
   data.map((row) => ({ stream: stream.name, data: row }));
+
+test('file text and bounded original bytes survive replay, replacement and deletion with checkpoints', async () => {
+  await using database = await scratchDatabase();
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-postgres-files-'),
+  );
+  const file = join(scratch.path, 'note.txt');
+  const empty = join(scratch.path, 'empty.txt');
+  const bytes = Buffer.alloc(PostgresFileStore.chunkSize + 3, 'a');
+  await writeFile(file, bytes);
+  await writeFile(empty, '');
+  class TextParser extends DocumentParser {
+    constructor() {
+      super('test-text');
+    }
+    override parse(path: string) {
+      return readFile(path, 'utf8');
+    }
+  }
+  const stream = new Stream({
+    name: 'attachments',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      required: ['id', 'version'],
+    },
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    primaryKey: ['id'],
+    supportsFileTransfer: true,
+    emitsDeletes: true,
+  });
+  const source = new Messages(stream);
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'apple_notes',
+  });
+  const table = destination.table('attachments', (c) => [
+    c.text('id'),
+    c.integer('version'),
+    c.text('content').from(stream.file).parse(new TextParser()),
+    c.blob('bytes').from(stream.file),
+  ]);
+  const fileColumn = table.columns.find((column) => column.name === 'bytes');
+  assert.ok(fileColumn);
+  const store = new PostgresFileStore(destination.schema, table, fileColumn);
+  const pipeline = new Pipeline({
+    source,
+    destination,
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: destination.schema,
+    }),
+    steps: [
+      new Copy(stream, table, {
+        id: 'attachments',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+        cursorField: 'version',
+      }),
+    ],
+  });
+  source.messages = [
+    { stream: stream.name, data: { id: 'note', version: 1 }, file },
+    { stream: stream.name, data: { id: 'empty', version: 1 }, file: empty },
+    { stream: stream.name, data: { id: 'missing', version: 1 }, file: null },
+  ];
+  await pipeline.run();
+  const initial =
+    await database.sql`SELECT id, bytes, loaded_at FROM apple_notes.attachments ORDER BY id`;
+  assert.deepEqual(
+    (
+      await database.sql`SELECT id, length(content) AS length, bytes IS NULL AS missing FROM apple_notes.attachments ORDER BY id`
+    ).map((row) => ({ ...row })),
+    [
+      { id: 'empty', length: 0, missing: false },
+      { id: 'missing', length: null, missing: true },
+      { id: 'note', length: bytes.length, missing: false },
+    ],
+  );
+  const chunks = await database.sql.unsafe<{ bytes: Buffer }[]>(
+    `SELECT chunks.bytes FROM ${store.qualifiedName} chunks JOIN apple_notes.attachments a ON a.bytes = chunks.file WHERE a.id = 'note' ORDER BY chunks.n`,
+  );
+  assert.deepEqual(
+    chunks.map((chunk) => chunk.bytes.length),
+    [PostgresFileStore.chunkSize, 3],
+  );
+  assert.deepEqual(Buffer.concat(chunks.map((chunk) => chunk.bytes)), bytes);
+  const orphanCount = async () =>
+    (
+      await database.sql.unsafe(
+        `SELECT count(*)::int AS n FROM ${store.qualifiedName} chunks WHERE NOT EXISTS (SELECT 1 FROM apple_notes.attachments a WHERE a.bytes = chunks.file)`,
+      )
+    )[0]?.n;
+  assert.equal(await orphanCount(), 0);
+
+  // The cursor guard rejects these replays, including their newly staged files.
+  await pipeline.run();
+  assert.deepEqual(
+    await database.sql`SELECT id, bytes, loaded_at FROM apple_notes.attachments ORDER BY id`,
+    initial,
+  );
+  assert.equal(await orphanCount(), 0);
+  assert.equal(
+    (
+      await database.sql`SELECT count(*)::int AS n FROM apple_notes._mac_elt_checkpoints`
+    )[0]?.n,
+    1,
+  );
+
+  await writeFile(file, 'updated');
+  source.messages = [
+    { stream: stream.name, data: { id: 'note', version: 2 }, file },
+    { type: 'DELETE', stream: stream.name, key: { id: 'empty' } },
+  ];
+  await pipeline.run();
+  assert.equal(
+    (
+      await database.sql`SELECT content FROM apple_notes.attachments WHERE id = 'note'`
+    )[0]?.content,
+    'updated',
+  );
+  assert.equal(await orphanCount(), 0);
+  assert.equal(
+    (
+      await database.sql.unsafe(
+        `SELECT count(*)::int AS n FROM ${store.qualifiedName}`,
+      )
+    )[0]?.n,
+    1,
+  );
+
+  // A failed record discards files already staged by this uncommitted batch.
+  source.messages = [
+    { stream: stream.name, data: { id: 'note', version: 3 }, file: empty },
+    { stream: stream.name, data: { id: 'bad', version: 'invalid' }, file },
+  ];
+  await assert.rejects(pipeline.run(), PipelineError);
+  assert.equal(
+    (
+      await database.sql`SELECT content FROM apple_notes.attachments WHERE id = 'note'`
+    )[0]?.content,
+    'updated',
+  );
+  assert.equal(await orphanCount(), 0);
+
+  await pipeline.clear();
+  assert.equal(
+    (
+      await database.sql.unsafe(
+        `SELECT count(*)::int AS n FROM ${store.qualifiedName}`,
+      )
+    )[0]?.n,
+    0,
+  );
+  assert.equal(
+    (
+      await database.sql`SELECT count(*)::int AS n FROM apple_notes._mac_elt_checkpoints`
+    )[0]?.n,
+    0,
+  );
+});
 
 test('a copy creates its schema and a table typed from the stream schema', async () => {
   await using database = await scratchDatabase();

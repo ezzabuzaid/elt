@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  FileContent,
   type KeyValue,
   type Stage,
   type Stream,
@@ -11,6 +12,7 @@ import type postgres from 'postgres';
 import { Connection, schemaLock } from './connection.ts';
 import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
+import { PostgresFileStore } from './postgres-file-store.ts';
 import type { PostgresTable } from './postgres-table.ts';
 
 // The load's one connection; statements run inside its open transaction.
@@ -228,6 +230,17 @@ export abstract class PostgresWriter extends Writer {
       );
       if (table?.exists === true)
         await transaction.unsafe(`DELETE FROM ${this.qualifiedName}`);
+      for (const column of this.table.columns.filter(
+        (column) => column.storesFile,
+      )) {
+        const store = new PostgresFileStore(this.schema, this.table, column);
+        const [chunks] = await transaction.unsafe(
+          'SELECT to_regclass($1) IS NOT NULL AS "exists"',
+          [store.qualifiedName],
+        );
+        if (chunks?.exists === true)
+          await transaction.unsafe(`DELETE FROM ${store.qualifiedName}`);
+      }
       await transaction.unsafe(`DELETE FROM ${writers} WHERE "target" = $1`, [
         this.table.name,
       ]);
@@ -246,6 +259,9 @@ export abstract class PostgresWriter extends Writer {
     const stage = quote(
       `_mac_elt_stage_${createHash('sha256').update(this.qualifiedName).digest('hex').slice(0, 40)}`,
     );
+    const stores = this.table.columns
+      .filter((column) => column.storesFile)
+      .map((column) => new PostgresFileStore(this.schema, this.table, column));
     await load.savepoint('prepare', async () => {
       if (resuming) {
         const [table] = await sql.unsafe(
@@ -257,6 +273,7 @@ export abstract class PostgresWriter extends Writer {
       }
       await this.own(sql, writer);
       await this.initialize(sql);
+      for (const store of stores) await store.initialize(sql);
       await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${stage}`);
       await sql.unsafe(
         `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
@@ -278,14 +295,28 @@ export abstract class PostgresWriter extends Writer {
     };
     const drop = async () => {
       pending = [];
-      await load.savepoint('drop', () => sql.unsafe(`TRUNCATE ${stage}`));
+      await load.savepoint('drop', async () => {
+        await sql.unsafe(`TRUNCATE ${stage}`);
+        for (const store of stores) await store.prune(sql);
+      });
     };
     let replaced = false;
     return {
       apply: async (operation) => {
+        let data = operation.type === 'RECORD' ? operation.data : undefined;
+        for (const store of stores) {
+          const content: unknown = Reflect.get(Object(data), store.column.name);
+          if (content instanceof FileContent)
+            data = {
+              ...Object(data),
+              [store.column.name]: await load.savepoint('file', () =>
+                store.save(sql, content),
+              ),
+            };
+        }
         const row =
           operation.type === 'RECORD'
-            ? this.encode(operation.data)
+            ? this.encode(data)
             : this.deletionRow(operation.key);
         pending.push([next++, operation.type === 'RECORD' ? 'R' : 'D', ...row]);
         if (pending.length >= batchSize) await flush();
@@ -296,6 +327,7 @@ export abstract class PostgresWriter extends Writer {
           if (this.replaces && !replaced) await this.replace(sql);
           await this.merge(sql, stage, load.loadedAt);
           await sql.unsafe(`TRUNCATE ${stage}`);
+          for (const store of stores) await store.prune(sql);
         });
         replaced = true;
         await load.commit();

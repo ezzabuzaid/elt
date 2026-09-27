@@ -105,6 +105,10 @@ export class PostgresColumns {
     return this.#column(field, 'timestamp');
   }
 
+  blob(field: string): PostgresColumn {
+    return this.#column(field, 'blob');
+  }
+
   #column(field: string, kind: PostgresColumn['kind']): PostgresColumn {
     return new PostgresColumn(field, kind, {
       nullable: true,

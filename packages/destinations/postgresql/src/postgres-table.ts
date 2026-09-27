@@ -27,7 +27,21 @@ export class PostgresTable extends Target {
       throw new TypeError('Duplicate column names');
     if ((columns ?? []).filter((column) => column.isPrimaryKey).length > 1)
       throw new TypeError('Only one primary-key column is supported');
-    super();
+    const fileReads = (columns ?? []).flatMap((column) =>
+      column.fileRead === undefined ? [] : [column.fileRead],
+    );
+    for (const column of columns ?? []) {
+      if (column.fileRead === undefined) continue;
+      if (
+        column.fileRead.parser === undefined
+          ? column.kind !== 'blob'
+          : column.kind !== 'text'
+      )
+        throw new TypeError(
+          'Original files require a BLOB column; parsed files require a TEXT column',
+        );
+    }
+    super(fileReads);
     this.name = name;
     this.columns = Object.freeze([...(columns ?? [])]);
     Object.freeze(this);
@@ -46,7 +60,10 @@ export class PostgresTable extends Target {
       !Array.isArray(properties)
     ) {
       for (const column of this.columns) {
-        if (!Object.hasOwn(properties, column.name))
+        if (
+          column.fileRead === undefined &&
+          !Object.hasOwn(properties, column.name)
+        )
           throw new TypeError(
             `Stream ${stream.name} does not describe column ${column.name}`,
           );

@@ -348,6 +348,8 @@ ORDER BY c.n;
 
 Verified on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a 1.5 GB file loaded as 358 chunks in 3.3 s with a peak RSS of 137 MiB, and the reassembled chunks matched the file's SHA-256.
 
+Postgres supports the same `text().from(file).parse(parser)` and `blob().from(file)` declarations. Parsed content is TEXT. An original file's column holds a UUID; its bytes live in a per-column `_mac_elt_files_<hash>` table in the destination schema, with `(file UUID, n BIGINT, bytes BYTEA)` chunks of up to 4 MiB. The hash is the first 40 hex characters of SHA-256 over `JSON.stringify([tableName, columnName])`. Join the file UUID and order by `n` to read the original. Empty files have one empty chunk; unavailable files have a null reference. The loader removes unreferenced chunks when a stage commits or is discarded, and when it reopens after a crash; clearing a copy removes its files too. A plain `blob()` column without `.from(file)` stores an inline BYTEA value.
+
 ```ts
 // Text only, under a destination field name you choose.
 new Copy(notes.attachments, sqlite.table('attachment_text', c => [
@@ -392,7 +394,7 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 
 ## Connector applications
 
-`apps/apple/src/connectors.ts` and `apps/google/src/connectors.ts` default-export lists of `{ name, run }` entries. Each `run()` owns its source configuration, credentials, pipeline, and any post-load work. It can use any ELT source and destination. Google refreshes its warehouse marts after complete or partial loads.
+`apps/apple/src/connectors.ts` and `apps/google/src/connectors.ts` default-export lists of `{ name, run }` entries. Each `run()` owns its source configuration, credentials, pipeline, and any post-load work. It can use any ELT source and destination. Apple loads into the shared Postgres warehouse as the loader role, with `raw_<stream>` tables and `_mac_elt_checkpoints` in each connector's `apple_<name>` schema. Apple raw schemas are not granted to the MCP reader. Google refreshes its warehouse marts after complete or partial loads.
 
 Each app's `main.ts` loops over its list in order, awaits `run()`, sets exit status 1 on failure, and continues without console output. `Pipeline` already includes failed streams and partitions in its errors. Connector-specific code that handles a partial failure, such as Google's marts refresh, also sets exit status 1. An empty list succeeds. Apple and Google stay separate apps until their later convergence; both use the same list shape without a shared runner or lifecycle hooks.
 
@@ -477,7 +479,7 @@ Inferred columns follow the stream schema, and unlike SQLite the string formats 
 
 ISO dates count years astronomically and Postgres does not, so year `0000` loads as `0001 BC`, the same day; every other year is written as given.
 
-Explicit columns use `columns.text/integer/real/boolean/date/timestamp(field)` with `.notNull()` and `.primaryKey()`. File reads are not supported. Identifiers are case-sensitive and limited to 63 bytes, because Postgres would silently truncate a longer one; `_mac_elt_` names and a `loaded_at` column are reserved, and `pg_` schemas are refused.
+Explicit columns use `columns.text/integer/real/boolean/date/timestamp/blob(field)` with `.notNull()` and `.primaryKey()`. A plain `blob()` stores BYTEA; `blob().from(file)` streams originals into chunk tables, and `text().from(file).parse(parser)` stores parsed text. See [attachment storage](#attachment-files-and-document-parsing). Identifiers are case-sensitive and limited to 63 bytes, because Postgres would silently truncate a longer one; `_mac_elt_` names and a `loaded_at` column are reserved, and `pg_` schemas are refused.
 
 A run holds one connection and one write transaction on the schema, under a per-schema advisory lock retaken after each commit, so writers to one schema run one at a time. Readers never wait on the lock. Each stream stages its operations in a session-private `TEMP` table and commits them at its own checkpoints:
 
@@ -515,7 +517,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messages.app need not be open. A missing file or a denied grant raises `MessagesUnavailableError` before any copy runs, with the SQLite error as `cause`. `npx nx run apple:start` loads every stream incrementally into `outputs/apple-messages.sqlite`, with attachment text and bytes.
+The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messages.app need not be open. A missing file or a denied grant raises `MessagesUnavailableError` before any copy runs, with the SQLite error as `cause`. `npx nx run apple:start` loads every stream incrementally into the Postgres `apple_messages` schema, with attachment text and bytes.
 
 ### Full Disk Access
 
@@ -666,7 +668,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads Contacts' own Core Data stores read-only through `node:sqlite`: `AddressBook-v22.abcddb` at the root of `~/Library/Application Support/AddressBook` (On My Mac) and one `Sources/<id>/AddressBook-v22.abcddb` per account. Contacts.app need not be open. A store or the `Sources` folder that cannot be opened (missing, or no permission) raises `ContactsUnavailableError`, and a store without a column the connector reads raises `ContactsSchemaError` naming the columns, both before any copy runs. `npx nx run apple:start` loads every stream incrementally into `outputs/apple-contacts.sqlite`, with photo text and bytes.
+The source reads Contacts' own Core Data stores read-only through `node:sqlite`: `AddressBook-v22.abcddb` at the root of `~/Library/Application Support/AddressBook` (On My Mac) and one `Sources/<id>/AddressBook-v22.abcddb` per account. Contacts.app need not be open. A store or the `Sources` folder that cannot be opened (missing, or no permission) raises `ContactsUnavailableError`, and a store without a column the connector reads raises `ContactsSchemaError` naming the columns, both before any copy runs. `npx nx run apple:start` loads every stream incrementally into the Postgres `apple_contacts` schema, with photo text and bytes.
 
 ### Access
 

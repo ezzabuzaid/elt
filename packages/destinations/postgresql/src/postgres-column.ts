@@ -1,4 +1,10 @@
-import { isCalendarDate, isTimestamp } from 'elt';
+import {
+  type DocumentParser,
+  FileRead,
+  type FileReference,
+  isCalendarDate,
+  isTimestamp,
+} from 'elt';
 import { identifier, quote } from './identifier.ts';
 
 const storageTypes = {
@@ -8,6 +14,7 @@ const storageTypes = {
   boolean: 'BOOLEAN',
   date: 'DATE',
   timestamp: 'TIMESTAMPTZ',
+  blob: 'BYTEA',
 } as const;
 
 // information_schema.columns.data_type for each storage type.
@@ -18,6 +25,7 @@ const dataTypes = {
   boolean: 'boolean',
   date: 'date',
   timestamp: 'timestamp with time zone',
+  blob: 'bytea',
 } as const;
 
 // A value the batch insert can carry through JSON and cast back to the column type.
@@ -36,15 +44,27 @@ export class PostgresColumn {
   readonly isPrimaryKey: boolean;
   readonly nullable: boolean;
   readonly optional: boolean;
+  readonly fileRead?: FileRead;
 
   constructor(
     name: string,
     kind: keyof typeof storageTypes,
-    options: { nullable: boolean; optional: boolean; primaryKey: boolean },
+    options: {
+      nullable: boolean;
+      optional: boolean;
+      primaryKey: boolean;
+      fileRead?: FileRead;
+    },
   ) {
     identifier(name, 'column name');
     if (!Object.hasOwn(storageTypes, kind))
       throw new TypeError('Unsupported Postgres column type');
+    this.fileRead = options.fileRead;
+    if (
+      this.fileRead !== undefined &&
+      (!(this.fileRead instanceof FileRead) || this.fileRead.name !== name)
+    )
+      throw new TypeError('Column file read must match its name');
     this.name = name;
     this.kind = kind;
     this.isPrimaryKey = options.primaryKey;
@@ -59,6 +79,7 @@ export class PostgresColumn {
       nullable: false,
       optional: false,
       primaryKey: true,
+      fileRead: this.fileRead,
     });
   }
 
@@ -67,7 +88,36 @@ export class PostgresColumn {
       nullable: false,
       optional: false,
       primaryKey: this.isPrimaryKey,
+      fileRead: this.fileRead,
     });
+  }
+
+  from(file: FileReference): PostgresColumn {
+    if (this.kind !== 'blob' && this.kind !== 'text')
+      throw new TypeError('Files require a BLOB column or parsed TEXT column');
+    return new PostgresColumn(this.name, this.kind, {
+      nullable: this.nullable,
+      optional: this.optional,
+      primaryKey: this.isPrimaryKey,
+      fileRead: new FileRead(this.name, file, this.fileRead?.parser),
+    });
+  }
+
+  parse(parser: DocumentParser): PostgresColumn {
+    if (this.kind !== 'text')
+      throw new TypeError('Document parsing requires a TEXT column');
+    if (this.fileRead === undefined)
+      throw new TypeError('Select a source file before selecting a parser');
+    return new PostgresColumn(this.name, this.kind, {
+      nullable: this.nullable,
+      optional: this.optional,
+      primaryKey: this.isPrimaryKey,
+      fileRead: new FileRead(this.name, this.fileRead.file, parser),
+    });
+  }
+
+  get storesFile(): boolean {
+    return this.kind === 'blob' && this.fileRead !== undefined;
   }
 
   get quotedName(): string {
@@ -75,11 +125,11 @@ export class PostgresColumn {
   }
 
   get storageType(): string {
-    return storageTypes[this.kind];
+    return this.storesFile ? 'UUID' : storageTypes[this.kind];
   }
 
   get dataType(): string {
-    return dataTypes[this.kind];
+    return this.storesFile ? 'uuid' : dataTypes[this.kind];
   }
 
   get definition(): string {
@@ -120,6 +170,16 @@ export class PostgresColumn {
         break;
       case 'timestamp':
         if (isTimestamp(value)) return postgresYear(value);
+        break;
+      case 'blob':
+        if (this.storesFile) {
+          if (
+            typeof value === 'string' &&
+            /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)
+          )
+            return value;
+        } else if (value instanceof Uint8Array)
+          return `\\x${Buffer.from(value).toString('hex')}`;
     }
     throw new TypeError(
       `Column "${this.name}" requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
