@@ -73,6 +73,8 @@ export type SearchConsoleOptions = {
   // A URL is inspected again once its last inspection is this old.
   readonly inspectionRefreshHours?: number;
   readonly inspectionConcurrency?: number;
+  // How many streams read at once; their API calls overlap.
+  readonly streamConcurrency?: number;
   readonly pollIntervalMs?: number;
   readonly now?: () => Date;
   // Downloads the property's sitemaps; injectable for tests.
@@ -134,6 +136,7 @@ export class SearchConsoleSource extends Source {
 
   readonly #api: SearchConsoleApi;
   protected readonly catalog: Catalog;
+  protected override readonly concurrency: number;
   readonly #now: () => Date;
   readonly #fetch: SitemapFetch;
   readonly #clock: InspectionClock;
@@ -157,6 +160,10 @@ export class SearchConsoleSource extends Source {
   // When each inspection stream next has a URL due, per property, learned
   // from the checkpoints its extractions received; observe() sleeps on it.
   readonly #dueAt = new Map<string, number>();
+  // Inspection streams read at once take turns per property to plan and
+  // inspect, so each sees what the one before it inspected and no URL is
+  // inspected twice; different properties never wait on each other.
+  readonly #inspecting = new Map<string, Promise<unknown>>();
 
   constructor(options: SearchConsoleOptions) {
     super();
@@ -166,6 +173,7 @@ export class SearchConsoleSource extends Source {
       breakdownMonths = 3,
       inspectionRefreshHours = 24,
       inspectionConcurrency = 16,
+      streamConcurrency = 4,
       pollIntervalMs = 6 * 60 * 60 * 1000,
       now = () => new Date(),
       fetch = globalThis.fetch,
@@ -201,11 +209,16 @@ export class SearchConsoleSource extends Source {
       throw new TypeError(
         'inspectionConcurrency must be a whole number of at least one',
       );
+    if (!Number.isSafeInteger(streamConcurrency) || streamConcurrency < 1)
+      throw new TypeError(
+        'streamConcurrency must be a whole number of at least one',
+      );
     this.siteUrls = Object.freeze([...siteUrls]);
     this.searchTypes = Object.freeze([...searchTypes]);
     this.breakdownMonths = breakdownMonths;
     this.inspectionRefreshHours = inspectionRefreshHours;
     this.inspectionConcurrency = inspectionConcurrency;
+    this.concurrency = streamConcurrency;
     this.pollIntervalMs = pollIntervalMs;
     this.#now = now;
     this.#fetch = fetch;
@@ -607,41 +620,47 @@ export class SearchConsoleSource extends Source {
   ): AsyncGenerator<SourceMessage> {
     const saved = readInspectionState(state);
     const universe = await this.#universe(siteUrl, stream.name);
-    const cached = this.#inspected.get(siteUrl) ?? new Map();
-    this.#inspected.set(siteUrl, cached);
-    const refreshMs = this.inspectionRefreshHours * 60 * 60 * 1000;
-    const plan = planInspections({
-      saved,
-      universe,
-      cached,
-      now: this.#now().getTime(),
-      refreshMs,
-    });
-    const inspections = [...plan.reuse];
-    let nextDue = plan.nextDue;
-    const resetAt = this.#quotaResetAt.get(siteUrl) ?? 0;
-    if (plan.due.length > 0 && this.#now().getTime() >= resetAt) {
-      const { inspections: made, exhausted } = await inspectUrls(
-        this.#api,
-        siteUrl,
-        plan.due,
-        { concurrency: this.inspectionConcurrency, clock: this.#clock },
-      );
-      for (const inspection of made) {
-        cached.set(inspection.inspectionUrl, inspection);
-        nextDue = Math.min(
-          nextDue,
-          Date.parse(inspection.inspectedAt) + refreshMs,
-        );
-      }
-      inspections.push(...made);
-      if (exhausted) {
-        const reset = nextPacificMidnight(this.#now()).getTime();
-        this.#quotaResetAt.set(siteUrl, reset);
-        nextDue = Math.min(nextDue, reset);
-      }
-    } else if (plan.due.length > 0) nextDue = Math.min(nextDue, resetAt);
-    this.#dueAt.set(`${stream.name}\0${siteUrl}`, nextDue);
+    const { plan, inspections } = await this.#inspectionTurn(
+      siteUrl,
+      async () => {
+        const cached = this.#inspected.get(siteUrl) ?? new Map();
+        this.#inspected.set(siteUrl, cached);
+        const refreshMs = this.inspectionRefreshHours * 60 * 60 * 1000;
+        const plan = planInspections({
+          saved,
+          universe,
+          cached,
+          now: this.#now().getTime(),
+          refreshMs,
+        });
+        const inspections = [...plan.reuse];
+        let nextDue = plan.nextDue;
+        const resetAt = this.#quotaResetAt.get(siteUrl) ?? 0;
+        if (plan.due.length > 0 && this.#now().getTime() >= resetAt) {
+          const { inspections: made, exhausted } = await inspectUrls(
+            this.#api,
+            siteUrl,
+            plan.due,
+            { concurrency: this.inspectionConcurrency, clock: this.#clock },
+          );
+          for (const inspection of made) {
+            cached.set(inspection.inspectionUrl, inspection);
+            nextDue = Math.min(
+              nextDue,
+              Date.parse(inspection.inspectedAt) + refreshMs,
+            );
+          }
+          inspections.push(...made);
+          if (exhausted) {
+            const reset = nextPacificMidnight(this.#now()).getTime();
+            this.#quotaResetAt.set(siteUrl, reset);
+            nextDue = Math.min(nextDue, reset);
+          }
+        } else if (plan.due.length > 0) nextDue = Math.min(nextDue, resetAt);
+        this.#dueAt.set(`${stream.name}\0${siteUrl}`, nextDue);
+        return { plan, inspections };
+      },
+    );
 
     const next = new Map(saved);
     for (const url of plan.gone) {
@@ -685,6 +704,14 @@ export class SearchConsoleSource extends Source {
         ),
       },
     };
+  }
+
+  // Runs work after the property's previous turn settles, whether it failed.
+  #inspectionTurn<T>(siteUrl: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.#inspecting.get(siteUrl) ?? Promise.resolve();
+    const turn = previous.then(work);
+    this.#inspecting.set(siteUrl, Promise.allSettled([turn]));
+    return turn;
   }
 
   #inspectionRows(

@@ -1756,6 +1756,56 @@ test('one inspection serves all three streams, and a URL that leaves is deleted 
   );
 });
 
+test('the three inspection streams read together inspect each URL once', async () => {
+  const pages = ['https://example.com/a', 'https://example.com/b'];
+  const property = inspectionProperty({
+    pages,
+    inspect: (url) => ({
+      verdict: 'PASS',
+      sitemap: ['https://example.com/sitemap.xml'],
+      referringUrls: [`${url}/r0`],
+    }),
+  });
+  // Slow inspections keep one stream's calls in flight while the others plan.
+  const requester = {
+    async request(options: { url: string; data?: Record<string, unknown> }) {
+      if (options.data?.['inspectionUrl'] !== undefined)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      return property.requester.request(options);
+    },
+  };
+  const source = new SearchConsoleSource({
+    ...property,
+    requester,
+    now: NOW,
+    searchTypes: ['WEB'],
+    siteUrls: [SITE],
+    streamConcurrency: 3,
+  });
+  const all = [
+    'urlInspection',
+    'urlInspectionSitemaps',
+    'urlInspectionReferrers',
+  ] as const;
+  await using warehouse = await scratchWarehouse();
+
+  await inspectionRun(source, warehouse, all);
+
+  assert.deepEqual(property.inspected.toSorted(), pages);
+  for (const table of all)
+    assert.deepEqual(
+      [
+        ...new Set(
+          (await inspectionRows(warehouse, table)).map(
+            (row) => row.inspectionUrl,
+          ),
+        ),
+      ].toSorted(),
+      pages,
+      table,
+    );
+});
+
 test('inspections run concurrently, a rejected URL becomes a row, and a server error fails', async () => {
   let inFlight = 0;
   let peak = 0;
@@ -1863,6 +1913,11 @@ test('inspection options are validated', () => {
     assert.throws(
       () => new SearchConsoleSource({ ...base, inspectionConcurrency }),
       /inspectionConcurrency must be a whole number of at least one/,
+    );
+  for (const streamConcurrency of [0, 1.5])
+    assert.throws(
+      () => new SearchConsoleSource({ ...base, streamConcurrency }),
+      /streamConcurrency must be a whole number of at least one/,
     );
 });
 

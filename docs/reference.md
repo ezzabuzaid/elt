@@ -962,7 +962,7 @@ URL inspection has no listing endpoint: each row costs one request naming one UR
 - **Quota.** When Google refuses for quota (a `429` that outlasts the retries), no new request starts, the ones in flight finish, and the inspections that succeeded are committed. The source makes no further inspection request for that property until the next midnight Pacific time, when per-day Google Cloud quotas reset.
 - **Rejected URLs.** A `400` or `404` for one URL is loaded as a `urlInspection` row with `errorStatus` and `errorMessage` and null verdicts, and the run continues. A `401` or any other `403` would fail every URL alike, so it fails the copy.
 - **Removal.** A URL that leaves the discovered set is deleted from all three tables; an array that shrank loses its extra positions.
-- **Sharing.** One request serves all three streams: the source keeps its inspections in memory, and a stream uses one newer than what it last loaded before calling the API.
+- **Sharing.** One request serves all three streams: the source keeps its inspections in memory, and a stream uses one newer than what it last loaded before calling the API. The source reads `streamConcurrency` (default 4) streams at once, so the three inspection streams can run together; they take turns per property to plan and inspect, so a stream sees what the one before it inspected and no URL is inspected twice, while different properties never wait on each other.
 - **Unreadable sitemaps** do not stop inspection. Each listed sitemap's outcome is loaded on the `sitemaps` stream (`urlsRead`, `readError`), and the URLs every other source shows are still inspected. Live, `https://ezz.sh/sitemap.xml` resets TLS connections, and Google itself last read it on 2025-07-20 with one error.
 
 ### Retry
