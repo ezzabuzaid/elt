@@ -5,6 +5,7 @@ import type {
 } from '../state/checkpoint-store.ts';
 import type { Copy, CopyOutcome } from './copy.ts';
 import type { Destination } from './destination.ts';
+import { FileTransfer } from './file-transfer.ts';
 import {
   type KeyValue,
   type ReadMessage,
@@ -33,7 +34,19 @@ class Replicated<Target extends DestinationTarget> {
   ended = false;
   resuming = false;
 
-  constructor(readonly copy: Copy<Target>) {}
+  readonly files: FileTransfer;
+
+  constructor(
+    readonly copy: Copy<Target>,
+    source: Source,
+    destination: Destination<Target>,
+  ) {
+    this.files = new FileTransfer(
+      copy.configuration.fileReads,
+      destination.identity(copy.to),
+      copy.writer(source),
+    );
+  }
 
   get stream(): Stream {
     return this.copy.from;
@@ -53,7 +66,9 @@ export async function replicate<Target extends DestinationTarget>(
   checkpoints: CheckpointStore | undefined,
   copies: readonly Copy<Target>[],
 ): Promise<CopyOutcome<Target>[]> {
-  const replications = copies.map((copy) => new Replicated(copy));
+  const replications = copies.map(
+    (copy) => new Replicated(copy, source, destination),
+  );
   const bindings = new Map<string, object>();
   for (const { copy } of replications)
     if (copy.configuration.syncMode === 'incremental' && copy.id !== undefined)
@@ -126,9 +141,11 @@ async function transfer<Target extends DestinationTarget>(
           resuming: replication.resuming,
         },
       );
+      await replication.files.reconcile(replication.stage.values);
       prepared.push(replication);
     } catch (error) {
-      fail(replication, error);
+      if (replication.stage !== undefined) await breakStage(replication, error);
+      else fail(replication, error);
     }
   if (prepared.length === 0) return;
   try {
@@ -159,6 +176,7 @@ async function transfer<Target extends DestinationTarget>(
               partition: message.partition,
               error: message.error,
             });
+            await replication.files.reconcile(started(replication).values);
           } else {
             replication.ended = true;
             if (replication.broken) continue;
@@ -183,7 +201,14 @@ async function transfer<Target extends DestinationTarget>(
           const { run, id } = checkpoint(replication);
           await run.save(id, operation.state);
         } else {
-          await started(replication).apply(operation);
+          await started(replication).apply(
+            operation.type === 'RECORD'
+              ? {
+                  ...operation,
+                  data: await replication.files.record(operation.data),
+                }
+              : operation,
+          );
           replication.clean = false;
           if (operation.type === 'RECORD') replication.pending.count++;
           else replication.pending.deleted++;
@@ -225,6 +250,7 @@ async function commit<Target extends DestinationTarget>(
   replication.committed.deleted += replication.pending.deleted;
   replication.pending.count = 0;
   replication.pending.deleted = 0;
+  await replication.files.reconcile(started(replication).values);
 }
 
 function fail<Target extends DestinationTarget>(

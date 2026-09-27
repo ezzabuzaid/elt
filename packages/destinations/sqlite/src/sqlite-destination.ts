@@ -8,7 +8,7 @@ import { SQLiteColumns } from './sqlite-columns.ts';
 import { SQLiteDeduplicatingWriter } from './sqlite-deduplicating-writer.ts';
 import { SQLiteOverwriteWriter } from './sqlite-overwrite-writer.ts';
 import { SQLiteTable } from './sqlite-table.ts';
-import type { SQLiteWriter } from './sqlite-writer.ts';
+import { lockWriter, type SQLiteWriter } from './sqlite-writer.ts';
 
 export class SQLiteDestination extends Destination<SQLiteTable> {
   readonly supportedDestinationSyncModes = Object.freeze([
@@ -34,14 +34,16 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     return target.location;
   }
 
-  // One connection and one write transaction for the whole run; each commit
-  // takes the lock straight back.
+  // The writer lock spans all commits; each stream still publishes separately.
   override async load(): Promise<Load<SQLiteTable>> {
-    const database = new DatabaseSync(this.path);
+    const resources = new DisposableStack();
+    let database: DatabaseSync;
     try {
+      resources.use(lockWriter(this.path));
+      database = resources.use(new DatabaseSync(this.path));
       database.exec('BEGIN IMMEDIATE');
     } catch (error) {
-      database.close();
+      resources.dispose();
       throw error;
     }
     const loadedAt = new Date().toISOString();
@@ -56,7 +58,7 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
         try {
           if (database.isTransaction) database.exec('ROLLBACK');
         } finally {
-          database.close();
+          resources.dispose();
         }
       },
     };

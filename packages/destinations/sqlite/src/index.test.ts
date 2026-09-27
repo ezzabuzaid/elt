@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 import { rmSync } from 'node:fs';
-import { mkdir, mkdtempDisposable, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtempDisposable,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -14,6 +21,8 @@ import {
   type CopyConfiguration,
   type Destination,
   diffSnapshot,
+  type FileContent,
+  LocalFiles,
   type Partition,
   Pipeline,
   PipelineError,
@@ -1891,6 +1900,289 @@ const removal = (stream: string, id: string) => ({
   type: 'DELETE' as const,
   stream,
   key: { id },
+});
+
+test('the SQLite writer lock spans commits, permits readers and releases after disposal', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-writer-lock-'),
+  );
+  const stream = scripted('docs');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const copy = new Copy(stream, destination.table('docs'));
+  const load = await destination.load();
+  try {
+    const stage = await load.prepare(copy.configuration, copy.to, {
+      writer: 'writer',
+      resuming: false,
+    });
+    try {
+      await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
+      await stage.commit();
+      using reader = new DatabaseSync(destination.path, { readOnly: true });
+      assert.equal(
+        reader.prepare('SELECT count(*) AS n FROM docs').get()?.n,
+        1,
+      );
+      await assert.rejects(destination.load(), /locked/);
+      await assert.rejects(
+        destination.clear(copy.configuration, copy.to, 'writer'),
+        /locked/,
+      );
+    } finally {
+      await stage[Symbol.asyncDispose]();
+    }
+  } finally {
+    await load[Symbol.asyncDispose]();
+  }
+  await destination.clear(copy.configuration, copy.to, 'writer');
+  await using next = await destination.load();
+});
+
+test('stored file references follow committed SQLite rows, including rejected updates, failures, deletions and clear', async () => {
+  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-local-sqlite-'));
+  try {
+    const path = join(scratch.path, 'source.txt');
+    await writeFile(path, 'original');
+    const directory = join(scratch.path, 'files');
+    const files = new LocalFiles({ directory });
+    const stream = new Stream({
+      ...scripted('docs', { snapshot: false }),
+      supportsFileTransfer: true,
+    });
+    const source = new ScriptedSource([stream], {});
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'out.sqlite'),
+    });
+    const statePath = join(scratch.path, 'state.sqlite');
+    assert.throws(
+      () =>
+        destination.table('invalid', (c) => [
+          c.blob('ref').from(stream.file.store(files)),
+        ]),
+      /stored references require a TEXT column/,
+    );
+    const copy = new Copy(
+      stream,
+      destination.table('docs', (c) => [
+        c.text('id'),
+        c.integer('version'),
+        c.text('ref').from(stream.file.store(files)),
+      ]),
+      {
+        id: 'docs',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+        cursorField: 'version',
+      },
+    );
+    const pipeline = new Pipeline({
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+      steps: [copy],
+    });
+    const loaded = () => {
+      using db = new DatabaseSync(destination.path, { readOnly: true });
+      return db
+        .prepare('SELECT id, version, ref FROM docs ORDER BY id')
+        .all()
+        .map((row) => ({ ...row }));
+    };
+    const saved = () => {
+      using db = new DatabaseSync(statePath, { readOnly: true });
+      return db
+        .prepare('SELECT state FROM checkpoints WHERE id = ?')
+        .get('docs')?.state;
+    };
+    const storedFiles = async () =>
+      (
+        await readdir(directory, { recursive: true, withFileTypes: true })
+      ).filter((entry) => entry.isFile());
+    const fileRecord = (version: number) => ({
+      ...record('docs', 'a', version),
+      file: path,
+    });
+    await assert.rejects(readdir(directory), { code: 'ENOENT' });
+    source.scripts = {
+      docs: [
+        fileRecord(2),
+        { ...record('docs', 'b', 1), file: null },
+        checkpoint('docs', { at: 1 }),
+      ],
+    };
+    await pipeline.run();
+    const original = String(loaded()[0]?.ref);
+    assert.equal(await readFile(original, 'utf8'), 'original');
+    assert.equal(loaded()[1]?.ref, null);
+    assert.equal((await storedFiles()).length, 1);
+
+    await pipeline.run();
+    assert.equal(loaded()[0]?.ref, original);
+    assert.equal((await storedFiles()).length, 1);
+    await writeFile(path, 'rejected');
+    source.scripts = { docs: [fileRecord(1), checkpoint('docs', { at: 2 })] };
+    await pipeline.run();
+    assert.equal(loaded()[0]?.ref, original);
+    assert.equal((await storedFiles()).length, 1);
+    const beforeFailure = saved();
+    source.scripts = { docs: [fileRecord(3), new Error('upstream failed')] };
+    await assert.rejects(pipeline.run(), PipelineError);
+    assert.equal(saved(), beforeFailure);
+    assert.equal(await readFile(original, 'utf8'), 'original');
+    assert.equal((await storedFiles()).length, 1);
+
+    await writeFile(path, 'replacement');
+    source.scripts = { docs: [fileRecord(3), checkpoint('docs', { at: 3 })] };
+    await pipeline.run();
+    const replacement = String(loaded()[0]?.ref);
+    assert.equal(await readFile(replacement, 'utf8'), 'replacement');
+    await assert.rejects(readFile(original), { code: 'ENOENT' });
+    source.scripts = {
+      docs: [removal('docs', 'a'), checkpoint('docs', { at: 4 })],
+    };
+    await pipeline.run();
+    await assert.rejects(readFile(replacement), { code: 'ENOENT' });
+    assert.equal((await storedFiles()).length, 0);
+    source.scripts = { docs: [fileRecord(4), checkpoint('docs', { at: 5 })] };
+    await pipeline.run();
+    await pipeline.clear();
+    assert.deepEqual(loaded(), []);
+    assert.equal(saved(), undefined);
+    assert.equal((await storedFiles()).length, 0);
+  } finally {
+    await scratch[Symbol.asyncDispose]();
+  }
+});
+
+test('stored files recover cleanup failures before checkpointing and isolate copies sharing a directory', async () => {
+  const scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-local-recovery-'),
+  );
+  try {
+    const path = join(scratch.path, 'source.bin');
+    const content = Buffer.alloc(4 * 1024 * 1024 + 1, 42);
+    await writeFile(path, content);
+    let rejectCleanup = false;
+    let savedFile = false;
+    let rejectSave = false;
+    const files = new (class extends LocalFiles {
+      override async save(scope: string, content: FileContent) {
+        if (rejectSave) throw new Error('storage unavailable');
+        const reference = await super.save(scope, content);
+        savedFile = true;
+        return reference;
+      }
+      override async retain(scope: string, references: ReadonlySet<string>) {
+        if (rejectCleanup && savedFile) throw new Error('cleanup unavailable');
+        await super.retain(scope, references);
+      }
+    })({ directory: join(scratch.path, 'files') });
+    const stream = new Stream({
+      ...scripted('docs', { snapshot: false }),
+      supportsFileTransfer: true,
+    });
+    const source = new ScriptedSource([stream], {});
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'out.sqlite'),
+    });
+    const statePath = join(scratch.path, 'state.sqlite');
+    const target = (name: string) =>
+      destination.table(name, (c) => [
+        c.text('id'),
+        c.integer('version'),
+        c.text('ref').from(stream.file.store(files)),
+      ]);
+    const copy = new Copy(stream, target('docs'), {
+      id: 'docs',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+      primaryKey: ['id'],
+      cursorField: 'version',
+    });
+    const pipeline = new Pipeline({
+      source,
+      destination,
+      steps: [copy],
+      checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+    });
+    const loaded = (table: string) => {
+      using db = new DatabaseSync(destination.path, { readOnly: true });
+      return db.prepare(`SELECT ref FROM "${table}"`).get()?.ref;
+    };
+    const saved = () => {
+      using db = new DatabaseSync(statePath, { readOnly: true });
+      return db
+        .prepare('SELECT state FROM checkpoints WHERE id = ?')
+        .get('docs')?.state;
+    };
+    source.scripts = {
+      docs: [
+        { ...record('docs', 'a', 1), file: path },
+        checkpoint('docs', { at: 1 }),
+      ],
+    };
+    rejectCleanup = true;
+    await assert.rejects(pipeline.run(), PipelineError);
+    const original = String(loaded('docs'));
+    assert.deepEqual(await readFile(original), content);
+    assert.equal(saved(), undefined);
+    rejectCleanup = false;
+    await pipeline.run();
+    assert.equal(loaded('docs'), original);
+    assert.equal(saved(), '{"at":1}');
+
+    rejectSave = true;
+    source.scripts = {
+      docs: [
+        { ...record('docs', 'a', 2), file: path },
+        checkpoint('docs', { at: 2 }),
+      ],
+    };
+    await assert.rejects(pipeline.run(), PipelineError);
+    assert.equal(loaded('docs'), original);
+    assert.equal(saved(), '{"at":1}');
+    assert.deepEqual(await readFile(original), content);
+    rejectSave = false;
+
+    const snapshot = new Pipeline({
+      source,
+      destination,
+      steps: [new Copy(stream, target('snapshot'))],
+    });
+    await writeFile(path, '');
+    source.scripts = { docs: [{ ...record('docs', 'a', 1), file: path }] };
+    await snapshot.run();
+    const empty = String(loaded('snapshot'));
+    assert.equal((await readFile(empty)).length, 0);
+    assert.deepEqual(await readFile(original), content);
+    source.scripts = {
+      docs: [
+        { ...record('docs', 'a', 2), file: path },
+        new Error('snapshot failed'),
+      ],
+    };
+    await assert.rejects(snapshot.run(), PipelineError);
+    assert.equal(loaded('snapshot'), empty);
+    assert.equal((await readFile(empty)).length, 0);
+    source.scripts = { docs: [] };
+    await snapshot.run();
+    assert.equal(loaded('snapshot'), undefined);
+    await assert.rejects(readFile(empty), { code: 'ENOENT' });
+    assert.deepEqual(await readFile(original), content);
+    await pipeline.clear();
+    await assert.rejects(readFile(original), { code: 'ENOENT' });
+    source.scripts = { docs: [{ ...record('docs', 'a', 1), file: path }] };
+    await snapshot.run();
+    await rm(String(loaded('snapshot')));
+    await assert.rejects(snapshot.run(), PipelineError);
+    assert.equal(loaded('snapshot'), empty);
+    await snapshot.clear();
+  } finally {
+    await scratch[Symbol.asyncDispose]();
+  }
 });
 
 test('a stream that fails publishes none of its staged rows while its sibling commits, and a failing overwrite keeps the old table', async () => {

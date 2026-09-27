@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
+import {
+  mkdtempDisposable,
+  readdir,
+  readFile,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   Catalog,
   Copy,
   type CopyConfiguration,
   DocumentParser,
   diffSnapshot,
+  LocalFiles,
   type Partition,
   Pipeline,
   PipelineError,
@@ -82,6 +89,194 @@ class Messages extends Source {
 
 const rows = (stream: Stream, data: readonly object[]): SourceMessage[] =>
   data.map((row) => ({ stream: stream.name, data: row }));
+
+test("a competing load cannot reconcile pending files between another load's commits", async () => {
+  await using database = await scratchDatabase();
+  const stream = new Stream({
+    name: 'docs',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    supportedSyncModes: ['full_refresh'],
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const copy = new Copy(stream, destination.table('docs'));
+  const load = await destination.load();
+  let acquired = false;
+  let contender: Promise<void> | undefined;
+  try {
+    const stage = await load.prepare(copy.configuration, copy.to, {
+      writer: 'writer',
+      resuming: false,
+    });
+    try {
+      await stage.apply({ type: 'RECORD', data: { id: 'a' } });
+      contender = destination.load().then(async (other) => {
+        acquired = true;
+        await other[Symbol.asyncDispose]();
+      });
+      // Wait until the real server has queued the contender, without racing
+      // connection startup against this load's commit.
+      let queued = false;
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const [row] = await database.sql`SELECT count(*)::int AS n FROM pg_locks
+          WHERE locktype = 'advisory' AND NOT granted
+          AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`;
+        if (row?.n > 0) {
+          queued = true;
+          break;
+        }
+        await delay(10);
+      }
+      assert.equal(queued, true);
+      await stage.commit();
+      assert.equal(acquired, false);
+    } finally {
+      await stage[Symbol.asyncDispose]();
+    }
+  } finally {
+    await load[Symbol.asyncDispose]();
+    await contender;
+  }
+  assert.equal(acquired, true);
+});
+
+test('Postgres stores per-field attachment references and reconciles only the files its committed rows retain', async () => {
+  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-local-pg-'));
+  try {
+    await using database = await scratchDatabase();
+    const path = join(scratch.path, 'source.txt');
+    await writeFile(path, 'original');
+    const directories = [
+      join(scratch.path, 'originals'),
+      join(scratch.path, 'copies'),
+    ] as const;
+    const files = directories.map((directory) => new LocalFiles({ directory }));
+    const stream = new Stream({
+      name: 'docs',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      emitsDeletes: true,
+      supportsFileTransfer: true,
+    });
+    const source = new Messages(stream);
+    const destination = new PostgresDestination({
+      url: database.url,
+      schema: 'raw',
+    });
+    const copy = new Copy(
+      stream,
+      destination.table('docs', (c) => [
+        c.text('id'),
+        c.integer('version'),
+        ...files.map((store, i) =>
+          c.text(`ref${i}`).from(stream.file.store(store)),
+        ),
+      ]),
+      {
+        id: 'docs',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+        primaryKey: ['id'],
+        cursorField: 'version',
+      },
+    );
+    const pipeline = new Pipeline({
+      source,
+      destination,
+      steps: [copy],
+      checkpoints: new PostgresCheckpointStore({
+        url: database.url,
+        schema: 'raw',
+      }),
+    });
+    const loaded = async () => [
+      ...(await database.sql.unsafe(
+        'SELECT id, ref0, ref1 FROM raw.docs ORDER BY id',
+      )),
+    ];
+    const storedFiles = async (directory: string) =>
+      (
+        await readdir(directory, { recursive: true, withFileTypes: true })
+      ).filter((entry) => entry.isFile());
+    const fileRecord = (version: number): SourceMessage => ({
+      stream: 'docs',
+      data: { id: 'a', version },
+      file: path,
+    });
+    source.messages = [
+      fileRecord(2),
+      { stream: 'docs', data: { id: 'b', version: 1 }, file: null },
+    ];
+    await pipeline.run();
+    const [first, unavailable] = await loaded();
+    assert.ok(first);
+    assert.equal(unavailable?.ref0, null);
+    assert.equal(unavailable?.ref1, null);
+    for (const i of [0, 1] as const) {
+      assert.equal(await readFile(first[`ref${i}`], 'utf8'), 'original');
+      assert.equal((await storedFiles(directories[i])).length, 1);
+    }
+    assert.notEqual(first.ref0, first.ref1);
+    assert.equal(
+      (
+        await database.sql.unsafe(
+          "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'raw' AND table_name LIKE '_mac_elt_files_%'",
+        )
+      )[0]?.n,
+      0,
+    );
+
+    await pipeline.run();
+    assert.deepEqual(await loaded(), [first, unavailable]);
+    await writeFile(path, 'rejected');
+    source.messages = [fileRecord(1)];
+    await pipeline.run();
+    assert.deepEqual(await loaded(), [first, unavailable]);
+    for (const directory of directories)
+      assert.equal((await storedFiles(directory)).length, 1);
+    // A database failure must preserve both prior references and their bytes.
+    await database.sql.unsafe(
+      'ALTER TABLE raw.docs ADD CONSTRAINT reject_three CHECK (version <> 3)',
+    );
+    source.messages = [fileRecord(3)];
+    await assert.rejects(pipeline.run(), PipelineError);
+    for (const i of [0, 1])
+      assert.equal(await readFile(first[`ref${i}`], 'utf8'), 'original');
+    await database.sql.unsafe(
+      'ALTER TABLE raw.docs DROP CONSTRAINT reject_three',
+    );
+    await writeFile(path, 'replacement');
+    await pipeline.run();
+    const [replacement] = await loaded();
+    assert.ok(replacement);
+    for (const i of [0, 1] as const) {
+      assert.equal(
+        await readFile(replacement[`ref${i}`], 'utf8'),
+        'replacement',
+      );
+      await assert.rejects(readFile(first[`ref${i}`]), { code: 'ENOENT' });
+      assert.equal((await storedFiles(directories[i])).length, 1);
+    }
+    source.messages = [{ type: 'DELETE', stream: 'docs', key: { id: 'a' } }];
+    await pipeline.run();
+    for (const directory of directories)
+      assert.equal((await storedFiles(directory)).length, 0);
+    source.messages = [fileRecord(4)];
+    await pipeline.run();
+    await pipeline.clear();
+    assert.equal((await loaded()).length, 0);
+    for (const directory of directories)
+      assert.equal((await storedFiles(directory)).length, 0);
+  } finally {
+    await scratch[Symbol.asyncDispose]();
+  }
+});
 
 test('schema annotations follow each copy, including projections, append history and removed descriptions', async () => {
   await using database = await scratchDatabase();

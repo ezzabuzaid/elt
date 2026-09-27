@@ -46,9 +46,15 @@ export type WriteOperation =
       readonly key: Readonly<Record<string, KeyValue>>;
     };
 
+// Scalar values in a target field, without exposing storage mechanisms.
+export type FieldValues = (field: string) => AsyncIterable<unknown>;
+
 // One stream's open load of its target. What is applied between two commits
 // becomes durable and visible together, or not at all.
 export type Stage = AsyncDisposable & {
+  // Current target values, excluding pending stage operations. Read while
+  // holding the target's write lock, including after commit reacquires it.
+  values: FieldValues;
   apply(operation: WriteOperation): Promise<void>;
   // Makes everything applied so far durable and visible.
   commit(): Promise<void>;
@@ -62,5 +68,9 @@ export abstract class Writer {
   constructor(readonly stream: Stream) {}
 
   // Empties the target and releases its owner, refusing another writer's target.
-  abstract clear(writer: string): Promise<void>;
+  // Acknowledges the committed result while holding the target's write lock.
+  abstract clear(
+    writer: string,
+    committed?: (values: FieldValues) => Promise<void>,
+  ): Promise<void>;
 }

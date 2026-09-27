@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   type CopyConfiguration,
+  type FieldValues,
   FileContent,
   type KeyValue,
   type Stage,
@@ -69,6 +70,12 @@ export class PostgresLoad implements AsyncDisposable {
         schema,
         String(clock?.loadedAt),
       );
+      // Keep pending files of every stream protected across commit boundaries.
+      // Closing this connection releases the session lock, including on errors.
+      await load.sql.unsafe(
+        'SELECT pg_advisory_lock(hashtextextended($1, 0))',
+        [schemaLock(schema)],
+      );
       await load.#begin();
       await load.sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(schema)}`);
       return load;
@@ -81,13 +88,9 @@ export class PostgresLoad implements AsyncDisposable {
   async #begin(): Promise<void> {
     await this.sql.unsafe('BEGIN');
     this.#open = true;
-    await this.sql.unsafe(
-      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-      [schemaLock(this.schema)],
-    );
   }
 
-  // Makes everything merged so far durable, then takes the lock back.
+  // Makes everything merged so far durable while retaining the writer lock.
   async commit(): Promise<void> {
     await this.sql.unsafe('COMMIT');
     this.#open = false;
@@ -169,6 +172,11 @@ export abstract class PostgresWriter extends Writer {
           return [
             column.name,
             `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`,
+          ];
+        if (column.fileRead?.outputType === 'text')
+          return [
+            column.name,
+            'Opaque reference to an externally stored attachment. NULL when the source file is unavailable.',
           ];
         return [
           column.name,
@@ -267,13 +275,36 @@ export abstract class PostgresWriter extends Writer {
       throw new TargetOwnedError(this.table.name, String(row.writer), writer);
   }
 
-  override async clear(writer: string): Promise<void> {
-    await using connection = new Connection(this.url, 'elt');
-    await connection.sql.begin(async (transaction) => {
-      await transaction.unsafe(
-        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-        [schemaLock(this.schema)],
+  private values(sql: Transaction): FieldValues {
+    const { table, schema, qualifiedName } = this;
+    return async function* (field) {
+      const column = table.columns.find((column) => column.name === field);
+      if (column === undefined)
+        throw new TypeError(`Unknown target field: ${field}`);
+      const present = await sql.unsafe(
+        'SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3',
+        [schema, table.name, field],
       );
+      if (present.length === 0) return;
+      for await (const rows of sql
+        .unsafe(`SELECT ${column.quotedName} AS value FROM ${qualifiedName}`)
+        .cursor(batchSize))
+        for (const row of rows) yield row.value;
+    };
+  }
+
+  override async clear(
+    writer: string,
+    committed?: (values: FieldValues) => Promise<void>,
+  ): Promise<void> {
+    await using connection = new Connection(this.url, 'elt');
+    // Hold this schema across the database commit and its acknowledgement.
+    // The session closes on every exit, releasing its advisory lock.
+    await connection.sql.unsafe(
+      'SELECT pg_advisory_lock(hashtextextended($1, 0))',
+      [schemaLock(this.schema)],
+    );
+    await connection.sql.begin(async (transaction) => {
       const [schema] = await transaction.unsafe(
         'SELECT to_regnamespace($1) IS NOT NULL AS "exists"',
         [quote(this.schema)],
@@ -311,6 +342,7 @@ export abstract class PostgresWriter extends Writer {
         this.table.name,
       ]);
     });
+    await committed?.(this.values(connection.sql));
   }
 
   // One stream's load inside the run's shared transaction. Operations wait in
@@ -383,6 +415,7 @@ export abstract class PostgresWriter extends Writer {
     };
     let replaced = false;
     return {
+      values: this.values(sql),
       apply: async (operation) => {
         let data = operation.type === 'RECORD' ? operation.data : undefined;
         for (const store of stores) {

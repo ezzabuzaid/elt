@@ -1,4 +1,5 @@
-import { Copy, Pipeline, type Source } from 'elt';
+import { join, resolve } from 'node:path';
+import { Copy, LocalFiles, Pipeline, type Source } from 'elt';
 import {
   PostgresCheckpointStore,
   PostgresColumns,
@@ -30,6 +31,9 @@ function apple(name: string, createSource: () => Source | Promise<Source>) {
     async run() {
       const source = await createSource();
       const schema = `apple_${name}`;
+      const files = new LocalFiles({
+        directory: join(resolve('outputs'), `apple-${name}-files`),
+      });
       const destination = new PostgresDestination({
         url: warehouseUrl,
         schema,
@@ -53,7 +57,9 @@ function apple(name: string, createSource: () => Source | Promise<Source>) {
                       .text('content')
                       .from(stream.file)
                       .parse(new MacOSDocumentParser()),
-                    columns.blob('bytes').from(stream.file),
+                    columns
+                      .text('attachmentRef')
+                      .from(stream.file.store(files)),
                   ])
                 : destination.table(`raw_${stream.name}`),
               {

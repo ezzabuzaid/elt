@@ -94,7 +94,9 @@ export class PostgresColumn {
 
   from(file: FileReference): PostgresColumn {
     if (this.kind !== 'blob' && this.kind !== 'text')
-      throw new TypeError('Files require a BLOB column or parsed TEXT column');
+      throw new TypeError(
+        'Files require a BLOB column, parsed TEXT or a stored TEXT reference',
+      );
     return new PostgresColumn(this.name, this.kind, {
       nullable: this.nullable,
       optional: this.optional,

@@ -77,7 +77,7 @@ This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table'
 
 `Copy` defaults to `full_refresh` extraction and `overwrite` loading. Creating a pipeline performs no extraction; `run()` executes it once and returns `{ copy, count, deleted }` results after loading. `count` is accepted input records, including deduplication no-ops, and `deleted` is accepted deletions, including keys that were already absent; neither is the number of changed rows.
 
-The repository also includes an [Apple exporter](apps/apple/src/main.ts) that loads every stream of every Apple connector incrementally: Mail, Notes, Messages, Contacts, Calendar and Reminders. Start the shared Postgres warehouse with `docker compose -f infra/docker-compose.yml up -d --wait`, then run `npx nx run apple:start`. Each connector writes `raw_<stream>` tables in its own `apple_<name>` schema (for example `apple_notes.raw_notes`) and keeps checkpoints in that schema's `_mac_elt_checkpoints` table; a second run with no changes writes nothing. Streams with files load their text as `content` and retain their original bytes in bounded chunks, referenced by the `bytes` column; files without extractable text load with null `content`. Apple raw schemas use the warehouse's loader role and are not exposed through the read-only MCP's `marts` schema.
+The repository also includes an [Apple exporter](apps/apple/src/main.ts) that loads every stream of every Apple connector incrementally: Mail, Notes, Messages, Contacts, Calendar and Reminders. Start the shared Postgres warehouse with `docker compose -f infra/docker-compose.yml up -d --wait`, then run `npx nx run apple:start`. Each connector writes `raw_<stream>` tables in its own `apple_<name>` schema (for example `apple_notes.raw_notes`) and keeps checkpoints in that schema's `_mac_elt_checkpoints` table; a second run with no changes writes nothing. Streams with files load their text as `content` and an absolute local file path as `attachmentRef`. Original files live under `outputs/apple-<name>-files`, configured in [connectors.ts](apps/apple/src/connectors.ts). Files without extractable text load with null `content`. Apple raw schemas use the warehouse's loader role and are not exposed through the read-only MCP's `marts` schema.
 
 Each connector reads the app's own store at its default location, and each needs its own grant for the process running the export: Mail, Notes and Messages need Full Disk Access; Mail account settings also need Automation access to Mail; Contacts needs Contacts access or Full Disk Access; Calendar and Reminders need full Calendar and Reminders access, and Calendar's `calendars` stream also needs Automation access to Calendar. A connector the process cannot read causes exit status 1 while the others still load; a failed stream keeps its checkpoint and resumes from it next run. The apps produce no console output. Calendar loads occurrences from 2000-01-01 to a year after the run and downloads attachments stored in Google Drive and Gmail, so the run needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first run opens a browser for consent. See [Messages streams](docs/reference.md#apple-messages) and [Contacts streams](docs/reference.md#apple-contacts); Contacts account names (iCloud, Google) are not in its stores and do not load.
 
@@ -245,12 +245,15 @@ await new Pipeline({
 
 Generated Markdown retains canonical record data for subsequent appends and reconciliation. Treat these files as managed output: manual edits are replaced. See [Markdown storage and recovery](docs/reference.md#markdown-destination).
 
-## Attachment text and bytes
+## Attachment text and local files
 
-Using the `source` and `destination` from the quick start, load Notes attachment metadata, parsed text, and original bytes together:
+Using the `source` and `destination` from the quick start, store attachment metadata and parsed text in the database, and save original files in a directory you choose:
 
 ```ts
+import { LocalFiles } from 'elt';
 import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
+
+const localFiles = new LocalFiles({ directory: './outputs/attachments' });
 
 const attachments = new Copy(
   source.attachments,
@@ -260,14 +263,16 @@ const attachments = new Copy(
     columns.text('content')
       .from(source.attachments.file)
       .parse(new MacOSDocumentParser()),
-    columns.blob('bytes').from(source.attachments.file),
+    columns.text('attachmentRef').from(source.attachments.file.store(localFiles)),
   ]),
 );
 
 await new Pipeline({ source, destination, steps: [attachments] }).run();
 ```
 
-Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, text in images through Vision, and speech in audio. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and bytes. Tables have no file; their cells are in the note's `markdown`.
+Each file field chooses its own store. SQLite and Postgres receive an ordinary text reference; `LocalFiles` owns paths and file writes. Files are saved before rows commit, and obsolete files are removed after committed rows stop referencing them. Unchanged content reuses its path; clearing a copy removes its managed files. These files mirror retained rows rather than form a permanent archive.
+
+Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, text in images through Vision, and speech in audio. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and reference. Tables have no file; their cells are in the note's `markdown`.
 
 See [file declarations, parsing, and attachment limitations](docs/reference.md#attachment-files-and-document-parsing).
 

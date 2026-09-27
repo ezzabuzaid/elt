@@ -33,12 +33,12 @@ export class PostgresTable extends Target {
     for (const column of columns ?? []) {
       if (column.fileRead === undefined) continue;
       if (
-        column.fileRead.parser === undefined
+        column.fileRead.outputType === 'bytes'
           ? column.kind !== 'blob'
           : column.kind !== 'text'
       )
         throw new TypeError(
-          'Original files require a BLOB column; parsed files require a TEXT column',
+          'Original files require a BLOB column; parsed text and stored references require a TEXT column',
         );
     }
     super(fileReads);

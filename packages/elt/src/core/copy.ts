@@ -1,6 +1,7 @@
 import type { CheckpointStore } from '../state/checkpoint-store.ts';
 import { CopyConfiguration } from './copy-configuration.ts';
 import type { Destination } from './destination.ts';
+import { FileTransfer } from './file-transfer.ts';
 import type { Source } from './source.ts';
 import type { Stream } from './stream.ts';
 import { Target as DestinationTarget } from './target.ts';
@@ -93,8 +94,18 @@ export class Copy<Target extends DestinationTarget> {
     checkpoints?: CheckpointStore,
   ): Promise<void> {
     this.validate(source, destination, checkpoints);
+    const files = new FileTransfer(
+      this.configuration.fileReads,
+      destination.identity(this.to),
+      this.writer(source),
+    );
     const drop = () =>
-      destination.clear(this.configuration, this.to, this.writer(source));
+      destination.clear(
+        this.configuration,
+        this.to,
+        this.writer(source),
+        (values) => files.reconcile(values),
+      );
     if (this.id !== undefined && checkpoints !== undefined)
       await checkpoints.clear(this.id, drop);
     else await drop();

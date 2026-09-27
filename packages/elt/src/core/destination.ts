@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Target as DestinationTarget } from './target.ts';
-import type { Stage, Writer } from './writer.ts';
+import type { FieldValues, Stage, Writer } from './writer.ts';
 
 // Recognized warehouse modes; each destination advertises only its implemented subset.
 export type DestinationSyncMode =
@@ -66,7 +66,8 @@ export abstract class Destination<Target extends DestinationTarget> {
     configuration: CopyConfiguration,
     target: Target,
     writer: string,
+    committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
-    await this.createWriter(configuration, target).clear(writer);
+    await this.createWriter(configuration, target).clear(writer, committed);
   }
 }

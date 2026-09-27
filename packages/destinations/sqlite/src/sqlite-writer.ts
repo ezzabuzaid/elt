@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type { KeyValue, Stream } from 'elt';
 import {
+  type FieldValues,
   FileContent,
   type Stage,
   TargetMissingError,
@@ -11,6 +12,22 @@ import {
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
+
+// Keep competing loads out across commits, including while other streams have
+// pending files. A separate native lock leaves the destination readable and
+// releases automatically on process exit; the sidecar stores no records.
+export function lockWriter(path: string): Disposable {
+  const lock = new DatabaseSync(
+    path === ':memory:' ? path : `${path}.writer-lock`,
+  );
+  try {
+    lock.exec('BEGIN EXCLUSIVE');
+    return { [Symbol.dispose]: () => lock.close() };
+  } catch (error) {
+    lock.close();
+    throw error;
+  }
+}
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 export const seq = '"_mac_elt_seq"';
@@ -124,7 +141,35 @@ export abstract class SQLiteWriter extends Writer {
     );
   }
 
-  override async clear(writer: string): Promise<void> {
+  private values(database: DatabaseSync): FieldValues {
+    const { table } = this;
+    return async function* (field) {
+      const column = table.columns.find((column) => column.name === field);
+      if (column === undefined)
+        throw new TypeError(`Unknown target field: ${field}`);
+      // clear also accepts a target or a declared column that was never loaded.
+      if (
+        !database
+          .prepare(
+            'SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE',
+          )
+          .get(table.name, field)
+      )
+        return;
+      for (const row of database
+        .prepare(
+          `SELECT ${column.quotedName} AS value FROM ${table.quotedName}`,
+        )
+        .iterate())
+        yield row.value;
+    };
+  }
+
+  override async clear(
+    writer: string,
+    committed?: (values: FieldValues) => Promise<void>,
+  ): Promise<void> {
+    using _lock = lockWriter(this.path);
     using database = new DatabaseSync(this.path);
     database.exec('BEGIN IMMEDIATE');
     try {
@@ -150,6 +195,9 @@ export abstract class SQLiteWriter extends Writer {
         .prepare('DELETE FROM "_mac_elt_writers" WHERE "target" = ?')
         .run(this.table.location);
       database.exec('COMMIT');
+      database.exec('BEGIN IMMEDIATE');
+      await committed?.(this.values(database));
+      database.exec('ROLLBACK');
     } catch (error) {
       if (database.isTransaction) database.exec('ROLLBACK');
       throw error;
@@ -212,6 +260,7 @@ export abstract class SQLiteWriter extends Writer {
     };
     let replaced = false;
     return {
+      values: this.values(database),
       apply: async (operation) => {
         if (operation.type === 'DELETE') {
           const [keys, values] = this.deletionKeys(operation.key);

@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { crc32, deflateSync } from 'node:zlib';
-import { Copy, Pipeline, PipelineError } from 'elt';
+import { Copy, FileRead, LocalFiles, Pipeline, PipelineError } from 'elt';
 import { MarkdownDestination } from 'elt-markdown';
 import {
   SQLiteCheckpointStore,
@@ -664,7 +664,8 @@ test('Mail watches index commits and file-only downloads, cancels, and exports r
   const destination = new MarkdownDestination({
     path: join(dir.path, 'markdown'),
   });
-  await new Pipeline({
+  const attachments = new LocalFiles({ directory: join(dir.path, 'files') });
+  const exportMail = new Pipeline({
     source,
     destination,
     steps: [
@@ -672,8 +673,20 @@ test('Mail watches index commits and file-only downloads, cancels, and exports r
         syncMode: 'full_refresh',
         destinationSyncMode: 'overwrite',
       }),
+      new Copy(
+        source.attachments,
+        destination.file('attachments.md', {
+          fields: [
+            new FileRead(
+              'attachmentRef',
+              source.attachments.file.store(attachments),
+            ),
+          ],
+        }),
+      ),
     ],
-  }).run();
+  });
+  await exportMail.run();
   const files = await readdir(join(dir.path, 'markdown'), { recursive: true });
   const contents = await Promise.all(
     files
@@ -681,9 +694,34 @@ test('Mail watches index commits and file-only downloads, cancels, and exports r
       .map((name) => readFile(join(dir.path, 'markdown', name), 'utf8')),
   );
   assert.ok(contents.some((text) => text.includes('Hello 🌍')));
+  const stored = (
+    await readdir(attachments.directory, {
+      recursive: true,
+      withFileTypes: true,
+    })
+  )
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name));
+  assert.ok(stored.length > 0);
+  const references = contents
+    .flatMap((text) =>
+      Array.from(
+        text.matchAll(/^<!-- mac-elt-record:([A-Za-z0-9+/=]+) -->$/gm),
+        ([, encoded]) =>
+          JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))
+            .attachmentRef,
+      ),
+    )
+    .filter((reference) => typeof reference === 'string');
+  assert.deepEqual(new Set(references), new Set(stored));
+  await exportMail.run();
+  for (const path of stored) await readFile(path);
+  await exportMail.clear();
+  for (const path of stored)
+    await assert.rejects(readFile(path), { code: 'ENOENT' });
 });
 
-test('Mail tracking pixels load their original bytes with null OCR text', async () => {
+test('Mail tracking pixels keep exact local files and database bytes with null OCR text', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-pixels-'));
   const store = await fixture(join(dir.path, 'Mail'));
   const images = [];
@@ -743,6 +781,7 @@ test('Mail tracking pixels load their original bytes with null OCR text', async 
   const destination = new SQLiteDestination({
     path: join(dir.path, 'images.sqlite'),
   });
+  const files = new LocalFiles({ directory: join(dir.path, 'files') });
   await new Pipeline({
     source,
     destination,
@@ -756,17 +795,21 @@ test('Mail tracking pixels load their original bytes with null OCR text', async 
             .from(source.attachments.file)
             .parse(new MacOSDocumentParser()),
           columns.blob('bytes').from(source.attachments.file),
+          columns
+            .text('attachmentRef')
+            .from(source.attachments.file.store(files)),
         ]),
       ),
     ],
   }).run();
   const output = rows(
     destination.path,
-    'SELECT content,bytes FROM images ORDER BY partId',
+    'SELECT content,bytes,attachmentRef FROM images ORDER BY partId',
   );
   assert.equal(output.length, 3);
   for (const [i, row] of output.entries()) {
     assert.equal(row.content, null);
     assert.deepEqual(bytes(destination.path, 'images', row.bytes), images[i]);
+    assert.deepEqual(await readFile(String(row.attachmentRef)), images[i]);
   }
 });

@@ -13,6 +13,7 @@ export {
 export { DocumentParser } from './core/document-parser.ts';
 export { FileContent } from './core/file-content.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
+export { FileStorage } from './core/file-storage.ts';
 export { isCalendarDate, isTimestamp } from './core/formats.ts';
 export type { Partition, PartitionState } from './core/partition.ts';
 export { Pipeline, PipelineError } from './core/pipeline.ts';
@@ -36,6 +37,7 @@ export {
 export { Stream, type SyncMode } from './core/stream.ts';
 export { Target } from './core/target.ts';
 export {
+  type FieldValues,
   type LoadFailure,
   type Stage,
   TargetMissingError,
@@ -50,3 +52,4 @@ export {
   CheckpointStore,
   type StoredCheckpoint,
 } from './state/checkpoint-store.ts';
+export { LocalFiles } from './storage/local-files.ts';

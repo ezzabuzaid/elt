@@ -7,9 +7,13 @@ import {
   Copy,
   type CopyConfiguration,
   Destination,
+  DocumentParser,
+  FileRead,
+  FileStorage,
   isCalendarDate,
   isTimestamp,
   type Load,
+  LocalFiles,
   type Partition,
   Pipeline,
   PipelineError,
@@ -26,6 +30,46 @@ import {
   type WriteOperation,
   Writer,
 } from './index.ts';
+
+test('file storage declarations validate identities and keep parsing separate without doing I/O', () => {
+  const stream = new Stream({
+    name: 'files',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    supportedSyncModes: ['full_refresh'],
+    supportsFileTransfer: true,
+  });
+  const storage = new (class extends FileStorage {
+    override identity = 'test-store';
+    override async save(): Promise<string> {
+      throw new Error('unexpected save');
+    }
+    override async retain(): Promise<void> {
+      throw new Error('unexpected cleanup');
+    }
+  })();
+  const parser = new (class extends DocumentParser {
+    override async parse(): Promise<string> {
+      throw new Error('unexpected parse');
+    }
+  })('test-parser');
+  const stored = stream.file.store(storage);
+  const read = new FileRead('reference', stored);
+  read.validate(stream);
+  assert.equal(read.outputType, 'text');
+  assert.equal(new FileRead('bytes', stream.file).outputType, 'bytes');
+  assert.equal(stream.file.storage, undefined);
+  assert.equal(JSON.parse(JSON.stringify(read)).storage, storage.identity);
+  assert.throws(
+    () => new FileRead('reference', stored, parser),
+    /separate file fields/,
+  );
+  storage.identity = 'another-store';
+  assert.throws(() => read.validate(stream), /identity changed/);
+  storage.identity = '';
+  assert.throws(() => stream.file.store(storage), /stable text identity/);
+  for (const directory of ['', 'bad\0path', '\ud800'])
+    assert.throws(() => new LocalFiles({ directory }), /requires a directory/);
+});
 
 test('date formats accept only canonical UTC timestamps and real calendar dates', () => {
   assert.equal(isTimestamp('2025-01-02T03:04:05.006Z'), true);
@@ -219,6 +263,7 @@ class RecordingWriter extends Writer {
     const { log, refusal } = this;
     log.push('open');
     return {
+      values: async function* () {},
       apply: async (operation: WriteOperation) => {
         log.push(
           operation.type === 'RECORD'

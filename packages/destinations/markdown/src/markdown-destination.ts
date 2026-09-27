@@ -61,8 +61,10 @@ export class MarkdownDestination extends Destination<
     target: MarkdownFile | MarkdownFolder,
   ): MarkdownWriter {
     this.validateConfiguration(configuration, target);
-    if (target.fileReads.some((read) => read.parser === undefined))
-      throw new TypeError('Markdown file fields require a document parser');
+    if (target.fileReads.some((read) => read.outputType !== 'text'))
+      throw new TypeError(
+        'Markdown file fields require a document parser or file storage',
+      );
     if (target instanceof MarkdownFolder)
       return new MarkdownFolderWriter(configuration, this.path, target);
     if (target instanceof MarkdownFile)

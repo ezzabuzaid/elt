@@ -311,15 +311,17 @@ Checklists, tags, tables and a locked note were also read from Apple-made macOS 
 ## Attachment files and document parsing
 
 ```ts
+import { LocalFiles } from 'elt';
 import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
 
+const files = new LocalFiles({ directory: './outputs/attachments' });
 const attachmentCopy = new Copy(
   notes.attachments,
   sqlite.table('attachments', c => [
     c.text('id'),
     c.text('noteId'),
     c.text('content').from(notes.attachments.file).parse(new MacOSDocumentParser()),
-    c.blob('bytes').from(notes.attachments.file),
+    c.text('attachmentRef').from(notes.attachments.file.store(files)),
   ]),
   {
     syncMode: 'full_refresh',
@@ -334,9 +336,23 @@ await new Pipeline({
 }).run();
 ```
 
-This stores the selected source metadata, parsed `content` as TEXT, and the original file under the `bytes` column. All are committed together. The original attachment ID and containing note ID remain available for joins. Append preserves each observation and its bytes; deduplication keeps the text and bytes belonging to the winning cursor.
+This stores the selected source metadata, parsed `content` and an `attachmentRef` as TEXT. The original attachment ID and containing note ID remain available for joins. `LocalFiles` stores the original bytes and returns their absolute local path. SQLite and Postgres receive only that ordinary text value: they do not construct paths or write attachment files. The Apple exporter uses this declaration for every stream with files, under `outputs/apple-<name>-files`.
 
-The columns declare what to extract and where to store it. `Copy` collects those declarations; `Source.read()` performs the parsing and hands original files to the destination as a `FileContent`, which is read in bounded chunks and never held whole in memory. Omitting the BLOB column avoids retaining the original file; omitting all file-derived columns avoids exporting files altogether.
+Storage is selected on each file reference with `.store(files)`, independently of the pipeline and destination. Two fields can use different stores, and copies can share one store without sharing file ownership. Constructing a store or declaring a field performs no I/O. A stored reference and parsed text must be separate fields; applying `.parse()` to a stored-file field is refused.
+
+`LocalFiles` resolves the chosen directory at construction. It streams each file in chunks of at most 4 MiB into a temporary file, syncs it, then publishes it atomically. Files live in `.elt-files/<scope hash>/<content hash><extension>` beneath that directory. The scope identifies the destination target, copy writer and field; the content hash makes repeated saves stable without overwriting an existing reference. A safe source extension is preserved; the original filename stays in source metadata. Empty files are real zero-byte files. Unavailable source files produce null references.
+
+The shared transfer saves files before applying records and commits database rows before removing obsolete files. It asks each destination for the references its committed rows actually retain, so a cursor-rejected update cannot delete the winning attachment. Append retains the files of every retained observation; replacement, deletion, empty overwrite and `Copy.clear()` remove files only when this scope no longer references them. Cleanup runs while the target's writer lock is held. Source failures discard pending rows and reconcile against the retained rows.
+
+Files and database rows do not share a transaction. A failed save prevents its rows and checkpoint from advancing. A cleanup failure after a database commit preserves that committed data but prevents the checkpoint from advancing; replay is safe. A failed database write or interrupted run can leave unreferenced files; the next run reconciles them before extraction using the current committed references. Missing referenced files, non-file references and invalid managed directories fail explicitly. Keep these generated files intact until clearing and rebuilding their copy.
+
+For another storage backend, implement the exported `FileStorage` contract: a stable `identity`, `save(scope, FileContent)` returning a durable, immutable, repeatable text reference, and `retain(scope, references)` removing only that scope's unreferenced objects. Identity participates in the copy's checkpoint binding. The transfer treats references as opaque strings, so a future S3 store can return its own reference format without changing database destinations. Only `LocalFiles` is supplied today. Reconciliation scans retained references and the scoped directory at each commit; it does not maintain a separate object index.
+
+The columns declare what to extract. `Copy` collects those declarations; `Source.read()` performs parsing and exposes original files as a `FileContent`, valid until its record is consumed. The shared transfer resolves stored-file declarations before sending records to the destination. Omitting a stored reference avoids retaining the original file; omitting all file-derived columns avoids exporting files altogether.
+
+### Explicit database byte storage
+
+Use `c.blob('bytes').from(notes.attachments.file)` when the database should own the original bytes instead. This is independent of `.store(files)` and remains available for both SQL destinations. The file and row then commit together in the database.
 
 SQLite stores an original file in chunks, because one BLOB is capped at 1,000,000,000 bytes (`SQLITE_MAX_LENGTH` in Node's build) and a whole-file value would sit in memory. The `bytes` column holds an INTEGER file id, and the table `_mac_elt_files_<table>_<column>` holds `(file, n, bytes)` rows of up to 4 MiB, `n` counting from 0. An empty file has one empty chunk. Triggers remove a row's chunks in the same transaction whenever the row is deleted, overwritten or replaced, and a record that a deduplication guard rejects stores none. Read a file back in order:
 
@@ -364,7 +380,7 @@ new Copy(notes.attachments, sqlite.table('originals', c => [
 ]));
 ```
 
-A bare table still infers the discovered metadata schema. To include all metadata alongside file-derived columns, spread `SQLiteColumns.fromSchema(notes.attachments.jsonSchema)` into the columns array. A plain `c.blob('bytes')` reads a record's existing `bytes` field into an inline BLOB. `.from(file)` selects the original source file; `.parse(parser)` requests its text representation. Unparsed file reads require a BLOB column; parsed files require a TEXT column. The existing `.notNull()` and `.primaryKey()` constraints apply to both. Incompatible types, another stream's file reference, and fields colliding with source metadata or `loaded_at` fail before extraction.
+A bare table still infers the discovered metadata schema. To include all metadata alongside file-derived columns, spread `SQLiteColumns.fromSchema(notes.attachments.jsonSchema)` into the columns array. A plain `c.blob('bytes')` reads a record's existing `bytes` field into an inline BLOB. `.from(file)` selects the original source file; `.parse(parser)` requests its text representation. Original bytes require a BLOB column; parsed text and stored-file references require TEXT. The existing `.notNull()` and `.primaryKey()` constraints apply to these fields. Incompatible types, another stream's file reference, and fields colliding with source metadata or `loaded_at` fail before extraction.
 
 `notes.attachments.file` is an immutable source reference, not a path. Other Notes streams reject file access. All declarations remain immutable and perform no I/O; the discovered source schema is never rewritten to describe destination fields. A file can supply multiple named representations in one copy. Each record is exported once; requests using the same parser instance share one parse, and original-byte requests share one read. Separate copies retain separate extraction and checkpoint progress.
 
@@ -378,7 +394,7 @@ new Copy(notes.attachments, markdown.folder('attachments', {
 }));
 ```
 
-Markdown accepts parsed text fields and rejects unparsed binary requests before I/O. Its `file()` target supports the same options as `folder()`.
+Markdown accepts parsed text and stored-reference fields, such as `new FileRead('attachmentRef', notes.attachments.file.store(files))`, and rejects binary requests before I/O. Its `file()` target supports the same options as `folder()`.
 
 This follows Airbyte's source-side parser and staged-file concepts: its [file parser Strategy](https://github.com/airbytehq/airbyte-python-cdk/blob/f77450f74def59598cda8e1e9a4e975031710c18/airbyte_cdk/sources/file_based/file_types/file_type_parser.py) interprets files, while [file transfer](https://docs.airbyte.com/platform/using-airbyte/sync-files-and-records) moves original content with metadata. Our parser emits plain text, not Airbyte's Markdown conversion, and we do not claim its complete format/OCR support or wire compatibility.
 
@@ -425,7 +441,7 @@ try {
 
 Declarations are frozen and reusable. `Destination.createWriter(configuration, target)` selects a storage-specific strategy without I/O; `Destination.load()` opens the run's one hold on storage, and `load.prepare(configuration, target, { writer, resuming })` gives each stream its `Stage` (`apply`, `commit`, `discard`). Destinations own connections, files, and publication. `Copy`/`Pipeline` contain no SQL/filesystem loading branches. `Source.identity` and `Destination.identity(target)` provide stable checkpoint bindings; custom implementations must distinguish different source instances/targets/configuration domains.
 
-SQLite holds one write transaction for the whole run, retaking the lock in the same step as each commit, so long reads block other writers to the file. Each stream stages its operations in a connection-private `TEMP` table: another stream's commit never publishes them and a crash leaves nothing behind. A commit merges one stream's staged operations into its table, with the result of applying them one at a time: a staged `DELETE` removes its key, only records after a key's last `DELETE` count, `replace` keeps the last and `cursor_newer` the first with the greatest cursor. Original files stream straight into the chunk table; chunks no row references are deleted after each merge and swept when a later run prepares the table or it is cleared. `:memory:` is allowed only for full refresh; the run's database disappears when its handle closes, so it cannot safely retain incremental progress.
+SQLite holds a native writer lock for the whole run in a `<database path>.writer-lock` sidecar containing no records. It survives individual commits and releases on handle closure or process exit; readers of the destination are unaffected. Each commit starts a fresh write transaction, so long reads block other writers to the file. Each stream stages its operations in a connection-private `TEMP` table: another stream's commit never publishes them and a crash leaves nothing behind. A commit merges one stream's staged operations into its table, with the result of applying them one at a time: a staged `DELETE` removes its key, only records after a key's last `DELETE` count, `replace` keeps the last and `cursor_newer` the first with the greatest cursor. Original files stream straight into the chunk table; chunks no row references are deleted after each merge and swept when a later run prepares the table or it is cleared. `:memory:` is allowed only for full refresh; the run's database disappears when its handle closes, so it cannot safely retain incremental progress.
 
 ## Markdown destination
 
@@ -487,7 +503,7 @@ Each Postgres copy publishes those annotations as native table and column commen
 
 Comments are installed in the load transaction and replaced on subsequent loads; removing a property description clears its old column comment. Descriptions must be strings without NUL or malformed Unicode, and are checked before storage access. Postgres's native `format` quotes the identifiers and text. Read comments through `obj_description` and `col_description` or a catalog view built over them. A mart that changes a field's meaning must describe that new meaning itself. Current sync status and extraction coverage remain runtime data, not static schema annotations.
 
-A run holds one connection and one write transaction on the schema, under a per-schema advisory lock retaken after each commit, so writers to one schema run one at a time. Readers never wait on the lock. Each stream stages its operations in a session-private `TEMP` table and commits them at its own checkpoints:
+A run holds one connection and one write transaction on the schema, under a per-schema session advisory lock held across every commit, so writers to one schema run one at a time. Readers never wait on the lock. Each stream stages its operations in a session-private `TEMP` table and commits them at its own checkpoints:
 
 - Operations reach the stage in batches of 1000, sent as one JSON parameter and cast per column. Every statement runs under a savepoint, because a failed statement aborts a Postgres transaction and would otherwise erase the other streams' stages.
 - A commit merges one stream's stage into its table with the result of applying its operations one at a time: staged `DELETE`s remove their keys, only records after a key's last `DELETE` count, `replace` keeps the last and `cursor_newer` the first with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`). Every row of a run shares one `loaded_at` (`TIMESTAMPTZ`).

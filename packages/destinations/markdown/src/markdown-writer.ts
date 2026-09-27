@@ -1,6 +1,6 @@
 import { lstat, mkdir, open, rm, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CopyConfiguration, Deduplication, Stage } from 'elt';
+import type { CopyConfiguration, Deduplication, FieldValues, Stage } from 'elt';
 import { TargetMissingError, TargetOwnedError, Writer } from 'elt';
 import { MarkdownDocument } from './markdown-document.ts';
 
@@ -34,12 +34,24 @@ export abstract class MarkdownWriter extends Writer {
     writer: string,
   ): Promise<void>;
 
-  override async clear(writer: string): Promise<void> {
+  private readonly values: FieldValues = async function* (
+    this: MarkdownWriter,
+    field: string,
+  ) {
+    for (const row of (await this.read()).rows)
+      yield Reflect.get(Object(row), field);
+  }.bind(this);
+
+  override async clear(
+    writer: string,
+    committed?: (values: FieldValues) => Promise<void>,
+  ): Promise<void> {
     await using _ = await this.lock();
     const { owner } = await this.read();
     if (owner !== undefined && owner !== writer)
       throw new TargetOwnedError(this.name, owner, writer);
     await rm(join(this.path, this.name), { recursive: true, force: true });
+    await committed?.(this.values);
   }
 
   // An exclusive directory prevents two cooperating writers from publishing the same target.
@@ -73,6 +85,7 @@ export abstract class MarkdownWriter extends Writer {
         for (const row of rows) this.add(published, row);
       let working = new Map(published);
       return {
+        values: this.values,
         apply: async (operation) => {
           if (operation.type === 'RECORD') {
             // Validate every observation, including deduplication losers.
