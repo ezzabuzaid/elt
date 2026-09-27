@@ -15,6 +15,7 @@ import {
 import {
   AppleCalendarSource,
   AppleContactsSource,
+  AppleMailSource,
   AppleMessagesSource,
   AppleNotesSource,
   AppleRemindersSource,
@@ -25,7 +26,11 @@ import {
   EventKitChangingError,
   googleCalendarAttachments,
   MacOSDocumentParser,
+  MailChangingError,
+  MailSchemaError,
+  MailUnavailableError,
   MessagesUnavailableError,
+  mailDirectory,
   NotesSchemaError,
   NotesUnavailableError,
   RemindersUnavailableError,
@@ -33,52 +38,57 @@ import {
 
 type Connector = {
   name: string;
-  source: Source;
+  source: () => Source | Promise<Source>;
   // Errors that mean this Mac cannot read the app right now: reported, and
   // the remaining connectors still load.
   unavailable: ReadonlyArray<new (...args: never[]) => Error>;
 };
-
-const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
-const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-if (!clientId || !clientSecret)
-  throw new Error(
-    `Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET to a Desktop-type OAuth client whose project has drive.googleapis.com and gmail.googleapis.com enabled; Calendar downloads attachments stored in Drive and Gmail. Grants are stored under ${grantDirectory()}.`,
-  );
-// The first run opens a browser for consent; later runs reuse the stored grant.
-const google = await googleSession({
-  clientId,
-  clientSecret,
-  scopes: [GOOGLE_DRIVE_READONLY_SCOPE, GMAIL_READONLY_SCOPE],
-});
 
 const out = resolve('outputs');
 const year = 365 * 24 * 60 * 60 * 1000;
 
 const connectors: Connector[] = [
   {
+    name: 'mail',
+    source: () => new AppleMailSource(mailDirectory),
+    unavailable: [MailUnavailableError, MailSchemaError, MailChangingError],
+  },
+  {
     name: 'notes',
-    source: new AppleNotesSource(),
+    source: () => new AppleNotesSource(),
     unavailable: [NotesUnavailableError, NotesSchemaError],
   },
   {
     name: 'messages',
-    source: new AppleMessagesSource(),
+    source: () => new AppleMessagesSource(),
     unavailable: [MessagesUnavailableError],
   },
   {
     name: 'contacts',
-    source: new AppleContactsSource(),
+    source: () => new AppleContactsSource(),
     unavailable: [ContactsUnavailableError, ContactsSchemaError],
   },
   {
     name: 'calendar',
-    source: new AppleCalendarSource({
-      // Before the earliest event on this Mac, through a year of upcoming ones.
-      startAt: '2000-01-01T00:00:00.000Z',
-      endAt: new Date(Date.now() + year).toISOString(),
-      attachments: googleCalendarAttachments(google),
-    }),
+    source: async () => {
+      const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+      if (!clientId || !clientSecret)
+        throw new Error(
+          `Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET for Calendar's Drive/Gmail attachments; grants are stored under ${grantDirectory()}.`,
+        );
+      const google = await googleSession({
+        clientId,
+        clientSecret,
+        scopes: [GOOGLE_DRIVE_READONLY_SCOPE, GMAIL_READONLY_SCOPE],
+      });
+      return new AppleCalendarSource({
+        // Before the earliest event on this Mac, through a year of upcoming ones.
+        startAt: '2000-01-01T00:00:00.000Z',
+        endAt: new Date(Date.now() + year).toISOString(),
+        attachments: googleCalendarAttachments(google),
+      });
+    },
     unavailable: [
       CalendarUnavailableError,
       CalendarIcsUnavailableError,
@@ -87,7 +97,7 @@ const connectors: Connector[] = [
   },
   {
     name: 'reminders',
-    source: new AppleRemindersSource(),
+    source: () => new AppleRemindersSource(),
     unavailable: [RemindersUnavailableError, EventKitChangingError],
   },
 ];
@@ -96,7 +106,17 @@ const connectors: Connector[] = [
 // checkpoints in <out>/apple-<name>-state.sqlite. A stream with files also
 // loads their text as `content` and their original bytes as `bytes`.
 await mkdir(out, { recursive: true });
-for (const { name, source, unavailable } of connectors) {
+for (const { name, source: createSource, unavailable } of connectors) {
+  let source: Source;
+  try {
+    source = await createSource();
+  } catch (error) {
+    console.error(
+      `${name}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+    continue;
+  }
   const destination = new SQLiteDestination({
     path: join(out, `apple-${name}.sqlite`),
   });

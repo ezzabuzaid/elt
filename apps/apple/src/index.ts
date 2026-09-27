@@ -10,6 +10,12 @@ export {
   RemindersUnavailableError,
 } from './platform/macos/eventkit.ts';
 export {
+  MailChangingError,
+  MailSchemaError,
+  MailUnavailableError,
+  mailDirectory,
+} from './platform/macos/mail-store.ts';
+export {
   NotesSchemaError,
   NotesUnavailableError,
 } from './platform/macos/note-store.ts';
@@ -21,6 +27,7 @@ export {
 } from './sources/apple-calendar/apple-calendar-source.ts';
 export { googleCalendarAttachments } from './sources/apple-calendar/google-calendar-attachments.ts';
 export { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
+export { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
 export { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
 export { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 export { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';

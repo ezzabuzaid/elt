@@ -16,6 +16,7 @@ The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and 
 | Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, and each item's iCalendar (ICS) components, properties and parameters | Full refresh or snapshot incremental within a required date range | EventKit notifications |
 | Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh or snapshot incremental | EventKit notifications |
 | Apple Messages | Every column of chats, handles, participants, messages (text, edits, unsends, reactions, replies), Recently Deleted, and attachments with their files | Full refresh or snapshot incremental, every stream from one consistent chat.db snapshot | Native filesystem notifications over `~/Library/Messages` |
+| Apple Mail | Accounts, mailboxes and memberships, messages and conversations, MIME bodies and headers, original EMLX files, attachments, rules, smart mailboxes, signatures and index metadata | Full refresh or snapshot incremental over the complete local store | SQLite commits plus recursive filesystem notifications |
 | Apple Contacts | Accounts, groups and memberships, contacts (names, organization, birthdays including year-less and non-Gregorian ones, flags), notes, every labeled value (phones, emails, addresses, URLs, social profiles, instant messaging, related names, dates, calendar URIs), custom and unrecognized vCard properties, and contact photos with their bytes | Full refresh or snapshot incremental, each account store read in one transaction | Commits to Contacts' own stores, and accounts added or removed |
 | Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection of every sitemap and search URL | Full refresh; incremental by date for the dated analytics grains, by snapshot for properties, sitemaps and the country breakdown, and rolling (never-inspected, then stalest, within the daily quota) for URL inspection; every row carries its property, so properties share tables | Change-gated polling (the API publishes no notification) |
 
@@ -25,7 +26,7 @@ Every destination supports overwrite, append, and deduplication:
 - **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers.
 - **Markdown** (`elt-markdown`): one document per stream or one document per record, with managed append and deduplication.
 
-See the reference for [Contacts streams](docs/reference.md#apple-contacts), [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Search Console streams](docs/reference.md#google-search-console), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
+See the reference for [Mail streams](docs/reference.md#apple-mail), [Contacts streams](docs/reference.md#apple-contacts), [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Search Console streams](docs/reference.md#google-search-console), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
 
 ## Quick start
 
@@ -81,9 +82,9 @@ This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table'
 
 `Copy` defaults to `full_refresh` extraction and `overwrite` loading. Creating a pipeline performs no extraction; `run()` executes it once and returns `{ copy, count, deleted }` results after loading. `count` is accepted input records, including deduplication no-ops, and `deleted` is accepted deletions, including keys that were already absent; neither is the number of changed rows.
 
-The repository also includes an [Apple exporter](apps/apple/src/main.ts) that loads every stream of every Apple connector incrementally: Notes, Messages, Contacts, Calendar and Reminders. Run it with `npx nx run apple:start`. Each connector writes `outputs/apple-<name>.sqlite` (for example `outputs/apple-notes.sqlite`) and keeps checkpoints in `outputs/apple-<name>-state.sqlite`; a second run with no changes writes nothing. Streams with files load their text as `content` and their original bytes as `bytes`; files without extractable text load with null `content`. Original files are stored in bounded chunks, so file size is limited only by disk.
+The repository also includes an [Apple exporter](apps/apple/src/main.ts) that loads every stream of every Apple connector incrementally: Mail, Notes, Messages, Contacts, Calendar and Reminders. Run it with `npx nx run apple:start`. Each connector writes `outputs/apple-<name>.sqlite` (for example `outputs/apple-notes.sqlite`) and keeps checkpoints in `outputs/apple-<name>-state.sqlite`; a second run with no changes writes nothing. Streams with files load their text as `content` and their original bytes as `bytes`; files without extractable text load with null `content`. Original files are stored in bounded chunks, so file size is limited only by disk.
 
-Each connector reads the app's own store at its default location, and each needs its own grant for the process running the export: Notes and Messages need Full Disk Access; Contacts needs Contacts access or Full Disk Access; Calendar and Reminders need full Calendar and Reminders access, and Calendar's `calendars` stream also needs Automation access to Calendar. A connector the process cannot read is reported, the others still load, and the run exits with status 1; a stream that fails is reported by name and resumes from its checkpoint next run. Calendar loads occurrences from 2000-01-01 to a year after the run and downloads attachments stored in Google Drive and Gmail, so the run needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first run opens a browser for consent. See [Messages streams](docs/reference.md#apple-messages) and [Contacts streams](docs/reference.md#apple-contacts); Contacts account names (iCloud, Google) are not in its stores and do not load.
+Each connector reads the app's own store at its default location, and each needs its own grant for the process running the export: Mail, Notes and Messages need Full Disk Access; Mail account settings also need Automation access to Mail; Contacts needs Contacts access or Full Disk Access; Calendar and Reminders need full Calendar and Reminders access, and Calendar's `calendars` stream also needs Automation access to Calendar. A connector the process cannot read is reported, the others still load, and the run exits with status 1; a stream that fails is reported by name and resumes from its checkpoint next run. Calendar loads occurrences from 2000-01-01 to a year after the run and downloads attachments stored in Google Drive and Gmail, so the run needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first run opens a browser for consent. See [Messages streams](docs/reference.md#apple-messages) and [Contacts streams](docs/reference.md#apple-contacts); Contacts account names (iCloud, Google) are not in its stores and do not load.
 
 ### Reminders
 
@@ -147,6 +148,25 @@ The Apple apps have no change feed, so an incremental copy compares each full sc
 Keep the copy ID and both SQLite files between runs. The checkpoint store must use a separate file from the destination. A Postgres destination keeps its checkpoints beside the data instead, with `PostgresCheckpointStore` from `elt-postgresql`; see [checkpoint stores](docs/reference.md#checkpoint-stores). Changing the source, target, schema, or copy configuration requires a new copy ID or an explicit checkpoint reset. Reset the checkpoint if you delete or replace destination storage.
 
 **Notes reads its whole store on each run.** That takes milliseconds for thousands of notes; the comparison reduces writes. Notes in **Recently Deleted** are notes in that folder, so they stay until permanently deleted.
+
+### Mail: local messages and attachments
+
+```ts
+import { AppleMailSource, mailDirectory } from './index.ts';
+
+const mail = new AppleMailSource(mailDirectory);
+await new Pipeline({
+  source: mail,
+  destination,
+  steps: [
+    new Copy(mail.messages, destination.table('mail_messages')),
+    new Copy(mail.messageParts, destination.table('mail_parts')),
+    new Copy(mail.messageMailboxes, destination.table('mail_mailboxes')),
+  ],
+}).run();
+```
+
+Mail reads all locally indexed history across the accounts on this Mac. `messageParts.text` preserves text and HTML bodies; `attachments.file` exposes every available decoded attachment, and `messageFiles.file` exposes the original EMLX. An indexed message or attachment that Mail has not downloaded keeps its metadata with `availableLocally: false` and null bytes. Only Mail downloads remote content. Keep Mail running for server changes to arrive; the watcher observes its local store without launching it. See [Mail streams and limits](docs/reference.md#apple-mail).
 
 ### Calendar: incremental with deletions
 
@@ -288,6 +308,7 @@ Permissions apply to the process running the export, and a sandbox can still res
 
 | Operation | Required access |
 | --- | --- |
+| Read or watch Apple Mail | Full Disk Access; account settings additionally require Automation access to Mail |
 | Read or watch Apple Notes | Full Disk Access; Notes does not need to be open |
 | Read or watch Apple Contacts | Contacts access or Full Disk Access; Contacts does not need to be open |
 | Read or watch Reminders | Full Reminders access through EventKit |

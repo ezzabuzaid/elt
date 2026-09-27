@@ -79,7 +79,7 @@ async function sniff(path: string): Promise<{ kind: Kind; format?: string }> {
 
 export class MacOSDocumentParser extends DocumentParser {
   constructor() {
-    super('macos-document-v2');
+    super('macos-document-v3');
     Object.freeze(this);
   }
 
@@ -150,8 +150,17 @@ async function recognizedText(path: string): Promise<string | null> {
   const content: unknown = JSON.parse(
     await osa.execute(`
       ObjC.import('Vision');
+      ObjC.import('ImageIO');
+      function recognize() {
+      const path = ${JSON.stringify(resolve(path))};
+      const image = $.CGImageSourceCreateWithURL($.NSURL.fileURLWithPath(path), null);
+      const properties = ObjC.castRefToObject($.CGImageSourceCopyPropertiesAtIndex(image, 0, null));
+      if (properties.isNil()) throw new Error('Cannot read image');
+      // Vision crashes on 1px and rejects 2px images on macOS 26.6.2.
+      for (const key of [$.kCGImagePropertyPixelWidth, $.kCGImagePropertyPixelHeight])
+        if (Number(ObjC.unwrap(properties.objectForKey(ObjC.castRefToObject(key)))) < 3) return null;
       const handler = $.VNImageRequestHandler.alloc.initWithURLOptions(
-        $.NSURL.fileURLWithPath(${JSON.stringify(resolve(path))}), $()
+        $.NSURL.fileURLWithPath(path), $()
       );
       const request = $.VNRecognizeTextRequest.alloc.init;
       request.recognitionLevel = $.VNRequestTextRecognitionLevelAccurate;
@@ -163,7 +172,9 @@ async function recognizedText(path: string): Promise<string | null> {
       const results = request.results;
       for (let index = 0; index < results.count; index++)
         lines.push(ObjC.unwrap(results.objectAtIndex(index).topCandidates(1).objectAtIndex(0).string));
-      JSON.stringify(lines.length > 0 ? lines.join('\\n') : null);
+      return lines.length > 0 ? lines.join('\\n') : null;
+      }
+      JSON.stringify(recognize());
     `),
   );
   if (content !== null && typeof content !== 'string')

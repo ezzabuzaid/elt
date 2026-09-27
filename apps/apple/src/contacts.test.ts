@@ -107,7 +107,7 @@ const appleSeconds = (iso: string) =>
 // Contacts writes birthdays and dates at noon UTC, in 1604 without a year.
 const noon = (date: string) => appleSeconds(`${date}T12:00:00.000Z`);
 
-// A 4x4 PNG; Vision OCR in MacOSDocumentParser fails below 3x3 (#2038).
+// A 4x4 PNG; Mail integration tests also cover smaller tracking pixels.
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAABKADAAQAAAABAAAABAAAAADFbP4CAAAAFklEQVQIHWP8z8BQz4AEmJDYYCZhAQBj0QGGfotxxgAAAABJRU5ErkJggg==',
   'base64',
