@@ -123,6 +123,26 @@ function browser() {
 
 const client = { clientId: 'client-id', clientSecret: 'client-secret' };
 
+test('a failed browser opener rejects consent and closes the callback listener', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-browser-'));
+  const failure = new Error('Browser unavailable');
+  let redirectUri: string | null = null;
+  await assert.rejects(
+    googleSession({
+      ...client,
+      directory: scratch.path,
+      scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
+      async openBrowser(url) {
+        redirectUri = new URL(url).searchParams.get('redirect_uri');
+        throw failure;
+      },
+    }),
+    (error) => error === failure,
+  );
+  assert.ok(redirectUri);
+  await assert.rejects(fetch(redirectUri));
+});
+
 test('the first session runs consent and stores the grant; the next reuses it', async (t) => {
   answerGoogle(t, `openid email ${GOOGLE_SEARCH_CONSOLE_SCOPE}`);
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-session-'));

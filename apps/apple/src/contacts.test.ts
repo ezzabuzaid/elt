@@ -14,10 +14,10 @@ import {
   SQLiteDestination,
 } from 'elt-sqlite';
 import {
-  AppleContactsSource,
   ContactsSchemaError,
   ContactsUnavailableError,
-} from './index.ts';
+} from './platform/macos/address-book.ts';
+import { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
 
 // Reads the source's first stream, which opens its address books.
 const readFirst = async (source: AppleContactsSource) => {

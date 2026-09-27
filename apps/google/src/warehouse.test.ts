@@ -4,14 +4,11 @@ import { test } from 'node:test';
 
 import { Pipeline } from 'elt';
 import postgres from 'postgres';
-
-import {
-  installSearchConsoleMarts,
-  installWarehouse,
-  SearchConsoleSource,
-  searchConsoleCopies,
-} from './index.ts';
+import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
+import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
 import { RAW, scratchWarehouse, testServer } from './test-warehouse.ts';
+import { installSearchConsoleMarts } from './warehouse/search-console-marts.ts';
+import { installWarehouse } from './warehouse/warehouse.ts';
 
 const NOW = () => new Date('2026-09-22T00:00:00.000Z');
 

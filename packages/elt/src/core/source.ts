@@ -181,12 +181,14 @@ export abstract class Source<
       while (reading.size < this.concurrency && waiting.length > 0) start();
       while (reading.size > 0) {
         const { stream, result } = await Promise.race(reading.values());
-        reading.delete(stream);
         if (result.done) {
+          reading.delete(stream);
           start();
           continue;
         }
+        // Keep the yielding stream tracked so an early return closes it too.
         yield result.value;
+        reading.delete(stream);
         next(stream);
       }
     } finally {

@@ -315,6 +315,51 @@ test('one read per run covers every copy inside one source context, closed after
   ]);
 });
 
+test('closing a read releases every active extract before its shared context', async () => {
+  const released: string[] = [];
+  class ClosingSource extends ContextSource {
+    protected override readonly concurrency = 2;
+
+    protected override async open(streams: readonly Stream[]) {
+      const context = await super.open(streams);
+      return {
+        id: context.id,
+        [Symbol.asyncDispose]: async () => {
+          released.push('context');
+          await context[Symbol.asyncDispose]();
+        },
+      };
+    }
+
+    protected override async *extract(configuration: CopyConfiguration) {
+      const name = configuration.stream.name;
+      try {
+        yield record(name, `${name}-1`);
+      } finally {
+        released.push(name);
+      }
+    }
+  }
+  const source = new ClosingSource();
+  const read = source.read(
+    [source.left, source.right].map(
+      (stream) => new Copy(stream, new NamedTarget(stream.name)).configuration,
+    ),
+    new Map(),
+  );
+
+  try {
+    for await (const message of read) {
+      if (message instanceof StreamStatus) continue;
+      break;
+    }
+    assert.deepEqual(released.slice(0, -1).sort(), ['left', 'right']);
+    assert.equal(released.at(-1), 'context');
+  } finally {
+    await read.return(undefined);
+  }
+});
+
 test('a failed copy does not stop later copies, and the run reports it at the end', async () => {
   const source = new ContextSource({ left: [new Error('left failed')] });
   const pipeline = contextPipeline(source);

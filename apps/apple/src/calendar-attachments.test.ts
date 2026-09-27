@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 import type { GoogleRequester } from 'google-auth';
 
-import { googleCalendarAttachments } from './index.ts';
+import { googleCalendarAttachments } from './sources/apple-calendar/google-calendar-attachments.ts';
 
 type Call = { url: string; headers?: Readonly<Record<string, string>> };
 

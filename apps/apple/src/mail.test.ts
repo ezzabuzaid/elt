@@ -19,13 +19,13 @@ import {
   SQLiteColumns,
   SQLiteDestination,
 } from 'elt-sqlite';
+import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
 import {
-  AppleMailSource,
-  MacOSDocumentParser,
   MailSchemaError,
   MailUnavailableError,
-} from './index.ts';
+} from './platform/macos/mail-store.ts';
 import osa from './platform/macos/osa.ts';
+import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
 
 // Mail 16.0 on macOS 26.6.2: schema only, with no personal records or triggers.
 const schema = `PRAGMA journal_mode = WAL;

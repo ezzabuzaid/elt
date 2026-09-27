@@ -1,0 +1,8 @@
+{
+	"$schema": "https://cdn.statically.io/gh/nguyenngoclongdev/cdn/main/schema/v11/terminal-keeper.json",
+	"theme": "tribe",
+	"active": "v2",
+	"activateOnStartup": false,
+	"keepExistingTerminals": true,
+	"sessions": {}
+}

@@ -6,12 +6,12 @@ Detailed sync, storage, connector, and failure contracts for `elt`.
 
 ## Working example
 
-The examples below live inside `apps/apple/src`: import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and Apple connectors from the app's `./index.ts`. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
+The examples below live inside `apps/apple/src`: import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and Apple connectors directly from their source modules. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
 
 ```ts
 import { Copy, Pipeline } from 'elt';
 import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
-import { AppleNotesSource } from './index.ts';
+import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 
 const notes = new AppleNotesSource();
 const sqlite = new SQLiteDestination({ path: './notes.sqlite' });
@@ -255,13 +255,8 @@ Use the same configured pipeline for continuous synchronization:
 ```ts
 const controller = new AbortController();
 
-for await (const results of pipeline.watch({ signal: controller.signal })) {
+for await (const _ of pipeline.watch({ signal: controller.signal })) {
   // These copies have already extracted, loaded, and saved their checkpoints.
-  console.table(results.map(({ copy, count, deleted }) => ({
-    stream: copy.from.name,
-    processed: count,
-    deleted,
-  })));
 }
 
 // Call controller.abort() from your app's stop/shutdown handler.
@@ -316,7 +311,7 @@ Checklists, tags, tables and a locked note were also read from Apple-made macOS 
 ## Attachment files and document parsing
 
 ```ts
-import { MacOSDocumentParser } from './index.ts';
+import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
 
 const attachmentCopy = new Copy(
   notes.attachments,
@@ -395,6 +390,12 @@ Extend `DocumentParser` with `parse(path): Promise<string | null>` for another p
 
 The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 in the consuming application. Parsing does not create a search index. No query API or general transformation step is part of this library.
 
+## Connector applications
+
+`apps/apple/src/connectors.ts` and `apps/google/src/connectors.ts` default-export lists of `{ name, run }` entries. Each `run()` owns its source configuration, credentials, pipeline, and any post-load work. It can use any ELT source and destination. Google refreshes its warehouse marts after complete or partial loads.
+
+Each app's `main.ts` loops over its list in order, awaits `run()`, sets exit status 1 on failure, and continues without console output. `Pipeline` already includes failed streams and partitions in its errors. Connector-specific code that handles a partial failure, such as Google's marts refresh, also sets exit status 1. An empty list succeeds. Apple and Google stay separate apps until their later convergence; both use the same list shape without a shared runner or lifecycle hooks.
+
 ## Execution and failures
 
 `Pipeline.run()` preflights every copy before executing any of them. Unknown streams, unsupported combinations, invalid schema declarations, missing keys/cursors/IDs/state store, and duplicate copy IDs fail without extraction or storage creation. Preflight uses metadata; storage permissions, existing constraints and record values are checked during execution.
@@ -412,10 +413,9 @@ try {
   await pipeline.run(); // [{ copy, count, deleted }] when every copy completed.
 } catch (error) {
   if (!(error instanceof PipelineError)) throw error; // Preflight errors are direct.
-  for (const { copy, count, deleted, failures } of error.results)
-    for (const { partition, error: cause } of failures)
-      console.error(copy.id, partition, cause); // partition is null for the whole copy.
-  console.error(error.cause); // The first failure.
+  // error.results contains committed counts and stream/partition failures.
+  // error.cause is the first failure.
+  process.exitCode = 1;
 }
 ```
 
@@ -494,7 +494,7 @@ Existing tables are not migrated: a deduplicating load checks that stored key an
 ```ts
 import { Copy, Pipeline } from 'elt';
 import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
-import { AppleMessagesSource } from './index.ts';
+import { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
 
 const source = new AppleMessagesSource(); // ~/Library/Messages/chat.db
 const destination = new SQLiteDestination({ path: './outputs/messages.sqlite' });
@@ -617,7 +617,7 @@ The access-method review selected the read-only index, EMLX and plist files for 
 Checks on 2026-09-26 used Node.js 26.8.1 and macOS 26.6.2:
 
 - `npx nx run apple:typecheck` and `npx nx run elt-sqlite:typecheck` pass. `apple:test` passes all 60 tests; `elt-sqlite:test` passes all 31. The initial Apple baseline passed 56 tests.
-- Four Mail integration tests enter through `src/index.ts` and real Pipeline/SQLite/Markdown destinations. They cover all 42 streams, exact file bytes, nested MIME, repeated/empty/encoded headers, 64-bit IDs, missing and later-downloaded content, changed flags/memberships, deletion, unchanged reruns, schema/read failures, checkpoint preservation, filesystem/index watch notifications and cancellation. Fixtures contain only synthetic data and Apple's schema, never personal records.
+- Four Mail integration tests import `AppleMailSource` directly and load through real Pipeline/SQLite/Markdown destinations. They cover all 42 streams, exact file bytes, nested MIME, repeated/empty/encoded headers, 64-bit IDs, missing and later-downloaded content, changed flags/memberships, deletion, unchanged reruns, schema/read failures, checkpoint preservation, filesystem/index watch notifications and cancellation. Fixtures contain only synthetic data and Apple's schema, never personal records.
 - Native ImageIO/Vision checks cover 1-, 2- and 3-pixel images through the Mail attachment pipeline. Smaller tracking pixels return null text while retaining their original bytes. Existing PDF, text, image and extensionless HEIC checks pass. Backlog defect #2038 is closed.
 - A full live attachment copy without a text parser loaded 1,152 records: 576 locally available files totaling 122,303,823 bytes in 583 SQLite chunks, and 576 unavailable records. Its unchanged second run wrote zero records and zero deletions.
 - Mail verification through the Apple exporter completed 40 of 42 streams, loading 25,689 messages, 819,179 headers and 69,324 MIME parts, including 46,251 text parts (1,133,028,667 UTF-8 bytes). All 25,689 stored original EMLX files (1,379,197,940 bytes) were reassembled and verified against their source SHA-256 and size on 2026-09-27. Forty checkpoints committed. The full body snapshot succeeded after changing SQLite to sort only row identifiers; earlier whole-payload sorting exhausted temporary disk on this nearly full Mac. The subsequent entry-point run completed 39 streams: 38 wrote nothing (including messages, EMLX files and headers), and two mailbox-property rows updated. Mail changed EMLX files during the later body and attachment scans, so those streams failed without advancing their saved checkpoints. Repeated native reads of all 33 mailbox plists had stable values/key order and matched the saved export; the mailbox updates were not generated serialization differences.
@@ -635,7 +635,7 @@ The `remove-code` review retained the Apple-specific frame, detached-file lookup
 
 - [x] Probing: access methods and change signals reviewed, full-archive live checks run.
 - [x] Source written with snapshot incremental sync and deletions.
-- [x] Black-box tests through `src/index.ts` and real destinations.
+- [x] Black-box tests through source classes and real destinations.
 - [x] README and reference updated.
 - [x] Gotchas checked: failed reads throw, keys are unique, fingerprints contain no generated read timestamps, native schemas are detected, and catalog validation stays in the base source.
 - [ ] Fully green real-upstream run and native CRUD cleanup: blocked by the explicitly recorded Mail failures and locked session. The parser defect is closed; no open Mail backlog item replaces these checks.
@@ -645,7 +645,7 @@ The `remove-code` review retained the Apple-specific frame, detached-file lookup
 ```ts
 import { Copy, Pipeline } from 'elt';
 import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
-import { AppleContactsSource } from './index.ts';
+import { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
 
 const source = new AppleContactsSource(); // ~/Library/Application Support/AddressBook
 const destination = new SQLiteDestination({ path: './outputs/contacts.sqlite' });
@@ -724,7 +724,7 @@ Live verification on **2026-09-25** (macOS 26.6.2, Node.js 26.8.1) against three
 ```ts
 import { Copy, Pipeline } from 'elt';
 import { SQLiteDestination } from 'elt-sqlite';
-import { AppleRemindersSource } from './index.ts';
+import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
 
 const reminders = new AppleRemindersSource();
 const sqlite = new SQLiteDestination({ path: './reminders-eventkit.sqlite' });
@@ -767,7 +767,7 @@ See the [EventKit research and implementation notes](eventkit-reminders.md) for 
 import { mkdir } from 'node:fs/promises';
 import { Copy, Pipeline } from 'elt';
 import { SQLiteDestination } from 'elt-sqlite';
-import { AppleCalendarSource } from './index.ts';
+import { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
 
 await mkdir('./outputs', { recursive: true });
 const calendar = new AppleCalendarSource({
@@ -919,7 +919,8 @@ One-time setup in the Cloud Console (Google has no API for creating Desktop OAut
 
 `googleSession` then works like this:
 
-- **First run.** With no stored grant covering the scopes, it listens on `http://127.0.0.1:<random port>/callback`, prints the consent link (and opens it on macOS), and waits up to five minutes. Only a redirect carrying the flow's `state` is accepted; any other request gets `400` and the listener keeps waiting.
+- **First run.** With no stored grant covering the scopes, it listens on `http://127.0.0.1:<random port>/callback`, opens the consent link in the default macOS browser, and waits up to five minutes. Only a redirect carrying the flow's `state` is accepted; any other request gets `400` and the listener keeps waiting.
+- **Browser failures.** A failed launch rejects sign-in and closes the callback listener. Other platforms and headless sessions supply `googleSession({ openBrowser })` to handle the consent URL. The library does not print links or errors.
 - **Later runs.** The stored grant is reused without a browser. Each access-token refresh is written back before the request that caused it returns.
 - **New scopes.** When a later caller needs a scope the grant lacks, consent runs again for the union of old and new scopes, so no earlier permission is dropped.
 - **Revoked or expired grants.** When Google refuses the stored refresh token (revoked consent, an expired Testing-mode token, or a Workspace re-authentication demand), consent runs again.

@@ -30,26 +30,30 @@ import {
   SQLiteDestination,
   type SQLiteTable,
 } from 'elt-sqlite';
+import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
+import { MessagesUnavailableError } from './platform/macos/chat-database.ts';
 import {
-  AppleCalendarSource,
-  AppleMessagesSource,
-  AppleNotesSource,
-  AppleRemindersSource,
-  CalendarIcsUnavailableError,
   CalendarUnavailableError,
+  EventKit,
   EventKitChangingError,
-  MacOSDocumentParser,
-  MessagesUnavailableError,
+  RemindersUnavailableError,
+} from './platform/macos/eventkit.ts';
+import {
   NotesSchemaError,
   NotesUnavailableError,
-  RemindersUnavailableError,
-} from './index.ts';
-import { EventKit } from './platform/macos/eventkit.ts';
+} from './platform/macos/note-store.ts';
 import osa from './platform/macos/osa.ts';
 import { decodeArchive, plistJSON } from './platform/macos/plist.ts';
+import {
+  AppleCalendarSource,
+  CalendarIcsUnavailableError,
+} from './sources/apple-calendar/apple-calendar-source.ts';
 import { calendarScript } from './sources/apple-calendar/calendar-script.ts';
 import { parseICalendar } from './sources/apple-calendar/icalendar.ts';
 import { icsStreams } from './sources/apple-calendar/ics-records.ts';
+import { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
+import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
+import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
 import { remindersScript } from './sources/apple-reminders/reminders-script.ts';
 
 const execFile = promisify(execFileCallback);

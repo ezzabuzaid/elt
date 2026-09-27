@@ -7,8 +7,8 @@ import { Copy, Pipeline, PipelineError } from 'elt';
 import {
   SearchConsoleApi,
   SearchConsoleQuotaError,
-  SearchConsoleSource,
-} from './index.ts';
+} from './platform/google/search-console-api.ts';
+import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
 import { scratchWarehouse } from './test-warehouse.ts';
 
 const SITE = 'sc-domain:example.com';

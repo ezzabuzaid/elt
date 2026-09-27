@@ -48,7 +48,7 @@ Create `apps/apple/src/example.ts`:
 import { mkdir } from 'node:fs/promises';
 import { Copy, Pipeline } from 'elt';
 import { SQLiteDestination } from 'elt-sqlite';
-import { AppleNotesSource } from './index.ts';
+import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 
 await mkdir('./outputs', { recursive: true });
 
@@ -63,12 +63,7 @@ const pipeline = new Pipeline({
   steps: [new Copy(source.notes, destination.table('notes'))],
 });
 
-const results = await pipeline.run();
-console.table(results.map(({ copy, count, deleted }) => ({
-  stream: copy.from.name,
-  processed: count,
-  deleted,
-})));
+await pipeline.run();
 ```
 
 Build and run from the repository root:
@@ -84,7 +79,21 @@ This writes `outputs/notes.sqlite`. Running it again replaces the `notes` table'
 
 The repository also includes an [Apple exporter](apps/apple/src/main.ts) that loads every stream of every Apple connector incrementally: Mail, Notes, Messages, Contacts, Calendar and Reminders. Run it with `npx nx run apple:start`. Each connector writes `outputs/apple-<name>.sqlite` (for example `outputs/apple-notes.sqlite`) and keeps checkpoints in `outputs/apple-<name>-state.sqlite`; a second run with no changes writes nothing. Streams with files load their text as `content` and their original bytes as `bytes`; files without extractable text load with null `content`. Original files are stored in bounded chunks, so file size is limited only by disk.
 
-Each connector reads the app's own store at its default location, and each needs its own grant for the process running the export: Mail, Notes and Messages need Full Disk Access; Mail account settings also need Automation access to Mail; Contacts needs Contacts access or Full Disk Access; Calendar and Reminders need full Calendar and Reminders access, and Calendar's `calendars` stream also needs Automation access to Calendar. A connector the process cannot read is reported, the others still load, and the run exits with status 1; a stream that fails is reported by name and resumes from its checkpoint next run. Calendar loads occurrences from 2000-01-01 to a year after the run and downloads attachments stored in Google Drive and Gmail, so the run needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first run opens a browser for consent. See [Messages streams](docs/reference.md#apple-messages) and [Contacts streams](docs/reference.md#apple-contacts); Contacts account names (iCloud, Google) are not in its stores and do not load.
+Each connector reads the app's own store at its default location, and each needs its own grant for the process running the export: Mail, Notes and Messages need Full Disk Access; Mail account settings also need Automation access to Mail; Contacts needs Contacts access or Full Disk Access; Calendar and Reminders need full Calendar and Reminders access, and Calendar's `calendars` stream also needs Automation access to Calendar. A connector the process cannot read causes exit status 1 while the others still load; a failed stream keeps its checkpoint and resumes from it next run. The apps produce no console output. Calendar loads occurrences from 2000-01-01 to a year after the run and downloads attachments stored in Google Drive and Gmail, so the run needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first run opens a browser for consent. See [Messages streams](docs/reference.md#apple-messages) and [Contacts streams](docs/reference.md#apple-contacts); Contacts account names (iCloud, Google) are not in its stores and do not load.
+
+### Connector registration
+
+Each app's `src/connectors.ts` default-exports a list of `{ name, run }` entries. `main.ts` calls each entry in a plain loop, sets exit status 1 on failure, and continues with the next connector. Add or remove entries in [Apple connectors](apps/apple/src/connectors.ts) or [Google connectors](apps/google/src/connectors.ts); no command-line arguments are needed.
+
+Each `run()` configures and runs its own ELT pipeline, so it can use any source, destination, and sync strategy. Credentials, discovery, and post-load work stay inside that function. For an already configured `pipeline`, an entry is:
+
+```ts
+export default [
+  { name: 'notes', run: () => pipeline.run() },
+];
+```
+
+Apple and Google remain separate apps with the same list shape. Their lists can be combined when the apps converge.
 
 ### Reminders
 
@@ -94,7 +103,7 @@ Reminders reads through EventKit, so Reminders.app need not be open. Grant the p
 import { mkdir } from 'node:fs/promises';
 import { Copy, Pipeline } from 'elt';
 import { SQLiteDestination } from 'elt-sqlite';
-import { AppleRemindersSource } from './index.ts';
+import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
 
 await mkdir('./outputs', { recursive: true });
 
@@ -152,7 +161,8 @@ Keep the copy ID and both SQLite files between runs. The checkpoint store must u
 ### Mail: local messages and attachments
 
 ```ts
-import { AppleMailSource, mailDirectory } from './index.ts';
+import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
+import { mailDirectory } from './platform/macos/mail-store.ts';
 
 const mail = new AppleMailSource(mailDirectory);
 await new Pipeline({
@@ -173,7 +183,7 @@ Mail reads all locally indexed history across the accounts on this Mac. `message
 Calendar and Reminders load incrementally the same way:
 
 ```ts
-import { AppleCalendarSource } from './index.ts';
+import { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
 
 const calendar = new AppleCalendarSource({
   startAt: '2026-09-01T00:00:00.000Z',
@@ -194,19 +204,14 @@ See [checkpoint and replay semantics](docs/reference.md#incremental-extraction-a
 
 ## Watch for changes
 
-For either pipeline above, replace its final execution and logging statements with:
+For either pipeline above, replace its final execution statement with:
 
 ```ts
 const controller = new AbortController();
 process.once('SIGINT', () => controller.abort());
 
-for await (const results of pipeline.watch({ signal: controller.signal })) {
+for await (const _ of pipeline.watch({ signal: controller.signal })) {
   // The data is already extracted, loaded, and checkpointed here.
-  console.table(results.map(({ copy, count, deleted }) => ({
-    stream: copy.from.name,
-    processed: count,
-    deleted,
-  })));
 }
 ```
 
@@ -245,7 +250,7 @@ Generated Markdown retains canonical record data for subsequent appends and reco
 Using the `source` and `destination` from the quick start, load Notes attachment metadata, parsed text, and original bytes together:
 
 ```ts
-import { MacOSDocumentParser } from './index.ts';
+import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
 
 const attachments = new Copy(
   source.attachments,

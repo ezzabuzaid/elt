@@ -1,0 +1,17 @@
+{
+  "autorun": false,
+  "autokill": false,
+  "terminals": [
+    {
+      "name": "Backend",
+      "persistent": "session1",
+      "commands": ["nx run backend:serve"]
+    },
+    {
+      "name": "Frontend",
+      "persistent": "session2",
+      "split": "Backend",
+      "commands": ["nx run frontend:serve"]
+    }
+  ]
+}

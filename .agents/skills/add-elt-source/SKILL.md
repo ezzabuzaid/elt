@@ -12,7 +12,7 @@ Copy this checklist into your response and tick it off as you go:
 ```
 - [ ] Probing: every access method and change signal listed, live checks run
 - [ ] Source written, sync strategy picked from the list
-- [ ] Black-box tests through src/index.ts
+- [ ] Black-box tests through source classes and real destinations
 - [ ] README and docs/reference.md
 - [ ] Gotchas checked against the diff
 - [ ] Done when: e2e against the real upstream, backlog closed, report
@@ -24,6 +24,7 @@ Copy this checklist into your response and tick it off as you go:
 - `packages/elt` is platform-independent: contracts, pipeline, the checkpoint protocol, validation and diff helpers. Import it as `elt`, never through internal paths.
 - Each destination and its checkpoint store live in `packages/destinations/<name>` (`elt-sqlite`, `elt-markdown`, `elt-postgresql`).
 - Sources live in their owning app: `apps/<app>/src/sources/<source>/<source>-source.ts`. A provider's authorization is shared by every source for that provider, so it has its own package (`packages/google-auth`).
+- Register connectors as `{ name, run }` entries in the app's `src/connectors.ts` default-exported list. Keep credentials, pipeline setup/execution, and post-load work inside `run()`. Use a plain loop in `main.ts` that sets exit status 1 on failure and continues without console output; do not add a shared runner package, result protocol, or lifecycle hooks for this list. Apple and Google stay separate apps with the same list shape until later convergence.
 - Native clients (`apps/apple/src/platform/macos/eventkit.ts` for EventKit, `osa.ts` for scripting) must not depend on `Source`, `Stream`, catalogs, schemas, or destinations. Compose them into the source.
 - The contracts: `packages/elt/src/core/source.ts`, `stream.ts`, `record-validation.ts`, `snapshot.ts`.
 - Pick the closest existing source by its traits:
@@ -55,6 +56,7 @@ Copy this checklist into your response and tick it off as you go:
 - Validate every record with `validateRecords(stream, records, '<Source>')` against the stream schema (`type` with nullable unions, `enum`, `minimum`/`maximum`, `minLength`, `format: 'date-time' | 'date'`). Derive record types with `SchemaRecord<typeof properties>`; never hand-write validators or duplicate types.
 - Missing values stay `null`. Timestamps are canonical UTC (`isTimestamp`); local calendar dates stay dates (`isCalendarDate`).
 - Preserve error causes.
+- Do not add console logging or output, including debug tables and consent-link printing. Preserve errors and exit statuses; examples should follow the same rule.
 
 ### Sync strategy
 
@@ -82,14 +84,14 @@ Pick the first that fits:
 
 Test the source the way a user runs it, as a black box. Do not write unit tests.
 
-- Enter only through the app's public exports (`src/index.ts`), loaded by a real `Pipeline` into a real destination in temporary storage. Assert on what a consumer reads: rows or files, checkpoints, and what a second run writes.
+- Import source classes directly from their defining modules and load them through a real `Pipeline` into a real destination in temporary storage. Assert on what a consumer reads: rows or files, checkpoints, and what a second run writes.
 - Control only the upstream, at its outermost seam: a synthetic copy of the upstream's database, the HTTP requester, or `osa`, which crosses into `osascript`. Never import or mock the source's own modules (scripts, parsers, decoders); they are covered through the streams that use them, by feeding bad input at the seam.
 - Models: the Messages tests in `apps/apple/src/index.test.ts` (a synthetic `chat.db`, no mocks) and `apps/google/src/warehouse.test.ts` (a fake requester, scratch Postgres, read back through the agent role).
 - Use controlled inputs, never personal data. Put tests in the app's top-level `src/*.test.ts`; the `test` target runs nothing in subfolders.
 
 ## Writing docs
 
-- Export the source from its app's `src/index.ts`; keep `elt` exports generic.
+- Apps are executables, not libraries: use direct imports in their entry points, tests, and examples; do not add app export barrels. Keep reusable package exports in `packages/` and `elt` exports generic. A default-exported connector registration list is app configuration, not a public module barrel.
 - `README.md`: a minimal example and limitations.
 - `docs/reference.md`: details, the live checks from probing, and the deletion, snapshot and scan-cost limitations.
 - Commit only synthetic fixtures.
