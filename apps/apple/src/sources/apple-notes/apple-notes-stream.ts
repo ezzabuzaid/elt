@@ -17,9 +17,13 @@ export const notesFields = {
 } as const;
 
 // Every Notes property is required; the record type follows from the schema.
-export function notesSchema<P extends Properties>(properties: P) {
+export function notesSchema<P extends Properties>(
+  properties: P,
+  description: string,
+) {
   return {
     type: 'object',
+    description,
     properties,
     required: Object.keys(properties),
   } as const;

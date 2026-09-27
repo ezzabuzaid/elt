@@ -5,6 +5,7 @@ import type { Stream } from './stream.ts';
 // nullable, with enum, range, length and date formats.
 export type FieldSchema = {
   readonly type: ScalarType | readonly ScalarType[];
+  readonly description?: string;
   readonly format?: 'date-time' | 'date';
   readonly minimum?: number;
   readonly maximum?: number;

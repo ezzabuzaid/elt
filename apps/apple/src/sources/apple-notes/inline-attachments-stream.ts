@@ -8,15 +8,33 @@ import { type NotesScan, type Row, string, time } from './notes-scan.ts';
 
 const { id, text, nullableText, nullableTimestamp } = notesFields;
 
-// Tags, mentions, links to other notes and calculations sit inline in the
-// text; target is what each points at (a tag's normalized name, a note).
 const properties = {
-  id,
-  noteId: id,
-  type: text,
-  text: nullableText,
-  target: nullableText,
-  createdAt: nullableTimestamp,
+  id: { ...id, description: 'Notes identifier of this inline attachment.' },
+  noteId: {
+    ...id,
+    description:
+      'Containing note identifier; refers to notes.id within this source. One note can contain many inline attachments.',
+  },
+  type: {
+    ...text,
+    description:
+      'Notes type identifier, such as com.apple.notes.inlinetextattachment.hashtag; distinguishes tags, mentions, note links and calculation results.',
+  },
+  text: {
+    ...nullableText,
+    description:
+      'Text displayed inline, such as #travel; NULL when not recorded.',
+  },
+  target: {
+    ...nullableText,
+    description:
+      'Stored target of the inline attachment: for example a normalized tag name such as TRAVEL, or an applenotes:note/<id> URL. Its meaning depends on type; NULL when not recorded.',
+  },
+  createdAt: {
+    ...nullableTimestamp,
+    description:
+      'Creation time recorded by Notes, converted to a UTC instant; NULL when unavailable.',
+  },
 } as const;
 
 export class InlineAttachmentsStream extends AppleNotesStream<
@@ -24,7 +42,10 @@ export class InlineAttachmentsStream extends AppleNotesStream<
   Row
 > {
   readonly name = 'inlineAttachments';
-  readonly jsonSchema = notesSchema(properties);
+  readonly jsonSchema = notesSchema(
+    properties,
+    'One source record per inline tag, mention, note link or calculation attachment belonging to an exported note. These are structured references to content also rendered in the note body, not additional notes or file attachments.',
+  );
 
   protected rows(scan: NotesScan): readonly Row[] {
     return [...scan.inline.values()];

@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import {
+  type CopyConfiguration,
   FileContent,
   type KeyValue,
   type Stage,
-  type Stream,
   TargetMissingError,
   TargetOwnedError,
   Writer,
@@ -21,6 +21,20 @@ export type Transaction = postgres.Sql;
 const batchSize = 1000;
 export const seq = '"_mac_elt_seq"';
 export const op = '"_mac_elt_op"';
+
+// JSON Schema annotations are optional; when absent, remove any old SQL comment.
+function description(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (
+    typeof value !== 'string' ||
+    value.includes('\0') ||
+    !value.isWellFormed()
+  )
+    throw new TypeError(
+      'JSON Schema description must be well-formed text without NUL',
+    );
+  return value;
+}
 
 // A run's one connection and write transaction for a schema, shared by every
 // stream's stage. The schema lock serializes everything elt writes there, as
@@ -105,13 +119,65 @@ export class PostgresLoad implements AsyncDisposable {
 }
 
 export abstract class PostgresWriter extends Writer {
+  readonly #tableComment: string;
+  readonly #columnComments: Record<string, string | null>;
+
   constructor(
-    stream: Stream,
+    readonly configuration: CopyConfiguration,
     protected readonly url: string,
     readonly schema: string,
     readonly table: PostgresTable,
   ) {
-    super(stream);
+    super(configuration.stream);
+    const meaning = description(this.stream.jsonSchema.description);
+    const loading = {
+      append: 'Every accepted observation is appended; source keys may repeat.',
+      overwrite:
+        'Each full refresh replaces the table with its accepted records.',
+      append_dedup: 'Accepted observations reconcile rows by the copy key.',
+      overwrite_dedup:
+        'Each full refresh replaces the table with deduplicated records.',
+    }[configuration.destinationSyncMode];
+    const lines = [`Source stream: ${this.stream.name}.`];
+    if (meaning !== null) lines.push(`Source record meaning: ${meaning}`);
+    lines.push(
+      `Extraction: ${configuration.syncMode}. Loading: ${configuration.destinationSyncMode}. ${loading}`,
+    );
+    if (configuration.dedupPolicy !== undefined) {
+      const { primaryKey, cursorField } = configuration.deduplication();
+      lines.push(`Copy key: ${primaryKey.join(', ')}.`);
+      lines.push(
+        configuration.dedupPolicy === 'replace'
+          ? 'For a repeated key, the newest extracted record wins.'
+          : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare by byte order.`,
+      );
+    }
+    this.#tableComment = lines.join('\n');
+    const properties = this.stream.jsonSchema.properties as
+      | Readonly<Record<string, Readonly<Record<string, unknown>>>>
+      | undefined;
+    this.#columnComments = Object.fromEntries(
+      table.columns.map((column) => {
+        if (column.storesFile) {
+          const store = new PostgresFileStore(schema, table, column);
+          return [
+            column.name,
+            `UUID reference to the source file's original bytes. Join ${store.qualifiedName} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
+          ];
+        }
+        if (column.fileRead?.parser !== undefined)
+          return [
+            column.name,
+            `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`,
+          ];
+        return [
+          column.name,
+          description(properties?.[column.name]?.description),
+        ];
+      }),
+    );
+    this.#columnComments.loaded_at =
+      'Start time of the load that last wrote this row, not the source modification time or the most recent successful sync.';
   }
 
   protected abstract initialize(transaction: Transaction): Promise<void>;
@@ -274,6 +340,21 @@ export abstract class PostgresWriter extends Writer {
       await this.own(sql, writer);
       await this.initialize(sql);
       for (const store of stores) await store.initialize(sql);
+      // COMMENT does not accept bind parameters. Let Postgres quote identifiers
+      // and literals, including NULL to clear annotations removed from the schema.
+      const comments = await sql.unsafe<{ statement: string }[]>(
+        `SELECT format('COMMENT ON TABLE %I.%I IS %L', $1::text, $2::text, $3::text) AS statement
+         UNION ALL
+         SELECT format('COMMENT ON COLUMN %I.%I.%I IS %L', $1::text, $2::text, key, value)
+         FROM jsonb_each_text($4::jsonb)`,
+        [
+          this.schema,
+          this.table.name,
+          this.#tableComment,
+          sql.json(this.#columnComments),
+        ],
+      );
+      await sql.unsafe(comments.map(({ statement }) => statement).join(';'));
       await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${stage}`);
       await sql.unsafe(
         `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,

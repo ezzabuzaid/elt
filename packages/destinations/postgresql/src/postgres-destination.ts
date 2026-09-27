@@ -79,14 +79,14 @@ export class PostgresDestination extends Destination<PostgresTable> {
         );
       case 'append':
         return new PostgresAppendWriter(
-          configuration.stream,
+          configuration,
           this.#url,
           this.schema,
           table,
         );
       case 'overwrite':
         return new PostgresOverwriteWriter(
-          configuration.stream,
+          configuration,
           this.#url,
           this.schema,
           table,

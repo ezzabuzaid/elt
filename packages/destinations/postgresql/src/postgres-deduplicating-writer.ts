@@ -17,12 +17,12 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   readonly cursor?: PostgresColumn;
 
   constructor(
-    readonly configuration: CopyConfiguration,
+    configuration: CopyConfiguration,
     url: string,
     schema: string,
     table: PostgresTable,
   ) {
-    super(configuration.stream, url, schema, table);
+    super(configuration, url, schema, table);
     this.deduplication = configuration.deduplication();
     const inferred = PostgresColumns.fromSchema(
       configuration.stream.jsonSchema,

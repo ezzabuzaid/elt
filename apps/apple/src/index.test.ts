@@ -370,6 +370,22 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
   });
   const { destination, pipeline } = notesPipeline(source, scratch.path);
 
+  for (const stream of (await source.discover()).streams) {
+    assert.ok(
+      typeof stream.jsonSchema.description === 'string' &&
+        stream.jsonSchema.description.length > 0,
+      stream.name,
+    );
+    for (const [name, field] of Object.entries(
+      stream.jsonSchema.properties as Record<string, Record<string, unknown>>,
+    )) {
+      assert.ok(
+        typeof field.description === 'string' && field.description.length > 0,
+        `${stream.name}.${name}`,
+      );
+    }
+  }
+
   const results = await pipeline.run();
 
   const rows = (sql: string) => noteRows(destination.path, sql);

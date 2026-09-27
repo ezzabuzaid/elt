@@ -83,6 +83,176 @@ class Messages extends Source {
 const rows = (stream: Stream, data: readonly object[]): SourceMessage[] =>
   data.map((row) => ({ stream: stream.name, data: row }));
 
+test('schema annotations follow each copy, including projections, append history and removed descriptions', async () => {
+  await using database = await scratchDatabase();
+  const titleDescription =
+    "The owner's title.\nLiteral \\paths and '; DROP TABLE notes; -- stay text.";
+  const schema = {
+    type: 'object',
+    description: 'A source record represents one note.',
+    properties: {
+      id: { type: 'string', description: 'The source note identifier.' },
+      title: { type: 'string', description: titleDescription },
+      body: { type: 'string' },
+    },
+    required: ['id', 'title', 'body'],
+  };
+  const stream = new Stream({
+    name: 'notes',
+    jsonSchema: schema,
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  const source = new Messages(stream);
+  const record = { id: 'note-1', title: 'A note', body: 'Its body' };
+  source.messages = rows(stream, [record]);
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'note"data',
+  });
+  const titles = destination.table('note"titles', (c) => [
+    c.text('id').notNull(),
+    c.text('title'),
+  ]);
+  const full = new Pipeline({
+    source,
+    destination,
+    steps: [new Copy(stream, destination.table('notes'))],
+  });
+  const history = new Pipeline({
+    source,
+    destination,
+    steps: [
+      new Copy(stream, titles, {
+        syncMode: 'full_refresh',
+        destinationSyncMode: 'append',
+      }),
+    ],
+  });
+  await full.run();
+  await history.run();
+  await history.run();
+  const comments = async (table: string) => {
+    const found = await database.sql`
+      SELECT obj_description(c.oid, 'pg_class') AS relation, a.attname AS name,
+        col_description(c.oid, a.attnum) AS description
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+      WHERE n.nspname = ${destination.schema} AND c.relname = ${table}`;
+    return {
+      relation: found[0]?.relation,
+      columns: Object.fromEntries(
+        found.map((row) => [row.name, row.description]),
+      ),
+    };
+  };
+  const allComments = await comments('notes');
+  const titleComments = await comments(titles.name);
+  assert.ok(allComments.relation.includes(schema.description));
+  assert.match(allComments.relation, /overwrite/);
+  assert.match(titleComments.relation, /append/);
+  assert.match(titleComments.relation, /source keys may repeat/);
+  assert.equal(allComments.columns.id, schema.properties.id.description);
+  assert.equal(allComments.columns.title, titleDescription);
+  assert.equal(allComments.columns.body, null);
+  assert.equal(titleComments.columns.id, schema.properties.id.description);
+  assert.equal(titleComments.columns.title, titleDescription);
+  assert.equal(Object.hasOwn(titleComments.columns, 'body'), false);
+  assert.match(allComments.columns.loaded_at, /not.*source.*modification/i);
+  assert.deepEqual(
+    [
+      ...(await database.sql`SELECT id, title, body FROM "note""data".notes`),
+    ].map((row) => ({ ...row })),
+    [record],
+  );
+  assert.equal(
+    (
+      await database.sql`SELECT count(*)::int AS n FROM "note""data"."note""titles"`
+    )[0]?.n,
+    2,
+  );
+
+  const revised = new Stream({
+    name: stream.name,
+    jsonSchema: {
+      ...schema,
+      description: 'Revised source meaning.',
+      properties: { ...schema.properties, title: { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  const revisedSource = new Messages(revised);
+  revisedSource.messages = rows(revised, [record]);
+  await new Pipeline({
+    source: revisedSource,
+    destination,
+    steps: [new Copy(revised, destination.table('notes'))],
+  }).run();
+  const revisedComments = await comments('notes');
+  assert.ok(revisedComments.relation.includes('Revised source meaning.'));
+  assert.equal(revisedComments.columns.title, null);
+  assert.equal((await comments(titles.name)).columns.title, titleDescription);
+
+  // Explicit targets already support sources without a properties schema.
+  const unschematized = new Stream({
+    name: stream.name,
+    jsonSchema: {},
+    supportedSyncModes: ['full_refresh'],
+  });
+  const plainSource = new Messages(unschematized);
+  plainSource.messages = rows(unschematized, [record]);
+  await new Pipeline({
+    source: plainSource,
+    destination,
+    steps: [new Copy(unschematized, titles)],
+  }).run();
+  const plainComments = await comments(titles.name);
+  assert.equal(plainComments.columns.id, null);
+  assert.equal(plainComments.columns.title, null);
+  assert.equal(
+    (
+      await database.sql`SELECT count(*)::int AS n FROM "note""data"."note""titles"`
+    )[0]?.n,
+    1,
+  );
+});
+
+test('invalid schema annotations fail before extraction or storage access', async () => {
+  const destination = new PostgresDestination({
+    url: 'postgres://unused/unused',
+    schema: 'raw',
+  });
+  for (const invalid of [null, 1, 'bad\0text', '\ud800']) {
+    for (const atRoot of [true, false]) {
+      const stream = new Stream({
+        name: 'items',
+        jsonSchema: atRoot
+          ? {
+              type: 'object',
+              description: invalid,
+              properties: { id: { type: 'string' } },
+            }
+          : {
+              type: 'object',
+              properties: { id: { type: 'string', description: invalid } },
+            },
+        supportedSyncModes: ['full_refresh'],
+      });
+      const source = new Messages(stream);
+      await assert.rejects(
+        new Pipeline({
+          source,
+          destination,
+          steps: [new Copy(stream, destination.table('items'))],
+        }).run(),
+        /JSON Schema description/,
+      );
+      assert.equal(source.extracted, 0);
+    }
+  }
+});
+
 test('file text and bounded original bytes survive replay, replacement and deletion with checkpoints', async () => {
   await using database = await scratchDatabase();
   await using scratch = await mkdtempDisposable(
@@ -150,6 +320,17 @@ test('file text and bounded original bytes survive replay, replacement and delet
     { stream: stream.name, data: { id: 'missing', version: 1 }, file: null },
   ];
   await pipeline.run();
+  const comments = await database.sql`
+    SELECT a.attname AS name, col_description(a.attrelid, a.attnum) AS description
+    FROM pg_attribute a WHERE a.attrelid = 'apple_notes.attachments'::regclass AND a.attnum > 0`;
+  const descriptions = Object.fromEntries(
+    comments.map((row) => [row.name, row.description]),
+  );
+  assert.match(descriptions.content, /test-text/);
+  assert.match(descriptions.content, /NULL.*no text/);
+  assert.ok(descriptions.bytes.includes(store.qualifiedName));
+  assert.match(descriptions.bytes, /UUID/);
+  assert.match(descriptions.bytes, /order.*n/i);
   const initial =
     await database.sql`SELECT id, bytes, loaded_at FROM apple_notes.attachments ORDER BY id`;
   assert.deepEqual(
@@ -527,6 +708,16 @@ test('cursor_newer keeps the greatest cursor by byte order; replace keeps the ne
     x: 'x-tie',
     y: 'y-restated',
   });
+  const [comments] = await database.sql`
+    SELECT obj_description('raw.newer'::regclass, 'pg_class') AS newer,
+      obj_description('raw.restated'::regclass, 'pg_class') AS restated`;
+  assert.match(comments?.newer, /Copy key: id/);
+  assert.match(
+    comments?.newer,
+    /greatest version wins; equal cursors retain the first/,
+  );
+  assert.match(comments?.newer, /Text cursors compare by byte order/);
+  assert.match(comments?.restated, /newest extracted record wins/);
   const loaded = await names('many');
   assert.equal(Object.keys(loaded).length, 1200);
   assert.equal(loaded['0'], 'row-2400');
