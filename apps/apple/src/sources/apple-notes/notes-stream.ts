@@ -1,9 +1,5 @@
 import type { SchemaRecord } from 'elt';
-import {
-  AppleNotesStream,
-  notesFields,
-  notesSchema,
-} from './apple-notes-stream.ts';
+import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import {
   flag,
   type NoteEntry,
@@ -85,10 +81,13 @@ export class NotesStream extends AppleNotesStream<
   NoteEntry
 > {
   readonly name = 'notes';
-  readonly jsonSchema = notesSchema(
+  readonly jsonSchema = {
+    type: 'object',
+    description:
+      'One source record per note currently in the local Notes store with an account and folder. Includes locked notes and Recently Deleted; excludes cloud placeholders without a folder and records marked for deletion. Only Notes syncs remote changes to this Mac.',
     properties,
-    'One source record per note currently in the local Notes store with an account and folder. Includes locked notes and Recently Deleted; excludes cloud placeholders without a folder and records marked for deletion. Only Notes syncs remote changes to this Mac.',
-  );
+    required: Object.keys(properties),
+  } as const;
 
   protected rows(scan: NotesScan): readonly NoteEntry[] {
     return scan.notes;

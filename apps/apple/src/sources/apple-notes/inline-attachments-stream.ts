@@ -1,9 +1,5 @@
 import type { SchemaRecord } from 'elt';
-import {
-  AppleNotesStream,
-  notesFields,
-  notesSchema,
-} from './apple-notes-stream.ts';
+import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import { type NotesScan, type Row, string, time } from './notes-scan.ts';
 
 const { id, text, nullableText, nullableTimestamp } = notesFields;
@@ -42,10 +38,13 @@ export class InlineAttachmentsStream extends AppleNotesStream<
   Row
 > {
   readonly name = 'inlineAttachments';
-  readonly jsonSchema = notesSchema(
+  readonly jsonSchema = {
+    type: 'object',
+    description:
+      'One source record per inline tag, mention, note link or calculation attachment belonging to an exported note. These are structured references to content also rendered in the note body, not additional notes or file attachments.',
     properties,
-    'One source record per inline tag, mention, note link or calculation attachment belonging to an exported note. These are structured references to content also rendered in the note body, not additional notes or file attachments.',
-  );
+    required: Object.keys(properties),
+  } as const;
 
   protected rows(scan: NotesScan): readonly Row[] {
     return [...scan.inline.values()];

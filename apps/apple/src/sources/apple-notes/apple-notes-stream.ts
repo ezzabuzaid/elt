@@ -16,19 +16,6 @@ export const notesFields = {
   nullableNumber: { type: ['number', 'null'] },
 } as const;
 
-// Every Notes property is required; the record type follows from the schema.
-export function notesSchema<P extends Properties>(
-  properties: P,
-  description: string,
-) {
-  return {
-    type: 'object',
-    description,
-    properties,
-    required: Object.keys(properties),
-  } as const;
-}
-
 // What the source needs from any Notes stream, whatever its record type.
 export type NotesReader = {
   describe(): Stream;
@@ -42,7 +29,12 @@ export type NotesReader = {
 // Public discovery returns only the Stream description.
 export abstract class AppleNotesStream<P extends Properties, Row> {
   abstract readonly name: string;
-  abstract readonly jsonSchema: ReturnType<typeof notesSchema<P>>;
+  abstract readonly jsonSchema: {
+    readonly type: 'object';
+    readonly description: string;
+    readonly properties: P;
+    readonly required: string[];
+  };
   readonly primaryKey: readonly string[] = ['id'];
   readonly supportedSyncModes: readonly SyncMode[] = Object.freeze([
     'full_refresh',

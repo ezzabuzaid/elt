@@ -1,11 +1,7 @@
 import { access } from 'node:fs/promises';
 import type { SQLOutputValue } from 'node:sqlite';
 import type { SchemaRecord } from 'elt';
-import {
-  AppleNotesStream,
-  notesFields,
-  notesSchema,
-} from './apple-notes-stream.ts';
+import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import {
   type NotesScan,
   number,
@@ -142,10 +138,13 @@ export class AttachmentsStream extends AppleNotesStream<
   Row
 > {
   readonly name = 'attachments';
-  readonly jsonSchema = notesSchema(
+  readonly jsonSchema = {
+    type: 'object',
+    description:
+      'One source record per attachment of an exported note, including files, links, tables and child scan pages. Metadata can exist without a readable file. Locked notes hide attachment content; undownloaded files remain unavailable until Notes downloads them. Relationships name source streams, not destination tables.',
     properties,
-    'One source record per attachment of an exported note, including files, links, tables and child scan pages. Metadata can exist without a readable file. Locked notes hide attachment content; undownloaded files remain unavailable until Notes downloads them. Relationships name source streams, not destination tables.',
-  );
+    required: Object.keys(properties),
+  } as const;
   readonly supportsFileTransfer = true;
 
   protected rows(scan: NotesScan): readonly Row[] {

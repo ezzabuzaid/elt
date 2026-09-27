@@ -1,9 +1,5 @@
 import type { SchemaRecord } from 'elt';
-import {
-  AppleNotesStream,
-  notesFields,
-  notesSchema,
-} from './apple-notes-stream.ts';
+import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import type { NotesScan, Row } from './notes-scan.ts';
 
 const { id, text, ordinal } = notesFields;
@@ -24,10 +20,13 @@ const properties = {
 
 export class AccountsStream extends AppleNotesStream<typeof properties, Row> {
   readonly name = 'accounts';
-  readonly jsonSchema = notesSchema(
+  readonly jsonSchema = {
+    type: 'object',
+    description:
+      'One source record per account in the local Notes store, excluding accounts marked for deletion. This is what Notes has synced to this Mac.',
     properties,
-    'One source record per account in the local Notes store, excluding accounts marked for deletion. This is what Notes has synced to this Mac.',
-  );
+    required: Object.keys(properties),
+  } as const;
 
   protected rows(scan: NotesScan): readonly Row[] {
     return scan.accounts;

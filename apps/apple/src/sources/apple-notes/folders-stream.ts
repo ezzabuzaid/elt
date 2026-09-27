@@ -1,9 +1,5 @@
 import type { SchemaRecord } from 'elt';
-import {
-  AppleNotesStream,
-  notesFields,
-  notesSchema,
-} from './apple-notes-stream.ts';
+import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import { flag, type NotesScan, type Row, string } from './notes-scan.ts';
 
 const { id, nullableId, text, ordinal, nullableText, boolean } = notesFields;
@@ -43,10 +39,13 @@ const properties = {
 
 export class FoldersStream extends AppleNotesStream<typeof properties, Row> {
   readonly name = 'folders';
-  readonly jsonSchema = notesSchema(
+  readonly jsonSchema = {
+    type: 'object',
+    description:
+      'One source record per local Notes folder, including nested folders, smart folders and Recently Deleted, excluding folders marked for deletion. Relationships name streams in this source, not physical destination tables.',
     properties,
-    'One source record per local Notes folder, including nested folders, smart folders and Recently Deleted, excluding folders marked for deletion. Relationships name streams in this source, not physical destination tables.',
-  );
+    required: Object.keys(properties),
+  } as const;
 
   protected rows(scan: NotesScan): readonly Row[] {
     return scan.folders;
