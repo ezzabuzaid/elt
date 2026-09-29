@@ -2707,3 +2707,82 @@ test('each watch pass is recorded under its own connection when it completes', a
     4,
   );
 });
+
+test('stream_status keeps each stream own latest outcome when a watch pass reads only what changed', async () => {
+  await using database = await scratchDatabase();
+  const { sql } = database;
+  const a = scripted('a');
+  const b = scripted('b');
+  class Changes extends ScriptedSource {
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+      yield [a];
+    }
+  }
+  const source = new Changes([a, b], {
+    a: [record('a', 'a1', 1), checkpoint('a', {})],
+    b: [new Error('b denied')],
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const history = new PostgresSyncHistory({ url: database.url });
+  await history.install();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'notes',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [a, b].map(
+          (stream) =>
+            new Copy(
+              stream,
+              destination.table(stream.name),
+              incremental(stream.name),
+            ),
+        ),
+      }),
+    ],
+  });
+
+  for await (const _pass of pipeline.watch({
+    signal: AbortSignal.timeout(10_000),
+  }));
+
+  assert.deepEqual(
+    [...(await sql`SELECT connector, status FROM marts.sync_status`)],
+    [{ connector: 'notes', status: 'succeeded' }],
+  );
+  assert.deepEqual(
+    [
+      ...(await sql`SELECT stream, status, last_successful_attempt_id IS NOT NULL AS succeeded_once, target_table
+        FROM marts.stream_status ORDER BY stream`),
+    ],
+    [
+      {
+        stream: 'a',
+        status: 'succeeded',
+        succeeded_once: true,
+        target_table: 'a',
+      },
+      {
+        stream: 'b',
+        status: 'failed',
+        succeeded_once: false,
+        target_table: 'b',
+      },
+    ],
+  );
+  const [streamA] =
+    await sql`SELECT latest_attempt_id, last_successful_attempt_id FROM marts.stream_status WHERE stream = 'a'`;
+  const [latest] = await sql`SELECT latest_attempt_id FROM marts.sync_status`;
+  assert.equal(streamA?.latest_attempt_id, latest?.latest_attempt_id);
+  assert.equal(streamA?.last_successful_attempt_id, latest?.latest_attempt_id);
+});

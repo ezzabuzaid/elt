@@ -81,7 +81,7 @@ export const syncHistoryViews: readonly PostgresView[] = [
       ) success ON true
       ORDER BY a.connector, a.id DESC`,
     description:
-      'One row per connector with its latest started attempt and independently its most recently completed successful pass. A later failed, partial or unfinished pass does not erase prior success. Join extraction_coverage using the appropriate attempt ID: requested scope can change. NULL success means none recorded. These timestamps measure sync completion, not service liveness or source completeness.',
+      'One row per connector with its latest started attempt and independently its most recently completed successful pass. A watch pass covers only the streams that changed; see stream_status for each stream. A later failed, partial or unfinished pass does not erase prior success. Join extraction_coverage using the appropriate attempt ID: requested scope can change. NULL success means none recorded. These timestamps measure sync completion, not service liveness or source completeness.',
     columns: {
       connector: attempt.connector,
       latest_attempt_id:
@@ -94,6 +94,41 @@ export const syncHistoryViews: readonly PostgresView[] = [
         'Most recently completed all-copies-successful attempt; NULL if none. Its coverage may differ from the latest attempt.',
       last_successful_sync_at:
         'Completion time of that successful pass, advanced even if no rows changed. NULL if no successful pass was recorded. Never inferred from loaded_at or record modification dates.',
+    },
+  },
+  {
+    name: 'stream_status',
+    query: `SELECT DISTINCT ON (a.connector, c.stream) a.connector, c.stream,
+      c.target_schema, c.target_table,
+      a.id AS latest_attempt_id, a.started_at, a.completed_at, c.status,
+      success.id AS last_successful_attempt_id, success.completed_at AS last_successful_sync_at
+      FROM _warehouse.extraction_coverage c
+      JOIN _warehouse.sync_attempts a ON a.id = c.attempt_id
+      LEFT JOIN LATERAL (
+        SELECT s.id, s.completed_at FROM _warehouse.extraction_coverage sc
+        JOIN _warehouse.sync_attempts s ON s.id = sc.attempt_id
+        WHERE s.connector = a.connector AND sc.stream = c.stream AND sc.status = 'succeeded'
+        ORDER BY s.completed_at DESC, s.id DESC LIMIT 1
+      ) success ON true
+      ORDER BY a.connector, c.stream, a.id DESC`,
+    description:
+      'One row per connector and stream: the latest attempt that declared the stream, and independently the last attempt in which its copy succeeded. A watch pass reads only the streams its source reported changed, so a connector can succeed in sync_status while one of its streams last failed; judge a stream here. NULL success means that stream never completed.',
+    columns: {
+      connector: attempt.connector,
+      stream: 'Source stream name.',
+      target_schema:
+        'Raw destination schema of the latest declaration; this metadata does not grant access to it.',
+      target_table: 'Raw destination table name within target_schema.',
+      latest_attempt_id:
+        'Most recently started attempt that declared this stream; join extraction_coverage by attempt_id and stream.',
+      started_at: attempt.started_at,
+      completed_at: attempt.completed_at,
+      status:
+        "This stream's copy status in the latest attempt: running, succeeded, partial or failed. Other streams of the same attempt may differ.",
+      last_successful_attempt_id:
+        "Most recent completed attempt in which this stream's copy succeeded; NULL if none.",
+      last_successful_sync_at:
+        'Completion time of that attempt, advanced even if no rows changed. NULL if this stream never succeeded. Never inferred from loaded_at or record modification dates.',
     },
   },
 ];
