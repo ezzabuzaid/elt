@@ -4,6 +4,7 @@
       "command": "./launch_node",
       "args": ["./server.mjs"],
       "cwd": ".",
+      "tool_timeout_sec": 1800,
       "env_vars": [
         "CODEX_MCP_NODE_PATH",
         "CODEX_BROWSER_USE_NODE_PATH",
