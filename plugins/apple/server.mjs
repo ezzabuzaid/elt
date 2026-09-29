@@ -70239,7 +70239,7 @@ async function setUpWithForms(plugin2, ask) {
 if (process.platform !== "darwin")
   throw new Error("Apple requires Codex on a Mac.");
 var plugin = new ApplePlugin();
-var server = new McpServer({ name: "apple", version: "0.2.0" });
+var server = new McpServer({ name: "apple", version: "0.2.2" });
 var json2 = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }]
 });
@@ -70266,8 +70266,13 @@ server.registerTool(
       openWorldHint: false
     }
   },
+  // A person answers each form, so it waits as long as the tool call may run
+  // (tool_timeout_sec in plugins/apple/.mcp.json), not the SDK's 60 seconds.
   async () => json2(
-    await setUpWithForms(plugin, (form) => server.server.elicitInput(form))
+    await setUpWithForms(
+      plugin,
+      (form) => server.server.elicitInput(form, { timeout: 18e5 })
+    )
   )
 );
 server.registerTool(

@@ -10,7 +10,7 @@ if (process.platform !== 'darwin')
   throw new Error('Apple requires Codex on a Mac.');
 
 const plugin = new ApplePlugin();
-const server = new McpServer({ name: 'apple', version: '0.2.0' });
+const server = new McpServer({ name: 'apple', version: '0.2.2' });
 // McpServer turns a thrown error into an isError result.
 const json = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -41,9 +41,13 @@ server.registerTool(
       openWorldHint: false,
     },
   },
+  // A person answers each form, so it waits as long as the tool call may run
+  // (tool_timeout_sec in plugins/apple/.mcp.json), not the SDK's 60 seconds.
   async () =>
     json(
-      await setUpWithForms(plugin, (form) => server.server.elicitInput(form)),
+      await setUpWithForms(plugin, (form) =>
+        server.server.elicitInput(form, { timeout: 1_800_000 }),
+      ),
     ),
 );
 server.registerTool(

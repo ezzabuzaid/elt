@@ -15,6 +15,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -32,7 +33,7 @@ function read(database: string, script: string) {
 }
 
 test('the committed Apple plugin installs from the repo marketplace, sets up through Codex bundled Node and serves its imports to the skill read command', {
-  timeout: 30_000,
+  timeout: 150_000,
 }, async (t) => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
   const marketplace = JSON.parse(
@@ -92,12 +93,14 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
   const forms: string[] = [];
   client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
     forms.push(params.message);
+    // A person reads the form for longer than the SDK's 60 s request default.
+    await sleep(61_000);
     return { action: 'accept', content: { apps: ['notes'] } };
   });
   const call = (name: string, args?: Record<string, unknown>) =>
     client.callTool({ name, arguments: args }, undefined, {
       signal: t.signal,
-      timeout: 10_000,
+      timeout: 90_000,
     });
   const invoke = async (name: string, args?: Record<string, unknown>) => {
     const result = await call(name, args);
