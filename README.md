@@ -34,7 +34,7 @@ See the reference for [Mail streams](docs/reference.md#apple-mail), [Contacts st
 
 The [Apple plugin](plugins/apple/.codex-plugin/plugin.json) is a Codex plugin with setup and query skills and a local MCP server. To install it in Codex in the ChatGPT desktop app on a Mac:
 
-1. Open **Customize** in the sidebar, then **Plugins**, **Add**, **Add a marketplace**.
+1. Choose the **Plugins** icon in the sidebar, then **Add**, **Add a marketplace**.
 2. Enter `ezzabuzaid/elt` as the source and choose **Add marketplace**. Git ref and sparse paths can stay empty.
 3. Search for **Apple**, open it and choose **Install plugin**, then **Set up Apple**.
 
