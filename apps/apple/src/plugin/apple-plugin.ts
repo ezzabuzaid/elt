@@ -2,7 +2,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { CopyConfiguration, StreamStatus } from 'elt';
-import { type App, appNames, apps } from './apps.ts';
+import { type App, appNames, apps, type ChoiceRows } from './apps.ts';
 import { configurationSchema, lockOperations, Settings } from './settings.ts';
 import { importApp } from './sync.ts';
 
@@ -61,11 +61,11 @@ export class ApplePlugin {
     const definition = apps[app];
     const source = definition.source(definition.defaultScope?.() ?? {});
     const catalog = await source.discover();
-    const choices: Record<string, unknown[]> = {};
+    const choices: ChoiceRows = {};
     for await (const message of source.read(
       definition.choices.map(
-        (name) =>
-          new CopyConfiguration(catalog.get(name), {
+        (choice) =>
+          new CopyConfiguration(catalog.get(choice.stream), {
             syncMode: 'full_refresh',
             destinationSyncMode: 'overwrite',
           }),
@@ -76,10 +76,11 @@ export class ApplePlugin {
         if (message.status === 'FAILED') throw message.error;
         continue;
       }
+      // Every Apple source validates its records against the stream's object schema.
       if (!('type' in message))
         choices[message.stream] = [
           ...(choices[message.stream] ?? []),
-          message.data,
+          message.data as ChoiceRows[string][number],
         ];
     }
     return {

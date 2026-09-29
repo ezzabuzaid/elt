@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { ApplePlugin } from './apple-plugin.ts';
 import { appNames } from './apps.ts';
 import { appSchema, configurationSchema } from './settings.ts';
+import { setUpWithForms } from './setup-forms.ts';
 
 export function createServer(plugin: ApplePlugin) {
-  const server = new McpServer({ name: 'apple', version: '0.1.0' });
+  const server = new McpServer({ name: 'apple', version: '0.2.0' });
   const result = async (work: () => unknown) => {
     try {
       const value = await work();
@@ -37,6 +38,23 @@ export function createServer(plugin: ApplePlugin) {
       },
     },
     () => result(() => plugin.status()),
+  );
+  server.registerTool(
+    'apple_setup',
+    {
+      description:
+        'Set up Apple with forms the user answers: which apps, then for each app its accounts, collections, dates and attachments. Saves the answers, syncs, and reports skipped apps and apps macOS did not allow. Hosts without form support return an error; set up with apple_options and apple_configure there.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    () =>
+      result(() =>
+        setUpWithForms(plugin, (form) => server.server.elicitInput(form)),
+      ),
   );
   server.registerTool(
     'apple_options',

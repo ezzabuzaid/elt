@@ -21,9 +21,20 @@ export const appNames = [
 ] as const;
 export type App = (typeof appNames)[number];
 
+type Row = Record<string, unknown>;
+export type ChoiceRows = Record<string, Row[]>;
+
+// A stream that lists accounts or collections a user chooses from.
+export type Choice = {
+  readonly stream: string;
+  readonly scope: 'accountIds' | 'collectionIds';
+  id(row: Row): string;
+  label(row: Row, rows: ChoiceRows): string;
+};
+
 type AppDefinition = {
-  // Streams that list the accounts and collections a user chooses from.
-  readonly choices: readonly string[];
+  readonly title: string;
+  readonly choices: readonly Choice[];
   readonly accounts: boolean;
   readonly dateField: string | null;
   readonly permissions: string;
@@ -42,9 +53,54 @@ export function calendarDefaults(now = new Date()) {
   return { startAt: start.toISOString(), endAt: end.toISOString() };
 }
 
+const byId = (row: Row) => String(row.id);
+const named = (row: Row) => String(row.name);
+const accounts: Choice = {
+  stream: 'accounts',
+  scope: 'accountIds',
+  id: byId,
+  label: named,
+};
+// Collection names repeat across accounts, such as a Notes folder per account.
+const collections = (stream: string): Choice => ({
+  stream,
+  scope: 'collectionIds',
+  id: byId,
+  label: (row, rows) => {
+    const account = rows.accounts?.find(
+      (candidate) => candidate.id === row.accountId,
+    );
+    return account === undefined
+      ? named(row)
+      : `${named(account)} / ${named(row)}`;
+  },
+});
+
 export const apps: Record<App, AppDefinition> = {
   mail: {
-    choices: ['accounts', 'mailboxes'],
+    title: 'Mail',
+    choices: [
+      {
+        ...accounts,
+        label: (row) => JSON.parse(String(row.properties)).name,
+      },
+      {
+        stream: 'mailboxes',
+        scope: 'collectionIds',
+        id: byId,
+        // A mailbox URL names its account as the host.
+        label: (row, rows) => {
+          const url = new URL(String(row.url));
+          const account = rows.accounts?.find(
+            (candidate) => candidate.id === url.hostname,
+          );
+          const path = decodeURIComponent(url.pathname.slice(1));
+          return account === undefined
+            ? path
+            : `${JSON.parse(String(account.properties)).name} / ${path}`;
+        },
+      },
+    ],
     accounts: true,
     dateField: 'dateReceived (dateSent if absent)',
     permissions:
@@ -53,7 +109,8 @@ export const apps: Record<App, AppDefinition> = {
     source: (scope) => new AppleMailSource(mailDirectory, scope),
   },
   notes: {
-    choices: ['accounts', 'folders'],
+    title: 'Notes',
+    choices: [accounts, collections('folders')],
     accounts: true,
     dateField: 'modifiedAt',
     permissions:
@@ -62,7 +119,15 @@ export const apps: Record<App, AppDefinition> = {
     source: (scope) => new AppleNotesSource({ scope }),
   },
   messages: {
-    choices: ['chats'],
+    title: 'Messages',
+    choices: [
+      {
+        stream: 'chats',
+        scope: 'collectionIds',
+        id: (row) => String(row.guid),
+        label: (row) => String(row.displayName || row.chatIdentifier),
+      },
+    ],
     accounts: false,
     dateField: 'date',
     permissions:
@@ -70,7 +135,8 @@ export const apps: Record<App, AppDefinition> = {
     source: (scope) => new AppleMessagesSource(undefined, undefined, scope),
   },
   contacts: {
-    choices: ['containers'],
+    title: 'Contacts',
+    choices: [{ ...accounts, stream: 'containers', scope: 'collectionIds' }],
     accounts: false,
     dateField: null,
     permissions:
@@ -78,7 +144,8 @@ export const apps: Record<App, AppDefinition> = {
     source: (scope) => new AppleContactsSource(undefined, undefined, scope),
   },
   calendar: {
-    choices: ['accounts', 'calendars'],
+    title: 'Calendar',
+    choices: [accounts, collections('calendars')],
     accounts: true,
     dateField: 'event occurrence overlap',
     permissions:
@@ -93,7 +160,8 @@ export const apps: Record<App, AppDefinition> = {
       }),
   },
   reminders: {
-    choices: ['accounts', 'lists'],
+    title: 'Reminders',
+    choices: [accounts, collections('lists')],
     accounts: true,
     dateField: null,
     permissions:

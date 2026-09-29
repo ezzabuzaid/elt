@@ -98,7 +98,13 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     await client.connect(transport, { signal: t.signal, timeout: 5_000 });
     assert.deepEqual(
       (await client.listTools()).tools.map((tool) => tool.name).sort(),
-      ['apple_configure', 'apple_options', 'apple_status', 'apple_sync'],
+      [
+        'apple_configure',
+        'apple_options',
+        'apple_setup',
+        'apple_status',
+        'apple_sync',
+      ],
     );
     assert.equal((await invoke('apple_status')).configured, false);
     await invoke('apple_configure', { apps: [{ app: 'notes' }] });

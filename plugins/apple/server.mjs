@@ -7016,8 +7016,8 @@ var require_formats = __commonJS({
         return false;
       const year = +matches[1];
       const month = +matches[2];
-      const day = +matches[3];
-      return month >= 1 && month <= 12 && day >= 1 && day <= (month === 2 && isLeapYear(year) ? 29 : DAYS[month]);
+      const day2 = +matches[3];
+      return month >= 1 && month <= 12 && day2 >= 1 && day2 <= (month === 2 && isLeapYear(year) ? 29 : DAYS[month]);
     }
     function compareDate(d1, d2) {
       if (!(d1 && d2))
@@ -65589,7 +65589,7 @@ function attributes(table2, alias, list2) {
     }
   return fields;
 }
-function calendarDate(table2, alias, attribute, [year, month, day]) {
+function calendarDate(table2, alias, attribute, [year, month, day2]) {
   const column = `Z${attribute.toUpperCase()}`;
   requires(table2, column);
   const part = (format) => `CAST(strftime('${format}', ${alias}.${column} + ${appleEpoch2}, 'unixepoch') AS INTEGER)`;
@@ -65599,7 +65599,7 @@ function calendarDate(table2, alias, attribute, [year, month, day]) {
       `CASE WHEN ${part("%Y")} = 1604 THEN NULL ELSE ${part("%Y")} END`
     ],
     [month]: [nullableInteger, part("%m")],
-    [day]: [nullableInteger, part("%d")]
+    [day2]: [nullableInteger, part("%d")]
   };
 }
 var record2 = (alias) => attributes("ZABCDRECORD", alias, {
@@ -66980,7 +66980,7 @@ var MailScan = class {
       throw new MailSchemaError(
         "Mail scripting returned invalid account metadata"
       );
-    const accounts = value.accounts.map((account) => {
+    const accounts2 = value.accounts.map((account) => {
       if (account === null || typeof account !== "object" || !("id" in account) || typeof account.id !== "string")
         throw new MailSchemaError(
           "Mail scripting returned an account without an ID"
@@ -66989,8 +66989,8 @@ var MailScan = class {
     });
     for (const row of this.store.database.prepare("SELECT url FROM mailboxes ORDER BY ROWID").iterate()) {
       const url2 = new URL(row.url);
-      if (url2.protocol === "local:" && !accounts.some((account) => account.id === url2.hostname))
-        accounts.push({
+      if (url2.protocol === "local:" && !accounts2.some((account) => account.id === url2.hostname))
+        accounts2.push({
           id: url2.hostname,
           properties: JSON.stringify({ type: "local", name: "On My Mac" })
         });
@@ -67002,7 +67002,7 @@ var MailScan = class {
         );
       return { id: server.name, properties: JSON.stringify(server) };
     });
-    return { accounts, smtpServers };
+    return { accounts: accounts2, smtpServers };
   }
   async *read(name) {
     if (name in mailTables) {
@@ -69219,9 +69219,48 @@ function calendarDefaults(now = /* @__PURE__ */ new Date()) {
   end.setUTCFullYear(end.getUTCFullYear() + 1);
   return { startAt: start2.toISOString(), endAt: end.toISOString() };
 }
+var byId = (row) => String(row.id);
+var named = (row) => String(row.name);
+var accounts = {
+  stream: "accounts",
+  scope: "accountIds",
+  id: byId,
+  label: named
+};
+var collections = (stream) => ({
+  stream,
+  scope: "collectionIds",
+  id: byId,
+  label: (row, rows) => {
+    const account = rows.accounts?.find(
+      (candidate) => candidate.id === row.accountId
+    );
+    return account === void 0 ? named(row) : `${named(account)} / ${named(row)}`;
+  }
+});
 var apps = {
   mail: {
-    choices: ["accounts", "mailboxes"],
+    title: "Mail",
+    choices: [
+      {
+        ...accounts,
+        label: (row) => JSON.parse(String(row.properties)).name
+      },
+      {
+        stream: "mailboxes",
+        scope: "collectionIds",
+        id: byId,
+        // A mailbox URL names its account as the host.
+        label: (row, rows) => {
+          const url2 = new URL(String(row.url));
+          const account = rows.accounts?.find(
+            (candidate) => candidate.id === url2.hostname
+          );
+          const path = decodeURIComponent(url2.pathname.slice(1));
+          return account === void 0 ? path : `${JSON.parse(String(account.properties)).name} / ${path}`;
+        }
+      }
+    ],
     accounts: true,
     dateField: "dateReceived (dateSent if absent)",
     permissions: "Allow Codex in System Settings > Privacy & Security > Full Disk Access, and allow it to control Mail when macOS asks.",
@@ -69229,7 +69268,8 @@ var apps = {
     source: (scope) => new AppleMailSource(mailDirectory, scope)
   },
   notes: {
-    choices: ["accounts", "folders"],
+    title: "Notes",
+    choices: [accounts, collections("folders")],
     accounts: true,
     dateField: "modifiedAt",
     permissions: "Allow Codex in System Settings > Privacy & Security > Full Disk Access. Open Notes to let it finish syncing iCloud changes.",
@@ -69237,21 +69277,31 @@ var apps = {
     source: (scope) => new AppleNotesSource({ scope })
   },
   messages: {
-    choices: ["chats"],
+    title: "Messages",
+    choices: [
+      {
+        stream: "chats",
+        scope: "collectionIds",
+        id: (row) => String(row.guid),
+        label: (row) => String(row.displayName || row.chatIdentifier)
+      }
+    ],
     accounts: false,
     dateField: "date",
     permissions: "Allow Codex in System Settings > Privacy & Security > Full Disk Access. Only messages synced to this Mac can be imported.",
     source: (scope) => new AppleMessagesSource(void 0, void 0, scope)
   },
   contacts: {
-    choices: ["containers"],
+    title: "Contacts",
+    choices: [{ ...accounts, stream: "containers", scope: "collectionIds" }],
     accounts: false,
     dateField: null,
     permissions: "Allow Codex in System Settings > Privacy & Security > Contacts or Full Disk Access.",
     source: (scope) => new AppleContactsSource(void 0, void 0, scope)
   },
   calendar: {
-    choices: ["accounts", "calendars"],
+    title: "Calendar",
+    choices: [accounts, collections("calendars")],
     accounts: true,
     dateField: "event occurrence overlap",
     permissions: "Allow full Calendar access when macOS asks, and allow Codex to control Calendar for calendar descriptions. Access can be changed under System Settings > Privacy & Security > Calendars and Automation.",
@@ -69264,7 +69314,8 @@ var apps = {
     })
   },
   reminders: {
-    choices: ["accounts", "lists"],
+    title: "Reminders",
+    choices: [accounts, collections("lists")],
     accounts: true,
     dateField: null,
     permissions: "Allow Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.",
@@ -70309,7 +70360,7 @@ var ApplePlugin = class {
     const choices = {};
     for await (const message3 of source.read(
       definition3.choices.map(
-        (name) => new CopyConfiguration(catalog7.get(name), {
+        (choice) => new CopyConfiguration(catalog7.get(choice.stream), {
           syncMode: "full_refresh",
           destinationSyncMode: "overwrite"
         })
@@ -70373,9 +70424,151 @@ var ApplePlugin = class {
   }
 };
 
+// apps/apple/src/plugin/setup-forms.ts
+var pad = (value) => String(value).padStart(2, "0");
+var day = (instant2) => `${instant2.getFullYear()}-${pad(instant2.getMonth() + 1)}-${pad(instant2.getDate())}`;
+var midnight = (date5, days = 0) => {
+  const instant2 = /* @__PURE__ */ new Date(`${date5}T00:00:00`);
+  instant2.setDate(instant2.getDate() + days);
+  return instant2.toISOString();
+};
+var capitalized = (text11) => `${text11.charAt(0).toUpperCase()}${text11.slice(1)}`;
+function scopeForm(app, rows, previous) {
+  const definition3 = apps[app];
+  const offered = definition3.choices.map((choice) => {
+    const options = (rows[choice.stream] ?? []).map((row) => ({
+      const: choice.id(row),
+      title: choice.label(row, rows)
+    })).sort((left, right) => left.title.localeCompare(right.title));
+    return { choice, options, ids: options.map((option) => option.const) };
+  }).filter(({ ids: ids2 }) => ids2.length > 0);
+  const properties6 = {};
+  for (const { choice, options, ids: ids2 } of offered) {
+    const earlier = previous?.scope[choice.scope]?.filter(
+      (id11) => ids2.includes(id11)
+    );
+    properties6[choice.stream] = {
+      type: "array",
+      title: capitalized(choice.stream),
+      minItems: 1,
+      items: { anyOf: options },
+      default: earlier?.length ? earlier : ids2
+    };
+  }
+  const { startAt, endAt } = {
+    ...definition3.defaultScope?.(),
+    ...previous?.scope
+  };
+  if (definition3.dateField !== null) {
+    properties6.from = {
+      type: "string",
+      format: "date",
+      title: "From",
+      description: `First day to include, by ${definition3.dateField}. Leave empty to start at the earliest.`,
+      ...startAt && { default: day(new Date(startAt)) }
+    };
+    properties6.until = {
+      type: "string",
+      format: "date",
+      title: "Until",
+      description: "Last day to include. Leave empty to include the latest.",
+      ...endAt && { default: day(new Date(Date.parse(endAt) - 1)) }
+    };
+  }
+  properties6.attachments = {
+    type: "boolean",
+    title: "Copy attachments",
+    default: previous?.includeAttachments ?? true
+  };
+  const form = {
+    mode: "form",
+    message: [
+      `${definition3.title}: choose what Codex can read. With everything checked, items added later are included too.`,
+      definition3.note
+    ].filter(Boolean).join(" "),
+    requestedSchema: {
+      type: "object",
+      properties: properties6,
+      required: offered.map(({ choice }) => choice.stream)
+    }
+  };
+  const read = (answer) => {
+    const scope = {};
+    for (const { choice, ids: ids2 } of offered) {
+      const chosen = answer[choice.stream];
+      if (ids2.some((id11) => !chosen.includes(id11))) scope[choice.scope] = chosen;
+    }
+    if (typeof answer.from === "string" && answer.from)
+      scope.startAt = midnight(answer.from);
+    if (typeof answer.until === "string" && answer.until)
+      scope.endAt = midnight(answer.until, 1);
+    return { app, scope, includeAttachments: answer.attachments !== false };
+  };
+  return { form, read };
+}
+async function setUpWithForms(plugin, ask) {
+  const previous = new Map(
+    plugin.status().apps.map(({ app, scope, includeAttachments }) => [
+      app,
+      { app, scope, includeAttachments }
+    ])
+  );
+  const unchanged = () => ({ changed: false, ...plugin.status() });
+  const picked = await ask({
+    mode: "form",
+    message: "Choose the Apple apps Codex can read on this Mac. macOS may ask for access to each app.",
+    requestedSchema: {
+      type: "object",
+      properties: {
+        apps: {
+          type: "array",
+          title: "Apps",
+          items: {
+            anyOf: appNames.map((app) => ({
+              const: app,
+              title: apps[app].title
+            }))
+          },
+          default: [...previous.keys()]
+        }
+      },
+      required: ["apps"]
+    }
+  });
+  if (picked.action !== "accept") return unchanged();
+  const configuration = [];
+  const skipped = [];
+  const unavailable = [];
+  for (const app of appSchema.array().parse(picked.content?.apps)) {
+    let rows;
+    try {
+      rows = (await plugin.options(app)).choices;
+    } catch (error62) {
+      unavailable.push({
+        app,
+        error: error62 instanceof Error ? error62.message : String(error62),
+        permissions: apps[app].permissions
+      });
+      const kept = previous.get(app);
+      if (kept !== void 0) configuration.push(kept);
+      continue;
+    }
+    const { form, read } = scopeForm(app, rows, previous.get(app));
+    const answer = await ask(form);
+    if (answer.action === "cancel") return unchanged();
+    if (answer.action === "decline" || answer.content === void 0) {
+      skipped.push(app);
+      continue;
+    }
+    configuration.push(read(answer.content));
+  }
+  plugin.configure({ apps: configuration });
+  return { changed: true, skipped, unavailable, ...await plugin.sync() };
+}
+
 // apps/apple/src/plugin/server.ts
 function createServer(plugin) {
-  const server = new McpServer({ name: "apple", version: "0.1.0" });
+  const server = new McpServer({ name: "apple", version: "0.2.0" });
   const result = async (work) => {
     try {
       const value = await work();
@@ -70405,6 +70598,21 @@ function createServer(plugin) {
       }
     },
     () => result(() => plugin.status())
+  );
+  server.registerTool(
+    "apple_setup",
+    {
+      description: "Set up Apple with forms the user answers: which apps, then for each app its accounts, collections, dates and attachments. Saves the answers, syncs, and reports skipped apps and apps macOS did not allow. Hosts without form support return an error; set up with apple_options and apple_configure there.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    },
+    () => result(
+      () => setUpWithForms(plugin, (form) => server.server.elicitInput(form))
+    )
   );
   server.registerTool(
     "apple_options",
