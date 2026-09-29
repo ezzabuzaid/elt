@@ -12,3 +12,7 @@ for arch in arm64 x86_64; do
 done
 lipo -create "$out-arm64" "$out-x86_64" -output "$out"
 rm "$out-arm64" "$out-x86_64"
+# The linker's ad-hoc signature names the binary after its per-arch file and
+# leaves Info.plist unbound; without a bound identity macOS drops the access
+# request instead of prompting.
+codesign --force --sign - --identifier com.context-compiler.eventkit "$out"
