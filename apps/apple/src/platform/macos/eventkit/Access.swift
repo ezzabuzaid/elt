@@ -34,26 +34,40 @@ func requireAccess(_ entity: Entity, message: String) throws {
   }
 }
 
-// Asks for full access when it was never decided or only write access was granted,
-// then waits up to 30 seconds for the answer.
+// Asks for full access when it was never decided or only write access was granted.
 func openStore(_ entity: Entity) throws -> EKEventStore {
   guard #available(macOS 14, *) else {
     throw HelperError("\(entity.marker): macOS 14 or later is required")
   }
-  let store = EKEventStore()
-  let undecided = { [0, 4].contains(authorization(entity)) }
-  if undecided() {
-    switch entity {
-    case .events: store.requestFullAccessToEvents { _, _ in }
-    case .reminders: store.requestFullAccessToReminders { _, _ in }
-    }
-    let deadline = Date(timeIntervalSinceNow: 30)
-    while undecided() && Date() < deadline {
-      RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
-    }
-  }
+  if [0, 4].contains(authorization(entity)) { try requestThroughOsascript(entity) }
   try requireAccess(entity, message: "full access is required")
-  return store
+  return EKEventStore()
+}
+
+// macOS answers this helper's own access request with "not granted" and shows
+// no prompt (verified on macOS 27, signed or not). The same request from
+// osascript, run under the same terminal or app, prompts; the grant belongs to
+// that terminal or app, which this helper inherits. The script waits up to 30
+// seconds for the answer.
+private func requestThroughOsascript(_ entity: Entity) throws {
+  let request =
+    entity == .events
+    ? "requestFullAccessToEventsWithCompletion" : "requestFullAccessToRemindersWithCompletion"
+  let type = entity == .events ? 0 : 1
+  let script = """
+    ObjC.import('EventKit');
+    const status = () => Number($.EKEventStore.authorizationStatusForEntityType(\(type)));
+    $.EKEventStore.alloc.init.\(request)(() => {});
+    const deadline = Date.now() + 30000;
+    while ((status() === 0 || status() === 4) && Date.now() < deadline)
+      $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
+    """
+  let osascript = Process()
+  osascript.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+  osascript.arguments = ["-l", "JavaScript", "-e", script]
+  osascript.standardOutput = FileHandle.nullDevice
+  try osascript.run()
+  osascript.waitUntilExit()
 }
 
 struct ReadRequest: Decodable {

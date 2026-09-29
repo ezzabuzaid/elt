@@ -2378,7 +2378,12 @@ test('EventKit watch confirms its subscription through the native helper and sto
         controller.abort();
         assert.deepEqual(await pending, { value: undefined, done: true });
         await assert.rejects(
-          execFile('pgrep', ['-f', `${helper} watch ${entity}`]),
+          execFile('pgrep', [
+            '-P',
+            String(process.pid),
+            '-f',
+            `${helper} watch ${entity}`,
+          ]),
           { code: 1 },
         );
       } finally {
