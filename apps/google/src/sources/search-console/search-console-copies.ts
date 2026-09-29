@@ -46,7 +46,6 @@ export function searchConsoleCopies<T extends Target>(
           id: stream.name,
           syncMode: 'incremental',
           destinationSyncMode: 'append_dedup',
-          primaryKey: [...stream.primaryKey],
         }),
     ),
     // Each grain is its own copy: Google anonymizes rare rows, so the daily
@@ -67,7 +66,6 @@ export function searchConsoleCopies<T extends Target>(
           destinationSyncMode: 'append_dedup',
           dedupPolicy: 'replace',
           cursorField: 'date',
-          primaryKey: [...stream.primaryKey],
         }),
     ),
   ];

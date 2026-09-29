@@ -1,6 +1,6 @@
 import { type PostgresView, publishPostgresViews } from 'elt-postgresql';
+import type postgres from 'postgres';
 import { searchConsoleTables as tables } from '../sources/search-console/search-console-copies.ts';
-import { quote, type Sql } from './warehouse.ts';
 
 type View = Omit<PostgresView, 'query'> & {
   readonly select: (raw: string) => string;
@@ -11,7 +11,8 @@ const date =
   'Calendar day in Pacific Time, as Search Console reports it. Not UTC.';
 const settled =
   'False while Google may still restate the day (the last two or three days). Prefer settled days for comparisons.';
-const loadedAt = 'When this row was last loaded from Google.';
+const loadedAt =
+  'Time of the load that last wrote this row. Not source modification time or last successful sync; see sync_status.';
 const clicks =
   'Clicks. Additive. Click-through rate over any rows is sum(clicks)::float / nullif(sum(impressions), 0).';
 const impressions = 'Impressions. Additive.';
@@ -236,19 +237,60 @@ const views: readonly View[] = [
   },
 ];
 
+// Objects the views below depend on, created before them.
+const supporting = [
+  `CREATE OR REPLACE FUNCTION marts._url_path(url text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    RETURN CASE WHEN url ~* '^[a-z][a-z0-9+.-]*://' THEN coalesce(nullif(substring(url FROM '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*([^?#]*)'), ''), '/') END`,
+  `CREATE TABLE IF NOT EXISTS marts.freshness (relation text PRIMARY KEY, latest_date date, latest_settled_date date, loaded_at timestamptz)`,
+  `COMMENT ON TABLE marts.freshness IS 'Observed row dates and maximum row load time per content view, recomputed after publication. Not declared extraction coverage or last successful sync; consult sync_status and extraction_coverage.'`,
+  `COMMENT ON COLUMN marts.freshness.relation IS 'The view it describes.'`,
+  `COMMENT ON COLUMN marts.freshness.latest_date IS 'The latest day in the view; NULL for views without a date.'`,
+  `COMMENT ON COLUMN marts.freshness.latest_settled_date IS 'The latest day Google will no longer restate; NULL for views without settled days.'`,
+  `COMMENT ON COLUMN marts.freshness.loaded_at IS 'Maximum loaded_at among rows currently in the view. The load that last wrote those rows, not source modification time, last successful sync, or watcher health. NULL for empty views.'`,
+  `CREATE OR REPLACE FUNCTION marts._refresh_freshness() RETURNS void LANGUAGE plpgsql AS $$
+    DECLARE
+      candidate record;
+    BEGIN
+      DELETE FROM marts.freshness;
+      FOR candidate IN
+        SELECT c.relname,
+          bool_or(a.attname = 'date') AS has_date,
+          bool_or(a.attname = 'settled') AS has_settled
+        FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+        WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind = 'v'
+        GROUP BY c.relname
+        HAVING bool_or(a.attname = 'loaded_at')
+      LOOP
+        EXECUTE format(
+          'INSERT INTO marts.freshness SELECT %L, %s, %s, max(loaded_at) FROM marts.%I',
+          candidate.relname,
+          CASE WHEN candidate.has_date THEN 'max(date)' ELSE 'NULL::date' END,
+          CASE WHEN candidate.has_date AND candidate.has_settled THEN 'max(date) FILTER (WHERE settled)' ELSE 'NULL::date' END,
+          candidate.relname);
+      END LOOP;
+    END $$`,
+];
+
+function quote(name: string): string {
+  return `"${name.replaceAll('"', '""')}"`;
+}
+
 /**
  * Search Console's marts over the raw tables elt loaded into `raw`. The
  * calculations the data needs to be read correctly live in the views, so a
- * reader sums additive columns and cannot average a rate or a rank. Run after installWarehouse
- * and after the raw tables exist; it replaces its own views every time.
+ * reader sums additive columns and cannot average a rate or a rank. Run after
+ * the raw tables exist; it replaces its own views every time. The database
+ * grants readers every relation in marts, so nothing here grants access.
  */
 export async function installSearchConsoleMarts(
-  sql: Sql,
-  { raw, reader }: { raw: string; reader: string },
+  sql: postgres.Sql,
+  { raw }: { raw: string },
 ): Promise<void> {
   const schema = quote(raw);
   await sql.begin(async (transaction) => {
     await transaction`SET LOCAL lock_timeout = '35s'`;
+    await transaction`SELECT pg_advisory_xact_lock(hashtextextended('mac-elt:marts', 0))`;
+    for (const statement of supporting) await transaction.unsafe(statement);
     await publishPostgresViews(transaction, {
       schema: 'marts',
       views: views.map(({ select, ...view }) => ({
@@ -256,13 +298,6 @@ export async function installSearchConsoleMarts(
         query: select(schema),
       })),
     });
-    for (const statement of [
-      ...views.map(
-        (view) =>
-          `GRANT SELECT ON marts.${quote(view.name)} TO ${quote(reader)}`,
-      ),
-      'SELECT marts._refresh_freshness()',
-    ])
-      await transaction.unsafe(statement);
+    await transaction`SELECT marts._refresh_freshness()`;
   });
 }

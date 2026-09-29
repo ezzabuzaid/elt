@@ -1,11 +1,11 @@
 import { type CopyConfiguration, Destination, type Load } from 'elt';
-import { schemaName, server } from './connection.ts';
 import { quote } from './identifier.ts';
 import { PostgresAppendWriter } from './postgres-append-writer.ts';
 import type { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts';
 import { PostgresOverwriteWriter } from './postgres-overwrite-writer.ts';
+import { schemaName, server } from './postgres-session.ts';
 import { PostgresTable } from './postgres-table.ts';
 import { PostgresLoad, type PostgresWriter } from './postgres-writer.ts';
 
@@ -40,7 +40,8 @@ export class PostgresDestination extends Destination<PostgresTable> {
   }
 
   override location(target: PostgresTable): string {
-    return `${quote(this.schema)}.${target.quotedName}`;
+    const { host, port, database } = this.#server;
+    return `//${host}:${port}/${database}/${quote(this.schema)}.${target.quotedName}`;
   }
 
   // One connection and one write transaction for the whole run.

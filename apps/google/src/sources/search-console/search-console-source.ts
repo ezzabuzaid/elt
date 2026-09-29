@@ -2,6 +2,7 @@ import {
   Catalog,
   type CopyConfiguration,
   diffSnapshot,
+  type ExtractionCoverage,
   isCalendarDate,
   type Partition,
   type RecordMessage,
@@ -338,6 +339,47 @@ export class SearchConsoleSource extends Source {
   // Each stream is an independent API read; there is no snapshot to pin.
   protected override async open(): Promise<AsyncDisposableStack> {
     return new AsyncDisposableStack();
+  }
+
+  override coverage(stream: Stream): ExtractionCoverage {
+    if (stream === this.sites)
+      return {
+        description:
+          'All properties the Google grant can read, excluding unverified users. Not restricted to the configured siteUrls used by the other streams.',
+        selection: {},
+      };
+    if (stream.name.startsWith('searchAnalytics')) {
+      const countries = stream === this.searchAnalyticsCountries;
+      return {
+        description: countries
+          ? 'Configured siteUrls, WEB country/device breakdown over breakdownMonths before the read date through that date, inclusive, in Pacific Time. The complete trailing window is read each pass. Google may withhold rows; success is not proof of all traffic.'
+          : 'Configured siteUrls and searchTypes. Initial daily extraction requests sixteen months through the read date, inclusive, in Pacific Time; subsequent incremental passes resume each property checkpoint and reread unsettled days. The configured history policy is not the actual resumed request interval or observed row dates. Google may withhold breakdown rows; success does not make them authoritative totals.',
+        selection: {
+          siteUrls: this.siteUrls,
+          searchTypes:
+            stream === this.searchAnalyticsDaily ? this.searchTypes : ['WEB'],
+          ...(countries
+            ? { breakdownMonths: this.breakdownMonths }
+            : { initialHistoryMonths: 16 }),
+          timeZone: 'America/Los_Angeles',
+        },
+      };
+    }
+    if (stream.name.startsWith('urlInspection'))
+      return {
+        description:
+          'Configured siteUrls. URLs discovered from sitemaps and sixteen months of search analytics; inspect new or due URLs according to inspectionRefreshHours until none remain or the daily quota is exhausted. A successful quota-limited pass can leave due URLs pending until Pacific midnight. Not all site URLs can be discovered. Prior inspections remain stored; this pass does not reinspect every stored URL.',
+        selection: {
+          siteUrls: this.siteUrls,
+          searchTypes: this.searchTypes,
+          inspectionRefreshHours: this.inspectionRefreshHours,
+        },
+      };
+    return {
+      description:
+        'Sitemaps or sitemap content counts returned for each configured siteUrl. No date filter. Sitemap metadata can load even if downloading its URL listing fails; consult readError in raw metadata for that availability.',
+      selection: { siteUrls: this.siteUrls },
+    };
   }
 
   protected override async *observe({

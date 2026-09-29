@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
-import { Copy, Pipeline, PipelineError } from 'elt';
+import { Connection, Copy, Pipeline, PipelineError } from 'elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
@@ -483,7 +483,6 @@ function copies(source: AppleContactsSource, destination: SQLiteDestination) {
             id: stream.name,
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
-            primaryKey: [...stream.primaryKey],
           },
         ),
     ),
@@ -502,12 +501,17 @@ test('Contacts exports every stream of every account store by identifier', async
   });
 
   const results = await new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: await copies(source, destination),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: await copies(source, destination),
+      }),
+    ],
   }).run();
 
   assert.deepEqual(
@@ -863,16 +867,21 @@ test('Contacts loads edits incrementally, deletes removed rows and writes nothin
   });
   const all = await copies(source, destination);
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: all.filter(({ from }) =>
-      ['contacts', 'phoneNumbers', 'groupMembers', 'images'].includes(
-        from.name,
-      ),
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: all.filter(({ from }) =>
+          ['contacts', 'phoneNumbers', 'groupMembers', 'images'].includes(
+            from.name,
+          ),
+        ),
+      }),
+    ],
   });
   const counts = (results: Awaited<ReturnType<typeof pipeline.run>>) =>
     Object.fromEntries(
@@ -943,14 +952,19 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: (await copies(source, destination)).filter(
-      ({ from }) => from.name === 'contacts',
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: (await copies(source, destination)).filter(
+          ({ from }) => from.name === 'contacts',
+        ),
+      }),
+    ],
   });
   await pipeline.run();
   rmSync(join(directory, 'Sources/ACCOUNT-B/AddressBook-v22.abcddb'));
@@ -1039,14 +1053,19 @@ test('Contacts rejects image data in an encoding it does not know', async () => 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: (await copies(source, destination)).filter(
-      ({ from }) => from.name === 'images',
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: (await copies(source, destination)).filter(
+          ({ from }) => from.name === 'images',
+        ),
+      }),
+    ],
   });
 
   await assert.rejects(pipeline.run(), (error: Error) => {
@@ -1072,14 +1091,19 @@ test('a Contacts watch loads each commit contactsd makes and each account added'
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: (await copies(source, destination)).filter(
-      ({ from }) => from.name === 'contacts',
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: (await copies(source, destination)).filter(
+          ({ from }) => from.name === 'contacts',
+        ),
+      }),
+    ],
   });
   // contactsd holds its connections, and so the WALs, open the whole time.
   using contactsd = new DatabaseSync(
@@ -1088,8 +1112,10 @@ test('a Contacts watch loads each commit contactsd makes and each account added'
   const controller = new AbortController();
   const batches: number[] = [];
 
-  for await (const results of pipeline.watch({ signal: controller.signal })) {
-    batches.push(results[0]?.count ?? -1);
+  for await (const { outcomes } of pipeline.watch({
+    signal: controller.signal,
+  })) {
+    batches.push(outcomes[0]?.count ?? -1);
     if (batches.length === 1)
       contactsd.exec(
         `INSERT INTO ZABCDRECORD (Z_ENT, ZUNIQUEID, ZCONTAINER1, ZFIRSTNAME) VALUES (${contact}, 'NEW:ABPerson', 1, 'New')`,

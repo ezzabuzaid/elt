@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
-import { schemaLock, schemaName } from './connection.ts';
 import { identifier, quote } from './identifier.ts';
+import { schemaLock, schemaName } from './postgres-session.ts';
 
 export type PostgresView = {
   readonly name: string;

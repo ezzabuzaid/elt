@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
+  ExtractionCoverage,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -18,6 +19,7 @@ import {
   addressBookDirectory,
   type StoredData,
 } from '../../platform/macos/address-book.ts';
+import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
   definitions,
   recordFrom,
@@ -81,6 +83,10 @@ export class AppleContactsSource extends Source<AddressBook> {
 
   protected override open(): Promise<AddressBook> {
     return AddressBook.open(this.directory, requiredSchema);
+  }
+
+  override coverage(_stream: Stream): ExtractionCoverage {
+    return localAppleStoreCoverage;
   }
 
   protected override async *observe({

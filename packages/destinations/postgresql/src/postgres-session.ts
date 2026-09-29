@@ -2,7 +2,7 @@ import postgres from 'postgres';
 import { identifier } from './identifier.ts';
 
 // One session, closed however the work using it ends.
-export class Connection implements AsyncDisposable {
+export class PostgresSession implements AsyncDisposable {
   readonly sql: postgres.Sql;
 
   constructor(url: string, applicationName: string) {

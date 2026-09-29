@@ -2,6 +2,7 @@ import type { Catalog } from './catalog.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { DocumentParser } from './document-parser.ts';
 import { FileContent } from './file-content.ts';
+import { interleave } from './interleave.ts';
 import {
   assertInPartition,
   assertPartitions,
@@ -33,6 +34,22 @@ export type StateMessage = {
 };
 
 export type KeyValue = string | number | boolean;
+
+// What a pass over one stream asks the upstream for, in the source's own
+// words: the reader tells "no matching rows" from "not covered" with it.
+// selection holds the configuration values the description refers to.
+export type ExtractionCoverage = {
+  readonly description: string;
+  readonly selection: { readonly [field: string]: JsonValue };
+};
+
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly JsonValue[]
+  | { readonly [field: string]: JsonValue };
 
 // Removes the destination row with this primary key. Only streams that declare
 // emitsDeletes may send it, and only deduplicating loads can apply it.
@@ -112,6 +129,9 @@ export abstract class Source<
     );
   }
 
+  // Declares what a pass over this stream covers, from this source's configuration.
+  abstract coverage(stream: Stream): ExtractionCoverage;
+
   // Subscribe before yielding all selected streams once, then yield invalidations.
   // Keep receiving changes until signal aborts, including while extraction runs.
   protected abstract observe(
@@ -140,7 +160,9 @@ export abstract class Source<
     )
       throw new TypeError('A read selects each stream once');
     await using context = await this.open(catalog.map(({ stream }) => stream));
-    yield* this.#interleaved(
+    if (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)
+      throw new TypeError('Source concurrency must be a positive integer');
+    yield* interleave(
       catalog.map((configuration) =>
         this.#stream(
           configuration,
@@ -148,56 +170,8 @@ export abstract class Source<
           context,
         ),
       ),
+      this.concurrency,
     );
-  }
-
-  // Up to concurrency streams read together, each message yielded as it
-  // arrives. A stream is asked for its next message only after the consumer
-  // took its last one, so a staged file stays valid until the consumer
-  // advances, whichever stream it came from.
-  async *#interleaved(
-    streams: readonly AsyncGenerator<ReadMessage>[],
-  ): AsyncGenerator<ReadMessage> {
-    if (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)
-      throw new TypeError('Source concurrency must be a positive integer');
-    const waiting = [...streams];
-    const reading = new Map<
-      AsyncGenerator<ReadMessage>,
-      Promise<{
-        stream: AsyncGenerator<ReadMessage>;
-        result: IteratorResult<ReadMessage>;
-      }>
-    >();
-    const next = (stream: AsyncGenerator<ReadMessage>) =>
-      reading.set(
-        stream,
-        stream.next().then((result) => ({ stream, result })),
-      );
-    const start = () => {
-      const stream = waiting.shift();
-      if (stream !== undefined) next(stream);
-    };
-    try {
-      while (reading.size < this.concurrency && waiting.length > 0) start();
-      while (reading.size > 0) {
-        const { stream, result } = await Promise.race(reading.values());
-        if (result.done) {
-          reading.delete(stream);
-          start();
-          continue;
-        }
-        // Keep the yielding stream tracked so an early return closes it too.
-        yield result.value;
-        reading.delete(stream);
-        next(stream);
-      }
-    } finally {
-      for (const [stream, pending] of reading) {
-        await pending.catch(() => undefined);
-        await stream.return(undefined);
-      }
-      for (const stream of waiting) await stream.return(undefined);
-    }
   }
 
   async *#stream(

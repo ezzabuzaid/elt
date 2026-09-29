@@ -9,7 +9,7 @@ Detailed sync, storage, connector, and failure contracts for `elt`.
 The examples below live inside `apps/apple/src`: import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and Apple connectors directly from their source modules. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
 
 ```ts
-import { Copy, Pipeline } from 'elt';
+import { Connection, Copy, Pipeline } from 'elt';
 import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
 import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 
@@ -17,7 +17,8 @@ const notes = new AppleNotesSource();
 const sqlite = new SQLiteDestination({ path: './notes.sqlite' });
 const checkpoints = new SQLiteCheckpointStore({ path: './checkpoints.sqlite' });
 
-const pipeline = new Pipeline({
+const connection = new Connection({
+  name: 'apple-notes',
   source: notes,
   destination: sqlite,
   checkpoints,
@@ -30,15 +31,15 @@ const pipeline = new Pipeline({
       id: 'notes-to-sqlite',
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      primaryKey: ['id'],
     }),
   ],
 });
+const pipeline = new Pipeline({ connections: [connection] });
 
 const results = await pipeline.run(); // [{ copy, count, deleted }, ...] in declaration order
 ```
 
-Accounts uses an explicit destination projection; notes uses inferred columns. Apple Notes exposes `accounts`, `folders`, `notes`, `inlineAttachments`, and `attachments` directly. `discover()` returns the same immutable descriptions for generic code that enumerates streams. Neither discovery nor constructing a declaration reads Notes or opens storage.
+A `Connection` is Airbyte's connection: one source's copies into one destination, with the checkpoints that resume them. Its `name` is what readers of sync history see. A `Pipeline` is the orchestrator over one or more connections; see [execution and failures](#execution-and-failures). Accounts uses an explicit destination projection; notes uses inferred columns and deduplicates on the stream's own `id` key. Apple Notes exposes `accounts`, `folders`, `notes`, `inlineAttachments`, and `attachments` directly. `discover()` returns the same immutable descriptions for generic code that enumerates streams. Neither discovery nor constructing a declaration reads Notes or opens storage.
 
 ## Sync modes
 
@@ -65,18 +66,18 @@ These combinations follow Airbyte's [documented sync modes](https://docs.airbyte
 | `cursor_newer` (default) | `WHERE excluded.<cursor> > target.<cursor>` | The cursor advances independently of identity, so a lower cursor means a stale replay. |
 | `replace` | none | The upstream restates facts it already published, so the newest extraction is authoritative. |
 
-A deduplicating copy that leaves `dedupPolicy` unset uses `cursor_newer`. Both destinations apply the policy: SQLite as the upsert guard above, Markdown when it merges each record with the previously published one or with an earlier record from the same run.
+A deduplicating copy that leaves `dedupPolicy` unset uses `cursor_newer`, or `replace` for a stream with `sourceDefinedCursor`. Both destinations apply the policy: SQLite as the upsert guard above, Markdown when it merges each record with the previously published one or with an earlier record from the same run.
 
-Selecting `cursor_newer` with a cursor that is a member of `primaryKey` is rejected. A conflict on that key implies an equal cursor, so the guard could never fire and a restated record would load as a no-op that reports a count without changing the row. The rejection names the field and points at `replace`.
+Selecting `cursor_newer` with a cursor that is a member of the primary key is rejected. A conflict on that key implies an equal cursor, so the guard could never fire and a restated record would load as a no-op that reports a count without changing the row. The rejection names the field and points at `replace`.
 
 ```ts
-new Copy(source.searchAnalytics, destination.table('raw_search_analytics'), {
-  id: 'search-analytics',
+// searchAnalyticsQueries declares the key [siteUrl, date, query].
+new Copy(source.searchAnalyticsQueries, destination.table('raw_searchAnalyticsQueries'), {
+  id: 'search-analytics-queries',
   syncMode: 'incremental',
   destinationSyncMode: 'append_dedup',
   dedupPolicy: 'replace',
   cursorField: 'date',
-  primaryKey: ['date', 'query', 'page', 'country', 'device'],
 });
 ```
 
@@ -90,7 +91,7 @@ sqlite.supportedDestinationSyncModes;
 
 ### Deletions
 
-A stream that declares `emitsDeletes` can send `DELETE` messages during incremental reads, each carrying exactly the stream's `primaryKey` fields. Such copies must use `append_dedup` with the stream's own `primaryKey`, so the destination can find the row:
+A stream that declares `emitsDeletes` can send `DELETE` messages during incremental reads, each carrying exactly the stream's `primaryKey` fields. Such a stream always declares its key, and its incremental copies must use `append_dedup`, which deduplicates on that key, so the destination can find the row:
 
 | Destination | Effect of `DELETE` |
 | --- | --- |
@@ -103,9 +104,9 @@ Records and deletions apply in the order the source emits them, and deleting an 
 
 A target has one writer, as in Airbyte, where one stream owns one table and ["more than one Airbyte connection to sync to the same destination stream… isn't permitted"](https://github.com/airbytehq/airbyte/blob/65c1b23b53ca4929ff18adbc3a3ef92666a3fffe/docs/platform/using-airbyte/configuring-schema.md#L42-L54). An overwrite empties the whole target and a snapshot copy deletes keys it once saw, so a second writer's rows would be lost.
 
-A writer is the copy's `id`, or the source identity and stream name for a copy without one. Every destination records the writer of each target, stored with the target and committed with its first load. Before a copy extracts or changes anything, the target refuses any other writer with `TargetOwnedError`, which names both. A pipeline refuses two writers of one target among its own copies before running any. The owning writer may change its own mode or key.
+A writer is the copy's `id`, or the source identity and stream name for a copy without one. Every destination records the writer of each target, stored with the target and committed with its first load. Before a copy extracts or changes anything, the target refuses any other writer with `TargetOwnedError`, which names both. A pipeline refuses two writers of one target among the copies of all its connections before running any. It compares each destination's `location(target)`, which is globally unique: `//host:port/database/"schema"."table"` for Postgres, `<path>#<table>` for SQLite, and `<directory>/<name>` for Markdown. The owning writer may change its own mode or key.
 
-To reset or reassign a target, clear it with its owning copy, as with Airbyte's Clear: `pipeline.clear()` (or `pipeline.clear([copy])`) empties each target, releases its writer and removes the copy's checkpoint, so the next run reloads from scratch. A SQL table is emptied rather than dropped, so views built on it, such as the warehouse marts, keep working; a Markdown file or folder is removed. Clearing refuses a target another writer owns. A target dropped by hand also releases its writer, but a copy that still has a checkpoint for it fails with `TargetMissingError` before extracting, since resuming would load only what changed since the checkpoint; clear the copy to reload it. SQLite and Postgres keep writers in the reserved `_mac_elt_writers` table; Markdown keeps it in the file's header comment or the folder's marker file.
+To reset or reassign a target, clear it with its owning copy, as with Airbyte's Clear: `pipeline.clear()` (or `pipeline.clear([copy])`, which routes each copy to its connection, or `connection.clear()`) empties each target, releases its writer and removes the copy's checkpoint, so the next run reloads from scratch. A SQL table is emptied rather than dropped, so views built on it, such as the warehouse marts, keep working; a Markdown file or folder is removed. Clearing refuses a target another writer owns. A target dropped by hand also releases its writer, but a copy that still has a checkpoint for it fails with `TargetMissingError` before extracting, since resuming would load only what changed since the checkpoint; clear the copy to reload it. SQLite and Postgres keep writers in the reserved `_mac_elt_writers` table; Markdown keeps it in the file's header comment or the folder's marker file.
 
 Several properties or accounts share tables through one [partitioned source](#partitioned-streams), which is one writer.
 
@@ -113,11 +114,11 @@ Several properties or accounts share tables through one [partitioned source](#pa
 
 Three separate concepts control identity:
 
-- `Stream.primaryKey` describes source identity. It does not create SQL uniqueness or select deduplication automatically.
-- `Copy` options `primaryKey: ['id']` or `['tenantId', 'id']` select the identity used by a deduplicating load.
+- `Stream.primaryKey` is the source's own identity, like `sourceDefinedCursor` (Airbyte's `source_defined_primary_key`). A deduplicating copy of a stream that declares one uses it; it does not create SQL uniqueness or select deduplication by itself.
+- `Copy` option `primaryKey: ['id']` or `['tenantId', 'id']` selects the identity only for a stream that declares none. A copy that selects `primaryKey` on a keyed stream is refused at construction (`Stream <name> defines its own primary key; omit primaryKey`).
 - `.primaryKey()` on a SQLite column is a physical constraint. Conflicting append operations fail and roll back that copy; they never silently become updates.
 
-Both deduplication modes require an explicit `primaryKey`. `cursor_newer` also requires `cursorField`; `replace` works without one. A stream with `sourceDefinedCursor` has no cursor field: its copies omit `cursorField`, and its deduplicating loads default to and require `replace`. Fields must be top-level scalar properties declared with one non-null JSON Schema type. Keys support text, finite numbers, safe integers, and booleans; cursors support text or numbers. Missing/null values fail. Composite keys are supported; nested field paths and nullable key/cursor schemas are not. Explicit SQL projections must include all selected keys and the cursor with matching types.
+Both deduplication modes need a key: the stream's own, or for a keyless stream the copy's `primaryKey` (`Stream <name> declares no primary key; select primaryKey` otherwise). Non-deduplicating loads refuse `primaryKey`. `cursor_newer` also requires `cursorField`; `replace` works without one. A stream with `sourceDefinedCursor` has no cursor field: its copies omit `cursorField`, and its deduplicating loads default to and require `replace`. Fields must be top-level scalar properties declared with one non-null JSON Schema type. Keys support text, finite numbers, safe integers, and booleans; cursors support text or numbers. Missing/null values fail. Composite keys are supported; nested field paths and nullable key/cursor schemas are not. Explicit SQL projections must include all selected keys and the cursor with matching types.
 
 The greatest cursor wins. Older arrivals are ignored after validation. Equal cursors retain the first stored record, including across runs. This makes replay deterministic; a source that changes content without changing its cursor cannot distinguish those versions. Text uses UTF-8 byte order, matching SQLite `BINARY`; timestamps should use one canonical UTC ISO format. All observations are validated, even losing versions.
 
@@ -129,7 +130,7 @@ Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The `count` r
 
 ## Incremental extraction and checkpoints
 
-Incremental copies require an explicit stable `id` and a [checkpoint store](#checkpoint-stores). IDs must be unique within a pipeline, and each ID's progress is its own. A pipeline copies each stream once, so loading one stream into two targets takes two pipelines with two IDs (see [Read context](#read-context)).
+Incremental copies require an explicit stable `id` and a [checkpoint store](#checkpoint-stores). IDs must be unique across every connection of a pipeline, and each ID's progress is its own. A connection copies each stream once, so loading one stream into two targets takes two connections with two IDs (see [Read context](#read-context)).
 
 `Source.read(catalog, states)` hands each incremental stream its saved state, `null` on its first run, and `extract` receives it as `state`. `extract` emits `{ stream, data }` records, `{ type: 'DELETE', stream, key }` deletions and `{ type: 'STATE', stream, state }` checkpoints. Their text must be well-formed Unicode: a string or field name with a lone surrogate fails its stream, because SQLite and Markdown would store it as U+FFFD and Postgres refuses it. State is losslessly JSON serializable and source-owned; destinations do not interpret it.
 
@@ -148,11 +149,11 @@ A checkpoint is saved after its rows commit, in a separate store. If the rows co
 
 ### Checkpoint stores
 
-State belongs to the orchestration, not the destination, as in Airbyte, so any store works with any destination, including one that cannot hold state itself: the replication saves each checkpoint only after its stream's rows before it committed. `CheckpointStore.run(bindings, work)` owns that protocol for every incremental copy of a run at once (the binding check per copy, the cloned input state, advancing only on a commit, `reset` and `clear`). A store supplies a session that holds every copy's lock for the whole run and whose `save` is durable when it resolves.
+State belongs to the orchestration, not the destination, as in Airbyte, so any store works with any destination, including one that cannot hold state itself: the replication saves each checkpoint only after its stream's rows before it committed. `CheckpointStore.run(bindings, work)` owns that protocol for every incremental copy of a pass at once (the binding check per copy, the cloned input state, advancing only on a commit, `reset` and `clear`). A store supplies a session that holds every copy's lock for the whole pass and whose `save` is durable when it resolves.
 
 | Store | Keeps state in | Concurrency |
 | --- | --- | --- |
-| `SQLiteCheckpointStore({ path })` from `elt-sqlite` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | The file's write lock, held for the run and retaken in the same step as each save commits: runs sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Use separate files for independent parallel pipelines. |
+| `SQLiteCheckpointStore({ path })` from `elt-sqlite` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | The file's write lock, held for the pass and retaken in the same step as each save commits: passes sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Connections pass side by side, so give each connection, and each independent pipeline, its own file. |
 | `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._mac_elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | A session advisory lock per copy `id` on its own connection, taken in sorted order: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the writers' schema lock. |
 
 ### Snapshot streams
@@ -191,7 +192,7 @@ protected override async *extract(configuration, state, partition) {
 - **New partition:** it receives `null` and starts from the source's normal beginning, for example a full history backfill, while the others resume.
 - **Removed partition:** it leaves the next checkpoint; its rows stay loaded. Reading it again later starts it from `null`.
 - **Identity:** the partition list is not part of the source identity or the checkpoint binding, so adding or removing a partition never invalidates the others' checkpoints.
-- **Rows:** every record and every `DELETE` key must carry its partition's values; a row naming another partition, or none, fails that partition. Deduplicating copies must include the `partitionKey` fields in their `primaryKey`.
+- **Rows:** every record and every `DELETE` key must carry its partition's values; a row naming another partition, or none, fails that partition. The `partitionKey` fields are members of the stream's `primaryKey`, so a deduplicating copy's key always includes them.
 - **Failures:** as in Airbyte, a failing partition does not stop the others. Its rows since its last checkpoint are discarded and it keeps its saved state, so the next run retries it from there; the other partitions commit and advance. The copy then reports the failed partitions, and the run fails naming each one. A failing partition is never skipped silently.
 - **Full refresh:** partitions are read the same way without state, and an overwrite replaces the whole target with every listed partition.
 
@@ -199,7 +200,7 @@ Partitions are declared without I/O: `partitionKey` fields must be distinct non-
 
 ### Read context
 
-One `Pipeline.run()` is one `Source.read(catalog, states)` over every copy's stream, as Airbyte's `read(config, catalog, state)`. The source opens one context for the whole read, so related streams describe the same moment of the source; separate reads would let a join stream reference a row its parent stream never saw.
+A pass is one connection's read: one `Source.read(catalog, states)` over every stream the connection selected, as Airbyte's `read(config, catalog, state)`. `Pipeline.run()` makes one pass per connection. The source opens one context for the whole read, so related streams describe the same moment of the source; separate reads would let a join stream reference a row its parent stream never saw.
 
 ```ts
 class ChatSource extends Source<ChatDatabase> {
@@ -216,9 +217,9 @@ class ChatSource extends Source<ChatDatabase> {
 - **Contract:** every source implements `open(streams)`, receiving the streams the read covers. An upstream with a read transaction pins it (Messages; Notes; Contacts, once per account store). One without reads every selected stream up front in one change-free window and serves the streams from that snapshot (Calendar and Reminders, see [EventKit consistency](#eventkit-consistency)). A source whose streams need not agree returns an empty `AsyncDisposableStack` (Search Console).
 - **Stream status:** each stream reads as `STARTED`, its messages, then `ENDED`; a partition or stream that failed adds `FAILED` with its error. Only `Source.read` creates a `StreamStatus`; one yielded by `extract` fails its stream with a `TypeError`, as does a message naming any stream but the one being extracted, so a stream can never write into a sibling's target.
 - **Interleaving:** `protected concurrency` (default 1) sets how many streams read at once; their messages interleave. A stream is asked for its next message only after the consumer took its last one, so a record's file stays valid until the consumer advances. A source that raises it reads its context from several extracts together. Partitions of one stream always read one after another.
-- **Lifetime:** the context opens when the read starts and closes when it ends, including when it fails. A watch reads once per invalidation batch and holds nothing while idle, since a long read can block the upstream's own maintenance.
-- **Failures:** a context that cannot open (a denied permission, a missing store) fails every copy of the run; `PipelineError.cause` is the error.
-- **One copy per stream:** a pipeline copies each stream once, as Airbyte's configured catalog lists each stream once. To load one stream into two targets, use two pipelines.
+- **Lifetime:** the context opens when the read starts and closes when it ends, including when it fails. A watch reads once per pass and holds nothing while idle, since a long read can block the upstream's own maintenance.
+- **Failures:** a context that cannot open (a denied permission, a missing store) fails every copy of that pass; `PipelineError.cause` is the error. Other connections' passes are unaffected.
+- **One copy per stream:** a connection copies each stream once (`Connection <name> copies each stream once`), as Airbyte's configured catalog lists each stream once. To load one stream into two targets, use two connections.
 
 #### EventKit consistency
 
@@ -255,25 +256,27 @@ Use the same configured pipeline for continuous synchronization:
 ```ts
 const controller = new AbortController();
 
-for await (const _ of pipeline.watch({ signal: controller.signal })) {
-  // These copies have already extracted, loaded, and saved their checkpoints.
+for await (const { connection, outcomes } of pipeline.watch({ signal: controller.signal })) {
+  // This pass's copies have already extracted, loaded, and saved their checkpoints.
 }
 
 // Call controller.abort() from your app's stop/shutdown handler.
 ```
 
-Watching preflights the whole pipeline, subscribes before the initial synchronization, and then reruns copies whose streams receive notifications. It uses the existing copy modes: incremental Notes and Calendar copies stay incremental, and full-refresh copies stay full refresh. Notifications do not provide records or turn a full-refresh copy into an incremental one. `run()` remains a single execution, and the runnable Apple app still uses it.
+Watching preflights every connection, then each connection watches its own source: it subscribes before the initial synchronization and runs a pass over the copies whose streams receive notifications. It uses the existing copy modes: incremental Notes and Calendar copies stay incremental, and full-refresh copies stay full refresh. Notifications do not provide records or turn a full-refresh copy into an incremental one. `run()` remains a single execution: the Apple app's `main.ts` uses it, and `serve.ts` watches.
 
 The source owns change detection:
 
 - **Calendar and Reminders:** a persistent OSA process subscribes to native `EKEventStoreChangedNotification` notifications. These invalidate all selected streams because EventKit does not identify individual changes. The notification covers the whole event store, so a Calendar edit also re-extracts a Reminders watch, and a Reminders edit also re-extracts a Calendar watch. The existing EventKit permission requirements apply. Full-refresh overwrite reconciles deletions on the next successful pass.
 - **Notes:** the watcher opens its own read-only connection to `NoteStore.sqlite` and checks `PRAGMA data_version` every second (`pollIntervalMs`); it changes with every commit another connection makes, so each save Notes commits invalidates every selected stream. Filesystem notifications are not used: Notes keeps the store and its WAL open, and FSEvents reports a write only when the file closes, which verification showed arrives when Notes quits. Because only Notes syncs iCloud notes, the watch keeps Notes running: it launches Notes hidden and in the background (`open -g -j`) when it starts and, every `launchIntervalMs` (30 s), again if Notes has stopped. It cannot tell your quit from macOS closing a hidden Notes, which happens when the system frees disk space (seen twice on a 99% full disk, within minutes of a hidden launch), so it relaunches in both cases. A running Notes is left as it is. Watching needs the same Full Disk Access as reading.
 
-Runs are serial. Notifications received during extraction or while the caller handles a result are coalesced into a pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. Each batch yields every copy's outcome once its loading and checkpoint persistence finished: the committed `count` and `deleted` (accepted observations, including deduplication no-ops and absent keys) and its `failures`, empty when it loaded completely. As Airbyte keeps a connection's schedule after a failed sync, a batch that did not load completely does not end the watch: the caller sees its failures, the failed partitions keep their checkpoints, and the next invalidation of that stream retries them. A watcher failure is propagated and ends it. No retries between invalidations, periodic reconciliation or automatic disabling are added.
+A connection's passes are serial; passes of different connections run side by side, and each waits only on the consumer, so a slow source never holds back another. Notifications received during extraction or while the caller handles a result are coalesced into that connection's pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. A connection's first invalidation must cover every stream it selected. Each pass yields a `Pass`, `{ connection, outcomes }`, once its loading and checkpoint persistence finished; each outcome carries the committed `count` and `deleted` (accepted observations, including deduplication no-ops and absent keys) and its `failures`, empty when it loaded completely. As Airbyte keeps a connection's schedule after a failed sync, a pass that did not load completely does not end the watch: the caller sees its failures, the failed partitions keep their checkpoints, and the next invalidation of that stream retries them.
 
-Aborting stops native observation, lets an in-flight pass finish and yield its result, and prevents another pass. Breaking the loop also closes the watcher. A new watch session subscribes and performs an initial pass again, using the saved checkpoints. Notifications themselves are not durable, and the source's existing snapshot/cursor limitations still apply.
+A connection whose watcher fails stops alone, and is recorded as a failed attempt when the pipeline has a [sync history](#sync-history); the other connections keep watching. Once every connection has stopped, or the signal aborts, the stopped connections' errors are thrown together as an `AggregateError` whose message joins `Connection <name>: <message>` entries. No retries between invalidations, periodic reconciliation or automatic disabling are added.
 
-Custom sources declare a `catalog` and implement `observe({ streams, signal }): AsyncIterable<readonly Stream[]>`. The base `Source` owns `discover()`, `validate()`, and `watch()`: before extracting or observing, it rejects any stream that is not the same object as its catalog's stream of that name. A stream's schema shapes the destination, so a lookalike stream with a matching name is refused. Add source-specific selection rules, such as a required cursor field, by overriding `validateExtraction()`. In `observe()`, establish observation before yielding all selected streams once; then emit the affected selected streams until cancellation. The pipeline keeps consuming these invalidations while it loads records. Close native resources when aborted or when the iterator is closed; errors must propagate. `Stream` remains immutable metadata, and loading continues through `Source.read`, `Copy`, and the destination writers.
+Aborting stops native observation, lets each in-flight pass finish and yield its result, and prevents another pass. Breaking the loop also closes the watchers. A new watch session subscribes and performs an initial pass again, using the saved checkpoints. Notifications themselves are not durable, and the source's existing snapshot/cursor limitations still apply.
+
+Custom sources declare a `catalog` and implement `observe({ streams, signal }): AsyncIterable<readonly Stream[]>` and `coverage(stream): ExtractionCoverage`, the source's own statement of what a pass over that stream asks the upstream for (see [sync history](#sync-history)). The base `Source` owns `discover()`, `validate()`, and `watch()`: before extracting or observing, it rejects any stream that is not the same object as its catalog's stream of that name. A stream's schema shapes the destination, so a lookalike stream with a matching name is refused. Add source-specific selection rules, such as a required cursor field, by overriding `validateExtraction()`. In `observe()`, establish observation before yielding all selected streams once; then emit the affected selected streams until cancellation. The connection keeps consuming these invalidations while it loads records. Close native resources when aborted or when the iterator is closed; errors must propagate. `Stream` remains immutable metadata, and loading continues through `Source.read`, `Copy`, and the destination writers.
 
 Automated verification covers actual filesystem events in temporary storage, native EventKit observer delivery using process-local notifications without personal data, and destination/checkpoint visibility before results are yielded. The native filesystem test requires an environment that permits filesystem notifications; this host's sandbox reports `EMFILE` even for a single temporary-directory watcher, while the same probe succeeds outside it.
 
@@ -330,15 +333,20 @@ const attachmentCopy = new Copy(
 );
 
 await new Pipeline({
-  source: notes,
-  destination: sqlite,
-  steps: [attachmentCopy],
+  connections: [
+    new Connection({
+      name: 'apple-notes-attachments',
+      source: notes,
+      destination: sqlite,
+      steps: [attachmentCopy],
+    }),
+  ],
 }).run();
 ```
 
 This stores the selected source metadata, parsed `content` and an `attachmentRef` as TEXT. The original attachment ID and containing note ID remain available for joins. `LocalFiles` stores the original bytes and returns their absolute local path. SQLite and Postgres receive only that ordinary text value: they do not construct paths or write attachment files. The Apple exporter uses this declaration for every stream with files, under `outputs/apple-<name>-files`.
 
-Storage is selected on each file reference with `.store(files)`, independently of the pipeline and destination. Two fields can use different stores, and copies can share one store without sharing file ownership. Constructing a store or declaring a field performs no I/O. A stored reference and parsed text must be separate fields; applying `.parse()` to a stored-file field is refused.
+Storage is selected on each file reference with `.store(files)`, independently of the connection and destination. Two fields can use different stores, and copies can share one store without sharing file ownership. Constructing a store or declaring a field performs no I/O. A stored reference and parsed text must be separate fields; applying `.parse()` to a stored-file field is refused.
 
 `LocalFiles` resolves the chosen directory at construction. It streams each file in chunks of at most 4 MiB into a temporary file, syncs it, then publishes it atomically. Files live in `.elt-files/<scope hash>/<content hash><extension>` beneath that directory. The scope identifies the destination target, copy writer and field; the content hash makes repeated saves stable without overwriting an existing reference. A safe source extension is preserved; the original filename stays in source metadata. Empty files are real zero-byte files. Unavailable source files produce null references.
 
@@ -410,19 +418,25 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 
 ## Connector applications
 
-`apps/apple/src/connectors.ts` and `apps/google/src/connectors.ts` default-export lists of `{ name, run }` entries. Each `run()` owns its source configuration, credentials, pipeline, and any post-load work. It can use any ELT source and destination. Apple loads into the shared Postgres warehouse as the loader role, with `raw_<stream>` tables and `_mac_elt_checkpoints` in each connector's `apple_<name>` schema. Apple raw schemas are not granted to the MCP reader. Google refreshes its warehouse marts after complete or partial loads.
+`apps/apple/src/pipeline.ts` default-exports one `Pipeline` with a `PostgresSyncHistory` and six connections: `apple-mail`, `apple-notes`, `apple-messages`, `apple-contacts`, `apple-calendar` and `apple-reminders`. Building it signs in to Google for Calendar's Drive and Gmail attachments, so `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` must be set when the app starts; discovery returns each source's static catalog. Apple loads into the shared Postgres warehouse as the loader role, with `raw_<stream>` tables and `_mac_elt_checkpoints` in each connection's `apple_<name>` schema. Apple raw schemas are not granted to the reader.
 
-Each app's `main.ts` loops over its list in order, awaits `run()`, sets exit status 1 on failure, and continues without console output. `Pipeline` already includes failed streams and partitions in its errors. Connector-specific code that handles a partial failure, such as Google's marts refresh, also sets exit status 1. An empty list succeeds. Apple and Google stay separate apps until their later convergence; both use the same list shape without a shared runner or lifecycle hooks.
+- `apps/apple/src/main.ts` (`npx nx run apple:start`), the app's one entry point, installs the sync history and watches the pipeline until `SIGINT` or `SIGTERM`. Every connection's first pass loads all its streams, side by side; after that each connection refreshes at its own source's pace, and every pass is recorded as it completes.
+
+Calendar's coverage declares its configured window for event-derived streams and a listing for accounts and calendars; the other five Apple sources share `localAppleStoreCoverage`, the whole accessible local store.
+
+`apps/google/src/connectors.ts` default-exports a list of `{ name, run }` entries that `main.ts` calls in order. Each `run()` owns its source configuration, credentials, pipeline, and post-load work. Search Console's builds a `Pipeline` with one `google-search-console` connection and a `PostgresSyncHistory`, runs it, and publishes its content marts after complete or partial loads. Its coverage lives in `SearchConsoleSource.coverage(stream)`.
+
+Both applications record every pass and its declared extraction coverage in PostgreSQL, without console output. `Pipeline` already includes failed streams and partitions in its errors. Connector-specific code that handles a partial failure, such as Google's marts refresh, also sets exit status 1. Apple and Google stay separate apps until their later convergence.
 
 ## Execution and failures
 
-`Pipeline.run()` preflights every copy before executing any of them. Unknown streams, unsupported combinations, invalid schema declarations, missing keys/cursors/IDs/state store, and duplicate copy IDs fail without extraction or storage creation. Preflight uses metadata; storage permissions, existing constraints and record values are checked during execution.
+`Pipeline({ connections, history? })` is the orchestrator. `run()` and `watch()` validate every declaration of every connection before any read: distinct connection names, copy IDs distinct across the pipeline, each connection's copies (unknown streams, a stream copied twice, unsupported combinations, invalid schema declarations, missing keys/cursors/IDs/state store), and [target ownership](#target-ownership) across connections. An invalid connection stops the whole pipeline without extraction or storage creation and, when a history is given, is recorded as a failed attempt for that connection. Preflight uses metadata; storage permissions, existing constraints and record values are checked during execution.
 
-A run then locks every incremental copy's checkpoint, opens one load on the destination, and prepares every target before reading anything: a copy whose target is refused (another writer's, or dropped while its copy resumes) fails and reads nothing. One read then covers the remaining copies. As in Airbyte, every copy runs even when another fails. Each stream stages its operations apart from the others and commits them at its own checkpoints, so an incremental copy that fails keeps what it committed and publishes nothing it staged since; a full refresh commits once, when its stream ends, so a failure keeps the previous target. Empty overwrite clears it; empty append preserves existing records. There is no pipeline-wide rollback.
+`run()` then makes one pass per connection, all side by side, so a slow source never holds back another. Each pass locks every incremental copy's checkpoint, opens one load on the destination, and prepares every target before reading anything: a copy whose target is refused (another writer's, or dropped while its copy resumes) fails and reads nothing. One read then covers the remaining copies. As in Airbyte, every copy runs even when another fails, and every connection's pass runs even when another's fails. Each stream stages its operations apart from the others and commits them at its own checkpoints, so an incremental copy that fails keeps what it committed and publishes nothing it staged since; a full refresh commits once, when its stream ends, so a failure keeps the previous target. Empty overwrite clears it; empty append preserves existing records. There is no pipeline-wide rollback.
 
 Verified live on 2026-09-26 (macOS 26.6.2) with the Apple exporter run twice against real stores: the first run loaded every stream (Messages 12,573 messages, Calendar 10,941 events) in 203 s; the second, 168 s, wrote nothing for Notes, Messages, Contacts and Reminders, and for Calendar only 2 events (with 1 alarm and 2 recurrence rules) that had just entered its one-year window, and 1 account EventKit listed for the first time. A run killed mid-write left a hot journal that SQLite rolled back on the next open; nothing it staged was published. The Search Console exporter completed every stream into the Postgres warehouse the same day.
 
-When any copy is incomplete, `run()` throws one `PipelineError` once the read ends:
+When any copy is incomplete or any pass could not run, `run()` throws one `PipelineError` once every pass ends:
 
 ```ts
 import { PipelineError } from 'elt';
@@ -437,11 +451,54 @@ try {
 }
 ```
 
-`PipelineError` is an `AggregateError`: `errors` holds every failure and `results` holds every copy's committed `count` and `deleted` beside its `failures`. A failure after rows committed, such as a checkpoint that could not be saved or a cleanup error after publication, is reported the same way with the committed counts; it does not imply rollback. A count of zero also covers a committed empty input.
+`PipelineError` is an `AggregateError`: `errors` holds every failure, `results` holds every copy's committed `count` and `deleted` beside its `failures`, in connection order then copy order. A pass that could not run, such as one whose sync history could not be written, adds its error with the message prefixed `Connection <name>: `. A failure after rows committed, such as a checkpoint that could not be saved or a cleanup error after publication, is reported the same way with the committed counts; it does not imply rollback. A count of zero also covers a committed empty input.
 
-Declarations are frozen and reusable. `Destination.createWriter(configuration, target)` selects a storage-specific strategy without I/O; `Destination.load()` opens the run's one hold on storage, and `load.prepare(configuration, target, { writer, resuming })` gives each stream its `Stage` (`apply`, `commit`, `discard`). Destinations own connections, files, and publication. `Copy`/`Pipeline` contain no SQL/filesystem loading branches. `Source.identity` and `Destination.identity(target)` provide stable checkpoint bindings; custom implementations must distinguish different source instances/targets/configuration domains.
+Declarations are frozen and reusable. `Destination.createWriter(configuration, target)` selects a storage-specific strategy without I/O; `Destination.load()` opens the pass's one hold on storage, and `load.prepare(configuration, target, { writer, resuming })` gives each stream its `Stage` (`apply`, `commit`, `discard`). Destinations own connections, files, and publication. `Copy`/`Pipeline` contain no SQL/filesystem loading branches. `Source.identity` and `Destination.identity(target)` provide stable checkpoint bindings; custom implementations must distinguish different source instances/targets/configuration domains.
 
-SQLite holds a native writer lock for the whole run in a `<database path>.writer-lock` sidecar containing no records. It survives individual commits and releases on handle closure or process exit; readers of the destination are unaffected. Each commit starts a fresh write transaction, so long reads block other writers to the file. Each stream stages its operations in a connection-private `TEMP` table: another stream's commit never publishes them and a crash leaves nothing behind. A commit merges one stream's staged operations into its table, with the result of applying them one at a time: a staged `DELETE` removes its key, only records after a key's last `DELETE` count, `replace` keeps the last and `cursor_newer` the first with the greatest cursor. Original files stream straight into the chunk table; chunks no row references are deleted after each merge and swept when a later run prepares the table or it is cleared. `:memory:` is allowed only for full refresh; the run's database disappears when its handle closes, so it cannot safely retain incremental progress.
+SQLite holds a native writer lock for the whole pass in a `<database path>.writer-lock` sidecar containing no records. It survives individual commits and releases on handle closure or process exit; readers of the destination are unaffected. Each commit starts a fresh write transaction, so long reads block other writers to the file. Each stream stages its operations in a connection-private `TEMP` table: another stream's commit never publishes them and a crash leaves nothing behind. A commit merges one stream's staged operations into its table, with the result of applying them one at a time: a staged `DELETE` removes its key, only records after a key's last `DELETE` count, `replace` keeps the last and `cursor_newer` the first with the greatest cursor. Original files stream straight into the chunk table; chunks no row references are deleted after each merge and swept when a later run prepares the table or it is cleared. `:memory:` is allowed only for full refresh; the run's database disappears when its handle closes, so it cannot safely retain incremental progress.
+
+### Sync history
+
+As Airbyte's platform keeps each connection's jobs and attempts apart from any connector, the orchestrator records every pass in a `SyncHistory`, exported from `elt`. Like a `CheckpointStore`, it belongs to the orchestration: pass it as `Pipeline({ connections, history })`.
+
+```ts
+import {
+  PostgresCheckpointStore,
+  PostgresDestination,
+  PostgresSyncHistory,
+} from 'elt-postgresql';
+
+const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
+const warehouse = new PostgresDestination({ url, schema: 'apple_notes' });
+
+const history = new PostgresSyncHistory({ url });
+await history.install();
+
+const recorded = new Pipeline({
+  history,
+  connections: [
+    new Connection({
+      name: 'apple-notes',
+      source: notes,
+      destination: warehouse,
+      checkpoints: new PostgresCheckpointStore({ url, schema: 'apple_notes' }),
+      steps: [
+        new Copy(notes.notes, warehouse.table('raw_notes'), {
+          id: 'apple-notes:notes',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+        }),
+      ],
+    }),
+  ],
+});
+```
+
+A pass is one connection's read over the copies it selected. `validate(connection)` refuses, without I/O, a connection the history cannot record; the pipeline calls it during preflight. `begin(connection, copies)` receives each selected copy with its `coverage` and is durable when it resolves, before the read starts, so a pass that never finishes stays visible as unfinished rather than missing. It returns a `RecordedPass`: `finish(outcomes)` closes it with what each copy loaded, and `fail(error)` closes a pass that produced no outcomes, such as an invalid connection or a watcher that stopped. The helpers `copyStatus`, `passStatus` and `passError` derive `succeeded`, `partial` or `failed` (`SyncStatus`) and the pass's error text from outcomes. `DeclaredCopy` and `RecordedPass` type the contract.
+
+Coverage is the source's own statement, `coverage(stream): ExtractionCoverage` with `ExtractionCoverage = { description, selection }`: what a pass over that stream asks the upstream for, from the source's configuration (Calendar's `startAt`/`endAt`, Search Console's `siteUrls`), never inferred from the records it finds. `selection` holds the JSON configuration values the description refers to. Every custom source implements it.
+
+`PostgresSyncHistory({ url })` from `elt-postgresql` records into the [warehouse](#warehouse-marts) tables `_warehouse.sync_attempts` and `_warehouse.extraction_coverage`. Its `install()` creates those tables and publishes the `marts` views `sync_attempts`, `extraction_coverage` and `sync_status`; it is safe to repeat. Run it before the pipeline records its first pass. It grants nothing. It records Postgres destinations only and refuses any other connection during preflight.
 
 ## Markdown destination
 
@@ -450,16 +507,20 @@ import { MarkdownDestination } from 'elt-markdown';
 
 const markdown = new MarkdownDestination({ path: './exports' });
 const exportPipeline = new Pipeline({
-  source: notes,
-  destination: markdown,
-  checkpoints,
-  steps: [
-    new Copy(notes.accounts, markdown.file('accounts.md', { title: 'name' })),
-    new Copy(notes.notes, markdown.folder('notes', { title: 'title' }), {
-      id: 'notes-to-markdown',
-      syncMode: 'incremental',
-      destinationSyncMode: 'append_dedup',
-      primaryKey: ['id'],
+  connections: [
+    new Connection({
+      name: 'apple-notes-markdown',
+      source: notes,
+      destination: markdown,
+      checkpoints,
+      steps: [
+        new Copy(notes.accounts, markdown.file('accounts.md', { title: 'name' })),
+        new Copy(notes.notes, markdown.folder('notes', { title: 'title' }), {
+          id: 'notes-to-markdown',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+        }),
+      ],
     }),
   ],
 });
@@ -480,7 +541,7 @@ An exclusive `.markdown-<target>.lock` directory prevents cooperating concurrent
 
 ## Postgres destination
 
-`PostgresDestination({ url, schema })` from `elt-postgresql` loads every table of a pipeline into one schema, created on first load. The URL carries credentials, so it stays private: `identity()` records host, port, database, schema and target, never the user or password. Declarations are checked without connecting.
+`PostgresDestination({ url, schema })` from `elt-postgresql` loads every table of a connection into one schema, created on first load. The URL carries credentials, so it stays private: `identity()` records host, port, database, schema and target, never the user or password. Declarations are checked without connecting.
 
 Inferred columns follow the stream schema, and unlike SQLite the string formats get their own types, so readers can do date arithmetic:
 
@@ -540,14 +601,14 @@ await sql.begin(async (transaction) => {
 
 Supply trusted application SQL as one query, with every output column described exactly once and nonempty descriptions. Identifiers follow the destination's 63-byte limit. The publisher creates the target schema if needed, serializes publishing with other writers to that schema, and replaces only the supplied views. List dependencies before their dependents: views are dropped in reverse order and created in the supplied order. Dropping never uses `CASCADE`; an outside dependent prevents publication. A savepoint restores the previous views and comments on any failure, even if the caller catches it and continues the transaction. An empty list does nothing.
 
-The caller owns the connection and transaction. Replacing views recreates them, so reapply explicit grants after publication in that same transaction. Default grants still apply. Grants, reader roles, catalogs, and runtime freshness remain application concerns. The Google warehouse example uses this publisher and adds its grants and freshness update before committing.
+The caller owns the connection and transaction. Replacing views recreates them, so reapply explicit grants after publication in that same transaction. Default grants still apply. Applications choose which content to expose; in the warehouse, default privileges on `marts` make every published view readable. `PostgresSyncHistory` uses this publisher for its sync views, and the Search Console marts for their content views before recomputing `freshness`.
 
 Views reflect the underlying tables as queried; publishing them does not copy rows or schedule refreshes. Read their descriptions through `obj_description` and `col_description`, just like table comments.
 
 ## Apple Messages
 
 ```ts
-import { Copy, Pipeline } from 'elt';
+import { Connection, Copy, Pipeline } from 'elt';
 import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
 import { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
 
@@ -555,18 +616,22 @@ const source = new AppleMessagesSource(); // ~/Library/Messages/chat.db
 const destination = new SQLiteDestination({ path: './outputs/messages.sqlite' });
 
 await new Pipeline({
-  source,
-  destination,
-  checkpoints: new SQLiteCheckpointStore({ path: './outputs/messages-state.sqlite' }),
-  steps: [source.messages, source.chatMessages].map(
-    (stream) =>
-      new Copy(stream, destination.table(stream.name), {
-        id: stream.name,
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: [...stream.primaryKey],
-      }),
-  ),
+  connections: [
+    new Connection({
+      name: 'apple-messages',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({ path: './outputs/messages-state.sqlite' }),
+      steps: [source.messages, source.chatMessages].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
 }).run();
 ```
 
@@ -574,14 +639,7 @@ The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messag
 
 ### Full Disk Access
 
-Messages keeps its history only in `~/Library/Messages/chat.db`; it has no public API for reading messages. macOS guards that folder with **Full Disk Access** and checks it against the *responsible* process: the terminal app for anything started from a terminal, or the process launchd started. Run the export as a launchd job for the `node` binary itself, never through a shell (the shell would become the responsible process), and grant that binary Full Disk Access:
-
-```sh
-launchctl submit -l dev.context-compiler.messages -- \
-  "$(readlink -f "$(which node)")" "$PWD/apps/apple/dist/messages.js" --out "$PWD/outputs"
-```
-
-Homebrew's `node` is ad-hoc signed, so macOS ties the grant to that exact build: after `brew upgrade node` the export fails with `MessagesUnavailableError` until the new binary is granted again.
+Messages keeps its history only in `~/Library/Messages/chat.db`; it has no public API for reading messages. macOS guards that folder with **Full Disk Access** and checks it against the *responsible* process: the terminal app that runs `npx nx run apple:start`. Grant that app Full Disk Access.
 
 ### Streams
 
@@ -698,7 +756,7 @@ The `remove-code` review retained the Apple-specific frame, detached-file lookup
 ## Apple Contacts
 
 ```ts
-import { Copy, Pipeline } from 'elt';
+import { Connection, Copy, Pipeline } from 'elt';
 import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
 import { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
 
@@ -706,18 +764,22 @@ const source = new AppleContactsSource(); // ~/Library/Application Support/Addre
 const destination = new SQLiteDestination({ path: './outputs/contacts.sqlite' });
 
 await new Pipeline({
-  source,
-  destination,
-  checkpoints: new SQLiteCheckpointStore({ path: './outputs/contacts-state.sqlite' }),
-  steps: [source.contacts, source.phoneNumbers, source.emailAddresses].map(
-    (stream) =>
-      new Copy(stream, destination.table(stream.name), {
-        id: stream.name,
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: [...stream.primaryKey],
-      }),
-  ),
+  connections: [
+    new Connection({
+      name: 'apple-contacts',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({ path: './outputs/contacts-state.sqlite' }),
+      steps: [source.contacts, source.phoneNumbers, source.emailAddresses].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
 }).run();
 ```
 
@@ -725,14 +787,9 @@ The source reads Contacts' own Core Data stores read-only through `node:sqlite`:
 
 ### Access
 
-macOS guards the AddressBook folder with the **Contacts** privacy service, and Full Disk Access covers it too; either works, checked against the responsible process. Contacts access prompts once for the app a terminal export runs in; a dismissed prompt is recorded as a denial and never shows again, so enable the app under **System Settings → Privacy & Security → Contacts**. A launchd job for `node` cannot answer a prompt: grant that binary Full Disk Access and run it as for [Messages](#full-disk-access):
+macOS guards the AddressBook folder with the **Contacts** privacy service, and Full Disk Access covers it too; either works, checked against the responsible process: the terminal app that runs `npx nx run apple:start`. Contacts access prompts once for that app; a dismissed prompt is recorded as a denial and never shows again, so enable the app under **System Settings → Privacy & Security → Contacts**, or grant it [Full Disk Access](#full-disk-access).
 
-```sh
-launchctl submit -l dev.context-compiler.contacts -- \
-  "$(readlink -f "$(which node)")" "$PWD/apps/apple/dist/contacts.js" --out "$PWD/outputs"
-```
-
-Contacts.framework is not used. It needs the Contacts grant itself, which a launchd `node` cannot request, and it exposes less than the stores hold.
+Contacts.framework is not used. It needs the Contacts grant itself and exposes less than the stores hold.
 
 ### Streams
 
@@ -777,7 +834,7 @@ Live verification on **2026-09-25** (macOS 26.6.2, Node.js 26.8.1) against three
 ## Apple Reminders
 
 ```ts
-import { Copy, Pipeline } from 'elt';
+import { Connection, Copy, Pipeline } from 'elt';
 import { SQLiteDestination } from 'elt-sqlite';
 import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
 
@@ -785,11 +842,16 @@ const reminders = new AppleRemindersSource();
 const sqlite = new SQLiteDestination({ path: './reminders-eventkit.sqlite' });
 
 await new Pipeline({
-  source: reminders,
-  destination: sqlite,
-  steps: (await reminders.discover()).streams.map(stream =>
-    new Copy(stream, sqlite.table(stream.name)),
-  ),
+  connections: [
+    new Connection({
+      name: 'apple-reminders',
+      source: reminders,
+      destination: sqlite,
+      steps: (await reminders.discover()).streams.map(stream =>
+        new Copy(stream, sqlite.table(stream.name)),
+      ),
+    }),
+  ],
 }).run();
 ```
 
@@ -820,7 +882,7 @@ See the [EventKit research and implementation notes](eventkit-reminders.md) for 
 
 ```ts
 import { mkdir } from 'node:fs/promises';
-import { Copy, Pipeline } from 'elt';
+import { Connection, Copy, Pipeline } from 'elt';
 import { SQLiteDestination } from 'elt-sqlite';
 import { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
 
@@ -832,11 +894,16 @@ const calendar = new AppleCalendarSource({
 const sqlite = new SQLiteDestination({ path: './outputs/apple-calendar.sqlite' });
 
 await new Pipeline({
-  source: calendar,
-  destination: sqlite,
-  steps: (await calendar.discover()).streams.map(stream =>
-    new Copy(stream, sqlite.table(stream.name)),
-  ),
+  connections: [
+    new Connection({
+      name: 'apple-calendar',
+      source: calendar,
+      destination: sqlite,
+      steps: (await calendar.discover()).streams.map(stream =>
+        new Copy(stream, sqlite.table(stream.name)),
+      ),
+    }),
+  ],
 }).run();
 ```
 
@@ -1002,7 +1069,7 @@ One source reads several properties. Every stream except `sites` is a [partition
 
 Every read of the snapshot streams returns the complete list, so an incremental copy (`append_dedup` on the stream's key, no `cursorField`) writes only changed rows and deletes the rest; see [snapshot streams](#snapshot-streams). The inspection streams are rolling instead; see [URL inspection and quota](#url-inspection-and-quota).
 
-The example app lists every property in one source, so each table has one [writer](#target-ownership). To add a property, add it to that source's list; a second pipeline into the same tables is refused.
+The example app lists every property in one source, so each table has one [writer](#target-ownership). To add a property, add it to that source's list; a second connection into the same tables is refused.
 
 #### Why the grains are separate
 
@@ -1042,26 +1109,40 @@ Because `date` is both the cursor and part of the key, each resumable grain requ
 
 ### Warehouse marts
 
-The example app loads into the compose Postgres warehouse and installs a reading layer for agents. The layout:
+The Apple and Google apps load into the PostgreSQL warehouse and install a shared metadata contract. Google also publishes content views. The layout:
 
 ```text
 warehouse database
 ├── google_search_console   raw tables and _mac_elt_checkpoints, loaded by elt-postgresql; readers have no access
-├── marts                   views and one table, every object and column described
+├── apple_<name>            private raw Apple tables and checkpoints
+├── _warehouse              private sync attempts and coverage declarations
+├── marts                   documented reader views and observed-row freshness
 └── public                  revoked from PUBLIC
 roles: warehouse (loads, owns the database) · agent_reader (reads marts only)
 ```
 
 - **Privileges are the barrier.** `agent_reader` has `CONNECT`, `USAGE` on `marts` and `SELECT` on its relations, and nothing else. It has no `TEMP`, no `CREATE`, and no access to raw schemas. Views run with their owner's rights. The role's settings (`default_transaction_read_only`, `statement_timeout 30s`, `search_path = marts`) are only defaults, since a session may change them.
-- **Agents connect through Postgres MCP Pro**, `crystaldba/postgres-mcp:0.3.0` in `--access-mode=restricted`, served over SSE on `127.0.0.1:8000` (see `infra/docker-compose.yml` and `.mcp.json`). The server holds the reader's password. It parses each statement, rejects anything but reads (including `COMMIT; …` escapes), and cancels statements after 30 seconds. It does not cap result rows.
-- **Only built-in functions.** Restricted mode allows only a fixed list of built-in functions and cannot be configured. The marts therefore expose no functions: every calculation lives inside a view, where the check does not look, or is computed at load time. Helpers such as `marts._url_path` are internal.
+- **Direct PostgreSQL access works.** Use `psql` as `agent_reader`; MCP is optional. The explicitly invoked `query-warehouse` consumer discovers relations and meanings from `marts.catalog`. It reads connected data only on request and does not run pipelines, refresh data or manage connectors. The existing optional MCP container adds its own SQL restrictions.
 
-`installWarehouse(sql, { reader })` sets up the shared parts: grants, the `marts` schema, `catalog` and `freshness`. `installSearchConsoleMarts(sql, { raw, reader })` then replaces the Search Console views in one transaction and refreshes `freshness`. Both run as the loader after every load. A view that another connector built on top of these makes the reinstall fail rather than disappear, because it drops views without `CASCADE`.
+The reader's contract is provisioned once, with the database: `infra/init/02-marts.sh` runs `infra/init/marts/contract.sql` in the `warehouse` database. It revokes `PUBLIC` access, gives `agent_reader` `CONNECT` and `USAGE` on `marts`, creates `marts` owned by `warehouse`, publishes `catalog`, and sets default privileges so every table and view the `warehouse` role creates in `marts` is readable by `agent_reader`. No application code grants access. Like every init script, it runs when the volume is first created; to apply a changed contract, recreate the volume with `npx nx run infra:reset`. `installSearchConsoleMarts(sql, { raw })` creates the Search Console SQL helpers and observed-row `freshness` table, replaces its content views and recomputes `freshness` after extraction. Publication fails if outside views depend on a replaced view; no `CASCADE` is used.
+
+`PostgresSyncHistory({ url })` from `elt-postgresql` is the pipeline's [sync history](#sync-history) for this warehouse. Each pass inserts one `sync_attempts` row, with the connection name as `connector` and the source identity as `source`, and one `extraction_coverage` row per selected stream, with the source's declared `coverage(stream)` and the connection destination's schema as `target_schema`, before it reads; the outcomes close them. A run passes every stream a connection selected; a watch pass reads only the streams its source reported changed, so an attempt vouches only for its own `extraction_coverage` rows. An invalid connection, or a connection whose watcher stopped, records a failed attempt without outcomes. Use the same database for the history and the connection's destination. The Apple app's `main.ts` records every watch pass this way; Google's connector records one run.
+
+Every attempt retains its own declarations. `sync_status` gives the latest attempt separately from the most recently completed all-copies-successful attempt. An unchanged pass advances success even with zero writes. A failed or partial pass keeps earlier success and its original scope available by attempt ID. Per-copy status and failure partitions let a reader distinguish successful streams within a partial attempt. Counts are accepted operations committed during that pass, including deduplication no-ops and deletions of absent keys, not changed-row counts or current totals. A first failure has no successful timestamp.
+
+Coverage is **configured scope**, not observed minimum/maximum dates and not evidence of upstream completeness. For Calendar event and related streams, `selection.startAt` and `selection.endAt` are the configured UTC overlap interval `[startAt, endAt)`; zero-duration events must start in it. The declaration exists even when zero events match. Accounts and calendars have no date filter. ICS may describe a recurring series beyond the selected occurrences. Other Apple streams export the accessible local store without a configured date filter; this cannot promise complete cloud history or retrievable attachment bytes. Google declarations describe configured properties, report types, history/resume policies and inspection selection; they do not claim that every incremental pass rereads its entire configured history. A successful quota-limited URL inspection pass can leave due URLs pending until Pacific midnight.
+
+Three clocks have different meanings: source record modification fields describe upstream changes; `loaded_at` describes the load that last wrote a row; `last_successful_sync_at` describes recorded pass completion. `freshness` reports observed dates and maximum row load time only. Neither table timestamps nor sync completion imply that a watcher is healthy. An attempt left `running` means only that completion was not recorded, including after process interruption or failure to persist outcomes. Metadata and destination commits are separate; unfinished metadata never claims success. Credentials/source setup before construction of a pipeline and subsequent mart publication are outside the recorded extraction attempt. Missing metadata means unknown, not empty or current.
+
+Apple content remains private in this slice. Coverage identifies its raw targets and whether they exist now; it does not grant the reader content access. `marts.catalog` is the authority for available reader relations.
 
 | Relation | Contents |
 | --- | --- |
 | `catalog` | Every view, table and column in `marts`, with its description. The agent's starting point. |
-| `freshness` | Per view: latest day, latest settled day, last load. Refreshed after every load. |
+| `sync_status` | Latest attempt and last successful pass completion per connection, each with its attempt ID. |
+| `sync_attempts` | Retained attempt history, start/completion times, status and errors. |
+| `extraction_coverage` | Per attempt and stream: configured selection, scope explanation, target, copy outcome, committed counts and failed partitions. |
+| `freshness` | Observed latest day, settled day and maximum row `loaded_at` per content view. Not sync status. |
 | `search_console_totals_daily` | Authoritative totals per property, day and report type. |
 | `search_console_queries_daily`, `search_console_pages_daily` | Web breakdowns. Pages add `page_path`. Rows a re-read no longer returns are hidden (only the latest load of each property and day shows). |
 | `search_console_withheld_daily` | Web totals, the sum of query rows, and the difference Google withheld. |

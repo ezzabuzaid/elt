@@ -10,10 +10,10 @@ import {
   Writer,
 } from 'elt';
 import type postgres from 'postgres';
-import { Connection, schemaLock } from './connection.ts';
 import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
+import { PostgresSession, schemaLock } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
 
 // The load's one connection; statements run inside its open transaction.
@@ -42,12 +42,12 @@ function description(value: unknown): string | null {
 // SQLite's BEGIN IMMEDIATE does per file; readers never wait on it.
 // ponytail: holds the write transaction during extraction; stage elsewhere if long reads hold back vacuum.
 export class PostgresLoad implements AsyncDisposable {
-  readonly #connection: Connection;
+  readonly #connection: PostgresSession;
   readonly loadedAt: string;
   #open = false;
 
   private constructor(
-    connection: Connection,
+    connection: PostgresSession,
     readonly schema: string,
     loadedAt: string,
   ) {
@@ -60,7 +60,7 @@ export class PostgresLoad implements AsyncDisposable {
   }
 
   static async open(url: string, schema: string): Promise<PostgresLoad> {
-    const connection = new Connection(url, 'elt');
+    const connection = new PostgresSession(url, 'elt');
     try {
       const [clock] = await connection.sql.unsafe(
         'SELECT clock_timestamp()::text AS "loadedAt"',
@@ -297,7 +297,7 @@ export abstract class PostgresWriter extends Writer {
     writer: string,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
-    await using connection = new Connection(this.url, 'elt');
+    await using connection = new PostgresSession(this.url, 'elt');
     // Hold this schema across the database commit and its acknowledgement.
     // The session closes on every exit, releasing its advisory lock.
     await connection.sql.unsafe(

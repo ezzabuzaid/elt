@@ -1,4 +1,9 @@
-import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
+import type {
+  CopyConfiguration,
+  ExtractionCoverage,
+  SourceWatchOptions,
+  Stream,
+} from 'elt';
 import { diffSnapshot, Source, type SourceMessage, validateRecords } from 'elt';
 import { EventKit, EventKitSnapshot } from '../../platform/macos/eventkit.ts';
 import {
@@ -8,6 +13,7 @@ import {
   eventKitFields,
   eventKitRelatedFields,
 } from '../eventkit-schema.ts';
+import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import { dateComponentNames, remindersScript } from './reminders-script.ts';
 
 const { id, text, nullableText, nullableTimestamp, integer, boolean } =
@@ -66,6 +72,10 @@ export class AppleRemindersSource extends Source<EventKitSnapshot> {
   constructor() {
     super();
     Object.freeze(this);
+  }
+
+  override coverage(_stream: Stream): ExtractionCoverage {
+    return localAppleStoreCoverage;
   }
 
   protected override async *observe({

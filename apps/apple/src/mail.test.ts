@@ -12,7 +12,14 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { crc32, deflateSync } from 'node:zlib';
-import { Copy, FileRead, LocalFiles, Pipeline, PipelineError } from 'elt';
+import {
+  Connection,
+  Copy,
+  FileRead,
+  LocalFiles,
+  Pipeline,
+  PipelineError,
+} from 'elt';
 import { MarkdownDestination } from 'elt-markdown';
 import {
   SQLiteCheckpointStore,
@@ -367,29 +374,33 @@ async function pipeline(source: AppleMailSource, directory: string) {
   });
   const { streams } = await source.discover();
   return new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(directory, 'state.sqlite'),
-    }),
-    steps: streams.map(
-      (stream) =>
-        new Copy(
-          stream,
-          stream.supportsFileTransfer
-            ? destination.table(stream.name, (columns) => [
-                ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                columns.blob('bytes').from(stream.file),
-              ])
-            : destination.table(stream.name),
-          {
-            id: stream.name,
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-            primaryKey: [...stream.primaryKey],
-          },
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(directory, 'state.sqlite'),
+        }),
+        steps: streams.map(
+          (stream) =>
+            new Copy(
+              stream,
+              stream.supportsFileTransfer
+                ? destination.table(stream.name, (columns) => [
+                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                    columns.blob('bytes').from(stream.file),
+                  ])
+                : destination.table(stream.name),
+              {
+                id: stream.name,
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              },
+            ),
         ),
-    ),
+      }),
+    ],
   });
 }
 
@@ -666,24 +677,29 @@ test('Mail watches index commits and file-only downloads, cancels, and exports r
   });
   const attachments = new LocalFiles({ directory: join(dir.path, 'files') });
   const exportMail = new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(source.messageParts, destination.file('parts.md'), {
-        syncMode: 'full_refresh',
-        destinationSyncMode: 'overwrite',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.messageParts, destination.file('parts.md'), {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'overwrite',
+          }),
+          new Copy(
+            source.attachments,
+            destination.file('attachments.md', {
+              fields: [
+                new FileRead(
+                  'attachmentRef',
+                  source.attachments.file.store(attachments),
+                ),
+              ],
+            }),
+          ),
+        ],
       }),
-      new Copy(
-        source.attachments,
-        destination.file('attachments.md', {
-          fields: [
-            new FileRead(
-              'attachmentRef',
-              source.attachments.file.store(attachments),
-            ),
-          ],
-        }),
-      ),
     ],
   });
   await exportMail.run();
@@ -783,23 +799,28 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
   });
   const files = new LocalFiles({ directory: join(dir.path, 'files') });
   await new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(
-        source.attachments,
-        destination.table('images', (columns) => [
-          ...SQLiteColumns.fromSchema(source.attachments.jsonSchema),
-          columns
-            .text('content')
-            .from(source.attachments.file)
-            .parse(new MacOSDocumentParser()),
-          columns.blob('bytes').from(source.attachments.file),
-          columns
-            .text('attachmentRef')
-            .from(source.attachments.file.store(files)),
-        ]),
-      ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            source.attachments,
+            destination.table('images', (columns) => [
+              ...SQLiteColumns.fromSchema(source.attachments.jsonSchema),
+              columns
+                .text('content')
+                .from(source.attachments.file)
+                .parse(new MacOSDocumentParser()),
+              columns.blob('bytes').from(source.attachments.file),
+              columns
+                .text('attachmentRef')
+                .from(source.attachments.file.store(files)),
+            ]),
+          ),
+        ],
+      }),
     ],
   }).run();
   const output = rows(

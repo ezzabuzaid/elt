@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   Catalog,
+  Connection,
   Copy,
   type CopyConfiguration,
   DocumentParser,
@@ -29,6 +30,7 @@ import postgres from 'postgres';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
+  PostgresSyncHistory,
   publishPostgresViews,
 } from './index.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
@@ -46,7 +48,7 @@ async function scratchDatabase() {
   } catch (cause) {
     await admin.end();
     throw new Error(
-      `Test Postgres at ${new URL(server).host} is unavailable. Start it with: docker compose -f infra/docker-compose.yml up -d --wait`,
+      `Test Postgres at ${new URL(server).host} is unavailable. Start it with: npx nx run infra:up`,
       { cause },
     );
   }
@@ -66,6 +68,10 @@ async function scratchDatabase() {
 
 // Emits whatever the test sets on `messages`, then an empty checkpoint.
 class Messages extends Source {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
   protected override async open() {
     return new AsyncDisposableStack();
   }
@@ -312,18 +318,22 @@ test('Postgres stores per-field attachment references and reconciles only the fi
         id: 'docs',
         syncMode: 'incremental',
         destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
         cursorField: 'version',
       },
     );
     const pipeline = new Pipeline({
-      source,
-      destination,
-      steps: [copy],
-      checkpoints: new PostgresCheckpointStore({
-        url: database.url,
-        schema: 'raw',
-      }),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [copy],
+          checkpoints: new PostgresCheckpointStore({
+            url: database.url,
+            schema: 'raw',
+          }),
+        }),
+      ],
     });
     const loaded = async () => [
       ...(await database.sql.unsafe(
@@ -440,17 +450,27 @@ test('schema annotations follow each copy, including projections, append history
     c.text('title'),
   ]);
   const full = new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(stream, destination.table('notes'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [new Copy(stream, destination.table('notes'))],
+      }),
+    ],
   });
   const history = new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(stream, titles, {
-        syncMode: 'full_refresh',
-        destinationSyncMode: 'append',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(stream, titles, {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'append',
+          }),
+        ],
       }),
     ],
   });
@@ -510,9 +530,14 @@ test('schema annotations follow each copy, including projections, append history
   const revisedSource = new Messages(revised);
   revisedSource.messages = rows(revised, [record]);
   await new Pipeline({
-    source: revisedSource,
-    destination,
-    steps: [new Copy(revised, destination.table('notes'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source: revisedSource,
+        destination,
+        steps: [new Copy(revised, destination.table('notes'))],
+      }),
+    ],
   }).run();
   const revisedComments = await comments('notes');
   assert.ok(revisedComments.relation.includes('Revised source meaning.'));
@@ -528,9 +553,14 @@ test('schema annotations follow each copy, including projections, append history
   const plainSource = new Messages(unschematized);
   plainSource.messages = rows(unschematized, [record]);
   await new Pipeline({
-    source: plainSource,
-    destination,
-    steps: [new Copy(unschematized, titles)],
+    connections: [
+      new Connection({
+        name: 'test',
+        source: plainSource,
+        destination,
+        steps: [new Copy(unschematized, titles)],
+      }),
+    ],
   }).run();
   const plainComments = await comments(titles.name);
   assert.equal(plainComments.columns.id, null);
@@ -567,9 +597,14 @@ test('invalid schema annotations fail before extraction or storage access', asyn
       const source = new Messages(stream);
       await assert.rejects(
         new Pipeline({
-          source,
-          destination,
-          steps: [new Copy(stream, destination.table('items'))],
+          connections: [
+            new Connection({
+              name: 'test',
+              source,
+              destination,
+              steps: [new Copy(stream, destination.table('items'))],
+            }),
+          ],
         }).run(),
         /JSON Schema description/,
       );
@@ -623,19 +658,23 @@ test('file text and bounded original bytes survive replay, replacement and delet
   assert.ok(fileColumn);
   const store = new PostgresFileStore(destination.schema, table, fileColumn);
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: destination.schema,
-    }),
-    steps: [
-      new Copy(stream, table, {
-        id: 'attachments',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
-        cursorField: 'version',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: destination.schema,
+        }),
+        steps: [
+          new Copy(stream, table, {
+            id: 'attachments',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
       }),
     ],
   });
@@ -796,9 +835,14 @@ test('a copy creates its schema and a table typed from the stream schema', async
   });
 
   const [result] = await new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(stream, destination.table('Items'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [new Copy(stream, destination.table('Items'))],
+      }),
+    ],
   }).run();
 
   assert.equal(result?.count, 2);
@@ -878,9 +922,14 @@ test('overwrite replaces rows while readers keep seeing the previous load', asyn
   });
   const load = (source: Source) =>
     new Pipeline({
-      source,
-      destination,
-      steps: [new Copy(stream, destination.table('items'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(stream, destination.table('items'))],
+        }),
+      ],
     }).run();
   const first = new Messages(stream);
   first.messages = rows(stream, [{ id: 'old-1' }, { id: 'old-2' }]);
@@ -930,12 +979,17 @@ test('append keeps every load', async () => {
   const source = new Messages(stream);
   source.messages = rows(stream, [{ id: 'a' }]);
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(stream, destination.table('events'), {
-        syncMode: 'full_refresh',
-        destinationSyncMode: 'append',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(stream, destination.table('events'), {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'append',
+          }),
+        ],
       }),
     ],
   });
@@ -981,17 +1035,21 @@ test('cursor_newer keeps the greatest cursor by byte order; replace keeps the ne
     const source = new Messages(stream);
     source.messages = rows(stream, data);
     return new Pipeline({
-      source,
-      destination,
-      checkpoints,
-      steps: [
-        new Copy(stream, destination.table(table), {
-          id: table,
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          cursorField: 'version',
-          primaryKey: ['id'],
-          dedupPolicy,
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(stream, destination.table(table), {
+              id: table,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              cursorField: 'version',
+              dedupPolicy,
+            }),
+          ],
         }),
       ],
     }).run();
@@ -1074,18 +1132,22 @@ test('deletions remove keyed rows in source order', async () => {
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: 'raw',
-    }),
-    steps: [
-      new Copy(stream, destination.table('items'), {
-        id: 'items',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['day', 'id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(stream, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   });
@@ -1141,9 +1203,14 @@ test('a source failure commits nothing: no table, rows or owner', async () => {
 
   await assert.rejects(
     new Pipeline({
-      source,
-      destination,
-      steps: [new Copy(stream, destination.table('items'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(stream, destination.table('items'))],
+        }),
+      ],
     }).run(),
     /source broke/,
   );
@@ -1190,16 +1257,20 @@ test('a table has one writer, even when another loads only its own partitions', 
   });
   const upsert = (id: string, source: Owned) =>
     new Pipeline({
-      source,
-      destination,
-      checkpoints,
-      steps: [
-        new Copy(stream, destination.table('records'), {
-          id,
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          cursorField: 'version',
-          primaryKey: ['owner', 'id'],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(stream, destination.table('records'), {
+              id,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              cursorField: 'version',
+            }),
+          ],
         }),
       ],
     }).run();
@@ -1214,9 +1285,14 @@ test('a table has one writer, even when another loads only its own partitions', 
   );
   await assert.rejects(
     new Pipeline({
-      source: late,
-      destination,
-      steps: [new Copy(stream, destination.table('records'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source: late,
+          destination,
+          steps: [new Copy(stream, destination.table('records'))],
+        }),
+      ],
     }).run(),
     /\{"source":"c","stream":"records"\} cannot write it/,
   );
@@ -1230,9 +1306,14 @@ test('a table has one writer, even when another loads only its own partitions', 
   );
   await database.sql`DROP TABLE raw.records`;
   await new Pipeline({
-    source: late,
-    destination,
-    steps: [new Copy(stream, destination.table('records'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source: late,
+        destination,
+        steps: [new Copy(stream, destination.table('records'))],
+      }),
+    ],
   }).run();
   assert.equal(late.extracted, 1);
 });
@@ -1250,7 +1331,6 @@ test('an existing key column of another type is refused, and a changed key rebui
       },
       required: ['id', 'kind', 'version'],
     },
-    primaryKey: ['id'],
     supportedSyncModes: ['full_refresh'],
   });
   const source = new Messages(stream);
@@ -1264,14 +1344,19 @@ test('an existing key column of another type is refused, and a changed key rebui
   });
   const dedup = (primaryKey: string[]) =>
     new Pipeline({
-      source,
-      destination,
-      steps: [
-        new Copy(stream, destination.table('items'), {
-          syncMode: 'full_refresh',
-          destinationSyncMode: 'overwrite_dedup',
-          cursorField: 'version',
-          primaryKey,
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [
+            new Copy(stream, destination.table('items'), {
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite_dedup',
+              cursorField: 'version',
+              primaryKey,
+            }),
+          ],
         }),
       ],
     }).run();
@@ -1389,18 +1474,22 @@ test('a checkpoint that cannot be saved after its rows commit is reported with t
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: 'raw',
-    }),
-    steps: [
-      new Copy(stream, destination.table('items'), {
-        id: 'items',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(stream, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   });
@@ -1463,18 +1552,22 @@ test('a copy commits at each checkpoint, its rows share one loaded_at, and no ch
     schema: 'raw',
   });
   const running = new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: 'raw',
-    }),
-    steps: [
-      new Copy(stream, destination.table('items'), {
-        id: 'items',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(stream, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   }).run();
@@ -1592,18 +1685,22 @@ test('clear empties a table and keeps views on it, releasing its owner and check
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: 'raw',
-    }),
-    steps: [
-      new Copy(stream, destination.table('items'), {
-        id: 'items',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(stream, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   });
@@ -1673,6 +1770,10 @@ type Scripted = SourceMessage | Error | (() => unknown);
 
 // Reads what a test scripts for each stream, up to concurrency streams at once.
 class ScriptedSource extends Source {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
   readonly identity = 'scripted';
   protected readonly catalog: Catalog;
   protected override readonly concurrency: number;
@@ -1737,7 +1838,6 @@ const incremental = (id: string) =>
     id,
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['id'],
   }) as const;
 
 const loaded = async (database: { sql: postgres.Sql }, table: string) =>
@@ -1765,16 +1865,21 @@ test('a stream that fails publishes none of its staged rows while its sibling co
     snapshot: [record('snapshot', 'old', 1)],
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: 'raw',
-    }),
-    steps: [
-      new Copy(broken, destination.table('broken'), incremental('broken')),
-      new Copy(good, destination.table('good'), incremental('good')),
-      new Copy(snapshot, destination.table('snapshot')),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(broken, destination.table('broken'), incremental('broken')),
+          new Copy(good, destination.table('good'), incremental('good')),
+          new Copy(snapshot, destination.table('snapshot')),
+        ],
+      }),
     ],
   });
   await pipeline.run();
@@ -1827,6 +1932,12 @@ test("a failing partition's flushed rows are discarded while the next partition 
     sourceDefinedCursor: true,
   });
   class Sites extends ScriptedSource {
+    override coverage() {
+      return {
+        description: 'Configured properties a and b.',
+        selection: { sites: ['a', 'b'] },
+      };
+    }
     protected override partitions() {
       return [{ site: 'a' }, { site: 'b' }];
     }
@@ -1855,18 +1966,22 @@ test("a failing partition's flushed rows are discarded while the next partition 
   });
 
   const error = await new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: 'raw',
-    }),
-    steps: [
-      new Copy(pages, destination.table('pages'), {
-        id: 'pages',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['site', 'id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(pages, destination.table('pages'), {
+            id: 'pages',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   })
@@ -1921,22 +2036,27 @@ test('a staged unit merges like its operations applied one at a time, under repl
   });
 
   await new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: 'raw',
-    }),
-    steps: [
-      new Copy(
-        replacing,
-        destination.table('replacing'),
-        incremental('replacing'),
-      ),
-      new Copy(guarded, destination.table('guarded'), {
-        ...incremental('guarded'),
-        cursorField: 'version',
-        dedupPolicy: 'cursor_newer',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(
+            replacing,
+            destination.table('replacing'),
+            incremental('replacing'),
+          ),
+          new Copy(guarded, destination.table('guarded'), {
+            ...incremental('guarded'),
+            cursorField: 'version',
+            dedupPolicy: 'cursor_newer',
+          }),
+        ],
       }),
     ],
   }).run();
@@ -1976,13 +2096,20 @@ test('a checkpoint lost between commit and save replays to the same rows', async
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: 'raw',
-    }),
-    steps: [new Copy(items, destination.table('items'), incremental('items'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(items, destination.table('items'), incremental('items')),
+        ],
+      }),
+    ],
   });
   const names = async () =>
     (await database.sql`SELECT id, name FROM raw.items ORDER BY id`).map(
@@ -2049,15 +2176,20 @@ test("a statement that fails in one stream's merge does not erase a sibling's st
     schema: 'raw',
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({
-      url: database.url,
-      schema: 'raw',
-    }),
-    steps: [
-      new Copy(staged, destination.table('staged'), incremental('staged')),
-      new Copy(dated, destination.table('dated'), incremental('dated')),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(staged, destination.table('staged'), incremental('staged')),
+          new Copy(dated, destination.table('dated'), incremental('dated')),
+        ],
+      }),
     ],
   });
   await pipeline.run();
@@ -2160,9 +2292,14 @@ test('year 0000, which ISO counts astronomically, loads as 1 BC, and year 0001 s
   });
 
   await new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(moments, destination.table('moments'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [new Copy(moments, destination.table('moments'))],
+      }),
+    ],
   }).run();
 
   assert.deepEqual(
@@ -2178,5 +2315,395 @@ test('year 0000, which ISO counts astronomically, loads as 1 BC, and year 0001 s
       { id: 'first', onBC: false, atBC: false, dayBefore: true },
       { id: 'leap', onBC: true, atBC: true, dayBefore: false },
     ],
+  );
+});
+
+test('warehouse sync history distinguishes unchanged success, partial commits, failures and unfinished passes', async () => {
+  await using database = await scratchDatabase();
+  const { sql } = database;
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  let window = {
+    startAt: '2020-01-01T00:00:00.000Z',
+    endAt: '2021-01-01T00:00:00.000Z',
+  };
+  class Windowed extends ScriptedSource {
+    override coverage() {
+      return {
+        description: 'Requested UTC [startAt, endAt).',
+        selection: window,
+      };
+    }
+  }
+  const good = scripted('good');
+  const bad = scripted('bad');
+  const source = new Windowed([good, bad], {
+    good: [record('good', 'g1', 1), checkpoint('good', {})],
+    bad: [checkpoint('bad', {})],
+  });
+  const history = new PostgresSyncHistory({ url: database.url });
+  await history.install();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [good, bad].map(
+          (stream) =>
+            new Copy(
+              stream,
+              destination.table(stream.name),
+              incremental(stream.name),
+            ),
+        ),
+      }),
+    ],
+  });
+  const run = () => pipeline.run();
+  const status = async () => {
+    const [row] = await sql`SELECT * FROM marts.sync_status`;
+    assert.ok(row);
+    return row;
+  };
+  await run();
+  const first = await status();
+  const [original] = await sql`SELECT loaded_at::text FROM raw.good`;
+  assert.equal(first.status, 'succeeded');
+  assert.equal(first.latest_attempt_id, first.last_successful_attempt_id);
+  const [empty] =
+    await sql`SELECT status, written_count::int, selection, target_exists FROM marts.extraction_coverage WHERE stream = 'bad'`;
+  assert.deepEqual(
+    { ...empty },
+    {
+      status: 'succeeded',
+      written_count: 0,
+      selection: window,
+      target_exists: true,
+    },
+  );
+
+  source.scripts = {
+    good: [checkpoint('good', {})],
+    bad: [checkpoint('bad', {})],
+  };
+  const unchanged = await run();
+  assert.ok(
+    unchanged.every(({ count, deleted }) => count === 0 && deleted === 0),
+  );
+  const second = await status();
+  assert.notEqual(
+    second.last_successful_attempt_id,
+    first.last_successful_attempt_id,
+  );
+  assert.ok(second.last_successful_sync_at > first.last_successful_sync_at);
+  assert.deepEqual(
+    [...(await sql`SELECT loaded_at::text FROM raw.good`)],
+    [original],
+  );
+
+  window = { ...window, endAt: '2022-01-01T00:00:00.000Z' };
+  source.scripts = {
+    good: [checkpoint('good', {})],
+    bad: [
+      record('bad', 'committed', 1),
+      checkpoint('bad', {}),
+      record('bad', 'discarded', 1),
+      new Error('lost page'),
+    ],
+  };
+  await assert.rejects(run, PipelineError);
+  const partial = await status();
+  assert.equal(partial.status, 'partial');
+  assert.equal(partial.last_successful_attempt_id, second.latest_attempt_id);
+  assert.deepEqual(await loaded(database, 'bad'), ['committed:1']);
+  const [copy] =
+    await sql`SELECT status, written_count::int, deleted_count::int, failures, selection
+    FROM marts.extraction_coverage WHERE attempt_id = ${partial.latest_attempt_id} AND stream = 'bad'`;
+  assert.deepEqual(
+    { ...copy },
+    {
+      status: 'partial',
+      written_count: 1,
+      deleted_count: 0,
+      failures: [{ partition: null, error: 'lost page' }],
+      selection: window,
+    },
+  );
+  const [prior] = await sql`SELECT selection FROM marts.extraction_coverage
+    WHERE attempt_id = ${second.latest_attempt_id} AND stream = 'bad'`;
+  assert.equal(prior?.selection.endAt, '2021-01-01T00:00:00.000Z');
+
+  source.scripts = {
+    good: [new Error('offline')],
+    bad: [new Error('offline')],
+  };
+  await assert.rejects(run, PipelineError);
+  assert.equal((await status()).status, 'failed');
+  assert.equal(
+    (await status()).last_successful_attempt_id,
+    second.latest_attempt_id,
+  );
+
+  // Read the durable running declaration from inside the public extraction flow.
+  source.scripts = {
+    good: [
+      async () => {
+        const running = await status();
+        assert.equal(running.status, 'running');
+        assert.equal(running.completed_at, null);
+        assert.equal(
+          running.last_successful_attempt_id,
+          second.latest_attempt_id,
+        );
+        const pending =
+          await sql`SELECT status, written_count FROM marts.extraction_coverage WHERE attempt_id = ${running.latest_attempt_id}`;
+        assert.ok(
+          pending.every(
+            (row) => row.status === 'running' && row.written_count === null,
+          ),
+        );
+      },
+      checkpoint('good', {}),
+    ],
+    bad: [checkpoint('bad', {})],
+  };
+  await run();
+  assert.equal((await status()).status, 'succeeded');
+  // A new process installs the history again and keeps what was recorded.
+  source.scripts = {
+    good: [checkpoint('good', {})],
+    bad: [checkpoint('bad', {})],
+  };
+  const restarted = new PostgresSyncHistory({ url: database.url });
+  await restarted.install();
+  await new Pipeline({
+    history: restarted,
+    connections: pipeline.connections,
+  }).run();
+  assert.equal(
+    (await sql`SELECT count(*)::int AS n FROM marts.sync_attempts`)[0]?.n,
+    6,
+  );
+});
+
+test('warehouse records failed partitions and validation errors without fabricating success', async () => {
+  await using database = await scratchDatabase();
+  const { sql } = database;
+  const stream = new Stream({
+    name: 'pages',
+    jsonSchema: {
+      type: 'object',
+      properties: { site: { type: 'string' }, id: { type: 'string' } },
+      required: ['site', 'id'],
+    },
+    primaryKey: ['site', 'id'],
+    partitionKey: ['site'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+  });
+  class Sites extends ScriptedSource {
+    override coverage() {
+      return {
+        description: 'Configured properties a and b.',
+        selection: { sites: ['a', 'b'] },
+      };
+    }
+    protected override partitions() {
+      return [{ site: 'a' }, { site: 'b' }];
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      _state: unknown,
+      partition: Partition | null,
+    ) {
+      yield* this.play(String(partition?.site));
+    }
+  }
+  const source = new Sites([stream], {
+    a: [
+      { stream: 'pages', data: { site: 'a', id: '1' } },
+      checkpoint('pages', {}),
+    ],
+    b: [new Error('property denied')],
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const copy = new Copy(stream, destination.table('pages'), {
+    id: 'pages',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  });
+  const history = new PostgresSyncHistory({ url: database.url });
+  await history.install();
+  const connection = { name: 'sites', source, destination, steps: [copy] };
+  await assert.rejects(
+    new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          ...connection,
+          checkpoints: new PostgresCheckpointStore({
+            url: database.url,
+            schema: 'raw',
+          }),
+        }),
+      ],
+    }).run(),
+    PipelineError,
+  );
+  const [partial] =
+    await sql`SELECT status, written_count::int, failures, selection FROM marts.extraction_coverage`;
+  assert.deepEqual(
+    { ...partial },
+    {
+      status: 'partial',
+      written_count: 1,
+      failures: [{ partition: { site: 'b' }, error: 'property denied' }],
+      selection: { sites: ['a', 'b'] },
+    },
+  );
+  assert.equal(
+    (await sql`SELECT last_successful_sync_at FROM marts.sync_status`)[0]
+      ?.last_successful_sync_at,
+    null,
+  );
+
+  await assert.rejects(
+    new Pipeline({ history, connections: [new Connection(connection)] }).run(),
+    /checkpoint store/,
+  );
+  const [invalid] =
+    await sql`SELECT c.status, c.written_count, c.failures FROM marts.extraction_coverage c JOIN marts.sync_status s ON s.latest_attempt_id = c.attempt_id`;
+  assert.equal(invalid?.status, 'failed');
+  assert.equal(invalid?.written_count, null);
+  assert.match(invalid?.failures[0].error, /checkpoint store/);
+});
+
+test('one pipeline loads each connection into its own schema, and a failing connection leaves the other recorded as succeeded', async () => {
+  await using database = await scratchDatabase();
+  const { sql } = database;
+  const connection = (
+    schema: string,
+    scripts: Record<string, readonly Scripted[]>,
+  ) => {
+    const items = scripted('items');
+    const destination = new PostgresDestination({ url: database.url, schema });
+    return new Connection({
+      name: schema,
+      source: new ScriptedSource([items], scripts),
+      destination,
+      checkpoints: new PostgresCheckpointStore({ url: database.url, schema }),
+      steps: [
+        new Copy(
+          items,
+          destination.table('items'),
+          incremental(`${schema}:items`),
+        ),
+      ],
+    });
+  };
+  const history = new PostgresSyncHistory({ url: database.url });
+  await history.install();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      connection('notes', {
+        items: [record('items', 'n1', 1), checkpoint('items', {})],
+      }),
+      connection('mail', { items: [new Error('mail denied')] }),
+    ],
+  });
+
+  await assert.rejects(pipeline.run(), PipelineError);
+
+  assert.deepEqual(
+    [...(await sql`SELECT id FROM notes.items`)],
+    [{ id: 'n1' }],
+  );
+  assert.deepEqual(
+    [
+      ...(await sql`SELECT connector, status FROM marts.sync_status ORDER BY connector`),
+    ],
+    [
+      { connector: 'mail', status: 'failed' },
+      { connector: 'notes', status: 'succeeded' },
+    ],
+  );
+  assert.deepEqual(
+    [
+      ...(await sql`SELECT a.connector, c.target_schema, c.status FROM marts.extraction_coverage c
+        JOIN marts.sync_attempts a ON a.attempt_id = c.attempt_id ORDER BY a.connector`),
+    ],
+    [
+      { connector: 'mail', target_schema: 'mail', status: 'failed' },
+      { connector: 'notes', target_schema: 'notes', status: 'succeeded' },
+    ],
+  );
+});
+
+test('each watch pass is recorded under its own connection when it completes', async () => {
+  await using database = await scratchDatabase();
+  const { sql } = database;
+  class Twice extends ScriptedSource {
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+      yield streams;
+    }
+  }
+  const connection = (schema: string) => {
+    const items = scripted('items');
+    const destination = new PostgresDestination({ url: database.url, schema });
+    return new Connection({
+      name: schema,
+      source: new Twice([items], {
+        items: [record('items', schema, 1), checkpoint('items', {})],
+      }),
+      destination,
+      checkpoints: new PostgresCheckpointStore({ url: database.url, schema }),
+      steps: [
+        new Copy(
+          items,
+          destination.table('items'),
+          incremental(`${schema}:items`),
+        ),
+      ],
+    });
+  };
+  const history = new PostgresSyncHistory({ url: database.url });
+  await history.install();
+  const pipeline = new Pipeline({
+    history,
+    connections: [connection('notes'), connection('mail')],
+  });
+  const passes: string[] = [];
+
+  for await (const { connection } of pipeline.watch({
+    signal: AbortSignal.timeout(10_000),
+  }))
+    passes.push(connection.name);
+
+  assert.deepEqual(passes.toSorted(), ['mail', 'mail', 'notes', 'notes']);
+  const attempts =
+    await sql`SELECT connector, status, completed_at::text FROM marts.sync_attempts ORDER BY attempt_id`;
+  assert.deepEqual(
+    attempts
+      .map(({ connector, status }) => `${connector}:${status}`)
+      .toSorted(),
+    ['mail:succeeded', 'mail:succeeded', 'notes:succeeded', 'notes:succeeded'],
+  );
+  // Each pass closes its own attempt when it finishes, not when the watch ends.
+  assert.equal(
+    new Set(attempts.map(({ completed_at }) => completed_at)).size,
+    4,
   );
 });

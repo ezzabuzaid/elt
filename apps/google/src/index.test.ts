@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
-import { Copy, Pipeline, PipelineError } from 'elt';
+import { Connection, Copy, Pipeline, PipelineError } from 'elt';
 
 import {
   SearchConsoleApi,
@@ -83,7 +83,11 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
   );
 
   assert.deepEqual(
-    await new Pipeline({ source, destination, steps: [copy] }).run(),
+    await new Pipeline({
+      connections: [
+        new Connection({ name: 'test', source, destination, steps: [copy] }),
+      ],
+    }).run(),
     [{ copy, count: 1, deleted: 0 }],
   );
   const [loaded] =
@@ -149,15 +153,19 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
       dedupPolicy: 'replace',
       destinationSyncMode: 'append_dedup',
       id: 'search-analytics',
-      primaryKey: ['siteUrl', 'date', 'query'],
       syncMode: 'incremental',
     },
   );
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy],
+      }),
+    ],
   });
 
   await pipeline.run();
@@ -219,10 +227,15 @@ test('a fractional click count is refused rather than stored', async () => {
 
   await assert.rejects(
     new Pipeline({
-      source,
-      destination,
-      steps: [
-        new Copy(source.searchAnalyticsDaily, destination.table('daily')),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [
+            new Copy(source.searchAnalyticsDaily, destination.table('daily')),
+          ],
+        }),
       ],
     }).run(),
     /clicks/,
@@ -257,7 +270,11 @@ test('analytics pagination follows startRow until a short page', async () => {
   );
   // Extraction is lazy: nothing is requested until the destination pulls.
   assert.equal(analyticsCalls(calls).length, 0);
-  await new Pipeline({ source, destination, steps: [copy] }).run();
+  await new Pipeline({
+    connections: [
+      new Connection({ name: 'test', source, destination, steps: [copy] }),
+    ],
+  }).run();
   const requests = analyticsCalls(calls);
   assert.equal(requests.length, 2, 'a full page is followed by one more');
   assert.equal(requests[0]?.data?.['startRow'], 0);
@@ -288,11 +305,16 @@ test('sitemaps convert int64 text and second-precision times', async () => {
     siteUrls: [SITE],
   });
   await new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(source.sitemaps, destination.table('sitemaps')),
-      new Copy(source.sitemapContents, destination.table('contents')),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.sitemaps, destination.table('sitemaps')),
+          new Copy(source.sitemapContents, destination.table('contents')),
+        ],
+      }),
     ],
   }).run();
 
@@ -391,24 +413,28 @@ test('inspection covers every sitemap and search URL once, shared by all three s
     siteUrls: [SITE],
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: (
-      [
-        [source.urlInspection, 'inspection'],
-        [source.urlInspectionSitemaps, 'inspection_sitemaps'],
-        [source.urlInspectionReferrers, 'inspection_referrers'],
-      ] as const
-    ).map(
-      ([stream, table]) =>
-        new Copy(stream, destination.table(table), {
-          id: table,
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          primaryKey: [...stream.primaryKey],
-        }),
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: (
+          [
+            [source.urlInspection, 'inspection'],
+            [source.urlInspectionSitemaps, 'inspection_sitemaps'],
+            [source.urlInspectionReferrers, 'inspection_referrers'],
+          ] as const
+        ).map(
+          ([stream, table]) =>
+            new Copy(stream, destination.table(table), {
+              id: table,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+        ),
+      }),
+    ],
   });
   const inspected = () =>
     calls
@@ -477,12 +503,16 @@ test('watching invalidates only when the property actually changed', async () =>
   // One key per row is the daily grain.
   const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
   const controller = new AbortController();
-  const watching = new Pipeline({ source, destination, steps: [copy] }).watch({
+  const watching = new Pipeline({
+    connections: [
+      new Connection({ name: 'test', source, destination, steps: [copy] }),
+    ],
+  }).watch({
     signal: controller.signal,
   });
 
   try {
-    assert.deepEqual((await watching.next()).value, [
+    assert.deepEqual((await watching.next()).value?.outcomes, [
       { copy, count: 1, deleted: 0, failures: [] },
     ]);
     const afterFirst = calls.length;
@@ -490,7 +520,7 @@ test('watching invalidates only when the property actually changed', async () =>
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.ok(calls.length > afterFirst, 'the watcher keeps probing');
     clicks = 19;
-    assert.deepEqual((await watching.next()).value, [
+    assert.deepEqual((await watching.next()).value?.outcomes, [
       { copy, count: 1, deleted: 0, failures: [] },
     ]);
     const [row] = await sql`SELECT clicks::int FROM rows`;
@@ -530,9 +560,16 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
     siteUrls: [SITE],
   });
   await new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(source.searchAnalyticsDaily, destination.table('daily'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.searchAnalyticsDaily, destination.table('daily')),
+        ],
+      }),
+    ],
   }).run();
 
   assert.deepEqual(
@@ -564,9 +601,16 @@ test('the history window clamps to the last day of a shorter start month', async
     siteUrls: [SITE],
   });
   await new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(source.searchAnalyticsDaily, destination.table('daily'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.searchAnalyticsDaily, destination.table('daily')),
+        ],
+      }),
+    ],
   }).run();
 
   assert.deepEqual(requests, ['2024-11-30']);
@@ -611,14 +655,18 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
       id: 'countries',
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      primaryKey: [...source.searchAnalyticsCountries.primaryKey],
     },
   );
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy],
+      }),
+    ],
   });
 
   assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
@@ -708,23 +756,26 @@ test('two properties share tables through one source without deleting each other
         id: `${name}:${stream.name}`,
         syncMode: 'incremental',
         destinationSyncMode: 'append_dedup',
-        primaryKey: [...stream.primaryKey],
       });
     return new Pipeline({
-      source,
-      destination,
-      checkpoints,
-      steps: [
-        listing(source.sitemaps, 'sitemaps'),
-        new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
-          id: `${name}:searchAnalyticsDaily`,
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          dedupPolicy: 'replace',
-          cursorField: 'date',
-          primaryKey: [...source.searchAnalyticsDaily.primaryKey],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            listing(source.sitemaps, 'sitemaps'),
+            new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+              id: `${name}:searchAnalyticsDaily`,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              dedupPolicy: 'replace',
+              cursorField: 'date',
+            }),
+            listing(source.searchAnalyticsCountries, 'countries'),
+          ],
         }),
-        listing(source.searchAnalyticsCountries, 'countries'),
       ],
     });
   };
@@ -778,9 +829,14 @@ test('an unverified property is not offered as a readable site', async () => {
     siteUrls: [SITE],
   });
   await new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(source.sites, destination.table('sites'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [new Copy(source.sites, destination.table('sites'))],
+      }),
+    ],
   }).run();
 
   assert.deepEqual(
@@ -958,11 +1014,15 @@ test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
   });
   const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
   const controller = new AbortController();
-  const watching = new Pipeline({ source, destination, steps: [copy] }).watch({
+  const watching = new Pipeline({
+    connections: [
+      new Connection({ name: 'test', source, destination, steps: [copy] }),
+    ],
+  }).watch({
     signal: controller.signal,
   });
 
-  assert.deepEqual((await watching.next()).value, [
+  assert.deepEqual((await watching.next()).value?.outcomes, [
     { copy, count: 1, deleted: 0, failures: [] },
   ]);
   loaded = true;
@@ -1045,13 +1105,17 @@ test('an incremental sites copy deletes a property that is no longer listed', as
     id: 'sites',
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['siteUrl'],
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy],
+      }),
+    ],
   });
 
   assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
@@ -1126,23 +1190,26 @@ test('one source loads every property; a newly listed one backfills while the ot
       siteUrls,
     });
     return new Pipeline({
-      source,
-      destination,
-      checkpoints,
-      steps: [
-        new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
-          id: 'daily',
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          dedupPolicy: 'replace',
-          cursorField: 'date',
-          primaryKey: [...source.searchAnalyticsDaily.primaryKey],
-        }),
-        new Copy(source.urlInspection, destination.table('inspection'), {
-          id: 'inspection',
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          primaryKey: [...source.urlInspection.primaryKey],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+              id: 'daily',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              dedupPolicy: 'replace',
+              cursorField: 'date',
+            }),
+            new Copy(source.urlInspection, destination.table('inspection'), {
+              id: 'inspection',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
         }),
       ],
     }).run();
@@ -1214,17 +1281,21 @@ test('a property without permission is reported by name while the others load an
     siteUrls: [A, B],
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [
-      new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
-        id: 'daily',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        dedupPolicy: 'replace',
-        cursorField: 'date',
-        primaryKey: [...source.searchAnalyticsDaily.primaryKey],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+            id: 'daily',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            dedupPolicy: 'replace',
+            cursorField: 'date',
+          }),
+        ],
       }),
     ],
   });
@@ -1286,12 +1357,16 @@ test('watching invalidates when only one of several properties changed', async (
   });
   const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
   const controller = new AbortController();
-  const watching = new Pipeline({ source, destination, steps: [copy] }).watch({
+  const watching = new Pipeline({
+    connections: [
+      new Connection({ name: 'test', source, destination, steps: [copy] }),
+    ],
+  }).watch({
     signal: controller.signal,
   });
 
   try {
-    assert.deepEqual((await watching.next()).value, [
+    assert.deepEqual((await watching.next()).value?.outcomes, [
       { copy, count: 2, deleted: 0, failures: [] },
     ]);
     const probed = calls.length;
@@ -1302,7 +1377,7 @@ test('watching invalidates when only one of several properties changed', async (
       'every property is probed',
     );
     clicks[B] = 9;
-    assert.deepEqual((await watching.next()).value, [
+    assert.deepEqual((await watching.next()).value?.outcomes, [
       { copy, count: 2, deleted: 0, failures: [] },
     ]);
     assert.deepEqual(
@@ -1364,20 +1439,24 @@ test('a property without permission is reported in each batch while watching goe
       destinationSyncMode: 'append_dedup',
       dedupPolicy: 'replace',
       cursorField: 'date',
-      primaryKey: [...source.searchAnalyticsDaily.primaryKey],
     },
   );
   const controller = new AbortController();
   const watching = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy],
+      }),
+    ],
   }).watch({ signal: controller.signal });
   const batch = async () => {
     const next = await watching.next();
     if (next.done) assert.fail('watching ended');
-    const [outcome] = next.value;
+    const [outcome] = next.value.outcomes;
     return {
       count: outcome?.count,
       failed: outcome?.failures.map(({ partition, error }) => [
@@ -1471,18 +1550,22 @@ async function inspectionRun(
   )[] = ['urlInspection'],
 ) {
   return new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: streams.map(
-      (name) =>
-        new Copy(source[name], destination.table(name), {
-          id: name,
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          primaryKey: [...source[name].primaryKey],
-        }),
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: streams.map(
+          (name) =>
+            new Copy(source[name], destination.table(name), {
+              id: name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+        ),
+      }),
+    ],
   }).run();
 }
 
@@ -1580,9 +1663,14 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
     });
 
     await new Pipeline({
-      source,
-      destination,
-      steps: [new Copy(source.sitemaps, destination.table('sitemaps'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(source.sitemaps, destination.table('sitemaps'))],
+        }),
+      ],
     }).run();
     await inspectionRun(source, warehouse);
 
@@ -1960,19 +2048,23 @@ test('watching wakes inspection streams when URLs fall due, not when traffic cha
       id,
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      primaryKey: [...stream.primaryKey],
       ...extra,
     });
   const controller = new AbortController();
   const watching = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [
-      copy(source.urlInspection, 'inspection'),
-      copy(source.searchAnalyticsDaily, 'daily', {
-        dedupPolicy: 'replace',
-        cursorField: 'date',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          copy(source.urlInspection, 'inspection'),
+          copy(source.searchAnalyticsDaily, 'daily', {
+            dedupPolicy: 'replace',
+            cursorField: 'date',
+          }),
+        ],
       }),
     ],
   }).watch({ signal: controller.signal });
@@ -1982,7 +2074,7 @@ test('watching wakes inspection streams when URLs fall due, not when traffic cha
       const { value } = await watching.next();
       names.push(
         value
-          ? value.map(
+          ? value.outcomes.map(
               (result: { copy: { from: { name: string } } }) =>
                 result.copy.from.name,
             )

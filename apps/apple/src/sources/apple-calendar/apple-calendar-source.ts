@@ -1,7 +1,12 @@
 import { lstat, mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
-import type { CopyConfiguration, SourceWatchOptions, Stream } from 'elt';
+import type {
+  CopyConfiguration,
+  ExtractionCoverage,
+  SourceWatchOptions,
+  Stream,
+} from 'elt';
 import {
   diffSnapshot,
   isTimestamp,
@@ -180,6 +185,20 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
     this.startAt = startAt;
     this.endAt = endAt;
     Object.freeze(this);
+  }
+
+  override coverage(stream: Stream): ExtractionCoverage {
+    if (stream === this.accounts || stream === this.calendars)
+      return {
+        description:
+          'All Calendar accounts or calendars visible through EventKit on this Mac. No date filter; the event window does not restrict these listings.',
+        selection: {},
+      };
+    return {
+      description:
+        'EventKit event occurrences overlapping the configured UTC interval [startAt, endAt); zero-duration events must start within it. Related rows and ICS exports belong to those selected events; ICS may describe a recurring series beyond the interval. Only calendars visible on this Mac are included. This is a requested window, not observed event dates. Attachment metadata may exist without retrievable file bytes.',
+      selection: { startAt: this.startAt, endAt: this.endAt },
+    };
   }
 
   protected override async *observe({

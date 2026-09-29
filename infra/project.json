@@ -1,0 +1,15 @@
+{
+  "name": "infra",
+  "projectType": "application",
+  "targets": {
+    "up": {
+      "command": "docker compose -f infra/docker-compose.yml up -d --wait"
+    },
+    "down": {
+      "command": "docker compose -f infra/docker-compose.yml down"
+    },
+    "reset": {
+      "command": "docker compose -f infra/docker-compose.yml down --volumes && docker compose -f infra/docker-compose.yml up -d --wait"
+    }
+  }
+}

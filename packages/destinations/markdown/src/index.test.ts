@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   Catalog,
+  Connection,
   Copy,
   type CopyConfiguration,
   type Partition,
@@ -25,6 +26,10 @@ import {
 test('Markdown file and folder targets honor the deduplication policy', async () => {
   let clicks = 12;
   class RestatingSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -91,10 +96,15 @@ test('Markdown file and folder targets honor the deduplication policy', async ()
   const run = async () => {
     for (const copy of copies)
       await new Pipeline({
-        source,
-        destination,
-        checkpoints,
-        steps: [copy],
+        connections: [
+          new Connection({
+            name: 'test',
+            source,
+            destination,
+            checkpoints,
+            steps: [copy],
+          }),
+        ],
       }).run();
   };
   const clicksIn = async (name: string) => {
@@ -139,6 +149,10 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
     emitsDeletes: true,
   });
   class DeletingSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -172,7 +186,6 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
   const selection = {
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['id'],
   } as const;
   // A read copies each stream once, so each target of items has its own pipeline.
   const pipelines = [
@@ -181,10 +194,15 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
   ].map(
     (copy) =>
       new Pipeline({
-        source,
-        destination: markdown,
-        checkpoints,
-        steps: [copy],
+        connections: [
+          new Connection({
+            name: 'test',
+            source,
+            destination: markdown,
+            checkpoints,
+            steps: [copy],
+          }),
+        ],
       }),
   );
   const names = async () => {
@@ -238,6 +256,10 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
 
 test('a target has one writer, even when another loads only its own partitions', async () => {
   class Records extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -288,16 +310,20 @@ test('a target has one writer, even when another loads only its own partitions',
   ) => {
     const upsert = (id: string, source: Records) =>
       new Pipeline({
-        source,
-        destination,
-        checkpoints,
-        steps: [
-          new Copy(source.records, target(), {
-            id,
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-            cursorField: 'version',
-            primaryKey: ['owner', 'id'],
+        connections: [
+          new Connection({
+            name: 'test',
+            source,
+            destination,
+            checkpoints,
+            steps: [
+              new Copy(source.records, target(), {
+                id,
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+                cursorField: 'version',
+              }),
+            ],
           }),
         ],
       }).run();
@@ -312,9 +338,14 @@ test('a target has one writer, even when another loads only its own partitions',
     );
     await assert.rejects(
       new Pipeline({
-        source: late,
-        destination,
-        steps: [new Copy(late.records, target())],
+        connections: [
+          new Connection({
+            name: 'test',
+            source: late,
+            destination,
+            steps: [new Copy(late.records, target())],
+          }),
+        ],
       }).run(),
       /\{"source":"late","stream":"records"\} cannot write it/,
     );
@@ -353,6 +384,10 @@ test('a target has one writer, even when another loads only its own partitions',
 
 test('Markdown publishes at each checkpoint and never publishes a failing partition', async () => {
   class Sites extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -398,17 +433,21 @@ test('Markdown publishes at each checkpoint and never publishes a failing partit
     source.down.add('b');
     const destination = new MarkdownDestination({ path: scratch.path });
     const error = await new Pipeline({
-      source,
-      destination,
-      checkpoints: new SQLiteCheckpointStore({
-        path: join(scratch.path, 'state.sqlite'),
-      }),
-      steps: [
-        new Copy(source.pages, target(destination), {
-          id: 'pages',
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          primaryKey: ['site'],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
+          }),
+          steps: [
+            new Copy(source.pages, target(destination), {
+              id: 'pages',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
         }),
       ],
     })
@@ -439,6 +478,10 @@ test('Markdown publishes at each checkpoint and never publishes a failing partit
 
 test('clearing a Markdown target drops it with its checkpoint, and a deleted one is refused until cleared', async () => {
   class Pages extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -471,17 +514,21 @@ test('clearing a Markdown target drops it with its checkpoint, and a deleted one
   const source = new Pages();
   const destination = new MarkdownDestination({ path: scratch.path });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [
-      new Copy(source.pages, destination.file('pages.md'), {
-        id: 'pages',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.pages, destination.file('pages.md'), {
+            id: 'pages',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   });
@@ -516,6 +563,10 @@ test('one run loads a file and a folder together: a stream that fails keeps its 
   // gate opens when the consumer asks for a stream's next message, so the
   // order holds without timers.
   class Crossing extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     readonly identity = 'crossing';
     readonly notes = keyed('notes');
     readonly tasks = keyed('tasks');
@@ -567,17 +618,29 @@ test('one run loads a file and a folder together: a stream that fails keeps its 
       id,
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      primaryKey: ['id'],
     }) as const;
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [
-      new Copy(source.notes, destination.file('notes.md'), selection('notes')),
-      new Copy(source.tasks, destination.folder('tasks'), selection('tasks')),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(
+            source.notes,
+            destination.file('notes.md'),
+            selection('notes'),
+          ),
+          new Copy(
+            source.tasks,
+            destination.folder('tasks'),
+            selection('tasks'),
+          ),
+        ],
+      }),
     ],
   });
   const ids = (document: string) =>

@@ -1,5 +1,5 @@
-# Local warehouse for the Postgres destination, and the agent's only way in.
-# Start: docker compose -f infra/docker-compose.yml up -d --wait
+# Local Postgres warehouse; consumers may connect directly as agent_reader.
+# Start: npx nx run infra:up (reset the volume: npx nx run infra:reset)
 name: context-compiler
 
 services:
@@ -21,7 +21,7 @@ services:
       timeout: 5s
       retries: 30
 
-  # The agent connects here, never to Postgres: the server holds the reader's
+  # Optional MCP transport: the server holds the reader's
   # password, runs every statement in a read-only transaction, rejects
   # statements that would end it, and cancels anything past 30 seconds.
   # Pinned: 0.3.0 is the latest release and serves stdio or SSE only.

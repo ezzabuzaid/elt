@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
+  ExtractionCoverage,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -14,6 +15,7 @@ import {
   ChatDatabaseVersion,
   messagesDirectory,
 } from '../../platform/macos/chat-database.ts';
+import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
   definitions,
   recordFrom,
@@ -57,6 +59,10 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
 
   protected override open(): Promise<ChatDatabase> {
     return ChatDatabase.open(this.path);
+  }
+
+  override coverage(_stream: Stream): ExtractionCoverage {
+    return localAppleStoreCoverage;
   }
 
   protected override async *observe({

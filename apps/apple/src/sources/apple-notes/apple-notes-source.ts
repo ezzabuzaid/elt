@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
+  ExtractionCoverage,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -13,6 +14,7 @@ import {
   notesContainer,
 } from '../../platform/macos/note-store.ts';
 import { launchNotesHidden } from '../../platform/macos/notes-app.ts';
+import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import { AccountsStream } from './accounts-stream.ts';
 import type { NotesReader } from './apple-notes-stream.ts';
 import { AttachmentsStream } from './attachments-stream.ts';
@@ -74,6 +76,10 @@ export class AppleNotesSource extends Source<NotesScan> {
 
   protected override async open(): Promise<NotesScan> {
     return new NotesScan(await NoteStore.open(this.path, requiredColumns));
+  }
+
+  override coverage(_stream: Stream): ExtractionCoverage {
+    return localAppleStoreCoverage;
   }
 
   protected override async *observe({

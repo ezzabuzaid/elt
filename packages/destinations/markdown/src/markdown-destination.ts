@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { CopyConfiguration, Load } from 'elt';
 import { Destination } from 'elt';
 import { MarkdownFile } from './markdown-file.ts';
@@ -31,7 +31,7 @@ export class MarkdownDestination extends Destination<
   }
 
   override location(target: MarkdownFile | MarkdownFolder): string {
-    return target.name;
+    return join(this.path, target.name);
   }
 
   override async load(): Promise<Load<MarkdownFile | MarkdownFolder>> {

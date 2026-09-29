@@ -15,6 +15,7 @@ import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { gzipSync } from 'node:zlib';
 import {
+  Connection,
   Copy,
   Pipeline,
   PipelineError,
@@ -330,35 +331,39 @@ const notesPipeline = (source: AppleNotesSource, directory: string) => {
   return {
     destination,
     pipeline: new Pipeline({
-      source,
-      destination,
-      checkpoints: new SQLiteCheckpointStore({
-        path: join(directory, 'notes-state.sqlite'),
-      }),
-      steps: [
-        source.accounts,
-        source.folders,
-        source.notes,
-        source.inlineAttachments,
-        source.attachments,
-      ].map(
-        (stream) =>
-          new Copy(
-            stream,
-            stream.supportsFileTransfer
-              ? destination.table(stream.name, (columns) => [
-                  ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                  columns.blob('bytes').from(stream.file),
-                ])
-              : destination.table(stream.name),
-            {
-              id: stream.name,
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-              primaryKey: [...stream.primaryKey],
-            },
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(directory, 'notes-state.sqlite'),
+          }),
+          steps: [
+            source.accounts,
+            source.folders,
+            source.notes,
+            source.inlineAttachments,
+            source.attachments,
+          ].map(
+            (stream) =>
+              new Copy(
+                stream,
+                stream.supportsFileTransfer
+                  ? destination.table(stream.name, (columns) => [
+                      ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                      columns.blob('bytes').from(stream.file),
+                    ])
+                  : destination.table(stream.name),
+                {
+                  id: stream.name,
+                  syncMode: 'incremental',
+                  destinationSyncMode: 'append_dedup',
+                },
+              ),
           ),
-      ),
+        }),
+      ],
     }),
   };
 };
@@ -717,17 +722,21 @@ test('a Notes watch keeps Notes running and loads each commit while Notes keeps 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [
-      new Copy(source.notes, destination.table('notes'), {
-        id: 'notes',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.notes, destination.table('notes'), {
+            id: 'notes',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   });
@@ -736,8 +745,10 @@ test('a Notes watch keeps Notes running and loads each commit while Notes keeps 
   const controller = new AbortController();
   const batches: number[] = [];
 
-  for await (const results of pipeline.watch({ signal: controller.signal })) {
-    batches.push(results[0]?.count ?? -1);
+  for await (const { outcomes } of pipeline.watch({
+    signal: controller.signal,
+  })) {
+    batches.push(outcomes[0]?.count ?? -1);
     if (batches.length === 1)
       notes.exec(
         "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
@@ -792,9 +803,14 @@ test('Calendar extracts every scalar stream into SQLite and Markdown', {
     (stream) => new Copy(stream, sqlite.table(stream.name)),
   );
   const result = await new Pipeline({
-    source,
-    destination: sqlite,
-    steps: copies,
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        steps: copies,
+      }),
+    ],
   }).run();
 
   assert.deepEqual(
@@ -841,10 +857,18 @@ test('Calendar extracts every scalar stream into SQLite and Markdown', {
     path: join(scratch.path, 'markdown'),
   });
   await new Pipeline({
-    source,
-    destination: markdown,
-    steps: [
-      new Copy(source.events, markdown.file('events.md', { title: 'name' })),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: markdown,
+        steps: [
+          new Copy(
+            source.events,
+            markdown.file('events.md', { title: 'name' }),
+          ),
+        ],
+      }),
     ],
   }).run();
   const document = await readFile(join(markdown.path, 'events.md'), 'utf8');
@@ -898,7 +922,6 @@ test('Calendar validates its request range and preflights without OSA', {
   const snapshotCopy = {
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['id'],
     id: 'events',
   } as const;
   for (const [options, message] of [
@@ -906,26 +929,32 @@ test('Calendar validates its request range and preflights without OSA', {
       { destinationSyncMode: 'overwrite_dedup' },
       /cannot use overwrite loading/,
     ],
-    [
-      { destinationSyncMode: 'append', primaryKey: undefined },
-      /require append_dedup/,
-    ],
+    [{ destinationSyncMode: 'append' }, /require append_dedup/],
     [{ cursorField: 'modifiedAt' }, /defines its own cursor; omit cursorField/],
     [{ dedupPolicy: 'cursor_newer' }, /no cursor field to compare/],
-    [{ primaryKey: ['eventId'] }, /select primaryKey \["id"\]/],
+    [
+      { primaryKey: ['eventId'] },
+      /defines its own primary key; omit primaryKey/,
+    ],
   ] as const)
     await assert.rejects(
-      new Pipeline({
-        source,
-        destination: sqlite,
-        checkpoints,
-        steps: [
-          new Copy(source.events, sqlite.table('events'), {
-            ...snapshotCopy,
-            ...options,
-          } as ConstructorParameters<typeof Copy>[2]),
-        ],
-      }).run(),
+      async () =>
+        new Pipeline({
+          connections: [
+            new Connection({
+              name: 'test',
+              source,
+              destination: sqlite,
+              checkpoints,
+              steps: [
+                new Copy(source.events, sqlite.table('events'), {
+                  ...snapshotCopy,
+                  ...options,
+                } as ConstructorParameters<typeof Copy>[2]),
+              ],
+            }),
+          ],
+        }).run(),
       message,
     );
   const forged = new Stream({
@@ -936,9 +965,14 @@ test('Calendar validates its request range and preflights without OSA', {
   });
   await assert.rejects(
     new Pipeline({
-      source,
-      destination: sqlite,
-      steps: [new Copy(forged, sqlite.table('forged-events'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: sqlite,
+          steps: [new Copy(forged, sqlite.table('forged-events'))],
+        }),
+      ],
     }).run(),
     /discovered catalog/,
   );
@@ -965,9 +999,14 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
   });
   const run = () =>
     new Pipeline({
-      source,
-      destination: markdown,
-      steps: [new Copy(source.events, markdown.file('events.md'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: markdown,
+          steps: [new Copy(source.events, markdown.file('events.md'))],
+        }),
+      ],
     }).run();
 
   await run();
@@ -999,9 +1038,14 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
   });
   const sqliteRun = () =>
     new Pipeline({
-      source,
-      destination: sqlite,
-      steps: [new Copy(source.events, sqlite.table('events'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: sqlite,
+          steps: [new Copy(source.events, sqlite.table('events'))],
+        }),
+      ],
     }).run();
   response = async () => JSON.stringify([calendarEvents(source)]);
   await sqliteRun();
@@ -1088,31 +1132,40 @@ test('Calendar snapshot incremental reconciles added, changed, moved and removed
       id,
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      primaryKey: ['id'],
     }) as const;
   const toSQLite = new Pipeline({
-    source,
-    destination: sqlite,
-    checkpoints,
-    steps: [
-      new Copy(source.events, sqlite.table('events'), snapshot('events')),
-      new Copy(
-        source.attendees,
-        sqlite.table('attendees'),
-        snapshot('attendees'),
-      ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        checkpoints,
+        steps: [
+          new Copy(source.events, sqlite.table('events'), snapshot('events')),
+          new Copy(
+            source.attendees,
+            sqlite.table('attendees'),
+            snapshot('attendees'),
+          ),
+        ],
+      }),
     ],
   });
   const toMarkdown = new Pipeline({
-    source,
-    destination: markdown,
-    checkpoints,
-    steps: [
-      new Copy(
-        source.events,
-        markdown.folder('events', { title: 'name' }),
-        snapshot('events-md'),
-      ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: markdown,
+        checkpoints,
+        steps: [
+          new Copy(
+            source.events,
+            markdown.folder('events', { title: 'name' }),
+            snapshot('events-md'),
+          ),
+        ],
+      }),
     ],
   });
   const run = async () =>
@@ -1205,13 +1258,17 @@ test('Calendar snapshots span every extraction window without spurious deletions
     id: 'events',
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['id'],
   });
   const pipeline = new Pipeline({
-    source,
-    destination: sqlite,
-    checkpoints: new SQLiteCheckpointStore({ path: statePath }),
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+        steps: [copy],
+      }),
+    ],
   });
 
   assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
@@ -1251,9 +1308,14 @@ test('Calendar deduplicates an event returned by adjacent extraction windows', {
   });
   const copy = new Copy(source.events, sqlite.table('events'));
   const result = await new Pipeline({
-    source,
-    destination: sqlite,
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        steps: [copy],
+      }),
+    ],
   }).run();
   assert.deepEqual(
     result.map(({ count }) => count),
@@ -1311,11 +1373,16 @@ test('Calendar continues empty ICS pages and rejects a stalled cursor', {
   });
   const run = () =>
     new Pipeline({
-      source,
-      destination: sqlite,
-      steps: [source.icsComponents, source.icsProperties].map(
-        (stream) => new Copy(stream, sqlite.table(stream.name)),
-      ),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: sqlite,
+          steps: [source.icsComponents, source.icsProperties].map(
+            (stream) => new Copy(stream, sqlite.table(stream.name)),
+          ),
+        }),
+      ],
     }).run();
   await run();
   assert.deepEqual(calls, [
@@ -1834,17 +1901,29 @@ test('Reminders EventKit projects native records through every SQLite and Markdo
     path: join(scratch.path, 'markdown'),
   });
   await new Pipeline({
-    source,
-    destination: sqlite,
-    steps: streams.map((stream) => new Copy(stream, sqlite.table(stream.name))),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        steps: streams.map(
+          (stream) => new Copy(stream, sqlite.table(stream.name)),
+        ),
+      }),
+    ],
   }).run();
   await new Pipeline({
-    source,
-    destination: markdown,
-    steps: streams.map(
-      (stream) =>
-        new Copy(stream, markdown.file(`${stream.name.toLowerCase()}.md`)),
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: markdown,
+        steps: streams.map(
+          (stream) =>
+            new Copy(stream, markdown.file(`${stream.name.toLowerCase()}.md`)),
+        ),
+      }),
+    ],
   }).run();
   using database = new DatabaseSync(sqlite.path, { readOnly: true });
   for (const stream of streams) {
@@ -2044,9 +2123,14 @@ test('Reminders rejects unsupported selections and preserves targets on invalid 
   assert.equal(execute.mock.callCount(), 0);
   const run = () =>
     new Pipeline({
-      source,
-      destination,
-      steps: [new Copy(source.reminders, target)],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(source.reminders, target)],
+        }),
+      ],
     }).run();
   await run();
   const path = join(destination.path, 'reminders.md');
@@ -2549,20 +2633,24 @@ test('an unchanged Calendar item writes nothing when the export lists its except
   ];
   const run = () =>
     new Pipeline({
-      source,
-      destination: sqlite,
-      checkpoints: new SQLiteCheckpointStore({
-        path: join(scratch.path, 'state.sqlite'),
-      }),
-      steps: streams.map(
-        (stream) =>
-          new Copy(stream, sqlite.table(stream.name), {
-            id: stream.name,
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-            primaryKey: ['id'],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: sqlite,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
           }),
-      ),
+          steps: streams.map(
+            (stream) =>
+              new Copy(stream, sqlite.table(stream.name), {
+                id: stream.name,
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              }),
+          ),
+        }),
+      ],
     }).run();
 
   const first = await run();
@@ -2609,14 +2697,28 @@ test('Calendar ICS streams load components, raw properties and parameters with e
   ];
 
   const counts = await new Pipeline({
-    source,
-    destination: sqlite,
-    steps: streams.map((stream) => new Copy(stream, sqlite.table(stream.name))),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        steps: streams.map(
+          (stream) => new Copy(stream, sqlite.table(stream.name)),
+        ),
+      }),
+    ],
   }).run();
   await new Pipeline({
-    source,
-    destination: markdown,
-    steps: [new Copy(source.icsProperties, markdown.file('ics-properties.md'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: markdown,
+        steps: [
+          new Copy(source.icsProperties, markdown.file('ics-properties.md')),
+        ],
+      }),
+    ],
   }).run();
 
   assert.deepEqual(
@@ -2815,20 +2917,24 @@ test('Calendar ICS snapshots delete a removed property with its parameters', {
     path: join(scratch.path, 'ics.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination: sqlite,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [source.icsProperties, source.icsParameters].map(
-      (stream) =>
-        new Copy(stream, sqlite.table(stream.name), {
-          id: stream.name,
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          primaryKey: ['id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
         }),
-    ),
+        steps: [source.icsProperties, source.icsParameters].map(
+          (stream) =>
+            new Copy(stream, sqlite.table(stream.name), {
+              id: stream.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+        ),
+      }),
+    ],
   });
 
   await pipeline.run();
@@ -2869,15 +2975,19 @@ test('Reminders snapshot incremental writes only changed reminders and deletes r
     id: 'reminders',
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['id'],
   });
   const pipeline = new Pipeline({
-    source,
-    destination: sqlite,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 's.sqlite'),
-    }),
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 's.sqlite'),
+        }),
+        steps: [copy],
+      }),
+    ],
   });
 
   assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
@@ -2941,7 +3051,16 @@ test('Calendar attachment files come from the fetcher, inline data, or stay null
   );
 
   assert.deepEqual(
-    await new Pipeline({ source, destination: sqlite, steps: [copy] }).run(),
+    await new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: sqlite,
+          steps: [copy],
+        }),
+      ],
+    }).run(),
     [{ copy, count: 3, deleted: 0 }],
   );
   // Inline content never reaches the fetcher.
@@ -2996,7 +3115,16 @@ test('Calendar attachment files need a fetcher, but attachment metadata does not
     path: join(scratch.path, 'a.sqlite'),
   });
   const run = (copy: Copy<SQLiteTable>) =>
-    new Pipeline({ source, destination: sqlite, steps: [copy] }).run();
+    new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: sqlite,
+          steps: [copy],
+        }),
+      ],
+    }).run();
 
   const metadata = new Copy(source.icsAttachments, sqlite.table('metadata'));
   assert.deepEqual(await run(metadata), [
@@ -3048,16 +3176,20 @@ test('Calendar incremental attachment copies fetch only new attachments and dele
       id: 'attachments',
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      primaryKey: ['id'],
     },
   );
   const pipeline = new Pipeline({
-    source,
-    destination: sqlite,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 's.sqlite'),
-    }),
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 's.sqlite'),
+        }),
+        steps: [copy],
+      }),
+    ],
   });
 
   assert.deepEqual(await pipeline.run(), [{ copy, count: 3, deleted: 0 }]);
@@ -3375,9 +3507,14 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   );
 
   const results = await new Pipeline({
-    source,
-    destination,
-    steps: [...plain, attachments],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [...plain, attachments],
+      }),
+    ],
   }).run();
 
   assert.deepEqual(
@@ -3579,15 +3716,19 @@ test('Messages loads edits and unsends incrementally and deletes removed message
     id: 'messages',
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['guid'],
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [copy],
+      }),
+    ],
   });
 
   await pipeline.run();
@@ -3818,17 +3959,21 @@ test('a Messages watch loads each commit Messages makes while it keeps chat.db o
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [
-      new Copy(source.messages, destination.table('messages'), {
-        id: 'messages',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['guid'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.messages, destination.table('messages'), {
+            id: 'messages',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   });
@@ -3837,8 +3982,10 @@ test('a Messages watch loads each commit Messages makes while it keeps chat.db o
   const controller = new AbortController();
   const batches: number[] = [];
 
-  for await (const results of pipeline.watch({ signal: controller.signal })) {
-    batches.push(results[0]?.count ?? -1);
+  for await (const { outcomes } of pipeline.watch({
+    signal: controller.signal,
+  })) {
+    batches.push(outcomes[0]?.count ?? -1);
     if (batches.length === 1)
       messages.exec(
         "INSERT INTO message (guid, text) VALUES ('m-new', 'arrived')",
@@ -3847,4 +3994,29 @@ test('a Messages watch loads each commit Messages makes while it keeps chat.db o
   }
 
   assert.deepEqual(batches, [6, 1]);
+});
+
+test('Calendar declares its event window as the coverage of event streams, and none for its listings', async () => {
+  const startAt = '2020-01-01T00:00:00.000Z';
+  const endAt = '2021-01-01T00:00:00.000Z';
+  const calendar = new AppleCalendarSource({ startAt, endAt });
+  const notes = new AppleNotesSource();
+
+  const { streams } = await calendar.discover();
+  const [note] = (await notes.discover()).streams;
+
+  for (const stream of streams)
+    assert.deepEqual(
+      calendar.coverage(stream).selection,
+      stream === calendar.accounts || stream === calendar.calendars
+        ? {}
+        : { startAt, endAt },
+      stream.name,
+    );
+  assert.match(
+    calendar.coverage(calendar.events).description,
+    /\[startAt, endAt\)/,
+  );
+  assert.ok(note);
+  assert.match(notes.coverage(note).description, /local Apple store/);
 });

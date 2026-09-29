@@ -31,7 +31,7 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
   }
 
   override location(target: SQLiteTable): string {
-    return target.location;
+    return `${this.path}#${target.location}`;
   }
 
   // The writer lock spans all commits; each stream still publishes separately.

@@ -4,8 +4,10 @@ import {
   Catalog,
   type CheckpointSession,
   CheckpointStore,
+  Connection,
   Copy,
   type CopyConfiguration,
+  type DeclaredCopy,
   Destination,
   DocumentParser,
   FileRead,
@@ -17,7 +19,9 @@ import {
   type Partition,
   Pipeline,
   PipelineError,
+  passStatus,
   type ReadMessage,
+  type RecordedPass,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -25,6 +29,7 @@ import {
   type StoredCheckpoint,
   Stream,
   StreamStatus,
+  SyncHistory,
   Target,
   validateRecords,
   type WriteOperation,
@@ -175,6 +180,10 @@ const checkpoint = (stream: string, at: number): SourceMessage => ({
 });
 
 class ContextSource extends Source<ReadContext> {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
   readonly identity = 'context-test';
   readonly opened: number[] = [];
   readonly closed: number[] = [];
@@ -332,11 +341,16 @@ const contextPipeline = (
   destination = new DrainingDestination(),
 ) =>
   new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(source.left, new NamedTarget('left')),
-      new Copy(source.right, new NamedTarget('right')),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.left, new NamedTarget('left')),
+          new Copy(source.right, new NamedTarget('right')),
+        ],
+      }),
     ],
   });
 
@@ -466,6 +480,10 @@ class MemoryCheckpoints extends CheckpointStore {
 // Reads one record per site, then a checkpoint naming the run; sites listed
 // in down fail after emitting their record.
 class Sites extends Source {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
   readonly identity = 'sites';
   readonly down = new Set<string>();
   readonly received: [string, unknown][] = [];
@@ -513,14 +531,19 @@ test('each checkpoint commits its partition, and a failing partition keeps its l
   const destination = new DrainingDestination();
   const checkpoints = new MemoryCheckpoints(destination.log);
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [
-      new Copy(source.pages, new NamedTarget('pages'), {
-        id: 'pages',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(source.pages, new NamedTarget('pages'), {
+            id: 'pages',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append',
+          }),
+        ],
       }),
     ],
   });
@@ -576,9 +599,14 @@ test('a full refresh commits once, and a failing partition commits nothing', asy
   const source = new Sites();
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(source.pages, new NamedTarget('pages'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [new Copy(source.pages, new NamedTarget('pages'))],
+      }),
+    ],
   });
 
   await pipeline.run();
@@ -624,12 +652,17 @@ test('an empty full refresh still commits, so an overwrite clears its target', a
   const source = new ContextSource({ left: [] });
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(source.left, new NamedTarget('left'), {
-        syncMode: 'full_refresh',
-        destinationSyncMode: 'overwrite',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.left, new NamedTarget('left'), {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'overwrite',
+          }),
+        ],
       }),
     ],
   });
@@ -648,11 +681,16 @@ test('a read context that does not open fails every copy with its error, and not
   const source = new LockedSource(refusal);
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(source.left, new NamedTarget('left')),
-      new Copy(source.right, new NamedTarget('right')),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.left, new NamedTarget('left')),
+          new Copy(source.right, new NamedTarget('right')),
+        ],
+      }),
     ],
   });
 
@@ -678,21 +716,26 @@ test('a read context that does not open fails every copy with its error, and not
   assert.deepEqual(destination.log, ['open', 'open', 'close', 'close']);
 });
 
-test('a pipeline that copies one stream twice is refused before anything is prepared or read', async () => {
+test('a connection that copies one stream twice is refused before anything is prepared or read', async () => {
   const source = new ContextSource();
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(source.left, new NamedTarget('left')),
-      new Copy(source.left, new NamedTarget('left-again')),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(source.left, new NamedTarget('left')),
+          new Copy(source.left, new NamedTarget('left-again')),
+        ],
+      }),
     ],
   });
 
   await assert.rejects(pipeline.run(), {
     name: 'TypeError',
-    message: 'A pipeline copies each stream once',
+    message: 'Connection test copies each stream once',
   });
 
   assert.deepEqual(source.opened, []);
@@ -705,17 +748,22 @@ const incrementalPipeline = (
   checkpoints: MemoryCheckpoints,
 ) =>
   new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [source.left, source.right].map(
-      (stream) =>
-        new Copy(stream, new NamedTarget(stream.name), {
-          id: stream.name,
-          syncMode: 'incremental',
-          destinationSyncMode: 'append',
-        }),
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [source.left, source.right].map(
+          (stream) =>
+            new Copy(stream, new NamedTarget(stream.name), {
+              id: stream.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append',
+            }),
+        ),
+      }),
+    ],
   });
 
 test('a stage that fails to commit fails only its stream: its later messages are ignored while the sibling commits and saves its checkpoint', async () => {
@@ -859,11 +907,16 @@ test("an extract that emits another stream's message fails only its own stream, 
   });
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [source.left, source.middle, source.right].map(
-      (stream) => new Copy(stream, new NamedTarget(stream.name)),
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [source.left, source.middle, source.right].map(
+          (stream) => new Copy(stream, new NamedTarget(stream.name)),
+        ),
+      }),
+    ],
   });
 
   const error = await pipeline.run().then(
@@ -916,11 +969,16 @@ test('a read that breaks fails every stream it had not ended, while a stream tha
   const source = new BreakingSource();
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [source.left, source.middle, source.right].map(
-      (stream) => new Copy(stream, new NamedTarget(stream.name)),
-    ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [source.left, source.middle, source.right].map(
+          (stream) => new Copy(stream, new NamedTarget(stream.name)),
+        ),
+      }),
+    ],
   });
 
   const error = await pipeline.run().then(
@@ -988,5 +1046,218 @@ test('a connector that reports its own stream status fails that stream, not its 
     'apply {"id":"right-1"}',
     'commit',
     'close',
+  ]);
+});
+
+// Keeps each pass as it is recorded, so tests see what readers of sync history would.
+class MemoryHistory extends SyncHistory<NamedTarget> {
+  readonly log: string[] = [];
+  readonly #finished = new Map<string, PromiseWithResolvers<void>>();
+
+  finished(connection: string): Promise<void> {
+    return this.#pass(connection).promise;
+  }
+
+  override async begin(
+    connection: Connection<NamedTarget>,
+    copies: readonly DeclaredCopy<NamedTarget>[],
+  ): Promise<RecordedPass<NamedTarget>> {
+    this.log.push(
+      `begin ${connection.name} ${copies.map(({ copy, coverage }) => `${copy.from.name}:${coverage.description}`).join(',')}`,
+    );
+    return {
+      finish: async (outcomes) => {
+        this.log.push(`finish ${connection.name} ${passStatus(outcomes)}`);
+        this.#pass(connection.name).resolve();
+      },
+      fail: async (error) => {
+        this.log.push(
+          `fail ${connection.name} ${error instanceof Error ? error.message : String(error)}`,
+        );
+      },
+    };
+  }
+
+  #pass(connection: string): PromiseWithResolvers<void> {
+    let pass = this.#finished.get(connection);
+    if (pass === undefined) {
+      pass = Promise.withResolvers<void>();
+      this.#finished.set(connection, pass);
+    }
+    return pass;
+  }
+}
+
+const leftOnly = (name: string, source: ContextSource) =>
+  new Connection({
+    name,
+    source,
+    destination: new DrainingDestination(),
+    steps: [new Copy(source.left, new NamedTarget(`${name}-left`))],
+  });
+
+test('one connection failing leaves the others loaded, and every pass is recorded', async () => {
+  const history = new MemoryHistory();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      leftOnly('steady', new ContextSource()),
+      leftOnly(
+        'broken',
+        new ContextSource({ left: [new Error('upstream down')] }),
+      ),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('the broken connection must fail the run'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError);
+  assert.deepEqual(
+    error.results.map(({ copy, count, failures }) => [
+      copy.to.name,
+      count,
+      failures.length,
+    ]),
+    [
+      ['steady-left', 1, 0],
+      ['broken-left', 0, 1],
+    ],
+  );
+  assert.match(error.message, /left: upstream down/);
+  assert.deepEqual(history.log.toSorted(), [
+    'begin broken left:test',
+    'begin steady left:test',
+    'finish broken failed',
+    'finish steady succeeded',
+  ]);
+});
+
+test("connections read side by side, so one connection's pass never waits for another's", async () => {
+  const history = new MemoryHistory();
+  class Slow extends ContextSource {
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+      partition: null,
+      context: ReadContext,
+    ) {
+      await Promise.race([
+        history.finished('fast'),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('slow held back fast')), 2000),
+        ),
+      ]);
+      yield* super.extract(configuration, state, partition, context);
+    }
+  }
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      leftOnly('slow', new Slow()),
+      leftOnly('fast', new ContextSource()),
+    ],
+  });
+
+  const results = await pipeline.run();
+
+  assert.deepEqual(
+    results.map(({ copy, count }) => [copy.to.name, count]),
+    [
+      ['slow-left', 1],
+      ['fast-left', 1],
+    ],
+  );
+  assert.deepEqual(history.log.slice(-2), [
+    'finish fast succeeded',
+    'finish slow succeeded',
+  ]);
+});
+
+test('a connection whose watcher fails stops alone and is recorded; the others keep watching', async () => {
+  const history = new MemoryHistory();
+  class Lost extends ContextSource {
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+      throw new Error('watcher lost');
+    }
+  }
+  const steady = new ContextSource();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'steady',
+        source: steady,
+        destination: new DrainingDestination(),
+        steps: [
+          new Copy(steady.left, new NamedTarget('steady-left')),
+          new Copy(steady.right, new NamedTarget('steady-right')),
+        ],
+      }),
+      leftOnly('lost', new Lost()),
+    ],
+  });
+  const passes: string[] = [];
+
+  const error = await (async () => {
+    for await (const { connection, outcomes } of pipeline.watch({
+      signal: AbortSignal.timeout(5000),
+    }))
+      passes.push(
+        `${connection.name}:${outcomes.map(({ copy }) => copy.from.name).join(',')}`,
+      );
+  })().then(
+    () => assert.fail('the lost watcher must be reported'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof AggregateError);
+  assert.equal(error.message, 'Connection lost: watcher lost');
+  assert.deepEqual(passes.toSorted(), [
+    'lost:left',
+    'steady:left,right',
+    'steady:right',
+  ]);
+  assert.ok(history.log.includes('fail lost watcher lost'));
+  assert.equal(
+    history.log.filter((entry) => entry === 'finish steady succeeded').length,
+    2,
+  );
+});
+
+test('an invalid connection stops the whole pipeline before any read, and is recorded against that connection', async () => {
+  const history = new MemoryHistory();
+  const valid = new ContextSource();
+  const invalid = new ContextSource();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      leftOnly('valid', valid),
+      new Connection({
+        name: 'invalid',
+        source: invalid,
+        destination: new DrainingDestination(),
+        steps: [
+          new Copy(invalid.left, new NamedTarget('invalid-left'), {
+            syncMode: 'incremental',
+            destinationSyncMode: 'append',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  await assert.rejects(pipeline.run(), {
+    message: 'Incremental copies require a stable id and checkpoint store',
+  });
+
+  assert.deepEqual(valid.opened, []);
+  assert.deepEqual(invalid.opened, []);
+  assert.deepEqual(history.log, [
+    'begin invalid left:test',
+    'fail invalid Incremental copies require a stable id and checkpoint store',
   ]);
 });

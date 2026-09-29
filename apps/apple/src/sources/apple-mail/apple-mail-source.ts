@@ -3,6 +3,7 @@ import { copyFile, rm } from 'node:fs/promises';
 import { extname, join, relative } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setInterval } from 'node:timers/promises';
+import type { ExtractionCoverage } from 'elt';
 import {
   Catalog,
   type CopyConfiguration,
@@ -26,6 +27,7 @@ import {
 } from '../../platform/macos/mail-store.ts';
 import osa from '../../platform/macos/osa.ts';
 import type { PlistValue } from '../../platform/macos/plist.ts';
+import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import { mailStream, mailTables, tableStreams } from './mail-tables.ts';
 
 const text = { type: 'string' } as const;
@@ -573,6 +575,10 @@ export class AppleMailSource extends Source<MailScan> {
       yield 'type' in message || configuration.fileReads.length === 0
         ? message
         : { ...message, file };
+  }
+
+  override coverage(_stream: Stream): ExtractionCoverage {
+    return localAppleStoreCoverage;
   }
 
   protected override async *observe({

@@ -1,16 +1,24 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
-import { Pipeline } from 'elt';
+import { Connection, Pipeline } from 'elt';
+import {
+  PostgresCheckpointStore,
+  PostgresDestination,
+  PostgresSyncHistory,
+} from 'elt-postgresql';
 import postgres from 'postgres';
 import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
 import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
-import { RAW, scratchWarehouse, testServer } from './test-warehouse.ts';
+import { RAW, scratchWarehouse } from './test-warehouse.ts';
 import { installSearchConsoleMarts } from './warehouse/search-console-marts.ts';
-import { installWarehouse } from './warehouse/warehouse.ts';
 
 const NOW = () => new Date('2026-09-22T00:00:00.000Z');
+const contract = new URL(
+  '../../../infra/init/marts/contract.sql',
+  import.meta.url,
+);
 
 type Row = {
   keys: string[];
@@ -27,25 +35,34 @@ type Google = {
 };
 
 /**
- * A fresh database and reader role, loaded through the real pipeline from a
- * fake Search Console, with marts installed as the app installs them.
+ * A fresh database provisioned as infra/init provisions the warehouse: the
+ * warehouse role owns it and marts/contract.sql decides what agent_reader
+ * sees. It is loaded as the warehouse role through the real pipeline from a
+ * fake Search Console, and its marts are installed as the app installs them.
  */
 async function warehouse(siteUrls: string[], google: Google) {
   const base = await scratchWarehouse();
-  const reader = `agent_${randomUUID().replaceAll('-', '')}`;
-  // The same role settings infra/init/01-roles.sh gives agent_reader.
+  const as = (username: string, password: string) => {
+    const url = new URL(base.url);
+    url.username = username;
+    url.password = password;
+    return url.href;
+  };
   await base.sql.unsafe(
-    `CREATE ROLE "${reader}" LOGIN NOINHERIT PASSWORD 'agent'`,
+    `ALTER DATABASE "${new URL(base.url).pathname.slice(1)}" OWNER TO warehouse`,
   );
-  await base.sql.unsafe(
-    `ALTER ROLE "${reader}" SET default_transaction_read_only = on`,
-  );
-  await base.sql.unsafe(`ALTER ROLE "${reader}" SET search_path = marts`);
-  const agentUrl = new URL(base.url);
-  agentUrl.username = reader;
-  agentUrl.password = 'agent';
-  const { sql, destination, checkpoints } = base;
-  const agent = postgres(agentUrl.href, { max: 1, onnotice: () => {} });
+  await base.sql.unsafe(await readFile(contract, 'utf8'));
+  const loaderUrl = as('warehouse', 'warehouse');
+  const loader = postgres(loaderUrl, { max: 1, onnotice: () => {} });
+  const agent = postgres(as('agent_reader', 'agent'), {
+    max: 1,
+    onnotice: () => {},
+  });
+  const destination = new PostgresDestination({ url: loaderUrl, schema: RAW });
+  const checkpoints = new PostgresCheckpointStore({
+    url: loaderUrl,
+    schema: RAW,
+  });
   const requester = {
     async request(options: { url: string; data?: Record<string, unknown> }) {
       const path = new URL(options.url).pathname;
@@ -83,9 +100,7 @@ async function warehouse(siteUrls: string[], google: Google) {
     },
   };
   return {
-    sql,
     agent,
-    reader,
     async load() {
       const source = new SearchConsoleSource({
         requester,
@@ -93,22 +108,28 @@ async function warehouse(siteUrls: string[], google: Google) {
         now: NOW,
         searchTypes: ['WEB', 'DISCOVER'],
       });
+      const history = new PostgresSyncHistory({ url: loaderUrl });
+      await history.install();
       await new Pipeline({
-        source,
-        destination,
-        checkpoints,
-        steps: searchConsoleCopies(source, (table) => destination.table(table)),
+        history,
+        connections: [
+          new Connection({
+            name: 'google-search-console',
+            source,
+            destination,
+            checkpoints,
+            steps: searchConsoleCopies(source, (table) =>
+              destination.table(table),
+            ),
+          }),
+        ],
       }).run();
-      await installWarehouse(sql, { reader });
-      await installSearchConsoleMarts(sql, { raw: RAW, reader });
+      await installSearchConsoleMarts(loader, { raw: RAW });
     },
     async [Symbol.asyncDispose]() {
       await agent.end();
+      await loader.end();
       await base[Symbol.asyncDispose]();
-      // A role outlives the database, so it goes once its grants are gone.
-      const admin = postgres(testServer, { max: 1, onnotice: () => {} });
-      await admin.unsafe(`DROP ROLE "${reader}"`);
-      await admin.end();
     },
   };
 }
@@ -312,7 +333,20 @@ test('everything the agent can see explains itself', async () => {
     SELECT page_path FROM search_console_pages_daily ORDER BY page_path`;
 
   assert.deepEqual([...undescribed], []);
-  // Nothing to call: the agent's server allows only built-in functions.
+  const [sync] =
+    await store.agent`SELECT status, last_successful_sync_at FROM sync_status`;
+  assert.equal(sync?.status, 'succeeded');
+  assert.ok(sync?.last_successful_sync_at instanceof Date);
+  const [scope] =
+    await store.agent`SELECT selection, status FROM extraction_coverage WHERE stream = 'searchAnalyticsCountries'`;
+  assert.deepEqual(scope?.selection, {
+    siteUrls: [SITE],
+    searchTypes: ['WEB'],
+    breakdownMonths: 3,
+    timeZone: 'America/Los_Angeles',
+  });
+  assert.equal(scope?.status, 'succeeded');
+  // Every reader relation and column is described; internal functions are omitted.
   assert.deepEqual(
     kinds.map((found) => found.kind),
     ['column', 'table', 'view'],

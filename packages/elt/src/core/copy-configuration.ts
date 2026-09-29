@@ -53,20 +53,29 @@ export class CopyConfiguration {
       throw new TypeError('Both syncMode and destinationSyncMode are required');
     if (primaryKey !== undefined && !Array.isArray(primaryKey))
       throw new TypeError('primaryKey must be an array of field names');
+    // As Airbyte's source_defined_primary_key, a key the stream declares is
+    // the key; a copy selects one only for a stream without.
+    if (primaryKey !== undefined && from.primaryKey.length > 0)
+      throw new TypeError(
+        `Stream ${from.name} defines its own primary key; omit primaryKey`,
+      );
+    const deduplicating =
+      destinationSyncMode === 'append_dedup' ||
+      destinationSyncMode === 'overwrite_dedup';
     this.stream = from;
     this.fileReads = Object.freeze([...fileReads]);
     this.syncMode = syncMode;
     this.destinationSyncMode = destinationSyncMode;
     this.cursorField = cursorField;
-    this.primaryKey =
-      primaryKey === undefined ? undefined : Object.freeze([...primaryKey]);
+    const key =
+      deduplicating && from.primaryKey.length > 0
+        ? from.primaryKey
+        : primaryKey;
+    this.primaryKey = key === undefined ? undefined : Object.freeze([...key]);
     // A source-defined cursor leaves no field to compare, so the newest extraction wins.
-    this.dedupPolicy =
-      destinationSyncMode === 'append_dedup' ||
-      destinationSyncMode === 'overwrite_dedup'
-        ? (dedupPolicy ??
-          (from.sourceDefinedCursor ? 'replace' : 'cursor_newer'))
-        : dedupPolicy;
+    this.dedupPolicy = deduplicating
+      ? (dedupPolicy ?? (from.sourceDefinedCursor ? 'replace' : 'cursor_newer'))
+      : dedupPolicy;
     Object.freeze(this);
   }
 
@@ -115,22 +124,14 @@ export class CopyConfiguration {
       (typeof cursorField !== 'string' || !cursorField)
     )
       throw new TypeError('Incremental extraction requires cursorField');
-    if (emitsDeletes && syncMode === 'incremental') {
-      if (destinationSyncMode !== 'append_dedup')
-        throw new TypeError(
-          `Stream ${this.stream.name} emits deletions; incremental copies require append_dedup`,
-        );
-      if (
-        primaryKey === undefined ||
-        primaryKey.length !== this.stream.primaryKey.length ||
-        primaryKey.some(
-          (field, index) => field !== this.stream.primaryKey[index],
-        )
-      )
-        throw new TypeError(
-          `Stream ${this.stream.name} emits deletions by its primary key; select primaryKey ${JSON.stringify(this.stream.primaryKey)}`,
-        );
-    }
+    if (
+      emitsDeletes &&
+      syncMode === 'incremental' &&
+      destinationSyncMode !== 'append_dedup'
+    )
+      throw new TypeError(
+        `Stream ${this.stream.name} emits deletions; incremental copies require append_dedup`,
+      );
     if (
       dedupPolicy !== undefined &&
       dedupPolicy !== 'cursor_newer' &&
@@ -142,14 +143,8 @@ export class CopyConfiguration {
       destinationSyncMode === 'overwrite_dedup'
     ) {
       if (primaryKey === undefined)
-        throw new TypeError('Deduplication requires an explicit primaryKey');
-      const { partitionKey } = this.stream;
-      if (
-        partitionKey !== undefined &&
-        !partitionKey.every((field) => primaryKey.includes(field))
-      )
         throw new TypeError(
-          `Stream ${this.stream.name} is partitioned by ${JSON.stringify(partitionKey)}; select a primaryKey that includes them`,
+          `Stream ${this.stream.name} declares no primary key; select primaryKey`,
         );
       if (dedupPolicy === 'cursor_newer' && cursorField === undefined)
         throw new TypeError(

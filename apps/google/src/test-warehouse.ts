@@ -22,7 +22,7 @@ export async function scratchWarehouse() {
   } catch (cause) {
     await admin.end();
     throw new Error(
-      `Test Postgres at ${new URL(testServer).host} is unavailable. Start it with: docker compose -f infra/docker-compose.yml up -d --wait`,
+      `Test Postgres at ${new URL(testServer).host} is unavailable. Start it with: npx nx run infra:up`,
       { cause },
     );
   }

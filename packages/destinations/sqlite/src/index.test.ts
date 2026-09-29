@@ -17,6 +17,7 @@ import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 import {
   Catalog,
+  Connection,
   Copy,
   type CopyConfiguration,
   type Destination,
@@ -38,6 +39,10 @@ import { SQLiteCheckpointStore, SQLiteDestination } from './index.ts';
 
 test('the public ELT API copies source records into SQLite', async () => {
   class TestSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -75,9 +80,9 @@ test('the public ELT API copies source records into SQLite', async () => {
   });
   const copy = new Copy(source.records, destination.table('records'));
   const results = await new Pipeline({
-    source,
-    destination,
-    steps: [copy],
+    connections: [
+      new Connection({ name: 'test', source, destination, steps: [copy] }),
+    ],
   }).run();
 
   assert.deepEqual(results, [{ copy, count: 1, deleted: 0 }]);
@@ -89,6 +94,10 @@ test('the public ELT API copies source records into SQLite', async () => {
 
 test('a source accepts only the stream objects from its own catalog', async () => {
   class OwnedSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -151,6 +160,10 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   let version = 1;
   const previousStates: unknown[] = [];
   class WatchingSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -212,10 +225,15 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   });
   const other = new Copy(source.other, destination.table('other'));
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy, other],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy, other],
+      }),
+    ],
   });
   const controller = new AbortController();
   const watching = pipeline.watch({ signal: controller.signal });
@@ -229,7 +247,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     changes.emit('change', [source.records]);
     changes.emit('change', [source.records]);
   });
-  assert.deepEqual((await watching.next()).value, [
+  assert.deepEqual((await watching.next()).value?.outcomes, [
     { copy, count: 1, deleted: 0, failures: [] },
     { copy: other, count: 1, deleted: 0, failures: [] },
   ]);
@@ -247,7 +265,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     );
   assert.equal(loadedVersion(), 1);
   assert.deepEqual(savedVersion(), { version: 1 });
-  assert.deepEqual((await watching.next()).value, [
+  assert.deepEqual((await watching.next()).value?.outcomes, [
     { copy, count: 1, deleted: 0, failures: [] },
   ]);
   assert.equal(loadedVersion(), 2);
@@ -257,8 +275,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   // Changes received while the consumer is handling a result remain pending.
   version = 3;
   changes.emit('change', [source.records]);
-  for await (const results of watching) {
-    assert.deepEqual(results, [{ copy, count: 1, deleted: 0, failures: [] }]);
+  for await (const { outcomes } of watching) {
+    assert.deepEqual(outcomes, [{ copy, count: 1, deleted: 0, failures: [] }]);
     assert.equal(loadedVersion(), 3);
     assert.deepEqual(savedVersion(), { version: 3 });
     break;
@@ -285,7 +303,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const incomplete = await failed.next();
   if (incomplete.done) assert.fail('watching ended on a failed batch');
   assert.ok(
-    incomplete.value.some(({ failures }) => failures.length > 0),
+    incomplete.value.outcomes.some(({ failures }) => failures.length > 0),
     'the failed batch reports its failure',
   );
   assert.equal(loadedVersion(), 3);
@@ -296,7 +314,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const recovered = await failed.next();
   if (recovered.done) assert.fail('watching ended before the retry');
   assert.deepEqual(
-    recovered.value.map(({ failures }) => failures),
+    recovered.value.outcomes.map(({ failures }) => failures),
     [[]],
   );
   assert.equal(loadedVersion(), 4);
@@ -309,7 +327,13 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   await broken.next();
   const nativeError = new Error('Native watcher failed');
   changes.emit('error', nativeError);
-  await assert.rejects(broken.next(), (error) => error === nativeError);
+  await assert.rejects(
+    broken.next(),
+    (error) =>
+      error instanceof AggregateError &&
+      error.errors.length === 1 &&
+      error.errors[0].cause === nativeError,
+  );
   assert.equal(changes.listenerCount('change'), 0);
 
   const unselected = pipeline.watch({ signal: new AbortController().signal });
@@ -322,7 +346,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const stopping = new AbortController();
   const inFlight = pipeline.watch({ signal: stopping.signal });
   reads.once('read', () => stopping.abort());
-  assert.deepEqual((await inFlight.next()).value, [
+  assert.deepEqual((await inFlight.next()).value?.outcomes, [
     { copy, count: 1, deleted: 0, failures: [] },
     { copy: other, count: 1, deleted: 0, failures: [] },
   ]);
@@ -336,10 +360,15 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     { value: undefined, done: true },
   );
   const invalid = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy, copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy, copy],
+      }),
+    ],
   });
   await assert.rejects(
     invalid.watch({ signal: new AbortController().signal }).next(),
@@ -350,6 +379,10 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
 
 test('a cursor inside the primary key is rejected unless the policy replaces', async () => {
   class MetricsSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -404,13 +437,18 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
     modes: ConstructorParameters<typeof CopyConfiguration>[1] & { id?: string },
   ) =>
     new Pipeline({
-      source,
-      destination,
-      checkpoints,
-      steps: [
-        new Copy(source.metrics, destination.table(name), {
-          ...modes,
-          id: name,
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(source.metrics, destination.table(name), {
+              ...modes,
+              id: name,
+            }),
+          ],
         }),
       ],
     }).run();
@@ -450,6 +488,10 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
 test('replace loads a restated fact that cursor_newer discards', async () => {
   let clicks = 12;
   class RestatingSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -517,10 +559,15 @@ test('replace loads a restated fact that cursor_newer discards', async () => {
     for (const copy of [replacing, guarding])
       results.push(
         await new Pipeline({
-          source,
-          destination,
-          checkpoints,
-          steps: [copy],
+          connections: [
+            new Connection({
+              name: 'test',
+              source,
+              destination,
+              checkpoints,
+              steps: [copy],
+            }),
+          ],
         }).run(),
       );
     return results;
@@ -565,6 +612,10 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
     emitsDeletes: true,
   });
   class DeletingSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -595,17 +646,21 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
     path: join(scratch.path, 'd.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination: sqlite,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [
-      new Copy(items, sqlite.table('items'), {
-        id: 'sqlite',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: sqlite,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(items, sqlite.table('items'), {
+            id: 'sqlite',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   });
@@ -653,6 +708,10 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
   const items = selectable();
   let messages: SourceMessage[] = [];
   class DeletingSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -680,7 +739,6 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
         new Copy(items, sqlite.table('items'), {
           syncMode: 'incremental',
           destinationSyncMode: 'append_dedup',
-          primaryKey: ['id'],
           id: 'items',
           ...options,
         } as ConstructorParameters<typeof Copy>[2]).validate(
@@ -700,23 +758,30 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
     { destinationSyncMode: 'append', primaryKey: undefined },
     /require append_dedup/,
   );
-  rejects({ primaryKey: ['rank'] }, /select primaryKey \["id"\]/);
+  rejects(
+    { primaryKey: ['rank'] },
+    /defines its own primary key; omit primaryKey/,
+  );
   rejects({ cursorField: 'rank' }, /defines its own cursor; omit cursorField/);
   rejects({ dedupPolicy: 'cursor_newer' }, /no cursor field to compare/);
   const copy = new Copy(items, sqlite.table('items'), {
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['id'],
     id: 'items',
   });
   assert.equal(copy.configuration.dedupPolicy, 'replace');
 
   const run = (to = copy) =>
     new Pipeline({
-      source,
-      destination: sqlite,
-      checkpoints,
-      steps: [to],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: sqlite,
+          checkpoints,
+          steps: [to],
+        }),
+      ],
     }).run();
   for (const [key, message] of [
     [{}, /exactly its primary key/],
@@ -744,9 +809,14 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
   }
   await assert.rejects(
     new Pipeline({
-      source: new PlainSource(),
-      destination: sqlite,
-      steps: [new Copy(plain, sqlite.table('plain'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new PlainSource(),
+          destination: sqlite,
+          steps: [new Copy(plain, sqlite.table('plain'))],
+        }),
+      ],
     }).run(),
     /Stream items does not emit deletions/,
   );
@@ -766,6 +836,10 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     emitsDeletes: true,
   });
   class SnapshotSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -793,13 +867,17 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     id: 'items',
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['id'],
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({ path: statePath }),
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+        steps: [copy],
+      }),
+    ],
   });
   const table = () => {
     using database = new DatabaseSync(destination.path, { readOnly: true });
@@ -880,6 +958,10 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
 
 test('a target has one writer, even when another loads only its own partitions', async () => {
   class Records extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -930,16 +1012,20 @@ test('a target has one writer, even when another loads only its own partitions',
   ) => {
     const upsert = (id: string, source: Records) =>
       new Pipeline({
-        source,
-        destination,
-        checkpoints,
-        steps: [
-          new Copy(source.records, target(), {
-            id,
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-            cursorField: 'version',
-            primaryKey: ['owner', 'id'],
+        connections: [
+          new Connection({
+            name: 'test',
+            source,
+            destination,
+            checkpoints,
+            steps: [
+              new Copy(source.records, target(), {
+                id,
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+                cursorField: 'version',
+              }),
+            ],
           }),
         ],
       }).run();
@@ -954,9 +1040,14 @@ test('a target has one writer, even when another loads only its own partitions',
     );
     await assert.rejects(
       new Pipeline({
-        source: late,
-        destination,
-        steps: [new Copy(late.records, target())],
+        connections: [
+          new Connection({
+            name: 'test',
+            source: late,
+            destination,
+            steps: [new Copy(late.records, target())],
+          }),
+        ],
       }).run(),
       /\{"source":"late","stream":"records"\} cannot write it/,
     );
@@ -984,6 +1075,10 @@ test('a target has one writer, even when another loads only its own partitions',
 
 test('a writer may change its own mode, and dropping a target releases it', async () => {
   class Records extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -1020,21 +1115,30 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
   const second = new Records('second');
   const overwrite = (source: Records) =>
     new Pipeline({
-      source,
-      destination,
-      steps: [new Copy(source.records, destination.table('Records'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(source.records, destination.table('Records'))],
+        }),
+      ],
     }).run();
 
   await overwrite(first);
   await new Pipeline({
-    source: first,
-    destination,
-    steps: [
-      new Copy(first.records, destination.table('records'), {
-        syncMode: 'full_refresh',
-        destinationSyncMode: 'overwrite_dedup',
-        cursorField: 'version',
-        primaryKey: ['id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source: first,
+        destination,
+        steps: [
+          new Copy(first.records, destination.table('records'), {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'overwrite_dedup',
+            cursorField: 'version',
+          }),
+        ],
       }),
     ],
   }).run();
@@ -1062,6 +1166,10 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
 test('a pipeline refuses two writers of one target before running any', async () => {
   let extracted = 0;
   class Records extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     protected override async open() {
       return new AsyncDisposableStack();
     }
@@ -1097,23 +1205,27 @@ test('a pipeline refuses two writers of one target before running any', async ()
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [
-      new Copy(source.records, destination.table('records'), {
-        id: 'upsert',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        cursorField: 'version',
-        primaryKey: ['id'],
-      }),
-      new Copy(source.copies, destination.table('RECORDS'), {
-        id: 'log',
-        syncMode: 'full_refresh',
-        destinationSyncMode: 'append',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.records, destination.table('records'), {
+            id: 'upsert',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+          new Copy(source.copies, destination.table('RECORDS'), {
+            id: 'log',
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'append',
+          }),
+        ],
       }),
     ],
   });
@@ -1124,41 +1236,57 @@ test('a pipeline refuses two writers of one target before running any', async ()
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
       cursorField: 'version',
-      primaryKey: ['id'],
     });
   // Two copies with the same key are still two writers.
   const twins = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [upsert('one', source.records), upsert('two', source.copies)],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [upsert('one', source.records), upsert('two', source.copies)],
+      }),
+    ],
   });
   // One read routes by stream, so a stream is copied once per pipeline.
   const doubled = () =>
     new Pipeline({
-      source,
-      destination,
-      checkpoints: new SQLiteCheckpointStore({
-        path: join(scratch.path, 'state.sqlite'),
-      }),
-      steps: [upsert('one', source.records), upsert('two', source.records)],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
+          }),
+          steps: [upsert('one', source.records), upsert('two', source.records)],
+        }),
+      ],
     });
 
   await assert.rejects(
     pipeline.run(),
-    /Target records is written by \{"copy":"upsert"\}; \{"copy":"log"\} cannot write it/,
+    /Target \S+#records is written by \{"copy":"upsert"\}; \{"copy":"log"\} cannot write it/,
   );
   await assert.rejects(
     twins.run(),
     /\{"copy":"one"\}; \{"copy":"two"\} cannot write it/,
   );
-  await assert.rejects(doubled().run(), /A pipeline copies each stream once/);
+  await assert.rejects(
+    doubled().run(),
+    /Connection test copies each stream once/,
+  );
   assert.equal(extracted, 0);
 });
 
 class Sites extends Source {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
   protected override async open() {
     return new AsyncDisposableStack();
   }
@@ -1227,16 +1355,20 @@ test('a partitioned stream resumes each partition from its own state', async () 
     id: 'pages',
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['site', 'path'],
   });
   const checkpoints = new SQLiteCheckpointStore({
     path: join(scratch.path, 'state.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy],
+      }),
+    ],
   });
   const rows = () => {
     using database = new DatabaseSync(destination.path, { readOnly: true });
@@ -1297,13 +1429,17 @@ test('a failing partition loads nothing and keeps its checkpoint, while the othe
     id: 'pages',
     syncMode: 'incremental',
     destinationSyncMode: 'append_dedup',
-    primaryKey: ['site', 'path'],
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy],
+      }),
+    ],
   });
   const rows = () => {
     using database = new DatabaseSync(destination.path, { readOnly: true });
@@ -1387,13 +1523,17 @@ test('clear drops a target with its checkpoint, and a target dropped by hand is 
       id,
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      primaryKey: ['site', 'path'],
     });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy('pages')],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy('pages')],
+      }),
+    ],
   });
   const saved = () => {
     using state = new DatabaseSync(checkpoints.path, { readOnly: true });
@@ -1413,10 +1553,15 @@ test('clear drops a target with its checkpoint, and a target dropped by hand is 
   );
   assert.deepEqual(source.received, []);
   const other = new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [copy('other')],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [copy('other')],
+      }),
+    ],
   });
   await assert.rejects(other.clear(), TargetOwnedError);
   assert.equal(saved(), 1);
@@ -1440,9 +1585,14 @@ test('a full refresh whose partition fails keeps the previous table', async () =
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(source.pages, destination.table('pages'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [new Copy(source.pages, destination.table('pages'))],
+      }),
+    ],
   });
   const rows = () => {
     using database = new DatabaseSync(destination.path, { readOnly: true });
@@ -1495,7 +1645,6 @@ test('partition declarations are validated before extraction', async () => {
             id: 'pages',
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
-            primaryKey: ['site', 'path'],
           }).configuration,
         ],
         new Map(),
@@ -1516,6 +1665,7 @@ test('partition declarations are validated before extraction', async () => {
     supportedSyncModes: ['full_refresh'],
     partitionKey: ['site'],
   });
+  // The stream's key includes its partition key, and a copy cannot narrow it.
   assert.throws(
     () =>
       new Copy(partitioned, destination.table('pages'), {
@@ -1523,12 +1673,16 @@ test('partition declarations are validated before extraction', async () => {
         destinationSyncMode: 'overwrite_dedup',
         dedupPolicy: 'replace',
         primaryKey: ['path'],
-      }).configuration.validateSelection(),
-    /partitioned by \["site"\]; select a primaryKey that includes them/,
+      }),
+    /defines its own primary key; omit primaryKey/,
   );
 });
 
 class FileSource extends Source {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
   protected override async open() {
     return new AsyncDisposableStack();
   }
@@ -1634,17 +1788,21 @@ test('file bytes load as bounded chunks that leave with their row', async () => 
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [
-      new Copy(source.files, fileTable(destination, source), {
-        id: 'files',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.files, fileTable(destination, source), {
+            id: 'files',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
       }),
     ],
   });
@@ -1685,9 +1843,14 @@ test("an overwrite removes the previous load's files", async () => {
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(source.files, fileTable(destination, source))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [new Copy(source.files, fileTable(destination, source))],
+      }),
+    ],
   });
 
   await pipeline.run();
@@ -1711,19 +1874,23 @@ test('a record the cursor guard rejects leaves no stored file behind', async () 
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    }),
-    steps: [
-      new Copy(source.files, fileTable(destination, source), {
-        id: 'files',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
-        cursorField: 'version',
-        dedupPolicy: 'cursor_newer',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.files, fileTable(destination, source), {
+            id: 'files',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+            dedupPolicy: 'cursor_newer',
+          }),
+        ],
       }),
     ],
   });
@@ -1860,6 +2027,10 @@ const scripted = (name: string, { snapshot = true } = {}) =>
 
 // Reads what a test scripts for each stream; an Error entry is thrown there.
 class ScriptedSource extends Source {
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
   readonly identity = 'scripted';
   protected readonly catalog: Catalog;
 
@@ -1974,15 +2145,19 @@ test('stored file references follow committed SQLite rows, including rejected up
         id: 'docs',
         syncMode: 'incremental',
         destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
         cursorField: 'version',
       },
     );
     const pipeline = new Pipeline({
-      source,
-      destination,
-      checkpoints: new SQLiteCheckpointStore({ path: statePath }),
-      steps: [copy],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+          steps: [copy],
+        }),
+      ],
     });
     const loaded = () => {
       using db = new DatabaseSync(destination.path, { readOnly: true });
@@ -2099,14 +2274,18 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
       id: 'docs',
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      primaryKey: ['id'],
       cursorField: 'version',
     });
     const pipeline = new Pipeline({
-      source,
-      destination,
-      steps: [copy],
-      checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [copy],
+          checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+        }),
+      ],
     });
     const loaded = (table: string) => {
       using db = new DatabaseSync(destination.path, { readOnly: true });
@@ -2148,9 +2327,14 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     rejectSave = false;
 
     const snapshot = new Pipeline({
-      source,
-      destination,
-      steps: [new Copy(stream, target('snapshot'))],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(stream, target('snapshot'))],
+        }),
+      ],
     });
     await writeFile(path, '');
     source.scripts = { docs: [{ ...record('docs', 'a', 1), file: path }] };
@@ -2202,16 +2386,20 @@ test('a stream that fails publishes none of its staged rows while its sibling co
       id,
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      primaryKey: ['id'],
     }) as const;
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({ path: statePath }),
-    steps: [
-      new Copy(broken, destination.table('broken'), incremental('broken')),
-      new Copy(good, destination.table('good'), incremental('good')),
-      new Copy(snapshot, destination.table('snapshot')),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+        steps: [
+          new Copy(broken, destination.table('broken'), incremental('broken')),
+          new Copy(good, destination.table('good'), incremental('good')),
+          new Copy(snapshot, destination.table('snapshot')),
+        ],
+      }),
     ],
   });
   const rows = (table: string) => {
@@ -2292,23 +2480,26 @@ test('a staged unit merges like its operations applied one at a time, under repl
   });
 
   await new Pipeline({
-    source,
-    destination,
-    checkpoints,
-    steps: [
-      new Copy(replacing, destination.table('replacing'), {
-        id: 'replacing',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
-      }),
-      new Copy(guarded, destination.table('guarded'), {
-        id: 'guarded',
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-        primaryKey: ['id'],
-        cursorField: 'version',
-        dedupPolicy: 'cursor_newer',
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(replacing, destination.table('replacing'), {
+            id: 'replacing',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+          new Copy(guarded, destination.table('guarded'), {
+            id: 'guarded',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+            dedupPolicy: 'cursor_newer',
+          }),
+        ],
       }),
     ],
   }).run();
@@ -2337,9 +2528,14 @@ test('a native transaction rollback retains the original merge error and committ
     items: [record('items', 'old', 1)],
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [new Copy(stream, destination.table('items'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [new Copy(stream, destination.table('items'))],
+      }),
+    ],
   });
   await pipeline.run();
   using database = new DatabaseSync(destination.path);
@@ -2367,20 +2563,34 @@ test('an overwrite_dedup whose key narrows builds its index after the old rows a
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
-  const stream = scripted('items', { snapshot: false });
+  // A keyless stream, so each run's copy selects the key it deduplicates by.
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      required: ['id', 'version'],
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
   const source = new ScriptedSource([stream], {
     items: [record('items', 'a', 1), record('items', 'a', 2)],
   });
   const run = (primaryKey: string[]) =>
     new Pipeline({
-      source,
-      destination,
-      steps: [
-        new Copy(stream, destination.table('items'), {
-          syncMode: 'full_refresh',
-          destinationSyncMode: 'overwrite_dedup',
-          dedupPolicy: 'replace',
-          primaryKey,
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [
+            new Copy(stream, destination.table('items'), {
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite_dedup',
+              dedupPolicy: 'replace',
+              primaryKey,
+            }),
+          ],
         }),
       ],
     }).run();
@@ -2408,6 +2618,10 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     new Stream({ ...scripted(name), supportsFileTransfer: true });
   const emitted: string[] = [];
   class Interleaved extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
     readonly identity = 'interleaved';
     readonly a = files('a');
     readonly b = files('b');
@@ -2455,26 +2669,30 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
   });
   const statePath = join(scratch.path, 'state.sqlite');
   const pipeline = new Pipeline({
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({ path: statePath }),
-    steps: [source.a, source.b].map(
-      (stream) =>
-        new Copy(
-          stream,
-          destination.table(stream.name, (c) => [
-            c.text('id'),
-            c.integer('version'),
-            c.blob('bytes').from(stream.file),
-          ]),
-          {
-            id: stream.name,
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-            primaryKey: ['id'],
-          },
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+        steps: [source.a, source.b].map(
+          (stream) =>
+            new Copy(
+              stream,
+              destination.table(stream.name, (c) => [
+                c.text('id'),
+                c.integer('version'),
+                c.blob('bytes').from(stream.file),
+              ]),
+              {
+                id: stream.name,
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              },
+            ),
         ),
-    ),
+      }),
+    ],
   });
   const loaded = (table: string) => {
     using database = new DatabaseSync(destination.path, { readOnly: true });
@@ -2558,6 +2776,10 @@ for (const { outcome, next, expected } of leftBehind)
     // Each gate opens when the consumer asks for a stream's next message, so
     // the order holds without timers.
     class Crossing extends Source {
+      override coverage() {
+        return { description: 'test', selection: {} };
+      }
+
       readonly identity = 'crossing';
       readonly docs = new Stream({
         ...scripted('docs'),
@@ -2607,31 +2829,34 @@ for (const { outcome, next, expected } of leftBehind)
       path: join(scratch.path, 'out.sqlite'),
     });
     const pipeline = new Pipeline({
-      source,
-      destination,
-      checkpoints: new SQLiteCheckpointStore({
-        path: join(scratch.path, 'state.sqlite'),
-      }),
-      steps: [
-        new Copy(
-          source.docs,
-          destination.table('docs', (c) => [
-            c.text('id'),
-            c.integer('version'),
-            c.blob('bytes').from(source.docs.file),
-          ]),
-          {
-            id: 'docs',
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-            primaryKey: ['id'],
-          },
-        ),
-        new Copy(source.notes, destination.table('notes'), {
-          id: 'notes',
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          primaryKey: ['id'],
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
+          }),
+          steps: [
+            new Copy(
+              source.docs,
+              destination.table('docs', (c) => [
+                c.text('id'),
+                c.integer('version'),
+                c.blob('bytes').from(source.docs.file),
+              ]),
+              {
+                id: 'docs',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              },
+            ),
+            new Copy(source.notes, destination.table('notes'), {
+              id: 'notes',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
         }),
       ],
     });
@@ -2691,24 +2916,34 @@ test('clearing a table whose file column was declared after its first load empti
     docs: [record('docs', 'd1', 1)],
   });
   await new Pipeline({
-    source: loaded,
-    destination,
-    steps: [new Copy(plain, destination.table('docs'))],
+    connections: [
+      new Connection({
+        name: 'test',
+        source: loaded,
+        destination,
+        steps: [new Copy(plain, destination.table('docs'))],
+      }),
+    ],
   }).run();
   const docs = new Stream({ ...scripted('docs'), supportsFileTransfer: true });
   const source = new ScriptedSource([docs], {});
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(
-        docs,
-        destination.table('docs', (c) => [
-          c.text('id'),
-          c.integer('version'),
-          c.blob('bytes').from(docs.file),
-        ]),
-      ),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            docs,
+            destination.table('docs', (c) => [
+              c.text('id'),
+              c.integer('version'),
+              c.blob('bytes').from(docs.file),
+            ]),
+          ),
+        ],
+      }),
     ],
   });
 
@@ -2737,11 +2972,16 @@ test('text with a lone surrogate fails its stream instead of loading as a replac
     good: [record('good', 'g1', 1)],
   });
   const pipeline = new Pipeline({
-    source,
-    destination,
-    steps: [
-      new Copy(notes, destination.table('notes')),
-      new Copy(good, destination.table('good')),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(notes, destination.table('notes')),
+          new Copy(good, destination.table('good')),
+        ],
+      }),
     ],
   });
 

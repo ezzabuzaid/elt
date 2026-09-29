@@ -1,7 +1,12 @@
 import { type CheckpointSession, CheckpointStore } from 'elt';
 import type postgres from 'postgres';
-import { Connection, schemaLock, schemaName, server } from './connection.ts';
 import { quote } from './identifier.ts';
+import {
+  PostgresSession,
+  schemaLock,
+  schemaName,
+  server,
+} from './postgres-session.ts';
 
 // Checkpoints kept beside the data they describe, in `_mac_elt_checkpoints`
 // of one schema, so dropping the schema resets both. Each acknowledged
@@ -29,7 +34,7 @@ export class PostgresCheckpointStore extends CheckpointStore {
     ids: readonly string[],
     work: (session: CheckpointSession) => Promise<T>,
   ): Promise<T> {
-    await using connection = new Connection(this.#url, 'elt-checkpoints');
+    await using connection = new PostgresSession(this.#url, 'elt-checkpoints');
     const { sql } = connection;
     await this.#create(sql);
     // Two-key locks never collide with the writers' one-key schema lock. A

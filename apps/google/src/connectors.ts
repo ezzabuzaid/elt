@@ -1,5 +1,9 @@
-import { Pipeline, PipelineError } from 'elt';
-import { PostgresCheckpointStore, PostgresDestination } from 'elt-postgresql';
+import { Connection, Pipeline, PipelineError } from 'elt';
+import {
+  PostgresCheckpointStore,
+  PostgresDestination,
+  PostgresSyncHistory,
+} from 'elt-postgresql';
 import {
   GOOGLE_SEARCH_CONSOLE_SCOPE,
   googleSession,
@@ -9,11 +13,9 @@ import postgres from 'postgres';
 import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
 import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
 import { installSearchConsoleMarts } from './warehouse/search-console-marts.ts';
-import { installWarehouse } from './warehouse/warehouse.ts';
 
 const siteUrls = ['sc-domain:ezz.sh'];
 const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
-const reader = 'agent_reader';
 const raw = 'google_search_console';
 
 export default [
@@ -36,25 +38,33 @@ export default [
         url: warehouseUrl,
         schema: raw,
       });
-      await new Pipeline({
-        source,
-        destination,
-        checkpoints: new PostgresCheckpointStore({
-          url: warehouseUrl,
-          schema: raw,
-        }),
-        steps: searchConsoleCopies(source, (name) => destination.table(name)),
-      })
-        .run()
-        .catch((error: unknown) => {
+      const history = new PostgresSyncHistory({ url: warehouseUrl });
+      await history.install();
+      const pipeline = new Pipeline({
+        history,
+        connections: [
+          new Connection({
+            name: 'google-search-console',
+            source,
+            destination,
+            checkpoints: new PostgresCheckpointStore({
+              url: warehouseUrl,
+              schema: raw,
+            }),
+            steps: searchConsoleCopies(source, (name) =>
+              destination.table(name),
+            ),
+          }),
+        ],
+      });
+      const sql = postgres(warehouseUrl, { max: 1, onnotice: () => {} });
+      try {
+        await pipeline.run().catch((error: unknown) => {
           if (!(error instanceof PipelineError)) throw error;
           // Keep the marts current after a partial load as well.
           process.exitCode = 1;
         });
-      const sql = postgres(warehouseUrl, { max: 1, onnotice: () => {} });
-      try {
-        await installWarehouse(sql, { reader });
-        await installSearchConsoleMarts(sql, { raw, reader });
+        await installSearchConsoleMarts(sql, { raw });
       } finally {
         await sql.end();
       }
