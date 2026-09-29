@@ -25,11 +25,11 @@ Copy this checklist into your response and tick it off as you go:
 - Each destination and its checkpoint store live in `packages/destinations/<name>` (`elt-sqlite`, `elt-markdown`, `elt-postgresql`).
 - Sources live in their owning app: `apps/<app>/src/sources/<source>/<source>-source.ts`. A provider's authorization is shared by every source for that provider, so it has its own package (`packages/google-auth`).
 - Register connectors as `{ name, run }` entries in the app's `src/connectors.ts` default-exported list. Keep credentials, pipeline setup/execution, and post-load work inside `run()`. Use a plain loop in `main.ts` that sets exit status 1 on failure and continues without console output; do not add a shared runner package, result protocol, or lifecycle hooks for this list. Apple and Google stay separate apps with the same list shape until later convergence.
-- Native clients (`apps/apple/src/platform/macos/eventkit.ts` for EventKit, `osa.ts` for scripting) must not depend on `Source`, `Stream`, catalogs, schemas, or destinations. Compose them into the source.
+- Native clients (`apps/apple/src/platform/macos/eventkit.ts`, which spawns the Swift `eventkit` helper for EventKit, and `osa.ts` for scripting) must not depend on `Source`, `Stream`, catalogs, schemas, or destinations. Compose them into the source.
 - The contracts: `packages/elt/src/core/source.ts`, `stream.ts`, `record-validation.ts`, `snapshot.ts`.
 - Pick the closest existing source by its traits:
-  - **Apple Reminders**: EventKit, one fetch per stream, snapshot incremental.
-  - **Apple Calendar**: bounded occurrence windows, paged per-item reads, related scalar streams, a feature-detected private API (ICS).
+  - **Apple Reminders**: EventKit through a native helper, one read for every selected stream, snapshot incremental.
+  - **Apple Calendar**: bounded occurrence windows read in one helper process, related scalar streams, feature-detected private APIs (ICS, calendar descriptions).
   - **Apple Notes**: the upstream's own Core Data SQLite store read-only; one template-method class per stream (`AppleNotesStream`) over a per-run scan that decodes protobuf note bodies and tables once; original-path attachment files; a `data_version` watch that keeps the app running hidden.
   - **Apple Messages**: the upstream's own SQLite database read-only, one read context per run, composite keys, original-path attachment files.
   - **Google Search Console** (`apps/google`): REST through `google-auth`, a date cursor with restated facts (`dedupPolicy: 'replace'`), polling `observe()`, quota-bound per-item refetch.
@@ -85,9 +85,9 @@ Pick the first that fits:
 Test the source the way a user runs it, as a black box. Do not write unit tests.
 
 - Import source classes directly from their defining modules and load them through a real `Pipeline` into a real destination in temporary storage. Assert on what a consumer reads: rows or files, checkpoints, and what a second run writes.
-- Control only the upstream, at its outermost seam: a synthetic copy of the upstream's database, the HTTP requester, or `osa`, which crosses into `osascript`. Never import or mock the source's own modules (scripts, parsers, decoders); they are covered through the streams that use them, by feeding bad input at the seam.
+- Control only the upstream, at its outermost seam: a synthetic copy of the upstream's database, the HTTP requester, `nativeProcess.lines`, which yields the `eventkit` helper's stdout lines, or `osa`, which crosses into `osascript`. Never import or mock the source's own modules (scripts, parsers, decoders); they are covered through the streams that use them, by feeding bad input at the seam.
 - Models: the Messages tests in `apps/apple/src/index.test.ts` (a synthetic `chat.db`, no mocks) and `apps/google/src/warehouse.test.ts` (a fake requester, scratch Postgres, read back through the agent role).
-- Use controlled inputs, never personal data. Put tests in the app's top-level `src/*.test.ts`; the `test` target runs nothing in subfolders.
+- Use controlled inputs, never personal data, except one live read-only test per native store that asserts shapes and counts, persists nothing outside a temporary directory, and skips without access (the Calendar and Reminders helper test). Put tests in the app's top-level `src/*.test.ts`; the `test` target runs nothing in subfolders.
 
 ## Writing docs
 

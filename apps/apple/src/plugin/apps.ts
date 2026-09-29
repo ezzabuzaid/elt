@@ -150,7 +150,7 @@ export const apps: Record<App, AppDefinition> = {
     accounts: true,
     dateField: 'event occurrence overlap',
     permissions:
-      'Allow full Calendar access when macOS asks, and allow Codex to control Calendar for calendar descriptions. Access can be changed under System Settings > Privacy & Security > Calendars and Automation.',
+      'Allow full Calendar access when macOS asks. Access can be changed under System Settings > Privacy & Security > Calendars.',
     defaultScope: calendarDefaults,
     source: (scope) =>
       new AppleCalendarSource({
@@ -166,7 +166,7 @@ export const apps: Record<App, AppDefinition> = {
     accounts: true,
     dateField: null,
     permissions:
-      'Allow Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.',
+      'Allow full Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.',
     source: (scope) => new AppleRemindersSource(scope),
   },
 };

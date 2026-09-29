@@ -1,5 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import osa from './osa.ts';
+import { fileURLToPath } from 'node:url';
+import type { EventKitDocument } from './eventkit-documents.ts';
+import nativeProcess from './native-process.ts';
 
 export class CalendarUnavailableError extends Error {
   override name = 'CalendarUnavailableError';
@@ -49,49 +51,36 @@ export class EventKitSnapshot implements AsyncDisposable {
   async [Symbol.asyncDispose](): Promise<void> {}
 }
 
+export type EventKitRequest = {
+  // Calendar's requested UTC interval.
+  readonly startAt?: string;
+  readonly endAt?: string;
+  // Export each event item's iCalendar data through private EventKit API.
+  readonly ics?: boolean;
+  readonly accountIds?: readonly string[];
+  readonly collectionIds?: readonly string[];
+};
+
+// The compiled helper (platform/macos/eventkit/*.swift) sits next to this
+// module in dist and next to the plugin's bundled server.
+const helper = fileURLToPath(new URL('./eventkit', import.meta.url));
+
 export class EventKit {
-  static readonly runtime = `
-ObjC.import('EventKit');
-ObjC.import('AppKit');
-ObjC.import('CoreLocation');
-
-function requireEventKitAccess(store, entityType, marker) {
-  const method = entityType === 0
-    ? 'requestFullAccessToEventsWithCompletion'
-    : 'requestFullAccessToRemindersWithCompletion';
-  if (!store.respondsToSelector(method + ':'))
-    throw new Error(marker + ': macOS 14 or later is required');
-  const authorization = () => Number($.EKEventStore.authorizationStatusForEntityType(entityType));
-  // The new authorization constants are absent from JXA BridgeSupport metadata.
-  // 0=undetermined, 1=restricted, 2=denied, 3=full access, 4=write-only.
-  if (authorization() === 0 || authorization() === 4) {
-    store[method](() => {});
-    const deadline = Date.now() + 30000;
-    while ((authorization() === 0 || authorization() === 4) && Date.now() < deadline)
-      $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
-  }
-  if (authorization() !== 3)
-    throw new Error(marker + ': full access is required; status=' + authorization());
-}
-`;
-
   constructor(readonly entity: 'events' | 'reminders') {}
 
-  async execute(script: string): Promise<unknown> {
+  // One read of the whole store, in one helper process.
+  async read(request: EventKitRequest): Promise<EventKitDocument[]> {
+    const documents: EventKitDocument[] = [];
     try {
-      return JSON.parse(
-        await osa.execute(
-          this.script(`
-        const value = (() => { ${script} })();
-        if (Number($.EKEventStore.authorizationStatusForEntityType(entityType)) !== 3)
-          throw new Error(marker + ': access was revoked during execution');
-        JSON.stringify(value);
-      `),
-        ),
-      );
+      for await (const line of nativeProcess.lines(helper, [
+        'read',
+        JSON.stringify({ entity: this.entity, ...request }),
+      ]))
+        documents.push(JSON.parse(line));
     } catch (error) {
       throw this.unavailable(error);
     }
+    return documents;
   }
 
   // EventKit has no read transaction. Reads run while a watcher counts
@@ -131,20 +120,9 @@ function requireEventKitAccess(store, entityType, marker) {
 
   async *watch(signal: AbortSignal): AsyncGenerator<void> {
     try {
-      for await (const message of osa.watch(
-        this.script(`
-        const center = $.NSNotificationCenter.defaultCenter;
-        const changed = () => $.NSFileHandle.fileHandleWithStandardOutput.writeData(
-          $('changed\\n').dataUsingEncoding($.NSUTF8StringEncoding));
-        const observer = center.addObserverForNameObjectQueueUsingBlock(
-          $.EKEventStoreChangedNotification, store, $.NSOperationQueue.mainQueue, changed);
-        try {
-          changed();
-          $.NSRunLoop.currentRunLoop.run;
-        } finally {
-          center.removeObserver(observer);
-        }
-      `),
+      for await (const message of nativeProcess.lines(
+        helper,
+        ['watch', this.entity],
         signal,
       )) {
         if (message !== 'changed')
@@ -158,18 +136,6 @@ function requireEventKitAccess(store, entityType, marker) {
     } catch (error) {
       throw this.unavailable(error);
     }
-  }
-
-  private script(script: string): string {
-    const entityType = this.entity === 'events' ? 0 : 1;
-    return `
-        ${EventKit.runtime}
-        const entityType = ${entityType};
-        const marker = ${JSON.stringify(this.marker)};
-        const store = $.EKEventStore.alloc.init;
-        requireEventKitAccess(store, entityType, marker);
-        ${script}
-      `;
   }
 
   private get marker(): string {

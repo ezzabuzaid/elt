@@ -15,7 +15,7 @@ import {
 } from '../eventkit-schema.ts';
 import type { ImportScope } from '../import-scope.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
-import { dateComponentNames, remindersScript } from './reminders-script.ts';
+import { dateComponentNames, reminderRows } from './reminder-rows.ts';
 
 const { id, text, nullableText, nullableTimestamp, integer, boolean } =
   eventKitFields;
@@ -86,27 +86,24 @@ export class AppleRemindersSource extends Source<EventKitSnapshot> {
     for await (const _ of this.#eventKit.watch(signal)) yield streams;
   }
 
-  // Every selected stream from one change-free window, so reminders match
+  // Every selected stream from one change-free read, so reminders match
   // their lists and alarms their reminders.
   protected override async open(
     streams: readonly Stream[],
   ): Promise<EventKitSnapshot> {
+    const { accountIds, collectionIds } = this.scope;
     return new EventKitSnapshot(
       await this.#eventKit.consistently(async () => {
-        const records = new Map<string, Record<string, unknown>[]>();
-        for (const stream of streams)
-          records.set(
+        const rows = reminderRows(
+          await this.#eventKit.read({ accountIds, collectionIds }),
+          this.scope,
+        );
+        return new Map(
+          streams.map((stream) => [
             stream.name,
-            validateRecords(
-              stream,
-              await this.#eventKit.execute(`
-                ${remindersScript}
-                return readReminders(store, ${JSON.stringify(stream.name)}, ${JSON.stringify(this.scope)});
-              `),
-              'EventKit',
-            ),
-          );
-        return records;
+            validateRecords(stream, rows.get(stream.name), 'EventKit'),
+          ]),
+        );
       }),
     );
   }

@@ -14,7 +14,11 @@ import {
   type SourceMessage,
   validateRecords,
 } from 'elt';
-import { EventKit, EventKitSnapshot } from '../../platform/macos/eventkit.ts';
+import {
+  EventKit,
+  type EventKitRequest,
+  EventKitSnapshot,
+} from '../../platform/macos/eventkit.ts';
 import {
   eventKitAccountFields,
   eventKitCalendarFields,
@@ -23,8 +27,8 @@ import {
   eventKitRelatedFields,
 } from '../eventkit-schema.ts';
 import type { ImportScope } from '../import-scope.ts';
-import { calendarScript } from './calendar-script.ts';
-import { icsRecords, isIcsStream, validateIcsExports } from './ics-records.ts';
+import { calendarRows } from './calendar-rows.ts';
+import { isIcsStream } from './ics-records.ts';
 
 const {
   id,
@@ -213,19 +217,50 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
     for await (const _ of this.#eventKit.watch(signal)) yield streams;
   }
 
-  // Every selected stream from one change-free window, so occurrences match
+  // Every selected stream from one change-free read, so occurrences match
   // their calendars and ICS rows their items.
   protected override async open(
     streams: readonly Stream[],
   ): Promise<EventKitSnapshot> {
+    const { accountIds, collectionIds } = this.scope;
+    const request = {
+      startAt: this.startAt,
+      endAt: this.endAt,
+      ics: streams.some((stream) => isIcsStream(stream.name)),
+      accountIds,
+      collectionIds,
+    };
     return new EventKitSnapshot(
       await this.#eventKit.consistently(async () => {
-        const records = new Map<string, Record<string, unknown>[]>();
-        for (const stream of streams)
-          records.set(stream.name, await Array.fromAsync(this.scan(stream)));
-        return records;
+        const rows = calendarRows(await this.#read(request), this.scope);
+        return new Map(
+          streams.map((stream) => {
+            const records = validateRecords(
+              stream,
+              rows.get(stream.name),
+              'EventKit',
+            );
+            if (stream.name === 'events') records.forEach(checkEventDates);
+            return [stream.name, records];
+          }),
+        );
       }),
     );
+  }
+
+  async #read(request: EventKitRequest) {
+    try {
+      return await this.#eventKit.read(request);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'stderr' in error &&
+        typeof error.stderr === 'string' &&
+        error.stderr.includes('CALENDAR_ICS_UNAVAILABLE')
+      )
+        throw new CalendarIcsUnavailableError(error);
+      throw error;
+    }
   }
 
   protected override async *extract(
@@ -286,92 +321,16 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
       );
     yield { stream, data, file: saved ? path : null };
   }
+}
 
-  // One complete read of the window, each record once.
-  private async *scan(stream: Stream): AsyncGenerator<Record<string, unknown>> {
-    const metadata = stream.name === 'accounts' || stream.name === 'calendars';
-    const seen = new Set<string>();
-    let startAt = this.startAt;
-    do {
-      // EventKit silently truncates queries longer than four years. Smaller windows
-      // also bound each OSA response; overlapping events are emitted once per copy.
-      const endAt = metadata
-        ? this.endAt
-        : new Date(
-            Math.min(
-              Date.parse(startAt) + 365 * 24 * 60 * 60 * 1000,
-              Date.parse(this.endAt),
-            ),
-          ).toISOString();
-      for await (const data of this.readWindow(stream, startAt, endAt)) {
-        // Every Calendar stream's schema requires a text id.
-        const key = data.id as string;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        yield data;
-      }
-      startAt = endAt;
-    } while (startAt < this.endAt);
-  }
-
-  private async *readWindow(
-    stream: Stream,
-    startAt: string,
-    endAt: string,
-  ): AsyncGenerator<Record<string, unknown>> {
-    const ics = isIcsStream(stream.name) ? stream.name : undefined;
-    // ICS streams page by native item with a monotonic cursor.
-    const paged = ics !== undefined;
-    let cursor: string | null = null;
-    do {
-      let response: unknown;
-      try {
-        response = await this.#eventKit.execute(`
-          ${calendarScript}
-          return readCalendar(store, ${JSON.stringify(stream.name)}, ${JSON.stringify(startAt)}, ${JSON.stringify(endAt)}, undefined, ${JSON.stringify(cursor)}, ${JSON.stringify(this.scope)});
-        `);
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          'stderr' in error &&
-          typeof error.stderr === 'string' &&
-          error.stderr.includes('CALENDAR_ICS_UNAVAILABLE')
-        )
-          throw new CalendarIcsUnavailableError(error);
-        throw error;
-      }
-      if (paged) {
-        // readCalendar's page. A cursor that does not advance would page
-        // forever, so it fails the copy.
-        const page = response as {
-          records: unknown;
-          nextCursor: string | null;
-        };
-        if (page.nextCursor !== null && page.nextCursor <= (cursor ?? ''))
-          throw new TypeError('Calendar returned an invalid ICS page');
-        cursor = page.nextCursor;
-        response = page.records;
-      }
-      if (ics !== undefined)
-        response = validateIcsExports(response).flatMap((item) =>
-          icsRecords(ics, item),
-        );
-      for (const record of validateRecords(stream, response, 'EventKit')) {
-        if (
-          stream.name === 'events' &&
-          (record.id !== record.eventId ||
-            String(record.endAt) < String(record.startAt) ||
-            (record.allDay
-              ? record.startDate === null ||
-                record.endDate === null ||
-                String(record.endDate) < String(record.startDate)
-              : record.startDate !== null || record.endDate !== null))
-        )
-          throw new TypeError(
-            'Calendar returned inconsistent event dates or identity',
-          );
-        yield record;
-      }
-    } while (cursor !== null);
-  }
+function checkEventDates(event: Record<string, unknown>): void {
+  if (
+    String(event.endAt) < String(event.startAt) ||
+    (event.allDay
+      ? event.startDate === null ||
+        event.endDate === null ||
+        String(event.endDate) < String(event.startDate)
+      : event.startDate !== null || event.endDate !== null)
+  )
+    throw new TypeError('Calendar returned inconsistent event dates');
 }

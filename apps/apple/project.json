@@ -4,10 +4,22 @@
   "projectType": "application",
   "targets": {
     "lint": {},
+    "eventkit": {
+      "command": "sh apps/apple/src/platform/macos/eventkit/build.sh apps/apple/dist/platform/macos/eventkit",
+      "cache": true,
+      "inputs": ["{projectRoot}/src/platform/macos/eventkit/*"],
+      "outputs": ["{projectRoot}/dist/platform/macos/eventkit"]
+    },
+    "build": {
+      "dependsOn": ["...", "eventkit"]
+    },
     "plugin": {
       "executor": "@nx/esbuild:esbuild",
-      "dependsOn": ["^build"],
-      "outputs": ["{workspaceRoot}/plugins/apple/server.mjs"],
+      "dependsOn": ["^build", "eventkit"],
+      "outputs": [
+        "{workspaceRoot}/plugins/apple/server.mjs",
+        "{workspaceRoot}/plugins/apple/eventkit"
+      ],
       "options": {
         "main": "apps/apple/src/plugin/main.ts",
         "tsConfig": "apps/apple/tsconfig.json",
@@ -20,11 +32,17 @@
         "thirdParty": true,
         "declaration": false,
         "skipTypeCheck": true,
+        "assets": [
+          {
+            "input": "apps/apple/dist/platform/macos",
+            "glob": "eventkit",
+            "output": "."
+          }
+        ],
+        "includeIgnoredAssetFiles": true,
         "esbuildOptions": {
           "logLevel": "warning",
-          "outExtension": {
-            ".js": ".mjs"
-          },
+          "outExtension": { ".js": ".mjs" },
           "banner": {
             "js": "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
           }
