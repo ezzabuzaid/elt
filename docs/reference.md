@@ -513,6 +513,37 @@ A run holds one connection and one write transaction on the schema, under a per-
 
 Existing tables are not migrated: a deduplicating load checks that stored key and cursor columns keep their types and fails otherwise. Keep checkpoints in the same schema with `PostgresCheckpointStore` ([checkpoint stores](#checkpoint-stores)).
 
+### Documented Postgres views
+
+`publishPostgresViews(transaction, { schema, views })` from `elt-postgresql` publishes ordinary SQL views with native view and column comments. Each `PostgresView` supplies `name`, `query`, `description`, and a `columns` map from output column names to descriptions. The application defines the SQL and meaning; Postgres derives the output types.
+
+Given a `postgres` client `sql` and an existing `raw.notes` table:
+
+```ts
+import { publishPostgresViews } from 'elt-postgresql';
+
+await sql.begin(async (transaction) => {
+  await publishPostgresViews(transaction, {
+    schema: 'knowledge',
+    views: [{
+      name: 'notes',
+      query: 'SELECT id, title FROM raw.notes',
+      description: 'One row per note, identified by id.',
+      columns: {
+        id: 'Source note identifier.',
+        title: 'Note title.',
+      },
+    }],
+  });
+});
+```
+
+Supply trusted application SQL as one query, with every output column described exactly once and nonempty descriptions. Identifiers follow the destination's 63-byte limit. The publisher creates the target schema if needed, serializes publishing with other writers to that schema, and replaces only the supplied views. List dependencies before their dependents: views are dropped in reverse order and created in the supplied order. Dropping never uses `CASCADE`; an outside dependent prevents publication. A savepoint restores the previous views and comments on any failure, even if the caller catches it and continues the transaction. An empty list does nothing.
+
+The caller owns the connection and transaction. Replacing views recreates them, so reapply explicit grants after publication in that same transaction. Default grants still apply. Grants, reader roles, catalogs, and runtime freshness remain application concerns. The Google warehouse example uses this publisher and adds its grants and freshness update before committing.
+
+Views reflect the underlying tables as queried; publishing them does not copy rows or schedule refreshes. Read their descriptions through `obj_description` and `col_description`, just like table comments.
+
 ## Apple Messages
 
 ```ts

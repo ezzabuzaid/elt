@@ -23,7 +23,7 @@ The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and 
 Every destination supports overwrite, append, and deduplication:
 
 - **SQLite** (`elt-sqlite`): strict tables with inferred or explicitly selected columns, including text and attachment bytes.
-- **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers.
+- **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers, and [documented SQL views](docs/reference.md#documented-postgres-views) defined by the consuming application.
 - **Markdown** (`elt-markdown`): one document per stream or one document per record, with managed append and deduplication.
 
 See the reference for [Mail streams](docs/reference.md#apple-mail), [Contacts streams](docs/reference.md#apple-contacts), [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Search Console streams](docs/reference.md#google-search-console), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).

@@ -1,11 +1,9 @@
+import { type PostgresView, publishPostgresViews } from 'elt-postgresql';
 import { searchConsoleTables as tables } from '../sources/search-console/search-console-copies.ts';
 import { quote, type Sql } from './warehouse.ts';
 
-type View = {
-  readonly name: string;
-  readonly description: string;
+type View = Omit<PostgresView, 'query'> & {
   readonly select: (raw: string) => string;
-  readonly columns: Readonly<Record<string, string>>;
 };
 
 const site = 'The Search Console property, e.g. sc-domain:example.com.';
@@ -238,8 +236,6 @@ const views: readonly View[] = [
   },
 ];
 
-const literal = (text: string) => `'${text.replaceAll("'", "''")}'`;
-
 /**
  * Search Console's marts over the raw tables elt loaded into `raw`. The
  * calculations the data needs to be read correctly live in the views, so a
@@ -253,21 +249,18 @@ export async function installSearchConsoleMarts(
   const schema = quote(raw);
   await sql.begin(async (transaction) => {
     await transaction`SET LOCAL lock_timeout = '35s'`;
-    await transaction`SELECT pg_advisory_xact_lock(hashtextextended('mac-elt:marts', 0))`;
-    // Dependents first. No CASCADE: a view another connector built on these
-    // fails the install loudly instead of disappearing.
-    for (const view of [...views].reverse())
-      await transaction.unsafe(`DROP VIEW IF EXISTS marts.${quote(view.name)}`);
+    await publishPostgresViews(transaction, {
+      schema: 'marts',
+      views: views.map(({ select, ...view }) => ({
+        ...view,
+        query: select(schema),
+      })),
+    });
     for (const statement of [
-      ...views.flatMap((view) => [
-        `CREATE VIEW marts.${quote(view.name)} AS ${view.select(schema)}`,
-        `COMMENT ON VIEW marts.${quote(view.name)} IS ${literal(view.description)}`,
-        ...Object.entries(view.columns).map(
-          ([column, description]) =>
-            `COMMENT ON COLUMN marts.${quote(view.name)}.${quote(column)} IS ${literal(description)}`,
-        ),
-        `GRANT SELECT ON marts.${quote(view.name)} TO ${quote(reader)}`,
-      ]),
+      ...views.map(
+        (view) =>
+          `GRANT SELECT ON marts.${quote(view.name)} TO ${quote(reader)}`,
+      ),
       'SELECT marts._refresh_freshness()',
     ])
       await transaction.unsafe(statement);
