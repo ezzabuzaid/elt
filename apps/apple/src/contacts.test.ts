@@ -489,6 +489,49 @@ function copies(source: AppleContactsSource, destination: SQLiteDestination) {
   );
 }
 
+test('Contacts scope keeps only one container and its related records and images', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'contacts-scope-'),
+  );
+  const source = new AppleContactsSource(
+    addressBookFixture(join(scratch.path, 'AddressBook')),
+    undefined,
+    { collectionIds: ['LOCAL:ABContainer'] },
+  );
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'scope',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: await copies(source, destination),
+      }),
+    ],
+  }).run();
+  assert.deepEqual(rows(destination.path, 'SELECT id FROM contacts'), [
+    { id: 'ME:ABPerson' },
+  ]);
+  assert.deepEqual(rows(destination.path, 'SELECT id FROM containers'), [
+    { id: 'LOCAL:ABContainer' },
+  ]);
+  assert.deepEqual(
+    rows(destination.path, 'SELECT DISTINCT contactId FROM images'),
+    [{ contactId: 'ME:ABPerson' }],
+  );
+  const saved = JSON.stringify(
+    rows(join(scratch.path, 'state.sqlite'), 'SELECT state FROM checkpoints'),
+  );
+  assert.ok(
+    !saved.includes('BOB:ABPerson') && !saved.includes('FRIENDS:ABGroup'),
+  );
+});
+
 test('Contacts exports every stream of every account store by identifier', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-contacts-'),

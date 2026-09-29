@@ -19,6 +19,7 @@ import {
   addressBookDirectory,
   type StoredData,
 } from '../../platform/macos/address-book.ts';
+import { type ImportScope, selected } from '../import-scope.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
   definitions,
@@ -75,6 +76,7 @@ export class AppleContactsSource extends Source<AddressBook> {
     readonly directory = addressBookDirectory,
     // How often a watch checks the stores for commits.
     readonly pollIntervalMs = 1000,
+    readonly scope: ImportScope = {},
   ) {
     super();
     this.identity = `apple-contacts:${directory}`;
@@ -86,7 +88,7 @@ export class AppleContactsSource extends Source<AddressBook> {
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {
-    return localAppleStoreCoverage;
+    return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
   protected override async *observe({
@@ -121,16 +123,21 @@ export class AppleContactsSource extends Source<AddressBook> {
     const name = stream.name as StreamName;
     const files = new Map<string, StoredData>();
     const rows = [];
-    for (const store of book.stores)
+    for (const store of book.stores) {
+      const accepts = contactSelection(store, this.scope);
       rows.push(
         ...(name === 'images'
-          ? await this.#images(store, files)
-          : store.all(definitions[name].sql).map((row) => {
-              const record = recordFrom(name, row);
-              if (name === 'containers') record.source = store.source;
-              return record;
-            })),
+          ? await this.#images(store, files, accepts)
+          : store
+              .all(definitions[name].sql)
+              .filter((row) => accepts(name, row))
+              .map((row) => {
+                const record = recordFrom(name, row);
+                if (name === 'containers') record.source = store.source;
+                return record;
+              })),
       );
+    }
     const records = validateRecords(stream, rows, 'Contacts');
     const messages =
       configuration.syncMode === 'incremental'
@@ -169,9 +176,12 @@ export class AppleContactsSource extends Source<AddressBook> {
   async #images(
     store: AddressBookStore,
     files: Map<string, StoredData>,
+    accepts: (name: StreamName, row: Record<string, unknown>) => boolean,
   ): Promise<Record<string, unknown>[]> {
     const records: Record<string, unknown>[] = [];
-    for (const row of store.all(definitions.images.sql))
+    for (const row of store
+      .all(definitions.images.sql)
+      .filter((row) => accepts('images', row)))
       for (const kind of ['image', 'thumbnail'] as const) {
         const value = row[kind];
         if (!(value instanceof Uint8Array)) continue;
@@ -191,4 +201,39 @@ export class AppleContactsSource extends Source<AddressBook> {
       }
     return records;
   }
+}
+
+function contactSelection(store: AddressBookStore, scope: ImportScope) {
+  if (scope.collectionIds === undefined) return () => true;
+  const containers = new Set<unknown>(
+    store
+      .all(definitions.containers.sql)
+      .filter((row) => selected(scope.collectionIds, row.id))
+      .map((row) => row.id),
+  );
+  const contacts = new Set<unknown>(
+    store
+      .all(definitions.contacts.sql)
+      .filter((row) => containers.has(row.containerId))
+      .map((row) => row.id),
+  );
+  const groups = new Set<unknown>(
+    store
+      .all(definitions.groups.sql)
+      .filter((row) => containers.has(row.containerId))
+      .map((row) => row.id),
+  );
+  const records = new Set<unknown>([...containers, ...contacts, ...groups]);
+  return (name: StreamName, row: Record<string, unknown>): boolean => {
+    if (name === 'containers') return containers.has(row.id);
+    if (name === 'contacts') return contacts.has(row.id);
+    if (name === 'groups') return groups.has(row.id);
+    return (
+      (!('contactId' in row) || contacts.has(row.contactId)) &&
+      (!('groupId' in row) || groups.has(row.groupId)) &&
+      (!('parentGroupId' in row) || groups.has(row.parentGroupId)) &&
+      (!('childGroupId' in row) || groups.has(row.childGroupId)) &&
+      (!('recordId' in row) || records.has(row.recordId))
+    );
+  };
 }

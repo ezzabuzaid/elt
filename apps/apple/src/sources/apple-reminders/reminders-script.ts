@@ -21,10 +21,10 @@ export const dateComponentNames = [
 export const remindersScript = `
 ${eventKitScript}
 
-function fetchReminders(store) {
+function fetchReminders(store, calendars = $()) {
   let completed = false;
   let reminders;
-  const predicate = store.predicateForRemindersInCalendars($());
+  const predicate = store.predicateForRemindersInCalendars(calendars);
   const request = store.fetchRemindersMatchingPredicateCompletion(predicate, result => {
     reminders = result;
     completed = true;
@@ -62,14 +62,25 @@ function reminderDateComponents(reminderId, kind, components) {
   };
 }
 
-function readReminders(store, stream) {
+function readReminders(store, stream, scope = {}) {
   const { isNil, string, number, bool, timestamp, url } = eventKit;
-  if (stream === 'accounts') return eventKit.accounts(store);
-  if (stream === 'lists') return eventKit.calendars(store, 1);
+  const allows = (ids, id) => ids === undefined || ids.includes(id);
+  const scoped = scope.accountIds !== undefined || scope.collectionIds !== undefined;
+  if (stream === 'accounts' && !scoped) return eventKit.accounts(store);
+  const lists = (scoped || stream === 'lists' ? eventKit.calendars(store, 1) : []).filter(list =>
+    allows(scope.accountIds, list.accountId) && allows(scope.collectionIds, list.id));
+  if (stream === 'accounts') return eventKit.accounts(store).filter(account =>
+    allows(scope.accountIds, account.id) &&
+    (scope.collectionIds === undefined || lists.some(list => list.accountId === account.id)));
+  if (stream === 'lists') return lists;
   if (!['reminders', 'dateComponents', 'attendees', 'alarms', 'recurrenceRules', 'recurrenceRuleValues'].includes(stream))
     throw new Error('Unknown reminders stream: ' + stream);
   const records = [];
-  for (const reminder of fetchReminders(store)) {
+  if (scoped && lists.length === 0) return records;
+  const listIds = new Set(lists.map(list => list.id));
+  const calendars = scoped ? $(eventKit.array(store.calendarsForEntityType(1)).filter(calendar =>
+    listIds.has(string(calendar.calendarIdentifier)))) : $();
+  for (const reminder of fetchReminders(store, calendars)) {
     const id = string(reminder.calendarItemIdentifier);
     const listId = isNil(reminder.calendar) ? null : string(reminder.calendar.calendarIdentifier);
     if (typeof id !== 'string' || !id || typeof listId !== 'string' || !listId)

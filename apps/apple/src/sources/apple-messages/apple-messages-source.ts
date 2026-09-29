@@ -15,6 +15,7 @@ import {
   ChatDatabaseVersion,
   messagesDirectory,
 } from '../../platform/macos/chat-database.ts';
+import { type ImportScope, selected, withinDates } from '../import-scope.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
   definitions,
@@ -46,11 +47,16 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
   readonly recoverableMessageParts = streams.recoverableMessageParts;
   readonly attachments = streams.attachments;
   readonly messageAttachments = streams.messageAttachments;
+  readonly #scopes = new WeakMap<
+    ChatDatabase,
+    (name: StreamName, row: Record<string, unknown>) => boolean
+  >();
 
   constructor(
     readonly path = join(messagesDirectory, 'chat.db'),
     // How often a watch checks chat.db for commits.
     readonly pollIntervalMs = 1000,
+    readonly scope: ImportScope = {},
   ) {
     super();
     this.identity = `apple-messages:${path}`;
@@ -62,7 +68,7 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {
-    return localAppleStoreCoverage;
+    return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
   protected override async *observe({
@@ -128,7 +134,14 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
     const definition: {
       expand?: (row: Record<string, unknown>) => Record<string, unknown>[];
     } = definitions[name];
-    const rows = database.all(definitions[name].sql);
+    let accepts = this.#scopes.get(database);
+    if (accepts === undefined) {
+      accepts = messageSelection(database, this.scope);
+      this.#scopes.set(database, accepts);
+    }
+    const rows = database
+      .all(definitions[name].sql)
+      .filter((row) => accepts(name, row));
     if (definition.expand !== undefined) return rows.flatMap(definition.expand);
     return Promise.all(
       rows.map(async (row) => {
@@ -149,4 +162,68 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
       }),
     );
   }
+}
+
+function messageSelection(database: ChatDatabase, scope: ImportScope) {
+  if (Object.keys(scope).length === 0) return () => true;
+  const chats = new Set<unknown>(
+    database
+      .all(definitions.chats.sql)
+      .filter(
+        (row) =>
+          selected(scope.collectionIds, row.guid) &&
+          selected(scope.accountIds, row.accountId),
+      )
+      .map((row) => row.guid),
+  );
+  const memberships = [
+    ...database.all(definitions.chatMessages.sql),
+    ...database.all(definitions.recoverableMessages.sql),
+  ];
+  const linked = new Set<unknown>(
+    memberships
+      .filter((row) => chats.has(row.chatGuid))
+      .map((row) => row.messageGuid),
+  );
+  const messages = database
+    .all(definitions.messages.sql)
+    .filter(
+      (row) =>
+        ((scope.collectionIds === undefined &&
+          scope.accountIds === undefined) ||
+          linked.has(row.guid)) &&
+        withinDates(
+          scope,
+          typeof row.date === 'number'
+            ? new Date(Date.UTC(2001, 0, 1) + row.date).toISOString()
+            : null,
+        ),
+    );
+  const messageIds = new Set<unknown>(messages.map((row) => row.guid));
+  const attachmentIds = new Set<unknown>(
+    database
+      .all(definitions.messageAttachments.sql)
+      .filter((row) => messageIds.has(row.messageGuid))
+      .map((row) => row.attachmentGuid),
+  );
+  const handles = new Set<unknown>(
+    messages.flatMap((row) => [
+      JSON.stringify([row.handle, row.handleService]),
+      JSON.stringify([row.otherHandle, row.otherHandleService]),
+    ]),
+  );
+  for (const row of database.all(definitions.chatHandles.sql))
+    if (chats.has(row.chatGuid))
+      handles.add(JSON.stringify([row.handleId, row.handleService]));
+  return (name: StreamName, row: Record<string, unknown>): boolean => {
+    if (name === 'chats') return chats.has(row.guid);
+    if (name === 'messages') return messageIds.has(row.guid);
+    if (name === 'attachments') return attachmentIds.has(row.guid);
+    if (name === 'handles')
+      return handles.has(JSON.stringify([row.id, row.service]));
+    return (
+      (!('chatGuid' in row) || chats.has(row.chatGuid)) &&
+      (!('messageGuid' in row) || messageIds.has(row.messageGuid))
+    );
+  };
 }

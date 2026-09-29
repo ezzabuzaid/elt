@@ -30,6 +30,16 @@ See the reference for [Mail streams](docs/reference.md#apple-mail), [Contacts st
 
 ## Quick start
 
+### Apple plugin for Codex
+
+The [Apple plugin](plugins/apple/.codex-plugin/plugin.json) is a Codex plugin with setup and query skills and a local MCP server. Add this repository as a marketplace in Codex in the ChatGPT desktop app on a Mac (`codex plugin marketplace add ezzabuzaid/elt`), install **Apple**, then choose **Set up Apple**. Setup asks which apps and scopes to connect and explains macOS permissions. Users do not install Node, Docker or a repository: the launcher runs the server on the Node runtime bundled with the desktop app. The post-install setup prompt requires Codex 0.156 or later.
+
+`plugins/apple` is the installable package, committed as Codex runs it; [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) lists it. Its server is one bundled file, `plugins/apple/server.mjs`, built from `apps/apple/src/plugin` by `npx nx run apple:plugin`. `apple:test` rebuilds it, so commit the bundle with the source change that produced it.
+
+The MCP tools only set up and sync. They import into `~/Library/Application Support/Context Compiler/Apple/<app>`: `data.sqlite` with an `_apple_catalog` table of schemas and coverage, checkpoints, and managed attachment copies. The query skill reads each `data.sqlite` directly with `sqlite3 -readonly`; the Codex sandbox also denies writes there. Sync runs on request while in use and records each app's status and last successful sync. Scope changes discard that app's previous imported copy. The setup skill can be run again to change or disconnect apps. It accesses content already available on the Mac; Calendar keeps remote attachment links without requiring Google sign-in. Scoped Mail omits global settings and native metadata streams whose ownership cannot be established. This desktop workflow is separate from the Postgres exporter described below.
+
+### Library and exporter
+
 Use **Node.js 26** and npm. The Apple connectors require macOS; Calendar and Reminders require **macOS 14 or later**.
 
 The packages are currently private npm workspaces. Use this checkout; the examples import its local `elt` package.

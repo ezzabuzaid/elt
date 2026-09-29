@@ -32,7 +32,10 @@ import {
   type SQLiteTable,
 } from 'elt-sqlite';
 import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
-import { MessagesUnavailableError } from './platform/macos/chat-database.ts';
+import {
+  ChatDatabase,
+  MessagesUnavailableError,
+} from './platform/macos/chat-database.ts';
 import {
   CalendarUnavailableError,
   EventKit,
@@ -40,11 +43,13 @@ import {
   RemindersUnavailableError,
 } from './platform/macos/eventkit.ts';
 import {
+  NoteStore,
   NotesSchemaError,
   NotesUnavailableError,
 } from './platform/macos/note-store.ts';
 import osa from './platform/macos/osa.ts';
 import { decodeArchive, plistJSON } from './platform/macos/plist.ts';
+import { ApplePlugin } from './plugin/apple-plugin.ts';
 import {
   AppleCalendarSource,
   CalendarIcsUnavailableError,
@@ -367,6 +372,115 @@ const notesPipeline = (source: AppleNotesSource, directory: string) => {
     }),
   };
 };
+
+test('Apple plugin completes scoped setup, sync and query with managed files and independent app failures', async (t) => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-flow-'));
+  const path = await noteStoreFixture(join(scratch.path, 'native'));
+  const openNative = NoteStore.open;
+  let revoked = false;
+  t.mock.method(
+    NoteStore,
+    'open',
+    async (_path: string, required: Parameters<typeof NoteStore.open>[1]) => {
+      if (revoked) throw new NotesUnavailableError(path, new Error('revoked'));
+      return openNative(path, required);
+    },
+  );
+  t.mock.method(ChatDatabase, 'open', async () => {
+    throw new MessagesUnavailableError(
+      'synthetic-chat.db',
+      new Error('denied'),
+    );
+  });
+  const plugin = new ApplePlugin(join(scratch.path, 'plugin'));
+  const choices = await plugin.options('notes');
+  assert.equal(choices.choices.folders?.length, 3);
+  plugin.configure({
+    apps: [
+      {
+        app: 'notes',
+        scope: { accountIds: ['ACCOUNT-1'], collectionIds: ['FOLDER-NOTES'] },
+      },
+      { app: 'messages' },
+    ],
+  });
+  const status = await plugin.sync();
+  assert.equal(status.apps[0]?.sync?.state, 'succeeded');
+  assert.equal(status.apps[1]?.sync?.state, 'failed');
+  const lastSucceededAt = status.apps[0]?.sync?.lastSucceededAt;
+  assert.ok(lastSucceededAt);
+  const database = status.apps[0]?.database;
+  assert.ok(database);
+  // The query-apple skill's read command.
+  const read = async (sql: string, ...commands: string[]) => {
+    const { stdout } = await execFile('/usr/bin/sqlite3', [
+      '-readonly',
+      '-json',
+      '-cmd',
+      '.timeout 30000',
+      ...commands.flatMap((command) => ['-cmd', command]),
+      database,
+      sql,
+    ]);
+    return JSON.parse(stdout || '[]');
+  };
+  const [catalog] = await read(
+    "SELECT schema_json FROM _apple_catalog WHERE name='attachments'",
+  );
+  assert.ok(JSON.parse(catalog.schema_json).properties.attachmentRef);
+  const [attachment] = await read(
+    'SELECT attachmentRef FROM attachments WHERE id=@id',
+    ".parameter set @id 'ATT-FILE'",
+  );
+  assert.equal(
+    await readFile(String(attachment.attachmentRef), 'utf8'),
+    'attached words',
+  );
+  assert.deepEqual(await read('SELECT id FROM notes ORDER BY id'), [
+    { id: 'NOTE-LOCKED' },
+    { id: 'NOTE-RICH' },
+  ]);
+  const repeated = await plugin.sync(['notes']);
+  assert.equal(repeated.apps[0]?.sync?.state, 'succeeded');
+  revoked = true;
+  const failed = await plugin.sync(['notes']);
+  assert.equal(failed.apps[0]?.sync?.state, 'failed');
+  assert.equal(
+    failed.apps[0]?.sync?.lastSucceededAt,
+    repeated.apps[0]?.sync?.lastSucceededAt,
+  );
+  assert.deepEqual(await read('SELECT count(*) AS n FROM notes'), [{ n: 2 }]);
+});
+
+test('Notes scope excludes other folders from records, attachments and checkpoints', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-scope-'));
+  const source = new AppleNotesSource({
+    path: await noteStoreFixture(scratch.path),
+    scope: {
+      accountIds: ['ACCOUNT-1'],
+      collectionIds: ['FOLDER-TRASH'],
+      startAt: '2025-02-01T00:00:00.000Z',
+      endAt: '2025-03-01T00:00:00.000Z',
+    },
+  });
+  const { pipeline, destination } = notesPipeline(source, scratch.path);
+  await pipeline.run();
+  assert.deepEqual(noteRows(destination.path, 'SELECT id FROM notes'), [
+    { id: 'NOTE-TRASHED' },
+  ]);
+  assert.deepEqual(
+    noteRows(destination.path, 'SELECT id FROM attachments'),
+    [],
+  );
+  const saved = JSON.stringify(
+    noteRows(
+      join(scratch.path, 'notes-state.sqlite'),
+      'SELECT state FROM checkpoints',
+    ),
+  );
+  assert.ok(saved.includes('NOTE-TRASHED'));
+  assert.ok(!saved.includes('NOTE-RICH') && !saved.includes('ATT-FILE'));
+});
 
 test('Notes exports every stream from its store, skipping cloud placeholders and locked content', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
@@ -1293,7 +1407,7 @@ test('Calendar deduplicates an event returned by adjacent extraction windows', {
   const windows: Array<[string, string]> = [];
   t.mock.method(osa, 'execute', async (script: string) => {
     assert.equal(streamName(script), 'events');
-    const bounds = /readCalendar\(store, "events", ("[^"]+"), ("[^"]+")\)/.exec(
+    const bounds = /readCalendar\(store, "events", ("[^"]+"), ("[^"]+")/.exec(
       script,
     );
     assert.ok(bounds?.[1] && bounds[2]);
@@ -1348,8 +1462,8 @@ test('Calendar continues empty ICS pages and rejects a stalled cursor', {
   const calls: string[] = [];
   t.mock.method(osa, 'execute', async (script: string) => {
     const name = streamName(script);
-    const first = script.includes(', undefined, null)');
-    if (!first) assert.ok(script.includes(', undefined, "page-1")'));
+    const first = script.includes(', undefined, null,');
+    if (!first) assert.ok(script.includes(', undefined, "page-1",'));
     calls.push(name);
     const page = JSON.parse(
       icsPage([
@@ -1402,6 +1516,52 @@ test('Calendar continues empty ICS pages and rejects a stalled cursor', {
   assert.deepEqual(items('icsProperties'), ['item-2']);
   stalled = true;
   await assert.rejects(run(), /invalid ICS page/);
+});
+
+test('Calendar and Reminders scope passes only chosen calendars to native predicates', () => {
+  const runtime = `
+    const eventKit = {
+      isNil: value => value == null,
+      array: value => value,
+      string: value => value,
+      calendars: (store, type) => store.calendarsForEntityType(type).map(value => ({id: value.calendarIdentifier, accountId: value.accountId})),
+      accounts: () => [{id:'account-1'}, {id:'account-2'}],
+      nativeDate: value => new Date(value), milliseconds: value => Number(value),
+    };
+    const selected = {calendarIdentifier:'selected',accountId:'account-1'};
+    const excluded = {calendarIdentifier:'excluded',accountId:'account-2'};
+    const store = {
+      calendarsForEntityType: () => [selected,excluded],
+      predicateForEventsWithStartDateEndDateCalendars: (start,end,calendars) => {
+        if (calendars.length !== 1 || calendars[0] !== selected) throw new Error('Event predicate escaped selection');
+        return 'events';
+      },
+      eventsMatchingPredicate: () => [],
+      predicateForRemindersInCalendars: calendars => {
+        if (calendars.length !== 1 || calendars[0] !== selected) throw new Error('Reminder predicate escaped selection');
+        return 'reminders';
+      },
+      fetchRemindersMatchingPredicateCompletion: (predicate,done) => { done([]); return 'request'; },
+    };
+  `;
+  const reader = (script: string) =>
+    script.slice(script.indexOf('function ', script.indexOf('})();') + 5));
+  const output = runInNewContext(
+    `${runtime}\n${reader(calendarScript)}\n${reader(remindersScript)}
+    const scope = {accountIds:['account-1'],collectionIds:['selected']};
+    ({ events: readCalendar(store,'events','2025-01-01T00:00:00.000Z','2025-02-01T00:00:00.000Z',undefined,null,scope),
+       reminders: readReminders(store,'reminders',scope), accounts: readCalendar(store,'accounts',null,null,undefined,null,scope),
+       noEvents: readCalendar(store,'events',null,null,undefined,null,{collectionIds:['missing']}),
+       noReminders: readReminders(store,'reminders',{collectionIds:['missing']}) });`,
+    { $: (value: unknown) => value },
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(output)), {
+    events: [],
+    reminders: [],
+    accounts: [{ id: 'account-1' }],
+    noEvents: [],
+    noReminders: [],
+  });
 });
 
 test('Calendar JXA projects unsaved EventKit objects without reading Calendar data', {
@@ -3482,6 +3642,62 @@ const messagesRows = (path: string, sql: string) => {
     .all()
     .map((row) => ({ ...row }));
 };
+
+test('Messages scope filters chat and native dates before decoding attachments and saving checkpoints', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'messages-scope-'),
+  );
+  const path = await chatFixture(scratch.path);
+  using native = new DatabaseSync(path);
+  // Invalid archived content on an excluded message must never be decoded.
+  native.exec(
+    "UPDATE message SET attributedBody=X'010203' WHERE guid='m-archived'",
+  );
+  const source = new AppleMessagesSource(path, undefined, {
+    collectionIds: ['iMessage;-;+15550100'],
+    startAt: '2025-01-02T03:04:05.006Z',
+    endAt: '2025-01-02T03:04:05.007Z',
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'scope',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: (await source.discover()).streams.map(
+          (stream) =>
+            new Copy(stream, destination.table(stream.name), {
+              id: stream.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+        ),
+      }),
+    ],
+  }).run();
+  assert.deepEqual(
+    messagesRows(destination.path, 'SELECT guid FROM messages'),
+    [{ guid: 'm-plain' }],
+  );
+  assert.deepEqual(
+    messagesRows(destination.path, 'SELECT guid FROM attachments'),
+    [],
+  );
+  const saved = JSON.stringify(
+    messagesRows(
+      join(scratch.path, 'state.sqlite'),
+      'SELECT state FROM checkpoints',
+    ),
+  );
+  assert.ok(saved.includes('m-plain'));
+  assert.ok(!saved.includes('m-archived') && !saved.includes('att-local'));
+});
 
 test('Messages exports every stream by guid, decodes archived text and streams local attachments', async () => {
   await using scratch = await mkdtempDisposable(

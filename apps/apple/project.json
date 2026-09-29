@@ -3,6 +3,11 @@
   "sourceRoot": "apps/apple/src",
   "projectType": "application",
   "targets": {
+    "plugin": {
+      "dependsOn": ["^build"],
+      "command": "esbuild apps/apple/src/plugin/main.ts --bundle --platform=node --format=esm --target=node24.19 --log-level=warning --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=plugins/apple/server.mjs",
+      "outputs": ["{workspaceRoot}/plugins/apple/server.mjs"]
+    },
     "build": {
       "command": "tsc -p apps/apple/tsconfig.json",
       "outputs": ["{projectRoot}/dist"]
@@ -22,7 +27,7 @@
       "command": "node apps/apple/dist/main.js"
     },
     "test": {
-      "dependsOn": ["build"],
+      "dependsOn": ["build", "plugin"],
       "command": "node --test \"apps/apple/dist/*.test.js\""
     }
   }

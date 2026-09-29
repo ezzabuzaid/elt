@@ -14,6 +14,7 @@ import {
   notesContainer,
 } from '../../platform/macos/note-store.ts';
 import { launchNotesHidden } from '../../platform/macos/notes-app.ts';
+import type { ImportScope } from '../import-scope.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import { AccountsStream } from './accounts-stream.ts';
 import type { NotesReader } from './apple-notes-stream.ts';
@@ -50,6 +51,7 @@ export class AppleNotesSource extends Source<NotesScan> {
   readonly pollIntervalMs: number;
   readonly launchIntervalMs: number;
   readonly launch: () => Promise<unknown>;
+  readonly scope: ImportScope;
 
   constructor({
     path = join(notesContainer, 'NoteStore.sqlite'),
@@ -59,27 +61,33 @@ export class AppleNotesSource extends Source<NotesScan> {
     // when it frees disk space, and only Notes syncs iCloud notes.
     launchIntervalMs = 30_000,
     launch = launchNotesHidden,
+    scope = {},
   }: {
     path?: string;
     pollIntervalMs?: number;
     launchIntervalMs?: number;
     launch?: () => Promise<unknown>;
+    scope?: ImportScope;
   } = {}) {
     super();
     this.path = path;
     this.pollIntervalMs = pollIntervalMs;
     this.launchIntervalMs = launchIntervalMs;
     this.launch = launch;
+    this.scope = scope;
     this.identity = `apple-notes:${path}`;
     Object.freeze(this);
   }
 
   protected override async open(): Promise<NotesScan> {
-    return new NotesScan(await NoteStore.open(this.path, requiredColumns));
+    return new NotesScan(
+      await NoteStore.open(this.path, requiredColumns),
+      this.scope,
+    );
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {
-    return localAppleStoreCoverage;
+    return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
   protected override async *observe({

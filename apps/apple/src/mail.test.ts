@@ -403,6 +403,43 @@ async function pipeline(source: AppleMailSource, directory: string) {
   });
 }
 
+test('Mail scope filters dates, message ownership and MIME before copying files and checkpoints', async (t) => {
+  t.mock.method(osa, 'execute', async () =>
+    JSON.stringify({
+      accounts: [{ id: 'ACCOUNT', name: 'Synthetic' }],
+      smtpServers: [],
+    }),
+  );
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'mail-scope-'));
+  const input = await fixture(scratch.path);
+  const source = new AppleMailSource(scratch.path, {
+    collectionIds: ['1'],
+    startAt: '2025-01-01T00:00:00.000Z',
+    endAt: '2025-02-01T00:00:00.000Z',
+  });
+  const run = await pipeline(source, scratch.path);
+  await run.run();
+  const output = join(scratch.path, 'out.sqlite');
+  assert.deepEqual(rows(output, 'SELECT id FROM messages'), [{ id: '1' }]);
+  assert.deepEqual(rows(output, 'SELECT DISTINCT messageId FROM attachments'), [
+    { messageId: '1' },
+  ]);
+  assert.deepEqual(rows(output, 'SELECT id FROM recipients'), [{ id: '1' }]);
+  assert.deepEqual(rows(output, 'SELECT messageId FROM conversationMessages'), [
+    { messageId: '9223372036854775800' },
+  ]);
+  assert.deepEqual(rows(output, 'SELECT * FROM messageMetadata'), []);
+  const saved = JSON.stringify(
+    rows(join(scratch.path, 'state.sqlite'), 'SELECT state FROM checkpoints'),
+  );
+  assert.ok(!saved.includes('not-downloaded.txt'));
+  using native = new DatabaseSync(input.index);
+  native.exec('UPDATE messages SET date_received=0,date_sent=0 WHERE ROWID=1');
+  await run.run();
+  assert.deepEqual(rows(output, 'SELECT id FROM messages'), []);
+  assert.deepEqual(rows(output, 'SELECT messageId FROM attachments'), []);
+});
+
 test('Mail exports the native store, MIME, detached files and unavailable metadata; snapshots update and delete', async (t) => {
   t.mock.method(osa, 'execute', async () =>
     JSON.stringify({

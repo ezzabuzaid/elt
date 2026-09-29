@@ -27,6 +27,7 @@ import {
 } from '../../platform/macos/mail-store.ts';
 import osa from '../../platform/macos/osa.ts';
 import type { PlistValue } from '../../platform/macos/plist.ts';
+import { type ImportScope, selected, withinDates } from '../import-scope.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import { mailStream, mailTables, tableStreams } from './mail-tables.ts';
 
@@ -169,13 +170,175 @@ const accountsScript = `
   JSON.stringify({ accounts, smtpServers });
 `;
 
+// These native records have no proven account/message ownership. A restricted
+// import omits them rather than copying unrelated settings or guessing joins.
+export const restrictedMailStreams = [
+  'messageMetadata',
+  'dataDetectionResults',
+  'protectedMessageData',
+  'smtpServers',
+  'mailboxProperties',
+  'configuration',
+  'rules',
+  'ruleConditions',
+  'smartMailboxes',
+  'smartMailboxConditions',
+  'signatures',
+] as const;
+
+function mailSelection(store: MailStore, scope: ImportScope) {
+  if (Object.keys(scope).length === 0) return () => true;
+  const rows = (name: keyof typeof mailTables) =>
+    store.database.prepare(mailTables[name].sql).all();
+  const mailboxes = new Set<unknown>(
+    rows('mailboxes')
+      .filter((row) => {
+        const account =
+          typeof row.url === 'string'
+            ? URL.parse(row.url)?.hostname
+            : undefined;
+        return (
+          selected(scope.accountIds, account) &&
+          selected(scope.collectionIds, row.id)
+        );
+      })
+      .map((row) => row.id),
+  );
+  const labelled = new Set<unknown>(
+    rows('messageMailboxes')
+      .filter((row) => mailboxes.has(row.mailboxId))
+      .map((row) => row.messageId),
+  );
+  const messages = rows('messages').filter(
+    (row) =>
+      (mailboxes.has(row.mailbox) ||
+        mailboxes.has(row.remoteMailbox) ||
+        labelled.has(row.id)) &&
+      withinDates(scope, row.dateReceived ?? row.dateSent),
+  );
+  const ids = new Set<unknown>(messages.map((row) => row.id));
+  const hashes = new Set<unknown>(messages.map((row) => row.messageId));
+  const globals = new Set<unknown>(messages.map((row) => row.globalMessageId));
+  const recipients = rows('recipients').filter((row) => ids.has(row.message));
+  const addresses = new Set<unknown>([
+    ...messages.map((row) => row.sender),
+    ...recipients.map((row) => row.address),
+  ]);
+  const addressText = new Set<unknown>(
+    rows('addresses')
+      .filter((row) => addresses.has(row.id))
+      .map((row) => row.address),
+  );
+  const servers = new Set<unknown>(
+    rows('serverMessages')
+      .filter((row) => ids.has(row.message) && mailboxes.has(row.mailbox))
+      .map((row) => row.id),
+  );
+  const conversations = new Set<unknown>(
+    rows('conversationMessages')
+      .filter((row) => hashes.has(row.messageId))
+      .map((row) => row.conversationId),
+  );
+  const links = new Set<unknown>(
+    rows('messageRichLinks')
+      .filter((row) => globals.has(row.globalMessageId))
+      .map((row) => row.richLink),
+  );
+  const summaries = new Set<unknown>(
+    rows('messageGlobalData')
+      .filter((row) => globals.has(row.id))
+      .map((row) => row.generatedSummary),
+  );
+  const brands = new Set<unknown>(messages.map((row) => row.brandIndicator));
+  const businesses = new Set<unknown>(
+    rows('businessAddresses')
+      .filter((row) => addresses.has(row.address))
+      .map((row) => row.business),
+  );
+  const senders = new Set<unknown>(
+    rows('senderAddresses')
+      .filter((row) => addresses.has(row.address))
+      .map((row) => row.sender),
+  );
+  const subjects = new Set<unknown>(messages.map((row) => row.subject));
+  const texts = new Set<unknown>(messages.map((row) => row.summary));
+  return (name: StreamName, row: Record<string, unknown>): boolean => {
+    switch (name) {
+      case 'accounts':
+        return selected(scope.accountIds, row.id);
+      case 'mailboxes':
+        return mailboxes.has(row.id);
+      case 'messages':
+        return ids.has(row.id);
+      case 'recipients':
+      case 'indexedAttachments':
+      case 'messageReferences':
+        return ids.has(row.message);
+      case 'messageFiles':
+      case 'messageHeaders':
+      case 'messageParts':
+      case 'attachments':
+      case 'events':
+        return ids.has(row.messageId);
+      case 'messageMailboxes':
+        return ids.has(row.messageId) && mailboxes.has(row.mailboxId);
+      case 'serverMessages':
+        return servers.has(row.id);
+      case 'serverMessageMailboxes':
+        return servers.has(row.serverMessage) && mailboxes.has(row.label);
+      case 'conversationMessages':
+        return hashes.has(row.messageId);
+      case 'conversations':
+        return conversations.has(row.conversationId);
+      case 'messageGlobalData':
+        return globals.has(row.id);
+      case 'addresses':
+        return addresses.has(row.id);
+      case 'addressMetadata':
+        return addressText.has(row.address);
+      case 'subjects':
+        return subjects.has(row.id);
+      case 'summaries':
+        return texts.has(row.id);
+      case 'generatedSummaries':
+        return summaries.has(row.id);
+      case 'messageRichLinks':
+        return globals.has(row.globalMessageId);
+      case 'richLinks':
+        return links.has(row.id);
+      case 'brandIndicators':
+        return brands.has(row.id);
+      case 'brandIndicatorEvidence':
+        return brands.has(row.brandIndicator);
+      case 'businessAddresses':
+        return addresses.has(row.address);
+      case 'businesses':
+        return businesses.has(row.id);
+      case 'businessCategories':
+        return businesses.has(row.business);
+      case 'senderAddresses':
+        return addresses.has(row.address);
+      case 'senders':
+        return senders.has(row.id);
+      default:
+        return false;
+    }
+  };
+}
+
 class MailScan implements AsyncDisposable {
+  readonly accepts: (name: StreamName, row: Record<string, unknown>) => boolean;
   #accounts: Promise<{
     accounts: SchemaRecord<typeof metadata>[];
     smtpServers: SchemaRecord<typeof metadata>[];
   }> | null = null;
 
-  constructor(readonly store: MailStore) {}
+  constructor(
+    readonly store: MailStore,
+    scope: ImportScope = {},
+  ) {
+    this.accepts = mailSelection(store, scope);
+  }
 
   async *mime(
     name: 'messageHeaders' | 'messageParts' | 'attachments',
@@ -186,6 +349,7 @@ class MailScan implements AsyncDisposable {
     const remaining = new Map(
       indexedAttachments
         .all()
+        .filter((row) => this.accepts('indexedAttachments', row))
         .map((row) => [`${row.message}:${row.attachment_id}`, row]),
     );
     // ponytail: one archive scan per MIME view, with staging bounded by one
@@ -194,6 +358,7 @@ class MailScan implements AsyncDisposable {
       .prepare('SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID')
       .iterate()) {
       const id = row.id as string;
+      if (!this.accepts('messages', row)) continue;
       const file = this.store.messages.get(id);
       if (file === undefined) continue;
       const { headers, parts } = await readMailMime(
@@ -346,6 +511,7 @@ class MailScan implements AsyncDisposable {
     if (name in mailTables) {
       const definition = mailTables[name as keyof typeof mailTables];
       for (const row of this.store.database.prepare(definition.sql).iterate()) {
+        if (!this.accepts(name, row)) continue;
         for (const column of definition.blobs)
           if (row[column] instanceof Uint8Array)
             row[column] = Buffer.from(row[column]).toString('base64');
@@ -356,7 +522,7 @@ class MailScan implements AsyncDisposable {
     if (name === 'accounts' || name === 'smtpServers') {
       this.#accounts ??= this.#accountMetadata();
       for (const data of (await this.#accounts)[name])
-        yield { data, file: null };
+        if (this.accepts(name, data)) yield { data, file: null };
       return;
     }
     if (name === 'messageFiles') {
@@ -365,6 +531,7 @@ class MailScan implements AsyncDisposable {
           'SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID',
         )
         .iterate()) {
+        if (!this.accepts('messages', row)) continue;
         const file = this.store.messages.get(row.id as string);
         const data: SchemaRecord<typeof fileFields> = {
           messageId: row.id as string,
@@ -533,7 +700,10 @@ export class AppleMailSource extends Source<MailScan> {
   readonly smartMailboxes = streams.smartMailboxes;
   readonly signatures = streams.signatures;
 
-  constructor(readonly path: string) {
+  constructor(
+    readonly path: string,
+    readonly scope: ImportScope = {},
+  ) {
     super();
     this.identity = `apple-mail:${path}`;
     Object.freeze(this);
@@ -547,6 +717,7 @@ export class AppleMailSource extends Source<MailScan> {
           Object.values(mailTables).map((table) => [table.name, table.columns]),
         ),
       ),
+      this.scope,
     );
   }
 
@@ -560,6 +731,7 @@ export class AppleMailSource extends Source<MailScan> {
     let file: string | null = null;
     async function* records() {
       for await (const entry of scan.read(stream.name as StreamName)) {
+        if (!scan.accepts(stream.name as StreamName, entry.data)) continue;
         file = entry.file;
         yield* validateRecords(stream, [entry.data], 'Mail');
       }
@@ -578,7 +750,7 @@ export class AppleMailSource extends Source<MailScan> {
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {
-    return localAppleStoreCoverage;
+    return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
   protected override async *observe({

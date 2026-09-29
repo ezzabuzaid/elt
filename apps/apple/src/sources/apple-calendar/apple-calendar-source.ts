@@ -22,6 +22,7 @@ import {
   eventKitFields,
   eventKitRelatedFields,
 } from '../eventkit-schema.ts';
+import type { ImportScope } from '../import-scope.ts';
 import { calendarScript } from './calendar-script.ts';
 import { icsRecords, isIcsStream, validateIcsExports } from './ics-records.ts';
 
@@ -152,6 +153,7 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
   protected readonly catalog = catalog;
   readonly startAt: string;
   readonly endAt: string;
+  readonly scope: ImportScope;
   readonly accounts = catalog.get('accounts');
   readonly calendars = catalog.get('calendars');
   readonly events = catalog.get('events');
@@ -170,11 +172,13 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
     startAt,
     endAt,
     attachments,
+    scope = {},
   }: {
     startAt: string;
     endAt: string;
     // Retrieves remote ATTACH files; only needed when a copy reads their bytes.
     attachments?: CalendarAttachmentFetcher;
+    scope?: ImportScope;
   }) {
     super();
     this.#attachments = attachments;
@@ -184,6 +188,7 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
       );
     this.startAt = startAt;
     this.endAt = endAt;
+    this.scope = scope;
     Object.freeze(this);
   }
 
@@ -192,12 +197,12 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
       return {
         description:
           'All Calendar accounts or calendars visible through EventKit on this Mac. No date filter; the event window does not restrict these listings.',
-        selection: {},
+        selection: this.scope,
       };
     return {
       description:
         'EventKit event occurrences overlapping the configured UTC interval [startAt, endAt); zero-duration events must start within it. Related rows and ICS exports belong to those selected events; ICS may describe a recurring series beyond the interval. Only calendars visible on this Mac are included. This is a requested window, not observed event dates. Attachment metadata may exist without retrievable file bytes.',
-      selection: { startAt: this.startAt, endAt: this.endAt },
+      selection: { ...this.scope, startAt: this.startAt, endAt: this.endAt },
     };
   }
 
@@ -323,7 +328,7 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
       try {
         response = await this.#eventKit.execute(`
           ${calendarScript}
-          return readCalendar(store, ${JSON.stringify(stream.name)}, ${JSON.stringify(startAt)}, ${JSON.stringify(endAt)}${paged ? `, undefined, ${JSON.stringify(cursor)}` : ''});
+          return readCalendar(store, ${JSON.stringify(stream.name)}, ${JSON.stringify(startAt)}, ${JSON.stringify(endAt)}, undefined, ${JSON.stringify(cursor)}, ${JSON.stringify(this.scope)});
         `);
       } catch (error) {
         if (

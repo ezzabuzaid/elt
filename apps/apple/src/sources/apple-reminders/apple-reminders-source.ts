@@ -13,6 +13,7 @@ import {
   eventKitFields,
   eventKitRelatedFields,
 } from '../eventkit-schema.ts';
+import type { ImportScope } from '../import-scope.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import { dateComponentNames, remindersScript } from './reminders-script.ts';
 
@@ -69,13 +70,13 @@ export class AppleRemindersSource extends Source<EventKitSnapshot> {
   readonly recurrenceRules = catalog.get('recurrenceRules');
   readonly recurrenceRuleValues = catalog.get('recurrenceRuleValues');
 
-  constructor() {
+  constructor(readonly scope: ImportScope = {}) {
     super();
     Object.freeze(this);
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {
-    return localAppleStoreCoverage;
+    return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
   protected override async *observe({
@@ -100,7 +101,7 @@ export class AppleRemindersSource extends Source<EventKitSnapshot> {
               stream,
               await this.#eventKit.execute(`
                 ${remindersScript}
-                return readReminders(store, ${JSON.stringify(stream.name)});
+                return readReminders(store, ${JSON.stringify(stream.name)}, ${JSON.stringify(this.scope)});
               `),
               'EventKit',
             ),

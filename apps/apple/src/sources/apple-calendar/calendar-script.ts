@@ -10,6 +10,7 @@ function readCalendar(
   endAt,
   calendarApplication,
   after = null,
+  scope = {},
 ) {
   const names = [
     'accounts',
@@ -72,14 +73,24 @@ function readCalendar(
       ics: ObjC.unwrap(data.base64EncodedStringWithOptions(0)),
     };
   };
-  if (wants('accounts')) return eventKit.accounts(store);
+  const allows = (ids, id) => ids === undefined || ids.includes(id);
+  const scoped = scope.accountIds !== undefined || scope.collectionIds !== undefined;
+  if (wants('accounts') && !scoped) return eventKit.accounts(store);
+  const calendarMetadata = (scoped || wants('calendars') ? eventKit.calendars(store, 0) : []).filter(calendar =>
+    allows(scope.accountIds, calendar.accountId) && allows(scope.collectionIds, calendar.id));
+  const calendarIds = new Set(calendarMetadata.map(calendar => calendar.id));
+  if (wants('accounts')) return eventKit.accounts(store).filter(account =>
+    allows(scope.accountIds, account.id) &&
+    (scope.collectionIds === undefined || calendarMetadata.some(calendar => calendar.accountId === account.id)));
   if (wants('calendars'))
-    return eventKit.calendars(store, 0).map((calendar) => ({
+    return calendarMetadata.map((calendar) => ({
       ...calendar,
       description: scriptingCalendar(calendar.id, calendar.name).description(),
     }));
-  const calendars = store.calendarsForEntityType(0);
-  if (isNil(calendars)) throw new Error('EventKit returned no event calendars');
+  const visibleCalendars = store.calendarsForEntityType(0);
+  if (isNil(visibleCalendars)) throw new Error('EventKit returned no event calendars');
+  const calendars = scoped ? $(array(visibleCalendars).filter(calendar => calendarIds.has(string(calendar.calendarIdentifier)))) : visibleCalendars;
+  if (scoped && calendarIds.size === 0) return ics ? { records: [], nextCursor: null } : [];
 
   const eventStreams = [
     'events',

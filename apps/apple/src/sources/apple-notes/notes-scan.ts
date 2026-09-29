@@ -7,6 +7,7 @@ import {
   NoteDocument,
 } from '../../platform/macos/note-document.ts';
 import type { NoteStore } from '../../platform/macos/note-store.ts';
+import { type ImportScope, selected, withinDates } from '../import-scope.ts';
 
 // Every Notes object lives in one Core Data table; Z_ENT names its entity, and
 // each entity's relationships sit in their own numbered columns. These are the
@@ -150,44 +151,78 @@ export class NotesScan implements AsyncDisposable {
   #inline?: Map<SQLOutputValue | undefined, Row>;
   readonly #tables = new Map<string, string[][]>();
 
-  constructor(readonly store: NoteStore) {}
+  constructor(
+    readonly store: NoteStore,
+    readonly scope: ImportScope = {},
+  ) {}
 
   [Symbol.asyncDispose](): Promise<void> {
     return this.store[Symbol.asyncDispose]();
   }
 
   get accounts(): Row[] {
-    this.#accounts ??= this.store.all(accountsSql);
+    this.#accounts ??= this.store
+      .all(accountsSql)
+      .filter(
+        (row) =>
+          selected(this.scope.accountIds, row.ZIDENTIFIER) &&
+          (this.scope.collectionIds === undefined ||
+            this.folders.some((folder) => folder.account === row.ZIDENTIFIER)),
+      );
     return this.#accounts;
   }
 
   get folders(): Row[] {
-    this.#folders ??= this.store.all(foldersSql);
+    this.#folders ??= this.store
+      .all(foldersSql)
+      .filter(
+        (row) =>
+          selected(this.scope.accountIds, row.account) &&
+          selected(this.scope.collectionIds, row.ZIDENTIFIER),
+      );
     return this.#folders;
   }
 
   get notes(): NoteEntry[] {
-    this.#notes ??= this.store.all(notesSql).map((row) => ({
-      row,
-      document:
-        row.ZISPASSWORDPROTECTED === 1 || !(row.ZDATA instanceof Uint8Array)
-          ? null
-          : NoteDocument.decode(row.ZDATA),
-    }));
+    this.#notes ??= this.store
+      .all(notesSql)
+      .filter(
+        (row) =>
+          selected(this.scope.accountIds, row.account) &&
+          selected(this.scope.collectionIds, row.folder) &&
+          withinDates(this.scope, time(row.ZMODIFICATIONDATE1)),
+      )
+      .map((row) => ({
+        row,
+        document:
+          row.ZISPASSWORDPROTECTED === 1 || !(row.ZDATA instanceof Uint8Array)
+            ? null
+            : NoteDocument.decode(row.ZDATA),
+      }));
     return this.#notes;
   }
 
   // Attachments and inline attachments by identifier, in store order.
   get attachments(): ReadonlyMap<SQLOutputValue | undefined, Row> {
+    if (this.#attachments !== undefined) return this.#attachments;
+    const notes = new Set(this.notes.map((note) => note.row.ZIDENTIFIER));
     this.#attachments ??= new Map(
-      this.store.all(attachmentsSql).map((row) => [row.ZIDENTIFIER, row]),
+      this.store
+        .all(attachmentsSql)
+        .filter((row) => notes.has(row.note))
+        .map((row) => [row.ZIDENTIFIER, row]),
     );
     return this.#attachments;
   }
 
   get inline(): ReadonlyMap<SQLOutputValue | undefined, Row> {
+    if (this.#inline !== undefined) return this.#inline;
+    const notes = new Set(this.notes.map((note) => note.row.ZIDENTIFIER));
     this.#inline ??= new Map(
-      this.store.all(inlineSql).map((row) => [row.ZIDENTIFIER, row]),
+      this.store
+        .all(inlineSql)
+        .filter((row) => notes.has(row.note))
+        .map((row) => [row.ZIDENTIFIER, row]),
     );
     return this.#inline;
   }
