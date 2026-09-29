@@ -10,7 +10,7 @@ const fieldName = (column: string, kind: string) =>
       )) +
   (kind === 'base64'
     ? 'Base64'
-    : kind === 'number' && /date|timestamp|last_modified/.test(column)
+    : kind === 'number' && /date|timestamp|last_modified|due_by/.test(column)
       ? 'Raw'
       : '');
 
@@ -169,7 +169,7 @@ export const mailTables = {
     follow_up_start_date: 'number',
     follow_up_end_date: 'number',
     follow_up_jsonstringformodelevaluationforsuggestions: 'text',
-    download_state: 'number',
+    due_by: 'number',
     read_later_date: 'number',
     send_later_date: 'number',
     validation_state: 'number',
