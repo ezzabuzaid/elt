@@ -52,12 +52,12 @@ function scopeForm(app: App, rows: ChoiceRows, previous?: AppConfiguration) {
     ...definition.defaultScope?.(),
     ...previous?.scope,
   };
-  if (definition.dateField !== null) {
+  if (definition.datedBy !== null) {
     properties.from = {
       type: 'string',
       format: 'date',
       title: 'From',
-      description: `First day to include, by ${definition.dateField}. Leave empty to start at the earliest.`,
+      description: `First day to include, by ${definition.datedBy}. Leave empty to start at the earliest.`,
       ...(startAt && { default: day(new Date(startAt)) }),
     };
     properties.until = {

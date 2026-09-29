@@ -52,7 +52,7 @@ export const configurationSchema = z
           message: `${app}: choose collections instead of account IDs`,
         });
       if (
-        apps[app].dateField === null &&
+        apps[app].datedBy === null &&
         (scope.startAt !== undefined || scope.endAt !== undefined)
       )
         context.addIssue({

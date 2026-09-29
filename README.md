@@ -32,7 +32,13 @@ See the reference for [Mail streams](docs/reference.md#apple-mail), [Contacts st
 
 ### Apple plugin for Codex
 
-The [Apple plugin](plugins/apple/.codex-plugin/plugin.json) is a Codex plugin with setup and query skills and a local MCP server. Add this repository as a marketplace in Codex in the ChatGPT desktop app on a Mac (`codex plugin marketplace add ezzabuzaid/elt`), install **Apple**, then choose **Set up Apple**. Setup asks which apps and scopes to connect and explains macOS permissions. Users do not install Node, Docker or a repository: the launcher runs the server on the Node runtime bundled with the desktop app. The post-install setup prompt requires Codex 0.156 or later.
+The [Apple plugin](plugins/apple/.codex-plugin/plugin.json) is a Codex plugin with setup and query skills and a local MCP server. To install it in Codex in the ChatGPT desktop app on a Mac:
+
+1. Open **Customize** in the sidebar, then **Plugins**, **Add**, **Add a marketplace**.
+2. Enter `ezzabuzaid/elt` as the source and choose **Add marketplace**. Git ref and sparse paths can stay empty.
+3. Search for **Apple**, open it and choose **Install plugin**, then **Set up Apple**.
+
+Setup shows forms: first the apps, then each app's accounts, folders or other collections, dates and attachments. Mail, Notes and Messages need Full Disk Access for ChatGPT, which macOS does not prompt for; setup names the step when it is missing. Users do not install Node, Docker or a repository: the launcher runs the server on the Node runtime bundled with the desktop app. The terminal equivalent of steps 1–2 is `codex plugin marketplace add ezzabuzaid/elt`. The post-install setup prompt requires Codex 0.156 or later.
 
 `plugins/apple` is the installable package, committed as Codex runs it; [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) lists it. Its server is one bundled file, `plugins/apple/server.mjs`, built from `apps/apple/src/plugin` by `npx nx run apple:plugin`. `apple:test` rebuilds it, so commit the bundle with the source change that produced it.
 

@@ -87,7 +87,7 @@ export class ApplePlugin {
       app,
       choices,
       permissions: definition.permissions,
-      dateField: definition.dateField,
+      datedBy: definition.datedBy,
       defaultScope: definition.defaultScope?.(),
       note: definition.note,
     };

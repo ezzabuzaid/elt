@@ -36,7 +36,8 @@ type AppDefinition = {
   readonly title: string;
   readonly choices: readonly Choice[];
   readonly accounts: boolean;
-  readonly dateField: string | null;
+  // How dates select records, in the user's words; null when they cannot.
+  readonly datedBy: string | null;
   readonly permissions: string;
   readonly note?: string;
   // Streams whose rows cannot be attributed to a chosen account or collection.
@@ -106,7 +107,7 @@ export const apps: Record<App, AppDefinition> = {
       },
     ],
     accounts: true,
-    dateField: 'dateReceived (dateSent if absent)',
+    datedBy: 'date received (date sent if missing)',
     permissions: `${fullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
     unscoped: restrictedMailStreams,
     source: (scope) => new AppleMailSource(mailDirectory, scope),
@@ -115,7 +116,7 @@ export const apps: Record<App, AppDefinition> = {
     title: 'Notes',
     choices: [accounts, collections('folders')],
     accounts: true,
-    dateField: 'modifiedAt',
+    datedBy: 'date last edited',
     permissions: `${fullDiskAccess} Open Notes to let it finish syncing iCloud changes.`,
     note: 'Exact containing folders; select descendants separately. Smart folders are saved searches and cannot be selected as containing folders.',
     source: (scope) => new AppleNotesSource({ scope }),
@@ -131,7 +132,7 @@ export const apps: Record<App, AppDefinition> = {
       },
     ],
     accounts: false,
-    dateField: 'date',
+    datedBy: 'message date',
     permissions: `${fullDiskAccess} Only messages synced to this Mac can be imported.`,
     source: (scope) => new AppleMessagesSource(undefined, undefined, scope),
   },
@@ -139,7 +140,7 @@ export const apps: Record<App, AppDefinition> = {
     title: 'Contacts',
     choices: [{ ...accounts, stream: 'containers', scope: 'collectionIds' }],
     accounts: false,
-    dateField: null,
+    datedBy: null,
     permissions:
       'Allow ChatGPT when macOS asks for Contacts access, or turn it on in System Settings > Privacy & Security > Contacts. Full Disk Access for ChatGPT also works.',
     source: (scope) => new AppleContactsSource(undefined, undefined, scope),
@@ -148,7 +149,7 @@ export const apps: Record<App, AppDefinition> = {
     title: 'Calendar',
     choices: [accounts, collections('calendars')],
     accounts: true,
-    dateField: 'event occurrence overlap',
+    datedBy: 'event dates (events that overlap the range)',
     permissions:
       'Allow full Calendar access when macOS asks. Access can be changed under System Settings > Privacy & Security > Calendars.',
     defaultScope: calendarDefaults,
@@ -164,7 +165,7 @@ export const apps: Record<App, AppDefinition> = {
     title: 'Reminders',
     choices: [accounts, collections('lists')],
     accounts: true,
-    dateField: null,
+    datedBy: null,
     permissions:
       'Allow full Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.',
     source: (scope) => new AppleRemindersSource(scope),
