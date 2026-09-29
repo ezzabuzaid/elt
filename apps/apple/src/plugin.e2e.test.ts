@@ -22,12 +22,21 @@ import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const root = resolve(import.meta.dirname, '../../..');
 
-// The query-apple skill's read command: SQL and dot-commands on stdin.
-function read(database: string, script: string) {
+// The query-apple skill's read command: everything as arguments, since the
+// read-only sandbox refuses the temporary file a heredoc needs.
+function read(database: string, sql: string, ...commands: string[]) {
   const { stdout, stderr, status } = spawnSync(
     '/usr/bin/sqlite3',
-    ['-readonly', '-json', database],
-    { input: `.timeout 30000\n${script}`, encoding: 'utf8' },
+    [
+      '-readonly',
+      '-json',
+      ...['.timeout 30000', 'PRAGMA temp_store = MEMORY', ...commands].flatMap(
+        (command) => ['-cmd', command],
+      ),
+      database,
+      sql,
+    ],
+    { encoding: 'utf8' },
   );
   return { rows: JSON.parse(stdout || '[]'), stderr, status };
 }
@@ -184,7 +193,8 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     assert.deepEqual(
       read(
         notes.database,
-        `.parameter set @name "'It''s selected'"\nSELECT id FROM notes WHERE name = @name;`,
+        'SELECT id FROM notes WHERE name = @name',
+        `.parameter set @name "'It''s selected'"`,
       ).rows,
       [{ id: 'n1' }],
     );

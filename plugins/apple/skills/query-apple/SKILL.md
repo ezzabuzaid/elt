@@ -14,23 +14,19 @@ The Apple plugin imports each selected app into its own SQLite file. `apple_stat
 3. Read the catalog of each app you need:
 
    ```sh
-   /usr/bin/sqlite3 -readonly -json '<database>' <<'SQL'
-   .timeout 30000
-   SELECT name, schema_json, coverage_json FROM _apple_catalog ORDER BY name;
-   SQL
+   /usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' -cmd 'PRAGMA temp_store = MEMORY' \
+     '<database>' 'SELECT name, schema_json, coverage_json FROM _apple_catalog ORDER BY name'
    ```
 
-   The quoted heredoc keeps SQL out of shell expansion. `.timeout` waits while a sync commits instead of failing with `database is locked`.
+   Pass everything as arguments: dot-commands and pragmas with `-cmd`, the SQL last. A heredoc needs a temporary file, which the read-only sandbox refuses. `.timeout` waits while a sync commits instead of failing with `database is locked`. `temp_store = MEMORY` keeps large sorts and groupings off disk, where the sandbox would fail them with `disk I/O error`.
 
-4. Query with the same command. Bind user values as parameters. Write each value as a SQL literal in double quotes, doubling single quotes inside it:
+4. Query with the same command. Bind user values as parameters with `-cmd`. Write each value as a SQL literal inside double quotes, doubling single quotes inside it:
 
    ```sh
-   /usr/bin/sqlite3 -readonly -json '<mail database>' <<'SQL'
-   .timeout 30000
-   .parameter set @subject "'It''s the invoice'"
-   ATTACH '<notes database>' AS notes;
-   SELECT … FROM messages WHERE subject = @subject LIMIT 50;
-   SQL
+   /usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' -cmd 'PRAGMA temp_store = MEMORY' \
+     -cmd ".parameter set @subject \"'It''s the invoice'\"" \
+     -cmd "ATTACH '<notes database>' AS notes" \
+     '<mail database>' 'SELECT … FROM messages WHERE subject = @subject LIMIT 50'
    ```
 
    Tables of the opened file need no prefix. `ATTACH` another app's file to join across apps; attached files are read-only too.

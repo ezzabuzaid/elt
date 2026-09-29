@@ -358,6 +358,8 @@ const noteBody = (runs: NoteRun[]) => {
       protobuf.bytes(2, [
         ...protobuf.number(1, 0),
         ...protobuf.bytes(3, string),
+      '-cmd',
+      'PRAGMA temp_store = MEMORY',
       ]),
     ),
   );
