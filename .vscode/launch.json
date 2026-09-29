@@ -8,10 +8,9 @@
       "type": "node",
       "request": "launch",
       "name": "Launch Current File",
-      "runtimeExecutable": "/Users/ezzabuzaid/.nvm/versions/node/v22.18.0/bin/node",
       "skipFiles": ["<node_internals>/**"],
       "program": "${file}",
-      "envFile": "${workspaceFolder}/apps/backend/.env"
+      "envFile": "${workspaceFolder}/.env"
     }
   ]
 }
