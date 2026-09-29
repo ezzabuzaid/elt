@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@zone-eu/mailsplit": "5.4.17",
+    "@zone-eu/mailsplit": "5.4.19",
     "elt": "0.0.1",
     "elt-postgresql": "0.0.1",
     "google-auth": "0.0.1",
-    "libmime": "5.4.4"
+    "libmime": "5.4.6"
   },
   "devDependencies": {
     "@types/libmime": "5.3.0",
