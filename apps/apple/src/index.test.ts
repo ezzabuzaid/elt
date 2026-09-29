@@ -14,12 +14,9 @@ import { type TestContext, test } from 'node:test';
 import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { gzipSync } from 'node:zlib';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import {
-  type ElicitRequestFormParams,
-  ElicitRequestSchema,
-  type ElicitResult,
+import type {
+  ElicitRequestFormParams,
+  ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import {
   Connection,
@@ -57,7 +54,7 @@ import {
 import osa from './platform/macos/osa.ts';
 import { decodeArchive, plistJSON } from './platform/macos/plist.ts';
 import { ApplePlugin } from './plugin/apple-plugin.ts';
-import { createServer } from './plugin/server.ts';
+import { setUpWithForms } from './plugin/setup-forms.ts';
 import {
   AppleCalendarSource,
   CalendarIcsUnavailableError,
@@ -476,119 +473,84 @@ test('Apple setup forms connect the chosen Notes folders, report an app macOS de
       new Error('denied'),
     );
   });
-  const server = createServer(new ApplePlugin(join(scratch.path, 'plugin')));
-  const client = new Client(
-    { name: 'forms', version: '1.0.0' },
-    { capabilities: { elicitation: { form: {} } } },
-  );
+  const plugin = new ApplePlugin(join(scratch.path, 'plugin'));
   const forms: ElicitRequestFormParams[] = [];
-  let answers: ElicitResult[] = [];
-  client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
-    forms.push(params as ElicitRequestFormParams);
-    const answer = answers.shift();
-    assert.ok(answer, `unexpected form: ${params.message}`);
-    return answer;
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const setUp = async (...next: ElicitResult[]) => {
-    answers = next;
+  // The user's answers, one per form.
+  const setUp = async (...answers: ElicitResult[]) => {
     forms.length = 0;
-    const result = await client.callTool({ name: 'apple_setup' });
-    assert.notEqual(result.isError, true, JSON.stringify(result.content));
-    assert.deepEqual(answers, []);
-    return JSON.parse((result.content as { text: string }[])[0]?.text ?? '');
-  };
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
-    const connected = await setUp(
-      { action: 'accept', content: { apps: ['notes', 'messages'] } },
-      {
-        action: 'accept',
-        content: {
-          accounts: ['ACCOUNT-1'],
-          folders: ['FOLDER-NOTES'],
-          attachments: true,
-        },
-      },
-    );
-    const notesForm = forms[1]?.requestedSchema.properties;
-    assert.deepEqual(notesForm?.folders, {
-      type: 'array',
-      title: 'Folders',
-      minItems: 1,
-      items: {
-        anyOf: [
-          { const: 'FOLDER-CHILD', title: 'iCloud / Child' },
-          { const: 'FOLDER-NOTES', title: 'iCloud / Notes' },
-          { const: 'FOLDER-TRASH', title: 'iCloud / Recently Deleted' },
-        ],
-      },
-      default: ['FOLDER-CHILD', 'FOLDER-NOTES', 'FOLDER-TRASH'],
+    const result = await setUpWithForms(plugin, async (form) => {
+      forms.push(form);
+      const answer = answers.shift();
+      assert.ok(answer, `unexpected form: ${form.message}`);
+      return answer;
     });
-    assert.equal(forms.length, 2);
-    assert.equal(connected.changed, true);
-    assert.deepEqual(
-      connected.unavailable.map(({ app }: { app: string }) => app),
-      ['messages'],
-    );
-    const [notes] = connected.apps;
-    assert.deepEqual(notes.scope, { collectionIds: ['FOLDER-NOTES'] });
-    assert.equal(notes.sync.state, 'succeeded');
-    const { stdout } = await execFile('/usr/bin/sqlite3', [
-      '-readonly',
-      '-json',
-      notes.database,
-      'SELECT id FROM notes ORDER BY id',
-    ]);
-    assert.deepEqual(JSON.parse(stdout), [
-      { id: 'NOTE-LOCKED' },
-      { id: 'NOTE-RICH' },
-    ]);
+    assert.deepEqual(answers, []);
+    return result;
+  };
 
-    const cancelled = await setUp(
-      { action: 'accept', content: { apps: ['notes'] } },
-      { action: 'cancel' },
-    );
-    assert.deepEqual(forms[1]?.requestedSchema.properties.folders?.default, [
-      'FOLDER-NOTES',
-    ]);
-    assert.equal(cancelled.changed, false);
-    assert.deepEqual(cancelled.apps[0].scope, notes.scope);
+  const connected = await setUp(
+    { action: 'accept', content: { apps: ['notes', 'messages'] } },
+    {
+      action: 'accept',
+      content: {
+        accounts: ['ACCOUNT-1'],
+        folders: ['FOLDER-NOTES'],
+        attachments: true,
+      },
+    },
+  );
+  assert.equal(forms.length, 2);
+  assert.deepEqual(forms[1]?.requestedSchema.properties.folders, {
+    type: 'array',
+    title: 'Folders',
+    minItems: 1,
+    items: {
+      anyOf: [
+        { const: 'FOLDER-CHILD', title: 'iCloud / Child' },
+        { const: 'FOLDER-NOTES', title: 'iCloud / Notes' },
+        { const: 'FOLDER-TRASH', title: 'iCloud / Recently Deleted' },
+      ],
+    },
+    default: ['FOLDER-CHILD', 'FOLDER-NOTES', 'FOLDER-TRASH'],
+  });
+  assert.equal(connected.changed, true);
+  assert.ok('unavailable' in connected);
+  assert.deepEqual(
+    connected.unavailable.map(({ app }) => app),
+    ['messages'],
+  );
+  const [notes] = connected.apps;
+  assert.ok(notes?.database);
+  assert.deepEqual(notes.scope, { collectionIds: ['FOLDER-NOTES'] });
+  assert.equal(notes.sync?.state, 'succeeded');
+  const { stdout } = await execFile('/usr/bin/sqlite3', [
+    '-readonly',
+    '-json',
+    notes.database,
+    'SELECT id FROM notes ORDER BY id',
+  ]);
+  assert.deepEqual(JSON.parse(stdout), [
+    { id: 'NOTE-LOCKED' },
+    { id: 'NOTE-RICH' },
+  ]);
 
-    const declined = await setUp(
-      { action: 'accept', content: { apps: ['notes'] } },
-      { action: 'decline' },
-    );
-    assert.deepEqual(declined.skipped, ['notes']);
-    assert.deepEqual(declined.apps, []);
-  } finally {
-    await client.close();
-    await server.close();
-  }
-});
+  const cancelled = await setUp(
+    { action: 'accept', content: { apps: ['notes'] } },
+    { action: 'cancel' },
+  );
+  assert.deepEqual(forms[1]?.requestedSchema.properties.folders?.default, [
+    'FOLDER-NOTES',
+  ]);
+  assert.equal(cancelled.changed, false);
+  assert.deepEqual(cancelled.apps[0]?.scope, notes.scope);
 
-test('Apple setup forms refuse a host without form support, which sets up through options and configure', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-forms-'));
-  const server = createServer(new ApplePlugin(scratch.path));
-  const client = new Client({ name: 'no-forms', version: '1.0.0' });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const result = await client.callTool({ name: 'apple_setup' });
-    assert.equal(result.isError, true);
-    assert.match(
-      (result.content as { text: string }[])[0]?.text ?? '',
-      /does not support form elicitation/,
-    );
-  } finally {
-    await client.close();
-    await server.close();
-  }
+  const declined = await setUp(
+    { action: 'accept', content: { apps: ['notes'] } },
+    { action: 'decline' },
+  );
+  assert.ok('skipped' in declined);
+  assert.deepEqual(declined.skipped, ['notes']);
+  assert.deepEqual(declined.apps, []);
 });
 
 test('Notes scope excludes other folders from records, attachments and checkpoints', async () => {

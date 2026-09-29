@@ -17,6 +17,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const root = resolve(import.meta.dirname, '../../..');
 
@@ -69,18 +70,30 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     existsSync(runtime),
     'Open the ChatGPT desktop app to install the Codex bundled runtime',
   );
-  const transport = new StdioClientTransport({
-    command: join(plugin, apple.command),
-    args: apple.args,
-    cwd: join(plugin, apple.cwd),
-    env: { HOME: scratch.path, CODEX_MCP_NODE_PATH: runtime, PATH: '' },
-    stderr: 'pipe',
-  });
   let diagnostics = '';
-  transport.stderr?.on('data', (data) => {
-    diagnostics += String(data);
+  const launch = () => {
+    const transport = new StdioClientTransport({
+      command: join(plugin, apple.command),
+      args: apple.args,
+      cwd: join(plugin, apple.cwd),
+      env: { HOME: scratch.path, CODEX_MCP_NODE_PATH: runtime, PATH: '' },
+      stderr: 'pipe',
+    });
+    transport.stderr?.on('data', (data) => {
+      diagnostics += String(data);
+    });
+    return transport;
+  };
+  const transport = launch();
+  const client = new Client(
+    { name: 'apple-e2e', version: '1.0.0' },
+    { capabilities: { elicitation: { form: {} } } },
+  );
+  const forms: string[] = [];
+  client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
+    forms.push(params.message);
+    return { action: 'accept', content: { apps: ['notes'] } };
   });
-  const client = new Client({ name: 'apple-e2e', version: '1.0.0' });
   const call = (name: string, args?: Record<string, unknown>) =>
     client.callTool({ name, arguments: args }, undefined, {
       signal: t.signal,
@@ -107,6 +120,38 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       ],
     );
     assert.equal((await invoke('apple_status')).configured, false);
+    assert.deepEqual((await call('apple_sync', {})).content, [
+      {
+        type: 'text',
+        text: 'Choose the Apple apps to connect with Set up Apple first.',
+      },
+    ]);
+    // Notes is unreadable under the scratch HOME, so only the app form shows.
+    const setUp = await invoke('apple_setup');
+    const [appsForm, ...others] = forms;
+    assert.ok(appsForm);
+    assert.deepEqual(others, []);
+    assert.match(appsForm, /Choose the Apple apps/);
+    assert.deepEqual(
+      setUp.unavailable.map(({ app }: { app: string }) => app),
+      ['notes'],
+    );
+    assert.deepEqual(setUp.apps, []);
+
+    const withoutForms = new Client({ name: 'no-forms', version: '1.0.0' });
+    try {
+      await withoutForms.connect(launch(), {
+        signal: t.signal,
+        timeout: 5_000,
+      });
+      assert.deepEqual(
+        (await withoutForms.callTool({ name: 'apple_setup' })).content,
+        [{ type: 'text', text: 'Client does not support form elicitation.' }],
+      );
+    } finally {
+      await withoutForms.close();
+    }
+
     await invoke('apple_configure', { apps: [{ app: 'notes' }] });
     assert.equal((await invoke('apple_status')).apps[0].database, null);
     assert.equal(
