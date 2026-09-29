@@ -156,7 +156,7 @@ async function recognizedText(path: string): Promise<string | null> {
       const image = $.CGImageSourceCreateWithURL($.NSURL.fileURLWithPath(path), null);
       const properties = ObjC.castRefToObject($.CGImageSourceCopyPropertiesAtIndex(image, 0, null));
       if (properties.isNil()) throw new Error('Cannot read image');
-      // Vision crashes on 1px and rejects 2px images on macOS 26.6.2.
+      // Vision crashes on 1px and 2px images (macOS 26.6.2 and 27.0).
       for (const key of [$.kCGImagePropertyPixelWidth, $.kCGImagePropertyPixelHeight])
         if (Number(ObjC.unwrap(properties.objectForKey(ObjC.castRefToObject(key)))) < 3) return null;
       const handler = $.VNImageRequestHandler.alloc.initWithURLOptions(

@@ -104,6 +104,7 @@ Test the source the way a user runs it, as a black box. Do not write unit tests.
 - **Tests pass on hand-built objects** → only the projection code is proven. Upstream behavior is verified only by a live check.
 - **You re-check that a stream belongs to the catalog** → duplicate logic; the base `Source` already rejects foreign streams in `validate()` and `watch()`.
 - **A private or version-gated API is called without detection** → an opaque crash on other OS versions. Detect first and throw a typed error when it is missing.
+- **`MacOSDocumentParser` image tests exit with SIGSEGV** (`sysctlbyname for kern.hv_vmm_present failed`) → the agent's command sandbox blocks a call that Vision needs; macOS is not at fault. Run `apple:test` outside the sandbox before you treat an OCR crash as a defect.
 - **A partition value ends up in the source `identity`** → the identity is part of the checkpoint binding and the target's writer (`packages/elt/src/core/copy.ts`), so adding one property rebinds every partition. Partition values belong in records and primary keys, not the identity.
 
 ## Done when

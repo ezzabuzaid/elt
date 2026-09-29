@@ -12,7 +12,6 @@ import {
   googleSession,
   grantDirectory,
 } from 'google-auth';
-import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
 import { mailDirectory } from './platform/macos/mail-store.ts';
 import { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
 import { googleCalendarAttachments } from './sources/apple-calendar/google-calendar-attachments.ts';
@@ -45,10 +44,6 @@ async function apple(name: string, source: Source) {
           stream.supportsFileTransfer
             ? destination.table(`raw_${stream.name}`, (columns) => [
                 ...PostgresColumns.fromSchema(stream.jsonSchema),
-                columns
-                  .text('content')
-                  .from(stream.file)
-                  .parse(new MacOSDocumentParser()),
                 columns.text('attachmentRef').from(stream.file.store(files)),
               ])
             : destination.table(`raw_${stream.name}`),
