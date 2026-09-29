@@ -43,7 +43,9 @@ export async function importApp(
       (stream) => !omitted.has(stream.name),
     );
     const withFiles = (stream: Stream) =>
-      includeAttachments && stream.supportsFileTransfer === true;
+      includeAttachments &&
+      stream.supportsFileTransfer === true &&
+      !apps[app].storeCopies?.includes(stream.name);
     const appDirectory = join(directory, app);
     mkdirSync(appDirectory, { recursive: true, mode: 0o700 });
     const destination = new SQLiteDestination({

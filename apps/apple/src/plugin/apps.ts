@@ -42,6 +42,9 @@ type AppDefinition = {
   readonly note?: string;
   // Streams whose rows cannot be attributed to a chosen account or collection.
   readonly unscoped?: readonly string[];
+  // File streams that copy the app's own store rather than attachments; they
+  // import metadata only, whatever the attachments choice.
+  readonly storeCopies?: readonly string[];
   defaultScope?(): ImportScope;
   source(scope: ImportScope): Source;
 };
@@ -110,6 +113,8 @@ export const apps: Record<App, AppDefinition> = {
     datedBy: 'date received (date sent if missing)',
     permissions: `${fullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
     unscoped: restrictedMailStreams,
+    // Each message's raw .emlx; messageParts already holds its decoded text.
+    storeCopies: ['messageFiles'],
     source: (scope) => new AppleMailSource(mailDirectory, scope),
   },
   notes: {
