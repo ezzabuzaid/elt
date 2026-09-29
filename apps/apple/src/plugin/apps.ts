@@ -76,6 +76,10 @@ const collections = (stream: string): Choice => ({
   },
 });
 
+// macOS lists the ChatGPT desktop app, which runs Codex, as ChatGPT.
+const fullDiskAccess =
+  'Turn on ChatGPT in System Settings > Privacy & Security > Full Disk Access, then quit and reopen ChatGPT. macOS does not ask for this access.';
+
 export const apps: Record<App, AppDefinition> = {
   mail: {
     title: 'Mail',
@@ -103,8 +107,7 @@ export const apps: Record<App, AppDefinition> = {
     ],
     accounts: true,
     dateField: 'dateReceived (dateSent if absent)',
-    permissions:
-      'Allow Codex in System Settings > Privacy & Security > Full Disk Access, and allow it to control Mail when macOS asks.',
+    permissions: `${fullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
     unscoped: restrictedMailStreams,
     source: (scope) => new AppleMailSource(mailDirectory, scope),
   },
@@ -113,8 +116,7 @@ export const apps: Record<App, AppDefinition> = {
     choices: [accounts, collections('folders')],
     accounts: true,
     dateField: 'modifiedAt',
-    permissions:
-      'Allow Codex in System Settings > Privacy & Security > Full Disk Access. Open Notes to let it finish syncing iCloud changes.',
+    permissions: `${fullDiskAccess} Open Notes to let it finish syncing iCloud changes.`,
     note: 'Exact containing folders; select descendants separately. Smart folders are saved searches and cannot be selected as containing folders.',
     source: (scope) => new AppleNotesSource({ scope }),
   },
@@ -130,8 +132,7 @@ export const apps: Record<App, AppDefinition> = {
     ],
     accounts: false,
     dateField: 'date',
-    permissions:
-      'Allow Codex in System Settings > Privacy & Security > Full Disk Access. Only messages synced to this Mac can be imported.',
+    permissions: `${fullDiskAccess} Only messages synced to this Mac can be imported.`,
     source: (scope) => new AppleMessagesSource(undefined, undefined, scope),
   },
   contacts: {
@@ -140,7 +141,7 @@ export const apps: Record<App, AppDefinition> = {
     accounts: false,
     dateField: null,
     permissions:
-      'Allow Codex in System Settings > Privacy & Security > Contacts or Full Disk Access.',
+      'Allow ChatGPT when macOS asks for Contacts access, or turn it on in System Settings > Privacy & Security > Contacts. Full Disk Access for ChatGPT also works.',
     source: (scope) => new AppleContactsSource(undefined, undefined, scope),
   },
   calendar: {

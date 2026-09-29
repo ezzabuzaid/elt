@@ -13,7 +13,7 @@ The Apple plugin imports the apps, accounts, collections and dates the user choo
 2. Read its result:
    - `changed: false`: the user cancelled; nothing changed.
    - `skipped`: apps the user chose not to connect.
-   - `unavailable`: apps macOS did not allow. Explain their `permissions` guidance, then offer to run setup again once access is granted. Treat them as inaccessible, never as empty.
+   - `unavailable`: apps macOS did not allow. Give their `permissions` guidance as steps. Full Disk Access has no macOS prompt: the user turns on ChatGPT in System Settings, then quits and reopens ChatGPT, which ends this chat, so tell them to run Set up Apple again afterwards. Treat these apps as inaccessible, never as empty.
 3. Report as described in "Report the result".
 
 If `apple_setup` fails because the host does not support forms, set up in chat instead.
