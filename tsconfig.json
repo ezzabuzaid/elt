@@ -1,12 +1,27 @@
 {
-  "compilerOptions": {
-    "target": "ESNext",
-    "module": "NodeNext",
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-    "rewriteRelativeImportExtensions": true,
-    "types": ["node"]
-  },
-  "files": []
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/destinations/postgresql"
+    },
+    {
+      "path": "./packages/destinations/markdown"
+    },
+    {
+      "path": "./packages/destinations/sqlite"
+    },
+    {
+      "path": "./packages/google-auth"
+    },
+    {
+      "path": "./packages/elt"
+    },
+    {
+      "path": "./apps/google"
+    },
+    {
+      "path": "./apps/apple"
+    }
+  ]
 }

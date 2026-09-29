@@ -1,12 +1,29 @@
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "analytics": false,
+  "plugins": [
+    {
+      "plugin": "@nx/js/typescript",
+      "options": {
+        "typecheck": {
+          "targetName": "typecheck"
+        },
+        "build": {
+          "targetName": "build",
+          "configName": "tsconfig.json"
+        }
+      }
+    }
+  ],
   "targetDefaults": {
-    "build": {
-      "dependsOn": ["^build"]
+    "lint": {
+      "command": "biome check --write {projectRoot}/src {projectRoot}/package.json {projectRoot}/project.json {projectRoot}/tsconfig.json"
     },
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["lint", "..."]
     }
+  },
+  "sync": {
+    "applyChanges": true
   }
 }

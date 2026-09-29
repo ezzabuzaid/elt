@@ -3,23 +3,32 @@
   "sourceRoot": "apps/apple/src",
   "projectType": "application",
   "targets": {
+    "lint": {},
     "plugin": {
+      "executor": "@nx/esbuild:esbuild",
       "dependsOn": ["^build"],
-      "command": "esbuild apps/apple/src/plugin/main.ts --bundle --platform=node --format=esm --target=node24.19 --log-level=warning --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=plugins/apple/server.mjs",
-      "outputs": ["{workspaceRoot}/plugins/apple/server.mjs"]
-    },
-    "build": {
-      "command": "tsc -p apps/apple/tsconfig.json",
-      "outputs": ["{projectRoot}/dist"]
-    },
-    "typecheck": {
-      "executor": "nx:run-commands",
+      "outputs": ["{workspaceRoot}/plugins/apple/server.mjs"],
       "options": {
-        "commands": [
-          "biome check --write apps/apple/src apps/apple/package.json apps/apple/project.json apps/apple/tsconfig.json",
-          "tsc -p apps/apple/tsconfig.json --noEmit"
-        ],
-        "parallel": false
+        "main": "apps/apple/src/plugin/main.ts",
+        "tsConfig": "apps/apple/tsconfig.json",
+        "outputPath": "plugins/apple",
+        "outputFileName": "server.mjs",
+        "deleteOutputPath": false,
+        "format": ["esm"],
+        "platform": "node",
+        "target": "node24.19",
+        "thirdParty": true,
+        "declaration": false,
+        "skipTypeCheck": true,
+        "esbuildOptions": {
+          "logLevel": "warning",
+          "outExtension": {
+            ".js": ".mjs"
+          },
+          "banner": {
+            "js": "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+          }
+        }
       }
     },
     "start": {

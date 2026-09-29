@@ -1,8 +1,26 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "references": [
+    {
+      "path": "../../packages/google-auth"
+    },
+    {
+      "path": "../../packages/destinations/sqlite"
+    },
+    {
+      "path": "../../packages/destinations/postgresql"
+    },
+    {
+      "path": "../../packages/elt"
+    },
+    {
+      "path": "../../packages/destinations/markdown"
+    }
+  ]
 }
