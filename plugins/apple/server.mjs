@@ -71377,12 +71377,14 @@ async function appConnection(directory, item) {
 
 // apps/apple/src/plugin/freshness.ts
 function lease(directory) {
-  const database = new DatabaseSync11(join15(directory, "watch.sqlite"));
+  let database;
   try {
+    mkdirSync3(directory, { recursive: true, mode: 448 });
+    database = new DatabaseSync11(join15(directory, "watch.sqlite"));
     database.exec("BEGIN IMMEDIATE");
     return database;
   } catch {
-    database.close();
+    database?.close();
     return null;
   }
 }
@@ -71504,10 +71506,20 @@ async function watchImports(directory, configuration, signal) {
   } catch {
   }
 }
+async function followSelection(directory, selection, changed, signal) {
+  try {
+    for await (const _ of setInterval5(1e3, void 0, { signal }))
+      try {
+        if (JSON.stringify(readConfiguration(directory)) !== selection)
+          changed.abort();
+      } catch {
+      }
+  } catch {
+  }
+}
 async function keepFresh(directory, signal) {
   var _stack = [];
   try {
-    mkdirSync3(directory, { recursive: true, mode: 448 });
     let leader = lease(directory);
     while (leader === null) {
       try {
@@ -71519,30 +71531,26 @@ async function keepFresh(directory, signal) {
     }
     const _lease = __using(_stack, leader);
     while (!signal.aborted) {
-      const configuration = readConfiguration(directory);
-      const selection = JSON.stringify(configuration);
       const changed = new AbortController();
       const watching = AbortSignal.any([signal, changed.signal]);
-      const polling = (async () => {
-        try {
-          for await (const _2 of setInterval5(1e3, void 0, {
-            signal: watching
-          }))
-            if (JSON.stringify(readConfiguration(directory)) !== selection)
-              changed.abort();
-        } catch {
-        }
-      })();
+      let following = Promise.resolve();
       try {
+        const configuration = readConfiguration(directory);
+        following = followSelection(
+          directory,
+          JSON.stringify(configuration),
+          changed,
+          watching
+        );
         removeStaleImports(directory, configuration);
         if (configuration !== null)
           await watchImports(directory, configuration, watching);
-        await sleep2(6e4, void 0, { signal: watching }).catch(() => {
-        });
-      } finally {
-        changed.abort();
-        await polling;
+      } catch {
       }
+      await sleep2(6e4, void 0, { signal: watching }).catch(() => {
+      });
+      changed.abort();
+      await following;
     }
   } catch (_) {
     var _error = _, _hasError = true;

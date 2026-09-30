@@ -23,14 +23,17 @@ import {
 import { appConnection } from './sync.ts';
 
 // The lock of the one server per Mac that keeps imports current. SQLite
-// releases it when its connection closes or its process exits.
+// releases it when its connection closes or its process exits. null when
+// another server holds it, or it cannot be opened now.
 function lease(directory: string): DatabaseSync | null {
-  const database = new DatabaseSync(join(directory, 'watch.sqlite'));
+  let database: DatabaseSync | undefined;
   try {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    database = new DatabaseSync(join(directory, 'watch.sqlite'));
     database.exec('BEGIN IMMEDIATE');
     return database;
   } catch {
-    database.close();
+    database?.close();
     return null;
   }
 }
@@ -148,15 +151,36 @@ async function watchImports(
   }
 }
 
+// Aborts changed once the saved selection differs from selection.
+async function followSelection(
+  directory: string,
+  selection: string,
+  changed: AbortController,
+  signal: AbortSignal,
+) {
+  try {
+    for await (const _ of setInterval(1_000, undefined, { signal }))
+      try {
+        if (JSON.stringify(readConfiguration(directory)) !== selection)
+          changed.abort();
+      } catch {
+        // Unreadable for now, such as while the disk is full: ask again.
+      }
+  } catch {
+    // Aborted: the selection changed or the watch ended.
+  }
+}
+
 // While this server runs, keeps every selected app's import current. One
 // server per Mac leads; the others wait to take over when it exits. A changed
 // selection, from any chat, restarts the watch; a watch whose sources all
-// stopped, such as for a missing permission, retries after a minute.
+// stopped, such as for a missing permission, retries after a minute. It never
+// throws: a failure outside any pass, such as a full disk, is retried too, so
+// the plugin's tools keep working.
 export async function keepFresh(
   directory: string,
   signal: AbortSignal,
 ): Promise<void> {
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
   let leader = lease(directory);
   while (leader === null) {
     try {
@@ -168,29 +192,25 @@ export async function keepFresh(
   }
   using _lease = leader;
   while (!signal.aborted) {
-    const configuration = readConfiguration(directory);
-    const selection = JSON.stringify(configuration);
     const changed = new AbortController();
     const watching = AbortSignal.any([signal, changed.signal]);
-    const polling = (async () => {
-      try {
-        for await (const _ of setInterval(1_000, undefined, {
-          signal: watching,
-        }))
-          if (JSON.stringify(readConfiguration(directory)) !== selection)
-            changed.abort();
-      } catch {
-        // Aborted: the selection changed or the server is stopping.
-      }
-    })();
+    let following = Promise.resolve();
     try {
+      const configuration = readConfiguration(directory);
+      following = followSelection(
+        directory,
+        JSON.stringify(configuration),
+        changed,
+        watching,
+      );
       removeStaleImports(directory, configuration);
       if (configuration !== null)
         await watchImports(directory, configuration, watching);
-      await sleep(60_000, undefined, { signal: watching }).catch(() => {});
-    } finally {
-      changed.abort();
-      await polling;
+    } catch {
+      // Retried below, once the selection changes or a minute passes.
     }
+    await sleep(60_000, undefined, { signal: watching }).catch(() => {});
+    changed.abort();
+    await following;
   }
 }

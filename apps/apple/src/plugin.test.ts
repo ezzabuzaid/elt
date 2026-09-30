@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { ApplePlugin } from './plugin/apple-plugin.ts';
+import { keepFresh, leaderRunning } from './plugin/freshness.ts';
 import { importDirectory, Settings } from './plugin/settings.ts';
 
 // Stands in for the leading server's import of one app selection.
@@ -89,4 +91,22 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   plugin.configure({ apps: [] });
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
   await assert.rejects(plugin.sync(['notes']), /selected during setup/);
+});
+
+test('the leading server keeps leading when its settings cannot be read, and lets go once stopped', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  // A directory where the settings file belongs fails every read of them.
+  mkdirSync(join(scratch.path, 'settings.sqlite'));
+  const stopping = new AbortController();
+  const running = keepFresh(scratch.path, stopping.signal);
+  try {
+    await sleep(1_500);
+    assert.equal(leaderRunning(scratch.path), true);
+  } finally {
+    stopping.abort();
+  }
+  await running;
+  assert.equal(leaderRunning(scratch.path), false);
 });
