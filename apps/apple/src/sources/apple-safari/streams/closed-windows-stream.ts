@@ -1,0 +1,58 @@
+import type { SchemaRecord } from 'elt';
+import type { ClosedWindow } from '../closed-tabs-reader.ts';
+import type { SafariScan } from '../safari-scan.ts';
+import { SafariStream, safariFields } from '../safari-stream.ts';
+import { text } from '../safari-values.ts';
+import { windowState, windowStateFields } from '../window-state.ts';
+
+const properties = {
+  id: {
+    ...safariFields.id,
+    description:
+      'Closed window UUID; closedTabs.closedWindowId and closedWindowActiveTabs.windowId refer to it.',
+  },
+  position: {
+    ...safariFields.ordinal,
+    description: 'Index in the Recently Closed list, as Safari orders it.',
+  },
+  profileId: safariFields.profileId,
+  activeTabGroupId: {
+    ...safariFields.nullableText,
+    description:
+      'The tab group shown when the window closed; closedTabs.tabGroupId uses the same identifiers. NULL when not recorded.',
+  },
+  ...windowStateFields,
+} as const;
+
+export class ClosedWindowsStream extends SafariStream<
+  typeof properties,
+  ClosedWindow
+> {
+  readonly name = 'closedWindows';
+  readonly store = 'closedTabs';
+  readonly primaryKey = ['id'];
+  readonly jsonSchema = {
+    type: 'object',
+    description:
+      'One source record per window Safari lists under History > Recently Closed (RecentlyClosedTabs.plist). Its tabs are in closedTabs. Relationships name streams in this source, not physical destination tables.',
+    properties,
+    required: Object.keys(properties),
+  } as const;
+
+  protected rows(scan: SafariScan): readonly ClosedWindow[] {
+    return scan.closedTabs.windows;
+  }
+
+  protected record({
+    state,
+    position,
+  }: ClosedWindow): SchemaRecord<typeof properties> {
+    return {
+      id: state.WindowUUID as string,
+      position,
+      profileId: state.ProfileUUID as string,
+      activeTabGroupId: text(state.activeTabGroupUUID),
+      ...windowState(state),
+    };
+  }
+}

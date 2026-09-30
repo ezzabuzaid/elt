@@ -13,6 +13,7 @@ import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
 import { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
 import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
+import { AppleSafariSource } from './sources/apple-safari/apple-safari-source.ts';
 import { warehouseConnection } from './warehouse-connection.ts';
 
 const sources: Record<string, Source> = {
@@ -25,6 +26,7 @@ const sources: Record<string, Source> = {
     endAt: '2001-01-01T00:00:00.000Z',
   }),
   reminders: new AppleRemindersSource(),
+  safari: new AppleSafariSource(),
 };
 
 test('every Apple stream has one documented reader view named after its source and stream', async () => {
@@ -50,6 +52,7 @@ test('every Apple stream has one documented reader view named after its source a
   assert.ok(names.includes('marts.notes_inline_attachments'));
   assert.ok(names.includes('marts.messages_chat_handles'));
   assert.ok(names.includes('marts.calendar_ics_components'));
+  assert.ok(names.includes('marts.safari_history_visits'));
 });
 
 test('Notes reads as documented views that follow edits and deletions without being recreated', async () => {

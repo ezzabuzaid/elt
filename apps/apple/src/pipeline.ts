@@ -15,6 +15,7 @@ import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
 import { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
 import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
+import { AppleSafariSource } from './sources/apple-safari/apple-safari-source.ts';
 import { warehouseConnection } from './warehouse-connection.ts';
 
 const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
@@ -55,5 +56,6 @@ export default new Pipeline({
       }),
     ),
     await apple('reminders', new AppleRemindersSource()),
+    await apple('safari', new AppleSafariSource()),
   ],
 });

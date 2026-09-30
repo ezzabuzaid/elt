@@ -1729,10 +1729,10 @@ var require_defaults = __commonJS({
     var codegen_1 = require_codegen();
     var util_1 = require_util();
     function assignDefaults(it, ty) {
-      const { properties: properties6, items } = it.schema;
-      if (ty === "object" && properties6) {
-        for (const key in properties6) {
-          assignDefault(it, key, properties6[key].default);
+      const { properties: properties29, items } = it.schema;
+      if (ty === "object" && properties29) {
+        for (const key in properties29) {
+          assignDefault(it, key, properties29[key].default);
         }
       } else if (ty === "array" && Array.isArray(items)) {
         items.forEach((sch, i) => assignDefault(it, i, sch.default));
@@ -1775,8 +1775,8 @@ var require_code2 = __commonJS({
       });
     }
     exports.checkReportMissingProp = checkReportMissingProp;
-    function checkMissingProp({ gen, data, it: { opts } }, properties6, missing) {
-      return (0, codegen_1.or)(...properties6.map((prop) => (0, codegen_1.and)(noPropertyInData(gen, data, prop, opts.ownProperties), (0, codegen_1._)`${missing} = ${prop}`)));
+    function checkMissingProp({ gen, data, it: { opts } }, properties29, missing) {
+      return (0, codegen_1.or)(...properties29.map((prop) => (0, codegen_1.and)(noPropertyInData(gen, data, prop, opts.ownProperties), (0, codegen_1._)`${missing} = ${prop}`)));
     }
     exports.checkMissingProp = checkMissingProp;
     function reportMissingProp(cxt, missing) {
@@ -2286,10 +2286,10 @@ var require_resolve = __commonJS({
       }
       return count;
     }
-    function getFullPath(resolver, id11 = "", normalize) {
+    function getFullPath(resolver, id12 = "", normalize) {
       if (normalize !== false)
-        id11 = normalizeId(id11);
-      const p = resolver.parse(id11);
+        id12 = normalizeId(id12);
+      const p = resolver.parse(id12);
       return _getFullPath(resolver, p);
     }
     exports.getFullPath = getFullPath;
@@ -2299,13 +2299,13 @@ var require_resolve = __commonJS({
     }
     exports._getFullPath = _getFullPath;
     var TRAILING_SLASH_HASH = /#\/?$/;
-    function normalizeId(id11) {
-      return id11 ? id11.replace(TRAILING_SLASH_HASH, "") : "";
+    function normalizeId(id12) {
+      return id12 ? id12.replace(TRAILING_SLASH_HASH, "") : "";
     }
     exports.normalizeId = normalizeId;
-    function resolveUrl(resolver, baseId, id11) {
-      id11 = normalizeId(id11);
-      return resolver.resolve(baseId, id11);
+    function resolveUrl(resolver, baseId, id12) {
+      id12 = normalizeId(id12);
+      return resolver.resolve(baseId, id12);
     }
     exports.resolveUrl = resolveUrl;
     var ANCHOR = /^[a-z_][-a-z0-9._]*$/i;
@@ -2947,7 +2947,7 @@ var require_compile = __commonJS({
       const _sch = getCompilingSchema.call(this, sch);
       if (_sch)
         return _sch;
-      const rootId = (0, resolve_1.getFullPath)(this.opts.uriResolver, sch.root.baseId);
+      const rootId2 = (0, resolve_1.getFullPath)(this.opts.uriResolver, sch.root.baseId);
       const { es5, lines } = this.opts.code;
       const { ownProperties } = this.opts;
       const gen = new codegen_1.CodeGen(this.scope, { es5, lines, ownProperties });
@@ -2977,8 +2977,8 @@ var require_compile = __commonJS({
         ValidationError: _ValidationError,
         schema: sch.schema,
         schemaEnv: sch,
-        rootId,
-        baseId: sch.baseId || rootId,
+        rootId: rootId2,
+        baseId: sch.baseId || rootId2,
         schemaPath: codegen_1.nil,
         errSchemaPath: sch.schemaPath || (this.opts.jtd ? "" : "#"),
         errorPath: (0, codegen_1._)`""`,
@@ -3075,8 +3075,8 @@ var require_compile = __commonJS({
       if (Object.keys(root.schema).length > 0 && refPath === baseId) {
         return getJsonPointer.call(this, p, root);
       }
-      const id11 = (0, resolve_1.normalizeId)(refPath);
-      const schOrRef = this.refs[id11] || this.schemas[id11];
+      const id12 = (0, resolve_1.normalizeId)(refPath);
+      const schOrRef = this.refs[id12] || this.schemas[id12];
       if (typeof schOrRef == "string") {
         const sch = resolveSchema.call(this, root, schOrRef);
         if (typeof (sch === null || sch === void 0 ? void 0 : sch.schema) !== "object")
@@ -3087,7 +3087,7 @@ var require_compile = __commonJS({
         return;
       if (!schOrRef.validate)
         compileSchema.call(this, schOrRef);
-      if (id11 === (0, resolve_1.normalizeId)(ref)) {
+      if (id12 === (0, resolve_1.normalizeId)(ref)) {
         const { schema } = schOrRef;
         const { schemaId } = this.opts;
         const schId = schema[schemaId];
@@ -3603,14 +3603,14 @@ var require_utils = __commonJS({
       }
       return output2;
     }
-    function recomposeAuthority(component) {
+    function recomposeAuthority(component2) {
       const uriTokens = [];
-      if (component.userinfo !== void 0) {
-        uriTokens.push(encodeUserinfo(component.userinfo));
+      if (component2.userinfo !== void 0) {
+        uriTokens.push(encodeUserinfo(component2.userinfo));
         uriTokens.push("@");
       }
-      if (component.host !== void 0) {
-        let host = component.host;
+      if (component2.host !== void 0) {
+        let host = component2.host;
         if (!isIPv4(host)) {
           let ipV6res = normalizeIPv6(host);
           if (ipV6res.isIPV6 !== true && ipV6res.isIPVFuture !== true) {
@@ -3625,8 +3625,8 @@ var require_utils = __commonJS({
         }
         uriTokens.push(host);
       }
-      if (typeof component.port === "number" || typeof component.port === "string") {
-        const port = String(component.port);
+      if (typeof component2.port === "number" || typeof component2.port === "string") {
+        const port = String(component2.port);
         if (!isPort(port)) {
           throw new TypeError("URI port is malformed.");
         }
@@ -3690,21 +3690,21 @@ var require_schemes = __commonJS({
         return false;
       }
     }
-    function httpParse(component) {
-      if (!component.host) {
-        component.error = component.error || "HTTP URIs must have a host.";
+    function httpParse(component2) {
+      if (!component2.host) {
+        component2.error = component2.error || "HTTP URIs must have a host.";
       }
-      return component;
+      return component2;
     }
-    function httpSerialize(component) {
-      const secure = String(component.scheme).toLowerCase() === "https";
-      if (component.port === (secure ? 443 : 80) || component.port === "") {
-        component.port = void 0;
+    function httpSerialize(component2) {
+      const secure = String(component2.scheme).toLowerCase() === "https";
+      if (component2.port === (secure ? 443 : 80) || component2.port === "") {
+        component2.port = void 0;
       }
-      if (!component.path) {
-        component.path = "/";
+      if (!component2.path) {
+        component2.path = "/";
       }
-      return component;
+      return component2;
     }
     function wsParse(wsComponent) {
       wsComponent.secure = wsIsSecure(wsComponent);
@@ -3984,7 +3984,7 @@ var require_fast_uri = __commonJS({
       return normalizedA !== void 0 && normalizedB !== void 0 && normalizedA === normalizedB;
     }
     function serialize(cmpts, opts) {
-      const component = {
+      const component2 = {
         host: cmpts.host,
         scheme: cmpts.scheme,
         userinfo: cmpts.userinfo,
@@ -4002,36 +4002,36 @@ var require_fast_uri = __commonJS({
       };
       const options = Object.assign({}, opts);
       const uriTokens = [];
-      if (component.scheme) {
-        component.scheme = decodeValidScheme(component.scheme);
+      if (component2.scheme) {
+        component2.scheme = decodeValidScheme(component2.scheme);
       }
-      const schemeHandler = getSchemeHandler(options.scheme || component.scheme);
-      if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(component, options);
-      const hasAuthority = component.userinfo !== void 0 || component.host !== void 0 || component.port !== void 0;
-      const pathNoScheme = !options.skipEscape && component.scheme === void 0 && !hasAuthority;
-      if (component.path !== void 0) {
+      const schemeHandler = getSchemeHandler(options.scheme || component2.scheme);
+      if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(component2, options);
+      const hasAuthority = component2.userinfo !== void 0 || component2.host !== void 0 || component2.port !== void 0;
+      const pathNoScheme = !options.skipEscape && component2.scheme === void 0 && !hasAuthority;
+      if (component2.path !== void 0) {
         if (!options.skipEscape) {
-          component.path = serializePathEncoding(component.path, pathNoScheme);
+          component2.path = serializePathEncoding(component2.path, pathNoScheme);
         } else {
-          component.path = normalizePercentEncoding(component.path);
+          component2.path = normalizePercentEncoding(component2.path);
         }
       }
-      if (options.reference !== "suffix" && component.scheme) {
-        component.scheme = decodeValidScheme(component.scheme);
-        uriTokens.push(component.scheme, ":");
+      if (options.reference !== "suffix" && component2.scheme) {
+        component2.scheme = decodeValidScheme(component2.scheme);
+        uriTokens.push(component2.scheme, ":");
       }
-      const authority = recomposeAuthority(component);
+      const authority = recomposeAuthority(component2);
       if (authority !== void 0) {
         if (options.reference !== "suffix") {
           uriTokens.push("//");
         }
         uriTokens.push(authority);
-        if (component.path && component.path[0] !== "/") {
+        if (component2.path && component2.path[0] !== "/") {
           uriTokens.push("/");
         }
       }
-      if (component.path !== void 0) {
-        let s = component.path;
+      if (component2.path !== void 0) {
+        let s = component2.path;
         if (!options.absolutePath && (!schemeHandler || !schemeHandler.absolutePath)) {
           s = removeDotSegments(s);
         }
@@ -4043,11 +4043,11 @@ var require_fast_uri = __commonJS({
         }
         uriTokens.push(s);
       }
-      if (component.query !== void 0) {
-        uriTokens.push("?", encodeQuery(component.query));
+      if (component2.query !== void 0) {
+        uriTokens.push("?", encodeQuery(component2.query));
       }
-      if (component.fragment !== void 0) {
-        uriTokens.push("#", encodeFragment(component.fragment));
+      if (component2.fragment !== void 0) {
+        uriTokens.push("#", encodeFragment(component2.fragment));
       }
       return uriTokens.join("");
     }
@@ -4063,14 +4063,14 @@ var require_fast_uri = __commonJS({
       }
       return void 0;
     }
-    function hasMalformedPercentEncoding(component) {
-      if (component === void 0) return false;
-      let percent = component.indexOf("%");
+    function hasMalformedPercentEncoding(component2) {
+      if (component2 === void 0) return false;
+      let percent = component2.indexOf("%");
       while (percent !== -1) {
-        if (percent + 2 >= component.length || !/^[\da-f]{2}$/iu.test(component.slice(percent + 1, percent + 3))) {
+        if (percent + 2 >= component2.length || !/^[\da-f]{2}$/iu.test(component2.slice(percent + 1, percent + 3))) {
           return true;
         }
-        percent = component.indexOf("%", percent + 3);
+        percent = component2.indexOf("%", percent + 3);
       }
       return false;
     }
@@ -4514,15 +4514,15 @@ var require_core = __commonJS({
             this.addSchema(sch, void 0, _meta, _validateSchema);
           return this;
         }
-        let id11;
+        let id12;
         if (typeof schema === "object") {
           const { schemaId } = this.opts;
-          id11 = schema[schemaId];
-          if (id11 !== void 0 && typeof id11 != "string") {
+          id12 = schema[schemaId];
+          if (id12 !== void 0 && typeof id12 != "string") {
             throw new Error(`schema ${schemaId} must be string`);
           }
         }
-        key = (0, resolve_1.normalizeId)(key || id11);
+        key = (0, resolve_1.normalizeId)(key || id12);
         this._checkUnique(key);
         this.schemas[key] = this._addSchema(schema, _meta, key, _validateSchema, true);
         return this;
@@ -4601,11 +4601,11 @@ var require_core = __commonJS({
           case "object": {
             const cacheKey = schemaKeyRef;
             this._cache.delete(cacheKey);
-            let id11 = schemaKeyRef[this.opts.schemaId];
-            if (id11) {
-              id11 = (0, resolve_1.normalizeId)(id11);
-              delete this.schemas[id11];
-              delete this.refs[id11];
+            let id12 = schemaKeyRef[this.opts.schemaId];
+            if (id12) {
+              id12 = (0, resolve_1.normalizeId)(id12);
+              delete this.schemas[id12];
+              delete this.refs[id12];
             }
             return this;
           }
@@ -4676,7 +4676,7 @@ var require_core = __commonJS({
       errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
         if (!errors || errors.length === 0)
           return "No errors";
-        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text11, msg) => text11 + separator + msg);
+        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text13, msg) => text13 + separator + msg);
       }
       $dataMetaSchema(metaSchema, keywordsJsonPointers) {
         const rules = this.RULES.all;
@@ -4712,10 +4712,10 @@ var require_core = __commonJS({
         }
       }
       _addSchema(schema, meta3, baseId, validateSchema = this.opts.validateSchema, addSchema = this.opts.addUsedSchema) {
-        let id11;
+        let id12;
         const { schemaId } = this.opts;
         if (typeof schema == "object") {
-          id11 = schema[schemaId];
+          id12 = schema[schemaId];
         } else {
           if (this.opts.jtd)
             throw new Error("schema must be object");
@@ -4725,7 +4725,7 @@ var require_core = __commonJS({
         let sch = this._cache.get(schema);
         if (sch !== void 0)
           return sch;
-        baseId = (0, resolve_1.normalizeId)(id11 || baseId);
+        baseId = (0, resolve_1.normalizeId)(id12 || baseId);
         const localRefs = resolve_1.getSchemaRefs.call(this, schema, baseId);
         sch = new compile_1.SchemaEnv({ schema, schemaId, meta: meta3, baseId, localRefs });
         this._cache.set(sch.schema, sch);
@@ -4738,9 +4738,9 @@ var require_core = __commonJS({
           this.validateSchema(schema, true);
         return sch;
       }
-      _checkUnique(id11) {
-        if (this.schemas[id11] || this.refs[id11]) {
-          throw new Error(`schema with key or id "${id11}" already exists`);
+      _checkUnique(id12) {
+        if (this.schemas[id12] || this.refs[id12]) {
+          throw new Error(`schema with key or id "${id12}" already exists`);
         }
       }
       _compileSchemaEnv(sch) {
@@ -6066,11 +6066,11 @@ var require_properties = __commonJS({
         if (it.opts.unevaluated && allProps.length && it.props !== true) {
           it.props = util_1.mergeEvaluated.props(gen, (0, util_1.toHash)(allProps), it.props);
         }
-        const properties6 = allProps.filter((p) => !(0, util_1.alwaysValidSchema)(it, schema[p]));
-        if (properties6.length === 0)
+        const properties29 = allProps.filter((p) => !(0, util_1.alwaysValidSchema)(it, schema[p]));
+        if (properties29.length === 0)
           return;
         const valid = gen.name("valid");
-        for (const prop of properties6) {
+        for (const prop of properties29) {
           if (hasDefault(prop)) {
             applyPropertySchema(prop);
           } else {
@@ -7224,8 +7224,8 @@ var require_dist = __commonJS({
         return ajv;
       }
       const [formats, exportName] = opts.mode === "fast" ? [formats_1.fastFormats, fastName] : [formats_1.fullFormats, fullName];
-      const list2 = opts.formats || formats_1.formatNames;
-      addFormats(ajv, list2, formats, exportName);
+      const list3 = opts.formats || formats_1.formatNames;
+      addFormats(ajv, list3, formats, exportName);
       if (opts.keywords)
         (0, limit_1.default)(ajv);
       return ajv;
@@ -7237,11 +7237,11 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list2, fs, exportName) {
+    function addFormats(ajv, list3, fs, exportName) {
       var _a3;
       var _b;
       (_a3 = (_b = ajv.opts.code).formats) !== null && _a3 !== void 0 ? _a3 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
-      for (const f of list2)
+      for (const f of list3)
         ajv.addFormat(f, fs[f]);
     }
     module.exports = exports = formatsPlugin;
@@ -30695,7 +30695,7 @@ var require_libmime = __commonJS({
             return left + "__\0JOIN\0__";
           }
           return match;
-        }).replace(/(\?=)?__\x00JOIN\x00__(=\?([^?]+)\?[QqBb]\?)?/g, "").replace(/(=\?[^?]+\?[QqBb]\?[^?]*\?=)\s+(?==\?[^?]+\?[QqBb]\?[^?]*\?=)/g, "$1").replace(/=\?([\w_\-*]+)\?([QqBb])\?([^?]*)\?=/g, (m, charset, encoding, text11) => this.decodeWord(charset, encoding, text11));
+        }).replace(/(\?=)?__\x00JOIN\x00__(=\?([^?]+)\?[QqBb]\?)?/g, "").replace(/(=\?[^?]+\?[QqBb]\?[^?]*\?=)\s+(?==\?[^?]+\?[QqBb]\?[^?]*\?=)/g, "$1").replace(/=\?([\w_\-*]+)\?([QqBb])\?([^?]*)\?=/g, (m, charset, encoding, text13) => this.decodeWord(charset, encoding, text13));
       }
       getHex(c) {
         if (c >= 48 && c <= 57 || c >= 97 && c <= 102 || c >= 65 && c <= 70) {
@@ -30923,7 +30923,7 @@ var require_libmime = __commonJS({
        * @return {Array} A list of encoded keys and headers
        */
       buildHeaderParam(key, data, maxLength, fromCharset) {
-        let list2 = [];
+        let list3 = [];
         if (typeof data !== "string" && !Buffer2.isBuffer(data)) {
           data = data === null || data === void 0 ? "" : data.toString();
         }
@@ -30945,13 +30945,13 @@ var require_libmime = __commonJS({
             ];
           }
           encodedStr = encodedStr.replace(new RegExp(".{" + maxLength + "}", "g"), (str) => {
-            list2.push({
+            list3.push({
               line: str
             });
             return "";
           });
           if (encodedStr) {
-            list2.push({
+            list3.push({
               line: encodedStr
             });
           }
@@ -30982,7 +30982,7 @@ var require_libmime = __commonJS({
               chr = chr === " " ? chr : this.safeEncodeURIComponent(chr);
               if (chr !== encodedStr[i]) {
                 if ((this.safeEncodeURIComponent(line) + chr).length >= maxLength) {
-                  list2.push({
+                  list3.push({
                     line,
                     encoded: isEncoded
                   });
@@ -30997,7 +30997,7 @@ var require_libmime = __commonJS({
               }
             }
             if ((line + chr).length >= maxLength) {
-              list2.push({
+              list3.push({
                 line,
                 encoded: isEncoded
               });
@@ -31013,13 +31013,13 @@ var require_libmime = __commonJS({
             }
           }
           if (line) {
-            list2.push({
+            list3.push({
               line,
               encoded: isEncoded
             });
           }
         }
-        return list2.map((item, i2) => ({
+        return list3.map((item, i2) => ({
           // encoded lines: {name}*{part}*
           // unencoded lines: {name}*{part}
           // if any line needs to be encoded then the first line (part==0) is always encoded
@@ -33717,8 +33717,8 @@ function isValidJWT(jwt2, alg) {
     const [header] = jwt2.split(".");
     if (!header)
       return false;
-    const base643 = header.replace(/-/g, "+").replace(/_/g, "/").padEnd(header.length + (4 - header.length % 4) % 4, "=");
-    const decoded = JSON.parse(atob(base643));
+    const base644 = header.replace(/-/g, "+").replace(/_/g, "/").padEnd(header.length + (4 - header.length % 4) % 4, "=");
+    const decoded = JSON.parse(atob(base644));
     if (typeof decoded !== "object" || decoded === null)
       return false;
     if ("typ" in decoded && decoded?.typ !== "JWT")
@@ -37728,8 +37728,8 @@ function cleanEnum(obj) {
     return Number.isNaN(Number.parseInt(k, 10));
   }).map((el) => el[1]);
 }
-function base64ToUint8Array(base643) {
-  const binaryString = atob(base643);
+function base64ToUint8Array(base644) {
+  const binaryString = atob(base644);
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
@@ -37744,9 +37744,9 @@ function uint8ArrayToBase64(bytes) {
   return btoa(binaryString);
 }
 function base64urlToUint8Array(base64url3) {
-  const base643 = base64url3.replace(/-/g, "+").replace(/_/g, "/");
-  const padding = "=".repeat((4 - base643.length % 4) % 4);
-  return base64ToUint8Array(base643 + padding);
+  const base644 = base64url3.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = "=".repeat((4 - base644.length % 4) % 4);
+  return base64ToUint8Array(base644 + padding);
 }
 function uint8ArrayToBase64url(bytes) {
   return uint8ArrayToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
@@ -39489,8 +39489,8 @@ var base64urlCharset = /^[A-Za-z0-9_-]*$/;
 function isValidBase64URL(data) {
   if (!base64urlCharset.test(data))
     return false;
-  const base643 = data.replace(/[-_]/g, (c) => c === "-" ? "+" : "/");
-  const padded = base643.padEnd(Math.ceil(base643.length / 4) * 4, "=");
+  const base644 = data.replace(/[-_]/g, (c) => c === "-" ? "+" : "/");
+  const padded = base644.padEnd(Math.ceil(base644.length / 4) * 4, "=");
   return isValidBase64(padded);
 }
 var $ZodBase64URL = /* @__PURE__ */ $constructor("$ZodBase64URL", (inst, def) => {
@@ -40039,15 +40039,15 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
     const syms = normalized.symbolKeys;
     const doc = new Doc(["payload", "ctx"], { shape, inst, memo: memo2, syms });
     const parseStr = (k) => `shape[${k}]._zod.run({ value: input[${k}], issues: [] }, ctx)`;
-    const prefixStr = (id11, k) => `
-          let ${id11}_ab = false;
-          for (let i = 0; i < ${id11}.issues.length; i++) {
-            const iss = ${id11}.issues[i];
+    const prefixStr = (id12, k) => `
+          let ${id12}_ab = false;
+          for (let i = 0; i < ${id12}.issues.length; i++) {
+            const iss = ${id12}.issues[i];
             iss.path = iss.path ? [${k}, ...iss.path] : [${k}];
             payload.issues.push(iss);
-            if (iss.continue !== true) ${id11}_ab = true;
+            if (iss.continue !== true) ${id12}_ab = true;
           }
-          if (${id11}_ab && ctx && ctx.abortEarly) {
+          if (${id12}_ab && ctx && ctx.abortEarly) {
             payload.value = newResult;
             return payload;
           }`;
@@ -40061,34 +40061,34 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
     for (const key of normalized.allKeys) {
       if (key === "__proto__")
         continue;
-      const id11 = ids2[key];
+      const id12 = ids2[key];
       const k = typeof key === "symbol" ? `syms[${syms.indexOf(key)}]` : esc(key);
       const isPresent = `${k} in input`;
       const schema = shape[key];
       const optin = schema?._zod?.optin;
       const isOptionalIn = optin !== void 0;
       const isOptionalOut = schema?._zod?.optout === "optional";
-      doc.write(`const ${id11} = ${parseStr(k)};`);
+      doc.write(`const ${id12} = ${parseStr(k)};`);
       if (isOptionalIn && isOptionalOut) {
-        const assign = optin === "optional" ? `${id11}_present` : `${id11}.value !== undefined || ${id11}_present`;
+        const assign = optin === "optional" ? `${id12}_present` : `${id12}.value !== undefined || ${id12}_present`;
         doc.write(`
-        const ${id11}_present = ${isPresent};
-        if (!${id11}.issues.length || ${id11}_present) {
-          if (${id11}.issues.length) {${prefixStr(id11, k)}
+        const ${id12}_present = ${isPresent};
+        if (!${id12}.issues.length || ${id12}_present) {
+          if (${id12}.issues.length) {${prefixStr(id12, k)}
           }
 
           if (${assign}) {
-            newResult[${k}] = ${id11}.value;
+            newResult[${k}] = ${id12}.value;
           }
         }
 
       `);
       } else if (!isOptionalIn) {
         doc.write(`
-        const ${id11}_present = ${isPresent};
-        if (${id11}.issues.length) {${prefixStr(id11, k)}
+        const ${id12}_present = ${isPresent};
+        if (${id12}.issues.length) {${prefixStr(id12, k)}
         }
-        if (!${id11}_present && !${id11}.issues.length) {
+        if (!${id12}_present && !${id12}.issues.length) {
           payload.issues.push({
             code: "invalid_type",
             expected: "nonoptional",
@@ -40101,22 +40101,22 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
           }
         }
 
-        if (${id11}_present) {
-          newResult[${k}] = ${id11}.value;
+        if (${id12}_present) {
+          newResult[${k}] = ${id12}.value;
         }
 
       `);
       } else {
         doc.write(`
-        if (${id11}.issues.length) {${prefixStr(id11, k)}
+        if (${id12}.issues.length) {${prefixStr(id12, k)}
         }
       `);
         if (optin === "defaulted") {
-          doc.write(`newResult[${k}] = ${id11}.value;`);
+          doc.write(`newResult[${k}] = ${id12}.value;`);
         } else {
           doc.write(`
-        if (${id11}.value !== undefined || ${isPresent}) {
-          newResult[${k}] = ${id11}.value;
+        if (${id12}.value !== undefined || ${isPresent}) {
+          newResult[${k}] = ${id12}.value;
         }
       `);
         }
@@ -45769,11 +45769,11 @@ function ko_default() {
 }
 
 // node_modules/zod/v4/locales/lt.js
-var capitalizeFirstCharacter = (text11) => {
-  return text11.charAt(0).toUpperCase() + text11.slice(1);
+var capitalizeFirstCharacter = (text13) => {
+  return text13.charAt(0).toUpperCase() + text13.slice(1);
 };
-function getUnitTypeFromNumber(number6) {
-  const abs = Math.abs(number6);
+function getUnitTypeFromNumber(number7) {
+  const abs = Math.abs(number7);
   const last = abs % 10;
   const last2 = abs % 100;
   if (last2 >= 11 && last2 <= 19 || last === 0)
@@ -52134,26 +52134,26 @@ function extractDefs(ctx, schema) {
     return;
   const idToSchema = /* @__PURE__ */ new Map();
   for (const entry of ctx.seen.entries()) {
-    const id11 = ctx.metadataRegistry.get(entry[0])?.id;
-    if (id11) {
-      const existing = idToSchema.get(id11);
+    const id12 = ctx.metadataRegistry.get(entry[0])?.id;
+    if (id12) {
+      const existing = idToSchema.get(id12);
       if (existing && existing !== entry[0]) {
-        throw new Error(`Duplicate schema id "${id11}" detected during JSON Schema conversion. Two different schemas cannot share the same id when converted together.`);
+        throw new Error(`Duplicate schema id "${id12}" detected during JSON Schema conversion. Two different schemas cannot share the same id when converted together.`);
       }
-      idToSchema.set(id11, entry[0]);
+      idToSchema.set(id12, entry[0]);
     }
   }
   const makeURI = (entry) => {
     const defsSegment = ctx.target === "draft-2020-12" ? "$defs" : "definitions";
     if (ctx.external) {
       const externalId = ctx.external.registry.get(entry[0])?.id;
-      const uriGenerator = ctx.external.uri ?? ((id12) => id12);
+      const uriGenerator = ctx.external.uri ?? ((id13) => id13);
       if (externalId) {
         return { ref: uriGenerator(externalId) };
       }
-      const id11 = entry[1].defId ?? entry[1].schema.id ?? `schema${ctx.counter++}`;
-      entry[1].defId = id11;
-      return { defId: id11, ref: `${uriGenerator("__shared")}#/${defsSegment}/${encodeJSONPointerSegment(id11)}` };
+      const id12 = entry[1].defId ?? entry[1].schema.id ?? `schema${ctx.counter++}`;
+      entry[1].defId = id12;
+      return { defId: id12, ref: `${uriGenerator("__shared")}#/${defsSegment}/${encodeJSONPointerSegment(id12)}` };
     }
     const uriPrefix = `#`;
     const defUriPrefix = `${uriPrefix}/${defsSegment}/`;
@@ -52201,8 +52201,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         continue;
       }
     }
-    const id11 = ctx.metadataRegistry.get(entry[0])?.id;
-    if (id11) {
+    const id12 = ctx.metadataRegistry.get(entry[0])?.id;
+    if (id12) {
       extractToDef(entry);
       continue;
     }
@@ -52261,11 +52261,11 @@ function foldObjects(members2) {
     }
     objects.push(member);
   }
-  const properties6 = {};
+  const properties29 = {};
   const required3 = /* @__PURE__ */ new Set();
   for (const object3 of objects) {
     for (const key in object3.properties) {
-      if (Object.prototype.hasOwnProperty.call(properties6, key))
+      if (Object.prototype.hasOwnProperty.call(properties29, key))
         continue;
       const parts = [];
       for (const other of objects) {
@@ -52276,12 +52276,12 @@ function foldObjects(members2) {
           parts.push(part);
       }
       const merged = parts.length === 1 ? parts[0] : foldObjects(parts) ?? { allOf: parts };
-      assignProp(properties6, key, merged);
+      assignProp(properties29, key, merged);
     }
     for (const key of object3.required ?? [])
       required3.add(key);
   }
-  const folded = { type: "object", properties: properties6 };
+  const folded = { type: "object", properties: properties29 };
   if (required3.size)
     folded.required = [...required3];
   if (objects.every((object3) => object3.additionalProperties === false)) {
@@ -52435,10 +52435,10 @@ function finalize(ctx, schema) {
   } else {
   }
   if (ctx.external?.uri) {
-    const id11 = ctx.external.registry.get(schema)?.id;
-    if (!id11)
+    const id12 = ctx.external.registry.get(schema)?.id;
+    if (!id12)
       throw new Error("Schema is missing an `id` property");
-    result.$id = ctx.external.uri(id11);
+    result.$id = ctx.external.uri(id12);
   }
   assignProps(result, root.defId ? root.schema : root.def ?? root.schema);
   const rootMetaId = ctx.metadataRegistry.get(schema)?.id;
@@ -52616,8 +52616,8 @@ var contributors = {
 function aggregateChecks(schema) {
   const agg = {};
   const def = schema._zod.def;
-  const list2 = schema._zod.traits.has("$ZodCheck") ? [schema, ...def.checks ?? []] : def.checks ?? [];
-  for (const ch of list2)
+  const list3 = schema._zod.traits.has("$ZodCheck") ? [schema, ...def.checks ?? []] : def.checks ?? [];
+  for (const ch of list3)
     contributors[ch._zod.def.check]?.(agg, ch._zod.def);
   const bag = schema._zod.bag;
   if (bag.minimum !== void 0)
@@ -53044,7 +53044,7 @@ function stringifyKeyNames(bySchema, json3, visited) {
   const values = json3.enum ?? (json3.const !== void 0 ? [json3.const] : void 0);
   if (!numericType && !values?.some((v) => typeof v === "number"))
     return json3;
-  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id: id11, ...rest } = json3;
+  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id: id12, ...rest } = json3;
   if (rest.enum)
     rest.enum = rest.enum.map((v) => typeof v === "number" ? String(v) : v);
   else if (typeof rest.const === "number")
@@ -56309,10 +56309,10 @@ function convertBaseSchema(schema, ctx) {
     }
     case "object": {
       const shape = {};
-      const properties6 = schema.properties || {};
+      const properties29 = schema.properties || {};
       const requiredSet = new Set(schema.required || []);
       const additionalSchema = typeof schema.additionalProperties === "object" ? convertSchema(schema.additionalProperties, ctx) : void 0;
-      for (const [key, propSchema] of Object.entries(properties6)) {
+      for (const [key, propSchema] of Object.entries(properties29)) {
         const propZodSchema = convertSchema(propSchema, ctx);
         assignProp(shape, key, requiredSet.has(key) ? propZodSchema : propZodSchema.optional());
       }
@@ -60589,7 +60589,7 @@ var ExperimentalServerTasks = class {
       if (hasPreviousToolUse) {
         const toolUseIds = new Set(previousContent.filter((c) => c.type === "tool_use").map((c) => c.id));
         const toolResultIds = new Set(lastContent.filter((c) => c.type === "tool_result").map((c) => c.toolUseId));
-        if (toolUseIds.size !== toolResultIds.size || ![...toolUseIds].every((id11) => toolResultIds.has(id11))) {
+        if (toolUseIds.size !== toolResultIds.size || ![...toolUseIds].every((id12) => toolResultIds.has(id12))) {
           throw new Error("ids of tool_result blocks and tool_use blocks from previous message do not match");
         }
       }
@@ -61014,7 +61014,7 @@ var Server = class extends Protocol {
       if (hasPreviousToolUse) {
         const toolUseIds = new Set(previousContent.filter((c) => c.type === "tool_use").map((c) => c.id));
         const toolResultIds = new Set(lastContent.filter((c) => c.type === "tool_result").map((c) => c.toolUseId));
-        if (toolUseIds.size !== toolResultIds.size || ![...toolUseIds].every((id11) => toolResultIds.has(id11))) {
+        if (toolUseIds.size !== toolResultIds.size || ![...toolUseIds].every((id12) => toolResultIds.has(id12))) {
           throw new Error("ids of tool_result blocks and tool_use blocks from previous message do not match");
         }
       }
@@ -62107,9 +62107,9 @@ var StdioServerTransport = class {
 };
 
 // apps/apple/src/plugin/apple-plugin.ts
-import { existsSync } from "node:fs";
-import { homedir as homedir6 } from "node:os";
-import { join as join16 } from "node:path";
+import { existsSync as existsSync2 } from "node:fs";
+import { homedir as homedir7 } from "node:os";
+import { join as join19 } from "node:path";
 import { setTimeout as sleep3 } from "node:timers/promises";
 
 // packages/elt/dist/core/deduplication.js
@@ -62130,10 +62130,10 @@ var Deduplication = class {
     Object.freeze(this);
   }
   type(field) {
-    const properties6 = this.stream.jsonSchema.properties;
-    if (typeof field !== "string" || !field || properties6 === null || typeof properties6 !== "object" || !Object.hasOwn(properties6, field))
+    const properties29 = this.stream.jsonSchema.properties;
+    if (typeof field !== "string" || !field || properties29 === null || typeof properties29 !== "object" || !Object.hasOwn(properties29, field))
       throw new TypeError(`Schema must describe key/cursor field ${field}`);
-    const schema = Reflect.get(properties6, field);
+    const schema = Reflect.get(properties29, field);
     const type = schema !== null && typeof schema === "object" ? Reflect.get(schema, "type") : void 0;
     if (type !== "string" && type !== "number" && type !== "integer" && type !== "boolean")
       throw new TypeError(`Key/cursor field ${field} requires one non-null scalar schema type`);
@@ -62228,10 +62228,10 @@ var FileRead = class {
       throw new TypeError("Parser identity changed after configuration");
     if (this.file.storage?.identity !== this.storageIdentity)
       throw new TypeError("File storage identity changed after configuration");
-    const { properties: properties6 } = stream.jsonSchema;
-    if (stream.jsonSchema.type !== "object" || properties6 === null || typeof properties6 !== "object" || Array.isArray(properties6))
+    const { properties: properties29 } = stream.jsonSchema;
+    if (stream.jsonSchema.type !== "object" || properties29 === null || typeof properties29 !== "object" || Array.isArray(properties29))
       throw new TypeError("File extraction requires an object metadata schema");
-    if (Object.keys(properties6).some((name) => name.toLowerCase() === this.name.toLowerCase()))
+    if (Object.keys(properties29).some((name) => name.toLowerCase() === this.name.toLowerCase()))
       throw new TypeError("File field collides with source metadata");
   }
   toJSON() {
@@ -62749,17 +62749,17 @@ var Source = class {
   // Each checkpoint is a commit point. A full refresh carries none, so it
   // loads all or nothing; an incremental read that fails keeps what earlier
   // checkpoints committed. states holds each incremental stream's saved state.
-  async *read(catalog7, states) {
+  async *read(catalog8, states) {
     var _stack = [];
     try {
-      for (const configuration of catalog7)
+      for (const configuration of catalog8)
         this.validate(configuration);
-      if (new Set(catalog7.map(({ stream }) => stream.name)).size !== catalog7.length)
+      if (new Set(catalog8.map(({ stream }) => stream.name)).size !== catalog8.length)
         throw new TypeError("A read selects each stream once");
-      const context = __using(_stack, await this.open(catalog7.map(({ stream }) => stream)), true);
+      const context = __using(_stack, await this.open(catalog8.map(({ stream }) => stream)), true);
       if (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)
         throw new TypeError("Source concurrency must be a positive integer");
-      yield* interleave(catalog7.map((configuration) => this.#stream(configuration, states.get(configuration.stream.name) ?? null, context)), this.concurrency);
+      yield* interleave(catalog8.map((configuration) => this.#stream(configuration, states.get(configuration.stream.name) ?? null, context)), this.concurrency);
     } catch (_) {
       var _error = _, _hasError = true;
     } finally {
@@ -62833,19 +62833,19 @@ var Source = class {
     const saved = incremental ? readPartitionStates(stream, state) : /* @__PURE__ */ new Map();
     const identity = partitionIdentity(stream);
     const listed = this.partitions(stream).map((entry) => readPartition(identity, entry));
-    const latest = new Map(saved);
+    const latest2 = new Map(saved);
     for (const { key, partition } of listed) {
       try {
         for await (const message3 of this.resolved(configuration, this.extract(configuration, saved.get(key)?.state ?? null, partition, context))) {
           if ("type" in message3 && message3.type === "STATE") {
             if (!incremental)
               continue;
-            latest.set(key, { partition, state: message3.state });
+            latest2.set(key, { partition, state: message3.state });
             yield {
               type: "STATE",
               stream: stream.name,
               state: {
-                partitions: listed.flatMap((entry) => latest.get(entry.key) ?? [])
+                partitions: listed.flatMap((entry) => latest2.get(entry.key) ?? [])
               }
             };
             continue;
@@ -62931,8 +62931,8 @@ async function transfer(source, destination, run, replications) {
         continue;
       }
       try {
-        const { run: run2, id: id11 } = checkpoint(replication);
-        const state = run2.state(id11);
+        const { run: run2, id: id12 } = checkpoint(replication);
+        const state = run2.state(id12);
         replication.resuming = state !== null;
         states.set(replication.stream.name, state);
         reading.push(replication);
@@ -63004,8 +63004,8 @@ async function transfer(source, destination, run, replications) {
             if (!incremental(replication))
               throw new TypeError(`Full refresh stream ${message3.stream} emitted a checkpoint`);
             await commit(replication);
-            const { run: run2, id: id11 } = checkpoint(replication);
-            await run2.save(id11, operation.state);
+            const { run: run2, id: id12 } = checkpoint(replication);
+            await run2.save(id12, operation.state);
           } else {
             await started(replication).apply(operation.type === "RECORD" ? {
               ...operation,
@@ -63322,7 +63322,7 @@ var Pipeline = class {
     const names = this.connections.map(({ name }) => name);
     if (new Set(names).size !== names.length)
       throw new TypeError("Pipeline connection names must be distinct");
-    const ids2 = this.connections.flatMap(({ steps }) => steps.map(({ id: id11 }) => id11)).filter((id11) => id11 !== void 0);
+    const ids2 = this.connections.flatMap(({ steps }) => steps.map(({ id: id12 }) => id12)).filter((id12) => id12 !== void 0);
     if (new Set(ids2).size !== ids2.length)
       throw new TypeError("Pipeline copy IDs must be distinct");
   }
@@ -63402,9 +63402,9 @@ async function* diffSnapshot(stream, records, state) {
     const key = deduplication.key(data);
     if (current.has(key))
       throw new TypeError(`Stream ${stream.name} returned key ${key} twice in one scan`);
-    const fingerprint = fingerprintOf(stream, data);
-    current.set(key, fingerprint);
-    if (previous.get(key) !== fingerprint)
+    const fingerprint2 = fingerprintOf(stream, data);
+    current.set(key, fingerprint2);
+    if (previous.get(key) !== fingerprint2)
       yield { stream: stream.name, data };
   }
   for (const key of previous.keys())
@@ -63450,9 +63450,9 @@ async function* diffGroupedSnapshot(stream, groups, state) {
     for await (const data of group2.records()) {
       const key = deduplication.key(data);
       claim2(key);
-      const fingerprint = fingerprintOf(stream, data);
-      snapshot.set(key, fingerprint);
-      if (previousFingerprint(before, key) !== fingerprint)
+      const fingerprint2 = fingerprintOf(stream, data);
+      snapshot.set(key, fingerprint2);
+      if (previousFingerprint(before, key) !== fingerprint2)
         yield { stream: stream.name, data };
     }
     current.set(group2.key, {
@@ -63513,33 +63513,33 @@ var CheckpointStore = class {
     const ids2 = [...bindings.keys()].sort();
     return this.session(ids2, async (session) => {
       const checkpoints = /* @__PURE__ */ new Map();
-      for (const id11 of ids2) {
-        const binding = JSON.stringify(bindings.get(id11));
-        const saved = await session.read(id11);
+      for (const id12 of ids2) {
+        const binding = JSON.stringify(bindings.get(id12));
+        const saved = await session.read(id12);
         const changed = saved !== void 0 && !isDeepStrictEqual4(JSON.parse(saved.binding), JSON.parse(binding));
-        checkpoints.set(id11, {
+        checkpoints.set(id12, {
           binding,
           state: saved === void 0 || changed ? null : JSON.parse(saved.state),
           changed
         });
       }
-      const checkpoint = (id11) => {
-        const found = checkpoints.get(id11);
+      const checkpoint = (id12) => {
+        const found = checkpoints.get(id12);
         if (found === void 0)
-          throw new TypeError(`Checkpoint ${id11} is not part of this run`);
+          throw new TypeError(`Checkpoint ${id12} is not part of this run`);
         if (found.changed)
-          throw new TypeError(`Checkpoint binding changed for ${id11}; reset it or use a new copy ID`);
+          throw new TypeError(`Checkpoint binding changed for ${id12}; reset it or use a new copy ID`);
         return found;
       };
       return work({
         // A source may mutate its input state, but only an acknowledged message may advance it.
-        state: (id11) => structuredClone(checkpoint(id11).state),
-        save: async (id11, state) => {
-          const { binding } = checkpoint(id11);
+        state: (id12) => structuredClone(checkpoint(id12).state),
+        save: async (id12, state) => {
+          const { binding } = checkpoint(id12);
           try {
-            await session.save(id11, { binding, state: JSON.stringify(state) });
+            await session.save(id12, { binding, state: JSON.stringify(state) });
           } catch (cause) {
-            throw new Error(`Checkpoint ${id11} was not saved after the destination committed; the next run replays from the last saved checkpoint`, { cause });
+            throw new Error(`Checkpoint ${id12} was not saved after the destination committed; the next run replays from the last saved checkpoint`, { cause });
           }
         }
       });
@@ -63547,16 +63547,16 @@ var CheckpointStore = class {
   }
   // Forgets progress but keeps the loaded rows: the next run reloads
   // everything, as Airbyte's refresh that keeps records.
-  async reset(id11) {
-    await this.session([id11], (session) => session.remove(id11));
+  async reset(id12) {
+    await this.session([id12], (session) => session.remove(id12));
   }
   // Airbyte's Clear: removes the data, then the checkpoint, under the
   // replication's lock. A crash between the two leaves a checkpoint beside an
   // emptied target, and clear can simply run again.
-  async clear(id11, drop) {
-    await this.session([id11], async (session) => {
+  async clear(id12, drop) {
+    await this.session([id12], async (session) => {
       await drop();
-      await session.remove(id11);
+      await session.remove(id12);
     });
   }
 };
@@ -63802,10 +63802,10 @@ function parseBinaryPlist(bytes) {
       }
       case 6: {
         const [length, start] = lengthAt(at);
-        let text11 = "";
+        let text13 = "";
         for (let index = 0; index < length; index++)
-          text11 += String.fromCharCode(view.getUint16(start + index * 2));
-        return text11;
+          text13 += String.fromCharCode(view.getUint16(start + index * 2));
+        return text13;
       }
       case 8:
         return new PlistUid(unsigned(at + 1, nibble + 1));
@@ -64063,12 +64063,12 @@ var MailStore = class _MailStore {
         const segments = relative(path, filePath).split(sep);
         const attachment2 = segments.indexOf("Attachments");
         if (/^\d+(\.partial)?\.emlx$/.test(entry.name)) {
-          const id11 = entry.name.split(".")[0];
-          if (store.messages.has(id11))
+          const id12 = entry.name.split(".")[0];
+          if (store.messages.has(id12))
             throw new MailSchemaError(
-              `Mail has more than one file for indexed message ${id11}`
+              `Mail has more than one file for indexed message ${id12}`
             );
-          store.messages.set(id11, await inspectMailFile(filePath));
+          store.messages.set(id12, await inspectMailFile(filePath));
         } else if (attachment2 !== -1 && segments.length >= attachment2 + 4) {
           const key = `${segments[attachment2 + 1]}:${segments[attachment2 + 2]}`;
           const files = store.attachments.get(key);
@@ -64561,13 +64561,13 @@ function eventKitCatalog(streams4, {
 } = {}) {
   return new Catalog(
     Object.entries(streams4).map(
-      ([name, { description, properties: properties6 }]) => new Stream({
+      ([name, { description, properties: properties29 }]) => new Stream({
         name,
         jsonSchema: {
           type: "object",
           description,
-          properties: properties6,
-          required: Object.keys(properties6)
+          properties: properties29,
+          required: Object.keys(properties29)
         },
         primaryKey: ["id"],
         supportedSyncModes: snapshot ? ["full_refresh", "incremental"] : ["full_refresh"],
@@ -64697,11 +64697,11 @@ function relatedRows(item, itemId, ownerKey) {
       endAt: timestamp2(rule.end?.endMs),
       occurrenceCount: rule.end?.occurrenceCount ?? 0
     });
-    const value = (component, index, value2, weekNumber) => ({
-      id: JSON.stringify([ruleId, component, index]),
+    const value = (component2, index, value2, weekNumber) => ({
+      id: JSON.stringify([ruleId, component2, index]),
       [ownerKey]: itemId,
       ruleId,
-      component,
+      component: component2,
       position: index,
       value: value2,
       weekNumber
@@ -64710,15 +64710,15 @@ function relatedRows(item, itemId, ownerKey) {
       recurrenceRuleValues.push(
         value("daysOfTheWeek", index, day2.day, day2.weekNumber)
       );
-    for (const component of [
+    for (const component2 of [
       "daysOfTheMonth",
       "daysOfTheYear",
       "weeksOfTheYear",
       "monthsOfTheYear",
       "setPositions"
     ])
-      for (const [index, number6] of rule[component].entries())
-        recurrenceRuleValues.push(value(component, index, number6, null));
+      for (const [index, number7] of rule[component2].entries())
+        recurrenceRuleValues.push(value(component2, index, number7, null));
   }
   return { attendees, alarms, recurrenceRules, recurrenceRuleValues };
 }
@@ -64726,13 +64726,13 @@ function relatedRows(item, itemId, ownerKey) {
 // apps/apple/src/sources/apple-calendar/icalendar.ts
 var namePattern = /^[A-Za-z0-9-]+/;
 function parseICalendar(bytes) {
-  let text11;
+  let text13;
   try {
-    text11 = new TextDecoder("utf-8", { fatal: true }).decode(unfold(bytes));
+    text13 = new TextDecoder("utf-8", { fatal: true }).decode(unfold(bytes));
   } catch (cause) {
     throw new TypeError("iCalendar data is not valid UTF-8", { cause });
   }
-  const lines = text11.split(/\r?\n/);
+  const lines = text13.split(/\r?\n/);
   if (lines.at(-1) === "") lines.pop();
   const stack = [];
   let root;
@@ -64742,30 +64742,30 @@ function parseICalendar(bytes) {
       throw fail2("content after the calendar ended");
     const property = parseLine(line, fail2);
     if (property.name === "BEGIN") {
-      const component = {
+      const component2 = {
         name: property.value.toUpperCase(),
         properties: [],
         components: []
       };
-      if (!namePattern.test(component.name))
+      if (!namePattern.test(component2.name))
         throw fail2(`invalid component name ${property.value}`);
       const parent = stack.at(-1);
       if (parent === void 0) {
-        if (component.name !== "VCALENDAR")
+        if (component2.name !== "VCALENDAR")
           throw fail2("content must start with BEGIN:VCALENDAR");
-        root = component;
-      } else parent.components.push(component);
-      stack.push(component);
+        root = component2;
+      } else parent.components.push(component2);
+      stack.push(component2);
     } else if (property.name === "END") {
-      const open8 = stack.pop();
-      if (open8 === void 0 || open8.name !== property.value.toUpperCase())
+      const open9 = stack.pop();
+      if (open9 === void 0 || open9.name !== property.value.toUpperCase())
         throw fail2(
-          `END:${property.value} does not close ${open8?.name ?? "anything"}`
+          `END:${property.value} does not close ${open9?.name ?? "anything"}`
         );
     } else {
-      const open8 = stack.at(-1);
-      if (open8 === void 0) throw fail2("property outside a component");
-      open8.properties.push(property);
+      const open9 = stack.at(-1);
+      if (open9 === void 0) throw fail2("property outside a component");
+      open9.properties.push(property);
     }
   }
   if (root === void 0)
@@ -64835,11 +64835,11 @@ function decodeCaret(value) {
     (_, code) => code === "n" ? "\n" : code === "'" ? '"' : "^"
   );
 }
-function freeze(component) {
+function freeze(component2) {
   return Object.freeze({
-    name: component.name,
+    name: component2.name,
     properties: Object.freeze(
-      component.properties.map(
+      component2.properties.map(
         (property) => Object.freeze({
           ...property,
           parameters: Object.freeze(
@@ -64853,7 +64853,7 @@ function freeze(component) {
         })
       )
     ),
-    components: Object.freeze(component.components.map(freeze))
+    components: Object.freeze(component2.components.map(freeze))
   });
 }
 
@@ -64877,7 +64877,7 @@ function validateIcsExports(items) {
 function icsRecords(stream, item) {
   const { calendarId, calendarItemId } = item;
   const calendar = parseICalendar(Buffer.from(item.ics, "base64"));
-  if (!calendar.components.some((component) => component.name === "VEVENT"))
+  if (!calendar.components.some((component2) => component2.name === "VEVENT"))
     throw new TypeError(
       `EventKit ICS export returned no VEVENT for saved item ${calendarItemId}`
     );
@@ -64887,26 +64887,26 @@ function icsRecords(stream, item) {
     icsParameters: [],
     icsAttachments: []
   };
-  const walk = (component, path, parentId, position) => {
-    const id11 = JSON.stringify([calendarId, calendarItemId, path]);
-    const property = (name) => component.properties.find((candidate) => candidate.name === name);
+  const walk = (component2, path, parentId, position) => {
+    const id12 = JSON.stringify([calendarId, calendarItemId, path]);
+    const property = (name) => component2.properties.find((candidate) => candidate.name === name);
     const recurrence = property("RECURRENCE-ID");
     rows.icsComponents.push({
-      id: id11,
+      id: id12,
       calendarId,
       calendarItemId,
       parentId,
       position,
-      name: component.name,
+      name: component2.name,
       uid: property("UID")?.value ?? null,
       recurrenceId: recurrence?.value ?? null,
       recurrenceIdTimeZone: recurrence?.parameters.find((parameter) => parameter.name === "TZID")?.values[0] ?? null,
-      eventId: component.name === "VEVENT" && !item.recurring && !recurrence ? JSON.stringify([calendarId, calendarItemId, null]) : null
+      eventId: component2.name === "VEVENT" && !item.recurring && !recurrence ? JSON.stringify([calendarId, calendarItemId, null]) : null
     });
-    const properties6 = component.properties.filter(
+    const properties29 = component2.properties.filter(
       (property2) => property2.name !== "DTSTAMP"
     );
-    for (const [index, { name, value, parameters }] of properties6.entries()) {
+    for (const [index, { name, value, parameters }] of properties29.entries()) {
       const propertyKey = [calendarId, calendarItemId, path, index];
       const propertyId = JSON.stringify(propertyKey);
       if (name === "ATTACH") {
@@ -64914,7 +64914,7 @@ function icsRecords(stream, item) {
         rows.icsAttachments.push({
           id: propertyId,
           propertyId,
-          componentId: id11,
+          componentId: id12,
           calendarId,
           calendarItemId,
           uri: value,
@@ -64926,7 +64926,7 @@ function icsRecords(stream, item) {
       }
       rows.icsProperties.push({
         id: propertyId,
-        componentId: id11,
+        componentId: id12,
         calendarId,
         calendarItemId,
         position: index,
@@ -64938,7 +64938,7 @@ function icsRecords(stream, item) {
           rows.icsParameters.push({
             id: JSON.stringify([...propertyKey, parameterIndex, valueIndex]),
             propertyId,
-            componentId: id11,
+            componentId: id12,
             calendarId,
             calendarItemId,
             position: parameterIndex,
@@ -64947,15 +64947,15 @@ function icsRecords(stream, item) {
             value: parameterValue
           });
     }
-    for (const [index, child] of component.components.entries())
-      walk(child, `${path}.${index}`, id11, index);
+    for (const [index, child] of component2.components.entries())
+      walk(child, `${path}.${index}`, id12, index);
   };
   walk(inContentOrder2(calendar), "0", null, 0);
   return rows[stream];
 }
-function inContentOrder2(component) {
-  const components = component.components.map(inContentOrder2).map((child) => [JSON.stringify(child), child]).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, child]) => child);
-  return { ...component, components };
+function inContentOrder2(component2) {
+  const components = component2.components.map(inContentOrder2).map((child) => [JSON.stringify(child), child]).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, child]) => child);
+  return { ...component2, components };
 }
 
 // apps/apple/src/sources/apple-calendar/calendar-rows.ts
@@ -65570,16 +65570,16 @@ var AddressBookStore = class {
     if (value[0] === 1) return { storage: "inline", bytes: value.subarray(1) };
     if (value[0] === 2) {
       const end = value.indexOf(0, 1);
-      const id11 = Buffer.from(
+      const id12 = Buffer.from(
         value.subarray(1, end === -1 ? value.length : end)
       ).toString("ascii");
       return {
         storage: "external",
-        id: id11,
+        id: id12,
         path: join4(
           this.directory,
           ".AddressBook-v22_SUPPORT/_EXTERNAL_DATA",
-          id11
+          id12
         )
       };
     }
@@ -65673,8 +65673,8 @@ var AddressBookVersion = class {
 };
 
 // apps/apple/src/sources/import-scope.ts
-function selected(ids2, id11) {
-  return ids2 === void 0 || typeof id11 === "string" && ids2.includes(id11);
+function selected(ids2, id12) {
+  return ids2 === void 0 || typeof id12 === "string" && ids2.includes(id12);
 }
 function withinDates(scope, value) {
   if (scope.startAt === void 0 && scope.endAt === void 0) return true;
@@ -65694,7 +65694,7 @@ var nullableNumber = { type: ["number", "null"] };
 var nullableBoolean = { type: ["boolean", "null"] };
 var appleEpoch2 = 978307200;
 var instant = (column) => `strftime('%Y-%m-%dT%H:%M:%fZ', ${column} + ${appleEpoch2}, 'unixepoch')`;
-var words = (list2 = "") => list2.split(/\s+/).filter(Boolean);
+var words = (list3 = "") => list3.split(/\s+/).filter(Boolean);
 var kinds = {
   text: (column) => [nullableText3, column],
   integer: (column) => [nullableInteger, column],
@@ -65738,9 +65738,9 @@ function requires(table2, columns2) {
   required2.set(table2, present);
   for (const column of words(columns2)) present.add(column);
 }
-function attributes(table2, alias, list2) {
+function attributes(table2, alias, list3) {
   const fields = {};
-  for (const [kind, names] of Object.entries(list2))
+  for (const [kind, names] of Object.entries(list3))
     for (const token of words(names)) {
       const [name = token, column = `Z${name.toUpperCase()}`] = token.split(":");
       requires(table2, column);
@@ -65791,10 +65791,10 @@ function entities(alias, names) {
   requires("ZABCDRECORD", "Z_PK Z_ENT ZUNIQUEID");
   requires("Z_PRIMARYKEY", "Z_ENT Z_NAME");
   for (const name of Object.keys(names)) requiredEntities.add(name);
-  const list2 = Object.keys(names).map((name) => `'${name}'`).join(", ");
+  const list3 = Object.keys(names).map((name) => `'${name}'`).join(", ");
   const meanings = Object.entries(names).map(([name, kind]) => `${kind} for ${name}`).join(", ");
   return {
-    join: `JOIN Z_PRIMARYKEY ${alias}_entity ON ${alias}_entity.Z_ENT = ${alias}.Z_ENT AND ${alias}_entity.Z_NAME IN (${list2})`,
+    join: `JOIN Z_PRIMARYKEY ${alias}_entity ON ${alias}_entity.Z_ENT = ${alias}.Z_ENT AND ${alias}_entity.Z_NAME IN (${list3})`,
     kind: [
       {
         ...text3,
@@ -65815,7 +65815,7 @@ var group = entities("g", {
   ABCDSmartGroup: "smartGroup"
 });
 var container = entities("r", { CNCDContainer: "container" });
-function labeled(table2, alias, list2) {
+function labeled(table2, alias, list3) {
   requires(table2, "ZUNIQUEID");
   return explained(
     {
@@ -65826,7 +65826,7 @@ function labeled(table2, alias, list2) {
         boolean: "isPrimary isPrivate",
         integer: "orderingIndex iOSLegacyIdentifier"
       }),
-      ...attributes(table2, alias, list2)
+      ...attributes(table2, alias, list3)
     },
     {
       id: `Identifier of this labeled value, AddressBook ${table2}.ZUNIQUEID; the primary key.`,
@@ -66572,7 +66572,7 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
           const node2 = chunk;
           if (node2.headers === false)
             throw new MailSchemaError("MIME parser returned no headers");
-          const id11 = partId(node2);
+          const id12 = partId(node2);
           if (readHeaders)
             for (const [position, header] of node2.headers.getList().entries()) {
               const decoded = import_libmime.default.decodeHeader(
@@ -66580,7 +66580,7 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
               );
               headers.push({
                 messageId,
-                partId: id11,
+                partId: id12,
                 position,
                 name: header.key,
                 value: import_libmime.default.decodeWords(decoded.value),
@@ -66598,7 +66598,7 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
           const contentId = node2.headers.getFirst("Content-ID");
           const record3 = {
             messageId,
-            partId: id11,
+            partId: id12,
             parentPartId: node2.parentNode === false ? null : partId(node2.parentNode),
             contentType: node2.contentType === false ? null : node2.contentType,
             charset: node2.charset === false ? null : node2.charset,
@@ -66620,7 +66620,7 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
           if (stageFiles)
             part.path = join6(
               store.scratch.path,
-              `${messageId}-${id11}${extension}`
+              `${messageId}-${id12}${extension}`
             );
           const decoder2 = node2.getDecoder();
           const hash2 = createHash5("sha256");
@@ -66667,10 +66667,10 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
   }
 }
 async function mailPartText(path, decoder2) {
-  let text11 = "";
+  let text13 = "";
   for await (const bytes of createReadStream3(path))
-    text11 += decoder2.decode(bytes, { stream: true });
-  return text11 + decoder2.decode();
+    text13 += decoder2.decode(bytes, { stream: true });
+  return text13 + decoder2.decode();
 }
 
 // apps/apple/src/platform/macos/osa.ts
@@ -66719,30 +66719,30 @@ function provenance2(name, column, kind, key) {
 }
 function table(name, description, keys, columns2, meanings) {
   const meaning = meanings;
-  const properties6 = {};
-  const select = [];
+  const properties29 = {};
+  const select4 = [];
   const blobs = [];
   for (const [column, kind] of Object.entries(columns2)) {
     const field = fieldName(column, kind);
     const key = keys.includes(column);
     const scalar = kind === "number" ? key ? "integer" : "number" : "string";
-    properties6[field] = {
+    properties29[field] = {
       type: key ? scalar : [scalar, "null"],
       ...kind === "time" ? { format: "date-time" } : {},
       description: `${provenance2(name, column, kind, key)} ${meaning[column] ?? undocumented}`
     };
     const expression = kind === "id" ? `CAST("${column}" AS TEXT)` : kind === "time" ? `strftime('%Y-%m-%dT%H:%M:%fZ', "${column}", 'unixepoch')` : `"${column}"`;
-    select.push(`${expression} AS "${field}"`);
+    select4.push(`${expression} AS "${field}"`);
     if (kind === "base64") blobs.push(field);
   }
   return {
     name,
     description: `${description} Read from the Envelope Index ${name} table; index row identifiers are local to this Mac. Relationships name source streams within this source, not destination tables.`,
     columns: Object.keys(columns2),
-    properties: properties6,
+    properties: properties29,
     primaryKey: keys.map((key) => fieldName(key, columns2[key])),
     blobs,
-    sql: `SELECT ${select.join(", ")} FROM "${name}" ORDER BY ${keys.map((key) => `"${key}"`).join(", ")}`
+    sql: `SELECT ${select4.join(", ")} FROM "${name}" ORDER BY ${keys.map((key) => `"${key}"`).join(", ")}`
   };
 }
 var mailTables = {
@@ -67194,14 +67194,14 @@ var mailTables = {
     }
   )
 };
-function mailStream(name, description, properties6, primaryKey, files) {
+function mailStream(name, description, properties29, primaryKey, files) {
   return new Stream({
     name,
     jsonSchema: {
       type: "object",
       description,
-      properties: properties6,
-      required: Object.keys(properties6)
+      properties: properties29,
+      required: Object.keys(properties29)
     },
     primaryKey,
     supportedSyncModes: ["full_refresh", "incremental"],
@@ -67642,8 +67642,8 @@ var MailScan = class {
       for (const [key, files] of [...this.store.attachments].sort(
         ([a], [b]) => a < b ? -1 : a > b ? 1 : 0
       )) {
-        const id11 = key.slice(0, key.indexOf(":"));
-        detached.set(id11, [...detached.get(id11) ?? [], [key, files]]);
+        const id12 = key.slice(0, key.indexOf(":"));
+        detached.set(id12, [...detached.get(id12) ?? [], [key, files]]);
       }
       const indexed = /* @__PURE__ */ new Map();
       for (const row of this.store.database.prepare(
@@ -67665,7 +67665,7 @@ var MailScan = class {
   // ctime in nanoseconds); a rewrite within one timestamp tick still changes
   // ctime, and a file that changes while it is read fails the read, so a
   // matching fingerprint means the saved records came from these bytes.
-  #fingerprint(id11, file2) {
+  #fingerprint(id12, file2) {
     const { detached, indexed } = this.#messageInputs();
     const identity = ({ path, version: version3 }) => [
       relative2(this.store.path, path),
@@ -67675,11 +67675,11 @@ var MailScan = class {
       JSON.stringify([
         messageParserVersion,
         file2 === void 0 ? null : identity(file2),
-        (detached.get(id11) ?? []).map(([key, files]) => [
+        (detached.get(id12) ?? []).map(([key, files]) => [
           key,
           files.map(identity)
         ]),
-        (indexed.get(id11) ?? []).map((row) => [row.attachment_id, row.name])
+        (indexed.get(id12) ?? []).map((row) => [row.attachment_id, row.name])
       ])
     ).digest("base64url");
   }
@@ -67690,30 +67690,30 @@ var MailScan = class {
     const listed = /* @__PURE__ */ new Set();
     for (const row of this.store.database.prepare("SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID").iterate()) {
       if (!this.accepts("messages", row)) continue;
-      const id11 = row.id;
-      listed.add(id11);
-      const file2 = this.store.messages.get(id11);
-      if (file2 === void 0 && (name === "messageHeaders" || name === "messageParts" || name === "attachments" && !indexed.has(id11)))
+      const id12 = row.id;
+      listed.add(id12);
+      const file2 = this.store.messages.get(id12);
+      if (file2 === void 0 && (name === "messageHeaders" || name === "messageParts" || name === "attachments" && !indexed.has(id12)))
         continue;
       yield {
-        key: id11,
-        fingerprint: this.#fingerprint(id11, file2),
-        records: () => this.#messageEntries(name, id11, file2)
+        key: id12,
+        fingerprint: this.#fingerprint(id12, file2),
+        records: () => this.#messageEntries(name, id12, file2)
       };
     }
     if (name !== "attachments") return;
-    for (const [id11, rows] of indexed)
-      if (!listed.has(id11))
+    for (const [id12, rows] of indexed)
+      if (!listed.has(id12))
         yield {
-          key: id11,
-          fingerprint: this.#fingerprint(id11, void 0),
+          key: id12,
+          fingerprint: this.#fingerprint(id12, void 0),
           records: () => this.#indexedEntries(rows)
         };
   }
-  async *#messageEntries(name, id11, file2) {
+  async *#messageEntries(name, id12, file2) {
     if (name === "messageFiles") {
       const data = {
-        messageId: id11,
+        messageId: id12,
         relativePath: file2 === void 0 ? null : relative2(this.store.path, file2.path),
         availableLocally: file2 !== void 0,
         partial: file2 === void 0 ? null : file2.path.endsWith(".partial.emlx"),
@@ -67725,7 +67725,7 @@ var MailScan = class {
       return;
     }
     const unclaimed = new Map(
-      (this.#messageInputs().indexed.get(id11) ?? []).map((row) => [
+      (this.#messageInputs().indexed.get(id12) ?? []).map((row) => [
         String(row.attachment_id),
         row
       ])
@@ -67733,7 +67733,7 @@ var MailScan = class {
     if (file2 !== void 0) {
       const { headers, parts } = await readMailMime(
         this.store,
-        id11,
+        id12,
         file2,
         name === "messageHeaders",
         name === "attachments",
@@ -67895,13 +67895,13 @@ var MailScan = class {
         if (value2 === null) continue;
         for (const entry of list(value2)) {
           const rule = plistObject(entry);
-          const id11 = requiredString(rule, "RuleId");
-          const enabled = active === null ? void 0 : active[id11];
+          const id12 = requiredString(rule, "RuleId");
+          const enabled = active === null ? void 0 : active[id12];
           if (name === "rules")
             yield {
               data: {
                 scope,
-                id: id11,
+                id: id12,
                 properties: plistJSON2(rule),
                 enabled: enabled === void 0 ? null : enabled
               },
@@ -67912,7 +67912,7 @@ var MailScan = class {
               yield {
                 data: {
                   scope,
-                  ownerId: id11,
+                  ownerId: id12,
                   position,
                   properties: plistJSON2(condition)
                 },
@@ -67927,21 +67927,21 @@ var MailScan = class {
     function* smart(entries, parentId) {
       for (const entry of entries) {
         const mailbox = plistObject(entry);
-        const id11 = requiredString(mailbox, "MailboxID");
+        const id12 = requiredString(mailbox, "MailboxID");
         if (name === "smartMailboxes")
-          yield { id: id11, parentId, properties: plistJSON2(mailbox) };
+          yield { id: id12, parentId, properties: plistJSON2(mailbox) };
         else if (mailbox.MailboxCriteria !== void 0)
           for (const [position, criterion] of list(
             mailbox.MailboxCriteria
           ).entries())
             yield {
               scope: "Synced",
-              ownerId: id11,
+              ownerId: id12,
               position,
               properties: plistJSON2(criterion)
             };
         if (mailbox.MailboxChildren !== void 0)
-          yield* smart(list(mailbox.MailboxChildren), id11);
+          yield* smart(list(mailbox.MailboxChildren), id12);
       }
     }
     for (const data of smart(list(value), null)) yield { data, file: null };
@@ -68200,7 +68200,7 @@ var { text: text5, id: id4, nullableText: nullableText5, boolean: boolean6, null
 var nullableInteger2 = { type: ["integer", "null"] };
 var appleMilliseconds = (column) => `CASE WHEN ${column} IS NULL OR ${column} = 0 THEN NULL WHEN abs(${column}) > 100000000000 THEN ${column} / 1000000 ELSE ${column} * 1000 END`;
 var camel = (column) => column.replaceAll(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-var words2 = (list2 = "") => list2.split(/\s+/).filter(Boolean);
+var words2 = (list3 = "") => list3.split(/\s+/).filter(Boolean);
 var kinds2 = {
   text: { schema: text5, select: (column) => column, loads: "text" },
   nullableText: {
@@ -68232,17 +68232,17 @@ var kinds2 = {
 var unverified2 = "Meaning not documented by Apple.";
 var provenance3 = ({ name }, column, kind) => `chat.db ${name}.${column}: ${kinds2[kind].loads}.`;
 function native(table2, column, kind) {
-  const { schema, select } = kinds2[kind];
+  const { schema, select: select4 } = kinds2[kind];
   return [
     {
       ...schema,
       description: `${provenance3(table2, column, kind)} ${unverified2}`
     },
-    select(`${table2.alias}.${column}`)
+    select4(`${table2.alias}.${column}`)
   ];
 }
-function columns(table2, list2, meanings) {
-  const listed = Object.values(list2).flatMap(words2);
+function columns(table2, list3, meanings) {
+  const listed = Object.values(list3).flatMap(words2);
   const unknown2 = Object.keys(meanings).filter(
     (column) => !listed.includes(column)
   );
@@ -68250,16 +68250,16 @@ function columns(table2, list2, meanings) {
     throw new TypeError(
       `Meanings for columns ${table2.name} does not list: ${unknown2.join(", ")}`
     );
-  const properties6 = {};
-  const select = [];
+  const properties29 = {};
+  const select4 = [];
   for (const kind of Object.keys(kinds2))
-    for (const column of words2(list2[kind])) {
+    for (const column of words2(list3[kind])) {
       const [schema, expression] = native(table2, column, kind);
       const meaning = meanings[column];
-      properties6[camel(column)] = meaning === void 0 ? schema : { ...schema, description: meaning };
-      select.push(`${expression} AS "${camel(column)}"`);
+      properties29[camel(column)] = meaning === void 0 ? schema : { ...schema, description: meaning };
+      select4.push(`${expression} AS "${camel(column)}"`);
     }
-  return { properties: properties6, select };
+  return { properties: properties29, select: select4 };
 }
 function definition2(keys, from, table2 = { properties: {}, select: [] }, extra = {}) {
   return {
@@ -69062,23 +69062,23 @@ var ProtobufMessage = class _ProtobufMessage {
     };
     while (offset < bytes.length) {
       const key = Number(varint());
-      const number6 = key >>> 3;
+      const number7 = key >>> 3;
       const wire = key & 7;
-      if (number6 === 0) throw new TypeError("Invalid protobuf field number 0");
-      if (wire === 0) this.#fields.push({ number: number6, wire, value: varint() });
+      if (number7 === 0) throw new TypeError("Invalid protobuf field number 0");
+      if (wire === 0) this.#fields.push({ number: number7, wire, value: varint() });
       else if (wire === 1 || wire === 5) {
         const size = wire === 1 ? 8 : 4;
         if (offset + size > bytes.length)
           throw new TypeError("Truncated protobuf fixed field");
         const value = wire === 1 ? view.getBigUint64(offset, true) : BigInt(view.getUint32(offset, true));
-        this.#fields.push({ number: number6, wire, value });
+        this.#fields.push({ number: number7, wire, value });
         offset += size;
       } else if (wire === 2) {
         const length = Number(varint());
         if (offset + length > bytes.length)
           throw new TypeError("Truncated protobuf length-delimited field");
         this.#fields.push({
-          number: number6,
+          number: number7,
           wire,
           value: bytes.subarray(offset, offset + length)
         });
@@ -69086,60 +69086,60 @@ var ProtobufMessage = class _ProtobufMessage {
       } else throw new TypeError(`Unsupported protobuf wire type ${wire}`);
     }
   }
-  #all(number6) {
-    return this.#fields.filter((field) => field.number === number6);
+  #all(number7) {
+    return this.#fields.filter((field) => field.number === number7);
   }
   // Protobuf's rule for a repeated scalar read as singular: the last one wins.
-  #last(number6) {
-    return this.#all(number6).at(-1);
+  #last(number7) {
+    return this.#all(number7).at(-1);
   }
-  has(number6) {
-    return this.#last(number6) !== void 0;
+  has(number7) {
+    return this.#last(number7) !== void 0;
   }
-  uint(number6) {
-    const field = this.#last(number6);
+  uint(number7) {
+    const field = this.#last(number7);
     if (field === void 0) return void 0;
     if (field.wire !== 0)
-      throw new TypeError(`Protobuf field ${number6} is not a varint`);
+      throw new TypeError(`Protobuf field ${number7} is not a varint`);
     if (field.value > BigInt(Number.MAX_SAFE_INTEGER))
-      throw new TypeError(`Protobuf field ${number6} exceeds a safe integer`);
+      throw new TypeError(`Protobuf field ${number7} exceeds a safe integer`);
     return Number(field.value);
   }
-  float(number6) {
-    const field = this.#last(number6);
+  float(number7) {
+    const field = this.#last(number7);
     if (field === void 0) return void 0;
     if (field.wire !== 5)
-      throw new TypeError(`Protobuf field ${number6} is not a float`);
+      throw new TypeError(`Protobuf field ${number7} is not a float`);
     const view = new DataView(new ArrayBuffer(4));
     view.setUint32(0, Number(field.value), true);
     return view.getFloat32(0, true);
   }
-  bytes(number6) {
-    const field = this.#last(number6);
-    return field === void 0 ? void 0 : this.#delimited(field, number6);
+  bytes(number7) {
+    const field = this.#last(number7);
+    return field === void 0 ? void 0 : this.#delimited(field, number7);
   }
-  string(number6) {
-    const bytes = this.bytes(number6);
+  string(number7) {
+    const bytes = this.bytes(number7);
     return bytes === void 0 ? void 0 : new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   }
-  message(number6) {
-    const bytes = this.bytes(number6);
+  message(number7) {
+    const bytes = this.bytes(number7);
     return bytes === void 0 ? void 0 : new _ProtobufMessage(bytes);
   }
-  bytesList(number6) {
-    return this.#all(number6).map((field) => this.#delimited(field, number6));
+  bytesList(number7) {
+    return this.#all(number7).map((field) => this.#delimited(field, number7));
   }
-  messages(number6) {
-    return this.bytesList(number6).map((bytes) => new _ProtobufMessage(bytes));
+  messages(number7) {
+    return this.bytesList(number7).map((bytes) => new _ProtobufMessage(bytes));
   }
-  strings(number6) {
-    return this.bytesList(number6).map(
+  strings(number7) {
+    return this.bytesList(number7).map(
       (bytes) => new TextDecoder("utf-8", { fatal: true }).decode(bytes)
     );
   }
-  #delimited(field, number6) {
+  #delimited(field, number7) {
     if (field.wire !== 2)
-      throw new TypeError(`Protobuf field ${number6} is not length-delimited`);
+      throw new TypeError(`Protobuf field ${number7} is not length-delimited`);
     return field.value;
   }
 };
@@ -69167,13 +69167,13 @@ var attachmentCharacter = "\uFFFC";
 var NoteDocument = class _NoteDocument {
   text;
   paragraphs;
-  constructor(text11, paragraphs) {
-    this.text = text11;
+  constructor(text13, paragraphs) {
+    this.text = text13;
     this.paragraphs = paragraphs;
   }
   static decode(bytes) {
     const note = versionData(bytes);
-    const text11 = note.string(2) ?? "";
+    const text13 = note.string(2) ?? "";
     const paragraphs = [];
     let current = [];
     let style;
@@ -69196,7 +69196,7 @@ var NoteDocument = class _NoteDocument {
     };
     for (const run of note.messages(5)) {
       const length = run.uint(1) ?? 0;
-      const segment = text11.slice(offset, offset + length);
+      const segment = text13.slice(offset, offset + length);
       offset += length;
       const hints = run.uint(5) ?? 0;
       const attachment2 = run.message(12);
@@ -69217,9 +69217,9 @@ var NoteDocument = class _NoteDocument {
         if (index < lines.length - 1) close();
       });
     }
-    if (offset < text11.length)
+    if (offset < text13.length)
       current.push({
-        text: text11.slice(offset),
+        text: text13.slice(offset),
         bold: false,
         italic: false,
         strikethrough: false,
@@ -69227,7 +69227,7 @@ var NoteDocument = class _NoteDocument {
         attachment: null
       });
     if (current.length > 0) close();
-    return new _NoteDocument(text11, paragraphs);
+    return new _NoteDocument(text13, paragraphs);
   }
   // The visible text, with each attachment character replaced as the caller
   // renders it: an inline tag by its text, a file by nothing.
@@ -69291,16 +69291,16 @@ var merge2 = (runs) => runs.reduce((merged, run) => {
   else merged.push(run);
   return merged;
 }, []);
-var escapeInline = (text11) => text11.replace(/[\\`*_[\]~<]/g, "\\$&");
+var escapeInline = (text13) => text13.replace(/[\\`*_[\]~<]/g, "\\$&");
 var escapeLineStart = (line) => line.replace(/^(\s*)([#>+-]|\d+[.)])(?=\s|$)/, "$1\\$2");
 var inline = (run, attachment2) => {
   if (run.attachment !== null)
     return run.text.split("").map(
       (character) => character === attachmentCharacter ? attachment2(run.attachment) : escapeInline(character)
     ).join("");
-  const text11 = run.text.trim();
-  if (text11 === "") return run.text;
-  let body = escapeInline(text11);
+  const text13 = run.text.trim();
+  if (text13 === "") return run.text;
+  let body = escapeInline(text13);
   if (run.strikethrough) body = `~~${body}~~`;
   if (run.bold && run.italic) body = `***${body}***`;
   else if (run.bold) body = `**${body}**`;
@@ -69318,8 +69318,8 @@ function decodeTable(bytes) {
   const objects = document.messages(3);
   const keys = document.strings(4);
   const uuidItems = document.bytesList(6);
-  const reference = (id11, label) => {
-    const index = id11?.uint(6);
+  const reference = (id12, label) => {
+    const index = id12?.uint(6);
     if (index === void 0 || objects[index] === void 0)
       throw new TypeError(`Notes table ${label} is not an object reference`);
     return objects[index];
@@ -69346,9 +69346,9 @@ function decodeTable(bytes) {
       throw new TypeError(`Notes table ${key} is not an ordered set`);
     const order = /* @__PURE__ */ new Map();
     (array2.message(1)?.messages(2) ?? []).forEach((entry, position) => {
-      const id11 = entry.bytes(2);
+      const id12 = entry.bytes(2);
       const index = uuidItems.findIndex(
-        (item) => id11 !== void 0 && Buffer.from(item).equals(id11)
+        (item) => id12 !== void 0 && Buffer.from(item).equals(id12)
       );
       if (index === -1)
         throw new TypeError(`Notes table ${key} names an unknown identity`);
@@ -69392,8 +69392,8 @@ function decodeTable(bytes) {
       const y = rows.order.get(identity(reference(cell.message(1), "row")));
       if (x === void 0 || y === void 0)
         throw new TypeError("Notes table cell has no row or column position");
-      const text11 = reference(cell.message(2), "cell").message(10)?.string(2);
-      grid[y][x] = (text11 ?? "").replaceAll(
+      const text13 = reference(cell.message(2), "cell").message(10)?.string(2);
+      grid[y][x] = (text13 ?? "").replaceAll(
         attachmentCharacter,
         ""
       );
@@ -69403,7 +69403,7 @@ function decodeTable(bytes) {
 }
 function markdownTable(grid) {
   if (grid.length === 0) return "";
-  const cell = (text11) => escapeInline(text11).replaceAll("|", "\\|").replaceAll("\n", "<br>");
+  const cell = (text13) => escapeInline(text13).replaceAll("|", "\\|").replaceAll("\n", "<br>");
   const row = (cells) => `| ${cells.map(cell).join(" | ")} |`;
   const [header = [], ...body] = grid;
   return [
@@ -69529,7 +69529,7 @@ var NotesScan = class {
   }
   get accounts() {
     this.#accounts ??= this.store.all(accountsSql).filter(
-      (row) => selected(this.scope.accountIds, row.ZIDENTIFIER) && (this.scope.collectionIds === void 0 || this.folders.some((folder) => folder.account === row.ZIDENTIFIER))
+      (row) => selected(this.scope.accountIds, row.ZIDENTIFIER) && (this.scope.collectionIds === void 0 || this.folders.some((folder2) => folder2.account === row.ZIDENTIFIER))
     );
     return this.#accounts;
   }
@@ -69593,26 +69593,26 @@ var NotesScan = class {
   // Plain text keeps what reads as text: inline tags and mentions.
   text(document) {
     return document.plain(
-      ({ id: id11 }) => string4(this.inline.get(id11)?.ZALTTEXT) ?? ""
+      ({ id: id12 }) => string4(this.inline.get(id12)?.ZALTTEXT) ?? ""
     );
   }
   markdown(document) {
-    return document.markdown(({ id: id11, type }) => {
-      const token = this.inline.get(id11);
+    return document.markdown(({ id: id12, type }) => {
+      const token = this.inline.get(id12);
       if (token !== void 0) {
-        const text11 = String(token.ZALTTEXT ?? "");
+        const text13 = String(token.ZALTTEXT ?? "");
         const target = string4(token.ZTOKENCONTENTIDENTIFIER);
-        return token.ZTYPEUTI1 === noteLinkType && target !== null ? `[${text11}](<${target}>)` : text11;
+        return token.ZTYPEUTI1 === noteLinkType && target !== null ? `[${text13}](<${target}>)` : text13;
       }
-      const row = this.attachments.get(id11);
+      const row = this.attachments.get(id12);
       if (row === void 0) return "";
       const grid = this.table(row);
       if (grid !== null) return `
 ${markdownTable(grid)}
 `;
-      const label = string4(row.title) ?? string4(row.ZFILENAME) ?? type ?? id11;
+      const label = string4(row.title) ?? string4(row.ZFILENAME) ?? type ?? id12;
       const url2 = string4(row.ZURLSTRING);
-      return url2 === null ? `[${label}](attachment:${id11})` : `[${label}](<${url2}>)`;
+      return url2 === null ? `[${label}](attachment:${id12})` : `[${label}](<${url2}>)`;
     });
   }
 };
@@ -70327,6 +70327,2632 @@ var AppleRemindersSource = class extends Source {
   }
 };
 
+// apps/apple/src/sources/apple-safari/apple-safari-source.ts
+import { readdir as readdir3, stat as stat3 } from "node:fs/promises";
+import { join as join15 } from "node:path";
+import { setInterval as setInterval5 } from "node:timers/promises";
+
+// apps/apple/src/platform/macos/safari-store.ts
+import { readFile as readFile2 } from "node:fs/promises";
+import { homedir as homedir6 } from "node:os";
+import { join as join13 } from "node:path";
+import {
+  DatabaseSync as DatabaseSync6
+} from "node:sqlite";
+var safariDirectory = join13(homedir6(), "Library/Safari");
+var safariContainer = join13(
+  homedir6(),
+  "Library/Containers/com.apple.Safari/Data/Library/Safari"
+);
+var SafariUnavailableError = class extends Error {
+  name = "SafariUnavailableError";
+  constructor(path, cause) {
+    super(
+      `Safari data at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Safari does not need to be open.`,
+      { cause }
+    );
+  }
+};
+var SafariSchemaError = class extends Error {
+  name = "SafariSchemaError";
+  constructor(path, missing) {
+    super(
+      `The Safari store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`
+    );
+  }
+};
+var unavailableCodes4 = /* @__PURE__ */ new Set([14, 23]);
+var open8 = (path) => {
+  try {
+    return new DatabaseSync6(path, { readOnly: true });
+  } catch (cause) {
+    if (cause instanceof Error && "errcode" in cause && unavailableCodes4.has(Number(cause.errcode)))
+      throw new SafariUnavailableError(path, cause);
+    throw cause;
+  }
+};
+var SafariDatabaseVersion = class {
+  #database;
+  #version;
+  constructor(path) {
+    this.#database = open8(path);
+    this.#version = this.#database.prepare("PRAGMA data_version");
+  }
+  get current() {
+    return Number(this.#version.get()?.data_version);
+  }
+  [Symbol.dispose]() {
+    this.#database.close();
+  }
+};
+var SafariDatabase = class _SafariDatabase {
+  constructor(path, database) {
+    this.path = path;
+    this.#database = database;
+  }
+  path;
+  #database;
+  static async open(path, required3) {
+    const database = open8(path);
+    try {
+      database.exec("BEGIN");
+      const missing = Object.entries(required3).flatMap(([table2, columns2]) => {
+        const present = new Set(
+          database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((column) => column.name)
+        );
+        return columns2.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
+      });
+      if (missing.length > 0) throw new SafariSchemaError(path, missing);
+      return new _SafariDatabase(path, database);
+    } catch (cause) {
+      database.close();
+      throw cause;
+    }
+  }
+  all(sql) {
+    return this.#database.prepare(sql).all();
+  }
+  async [Symbol.asyncDispose]() {
+    if (this.#database.isTransaction) this.#database.exec("COMMIT");
+    this.#database.close();
+  }
+};
+async function readSafariPlist(path) {
+  let bytes;
+  try {
+    bytes = await readFile2(path);
+  } catch (cause) {
+    throw new SafariUnavailableError(path, cause);
+  }
+  return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readMailPlist(path);
+}
+
+// apps/apple/src/sources/apple-safari/safari-scan.ts
+import { join as join14 } from "node:path";
+
+// apps/apple/src/sources/apple-safari/safari-values.ts
+var defaultProfile = "DefaultProfile";
+var appleEpochSeconds2 = 978307200;
+var distantPast = -63114076800;
+var distantFuture = 63113904e3;
+var appleTime2 = (value) => typeof value === "number" && Number.isFinite(value) && value > distantPast && value < distantFuture ? new Date(Math.round((value + appleEpochSeconds2) * 1e3)).toISOString() : null;
+var plistTime = (value) => value instanceof Date && value.getUTCFullYear() > 1 && value.getUTCFullYear() < 4001 ? value.toISOString() : null;
+var base643 = (value) => value instanceof Uint8Array ? Buffer.from(value).toString("base64") : null;
+var text11 = (value) => typeof value === "string" && value !== "" ? value : null;
+var integer6 = (value) => typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+var number6 = (value) => typeof value === "number" && Number.isFinite(value) ? value : null;
+var flag3 = (value) => value === 1 || value === true;
+function dictionary(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof Uint8Array) ? value : {};
+}
+var list2 = (value) => Array.isArray(value) ? value : [];
+var strings = (value) => list2(value).filter((item) => typeof item === "string");
+function counts(value) {
+  if (!(value instanceof Uint8Array)) return null;
+  if (value.byteLength % 4 !== 0)
+    throw new TypeError("Safari visit counts are not 32-bit integers");
+  const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
+  return Array.from(
+    { length: value.byteLength / 4 },
+    (_, index) => view.getInt32(index * 4, true)
+  );
+}
+
+// apps/apple/src/sources/apple-safari/bookmarks-reader.ts
+var readingListTitle = "com.apple.ReadingList";
+var BookmarksReader = class {
+  bookmarks = [];
+  readingList = [];
+  constructor(plist2) {
+    const root = dictionary(plist2);
+    if (typeof root.WebBookmarkType !== "string")
+      throw new TypeError("Bookmarks.plist has no root folder");
+    const walk = (folder2, parentId) => list2(folder2.Children).forEach((child, position) => {
+      const node2 = dictionary(child);
+      const entry = { node: node2, parentId, position };
+      if (folder2.Title === readingListTitle && node2.WebBookmarkType === "WebBookmarkTypeLeaf") {
+        this.readingList.push(entry);
+        return;
+      }
+      this.bookmarks.push(entry);
+      walk(node2, node2.WebBookmarkUUID);
+    });
+    walk(root, null);
+  }
+};
+
+// apps/apple/src/sources/apple-safari/closed-tabs-reader.ts
+var windowType = 1;
+var ClosedTabsReader = class {
+  #windows = /* @__PURE__ */ new Map();
+  #tabs = /* @__PURE__ */ new Map();
+  constructor(plist2, scope) {
+    const entries = dictionary(plist2).ClosedTabOrWindowPersistentStates;
+    if (!Array.isArray(entries))
+      throw new TypeError("RecentlyClosedTabs.plist lists no closed entries");
+    entries.forEach((value, position) => {
+      const entry = dictionary(value);
+      const state = dictionary(entry.PersistentState);
+      if (!selected(scope.collectionIds, state.ProfileUUID)) return;
+      if (entry.PersistentStateType !== windowType) {
+        latest(this.#tabs, state.TabUUID, {
+          state,
+          closedWindowId: null,
+          position
+        });
+        return;
+      }
+      latest(this.#windows, state.WindowUUID, { state, position });
+      for (const [index, tab] of list2(state.TabStates).entries())
+        latest(this.#tabs, dictionary(tab).TabUUID, {
+          state: dictionary(tab),
+          closedWindowId: state.WindowUUID,
+          position: index
+        });
+    });
+  }
+  get windows() {
+    return [...this.#windows.values()];
+  }
+  get tabs() {
+    return [...this.#tabs.values()];
+  }
+};
+function latest(entries, id12, entry) {
+  const kept = entries.get(id12);
+  const closed = (candidate) => candidate.state.DateClosed instanceof Date ? candidate.state.DateClosed.getTime() : Number.NEGATIVE_INFINITY;
+  if (kept === void 0 || closed(entry) > closed(kept))
+    entries.set(id12, entry);
+}
+
+// apps/apple/src/sources/apple-safari/cloud-tabs-reader.ts
+import { inflateSync as inflateSync2 } from "node:zlib";
+var cloudTabsColumns = {
+  cloud_tab_devices: [
+    "device_uuid",
+    "device_name",
+    "device_type_identifier",
+    "has_duplicate_device_name",
+    "is_ephemeral_device",
+    "last_modified"
+  ],
+  cloud_tabs: [
+    "tab_uuid",
+    "device_uuid",
+    "position",
+    "title",
+    "url",
+    "is_showing_reader",
+    "is_pinned",
+    "reader_scroll_position_page_index",
+    "scene_id",
+    "last_viewed_time",
+    "topic_title"
+  ],
+  cloud_tab_close_requests: [
+    "close_request_uuid",
+    "destination_device_uuid",
+    "url",
+    "tab_uuid"
+  ]
+};
+var select = (table2, order) => `SELECT ${cloudTabsColumns[table2].join(", ")} FROM ${table2} ORDER BY ${order}`;
+var CloudTabsReader = class {
+  constructor(database) {
+    this.database = database;
+  }
+  database;
+  #tabs;
+  get devices() {
+    return this.database.all(select("cloud_tab_devices", "device_uuid"));
+  }
+  get tabs() {
+    this.#tabs ??= this.database.all(select("cloud_tabs", "tab_uuid"));
+    return this.#tabs;
+  }
+  get closeRequests() {
+    return this.database.all(
+      select("cloud_tab_close_requests", "close_request_uuid")
+    );
+  }
+  // A tab's position is zlib-compressed JSON: {"sortValues": [...]}.
+  positions() {
+    return this.tabs.flatMap((tab) => {
+      if (!(tab.position instanceof Uint8Array))
+        throw new TypeError("A Safari iCloud tab has no position");
+      const { sortValues } = JSON.parse(
+        inflateSync2(tab.position).toString("utf8")
+      );
+      return sortValues.map((entry, index) => ({ tab, entry, index }));
+    });
+  }
+};
+
+// apps/apple/src/sources/apple-safari/downloads-reader.ts
+var DownloadsReader = class {
+  downloads;
+  constructor(plist2, scope) {
+    const history = dictionary(plist2).DownloadHistory;
+    if (!Array.isArray(history))
+      throw new TypeError("Downloads.plist lists no download history");
+    this.downloads = list2(history).map(dictionary).filter(
+      (entry) => selected(scope.collectionIds, entry.DownloadEntryProfileUUIDStringKey)
+    );
+  }
+};
+
+// apps/apple/src/sources/apple-safari/history-reader.ts
+var historyColumns = {
+  history_items: [
+    "id",
+    "url",
+    "domain_expansion",
+    "visit_count",
+    "daily_visit_counts",
+    "weekly_visit_counts",
+    "autocomplete_triggers",
+    "should_recompute_derived_visit_counts",
+    "visit_count_score",
+    "status_code"
+  ],
+  history_visits: [
+    "id",
+    "history_item",
+    "visit_time",
+    "title",
+    "load_successful",
+    "http_non_get",
+    "synthesized",
+    "redirect_source",
+    "redirect_destination",
+    "origin",
+    "generation",
+    "attributes",
+    "score"
+  ],
+  history_tombstones: [
+    "id",
+    "start_time",
+    "end_time",
+    "url",
+    "generation",
+    "udid",
+    "attributes"
+  ],
+  history_tags: [
+    "id",
+    "type",
+    "level",
+    "identifier",
+    "title",
+    "modification_timestamp",
+    "item_count"
+  ],
+  history_items_to_tags: ["history_item", "tag_id", "timestamp"]
+};
+var select2 = (table2, order) => `SELECT ${historyColumns[table2].join(", ")} FROM ${table2} ORDER BY ${order}`;
+var HistoryReader = class {
+  constructor(database, profileId5, scope) {
+    this.database = database;
+    this.profileId = profileId5;
+    this.scope = scope;
+  }
+  database;
+  profileId;
+  scope;
+  #visits;
+  #items;
+  #itemTags;
+  #tags;
+  get #included() {
+    return selected(this.scope.collectionIds, this.profileId);
+  }
+  #all(sql) {
+    return this.database.all(sql).map((row) => ({ ...row, $profile: this.profileId }));
+  }
+  get #dated() {
+    return this.scope.startAt !== void 0 || this.scope.endAt !== void 0;
+  }
+  get visits() {
+    this.#visits ??= this.#included ? this.#all(select2("history_visits", "id")).filter(
+      (row) => withinDates(this.scope, appleTime2(row.visit_time))
+    ) : [];
+    return this.#visits;
+  }
+  get items() {
+    if (this.#items !== void 0) return this.#items;
+    const visited = new Set(this.visits.map((visit2) => visit2.history_item));
+    this.#items = this.#included ? this.#all(select2("history_items", "id")).filter(
+      (row) => !this.#dated || visited.has(row.id)
+    ) : [];
+    return this.#items;
+  }
+  get itemTags() {
+    if (this.#itemTags !== void 0) return this.#itemTags;
+    const items = new Set(this.items.map((item) => item.id));
+    this.#itemTags = this.#included ? this.#all(
+      select2("history_items_to_tags", "history_item, tag_id")
+    ).filter((row) => items.has(row.history_item)) : [];
+    return this.#itemTags;
+  }
+  get tags() {
+    if (this.#tags !== void 0) return this.#tags;
+    const linked = new Set(this.itemTags.map((link2) => link2.tag_id));
+    this.#tags = this.#included ? this.#all(select2("history_tags", "id")).filter(
+      (row) => !this.#dated || linked.has(row.id)
+    ) : [];
+    return this.#tags;
+  }
+  // Tombstones record deletions to sync to other devices, whatever their date.
+  get tombstones() {
+    return this.#included ? this.#all(select2("history_tombstones", "id")) : [];
+  }
+};
+var triggers = (value) => value instanceof Uint8Array ? parseBinaryPlist(value) : null;
+
+// apps/apple/src/sources/apple-safari/tabs-reader.ts
+var tabsColumns = {
+  bookmarks: [
+    "id",
+    "parent",
+    "type",
+    "subtype",
+    "special_id",
+    "hidden",
+    "title",
+    "url",
+    "order_index",
+    "external_uuid",
+    "server_id",
+    "last_modified",
+    "date_closed",
+    "last_selected_child",
+    "extra_attributes",
+    "local_attributes",
+    "topic_title"
+  ],
+  windows: [
+    "id",
+    "uuid",
+    "active_tab_group_id",
+    "active_profile_id",
+    "local_tab_group_id",
+    "private_tab_group_id",
+    "is_last_session",
+    "date_closed",
+    "scene_id",
+    "extra_attributes"
+  ],
+  windows_tab_groups: ["window_id", "tab_group_id", "active_tab_id"],
+  windows_profiles: ["window_id", "profile_id", "active_tab_group_id"],
+  windows_unnamed_tab_groups: ["window_id", "tab_group_id"],
+  settings: ["key", "value", "parent"]
+};
+var select3 = (table2, order) => `SELECT ${tabsColumns[table2].join(", ")} FROM ${table2} ORDER BY ${order}`;
+var folder = 1;
+var profileSubtype = 2;
+var favoritesSubtype = 1;
+var deviceSubtype = 3;
+var rootId = 0;
+var namedSpecials = /* @__PURE__ */ new Set(["pinned", "privatePinned", "recentlyClosed"]);
+var tabGroupKinds = [
+  "named",
+  "unnamed",
+  "local",
+  "private",
+  "pinned",
+  "privatePinned",
+  "recentlyClosed",
+  "favorites",
+  "device",
+  "special"
+];
+var TabsReader = class {
+  constructor(database, scope) {
+    this.database = database;
+    this.scope = scope;
+    this.#rows = database.all(select3("bookmarks", "id"));
+    this.#byId = new Map(this.#rows.map((row) => [row.id, row]));
+    this.#windows = database.all(select3("windows", "id"));
+  }
+  database;
+  scope;
+  #rows;
+  #byId;
+  #windows;
+  #attributes = /* @__PURE__ */ new Map();
+  // Every profile, and where its History.db lives: the default profile's is
+  // ~/Library/Safari, another's the Profiles folder named by its server_id.
+  get allProfiles() {
+    return this.#rows.filter(
+      (row) => row.type === folder && row.subtype === profileSubtype
+    );
+  }
+  get profiles() {
+    return this.allProfiles.filter(
+      (row) => selected(this.scope.collectionIds, row.external_uuid)
+    );
+  }
+  get windows() {
+    return this.#windows.filter(
+      (window) => selected(this.scope.collectionIds, this.uuid(window.active_profile_id))
+    );
+  }
+  get tabGroups() {
+    return this.#rows.filter(
+      (row) => row.type === folder && row.id !== rootId && row.subtype !== profileSubtype && this.#included(row)
+    );
+  }
+  get tabs() {
+    return this.#rows.filter(
+      (row) => row.type !== folder && this.#included(row)
+    );
+  }
+  get windowTabGroups() {
+    const windows = new Set(this.windows.map((window) => window.id));
+    const unnamed = this.database.all(select3("windows_unnamed_tab_groups", "window_id, tab_group_id")).filter((row) => windows.has(row.window_id));
+    const active = this.database.all(select3("windows_tab_groups", "window_id, tab_group_id")).filter((row) => windows.has(row.window_id));
+    const key = (row) => `${row.window_id}:${row.tab_group_id}`;
+    const pairs = /* @__PURE__ */ new Map();
+    for (const row of active) pairs.set(key(row), { ...row, unnamed: 0 });
+    for (const row of unnamed)
+      pairs.set(key(row), {
+        active_tab_id: null,
+        ...pairs.get(key(row)),
+        ...row,
+        unnamed: 1
+      });
+    return [...pairs.values()];
+  }
+  get windowProfiles() {
+    const windows = new Set(this.windows.map((window) => window.id));
+    return this.database.all(select3("windows_profiles", "window_id, profile_id")).filter((row) => windows.has(row.window_id));
+  }
+  // Each profile's color, an archived WBSNamedColorOption.
+  color(profile) {
+    const setting = this.database.all(select3("settings", "parent")).find((row) => row.parent === profile.id && row.key === "ProfileColor");
+    return setting?.value instanceof Uint8Array ? dictionary(decodeArchive(setting.value)) : {};
+  }
+  // A row's own attributes and its attributes local to this Mac.
+  attributes(row) {
+    let found = this.#attributes.get(row.id);
+    if (found === void 0) {
+      found = [plist(row.extra_attributes), plist(row.local_attributes)];
+      this.#attributes.set(row.id, found);
+    }
+    return found;
+  }
+  windowState(window) {
+    return plist(window.extra_attributes);
+  }
+  row(id12) {
+    return this.#byId.get(id12);
+  }
+  uuid(id12) {
+    return text11(this.#byId.get(id12)?.external_uuid);
+  }
+  windowUuid(id12) {
+    return text11(this.#windows.find((window) => window.id === id12)?.uuid);
+  }
+  kind(row) {
+    const uuid5 = row.external_uuid;
+    if (namedSpecials.has(uuid5)) return uuid5;
+    if (Number(row.special_id) > 0) return "special";
+    if (row.subtype === favoritesSubtype) return "favorites";
+    if (row.subtype === deviceSubtype) return "device";
+    if (this.#windows.some((window) => window.private_tab_group_id === row.id))
+      return "private";
+    if (this.#windows.some((window) => window.local_tab_group_id === row.id))
+      return "local";
+    return this.attributes(row)[0].IsUnnamed === true ? "unnamed" : "named";
+  }
+  // The profile a row belongs to: its nearest profile folder; under the root,
+  // the default profile; a window's own groups, that window's profile; a
+  // tab's page context names its profile. NULL when Safari records none.
+  profileOf(row) {
+    if (row.type !== folder) {
+      const context = dictionary(this.attributes(row)[1].TabPageContextIDKey);
+      const named2 = text11(context.profileIdentifier);
+      if (named2 !== null) return named2;
+    }
+    for (let current = row; current !== void 0; current = this.#byId.get(current.parent)) {
+      if (current.type === folder && current.subtype === profileSubtype)
+        return current.external_uuid;
+      if (current.parent === rootId) return defaultProfile;
+      const window = this.#windows.find(
+        (window2) => window2.local_tab_group_id === current?.id || window2.private_tab_group_id === current?.id || window2.active_tab_group_id === current?.id
+      );
+      if (window !== void 0) return this.uuid(window.active_profile_id);
+    }
+    return null;
+  }
+  historyEntries() {
+    return this.tabs.flatMap((tab) => {
+      const state = this.attributes(tab)[1].SessionState;
+      if (!(state instanceof Uint8Array)) return [];
+      const session = dictionary(
+        dictionary(parseBinaryPlist(state.subarray(4))).SessionHistory
+      );
+      const current = session.SessionHistoryCurrentIndex;
+      return list2(session.SessionHistoryEntries).map((entry, position) => ({
+        tab,
+        entry: dictionary(entry),
+        position,
+        current: position === current
+      }));
+    });
+  }
+  #included(row) {
+    return selected(this.scope.collectionIds, this.profileOf(row));
+  }
+};
+var plist = (value) => value instanceof Uint8Array ? dictionary(parseBinaryPlist(value)) : {};
+
+// apps/apple/src/sources/apple-safari/safari-scan.ts
+var storeFiles = ({ directory, container: container2 }) => ({
+  history: join14(directory, "History.db"),
+  tabs: join14(container2, "SafariTabs.db"),
+  cloudTabs: join14(container2, "CloudTabs.db"),
+  bookmarks: join14(directory, "Bookmarks.plist"),
+  closedTabs: join14(directory, "RecentlyClosedTabs.plist"),
+  downloads: join14(directory, "Downloads.plist")
+});
+var profileHistory = ({ directory, container: container2 }, serverId) => serverId === defaultProfile ? join14(directory, "History.db") : join14(container2, "Profiles", serverId, "History.db");
+var databaseStores = /* @__PURE__ */ new Set([
+  "history",
+  "tabs",
+  "cloudTabs"
+]);
+var SafariScan = class _SafariScan {
+  #resources;
+  #stores;
+  constructor(resources, stores) {
+    this.#resources = resources;
+    this.#stores = stores;
+  }
+  static async open(location3, stores, scope) {
+    var _stack = [];
+    try {
+      const files = storeFiles(location3);
+      const resources = __using(_stack, new AsyncDisposableStack(), true);
+      const database = async (path, columns2) => resources.use(await SafariDatabase.open(path, columns2));
+      const open9 = async (store, reader) => {
+        if (!stores.has(store)) return void 0;
+        try {
+          return { reader: await reader() };
+        } catch (error62) {
+          return { error: error62 };
+        }
+      };
+      const opened = {
+        // Each profile's History.db, pinned on its own; SafariTabs.db lists them.
+        history: await open9("history", async () => {
+          const profiles = new TabsReader(
+            await database(files.tabs, tabsColumns),
+            {}
+          ).allProfiles;
+          const readers3 = [];
+          for (const profile of profiles)
+            readers3.push(
+              new HistoryReader(
+                await database(
+                  profileHistory(location3, profile.server_id),
+                  historyColumns
+                ),
+                profile.external_uuid,
+                scope
+              )
+            );
+          return readers3;
+        }),
+        tabs: await open9(
+          "tabs",
+          async () => new TabsReader(await database(files.tabs, tabsColumns), scope)
+        ),
+        cloudTabs: await open9(
+          "cloudTabs",
+          async () => new CloudTabsReader(
+            await database(files.cloudTabs, cloudTabsColumns)
+          )
+        ),
+        bookmarks: await open9(
+          "bookmarks",
+          async () => new BookmarksReader(await readSafariPlist(files.bookmarks))
+        ),
+        closedTabs: await open9(
+          "closedTabs",
+          async () => new ClosedTabsReader(await readSafariPlist(files.closedTabs), scope)
+        ),
+        downloads: await open9(
+          "downloads",
+          async () => new DownloadsReader(await readSafariPlist(files.downloads), scope)
+        )
+      };
+      return new _SafariScan(resources.move(), opened);
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise2 = __callDispose(_stack, _error, _hasError);
+      _promise2 && await _promise2;
+    }
+  }
+  get history() {
+    return this.#reader("history");
+  }
+  get tabs() {
+    return this.#reader("tabs");
+  }
+  get downloads() {
+    return this.#reader("downloads");
+  }
+  get cloudTabs() {
+    return this.#reader("cloudTabs");
+  }
+  get bookmarks() {
+    return this.#reader("bookmarks");
+  }
+  get closedTabs() {
+    return this.#reader("closedTabs");
+  }
+  #reader(store) {
+    const opened = this.#stores[store];
+    if (opened === void 0)
+      throw new Error(`Safari ${store} was not opened for this run`);
+    if ("error" in opened) throw opened.error;
+    return opened.reader;
+  }
+  [Symbol.asyncDispose]() {
+    return this.#resources.disposeAsync();
+  }
+};
+
+// apps/apple/src/sources/apple-safari/safari-stream.ts
+var text12 = { type: "string" };
+var nullableText11 = { type: ["string", "null"] };
+var integer7 = { type: "integer" };
+var nullableInteger3 = { type: ["integer", "null"] };
+var safariFields = {
+  id: { ...text12, minLength: 1 },
+  nullableId: { ...nullableText11, minLength: 1 },
+  text: text12,
+  nullableText: nullableText11,
+  integer: integer7,
+  nullableInteger: nullableInteger3,
+  ordinal: { ...integer7, minimum: 0 },
+  nullableNumber: { type: ["number", "null"] },
+  boolean: { type: "boolean" },
+  timestamp: { ...text12, format: "date-time" },
+  nullableTimestamp: { ...nullableText11, format: "date-time" },
+  profileId: {
+    ...text12,
+    minLength: 1,
+    description: "Safari profile identifier; refers to profiles.id within this source. The default profile is DefaultProfile."
+  }
+};
+var SafariStream = class {
+  supportedSyncModes = Object.freeze([
+    "full_refresh",
+    "incremental"
+  ]);
+  // Every read is the whole store, so incremental copies diff snapshots.
+  sourceDefinedCursor = true;
+  emitsDeletes = true;
+  #stream;
+  describe() {
+    this.#stream ??= new Stream(this);
+    return this.#stream;
+  }
+  async read(scan) {
+    return validateRecords(
+      this.describe(),
+      this.rows(scan).map((row) => this.record(row, scan)),
+      "Safari"
+    );
+  }
+  // The file a record carries, for streams that support file reads.
+  file(_record2, _scan) {
+    return null;
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/bookmarks-stream.ts
+var { nullableText: nullableText12 } = safariFields;
+var kinds3 = {
+  WebBookmarkTypeList: "folder",
+  WebBookmarkTypeLeaf: "bookmark",
+  WebBookmarkTypeProxy: "proxy"
+};
+var properties6 = {
+  id: {
+    ...safariFields.id,
+    description: "Bookmark UUID (WebBookmarkUUID); bookmarks.parentId refers to it."
+  },
+  parentId: {
+    ...safariFields.nullableId,
+    description: "The containing folder; refers to bookmarks.id. NULL for the top-level folders."
+  },
+  position: {
+    ...safariFields.ordinal,
+    description: "Index within the containing folder, as Safari orders it."
+  },
+  kind: {
+    ...safariFields.text,
+    enum: Object.values(kinds3),
+    description: "folder, bookmark, or proxy (a placeholder such as the History entry of the Bookmarks menu)."
+  },
+  title: {
+    ...nullableText12,
+    description: "Displayed title. Safari names its top-level folders BookmarksBar (Favorites), BookmarksMenu and com.apple.ReadingList. NULL when absent."
+  },
+  url: {
+    ...nullableText12,
+    description: "The bookmarked URL; NULL for folders and proxies."
+  },
+  identifier: {
+    ...nullableText12,
+    description: "Safari identifier of a built-in entry (WebBookmarkIdentifier), such as History; NULL otherwise."
+  },
+  hidden: {
+    ...safariFields.boolean,
+    description: "Whether Safari omits the entry from its bookmark lists."
+  },
+  addedAt: {
+    ...safariFields.nullableTimestamp,
+    description: "When the bookmark was added; NULL when Safari did not record it."
+  },
+  description: {
+    ...nullableText12,
+    description: "Description shown under the bookmark: the one the user typed, or preview text Safari fetched; NULL when none."
+  },
+  descriptionUserDefined: {
+    ...safariFields.boolean,
+    description: "Whether the user typed the description."
+  },
+  featureText: {
+    ...nullableText12,
+    description: "Summary text Safari fetched for the page; NULL when it fetched none."
+  },
+  metadataFetchFailures: {
+    ...safariFields.nullableInteger,
+    description: "Times Safari failed to fetch page details for the sidebar; NULL when none were recorded."
+  },
+  serverId: {
+    ...nullableText12,
+    description: "iCloud identifier of the entry; profiles.favoritesFolderServerId refers to a profile Favorites folder by it. NULL when never synced."
+  }
+};
+var BookmarksStream = class extends SafariStream {
+  name = "bookmarks";
+  store = "bookmarks";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per bookmark, folder and proxy in Safari bookmarks (Bookmarks.plist), including the Reading List folder but not its items, which readingListItems holds. Relationships name streams in this source, not physical destination tables.",
+    properties: properties6,
+    required: Object.keys(properties6)
+  };
+  rows(scan) {
+    return scan.bookmarks.bookmarks;
+  }
+  record({
+    node: node2,
+    parentId,
+    position
+  }) {
+    return {
+      id: node2.WebBookmarkUUID,
+      parentId,
+      position,
+      kind: kinds3[node2.WebBookmarkType],
+      title: text11(node2.Title) ?? text11(dictionary(node2.URIDictionary).title),
+      url: text11(node2.URLString),
+      identifier: text11(node2.WebBookmarkIdentifier),
+      hidden: flag3(node2.ShouldOmitFromUI),
+      addedAt: plistTime(node2.dateAdded),
+      description: text11(node2.previewText),
+      descriptionUserDefined: flag3(node2.previewTextIsUserDefined),
+      featureText: text11(node2.featureText),
+      metadataFetchFailures: integer6(
+        dictionary(node2.ReadingListNonSync).BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey
+      ),
+      serverId: text11(dictionary(node2.Sync).ServerID)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/closed-tabs-stream.ts
+var { boolean: boolean11, nullableText: nullableText13, nullableTimestamp: nullableTimestamp9 } = safariFields;
+var properties7 = {
+  id: { ...safariFields.id, description: "Closed tab UUID." },
+  closedWindowId: {
+    ...safariFields.nullableId,
+    description: "The recently closed window that held the tab; refers to closedWindows.id. NULL for a tab closed on its own."
+  },
+  position: {
+    ...safariFields.ordinal,
+    description: "Index in the Recently Closed list for a tab closed on its own, or among its closed window tabs."
+  },
+  windowId: {
+    ...nullableText13,
+    description: "UUID of the window the tab was in; NULL when not recorded."
+  },
+  profileId: safariFields.profileId,
+  title: { ...nullableText13, description: "Tab title; NULL when absent." },
+  url: { ...nullableText13, description: "Tab URL; NULL when absent." },
+  closedAt: {
+    ...nullableTimestamp9,
+    description: "When the tab was closed."
+  },
+  lastVisitedAt: {
+    ...nullableTimestamp9,
+    description: "When the tab last loaded a page; NULL when never."
+  },
+  tabIndex: {
+    ...safariFields.nullableInteger,
+    description: "Position of the tab in its tab bar; NULL when not recorded."
+  },
+  tabGroupId: {
+    ...nullableText13,
+    description: "The tab group the tab belonged to; NULL when not recorded."
+  },
+  tabGroupType: {
+    ...boolean11,
+    description: "Safari TabGroupTypeForTabKey flag as stored; true in every entry observed, and Apple does not document it."
+  },
+  ancestorTabIds: {
+    type: "array",
+    items: { type: "string" },
+    description: "UUIDs of the tabs this tab was opened from, in stored order; empty when opened directly."
+  },
+  muted: { ...boolean11, description: "Whether the tab was muted." },
+  disposable: {
+    ...boolean11,
+    description: "Safari IsDisposable flag as stored."
+  },
+  safeToLoad: {
+    ...boolean11,
+    description: "Safari SafeToLoad flag as stored."
+  }
+};
+var ClosedTabsStream = class extends SafariStream {
+  name = "closedTabs";
+  store = "closedTabs";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per tab Safari lists under History > Recently Closed (RecentlyClosedTabs.plist), closed on its own or with its window. Relationships name streams in this source, not physical destination tables.",
+    properties: properties7,
+    required: Object.keys(properties7)
+  };
+  rows(scan) {
+    return scan.closedTabs.tabs;
+  }
+  record({
+    state,
+    closedWindowId,
+    position
+  }) {
+    return {
+      id: state.TabUUID,
+      closedWindowId,
+      position,
+      windowId: text11(state.WindowUUID),
+      profileId: state.ProfileUUID,
+      title: text11(state.TabTitle),
+      url: text11(state.TabURL),
+      closedAt: plistTime(state.DateClosed),
+      lastVisitedAt: plistTime(state.LastVisitTime),
+      tabIndex: integer6(state.TabIndex),
+      tabGroupId: text11(state.TabGroupForTab),
+      tabGroupType: flag3(state.TabGroupTypeForTabKey),
+      ancestorTabIds: strings(state.AncestorTabUUIDsKey),
+      muted: flag3(state.IsMuted),
+      disposable: flag3(state.IsDisposable),
+      safeToLoad: flag3(state.SafeToLoad)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/closed-window-active-tabs-stream.ts
+var properties8 = {
+  windowId: {
+    ...safariFields.id,
+    description: "The closed window; refers to closedWindows.id."
+  },
+  tabGroupId: {
+    ...safariFields.id,
+    description: "A tab group the window showed."
+  },
+  tabId: {
+    ...safariFields.id,
+    description: "The tab that was active in that group; closedTabs.id when Safari kept the tab."
+  }
+};
+var ClosedWindowActiveTabsStream = class extends SafariStream {
+  name = "closedWindowActiveTabs";
+  store = "closedTabs";
+  primaryKey = ["windowId", "tabGroupId"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per tab group of a recently closed window, naming the tab active in it (RecentlyClosedTabs.plist TabGroupsToActiveTabs). Relationships name streams in this source, not physical destination tables.",
+    properties: properties8,
+    required: Object.keys(properties8)
+  };
+  rows(scan) {
+    return scan.closedTabs.windows.flatMap(
+      ({ state }) => Object.entries(dictionary(state.TabGroupsToActiveTabs)).map(
+        ([tabGroupId, tabId]) => ({
+          windowId: state.WindowUUID,
+          tabGroupId,
+          tabId
+        })
+      )
+    );
+  }
+  record(entry) {
+    return entry;
+  }
+};
+
+// apps/apple/src/sources/apple-safari/window-state.ts
+var { boolean: boolean12, nullableText: nullableText14, nullableInteger: nullableInteger4 } = safariFields;
+var windowStateFields = {
+  closedAt: {
+    ...safariFields.nullableTimestamp,
+    description: "When the window was closed; NULL while it is open."
+  },
+  private: { ...boolean12, description: "Whether it is a private window." },
+  popup: { ...boolean12, description: "Whether it is a popup window." },
+  miniaturized: {
+    ...boolean12,
+    description: "Whether it is minimized to the Dock."
+  },
+  unnamedTabGroupIds: {
+    type: "array",
+    items: { type: "string" },
+    description: "Unnamed tab groups of the window."
+  },
+  selectedTabIndex: {
+    ...nullableInteger4,
+    description: "Index of the selected tab; NULL when not recorded."
+  },
+  selectedPinnedTabIndex: {
+    ...nullableInteger4,
+    description: "Index of the selected pinned tab; NULL when no pinned tab is selected."
+  },
+  tabBarHidden: { ...boolean12, description: "Whether the tab bar is hidden." },
+  favoritesBarHidden: {
+    ...boolean12,
+    description: "Whether the Favorites bar is hidden."
+  },
+  readingListSidebarVisible: {
+    ...boolean12,
+    description: "Whether the window prefers the Reading List sidebar."
+  },
+  sidebarMode: {
+    ...nullableInteger4,
+    description: "Safari sidebar mode code, as stored; NULL when not recorded."
+  },
+  frame: {
+    ...nullableText14,
+    description: 'Window content rectangle as Safari stores it, "{{x, y}, {width, height}}"; NULL when not recorded.'
+  },
+  addressFieldText: {
+    ...nullableText14,
+    description: "Text typed into the address field and not yet submitted; NULL when none."
+  }
+};
+var windowState = (state) => ({
+  closedAt: plistTime(state.DateClosed),
+  private: flag3(state.IsPrivateWindow),
+  popup: flag3(state.IsPopupWindow),
+  miniaturized: flag3(state.Miniaturized),
+  unnamedTabGroupIds: strings(state.UnnamedTabGroupUUIDs),
+  selectedTabIndex: integer6(state.SelectedTabIndex),
+  selectedPinnedTabIndex: integer6(state.SelectedPinnedTabIndex),
+  tabBarHidden: flag3(state.TabBarHidden),
+  favoritesBarHidden: flag3(state.FavoritesBarHidden),
+  readingListSidebarVisible: flag3(state.PrefersReadingListSidebarVisible),
+  sidebarMode: integer6(state.WindowUnifiedSidebarMode),
+  frame: text11(state.WindowContentRect),
+  addressFieldText: text11(state.CustomUnifiedFieldText)
+});
+
+// apps/apple/src/sources/apple-safari/streams/closed-windows-stream.ts
+var properties9 = {
+  id: {
+    ...safariFields.id,
+    description: "Closed window UUID; closedTabs.closedWindowId and closedWindowActiveTabs.windowId refer to it."
+  },
+  position: {
+    ...safariFields.ordinal,
+    description: "Index in the Recently Closed list, as Safari orders it."
+  },
+  profileId: safariFields.profileId,
+  activeTabGroupId: {
+    ...safariFields.nullableText,
+    description: "The tab group shown when the window closed; closedTabs.tabGroupId uses the same identifiers. NULL when not recorded."
+  },
+  ...windowStateFields
+};
+var ClosedWindowsStream = class extends SafariStream {
+  name = "closedWindows";
+  store = "closedTabs";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per window Safari lists under History > Recently Closed (RecentlyClosedTabs.plist). Its tabs are in closedTabs. Relationships name streams in this source, not physical destination tables.",
+    properties: properties9,
+    required: Object.keys(properties9)
+  };
+  rows(scan) {
+    return scan.closedTabs.windows;
+  }
+  record({
+    state,
+    position
+  }) {
+    return {
+      id: state.WindowUUID,
+      position,
+      profileId: state.ProfileUUID,
+      activeTabGroupId: text11(state.activeTabGroupUUID),
+      ...windowState(state)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/cloud-tab-close-requests-stream.ts
+var properties10 = {
+  id: {
+    ...safariFields.id,
+    description: "iCloud Tabs close request identifier."
+  },
+  deviceId: {
+    ...safariFields.id,
+    description: "The device asked to close the tab; refers to cloudTabDevices.id."
+  },
+  url: { ...safariFields.text, description: "URL of the tab to close." },
+  tabId: {
+    ...safariFields.id,
+    description: "The tab to close; refers to cloudTabs.id while that device still lists it."
+  }
+};
+var CloudTabCloseRequestsStream = class extends SafariStream {
+  name = "cloudTabCloseRequests";
+  store = "cloudTabs";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per pending request, made from any device, to close a tab on another device through iCloud Tabs (CloudTabs.db). Relationships name streams in this source, not physical destination tables.",
+    properties: properties10,
+    required: Object.keys(properties10)
+  };
+  rows(scan) {
+    return scan.cloudTabs.closeRequests;
+  }
+  record(row) {
+    return {
+      id: row.close_request_uuid,
+      deviceId: row.destination_device_uuid,
+      url: row.url,
+      tabId: row.tab_uuid
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/cloud-tab-devices-stream.ts
+var { boolean: boolean13, nullableText: nullableText15 } = safariFields;
+var properties11 = {
+  id: {
+    ...safariFields.id,
+    description: "iCloud Tabs device identifier; cloudTabs.deviceId and cloudTabCloseRequests.deviceId refer to it."
+  },
+  name: {
+    ...nullableText15,
+    description: "Device name as the device reports it; NULL when absent."
+  },
+  type: {
+    ...nullableText15,
+    description: "Apple model identifier of the device, such as com.apple.iphone-15-pro-5; NULL when absent."
+  },
+  duplicateName: {
+    ...boolean13,
+    description: "Whether another device on the account has the same name."
+  },
+  ephemeral: {
+    ...boolean13,
+    description: "Whether Safari treats the device as temporary."
+  },
+  modifiedAt: {
+    ...safariFields.nullableTimestamp,
+    description: "When the device last changed its iCloud Tabs record."
+  }
+};
+var CloudTabDevicesStream = class extends SafariStream {
+  name = "cloudTabDevices";
+  store = "cloudTabs";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per device sharing its open tabs through iCloud Tabs (CloudTabs.db), as Safari on this Mac last fetched them. Safari fetches only while it runs. Relationships name streams in this source, not physical destination tables.",
+    properties: properties11,
+    required: Object.keys(properties11)
+  };
+  rows(scan) {
+    return scan.cloudTabs.devices;
+  }
+  record(row) {
+    return {
+      id: row.device_uuid,
+      name: text11(row.device_name),
+      type: text11(row.device_type_identifier),
+      duplicateName: flag3(row.has_duplicate_device_name),
+      ephemeral: flag3(row.is_ephemeral_device),
+      modifiedAt: appleTime2(row.last_modified)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/cloud-tab-positions-stream.ts
+var properties12 = {
+  tabId: {
+    ...safariFields.id,
+    description: "The tab; refers to cloudTabs.id."
+  },
+  position: {
+    ...safariFields.ordinal,
+    description: "Index of this entry in the tab position."
+  },
+  changeId: {
+    ...safariFields.integer,
+    description: "The change that wrote this sort value."
+  },
+  sortValue: {
+    ...safariFields.integer,
+    description: "Ordering value iCloud Tabs uses to place the tab among its device tabs."
+  },
+  deviceId: {
+    ...safariFields.id,
+    description: "Identifier of the device that wrote this sort value, as iCloud Tabs ordering records it; it is not a cloudTabDevices.id."
+  }
+};
+var CloudTabPositionsStream = class extends SafariStream {
+  name = "cloudTabPositions";
+  store = "cloudTabs";
+  primaryKey = ["tabId", "position"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per sort value in an iCloud tab position (CloudTabs.db cloud_tabs.position), which orders the tabs of a device. Relationships name streams in this source, not physical destination tables.",
+    properties: properties12,
+    required: Object.keys(properties12)
+  };
+  rows(scan) {
+    return scan.cloudTabs.positions();
+  }
+  record({
+    tab,
+    entry,
+    index
+  }) {
+    return {
+      tabId: tab.tab_uuid,
+      position: index,
+      changeId: entry.changeID,
+      sortValue: entry.sortValue,
+      deviceId: entry.deviceIdentifier
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/cloud-tabs-stream.ts
+var { boolean: boolean14, nullableText: nullableText16 } = safariFields;
+var properties13 = {
+  id: {
+    ...safariFields.id,
+    description: "iCloud Tabs tab identifier; cloudTabPositions.tabId and cloudTabCloseRequests.tabId refer to it."
+  },
+  deviceId: {
+    ...safariFields.id,
+    description: "The device the tab is open on; refers to cloudTabDevices.id."
+  },
+  title: {
+    ...nullableText16,
+    description: "Page title; NULL when the page had none."
+  },
+  url: { ...safariFields.text, description: "The page URL." },
+  showingReader: {
+    ...boolean14,
+    description: "Whether the tab shows the page in Reader."
+  },
+  pinned: { ...boolean14, description: "Whether the tab is pinned." },
+  readerScrollPageIndex: {
+    ...safariFields.nullableInteger,
+    description: "Page index Reader was scrolled to; NULL when not recorded."
+  },
+  sceneId: {
+    ...nullableText16,
+    description: "The device window (scene) holding the tab; NULL when not recorded."
+  },
+  lastViewedAt: {
+    ...safariFields.nullableTimestamp,
+    description: "When the tab was last viewed on its device; NULL when never recorded (stored as 0)."
+  },
+  topic: {
+    ...nullableText16,
+    description: "Topic Safari assigned to the page; NULL when none."
+  }
+};
+var CloudTabsStream = class extends SafariStream {
+  name = "cloudTabs";
+  store = "cloudTabs";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per tab open on another device through iCloud Tabs (CloudTabs.db), as Safari on this Mac last fetched them. Relationships name streams in this source, not physical destination tables.",
+    properties: properties13,
+    required: Object.keys(properties13)
+  };
+  rows(scan) {
+    return scan.cloudTabs.tabs;
+  }
+  record(row) {
+    return {
+      id: row.tab_uuid,
+      deviceId: row.device_uuid,
+      title: text11(row.title),
+      url: row.url,
+      showingReader: flag3(row.is_showing_reader),
+      pinned: flag3(row.is_pinned),
+      readerScrollPageIndex: integer6(row.reader_scroll_position_page_index),
+      sceneId: text11(row.scene_id),
+      lastViewedAt: row.last_viewed_time === 0 ? null : appleTime2(row.last_viewed_time),
+      topic: text11(row.topic_title)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/downloads-stream.ts
+import { existsSync } from "node:fs";
+var { boolean: boolean15, nullableText: nullableText17, nullableTimestamp: nullableTimestamp10, nullableInteger: nullableInteger5 } = safariFields;
+var properties14 = {
+  id: { ...safariFields.id, description: "Download identifier." },
+  profileId: {
+    ...safariFields.nullableId,
+    description: "The profile that downloaded the file; refers to profiles.id. NULL when not recorded."
+  },
+  url: { ...safariFields.text, description: "URL the file came from." },
+  path: {
+    ...safariFields.text,
+    description: "Where Safari saved the file. For an archive Safari opened on its own, the archive inside a .download folder that no longer exists."
+  },
+  openedPath: {
+    ...nullableText17,
+    description: "For an archive Safari opened on its own, the first extracted file as Safari recorded it, inside the .download folder; Safari moves the extracted files next to it. NULL otherwise."
+  },
+  addedAt: {
+    ...nullableTimestamp10,
+    description: "When the download started."
+  },
+  finishedAt: {
+    ...nullableTimestamp10,
+    description: "When the download finished; NULL while unfinished."
+  },
+  bytesReceived: {
+    ...nullableInteger5,
+    description: "Bytes downloaded."
+  },
+  bytesTotal: {
+    ...nullableInteger5,
+    description: "Expected size in bytes, as Safari recorded it."
+  },
+  removeWhenDone: {
+    ...boolean15,
+    description: "Whether Safari removes the entry once finished."
+  },
+  availableLocally: {
+    ...boolean15,
+    description: "Whether the file at path exists on this Mac."
+  }
+};
+var DownloadsStream = class extends SafariStream {
+  name = "downloads";
+  store = "downloads";
+  primaryKey = ["id"];
+  supportsFileTransfer = true;
+  jsonSchema = {
+    type: "object",
+    description: "One source record per entry of the Safari Downloads list (Downloads.plist), with the downloaded file when it is still where Safari saved it. Clearing the list removes the entries, not the files. Relationships name streams in this source, not physical destination tables.",
+    properties: properties14,
+    required: Object.keys(properties14)
+  };
+  rows(scan) {
+    return scan.downloads.downloads;
+  }
+  record(entry) {
+    const path = entry.DownloadEntryPath;
+    return {
+      id: entry.DownloadEntryIdentifier,
+      profileId: text11(entry.DownloadEntryProfileUUIDStringKey),
+      url: entry.DownloadEntryURL,
+      path,
+      openedPath: text11(entry.DownloadEntryPostPath),
+      addedAt: plistTime(entry.DownloadEntryDateAddedKey),
+      finishedAt: plistTime(entry.DownloadEntryDateFinishedKey),
+      bytesReceived: integer6(entry.DownloadEntryProgressBytesSoFar),
+      bytesTotal: integer6(entry.DownloadEntryProgressTotalToLoad),
+      removeWhenDone: flag3(entry.DownloadEntryRemoveWhenDoneKey),
+      availableLocally: existsSync(path)
+    };
+  }
+  // The original file, not a copy: downloads reach gigabytes and readers
+  // only read it.
+  file(record3) {
+    return record3.availableLocally ? record3.path : null;
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/history-item-tags-stream.ts
+var properties15 = {
+  profileId: safariFields.profileId,
+  itemId: {
+    ...safariFields.integer,
+    description: "The tagged URL; refers to historyItems.id."
+  },
+  tagId: {
+    ...safariFields.integer,
+    description: "The topic; refers to historyTags.id."
+  },
+  taggedAt: {
+    ...safariFields.timestamp,
+    description: "When Safari tagged the item."
+  }
+};
+var HistoryItemTagsStream = class extends SafariStream {
+  name = "historyItemTags";
+  store = "history";
+  primaryKey = ["profileId", "itemId", "tagId"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per topic Safari assigned to a history item (History.db history_items_to_tags). Relationships name streams in this source, not physical destination tables.",
+    properties: properties15,
+    required: Object.keys(properties15)
+  };
+  rows(scan) {
+    return scan.history.flatMap((history) => history.itemTags);
+  }
+  record(row) {
+    return {
+      profileId: row.$profile,
+      itemId: row.history_item,
+      tagId: row.tag_id,
+      taggedAt: appleTime2(row.timestamp)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/history-items-stream.ts
+var { profileId, id: id11, nullableText: nullableText18, ordinal: ordinal6, boolean: boolean16 } = safariFields;
+var countList = { type: "integer", minimum: 0 };
+var properties16 = {
+  profileId,
+  id: {
+    ...safariFields.integer,
+    description: "History.db history_items.id; historyVisits.itemId and historyItemTags.itemId refer to it within the same profile."
+  },
+  url: { ...safariFields.text, description: "The page URL, unique per item." },
+  domainExpansion: {
+    ...nullableText18,
+    description: "The part of the host Safari matches typed text against beyond the registrable domain, such as a subdomain; NULL when Safari recorded none."
+  },
+  visitCount: {
+    ...ordinal6,
+    description: "Visits Safari counts for this URL across its history."
+  },
+  visitCountScore: {
+    ...safariFields.integer,
+    description: "Safari ranking score derived from recent visits, used for suggestions and Top Sites."
+  },
+  dailyVisitCounts: {
+    type: "array",
+    items: countList,
+    description: "Per-day values Safari stores for ranking, as stored (daily_visit_counts). They are weighted, not raw visit counts (a single visit reads 20), and Safari does not store which day the list starts on or its order."
+  },
+  weeklyVisitCounts: {
+    type: ["array", "null"],
+    items: countList,
+    description: "Per-week values Safari stores for ranking, as stored (weekly_visit_counts), weighted like dailyVisitCounts; NULL until Safari has recorded any."
+  },
+  autocompleteTriggers: {
+    type: ["array", "null"],
+    items: { type: "string" },
+    description: "Typed prefixes that the user completed to this URL in the address field; NULL when none were recorded."
+  },
+  statusCode: {
+    ...safariFields.nullableInteger,
+    description: "HTTP status Safari recorded for the last load; NULL when it recorded none (stored as 0)."
+  },
+  derivedCountsStale: {
+    ...boolean16,
+    description: "Whether Safari marked visitCountScore and the count lists for recomputation."
+  }
+};
+var HistoryItemsStream = class extends SafariStream {
+  name = "historyItems";
+  store = "history";
+  primaryKey = ["profileId", "id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per URL in Safari history (History.db history_items), with the visit counts Safari ranks it by. Relationships name streams in this source, not physical destination tables.",
+    properties: properties16,
+    required: Object.keys(properties16)
+  };
+  rows(scan) {
+    return scan.history.flatMap((history) => history.items);
+  }
+  record(row) {
+    return {
+      profileId: row.$profile,
+      id: row.id,
+      url: row.url,
+      domainExpansion: text11(row.domain_expansion),
+      visitCount: row.visit_count,
+      visitCountScore: row.visit_count_score,
+      dailyVisitCounts: counts(row.daily_visit_counts),
+      weeklyVisitCounts: counts(row.weekly_visit_counts),
+      autocompleteTriggers: triggers(row.autocomplete_triggers),
+      statusCode: integer6(row.status_code) || null,
+      derivedCountsStale: flag3(row.should_recompute_derived_visit_counts)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/history-tags-stream.ts
+var { profileId: profileId2 } = safariFields;
+var properties17 = {
+  profileId: profileId2,
+  id: {
+    ...safariFields.integer,
+    description: "History.db history_tags.id; historyItemTags.tagId refers to it within the same profile."
+  },
+  type: {
+    ...safariFields.integer,
+    description: "Safari tag type as stored (1 observed: a topic)."
+  },
+  level: {
+    ...safariFields.integer,
+    description: "Safari tag level as stored (200 observed)."
+  },
+  identifier: {
+    ...safariFields.id,
+    description: "The topic identifier, a Wikidata item ID such as Q2063 for topics."
+  },
+  title: { ...safariFields.text, description: "The topic name." },
+  modifiedAt: {
+    ...safariFields.timestamp,
+    description: "When Safari last changed the tag."
+  },
+  itemCount: {
+    ...safariFields.integer,
+    description: "Items Safari counts under the tag. Safari maintains it by trigger, so it can exceed the historyItemTags rows left after visits expire."
+  }
+};
+var HistoryTagsStream = class extends SafariStream {
+  name = "historyTags";
+  store = "history";
+  primaryKey = ["profileId", "id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per topic Safari derived from browsing history (History.db history_tags). Relationships name streams in this source, not physical destination tables.",
+    properties: properties17,
+    required: Object.keys(properties17)
+  };
+  rows(scan) {
+    return scan.history.flatMap((history) => history.tags);
+  }
+  record(row) {
+    return {
+      profileId: row.$profile,
+      id: row.id,
+      type: row.type,
+      level: row.level,
+      identifier: row.identifier,
+      title: row.title,
+      modifiedAt: appleTime2(row.modification_timestamp),
+      itemCount: row.item_count
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/history-tombstones-stream.ts
+var { profileId: profileId3, nullableText: nullableText19, nullableTimestamp: nullableTimestamp11 } = safariFields;
+var properties18 = {
+  profileId: profileId3,
+  id: {
+    ...safariFields.integer,
+    description: "History.db history_tombstones.id."
+  },
+  startAt: {
+    ...nullableTimestamp11,
+    description: "Start of the cleared time range; NULL when it is unbounded (Safari stores the year 1)."
+  },
+  endAt: {
+    ...nullableTimestamp11,
+    description: "End of the cleared time range; NULL when it is unbounded."
+  },
+  url: {
+    ...nullableText19,
+    description: "The URL whose history was removed, when Safari stored it as text; NULL otherwise."
+  },
+  encryptedUrl: {
+    ...nullableText19,
+    description: "The removed URL as Safari stores it for iCloud sync, encrypted, in base64. Safari 27 stores deleted URLs this way; NULL when the whole range was cleared or the URL is plain text."
+  },
+  generation: {
+    ...safariFields.integer,
+    description: "Safari history sync generation of the deletion."
+  },
+  deviceId: {
+    ...nullableText19,
+    description: "Identifier of the device that made the deletion, if recorded."
+  },
+  attributes: {
+    ...safariFields.ordinal,
+    description: "Safari tombstone attribute bit mask as stored; Apple does not document the bits."
+  }
+};
+var HistoryTombstonesStream = class extends SafariStream {
+  name = "historyTombstones";
+  store = "history";
+  primaryKey = ["profileId", "id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per history deletion Safari keeps to sync to other devices (History.db history_tombstones): a removed URL or a cleared time range. Visits Safari expires by age leave no tombstone. Relationships name streams in this source, not physical destination tables.",
+    properties: properties18,
+    required: Object.keys(properties18)
+  };
+  rows(scan) {
+    return scan.history.flatMap((history) => history.tombstones);
+  }
+  record(row) {
+    return {
+      profileId: row.$profile,
+      id: row.id,
+      startAt: appleTime2(row.start_time),
+      endAt: appleTime2(row.end_time),
+      url: text11(row.url),
+      encryptedUrl: base643(row.url),
+      generation: row.generation,
+      deviceId: text11(row.udid),
+      attributes: row.attributes
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/history-visits-stream.ts
+var { profileId: profileId4, boolean: boolean17, nullableText: nullableText20, nullableInteger: nullableInteger6 } = safariFields;
+var properties19 = {
+  profileId: profileId4,
+  id: {
+    ...safariFields.integer,
+    description: "History.db history_visits.id; redirectSourceId and redirectDestinationId refer to it within the same profile."
+  },
+  itemId: {
+    ...safariFields.integer,
+    description: "The visited URL; refers to historyItems.id."
+  },
+  visitedAt: {
+    ...safariFields.timestamp,
+    description: "When the visit happened."
+  },
+  title: {
+    ...nullableText20,
+    description: "Page title at this visit; NULL when the page had none."
+  },
+  loadSuccessful: {
+    ...boolean17,
+    description: "Whether the page finished loading."
+  },
+  httpNonGet: {
+    ...boolean17,
+    description: "Whether the visit was a non-GET request, such as a form POST."
+  },
+  synthesized: {
+    ...boolean17,
+    description: "Whether Safari synthesized the visit rather than recording a navigation."
+  },
+  redirectSourceId: {
+    ...nullableInteger6,
+    description: "The visit that redirected to this one; refers to historyVisits.id. NULL when none did."
+  },
+  redirectDestinationId: {
+    ...nullableInteger6,
+    description: "The visit this one redirected to; refers to historyVisits.id. NULL when it did not redirect."
+  },
+  origin: {
+    ...safariFields.ordinal,
+    description: "Where the visit happened: 0 on this Mac, 1 on another device signed in to the same iCloud account whose history Safari synced here."
+  },
+  generation: {
+    ...safariFields.integer,
+    description: "Safari history sync generation that last wrote the visit; it grows with each local change."
+  },
+  attributes: {
+    ...safariFields.ordinal,
+    description: "Safari visit attribute bit mask as stored; Apple does not document the bits."
+  },
+  score: {
+    ...safariFields.integer,
+    description: "Safari ranking score of this visit (0 to 100 observed)."
+  }
+};
+var HistoryVisitsStream = class extends SafariStream {
+  name = "historyVisits";
+  store = "history";
+  primaryKey = ["profileId", "id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per page visit in Safari history (History.db history_visits), from this Mac and from other devices synced through iCloud while Safari ran. Safari removes visits older than its history retention setting. Relationships name streams in this source, not physical destination tables.",
+    properties: properties19,
+    required: Object.keys(properties19)
+  };
+  rows(scan) {
+    return scan.history.flatMap((history) => history.visits);
+  }
+  record(row) {
+    return {
+      profileId: row.$profile,
+      id: row.id,
+      itemId: row.history_item,
+      visitedAt: appleTime2(row.visit_time),
+      title: text11(row.title),
+      loadSuccessful: flag3(row.load_successful),
+      httpNonGet: flag3(row.http_non_get),
+      synthesized: flag3(row.synthesized),
+      redirectSourceId: integer6(row.redirect_source),
+      redirectDestinationId: integer6(row.redirect_destination),
+      origin: row.origin,
+      generation: row.generation,
+      attributes: row.attributes,
+      score: row.score
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/profile-start-page-sections-stream.ts
+var properties20 = {
+  profileId: safariFields.profileId,
+  position: {
+    ...safariFields.ordinal,
+    description: "Order of the section on the Start Page."
+  },
+  identifier: {
+    ...safariFields.id,
+    description: "Start Page section, such as favoritesItemIdentifier or readingListItemIdentifier."
+  },
+  enabled: {
+    ...safariFields.boolean,
+    description: "Whether the Start Page shows the section."
+  }
+};
+var ProfileStartPageSectionsStream = class extends SafariStream {
+  name = "profileStartPageSections";
+  store = "tabs";
+  primaryKey = ["profileId", "position"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per Start Page section a profile customized (SafariTabs.db StartPageSectionsData). A profile that never customized its Start Page has none. Relationships name streams in this source, not physical destination tables.",
+    properties: properties20,
+    required: Object.keys(properties20)
+  };
+  rows(scan) {
+    return scan.tabs.profiles.flatMap((profile) => {
+      const data = scan.tabs.attributes(profile)[0].StartPageSectionsData;
+      if (!(data instanceof Uint8Array)) return [];
+      const { Sections } = JSON.parse(Buffer.from(data).toString("utf8"));
+      return Sections.map((section, position) => ({
+        profile,
+        position,
+        section
+      }));
+    });
+  }
+  record({
+    profile,
+    position,
+    section
+  }) {
+    return {
+      profileId: profile.external_uuid,
+      position,
+      identifier: section.Identifier,
+      enabled: section.IsEnabled
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/profiles-stream.ts
+var { nullableText: nullableText21, nullableNumber: nullableNumber4 } = safariFields;
+var component = { ...nullableNumber4, minimum: 0, maximum: 1 };
+var properties21 = {
+  id: {
+    ...safariFields.id,
+    description: "Profile identifier (external_uuid); every profileId in this source refers to it. The profile Safari starts with is DefaultProfile."
+  },
+  serverId: {
+    ...safariFields.id,
+    description: "Profile iCloud identifier; names the folder Safari keeps the profile data in (DefaultProfile for the first profile)."
+  },
+  title: {
+    ...nullableText21,
+    description: "Profile name; NULL for the default profile, which Safari shows as Personal once other profiles exist."
+  },
+  position: {
+    ...safariFields.integer,
+    description: "Order Safari lists profiles in."
+  },
+  symbol: {
+    ...nullableText21,
+    description: "SF Symbol shown for the profile, such as person.fill."
+  },
+  colorName: {
+    ...nullableText21,
+    description: "Named profile color, such as heatherBlue or clear."
+  },
+  red: { ...component, description: "Profile color red component, 0 to 1." },
+  green: {
+    ...component,
+    description: "Profile color green component, 0 to 1."
+  },
+  blue: { ...component, description: "Profile color blue component, 0 to 1." },
+  alpha: {
+    ...component,
+    description: "Profile color opacity, 0 to 1; 0 for clear."
+  },
+  favoritesFolderServerId: {
+    ...nullableText21,
+    description: "The profile own Favorites folder; bookmarks.serverId refers to the same folder once Safari has written it. NULL when the profile shares the default Favorites."
+  },
+  addedAt: {
+    ...safariFields.nullableTimestamp,
+    description: "When the profile was created; NULL when not recorded."
+  },
+  modifiedAt: {
+    ...safariFields.nullableTimestamp,
+    description: "When Safari last changed the profile; NULL when not recorded."
+  }
+};
+var ProfilesStream = class extends SafariStream {
+  name = "profiles";
+  store = "tabs";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per Safari profile (SafariTabs.db). Each profile has its own history, tabs and tab groups. Relationships name streams in this source, not physical destination tables.",
+    properties: properties21,
+    required: Object.keys(properties21)
+  };
+  rows(scan) {
+    return scan.tabs.profiles;
+  }
+  record(row, scan) {
+    const [extra] = scan.tabs.attributes(row);
+    const color2 = scan.tabs.color(row);
+    return {
+      id: row.external_uuid,
+      serverId: row.server_id,
+      title: text11(row.title),
+      position: row.order_index,
+      symbol: text11(extra.SymbolImageName),
+      colorName: text11(color2.colorName),
+      red: number6(color2.redComponent),
+      green: number6(color2.greenComponent),
+      blue: number6(color2.blueComponent),
+      alpha: number6(color2.alphaComponent),
+      favoritesFolderServerId: text11(extra.CustomFavoritesFolderServerID),
+      addedAt: plistTime(dictionary(extra["com.apple.Bookmark"]).DateAdded),
+      modifiedAt: appleTime2(row.last_modified)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/reading-list-items-stream.ts
+var { nullableText: nullableText22, nullableTimestamp: nullableTimestamp12, nullableInteger: nullableInteger7 } = safariFields;
+var properties22 = {
+  id: {
+    ...safariFields.id,
+    description: "Reading List item UUID (WebBookmarkUUID)."
+  },
+  position: {
+    ...safariFields.ordinal,
+    description: "Index in the Reading List, as Safari orders it."
+  },
+  title: {
+    ...nullableText22,
+    description: "Displayed title; NULL when absent."
+  },
+  url: { ...safariFields.text, description: "The saved URL." },
+  addedAt: {
+    ...nullableTimestamp12,
+    description: "When the item was added to the Reading List."
+  },
+  lastViewedAt: {
+    ...nullableTimestamp12,
+    description: "When the item was last opened; NULL while it is unread."
+  },
+  previewText: {
+    ...nullableText22,
+    description: "Preview text Safari shows under the title; NULL when none."
+  },
+  imageUrl: {
+    ...nullableText22,
+    description: "URL of the preview image; NULL when none."
+  },
+  fetchedTitle: {
+    ...nullableText22,
+    description: "Page title Safari fetched for offline reading; NULL when none."
+  },
+  fetchedAt: {
+    ...nullableTimestamp12,
+    description: "When Safari last fetched the page for offline reading; NULL when never."
+  },
+  fetchResult: {
+    ...nullableInteger7,
+    description: "Safari result code of the last offline fetch, as stored; NULL when never fetched."
+  },
+  failedLoads: {
+    ...nullableInteger7,
+    description: "Offline fetches that failed with an unknown or unrecoverable error; NULL when none were recorded."
+  },
+  addedLocally: {
+    ...safariFields.boolean,
+    description: "Whether the item was added on this Mac rather than synced from another device."
+  },
+  metadataFetchFailures: {
+    ...nullableInteger7,
+    description: "Times Safari failed to fetch page details for the sidebar; NULL when none were recorded."
+  },
+  featureText: {
+    ...nullableText22,
+    description: "Summary text Safari fetched for the page; NULL when it fetched none."
+  }
+};
+var ReadingListItemsStream = class extends SafariStream {
+  name = "readingListItems";
+  store = "bookmarks";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per Safari Reading List item (Bookmarks.plist). Offline copies of the pages are not exported. Relationships name streams in this source, not physical destination tables.",
+    properties: properties22,
+    required: Object.keys(properties22)
+  };
+  rows(scan) {
+    return scan.bookmarks.readingList;
+  }
+  record({
+    node: node2,
+    position
+  }) {
+    const saved = dictionary(node2.ReadingList);
+    const fetched = dictionary(node2.ReadingListNonSync);
+    return {
+      id: node2.WebBookmarkUUID,
+      position,
+      title: text11(dictionary(node2.URIDictionary).title),
+      url: node2.URLString,
+      addedAt: plistTime(saved.DateAdded),
+      lastViewedAt: plistTime(saved.DateLastViewed),
+      previewText: text11(saved.PreviewText) ?? text11(node2.previewText),
+      imageUrl: text11(node2.imageURL),
+      fetchedTitle: text11(fetched.Title),
+      fetchedAt: plistTime(fetched.DateLastFetched),
+      fetchResult: integer6(fetched.FetchResult),
+      failedLoads: integer6(
+        fetched.NumberOfFailedLoadsWithUnknownOrNonRecoverableError
+      ),
+      addedLocally: flag3(fetched.AddedLocally),
+      metadataFetchFailures: integer6(
+        fetched.BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey
+      ),
+      featureText: text11(node2.featureText)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/tab-groups-stream.ts
+var { nullableId: nullableId3, nullableText: nullableText23 } = safariFields;
+var properties23 = {
+  id: {
+    ...safariFields.id,
+    description: "Tab group UUID; tabs.tabGroupId and tabGroups.parentId refer to it."
+  },
+  parentId: {
+    ...nullableId3,
+    description: "The containing folder: another tabGroups.id, or a profiles.id. NULL for top-level groups and the default profile ones."
+  },
+  profileId: {
+    ...nullableId3,
+    description: "The profile the group belongs to; refers to profiles.id. NULL when Safari records none, as for the pinned-tab folders shared by all profiles."
+  },
+  kind: {
+    ...safariFields.text,
+    enum: tabGroupKinds,
+    description: "named: a tab group the user named; unnamed: a synced group of a window ordinary tabs; local and private: the window own groups of ordinary and private tabs; pinned and privatePinned: pinned tabs; recentlyClosed: tabs closed from tab groups; favorites: a group own Favorites; device: the folder of one device unnamed groups; special: another built-in folder."
+  },
+  title: {
+    ...nullableText23,
+    description: "Name as Safari stores it; NULL when absent."
+  },
+  position: {
+    ...safariFields.integer,
+    description: "Order within the containing folder."
+  },
+  hidden: {
+    ...safariFields.boolean,
+    description: "Whether Safari hides the group from its lists."
+  },
+  lastSelectedTabId: {
+    ...nullableId3,
+    description: "The tab last shown in the group; refers to tabs.id. NULL when none."
+  },
+  deviceType: {
+    ...nullableText23,
+    description: "For a device folder, the Apple model identifier of the device; NULL otherwise."
+  },
+  topic: {
+    ...nullableText23,
+    description: "Topic Safari assigned to the group; NULL when none."
+  },
+  addedAt: {
+    ...safariFields.nullableTimestamp,
+    description: "When the group was created; NULL when not recorded."
+  },
+  modifiedAt: {
+    ...safariFields.nullableTimestamp,
+    description: "When Safari last changed the group; NULL when not recorded."
+  },
+  closedAt: {
+    ...safariFields.nullableTimestamp,
+    description: "When the group was closed; NULL while open."
+  }
+};
+var TabGroupsStream = class extends SafariStream {
+  name = "tabGroups";
+  store = "tabs";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per Safari tab group and tab folder (SafariTabs.db bookmarks folders other than profiles): named and unnamed groups, each window own groups, pinned tabs, and group Favorites. Relationships name streams in this source, not physical destination tables.",
+    properties: properties23,
+    required: Object.keys(properties23)
+  };
+  rows(scan) {
+    return scan.tabs.tabGroups;
+  }
+  record(row, scan) {
+    const { tabs } = scan;
+    const [extra] = tabs.attributes(row);
+    return {
+      id: row.external_uuid,
+      parentId: row.parent === 0 ? null : tabs.uuid(row.parent),
+      profileId: tabs.profileOf(row),
+      kind: tabs.kind(row),
+      title: text11(row.title),
+      position: row.order_index,
+      hidden: flag3(row.hidden),
+      lastSelectedTabId: tabs.uuid(row.last_selected_child),
+      deviceType: text11(extra.DeviceTypeIdentifier),
+      topic: text11(row.topic_title),
+      addedAt: plistTime(dictionary(extra["com.apple.Bookmark"]).DateAdded),
+      modifiedAt: appleTime2(row.last_modified),
+      closedAt: appleTime2(row.date_closed)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/tab-history-entries-stream.ts
+var { nullableText: nullableText24 } = safariFields;
+var properties24 = {
+  tabId: { ...safariFields.id, description: "The tab; refers to tabs.id." },
+  position: {
+    ...safariFields.ordinal,
+    description: "Index in the tab back and forward list, oldest first."
+  },
+  current: {
+    ...safariFields.boolean,
+    description: "Whether the tab shows this entry."
+  },
+  url: { ...nullableText24, description: "Page URL; NULL when absent." },
+  originalUrl: {
+    ...nullableText24,
+    description: "URL first requested before redirects; NULL when absent."
+  },
+  title: { ...nullableText24, description: "Page title; NULL when absent." },
+  scriptCreated: {
+    ...safariFields.boolean,
+    description: "Whether page script created the entry without user interaction."
+  },
+  externalUrlPolicy: {
+    ...nullableText24,
+    description: "Whether links from this entry may open other apps, as Safari stores it; NULL when absent."
+  }
+};
+var TabHistoryEntriesStream = class extends SafariStream {
+  name = "tabHistoryEntries";
+  store = "tabs";
+  primaryKey = ["tabId", "position"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per page in a tab back and forward list (SafariTabs.db SessionState). Page form and scroll state are WebKit data and are not exported. Relationships name streams in this source, not physical destination tables.",
+    properties: properties24,
+    required: Object.keys(properties24)
+  };
+  rows(scan) {
+    return scan.tabs.historyEntries();
+  }
+  record({
+    tab,
+    entry,
+    position,
+    current
+  }) {
+    return {
+      tabId: tab.external_uuid,
+      position,
+      current,
+      url: text11(entry.SessionHistoryEntryURL),
+      originalUrl: text11(entry.SessionHistoryEntryOriginalURL),
+      title: text11(entry.SessionHistoryEntryTitle),
+      scriptCreated: flag3(
+        entry.SessionHistoryEntryWasCreatedByJSWithoutUserInteraction
+      ),
+      externalUrlPolicy: text11(
+        entry.SessionHistoryEntryShouldOpenExternalURLsPolicyKey
+      )
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/tabs-stream.ts
+var { boolean: boolean18, nullableId: nullableId4, nullableText: nullableText25, nullableTimestamp: nullableTimestamp13 } = safariFields;
+var properties25 = {
+  id: {
+    ...safariFields.id,
+    description: "Tab UUID; tabHistoryEntries.tabId and windowTabGroups.activeTabId refer to it."
+  },
+  tabGroupId: {
+    ...safariFields.id,
+    description: "The group holding the tab; refers to tabGroups.id."
+  },
+  kind: {
+    ...safariFields.text,
+    enum: ["tab", "favorite"],
+    description: "tab: an open tab; favorite: an entry of a tab group own Favorites."
+  },
+  profileId: {
+    ...nullableId4,
+    description: "The profile the tab belongs to; refers to profiles.id. NULL when Safari records none."
+  },
+  windowId: {
+    ...nullableText25,
+    description: "The window the tab was last shown in; windows.id while that window is saved. NULL when not recorded."
+  },
+  position: {
+    ...safariFields.integer,
+    description: "Order within the tab group."
+  },
+  tabIndex: {
+    ...safariFields.nullableInteger,
+    description: "Position in the window tab bar; NULL when not recorded."
+  },
+  title: { ...nullableText25, description: "Page title; NULL when absent." },
+  url: { ...nullableText25, description: "Page URL; NULL for an empty tab." },
+  localTitle: {
+    ...nullableText25,
+    description: "Title this Mac shows, when it differs from the synced one; NULL when absent."
+  },
+  localUrl: {
+    ...nullableText25,
+    description: "URL this Mac shows, when it differs from the synced one; NULL when absent."
+  },
+  pinned: { ...boolean18, description: "Whether the tab is pinned." },
+  pinnedTitle: {
+    ...nullableText25,
+    description: "Title the pinned tab keeps; NULL for unpinned tabs."
+  },
+  pinnedUrl: {
+    ...nullableText25,
+    description: "Address the pinned tab returns to; NULL for unpinned tabs."
+  },
+  addedAt: {
+    ...nullableTimestamp13,
+    description: "When the tab was opened; NULL when not recorded."
+  },
+  lastViewedAt: {
+    ...nullableTimestamp13,
+    description: "When the tab was last shown; NULL when never."
+  },
+  lastVisitedAt: {
+    ...nullableTimestamp13,
+    description: "When the tab last loaded a page; NULL when never."
+  },
+  lastAccessedAt: {
+    ...nullableTimestamp13,
+    description: "When the tab was last accessed; NULL when never."
+  },
+  modifiedAt: {
+    ...nullableTimestamp13,
+    description: "When Safari last changed the tab; NULL when not recorded."
+  },
+  closedAt: {
+    ...nullableTimestamp13,
+    description: "When the tab was closed; NULL while open."
+  },
+  muted: { ...boolean18, description: "Whether the tab is muted." },
+  showingReader: {
+    ...boolean18,
+    description: "Whether the tab shows the page in Reader."
+  },
+  readerScrollOffset: {
+    ...safariFields.nullableNumber,
+    description: "Reader scroll offset, in points; NULL when not recorded."
+  },
+  openedFromLink: {
+    ...boolean18,
+    description: "Whether the tab was opened from a link."
+  },
+  standaloneImage: {
+    ...boolean18,
+    description: "Whether the tab shows an image on its own."
+  },
+  disposable: {
+    ...boolean18,
+    description: "Safari IsDisposable flag as stored."
+  },
+  safeToLoad: { ...boolean18, description: "Safari SafeToLoad flag as stored." },
+  ancestorTabIds: {
+    type: "array",
+    items: { type: "string" },
+    description: "UUIDs of the tabs this tab was opened from, in stored order; empty when opened directly."
+  },
+  deviceId: {
+    ...nullableText25,
+    description: "Identifier of the device that opened the tab."
+  },
+  topic: {
+    ...nullableText25,
+    description: "Topic Safari assigned to the page; NULL when none."
+  },
+  pageLanguage: {
+    ...nullableText25,
+    description: "Language Safari detected for the page; NULL when none."
+  },
+  pageSummary: {
+    ...nullableText25,
+    description: "Summary Safari derived for the page; NULL when none."
+  },
+  pageKeywords: {
+    type: "array",
+    items: { type: "string" },
+    description: "Keywords Safari derived for the page; empty when none."
+  },
+  pageKeywordWeights: {
+    type: "array",
+    items: { type: "number" },
+    description: "Weight of each pageKeywords entry, in the same order."
+  },
+  featureText: {
+    ...nullableText25,
+    description: "Summary text Safari fetched for the page; NULL when none."
+  }
+};
+var TabsStream = class extends SafariStream {
+  name = "tabs";
+  store = "tabs";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per tab Safari keeps in its tab store (SafariTabs.db): open tabs of every window and tab group, pinned tabs, and tab group Favorites. Relationships name streams in this source, not physical destination tables.",
+    properties: properties25,
+    required: Object.keys(properties25)
+  };
+  rows(scan) {
+    return scan.tabs.tabs;
+  }
+  record(row, scan) {
+    const { tabs } = scan;
+    const [extra, local] = tabs.attributes(row);
+    const context = dictionary(local.TabPageContextIDKey);
+    const parent = tabs.row(row.parent);
+    return {
+      id: row.external_uuid,
+      tabGroupId: tabs.uuid(row.parent),
+      kind: parent !== void 0 && tabs.kind(parent) === "favorites" ? "favorite" : "tab",
+      profileId: tabs.profileOf(row),
+      windowId: text11(local.WindowUUID),
+      position: row.order_index,
+      tabIndex: integer6(local.TabIndex),
+      title: text11(row.title),
+      url: text11(row.url),
+      localTitle: text11(extra.LocalTitle),
+      localUrl: text11(extra.LocalURL),
+      pinned: flag3(extra.IsPinned) || flag3(local.IsPinned),
+      pinnedTitle: text11(extra.PinnedTitle) ?? text11(local.PinnedPageTitle),
+      pinnedUrl: text11(extra.PinnedAddress) ?? text11(local.PinnedPageURL),
+      addedAt: plistTime(dictionary(extra["com.apple.Bookmark"]).DateAdded),
+      lastViewedAt: plistTime(extra.DateLastViewed),
+      lastVisitedAt: plistTime(local.LastVisitTime),
+      lastAccessedAt: plistTime(local.LastAccessDate),
+      modifiedAt: appleTime2(row.last_modified),
+      closedAt: appleTime2(row.date_closed) ?? plistTime(local.DateClosed),
+      muted: flag3(local.IsMuted),
+      showingReader: flag3(local.ShowingReader),
+      readerScrollOffset: number6(local.ReaderViewTopScrollOffset),
+      openedFromLink: flag3(local.OpenedFromLink),
+      standaloneImage: flag3(local.DisplayingStandaloneImage),
+      disposable: flag3(local.IsDisposable),
+      safeToLoad: flag3(local.SafeToLoad),
+      ancestorTabIds: strings(local.AncestorTabUUIDsKey),
+      deviceId: text11(extra.DeviceIdentifier),
+      topic: text11(row.topic_title) ?? text11(context.topicID),
+      pageLanguage: text11(context.pageLanguage),
+      pageSummary: text11(context.summary),
+      pageKeywords: strings(context.keywords),
+      pageKeywordWeights: list2(context.keywordsWeights),
+      featureText: text11(extra.featureText)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/window-profiles-stream.ts
+var properties26 = {
+  windowId: {
+    ...safariFields.id,
+    description: "The window; refers to windows.id."
+  },
+  profileId: {
+    ...safariFields.id,
+    description: "A profile the window has shown; refers to profiles.id."
+  },
+  activeTabGroupId: {
+    ...safariFields.nullableId,
+    description: "The tab group the window shows for that profile; refers to tabGroups.id."
+  }
+};
+var WindowProfilesStream = class extends SafariStream {
+  name = "windowProfiles";
+  store = "tabs";
+  primaryKey = ["windowId", "profileId"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per profile a window remembers, with the tab group it shows for it (SafariTabs.db windows_profiles). Relationships name streams in this source, not physical destination tables.",
+    properties: properties26,
+    required: Object.keys(properties26)
+  };
+  rows(scan) {
+    return scan.tabs.windowProfiles;
+  }
+  record(row, scan) {
+    const { tabs } = scan;
+    return {
+      windowId: tabs.windowUuid(row.window_id),
+      profileId: tabs.uuid(row.profile_id),
+      activeTabGroupId: tabs.uuid(row.active_tab_group_id)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/window-tab-groups-stream.ts
+var properties27 = {
+  windowId: {
+    ...safariFields.id,
+    description: "The window; refers to windows.id."
+  },
+  tabGroupId: {
+    ...safariFields.id,
+    description: "A tab group of the window; refers to tabGroups.id."
+  },
+  activeTabId: {
+    ...safariFields.nullableId,
+    description: "The tab the window shows in that group; refers to tabs.id. NULL when not recorded."
+  },
+  unnamed: {
+    ...safariFields.boolean,
+    description: "Whether the group is one of the window unnamed tab groups."
+  }
+};
+var WindowTabGroupsStream = class extends SafariStream {
+  name = "windowTabGroups";
+  store = "tabs";
+  primaryKey = ["windowId", "tabGroupId"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per tab group a window holds or has shown, with its active tab (SafariTabs.db windows_tab_groups and windows_unnamed_tab_groups). Relationships name streams in this source, not physical destination tables.",
+    properties: properties27,
+    required: Object.keys(properties27)
+  };
+  rows(scan) {
+    return scan.tabs.windowTabGroups;
+  }
+  record(row, scan) {
+    const { tabs } = scan;
+    return {
+      windowId: tabs.windowUuid(row.window_id),
+      tabGroupId: tabs.uuid(row.tab_group_id),
+      activeTabId: tabs.uuid(row.active_tab_id),
+      unnamed: flag3(row.unnamed)
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/streams/windows-stream.ts
+var { nullableId: nullableId5, nullableText: nullableText26 } = safariFields;
+var properties28 = {
+  id: {
+    ...safariFields.id,
+    description: "Window UUID; tabs.windowId, windowTabGroups.windowId and windowProfiles.windowId refer to it."
+  },
+  profileId: {
+    ...nullableId5,
+    description: "The profile the window shows; refers to profiles.id. NULL when not recorded."
+  },
+  activeTabGroupId: {
+    ...nullableId5,
+    description: "The tab group the window shows; refers to tabGroups.id."
+  },
+  localTabGroupId: {
+    ...nullableId5,
+    description: "The window own unnamed tab group of ordinary tabs; refers to tabGroups.id."
+  },
+  privateTabGroupId: {
+    ...nullableId5,
+    description: "The window own group of private tabs; refers to tabGroups.id."
+  },
+  lastSession: {
+    ...safariFields.boolean,
+    description: "Whether the window belongs to the last saved session."
+  },
+  sceneId: {
+    ...nullableText26,
+    description: "Scene identifier of the window; NULL when not recorded."
+  },
+  ...windowStateFields
+};
+var WindowsStream = class extends SafariStream {
+  name = "windows";
+  store = "tabs";
+  primaryKey = ["id"];
+  jsonSchema = {
+    type: "object",
+    description: "One source record per Safari window in the saved session (SafariTabs.db windows), with its state as Safari last saved it. Relationships name streams in this source, not physical destination tables.",
+    properties: properties28,
+    required: Object.keys(properties28)
+  };
+  rows(scan) {
+    return scan.tabs.windows;
+  }
+  record(row, scan) {
+    const { tabs } = scan;
+    const state = windowState(tabs.windowState(row));
+    return {
+      id: row.uuid,
+      profileId: tabs.uuid(row.active_profile_id),
+      activeTabGroupId: tabs.uuid(row.active_tab_group_id),
+      localTabGroupId: tabs.uuid(row.local_tab_group_id),
+      privateTabGroupId: tabs.uuid(row.private_tab_group_id),
+      lastSession: flag3(row.is_last_session),
+      sceneId: text11(row.scene_id),
+      ...state,
+      closedAt: appleTime2(row.date_closed) ?? state.closedAt
+    };
+  }
+};
+
+// apps/apple/src/sources/apple-safari/apple-safari-source.ts
+var readers2 = {
+  historyItems: new HistoryItemsStream(),
+  historyVisits: new HistoryVisitsStream(),
+  historyTombstones: new HistoryTombstonesStream(),
+  historyTags: new HistoryTagsStream(),
+  historyItemTags: new HistoryItemTagsStream(),
+  profiles: new ProfilesStream(),
+  profileStartPageSections: new ProfileStartPageSectionsStream(),
+  windows: new WindowsStream(),
+  windowProfiles: new WindowProfilesStream(),
+  windowTabGroups: new WindowTabGroupsStream(),
+  tabGroups: new TabGroupsStream(),
+  tabs: new TabsStream(),
+  tabHistoryEntries: new TabHistoryEntriesStream(),
+  cloudTabDevices: new CloudTabDevicesStream(),
+  cloudTabs: new CloudTabsStream(),
+  cloudTabPositions: new CloudTabPositionsStream(),
+  cloudTabCloseRequests: new CloudTabCloseRequestsStream(),
+  bookmarks: new BookmarksStream(),
+  readingListItems: new ReadingListItemsStream(),
+  closedWindows: new ClosedWindowsStream(),
+  closedWindowActiveTabs: new ClosedWindowActiveTabsStream(),
+  closedTabs: new ClosedTabsStream(),
+  downloads: new DownloadsStream()
+};
+var catalog7 = new Catalog(
+  Object.values(readers2).map((reader) => reader.describe())
+);
+var readerOf = (stream) => readers2[stream.name];
+var AppleSafariSource = class extends Source {
+  identity;
+  catalog = catalog7;
+  historyItems = readers2.historyItems.describe();
+  historyVisits = readers2.historyVisits.describe();
+  historyTombstones = readers2.historyTombstones.describe();
+  historyTags = readers2.historyTags.describe();
+  historyItemTags = readers2.historyItemTags.describe();
+  profiles = readers2.profiles.describe();
+  profileStartPageSections = readers2.profileStartPageSections.describe();
+  windows = readers2.windows.describe();
+  windowProfiles = readers2.windowProfiles.describe();
+  windowTabGroups = readers2.windowTabGroups.describe();
+  tabGroups = readers2.tabGroups.describe();
+  tabs = readers2.tabs.describe();
+  tabHistoryEntries = readers2.tabHistoryEntries.describe();
+  cloudTabDevices = readers2.cloudTabDevices.describe();
+  cloudTabs = readers2.cloudTabs.describe();
+  cloudTabPositions = readers2.cloudTabPositions.describe();
+  cloudTabCloseRequests = readers2.cloudTabCloseRequests.describe();
+  bookmarks = readers2.bookmarks.describe();
+  readingListItems = readers2.readingListItems.describe();
+  closedWindows = readers2.closedWindows.describe();
+  closedWindowActiveTabs = readers2.closedWindowActiveTabs.describe();
+  closedTabs = readers2.closedTabs.describe();
+  downloads = readers2.downloads.describe();
+  location;
+  pollIntervalMs;
+  scope;
+  constructor({
+    directory = safariDirectory,
+    container: container2 = safariContainer,
+    // How often a watch checks the stores for changes.
+    pollIntervalMs = 1e3,
+    scope = {}
+  } = {}) {
+    super();
+    this.location = Object.freeze({ directory, container: container2 });
+    this.pollIntervalMs = pollIntervalMs;
+    this.scope = scope;
+    this.identity = `apple-safari:${directory}:${container2}`;
+    Object.freeze(this);
+  }
+  open(streams4) {
+    return SafariScan.open(
+      this.location,
+      new Set(streams4.map((stream) => readerOf(stream).store)),
+      this.scope
+    );
+  }
+  coverage(_stream) {
+    return { ...localAppleStoreCoverage, selection: this.scope };
+  }
+  // Databases report commits through data_version; Safari rewrites each
+  // property list whole, so a changed stat marks a new one.
+  async *observe({
+    streams: streams4,
+    signal
+  }) {
+    var _stack = [];
+    try {
+      if (signal.aborted) return;
+      const files = storeFiles(this.location);
+      const stores = [
+        ...new Set(streams4.map((stream) => readerOf(stream).store))
+      ];
+      const versions = __using(_stack, new DisposableStack());
+      const opened = /* @__PURE__ */ new Map();
+      const version3 = (path) => {
+        let found = opened.get(path);
+        if (found === void 0) {
+          found = versions.use(new SafariDatabaseVersion(path));
+          opened.set(path, found);
+        }
+        return found.current;
+      };
+      const probes = new Map(
+        stores.map((store) => {
+          if (store === "history")
+            return [
+              store,
+              async () => (await historyFiles(this.location)).map(version3).join(",")
+            ];
+          if (!databaseStores.has(store))
+            return [store, () => fingerprint(files[store])];
+          return [store, async () => String(version3(files[store]))];
+        })
+      );
+      const seen = /* @__PURE__ */ new Map();
+      for (const [store, probe] of probes) seen.set(store, await probe());
+      yield streams4;
+      try {
+        for await (const _2 of setInterval5(this.pollIntervalMs, void 0, {
+          signal
+        })) {
+          const changed = /* @__PURE__ */ new Set();
+          for (const [store, probe] of probes) {
+            const current = await probe();
+            if (current === seen.get(store)) continue;
+            seen.set(store, current);
+            changed.add(store);
+          }
+          if (changed.size > 0)
+            yield streams4.filter((stream) => changed.has(readerOf(stream).store));
+        }
+      } catch (error62) {
+        if (!(error62 instanceof Error && error62.name === "AbortError")) throw error62;
+      }
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  }
+  async *extract(configuration, state, _partition, scan) {
+    const { stream } = configuration;
+    const reader = readerOf(stream);
+    const records = await reader.read(scan);
+    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state) : records.map((data) => ({ stream: stream.name, data }));
+    for await (const message3 of messages) {
+      if ("type" in message3 || configuration.fileReads.length === 0)
+        yield message3;
+      else yield { ...message3, file: reader.file(message3.data, scan) };
+    }
+  }
+};
+async function historyFiles(location3) {
+  const profiles = join15(location3.container, "Profiles");
+  const found = await readdir3(profiles, { withFileTypes: true }).catch(
+    (error62) => {
+      if (error62 instanceof Error && "code" in error62 && error62.code === "ENOENT")
+        return [];
+      throw error62;
+    }
+  );
+  const others = await Promise.all(
+    found.filter((entry) => entry.isDirectory()).map(async (entry) => {
+      const path = join15(profiles, entry.name, "History.db");
+      return await fingerprint(path) === "missing" ? [] : [path];
+    })
+  );
+  return [storeFiles(location3).history, ...others.flat()];
+}
+async function fingerprint(path) {
+  try {
+    const { ino, size, mtimeMs } = await stat3(path);
+    return `${ino}:${size}:${mtimeMs}`;
+  } catch (error62) {
+    if (error62 instanceof Error && "code" in error62 && error62.code === "ENOENT")
+      return "missing";
+    throw error62;
+  }
+}
+
 // apps/apple/src/plugin/apps.ts
 var appNames = [
   "mail",
@@ -70334,7 +72960,8 @@ var appNames = [
   "messages",
   "contacts",
   "calendar",
-  "reminders"
+  "reminders",
+  "safari"
 ];
 function calendarDefaults(now = /* @__PURE__ */ new Date()) {
   const start = new Date(now);
@@ -70447,21 +73074,47 @@ var apps = {
     datedBy: null,
     permissions: "Allow full Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.",
     source: (scope) => new AppleRemindersSource(scope)
+  },
+  safari: {
+    title: "Safari",
+    choices: [
+      {
+        stream: "profiles",
+        scope: "collectionIds",
+        id: byId,
+        // Safari stores no name for the profile it starts with.
+        label: (row) => String(row.title ?? "Default profile")
+      }
+    ],
+    accounts: false,
+    datedBy: "visit time",
+    permissions: `${fullDiskAccess} Open Safari to let it fetch history and tabs from your other devices.`,
+    note: "Profiles select history, windows, tab groups, tabs, recently closed tabs and downloads. Dates select history visits, and the pages and topics those visits reach.",
+    // Bookmarks, the Reading List and iCloud Tabs belong to no profile or date.
+    unscoped: [
+      "bookmarks",
+      "readingListItems",
+      "cloudTabDevices",
+      "cloudTabs",
+      "cloudTabPositions",
+      "cloudTabCloseRequests"
+    ],
+    source: (scope) => new AppleSafariSource({ scope })
   }
 };
 
 // apps/apple/src/plugin/freshness.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { mkdirSync as mkdirSync3 } from "node:fs";
-import { join as join15 } from "node:path";
-import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
-import { setInterval as setInterval5, setTimeout as sleep2 } from "node:timers/promises";
+import { join as join18 } from "node:path";
+import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
+import { setInterval as setInterval6, setTimeout as sleep2 } from "node:timers/promises";
 
 // apps/apple/src/plugin/settings.ts
 import { createHash as createHash7 } from "node:crypto";
 import { chmodSync, mkdirSync, readdirSync as readdirSync2, rmSync } from "node:fs";
-import { join as join13 } from "node:path";
-import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
+import { join as join16 } from "node:path";
+import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 var appSchema = external_exports.enum(appNames);
 var ids = external_exports.array(external_exports.string().min(1).max(1024)).min(1).max(1e3).refine(
   (values) => new Set(values).size === values.length,
@@ -70502,13 +73155,13 @@ var configurationSchema = external_exports.strictObject({
 });
 function importDirectory(directory, item) {
   const key = createHash7("sha256").update(JSON.stringify([item.scope, item.includeAttachments])).digest("hex").slice(0, 16);
-  return join13(directory, item.app, key);
+  return join16(directory, item.app, key);
 }
 function removeStaleImports(directory, configuration) {
   for (const app of appNames) {
     const item = configuration?.apps.find((selected2) => selected2.app === app);
     const kept = item === void 0 ? null : importDirectory(directory, item);
-    const root = join13(directory, app);
+    const root = join16(directory, app);
     let entries;
     try {
       entries = readdirSync2(root);
@@ -70516,8 +73169,8 @@ function removeStaleImports(directory, configuration) {
       continue;
     }
     for (const entry of entries)
-      if (join13(root, entry) !== kept)
-        rmSync(join13(root, entry), { recursive: true, force: true });
+      if (join16(root, entry) !== kept)
+        rmSync(join16(root, entry), { recursive: true, force: true });
   }
 }
 var Settings = class {
@@ -70525,8 +73178,8 @@ var Settings = class {
   constructor(directory) {
     mkdirSync(directory, { recursive: true, mode: 448 });
     chmodSync(directory, 448);
-    const path = join13(directory, "settings.sqlite");
-    this.database = new DatabaseSync6(path);
+    const path = join16(directory, "settings.sqlite");
+    this.database = new DatabaseSync7(path);
     try {
       chmodSync(path, 384);
       this.database.exec(
@@ -70569,17 +73222,17 @@ var Settings = class {
   }
   // Each running plugin server's version, seen within the last heartbeats;
   // servers gone for an hour are forgotten.
-  heartbeat(id11, version3, now) {
+  heartbeat(id12, version3, now) {
     this.database.prepare(
       "INSERT INTO servers VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version, seen_at=excluded.seen_at"
-    ).run(id11, version3, now);
+    ).run(id12, version3, now);
     this.database.prepare("DELETE FROM servers WHERE seen_at < ?").run(now - 36e5);
   }
   runningVersions(since) {
     return this.database.prepare("SELECT version FROM servers WHERE seen_at >= ?").all(since).map((row) => String(row.version));
   }
-  forgetServer(id11) {
-    this.database.prepare("DELETE FROM servers WHERE id=?").run(id11);
+  forgetServer(id12) {
+    this.database.prepare("DELETE FROM servers WHERE id=?").run(id12);
   }
   [Symbol.dispose]() {
     this.database.close();
@@ -70588,13 +73241,13 @@ var Settings = class {
 
 // apps/apple/src/plugin/sync.ts
 import { mkdirSync as mkdirSync2 } from "node:fs";
-import { join as join14 } from "node:path";
-import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
+import { join as join17 } from "node:path";
+import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-checkpoint-store.js
 import { chmodSync as chmodSync2 } from "node:fs";
 import { resolve as resolve2 } from "node:path";
-import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 var SQLiteCheckpointStore = class extends CheckpointStore {
   path;
   constructor({ path }) {
@@ -70616,12 +73269,12 @@ var SQLiteCheckpointStore = class extends CheckpointStore {
       };
       try {
         const result = await work({
-          read: async (id11) => {
-            const saved = database.prepare("SELECT binding, state FROM checkpoints WHERE id = ?").get(id11);
+          read: async (id12) => {
+            const saved = database.prepare("SELECT binding, state FROM checkpoints WHERE id = ?").get(id12);
             return saved === void 0 ? void 0 : { binding: String(saved.binding), state: String(saved.state) };
           },
-          save: async (id11, { binding, state }) => durable("INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state", id11, binding, state),
-          remove: async (id11) => durable("DELETE FROM checkpoints WHERE id = ?", id11)
+          save: async (id12, { binding, state }) => durable("INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state", id12, binding, state),
+          remove: async (id12) => durable("DELETE FROM checkpoints WHERE id = ?", id12)
         });
         database.exec("COMMIT");
         return result;
@@ -70637,7 +73290,7 @@ var SQLiteCheckpointStore = class extends CheckpointStore {
     }
   }
   open() {
-    const database = new DatabaseSync7(this.path);
+    const database = new DatabaseSync8(this.path);
     try {
       chmodSync2(this.path, 384);
       database.exec("CREATE TABLE IF NOT EXISTS checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL) STRICT");
@@ -70816,16 +73469,16 @@ function scalarKind(name, type) {
 var SQLiteColumns = class {
   // Scalars, and arrays of scalars as JSON arrays in TEXT.
   static fromSchema(schema) {
-    const { properties: properties6, required: required3 } = schema;
-    if (schema.type !== "object" || properties6 === null || typeof properties6 !== "object" || Array.isArray(properties6))
+    const { properties: properties29, required: required3 } = schema;
+    if (schema.type !== "object" || properties29 === null || typeof properties29 !== "object" || Array.isArray(properties29))
       throw new TypeError("SQLite requires an object schema with explicit properties");
     if (required3 !== void 0 && (!Array.isArray(required3) || !required3.every((name) => typeof name === "string")))
       throw new TypeError("JSON Schema required must be an array of field names");
     const requiredFields = new Set(required3);
     for (const name of requiredFields)
-      if (!Object.hasOwn(properties6, name))
+      if (!Object.hasOwn(properties29, name))
         throw new TypeError(`Schema does not describe field ${name}`);
-    return Object.entries(properties6).map(([name, field]) => {
+    return Object.entries(properties29).map(([name, field]) => {
       if (field === null || typeof field !== "object" || Array.isArray(field))
         throw new TypeError(`Unsupported JSON Schema for field ${name}`);
       const type = Reflect.get(field, "type");
@@ -70887,11 +73540,11 @@ var SQLiteColumns = class {
 
 // packages/destinations/sqlite/dist/sqlite-destination.js
 import { resolve as resolve3 } from "node:path";
-import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-writer.js
 import { createHash as createHash8 } from "node:crypto";
-import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-file-store.js
 var quote = (name) => `"${name.replaceAll('"', '""')}"`;
@@ -70926,7 +73579,7 @@ var SQLiteFileStore = class _SQLiteFileStore {
 
 // packages/destinations/sqlite/dist/sqlite-writer.js
 function lockWriter(path) {
-  const lock = new DatabaseSync8(path === ":memory:" ? path : `${path}.writer-lock`);
+  const lock = new DatabaseSync9(path === ":memory:" ? path : `${path}.writer-lock`);
   try {
     lock.exec("BEGIN EXCLUSIVE");
     return { [Symbol.dispose]: () => lock.close() };
@@ -71010,7 +73663,7 @@ var SQLiteWriter = class extends Writer {
     var _stack = [];
     try {
       const _lock = __using(_stack, lockWriter(this.path));
-      const database = __using(_stack, new DatabaseSync8(this.path));
+      const database = __using(_stack, new DatabaseSync9(this.path));
       database.exec("BEGIN IMMEDIATE");
       try {
         this.writers(database);
@@ -71154,13 +73807,13 @@ var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
       const selected2 = table2.columns.find((column2) => column2.name === field);
       if (selected2 === void 0)
         throw new TypeError(`Deduplication requires destination column ${field}`);
-      const kinds3 = {
+      const kinds4 = {
         string: "text",
         number: "real",
         integer: "integer",
         boolean: "boolean"
       };
-      if (selected2.kind !== kinds3[this.deduplication.type(field)])
+      if (selected2.kind !== kinds4[this.deduplication.type(field)])
         throw new TypeError(`Deduplication column ${field} must preserve the source scalar type`);
       return selected2;
     };
@@ -71268,10 +73921,10 @@ var SQLiteTable = class _SQLiteTable extends Target {
   resolve(stream) {
     if (this.columns.length === 0)
       return new _SQLiteTable(this.name, SQLiteColumns.fromSchema(stream.jsonSchema));
-    const properties6 = stream.jsonSchema.properties;
-    if (properties6 !== null && typeof properties6 === "object" && !Array.isArray(properties6)) {
+    const properties29 = stream.jsonSchema.properties;
+    if (properties29 !== null && typeof properties29 === "object" && !Array.isArray(properties29)) {
       for (const column of this.columns) {
-        if (column.fileRead === void 0 && !Object.hasOwn(properties6, column.name))
+        if (column.fileRead === void 0 && !Object.hasOwn(properties29, column.name))
           throw new TypeError(`Stream ${stream.name} does not describe column ${column.name}`);
       }
     }
@@ -71319,7 +73972,7 @@ var SQLiteDestination = class extends Destination {
     let database;
     try {
       resources.use(lockWriter(this.path));
-      database = resources.use(new DatabaseSync9(this.path));
+      database = resources.use(new DatabaseSync10(this.path));
       database.exec("BEGIN IMMEDIATE");
     } catch (error62) {
       resources.dispose();
@@ -71370,22 +74023,22 @@ var attachmentRef = {
 async function appConnection(directory, item) {
   const { app, scope, includeAttachments } = item;
   const source = apps[app].source(scope);
-  const catalog7 = await source.discover();
+  const catalog8 = await source.discover();
   const omitted = new Set(
     Object.keys(scope).length > 0 ? apps[app].unscoped ?? [] : []
   );
-  const streams4 = catalog7.streams.filter((stream) => !omitted.has(stream.name));
+  const streams4 = catalog8.streams.filter((stream) => !omitted.has(stream.name));
   const withFiles = (stream) => includeAttachments && stream.supportsFileTransfer === true && !apps[app].storeCopies?.includes(stream.name);
   const importPath = importDirectory(directory, item);
   mkdirSync2(importPath, { recursive: true, mode: 448 });
   const destination = new SQLiteDestination({
-    path: join14(importPath, "data.sqlite")
+    path: join17(importPath, "data.sqlite")
   });
-  const files = new LocalFiles({ directory: join14(importPath, "files") });
+  const files = new LocalFiles({ directory: join17(importPath, "files") });
   {
     var _stack = [];
     try {
-      const data = __using(_stack, new DatabaseSync10(destination.path));
+      const data = __using(_stack, new DatabaseSync11(destination.path));
       data.exec(
         "CREATE TABLE IF NOT EXISTS _apple_catalog (name TEXT PRIMARY KEY, schema_json TEXT NOT NULL, coverage_json TEXT NOT NULL);"
       );
@@ -71417,7 +74070,7 @@ async function appConnection(directory, item) {
     source,
     destination,
     checkpoints: new SQLiteCheckpointStore({
-      path: join14(importPath, "checkpoints.sqlite")
+      path: join17(importPath, "checkpoints.sqlite")
     }),
     steps: streams4.map(
       (stream) => new Copy(
@@ -71441,7 +74094,7 @@ function lease(directory) {
   let database;
   try {
     mkdirSync3(directory, { recursive: true, mode: 448 });
-    database = new DatabaseSync11(join15(directory, "watch.sqlite"));
+    database = new DatabaseSync12(join18(directory, "watch.sqlite"));
     database.exec("BEGIN IMMEDIATE");
     return database;
   } catch {
@@ -71567,7 +74220,7 @@ async function watchImports(directory, configuration, signal) {
   } catch {
   }
 }
-function outdated(directory, id11, version3) {
+function outdated(directory, id12, version3) {
   const newer = (candidate) => {
     const [left, right] = [candidate, version3].map(
       (value) => value.split(".").map(Number)
@@ -71582,7 +74235,7 @@ function outdated(directory, id11, version3) {
     try {
       const settings = __using(_stack, new Settings(directory));
       const now = Date.now();
-      settings.heartbeat(id11, version3, now);
+      settings.heartbeat(id12, version3, now);
       return settings.runningVersions(now - 1e4).some(newer);
     } catch (_) {
       var _error = _, _hasError = true;
@@ -71593,11 +74246,11 @@ function outdated(directory, id11, version3) {
     return false;
   }
 }
-async function followSelection(directory, selection, id11, version3, changed, newer, signal) {
+async function followSelection(directory, selection, id12, version3, changed, newer, signal) {
   try {
-    for await (const _ of setInterval5(1e3, void 0, { signal }))
+    for await (const _ of setInterval6(1e3, void 0, { signal }))
       try {
-        if (outdated(directory, id11, version3)) newer.abort();
+        if (outdated(directory, id12, version3)) newer.abort();
         else if (JSON.stringify(readConfiguration(directory)) !== selection)
           changed.abort();
       } catch {
@@ -71605,9 +74258,9 @@ async function followSelection(directory, selection, id11, version3, changed, ne
   } catch {
   }
 }
-async function acquire(directory, id11, version3, signal) {
+async function acquire(directory, id12, version3, signal) {
   for (; ; ) {
-    if (!outdated(directory, id11, version3)) {
+    if (!outdated(directory, id12, version3)) {
       const held = lease(directory);
       if (held !== null) return held;
     }
@@ -71618,7 +74271,7 @@ async function acquire(directory, id11, version3, signal) {
     }
   }
 }
-async function lead(directory, id11, version3, signal) {
+async function lead(directory, id12, version3, signal) {
   const newer = new AbortController();
   const leading = AbortSignal.any([signal, newer.signal]);
   while (!leading.aborted) {
@@ -71630,7 +74283,7 @@ async function lead(directory, id11, version3, signal) {
       following = followSelection(
         directory,
         JSON.stringify(configuration),
-        id11,
+        id12,
         version3,
         changed,
         newer,
@@ -71648,15 +74301,15 @@ async function lead(directory, id11, version3, signal) {
   }
 }
 async function keepFresh(directory, signal, version3) {
-  const id11 = randomUUID2();
+  const id12 = randomUUID2();
   try {
     while (!signal.aborted) {
       var _stack = [];
       try {
-        const leader = await acquire(directory, id11, version3, signal);
+        const leader = await acquire(directory, id12, version3, signal);
         if (leader === null) return;
         const _lease = __using(_stack, leader);
-        await lead(directory, id11, version3, signal);
+        await lead(directory, id12, version3, signal);
       } catch (_) {
         var _error = _, _hasError = true;
       } finally {
@@ -71668,7 +74321,7 @@ async function keepFresh(directory, signal, version3) {
       var _stack2 = [];
       try {
         const settings = __using(_stack2, new Settings(directory));
-        settings.forgetServer(id11);
+        settings.forgetServer(id12);
       } catch (_2) {
         var _error2 = _2, _hasError2 = true;
       } finally {
@@ -71681,8 +74334,8 @@ async function keepFresh(directory, signal, version3) {
 
 // apps/apple/src/plugin/apple-plugin.ts
 var ApplePlugin = class {
-  constructor(directory = join16(
-    homedir6(),
+  constructor(directory = join19(
+    homedir7(),
     "Library/Application Support/Context Compiler/Apple"
   )) {
     this.directory = directory;
@@ -71698,11 +74351,11 @@ var ApplePlugin = class {
         configured: configuration !== null,
         apps: (configuration?.apps ?? []).map((item) => {
           const importPath = importDirectory(this.directory, item);
-          const database = join16(importPath, "data.sqlite");
+          const database = join19(importPath, "data.sqlite");
           const sync = settings.syncResult(importPath) ?? null;
           return {
             ...item,
-            database: existsSync(database) ? database : null,
+            database: existsSync2(database) ? database : null,
             sync: sync?.state === "running" && !leading ? { ...sync, state: "interrupted" } : sync,
             permissions: apps[item.app].permissions
           };
@@ -71744,11 +74397,11 @@ var ApplePlugin = class {
   async options(app) {
     const definition3 = apps[app];
     const source = definition3.source(definition3.defaultScope?.() ?? {});
-    const catalog7 = await source.discover();
+    const catalog8 = await source.discover();
     const choices = {};
     for await (const message3 of source.read(
       definition3.choices.map(
-        (choice) => new CopyConfiguration(catalog7.get(choice.stream), {
+        (choice) => new CopyConfiguration(catalog8.get(choice.stream), {
           syncMode: "full_refresh",
           destinationSyncMode: "overwrite"
         })
@@ -71910,7 +74563,7 @@ var midnight = (date5, days = 0) => {
   instant2.setDate(instant2.getDate() + days);
   return instant2.toISOString();
 };
-var capitalized = (text11) => `${text11.charAt(0).toUpperCase()}${text11.slice(1)}`;
+var capitalized = (text13) => `${text13.charAt(0).toUpperCase()}${text13.slice(1)}`;
 function scopeForm(app, rows, previous) {
   const definition3 = apps[app];
   const offered = definition3.choices.map((choice) => {
@@ -71920,12 +74573,12 @@ function scopeForm(app, rows, previous) {
     })).sort((left, right) => left.title.localeCompare(right.title));
     return { choice, options, ids: options.map((option) => option.const) };
   }).filter(({ ids: ids2 }) => ids2.length > 1);
-  const properties6 = {};
+  const properties29 = {};
   for (const { choice, options, ids: ids2 } of offered) {
     const earlier = previous?.scope[choice.scope]?.filter(
-      (id11) => ids2.includes(id11)
+      (id12) => ids2.includes(id12)
     );
-    properties6[choice.stream] = {
+    properties29[choice.stream] = {
       type: "array",
       title: capitalized(choice.stream),
       minItems: 1,
@@ -71938,14 +74591,14 @@ function scopeForm(app, rows, previous) {
     ...previous?.scope
   };
   if (definition3.datedBy !== null) {
-    properties6.from = {
+    properties29.from = {
       type: "string",
       format: "date",
       title: "From",
       description: `First day to include, by ${definition3.datedBy}. Leave empty to start at the earliest.`,
       ...startAt && { default: day(new Date(startAt)) }
     };
-    properties6.until = {
+    properties29.until = {
       type: "string",
       format: "date",
       title: "Until",
@@ -71953,7 +74606,7 @@ function scopeForm(app, rows, previous) {
       ...endAt && { default: day(new Date(Date.parse(endAt) - 1)) }
     };
   }
-  properties6.attachments = {
+  properties29.attachments = {
     type: "boolean",
     title: "Copy attachments",
     default: previous?.includeAttachments ?? true
@@ -71966,7 +74619,7 @@ function scopeForm(app, rows, previous) {
     ].filter(Boolean).join(" "),
     requestedSchema: {
       type: "object",
-      properties: properties6,
+      properties: properties29,
       required: offered.map(({ choice }) => choice.stream)
     }
   };
@@ -71974,7 +74627,7 @@ function scopeForm(app, rows, previous) {
     const scope = {};
     for (const { choice, ids: ids2 } of offered) {
       const chosen = answer[choice.stream];
-      if (ids2.some((id11) => !chosen.includes(id11))) scope[choice.scope] = chosen;
+      if (ids2.some((id12) => !chosen.includes(id12))) scope[choice.scope] = chosen;
     }
     if (typeof answer.from === "string" && answer.from)
       scope.startAt = midnight(answer.from);

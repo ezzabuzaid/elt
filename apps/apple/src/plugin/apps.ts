@@ -9,6 +9,7 @@ import {
 import { AppleMessagesSource } from '../sources/apple-messages/apple-messages-source.ts';
 import { AppleNotesSource } from '../sources/apple-notes/apple-notes-source.ts';
 import { AppleRemindersSource } from '../sources/apple-reminders/apple-reminders-source.ts';
+import { AppleSafariSource } from '../sources/apple-safari/apple-safari-source.ts';
 import type { ImportScope } from '../sources/import-scope.ts';
 
 export const appNames = [
@@ -18,6 +19,7 @@ export const appNames = [
   'contacts',
   'calendar',
   'reminders',
+  'safari',
 ] as const;
 export type App = (typeof appNames)[number];
 
@@ -174,5 +176,31 @@ export const apps: Record<App, AppDefinition> = {
     permissions:
       'Allow full Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.',
     source: (scope) => new AppleRemindersSource(scope),
+  },
+  safari: {
+    title: 'Safari',
+    choices: [
+      {
+        stream: 'profiles',
+        scope: 'collectionIds',
+        id: byId,
+        // Safari stores no name for the profile it starts with.
+        label: (row) => String(row.title ?? 'Default profile'),
+      },
+    ],
+    accounts: false,
+    datedBy: 'visit time',
+    permissions: `${fullDiskAccess} Open Safari to let it fetch history and tabs from your other devices.`,
+    note: 'Profiles select history, windows, tab groups, tabs, recently closed tabs and downloads. Dates select history visits, and the pages and topics those visits reach.',
+    // Bookmarks, the Reading List and iCloud Tabs belong to no profile or date.
+    unscoped: [
+      'bookmarks',
+      'readingListItems',
+      'cloudTabDevices',
+      'cloudTabs',
+      'cloudTabPositions',
+      'cloudTabCloseRequests',
+    ],
+    source: (scope) => new AppleSafariSource({ scope }),
   },
 };

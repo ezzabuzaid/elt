@@ -42,7 +42,7 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
     [[{ app: 'messages', scope: { accountIds: ['a'] } }], /account IDs/],
     [[{ app: 'notes', scope: { collectionIds: [] } }], /too small/i],
     [[{ app: 'notes' }, { app: 'notes' }], /once/],
-    [[{ app: 'safari' }], /app/],
+    [[{ app: 'photos' }], /app/],
   ] as const)
     assert.throws(() => plugin.configure({ apps }), message);
   assert.equal(plugin.status().configured, false);
@@ -188,6 +188,7 @@ test('the Settings page switches apps on and off and describes each import as Op
       contacts: false,
       calendar: false,
       reminders: false,
+      safari: false,
     },
   );
   const [kept, mail] = plugin.status().apps;

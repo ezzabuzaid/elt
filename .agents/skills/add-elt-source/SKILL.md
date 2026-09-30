@@ -32,6 +32,7 @@ Copy this checklist into your response and tick it off as you go:
   - **Apple Calendar**: bounded occurrence windows read in one helper process, related scalar streams, feature-detected private APIs (ICS, calendar descriptions).
   - **Apple Notes**: the upstream's own Core Data SQLite store read-only; one template-method class per stream (`AppleNotesStream`) over a per-run scan that decodes protobuf note bodies and tables once; original-path attachment files; a `data_version` watch that keeps the app running hidden.
   - **Apple Messages**: the upstream's own SQLite database read-only, one read context per run, composite keys, original-path attachment files.
+  - **Apple Safari**: several stores behind one source, SQLite databases and property lists; `open` reads only the stores the selected streams need, and a store that cannot be opened fails only its streams; per-profile databases listed by another store; array fields for lists of values.
   - **Google Search Console** (`apps/google`): REST through `google-auth`, a date cursor with restated facts (`dedupPolicy: 'replace'`), polling `observe()`, quota-bound per-item refetch.
 
 ## Probing

@@ -1029,6 +1029,101 @@ A live run then saved a temporary weekly event with a URL, a location and an ala
 
 That last run also rewrote 48 component rows of other items. Four later no-change passes, 15 seconds apart, wrote nothing, so this is attributed to concurrent calendar activity rather than to the export; the cause was not verified.
 
+## Apple Safari
+
+```ts
+import { Connection, Copy, Pipeline } from 'elt';
+import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
+import { AppleSafariSource } from './sources/apple-safari/apple-safari-source.ts';
+
+const source = new AppleSafariSource(); // ~/Library/Safari and Safari's container
+const destination = new SQLiteDestination({ path: './outputs/safari.sqlite' });
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'apple-safari',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({ path: './outputs/safari-state.sqlite' }),
+      steps: [source.historyVisits, source.tabs, source.bookmarks].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads Safari's own stores read-only; Safari need not be open. `npx nx run apple:start` loads every stream incrementally into the Postgres `apple_safari` schema, read as `marts.safari_<stream>`; a download still on disk is saved under `outputs/apple-safari-files` and referenced by `attachmentRef`. `new AppleSafariSource({ scope })` selects profiles through `collectionIds` and history visits through `startAt`/`endAt` (see Scope below).
+
+| Store | Where | Streams |
+| --- | --- | --- |
+| `History.db` (SQLite), one per profile | `~/Library/Safari` for the default profile; `Profiles/<serverId>` in the container for every other | `historyItems`, `historyVisits`, `historyTombstones`, `historyTags`, `historyItemTags` |
+| `SafariTabs.db` (SQLite) | `~/Library/Containers/com.apple.Safari/Data/Library/Safari` | `profiles`, `profileStartPageSections`, `windows`, `windowProfiles`, `windowTabGroups`, `tabGroups`, `tabs`, `tabHistoryEntries` |
+| `CloudTabs.db` (SQLite) | the container | `cloudTabDevices`, `cloudTabs`, `cloudTabPositions`, `cloudTabCloseRequests` |
+| `Bookmarks.plist` | `~/Library/Safari` | `bookmarks`, `readingListItems` |
+| `RecentlyClosedTabs.plist` | `~/Library/Safari` | `closedWindows`, `closedTabs`, `closedWindowActiveTabs` |
+| `Downloads.plist` | `~/Library/Safari` | `downloads` |
+
+A run opens only the stores its selected streams read, pins each database in one read transaction and reads each property list once. Stores are separate files, so streams of different stores need not agree, and a store that cannot be opened fails only its own streams: a missing or unreadable file raises `SafariUnavailableError` naming Full Disk Access, and a database without a column the connector reads raises `SafariSchemaError` naming the columns. A failure never reads as an empty store, which would delete every row. Streams of every store support full refresh and snapshot incremental (`append_dedup` on the stream's own key, no `cursorField`; see [snapshot streams](#snapshot-streams)).
+
+### Access
+
+Every store lives under folders macOS guards with [Full Disk Access](#full-disk-access); Safari has no public API, and its AppleScript dictionary reaches only open windows and tabs. The grant goes to the process running the export.
+
+### Profiles
+
+Safari 17 and later keep profiles in `SafariTabs.db`. A profile's `id` is its `external_uuid` and every `profileId` refers to it; the profile Safari starts with is `DefaultProfile` and has no stored title (Safari shows it as Personal once other profiles exist). Its `serverId` names the folder holding its data: the default profile's history is `~/Library/Safari/History.db`, another profile's `Profiles/<serverId>/History.db` in the container. History ids are local to one profile's database, so history streams key on `(profileId, id)` and joins between them must match `profileId` too.
+
+A tab or tab group belongs to the nearest profile folder above it; a group under the root folder belongs to the default profile; each window's own groups belong to the window's profile; a tab's page context names its profile when Safari recorded one. The pinned-tab folders belong to no profile.
+
+### Streams
+
+| Stream | Contents and relationships |
+| --- | --- |
+| `historyItems` | One URL per profile: visit count, ranking score, Safari's per-day and per-week ranking values (weighted, not raw counts; `bigint[]`), autocomplete triggers (`text[]`), last HTTP status. |
+| `historyVisits` | Each visit: `itemId`, time, title, load success, non-GET, synthesized, redirect source and destination visits, `origin` (0 this Mac, 1 another device through iCloud), sync generation, attribute mask, score. |
+| `historyTombstones` | Deletions Safari keeps to sync: a cleared range (an unbounded start reads NULL) and the removed URL, plain in `url` or, as Safari 27 stores it, encrypted in `encryptedUrl` (base64). |
+| `historyTags`, `historyItemTags` | Topics Safari derived from history (Wikidata item identifiers) and the items tagged with them. |
+| `profiles`, `profileStartPageSections` | Profiles with symbol, named color and components, own Favorites folder (`favoritesFolderServerId` → `bookmarks.serverId`), and the Start Page sections a profile customized. |
+| `windows`, `windowProfiles`, `windowTabGroups` | Saved windows with their profile, active, local and private groups, and window state (private, popup, minimized, selected tab, bars, sidebar, frame, unsubmitted address text); the profiles each window remembers; the groups a window holds or shows, with each group's active tab. |
+| `tabGroups` | Every tab folder with its `kind`: `named`, `unnamed` (synced groups of a profile's ordinary tabs), `local` and `private` (a window's own groups), `pinned`, `privatePinned`, `recentlyClosed`, `favorites` (a group's own Favorites), `device` (one device's unnamed groups), `special`. |
+| `tabs`, `tabHistoryEntries` | Open tabs, pinned tabs (with the address they return to) and group Favorites; titles and URLs synced and local, times, reader state, opener chain, page language, keywords with weights (`text[]`, `double precision[]`); each tab's back and forward list, oldest first, with the entry shown. |
+| `cloudTabDevices`, `cloudTabs`, `cloudTabPositions`, `cloudTabCloseRequests` | iCloud Tabs as Safari last fetched them: devices (name, model), their tabs, each tab's ordering values (a zlib-compressed JSON list), and pending requests to close a tab elsewhere. |
+| `bookmarks`, `readingListItems` | The bookmark tree (folders, bookmarks, proxies such as History; titles, descriptions typed or fetched, iCloud `serverId`) including the Reading List folder, and Reading List items (added, viewed, preview, image, offline fetch, added on this Mac). |
+| `closedWindows`, `closedTabs`, `closedWindowActiveTabs` | History › Recently Closed: windows with their state, tabs closed alone or with their window, and each closed window's active tab per group. |
+| `downloads` | The Downloads list: URL, saved path, profile, times, bytes, and the file when it is still at `path` (`availableLocally`). For an archive Safari opened on its own, `path` names the archive inside a `.download` folder that no longer exists and `openedPath` the first extracted file; the extracted files move next to it, so no file loads. |
+
+Left out: iCloud sync bookkeeping (`history_events`, `history_event_listeners`, `history_client_versions`, `metadata`, `generations`, `sync_*` tables, CloudKit `system_fields` and `Sync.Data`), derived indexes (`bookmark_title_words`, `folder_ancestors`), WebKit and AppKit state (`SessionHistoryEntryData` form and scroll state, `WindowRestorationArchiveData`, `restoration_archive`), icon caches, AutoFill, form values and passwords, per-site preferences and permissions, and extensions.
+
+### Scope
+
+`collectionIds` names profiles: it selects history, profiles, windows, tab groups, tabs, recently closed windows and tabs, and downloads. Dates select history visits, and the history items, tag links and tags those visits reach; tombstones and everything else load whole. Bookmarks, the Reading List and iCloud Tabs belong to no profile and load whole; the Apple plugin leaves them out of a scoped import.
+
+### Changes and deletions
+
+Every stream diffs a whole read of its store against the previous one. Safari's own change records cannot replace that: it expires visits older than its history setting without a tombstone. When Safari launched on 2026-09-30 it removed every visit older than a year (the oldest moved from 2025-08-21 to 2025-09-30) and wrote no tombstone. A watch polls each database's `data_version` (including a profile's `History.db` created while watching) and each property list's inode, size and modification time every second, and wakes only the streams of the store that changed. It never launches Safari: history from other devices and iCloud Tabs arrive only while Safari runs.
+
+### Safari export probe
+
+Checked live on 2026-09-30 against macOS 27.0 (26A428) and Safari 27.0 by driving Safari, then removing every probe object and confirming each removal with a fresh load:
+
+- `origin`: a visit on this Mac stayed 0 after Safari uploaded it (sync generation 1635); 736 visits synced from an iPhone arrived as 1. Launching Safari after five weeks fetched only the last two weeks of the iPhone's history.
+- A second profile wrote its visit to `Profiles/<serverId>/History.db`, not the default `History.db`; its tabs named the profile by `external_uuid`. Deleting the profile (Safari asks to "stop using Profiles" when it is the last extra one) removed its folder, rows and Favorites folder; the next load deleted its history, tabs and groups.
+- Deleting a history item wrote a tombstone with an unbounded start and an encrypted 208-byte URL; each of six deletions wrote one, and the next load deleted the visits and items.
+- A bookmark saved with a description stored it as `previewText` with `previewTextIsUserDefined`. New Reading List items reached `Bookmarks.plist` only minutes later, at Safari's next write; removing them and the bookmark deleted their rows.
+- Pinning a tab moved it under the `pinned` folder; a new named tab group sat under the root folder with its own `TopScopedBookmarkList` Favorites.
+- A plain download recorded its final path; an archive Safari opened on its own recorded paths inside a removed `.download` folder. Clearing the Downloads list emptied `Downloads.plist` and deleted the rows.
+- Safari keeps the previous session's windows and tabs in `SafariTabs.db` until the next session replaces them.
+- A second load with no changes, with Safari running, wrote nothing.
+
+Unverified: a tombstone for a cleared time range without a URL (clearing a range would erase the user's real history), iCloud Tabs close requests (making one closes a real tab on another device), and shared tab groups (they need a second iCloud account).
+
 ## Google Search Console
 
 `SearchConsoleSource` reads one property through the `searchconsole:v1` API. `sites`, `sitemaps` and `searchAnalytics` are served under the original `webmasters/v3` path prefix; URL inspection is served from `v1` on the same host.
