@@ -16,6 +16,8 @@ When asked why a notion exists, name the requirement it serves, not the code tha
 
 When a live probe finds no instance of a feature, widen it before concluding: scan the full history, not a sample window, and use any earlier evidence that the data exists. Mark behavior unverified only when the environment genuinely cannot produce it, and say what blocked it.
 
+Drive the app yourself before listing manual steps: open URLs, click menus and rows through System Events, and post real mouse events (Quartz `CGEventPost`) where accessibility clicks do not land, as in SwiftUI lists. Hand the user only what macOS reserves for them, such as a privacy prompt, and then as one step.
+
 ## Place each job with whoever can know it
 
 Before proposing where a fix lives, split the requirement into its jobs and name, for each, who can actually know it: the source, the elt engine, the destination, the plugin server, or the agent. A job belongs to that owner. A slow Mail answer, for example, split into three jobs: whether a message changed (only the Mail source knows), turning changes into upserts and deletions (a shared elt helper the source calls), and when to refresh (the source's `observe()`, run by the plugin server, not a skill telling the agent to sync).
