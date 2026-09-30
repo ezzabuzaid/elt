@@ -34,7 +34,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
 
 ## Report the result
 
-Report connected apps, scope, last successful sync and any per-app failures. A partial sync is incomplete data. Explain that content is stored locally on their Mac and passed to Codex when used to answer their requests. The plugin keeps the copy current while Codex is open, following changes in each app, and catches up the next time Codex opens; nothing runs after Codex closes. With Notes connected, it keeps Notes running hidden while Codex is open, because only Notes syncs iCloud notes to the Mac. Setup can be run again to change apps or scope.
+Report connected apps, scope, last successful sync and any per-app failures. A partial sync is incomplete data. Explain that content is stored locally on their Mac and passed to Codex when used to answer their requests. The plugin keeps the copy current while Codex is open, following changes in each app, and catches up the next time Codex opens; nothing runs after Codex closes. With Notes connected, it keeps Notes running hidden while Codex is open, because only Notes syncs iCloud notes to the Mac. Apps can be switched on or off any time under Plugins › Apple › Settings, which also shows each app's sync status; a switched-on app imports everything. Run setup again to choose accounts, folders, dates or attachments.
 
 ## Gotchas
 

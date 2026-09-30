@@ -6,8 +6,14 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import {
+  OpenAISettingsReadResultSchema,
+  OpenAISettingsUpdateResultSchema,
+} from '@openai/mcp-extensions/server';
 import { ApplePlugin } from './plugin/apple-plugin.ts';
+import { apps } from './plugin/apps.ts';
 import { keepFresh, leaderRunning } from './plugin/freshness.ts';
+import { settingsRead, settingsUpdate } from './plugin/native-settings.ts';
 import { importDirectory, Settings } from './plugin/settings.ts';
 
 // Stands in for the leading server's import of one app selection.
@@ -109,4 +115,90 @@ test('the leading server keeps leading when its settings cannot be read, and let
   }
   await running;
   assert.equal(leaderRunning(scratch.path), false);
+});
+
+test('the Settings page switches apps on and off and describes each import as OpenAI’s settings schema requires', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = new ApplePlugin(scratch.path);
+  const described = () => {
+    const result = settingsRead(plugin);
+    OpenAISettingsReadResultSchema.parse(result);
+    return Object.fromEntries(
+      Object.entries(result.schema.properties).map(([app, field]) => [
+        app,
+        field.description,
+      ]),
+    );
+  };
+  assert.equal(described().notes, 'Not connected.');
+
+  const notes = {
+    app: 'notes' as const,
+    scope: { collectionIds: ['FOLDER-NOTES'] },
+    includeAttachments: true,
+  };
+  plugin.configure({ apps: [notes] });
+  assert.equal(described().notes, 'Waiting to import.');
+  const importPath = importDirectory(scratch.path, notes);
+  const record = (result: Parameters<Settings['saveSyncResult']>[1]) => {
+    using settings = new Settings(scratch.path);
+    settings.saveSyncResult(importPath, result);
+  };
+  record({
+    state: 'succeeded',
+    startedAt: new Date(Date.now() - 180_000).toISOString(),
+    finishedAt: new Date(Date.now() - 120_000).toISOString(),
+  });
+  assert.equal(described().notes, 'Synced 2 minutes ago · 1 folder.');
+  // The recorded error ends with the app's permissions guidance; the page
+  // shows it once.
+  record({
+    state: 'failed',
+    startedAt: new Date().toISOString(),
+    error: `Notes could not be opened. ${apps.notes.permissions}`,
+  });
+  assert.equal(
+    described().notes,
+    `Last sync failed: Notes could not be opened. ${apps.notes.permissions}`,
+  );
+  record({ state: 'running', startedAt: new Date().toISOString() });
+  assert.equal(
+    described().notes,
+    'Paused: resumes the next time Codex runs the Apple plugin.',
+  );
+  {
+    using lease = new DatabaseSync(join(scratch.path, 'watch.sqlite'));
+    lease.exec('BEGIN IMMEDIATE');
+    assert.match(described().notes ?? '', /^Importing since /);
+  }
+
+  // Switching Mail on keeps Notes as it was chosen; switching Notes off
+  // disconnects it and removes its import.
+  imported(scratch.path, notes);
+  assert.deepEqual(
+    OpenAISettingsUpdateResultSchema.parse(
+      settingsUpdate(plugin, { mail: true }),
+    ).values,
+    {
+      mail: true,
+      notes: true,
+      messages: false,
+      contacts: false,
+      calendar: false,
+      reminders: false,
+    },
+  );
+  const [kept, mail] = plugin.status().apps;
+  assert.deepEqual(kept?.scope, notes.scope);
+  assert.deepEqual(mail?.scope, {});
+  assert.equal(mail?.includeAttachments, true);
+  assert.equal(described().mail, 'Waiting to import.');
+  settingsUpdate(plugin, { notes: false });
+  assert.deepEqual(
+    plugin.status().apps.map(({ app }) => app),
+    ['mail'],
+  );
+  assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
 });

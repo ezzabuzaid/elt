@@ -18,6 +18,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  OpenAISettingsCapabilitySchema,
+  OpenAISettingsReadResultSchema,
+  OpenAISettingsUpdateResultSchema,
+} from '@openai/mcp-extensions/server';
 import { noteStoreFixture } from './fixtures/notes-store.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
@@ -179,10 +184,19 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       [
         'apple_configure',
         'apple_options',
+        'apple_settings_read',
+        'apple_settings_update',
         'apple_setup',
         'apple_status',
         'apple_sync',
       ],
+    );
+    // The plugin page's native Settings section names two of those tools.
+    assert.deepEqual(
+      OpenAISettingsCapabilitySchema.parse(
+        client.getServerCapabilities()?.experimental?.['openai/settings'],
+      ),
+      { readTool: 'apple_settings_read', updateTool: 'apple_settings_update' },
     );
     assert.equal((await invoke(client, 'apple_status')).configured, false);
     assert.deepEqual((await call(client, 'apple_sync', {})).content, [
@@ -221,6 +235,18 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
         `.parameter set @title "'Groceries'"`,
       ).rows,
       [{ id: 'NOTE-RICH' }],
+    );
+    const settings = OpenAISettingsReadResultSchema.parse(
+      (await call(client, 'apple_settings_read', {})).structuredContent,
+    );
+    assert.equal(settings.values.notes, true);
+    assert.equal(settings.values.mail, false);
+    const notesSetting = settings.schema.properties?.notes as
+      | { description?: string }
+      | undefined;
+    assert.match(
+      String(notesSetting?.description),
+      /^Synced (just now|\d+ seconds? ago) · everything\.$/,
     );
     const write = read(synced.database, 'DELETE FROM notes;');
     assert.match(write.stderr, /readonly/);
@@ -273,6 +299,22 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     await transport.close();
     retitle('Groceries (after handoff)');
     await imported(other, 'Groceries (after handoff)');
+
+    // Switching Notes off on the Settings page disconnects it and deletes
+    // its import; Messages stays selected.
+    const switched = OpenAISettingsUpdateResultSchema.parse(
+      (await call(other, 'apple_settings_update', { set: { notes: false } }))
+        .structuredContent,
+    );
+    assert.equal(switched.values.notes, false);
+    assert.equal(switched.values.messages, true);
+    assert.equal(existsSync(synced.database), false);
+    assert.deepEqual(
+      (await invoke(other, 'apple_status')).apps.map(
+        ({ app }: { app: string }) => app,
+      ),
+      ['messages'],
+    );
   } finally {
     await client.close();
     await transport.close();

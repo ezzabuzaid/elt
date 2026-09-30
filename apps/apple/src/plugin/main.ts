@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ApplePlugin } from './apple-plugin.ts';
 import { appNames } from './apps.ts';
 import { keepFresh } from './freshness.ts';
+import { settingsRead, settingsUpdate } from './native-settings.ts';
 import { appSchema, configurationSchema } from './settings.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
@@ -11,7 +12,7 @@ if (process.platform !== 'darwin')
   throw new Error('Apple requires Codex on a Mac.');
 
 const plugin = new ApplePlugin();
-const server = new McpServer({ name: 'apple', version: '0.3.0' });
+const server = new McpServer({ name: 'apple', version: '0.4.0' });
 // McpServer turns a thrown error into an isError result.
 const json = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -97,6 +98,87 @@ server.registerTool(
   },
   async ({ apps }) => json(await plugin.sync(apps)),
 );
+
+// The plugin page's Settings section: a switch per app, described by its
+// import status (the openai/settings extension; ChatGPT calls both tools).
+const switches = z.strictObject(
+  Object.fromEntries(appNames.map((app) => [app, z.boolean()])) as Record<
+    (typeof appNames)[number],
+    z.ZodBoolean
+  >,
+);
+server.registerTool(
+  'apple_settings_read',
+  {
+    description:
+      'Read which Apple apps are connected and each one’s import status, for the plugin’s Settings page. Does not read Apple app content.',
+    inputSchema: {},
+    outputSchema: {
+      schema: z.strictObject({
+        type: z.literal('object'),
+        properties: z.record(
+          z.string(),
+          z.strictObject({
+            type: z.literal('boolean'),
+            title: z.string(),
+            description: z.string(),
+          }),
+        ),
+      }),
+      values: switches,
+      layout: z.array(
+        z.strictObject({
+          kind: z.literal('group'),
+          title: z.string(),
+          items: z.array(
+            z.strictObject({
+              kind: z.literal('property'),
+              property: z.string(),
+            }),
+          ),
+        }),
+      ),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
+  },
+  () => {
+    const result = settingsRead(plugin);
+    return { content: [], structuredContent: result };
+  },
+);
+server.registerTool(
+  'apple_settings_update',
+  {
+    description:
+      'Connect or disconnect Apple apps from the plugin’s Settings page. A connected app imports everything by default; a disconnected app’s imported copy is deleted. Other apps keep their scope.',
+    inputSchema: {
+      set: switches.partial().meta({ minProperties: 1 }),
+    },
+    outputSchema: { values: switches },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  ({ set }) => {
+    if (Object.keys(set).length === 0) throw new Error('Set at least one app.');
+    return { content: [], structuredContent: settingsUpdate(plugin, set) };
+  },
+);
+server.server.registerCapabilities({
+  experimental: {
+    'openai/settings': {
+      readTool: 'apple_settings_read',
+      updateTool: 'apple_settings_update',
+    },
+  },
+});
 
 // Keeps the imports current until Codex closes this server.
 const stopping = new AbortController();

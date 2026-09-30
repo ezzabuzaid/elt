@@ -3925,49 +3925,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative3, options, skipNormalization) {
+    function resolveComponent(base, relative4, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse3(serialize(base, options), options);
-        relative3 = parse3(serialize(relative3, options), options);
+        relative4 = parse3(serialize(relative4, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative3.scheme) {
-        target.scheme = relative3.scheme;
-        target.userinfo = relative3.userinfo;
-        target.host = relative3.host;
-        target.port = relative3.port;
-        target.path = removeDotSegments(relative3.path || "");
-        target.query = relative3.query;
+      if (!options.tolerant && relative4.scheme) {
+        target.scheme = relative4.scheme;
+        target.userinfo = relative4.userinfo;
+        target.host = relative4.host;
+        target.port = relative4.port;
+        target.path = removeDotSegments(relative4.path || "");
+        target.query = relative4.query;
       } else {
-        if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
-          target.userinfo = relative3.userinfo;
-          target.host = relative3.host;
-          target.port = relative3.port;
-          target.path = removeDotSegments(relative3.path || "");
-          target.query = relative3.query;
+        if (relative4.userinfo !== void 0 || relative4.host !== void 0 || relative4.port !== void 0) {
+          target.userinfo = relative4.userinfo;
+          target.host = relative4.host;
+          target.port = relative4.port;
+          target.path = removeDotSegments(relative4.path || "");
+          target.query = relative4.query;
         } else {
-          if (!relative3.path) {
+          if (!relative4.path) {
             target.path = base.path;
-            if (relative3.query !== void 0) {
-              target.query = relative3.query;
+            if (relative4.query !== void 0) {
+              target.query = relative4.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative3.path[0] === "/") {
-              target.path = removeDotSegments(relative3.path);
+            if (relative4.path[0] === "/") {
+              target.path = removeDotSegments(relative4.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative3.path;
+                target.path = "/" + relative4.path;
               } else if (!base.path) {
-                target.path = relative3.path;
+                target.path = relative4.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative4.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative3.query;
+            target.query = relative4.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3975,7 +3975,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative3.fragment;
+      target.fragment = relative4.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -63221,7 +63221,7 @@ var Pipeline = class {
     let wake = Promise.withResolvers();
     let finished = false;
     let failed = false;
-    let failure3;
+    let failure4;
     const receive = (async () => {
       let initial = true;
       try {
@@ -63245,7 +63245,7 @@ var Pipeline = class {
       } catch (error62) {
         if (!(watching.aborted && error62 instanceof Error && error62.name === "AbortError")) {
           failed = true;
-          failure3 = error62;
+          failure4 = error62;
         }
       } finally {
         finished = true;
@@ -63255,7 +63255,7 @@ var Pipeline = class {
     try {
       while (!watching.aborted) {
         if (failed)
-          throw failure3;
+          throw failure4;
         if (pending.size === 0) {
           if (finished)
             return;
@@ -63268,7 +63268,7 @@ var Pipeline = class {
         yield await this.#pass(connection, steps);
       }
       if (failed)
-        throw failure3;
+        throw failure4;
     } catch (error62) {
       stopped.push(connectionError(connection, error62));
       await this.#recordFailure(connection, error62).catch((cause) => stopped.push(connectionError(connection, cause)));
@@ -63881,9 +63881,9 @@ function decodeClass(className, value, resolve4) {
     case "NSDate":
       return new Date(appleEpoch + Number(value["NS.time"]) * 1e3);
     case "NSURL": {
-      const relative3 = String(resolve4(value["NS.relative"] ?? null));
+      const relative4 = String(resolve4(value["NS.relative"] ?? null));
       const base = resolve4(value["NS.base"] ?? null);
-      return typeof base === "string" ? new URL(relative3, base).href : relative3;
+      return typeof base === "string" ? new URL(relative4, base).href : relative4;
     }
     case "NSUUID": {
       const hex3 = Buffer.from(value["NS.uuidbytes"]).toString(
@@ -64117,9 +64117,9 @@ var NativeProcess = class {
     try {
       if (signal.aborted) return;
       const child = spawn(file2, args, { stdio: ["ignore", "pipe", "pipe"] });
-      let failure3;
+      let failure4;
       child.on("error", (error62) => {
-        failure3 = error62;
+        failure4 = error62;
       });
       const closed = new Promise(
         (resolve4) => child.once("close", () => resolve4())
@@ -64135,7 +64135,7 @@ var NativeProcess = class {
       try {
         for await (const line of lines) yield line;
         await closed;
-        if (failure3) throw failure3;
+        if (failure4) throw failure4;
         if (!signal.aborted && child.exitCode !== 0)
           throw Object.assign(new Error(`${file2} exited: ${stderr.trim()}`), {
             stderr,
@@ -64223,13 +64223,13 @@ var EventKit = class {
     const controller = new AbortController();
     const changes = this.watch(controller.signal)[Symbol.asyncIterator]();
     let count = 0;
-    let failure3;
+    let failure4;
     await changes.next();
     const counting = (async () => {
       try {
         while (!(await changes.next()).done) count++;
       } catch (error62) {
-        if (!controller.signal.aborted) failure3 = { error: error62 };
+        if (!controller.signal.aborted) failure4 = { error: error62 };
       }
     })();
     try {
@@ -64237,7 +64237,7 @@ var EventKit = class {
         const before = count;
         const value = await read();
         await sleep(settleMs);
-        if (failure3 !== void 0) throw failure3.error;
+        if (failure4 !== void 0) throw failure4.error;
         if (count === before) return value;
       }
       throw new EventKitChangingError(this.entity, attempts);
@@ -68045,19 +68045,19 @@ var AppleMailSource = class extends Source {
       const version2 = database.prepare("PRAGMA data_version");
       let seen = version2.get()?.data_version;
       let changed = false;
-      let failure3 = null;
+      let failure4 = null;
       const resources = __using(_stack, new DisposableStack());
       const watcher = watch(this.path, { recursive: true, signal }, () => {
         changed = true;
       });
       resources.defer(() => watcher.close());
       watcher.on("error", (error62) => {
-        failure3 = error62;
+        failure4 = error62;
       });
       yield selected2;
       try {
         for await (const _2 of setInterval2(1e3, void 0, { signal })) {
-          if (failure3 !== null) throw failure3;
+          if (failure4 !== null) throw failure4;
           const current = version2.get()?.data_version;
           if (!changed && current === seen) continue;
           changed = false;
@@ -71677,6 +71677,111 @@ var ApplePlugin = class {
   }
 };
 
+// apps/apple/src/plugin/native-settings.ts
+var relative3 = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+function ago(instant2, now) {
+  const seconds = Math.round((Date.parse(instant2) - now.getTime()) / 1e3);
+  for (const [unit, size] of [
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60]
+  ])
+    if (Math.abs(seconds) >= size)
+      return relative3.format(Math.round(seconds / size), unit);
+  return "just now";
+}
+function coverage({ app, scope }) {
+  const parts = [];
+  if (scope.accountIds !== void 0)
+    parts.push(
+      `${scope.accountIds.length} account${scope.accountIds.length === 1 ? "" : "s"}`
+    );
+  const collection = apps[app].choices.find(
+    ({ scope: kind }) => kind === "collectionIds"
+  )?.stream;
+  if (scope.collectionIds !== void 0 && collection !== void 0)
+    parts.push(
+      `${scope.collectionIds.length} ${scope.collectionIds.length === 1 ? collection.replace(/(x)es$|s$/, "$1") : collection}`
+    );
+  if (scope.startAt !== void 0)
+    parts.push(`from ${scope.startAt.slice(0, 10)}`);
+  if (scope.endAt !== void 0)
+    parts.push(
+      `until ${new Date(Date.parse(scope.endAt) - 1).toISOString().slice(0, 10)}`
+    );
+  return parts.length === 0 ? "everything" : parts.join(", ");
+}
+function failure3(app, error62) {
+  const { permissions } = apps[app];
+  const cause = (error62 ?? "unknown error").replace(permissions, "").trim();
+  return `${cause} ${permissions}`;
+}
+function describe3(item, now) {
+  const { sync } = item;
+  if (sync === null) return "Waiting to import.";
+  switch (sync.state) {
+    case "running":
+      return `Importing since ${new Date(sync.startedAt).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" })}.`;
+    case "interrupted":
+      return "Paused: resumes the next time Codex runs the Apple plugin.";
+    case "succeeded":
+      return `Synced ${ago(sync.finishedAt ?? sync.startedAt, now)} \xB7 ${coverage(item)}.`;
+    case "partial":
+      return `Partly synced ${ago(sync.finishedAt ?? sync.startedAt, now)}: ${failure3(item.app, sync.error)}`;
+    case "failed":
+      return `Last sync failed: ${failure3(item.app, sync.error)}`;
+  }
+}
+function settingsRead(plugin2, now = /* @__PURE__ */ new Date()) {
+  const connected = new Map(
+    plugin2.status().apps.map((item) => [item.app, item])
+  );
+  return {
+    schema: {
+      type: "object",
+      properties: Object.fromEntries(
+        appNames.map((app) => {
+          const item = connected.get(app);
+          return [
+            app,
+            {
+              type: "boolean",
+              title: apps[app].title,
+              description: item === void 0 ? "Not connected." : describe3(item, now)
+            }
+          ];
+        })
+      )
+    },
+    values: Object.fromEntries(
+      appNames.map((app) => [app, connected.has(app)])
+    ),
+    layout: [
+      {
+        kind: "group",
+        title: "Apps",
+        items: appNames.map((app) => ({
+          kind: "property",
+          property: app
+        }))
+      }
+    ]
+  };
+}
+function settingsUpdate(plugin2, set2) {
+  const current = plugin2.status().apps;
+  const kept = current.filter(({ app }) => set2[app] !== false).map(({ app, scope, includeAttachments }) => ({
+    app,
+    scope,
+    includeAttachments
+  }));
+  const added = appNames.filter(
+    (app) => set2[app] === true && !current.some((item) => item.app === app)
+  ).map((app) => ({ app }));
+  plugin2.configure({ apps: [...kept, ...added] });
+  return { values: settingsRead(plugin2).values };
+}
+
 // apps/apple/src/plugin/setup-forms.ts
 var pad = (value) => String(value).padStart(2, "0");
 var day = (instant2) => `${instant2.getFullYear()}-${pad(instant2.getMonth() + 1)}-${pad(instant2.getDate())}`;
@@ -71827,7 +71932,7 @@ async function setUpWithForms(plugin2, ask) {
 if (process.platform !== "darwin")
   throw new Error("Apple requires Codex on a Mac.");
 var plugin = new ApplePlugin();
-var server = new McpServer({ name: "apple", version: "0.3.0" });
+var server = new McpServer({ name: "apple", version: "0.4.0" });
 var json2 = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }]
 });
@@ -71906,6 +72011,79 @@ server.registerTool(
   },
   async ({ apps: apps2 }) => json2(await plugin.sync(apps2))
 );
+var switches = external_exports.strictObject(
+  Object.fromEntries(appNames.map((app) => [app, external_exports.boolean()]))
+);
+server.registerTool(
+  "apple_settings_read",
+  {
+    description: "Read which Apple apps are connected and each one\u2019s import status, for the plugin\u2019s Settings page. Does not read Apple app content.",
+    inputSchema: {},
+    outputSchema: {
+      schema: external_exports.strictObject({
+        type: external_exports.literal("object"),
+        properties: external_exports.record(
+          external_exports.string(),
+          external_exports.strictObject({
+            type: external_exports.literal("boolean"),
+            title: external_exports.string(),
+            description: external_exports.string()
+          })
+        )
+      }),
+      values: switches,
+      layout: external_exports.array(
+        external_exports.strictObject({
+          kind: external_exports.literal("group"),
+          title: external_exports.string(),
+          items: external_exports.array(
+            external_exports.strictObject({
+              kind: external_exports.literal("property"),
+              property: external_exports.string()
+            })
+          )
+        })
+      )
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false
+    }
+  },
+  () => {
+    const result = settingsRead(plugin);
+    return { content: [], structuredContent: result };
+  }
+);
+server.registerTool(
+  "apple_settings_update",
+  {
+    description: "Connect or disconnect Apple apps from the plugin\u2019s Settings page. A connected app imports everything by default; a disconnected app\u2019s imported copy is deleted. Other apps keep their scope.",
+    inputSchema: {
+      set: switches.partial().meta({ minProperties: 1 })
+    },
+    outputSchema: { values: switches },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  ({ set: set2 }) => {
+    if (Object.keys(set2).length === 0) throw new Error("Set at least one app.");
+    return { content: [], structuredContent: settingsUpdate(plugin, set2) };
+  }
+);
+server.server.registerCapabilities({
+  experimental: {
+    "openai/settings": {
+      readTool: "apple_settings_read",
+      updateTool: "apple_settings_update"
+    }
+  }
+});
 var stopping = new AbortController();
 server.server.onclose = () => stopping.abort();
 process.stdin.once("end", () => stopping.abort());
