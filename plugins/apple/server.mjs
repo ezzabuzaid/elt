@@ -65882,7 +65882,7 @@ var definitions = {
     ["id"]
   ),
   groups: definition(
-    "One row per group record: an ABCDGroup, ABCDSubscribedGroup or ABCDSmartGroup, told apart by kind. Primary key id; containerId refers to containers.id. Stored members are in groupMembers, stored nesting in groupSubgroups and distribution-list configuration rows in distributionListConfigs.",
+    "One row per group record: an ABCDGroup, ABCDSubscribedGroup or ABCDSmartGroup, told apart by kind. Primary key id; containerId refers to containers.id. Stored members are in groupMembers, stored nesting in groupSubgroups and per-member address choices in distributionListConfigs.",
     explained(
       {
         id: [id3, "g.ZUNIQUEID"],
@@ -65971,9 +65971,9 @@ var definitions = {
     "ZABCDNOTE n JOIN ZABCDRECORD c ON c.Z_PK = n.ZCONTACT",
     ["contactId"]
   ),
-  // Date components owned by a contact, presumably CNContact.nonGregorianBirthday.
+  // The non-Gregorian birthday (CNContact.nonGregorianBirthday).
   alternateBirthdays: definition(
-    "One row per date components record owned by a contact in the AddressBook table ZABCDDATECOMPONENTS, presumed to be the contact's non-Gregorian birthday; not verified. Primary key contactId, which refers to contacts.id; one record per contact is assumed, since the store does not enforce it. Components stay in the calendar named by calendarIdentifier and are not converted, so they do not compare with the contact's Gregorian birthdayYear, birthdayMonth and birthdayDay.",
+    "One row per contact with a non-Gregorian birthday (CNContact.nonGregorianBirthday, which a live store saves here), as date components in the AddressBook table ZABCDDATECOMPONENTS. Primary key contactId, which refers to contacts.id; one record per contact is assumed, since the store does not enforce it. Components stay in the calendar named by calendarIdentifier and are not converted, so they do not compare with the contact's Gregorian birthdayYear, birthdayMonth and birthdayDay.",
     explained(
       {
         contactId: [id3, "c.ZUNIQUEID"],
@@ -66187,7 +66187,7 @@ var definitions = {
   ),
   // The address a distribution list (group) uses for each member.
   distributionListConfigs: definition(
-    "One row per record in the AddressBook table ZABCDDISTRIBUTIONLISTCONFIG, which references a group, a contact and optionally an email address, phone number or postal address record; what the record means is not documented by Apple. Primary key (groupId, contactId, propertyName), assumed unique since the store does not enforce it. emailId, phoneId and addressId refer to emailAddresses.id, phoneNumbers.id and postalAddresses.id within this source.",
+    "One row per distribution-list choice in the AddressBook table ZABCDDISTRIBUTIONLISTCONFIG: which of member contactId's email addresses, phone numbers or postal addresses group groupId uses for that member, as set by Contacts' Edit Distribution List (ABGroup setDistributionIdentifier:forProperty:person:, which a live store saves here). A member without a row uses its default value. Primary key (groupId, contactId, propertyName), assumed unique since the store does not enforce it. emailId, phoneId and addressId refer to emailAddresses.id, phoneNumbers.id and postalAddresses.id within this source.",
     explained(
       {
         groupId: [id3, "g.ZUNIQUEID"],
@@ -66200,10 +66200,10 @@ var definitions = {
       {
         groupId: "Group identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDISTRIBUTIONLISTCONFIG.ZGROUP); refers to groups.id within this source.",
         contactId: "Member contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDISTRIBUTIONLISTCONFIG.ZCONTACT); refers to contacts.id within this source.",
-        propertyName: `Property name as stored in AddressBook ZABCDDISTRIBUTIONLISTCONFIG.ZPROPERTYNAME; part of the key. ${unverified}`,
-        emailId: "Email address record referenced by ZABCDDISTRIBUTIONLISTCONFIG.ZEMAIL, resolved to that ZABCDEMAILADDRESS record's ZUNIQUEID. Join to emailAddresses.id within this source. NULL when unset or no record matches.",
-        phoneId: "Phone number record referenced by ZABCDDISTRIBUTIONLISTCONFIG.ZPHONE, resolved to that ZABCDPHONENUMBER record's ZUNIQUEID. Join to phoneNumbers.id within this source. NULL when unset or no record matches.",
-        addressId: "Postal address record referenced by ZABCDDISTRIBUTIONLISTCONFIG.ZADDRESS, resolved to that ZABCDPOSTALADDRESS record's ZUNIQUEID. Join to postalAddresses.id within this source. NULL when unset or no record matches."
+        propertyName: "The contact property the choice is for, as stored in AddressBook ZABCDDISTRIBUTIONLISTCONFIG.ZPROPERTYNAME (Email for an email address choice, as a live store shows); part of the key. Other values are not verified.",
+        emailId: "Chosen email address: the record ZABCDDISTRIBUTIONLISTCONFIG.ZEMAIL references, resolved to that ZABCDEMAILADDRESS record's ZUNIQUEID. Join to emailAddresses.id within this source. NULL when unset or no record matches.",
+        phoneId: "Chosen phone number: the record ZABCDDISTRIBUTIONLISTCONFIG.ZPHONE references, resolved to that ZABCDPHONENUMBER record's ZUNIQUEID. Join to phoneNumbers.id within this source. NULL when unset or no record matches.",
+        addressId: "Chosen postal address: the record ZABCDDISTRIBUTIONLISTCONFIG.ZADDRESS references, resolved to that ZABCDPOSTALADDRESS record's ZUNIQUEID. Join to postalAddresses.id within this source. NULL when unset or no record matches."
       }
     ),
     "ZABCDDISTRIBUTIONLISTCONFIG d JOIN ZABCDRECORD g ON g.Z_PK = d.ZGROUP JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT",
