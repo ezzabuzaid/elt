@@ -354,7 +354,7 @@ The shared transfer saves files before applying records and commits database row
 
 Files and database rows do not share a transaction. A failed save prevents its rows and checkpoint from advancing. A cleanup failure after a database commit preserves that committed data but prevents the checkpoint from advancing; replay is safe. A failed database write or interrupted run can leave unreferenced files; the next run reconciles them before extraction using the current committed references. Missing referenced files, non-file references and invalid managed directories fail explicitly. Keep these generated files intact until clearing and rebuilding their copy.
 
-For another storage backend, implement the exported `FileStorage` contract: a stable `identity`, `save(scope, FileContent)` returning a durable, immutable, repeatable text reference, and `retain(scope, references)` removing only that scope's unreferenced objects. Identity participates in the copy's checkpoint binding. The transfer treats references as opaque strings, so a future S3 store can return its own reference format without changing database destinations. Only `LocalFiles` is supplied today. Reconciliation scans retained references and the scoped directory at each commit; it does not maintain a separate object index.
+For another storage backend, implement the exported `FileStorage` contract: a stable `identity`, a `reference` sentence telling readers what a saved reference is (Postgres writes it as the reference column's comment), `save(scope, FileContent)` returning a durable, immutable, repeatable text reference, and `retain(scope, references)` removing only that scope's unreferenced objects. Identity participates in the copy's checkpoint binding. The transfer treats references as opaque strings, so a future S3 store can return its own reference format without changing database destinations. Only `LocalFiles` is supplied today. Reconciliation scans retained references and the scoped directory at each commit; it does not maintain a separate object index.
 
 The columns declare what to extract. `Copy` collects those declarations; `Source.read()` performs parsing and exposes original files as a `FileContent`, valid until its record is consumed. The shared transfer resolves stored-file declarations before sending records to the destination. Omitting a stored reference avoids retaining the original file; omitting all file-derived columns avoids exporting files altogether.
 
@@ -424,9 +424,9 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 
 Calendar's coverage declares its configured window for event-derived streams and a listing for accounts and calendars; the other five Apple sources share `localAppleStoreCoverage`, the whole accessible local store.
 
-`apps/google/src/connectors.ts` default-exports a list of `{ name, run }` entries that `main.ts` calls in order. Each `run()` owns its source configuration, credentials, pipeline, and post-load work. Search Console's builds a `Pipeline` with one `google-search-console` connection and a `PostgresSyncHistory`, runs it, and publishes its content marts after complete or partial loads. Its coverage lives in `SearchConsoleSource.coverage(stream)`.
+`apps/google/src/connectors.ts` default-exports a list of `{ name, run }` entries that `main.ts` calls in order. Each `run()` owns its source configuration, credentials, pipeline, and post-load work. Search Console's builds a `Pipeline` with one `google-search-console` connection and a `PostgresSyncHistory`, runs it, and publishes its content marts after complete or partial loads once every raw table exists. Its coverage lives in `SearchConsoleSource.coverage(stream)`.
 
-Both applications record every pass and its declared extraction coverage in PostgreSQL, without console output. `Pipeline` already includes failed streams and partitions in its errors. Connector-specific code that handles a partial failure, such as Google's marts refresh, also sets exit status 1. Apple and Google stay separate apps until their later convergence.
+Both applications record every pass and its declared extraction coverage in PostgreSQL, without console output. `Pipeline` already includes failed streams and partitions in its errors. Connector-specific code that handles a partial failure, such as Google's marts publication, also sets exit status 1. Apple and Google stay separate apps until their later convergence.
 
 ## Execution and failures
 
@@ -574,6 +574,12 @@ A run holds one connection and one write transaction on the schema, under a per-
 
 Existing tables are not migrated: a deduplicating load checks that stored key and cursor columns keep their types and fails otherwise. Keep checkpoints in the same schema with `PostgresCheckpointStore` ([checkpoint stores](#checkpoint-stores)).
 
+### Reader views
+
+`table.withReaderView(schema, name)` returns the same table target, which a load also exposes as the view `schema.name`: exactly the table's columns and `loaded_at`, with the table's own comments. The view is created in the same transaction as its table, so it exists exactly when the table does, and it follows inserts, updates and deletes without being recreated. The stream needs a JSON Schema `description`, and so does every column (file columns and `loaded_at` bring their own); a missing one fails the copy's declaration before any connection reads. The schema must already exist: in the warehouse, `marts` belongs to the reader's contract, and default privileges make the view readable.
+
+A load never replaces or drops an existing view, because replacing a view readers can see would lock them out until the load commits; it only refreshes the comments, which does not block readers. A view of other columns or of another table is refused with an error naming it. A changed stream schema therefore needs a fresh warehouse, as a changed table does.
+
 ### Documented Postgres views
 
 `publishPostgresViews(transaction, { schema, views })` from `elt-postgresql` publishes ordinary SQL views with native view and column comments. Each `PostgresView` supplies `name`, `query`, `description`, and a `columns` map from output column names to descriptions. The application defines the SQL and meaning; Postgres derives the output types.
@@ -601,7 +607,7 @@ await sql.begin(async (transaction) => {
 
 Supply trusted application SQL as one query, with every output column described exactly once and nonempty descriptions. Identifiers follow the destination's 63-byte limit. The publisher creates the target schema if needed, serializes publishing with other writers to that schema, and replaces only the supplied views. List dependencies before their dependents: views are dropped in reverse order and created in the supplied order. Dropping never uses `CASCADE`; an outside dependent prevents publication. A savepoint restores the previous views and comments on any failure, even if the caller catches it and continues the transaction. An empty list does nothing.
 
-The caller owns the connection and transaction. Replacing views recreates them, so reapply explicit grants after publication in that same transaction. Default grants still apply. Applications choose which content to expose; in the warehouse, default privileges on `marts` make every published view readable. `PostgresSyncHistory` uses this publisher for its sync views, and the Search Console marts for their content views before recomputing `freshness`.
+The caller owns the connection and transaction. Replacing views recreates them, so reapply explicit grants after publication in that same transaction. Default grants still apply. Applications choose which content to expose; in the warehouse, default privileges on `marts` make every published view readable. `PostgresSyncHistory` uses this publisher for its sync views, and the Search Console marts for their content views.
 
 Views reflect the underlying tables as queried; publishing them does not copy rows or schedule refreshes. Read their descriptions through `obj_description` and `col_description`, just like table comments.
 
@@ -1111,14 +1117,14 @@ Because `date` is both the cursor and part of the key, each resumable grain requ
 
 ### Warehouse marts
 
-The Apple and Google apps load into the PostgreSQL warehouse and install a shared metadata contract. Google also publishes content views. The layout:
+The Apple and Google apps load into the PostgreSQL warehouse and install a shared metadata contract. Each source publishes its own content views in `marts`, named after the source. The layout:
 
 ```text
 warehouse database
 ├── google_search_console   raw tables and _mac_elt_checkpoints, loaded by elt-postgresql; readers have no access
 ├── apple_<name>            private raw Apple tables and checkpoints
 ├── _warehouse              private sync attempts and coverage declarations
-├── marts                   documented reader views and observed-row freshness
+├── marts                   documented reader views, one prefix per source
 └── public                  revoked from PUBLIC
 roles: warehouse (loads, owns the database) · agent_reader (reads marts only)
 ```
@@ -1126,7 +1132,7 @@ roles: warehouse (loads, owns the database) · agent_reader (reads marts only)
 - **Privileges are the barrier.** `agent_reader` has `CONNECT`, `USAGE` on `marts` and `SELECT` on its relations, and nothing else. It has no `TEMP`, no `CREATE`, and no access to raw schemas. Views run with their owner's rights. The role's settings (`default_transaction_read_only`, `statement_timeout 30s`, `search_path = marts`) are only defaults, since a session may change them.
 - **Direct PostgreSQL access works.** Use `psql` as `agent_reader`; MCP is optional. The explicitly invoked `query-warehouse` consumer discovers relations and meanings from `marts.catalog`. It reads connected data only on request and does not run pipelines, refresh data or manage connectors. The existing optional MCP container adds its own SQL restrictions.
 
-The reader's contract is provisioned once, with the database: `infra/init/02-marts.sh` runs `infra/init/marts/contract.sql` in the `warehouse` database. It revokes `PUBLIC` access, gives `agent_reader` `CONNECT` and `USAGE` on `marts`, creates `marts` owned by `warehouse`, publishes `catalog`, and sets default privileges so every table and view the `warehouse` role creates in `marts` is readable by `agent_reader`. No application code grants access. Like every init script, it runs when the volume is first created; to apply a changed contract, recreate the volume with `npx nx run infra:reset`. `installSearchConsoleMarts(sql, { raw })` creates the Search Console SQL helpers and observed-row `freshness` table, replaces its content views and recomputes `freshness` after extraction. Publication fails if outside views depend on a replaced view; no `CASCADE` is used.
+The reader's contract is provisioned once, with the database: `infra/init/02-marts.sh` runs `infra/init/marts/contract.sql` in the `warehouse` database. It revokes `PUBLIC` access, gives `agent_reader` `CONNECT` and `USAGE` on `marts`, creates `marts` owned by `warehouse`, publishes `catalog`, and sets default privileges so every table and view the `warehouse` role creates in `marts` is readable by `agent_reader`. No application code grants access. Like every init script, it runs when the volume is first created; to apply a changed contract, recreate the volume with `npx nx run infra:reset`. `installSearchConsoleMarts(sql, { raw })` replaces the Search Console views after extraction, once every Search Console raw table exists; a missing one is named and nothing is replaced. Publication fails if outside views depend on a replaced view; no `CASCADE` is used. Apple views are created by the loads themselves ([reader views](#reader-views)), so the Apple app publishes nothing after a pass.
 
 `PostgresSyncHistory({ url })` from `elt-postgresql` is the pipeline's [sync history](#sync-history) for this warehouse. Each pass inserts one `sync_attempts` row, with the connection name as `connector` and the source identity as `source`, and one `extraction_coverage` row per selected stream, with the source's declared `coverage(stream)` and the connection destination's schema as `target_schema`, before it reads; the outcomes close them. A run passes every stream a connection selected; a watch pass reads only the streams its source reported changed, so an attempt vouches only for its own `extraction_coverage` rows. An invalid connection, or a connection whose watcher stopped, records a failed attempt without outcomes. Use the same database for the history and the connection's destination. The Apple app's `main.ts` records every watch pass this way; Google's connector records one run.
 
@@ -1134,9 +1140,9 @@ Every attempt retains its own declarations. `sync_status` gives the latest attem
 
 Coverage is **configured scope**, not observed minimum/maximum dates and not evidence of upstream completeness. For Calendar event and related streams, `selection.startAt` and `selection.endAt` are the configured UTC overlap interval `[startAt, endAt)`; zero-duration events must start in it. The declaration exists even when zero events match. Accounts and calendars have no date filter. ICS may describe a recurring series beyond the selected occurrences. Other Apple streams export the accessible local store without a configured date filter; this cannot promise complete cloud history or retrievable attachment bytes. Google declarations describe configured properties, report types, history/resume policies and inspection selection; they do not claim that every incremental pass rereads its entire configured history. A successful quota-limited URL inspection pass can leave due URLs pending until Pacific midnight.
 
-Three clocks have different meanings: source record modification fields describe upstream changes; `loaded_at` describes the load that last wrote a row; `last_successful_sync_at` describes recorded pass completion. `freshness` reports observed dates and maximum row load time only. Neither table timestamps nor sync completion imply that a watcher is healthy. An attempt left `running` means only that completion was not recorded, including after process interruption or failure to persist outcomes. Metadata and destination commits are separate; unfinished metadata never claims success. Credentials/source setup before construction of a pipeline and subsequent mart publication are outside the recorded extraction attempt. Missing metadata means unknown, not empty or current.
+Three clocks have different meanings: source record modification fields describe upstream changes; `loaded_at` describes the load that last wrote a row; `last_successful_sync_at` describes recorded pass completion. `search_console_freshness` reports observed dates and maximum row load time only. Neither table timestamps nor sync completion imply that a watcher is healthy. An attempt left `running` means only that completion was not recorded, including after process interruption or failure to persist outcomes. Metadata and destination commits are separate; unfinished metadata never claims success. Credentials/source setup before construction of a pipeline and Google's subsequent mart publication are outside the recorded extraction attempt. Missing metadata means unknown, not empty or current.
 
-Apple content remains private in this slice. Coverage identifies its raw targets and whether they exist now; it does not grant the reader content access. `marts.catalog` is the authority for available reader relations.
+Apple content is read through one view per stream, `<source>_<stream>` in snake case (for example `notes_inline_attachments`, `messages_chat_handles`), with the stream's native field names as columns (quote camelCase names: `"noteId"`) plus `loaded_at`, and `attachmentRef` for streams with files. Each view and column carries the source's description: grain, keys, joins, null meanings, and where a native value comes from when its meaning is not documented. A view exists once its source's first load commits any stream, so an empty view can mean a stream still loading or failed; check `stream_status`. `marts.catalog` is the authority for available reader relations.
 
 | Relation | Contents |
 | --- | --- |
@@ -1145,7 +1151,7 @@ Apple content remains private in this slice. Coverage identifies its raw targets
 | `stream_status` | Per connection and stream: the latest attempt that declared the stream with its copy status, and the last attempt in which that copy succeeded. A watch pass reads only changed streams, so judge a stream here, not in `sync_status`. |
 | `sync_attempts` | Retained attempt history, start/completion times, status and errors. |
 | `extraction_coverage` | Per attempt and stream: configured selection, scope explanation, target, copy outcome, committed counts and failed partitions. |
-| `freshness` | Observed latest day, settled day and maximum row `loaded_at` per content view. Not sync status. |
+| `search_console_freshness` | Observed latest day, settled day and maximum row `loaded_at` per Search Console view, computed when read. Not sync status. |
 | `search_console_totals_daily` | Authoritative totals per property, day and report type. |
 | `search_console_queries_daily`, `search_console_pages_daily` | Web breakdowns. Pages add `page_path`. Rows a re-read no longer returns are hidden (only the latest load of each property and day shows). |
 | `search_console_withheld_daily` | Web totals, the sum of query rows, and the difference Google withheld. |
@@ -1160,7 +1166,7 @@ Verified on 2026-09-24 against Postgres 18.3, first on a local Homebrew server. 
 - `COMMIT; CREATE TABLE …` fails validation.
 - A three-billion-row count is cancelled after 30 seconds.
 
-The compose stack was then started on Docker Desktop 4.92.0. The init script created both roles and the database, `elt-postgresql` tests passed against it, and the MCP container answered as `agent_reader` with `search_path` `marts`: it refused `pg_authid`, rejected a `COMMIT;` escape, and cancelled a long count at 30 seconds. A live load of `sc-domain:ezz.sh` into the compose warehouse then filled every view. Read as `agent_reader`, `freshness` showed data through 2026-09-24, settled through 2026-09-21, and `search_console_withheld_daily` showed Google withholding 1–2 clicks a day from the query rows.
+The compose stack was then started on Docker Desktop 4.92.0. The init script created both roles and the database, `elt-postgresql` tests passed against it, and the MCP container answered as `agent_reader` with `search_path` `marts`: it refused `pg_authid`, rejected a `COMMIT;` escape, and cancelled a long count at 30 seconds. A live load of `sc-domain:ezz.sh` into the compose warehouse then filled every view. Read as `agent_reader`, the observed-row freshness then showed data through 2026-09-24, settled through 2026-09-21, and `search_console_withheld_daily` showed Google withholding 1–2 clicks a day from the query rows.
 
 ### URL inspection and quota
 
