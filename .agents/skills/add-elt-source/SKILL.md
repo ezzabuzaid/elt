@@ -63,7 +63,7 @@ Copy this checklist into your response and tick it off as you go:
 Pick the first that fits:
 
 1. **The upstream has a change cursor** (a modification time or a date the API filters on): declare `incremental`, require the cursor in `validateExtraction()`, validate prior state, re-read equal cursors, and emit `STATE`. If the upstream restates facts under the same cursor, copies use `dedupPolicy: 'replace'`.
-2. **No change feed, but each read is a complete list**: declare `sourceDefinedCursor: true` and `emitsDeletes: true`, and pass one complete scan to `diffSnapshot(stream, scan, state)`. Copies select no `cursorField` and use `append_dedup` with the stream's own `primaryKey`. Unchanged records are not written; vanished keys are deleted.
+2. **No change feed, but each read is a complete list**: declare `sourceDefinedCursor: true` and `emitsDeletes: true`, and pass one complete scan to `diffSnapshot(stream, scan, state)`. Copies select no `cursorField` and use `append_dedup` with the stream's own `primaryKey`. Unchanged records are not written; vanished keys are deleted. When records come from inputs whose stat or version identifies their content (files, messages), group them with `diffGroupedSnapshot(stream, groups, state)`: still list every input, but read only those whose fingerprint changed. Put a parser-version constant in the fingerprint.
 3. **Each item must be refetched periodically under a quota**: incremental with `sourceDefinedCursor` and `emitsDeletes`; keep each item's last fetch time in state, fetch never-fetched then stalest items until the quota refuses, commit what succeeded, and delete items that left the set. `observe()` wakes the stream when the next item falls due; elt has no scheduler.
 4. **Neither**: full refresh only.
 

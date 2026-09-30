@@ -23,10 +23,7 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
   | DeleteMessage
   | StateMessage
 > {
-  if (!stream.sourceDefinedCursor || !stream.emitsDeletes)
-    throw new TypeError(
-      `Stream ${stream.name} must declare sourceDefinedCursor and emitsDeletes to diff snapshots`,
-    );
+  assertSnapshotStream(stream);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
   const current = new Map<string, string>();
@@ -47,10 +44,129 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
         stream: stream.name,
         key: keyObject(stream, key),
       };
-  const snapshot = Object.fromEntries(
-    [...current].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-  );
+  const snapshot = sortedObject(current);
   yield { type: 'STATE', stream: stream.name, state: { snapshot } };
+}
+
+// The records one input produced (a file, a message), keyed by that input,
+// with a fingerprint the source computes without reading the input.
+export type SnapshotGroup<Data> = {
+  readonly key: string;
+  // null when the source cannot vouch for the input: it is always read.
+  readonly fingerprint: string | null;
+  records(): AsyncIterable<Data> | Iterable<Data>;
+};
+
+type SavedGroup = {
+  readonly fingerprint: string | null;
+  readonly snapshot: Readonly<Record<string, string>>;
+};
+
+// Each group's input fingerprint and the snapshot of the records it produced.
+export type GroupedSnapshotState = {
+  readonly groups: Readonly<Record<string, SavedGroup>>;
+};
+
+// diffSnapshot for a scan whose records come from inputs the source can
+// fingerprint cheaply. A group whose fingerprint matches the last committed
+// scan keeps its records without reading them; every other group is read and
+// diffed record by record. Deletions still come from the complete scan: a key
+// no group produced, carried or read, is deleted.
+export async function* diffGroupedSnapshot<
+  Data extends Record<string, unknown>,
+>(
+  stream: Stream,
+  groups: AsyncIterable<SnapshotGroup<Data>> | Iterable<SnapshotGroup<Data>>,
+  state: unknown,
+): AsyncGenerator<
+  | { readonly stream: string; readonly data: Data }
+  | DeleteMessage
+  | StateMessage
+> {
+  assertSnapshotStream(stream);
+  const deduplication = new Deduplication(stream, stream.primaryKey);
+  const previous = new Map(
+    Object.entries((state as GroupedSnapshotState | null)?.groups ?? {}),
+  );
+  // A record can move between groups; its previous fingerprint is then found
+  // through every previous group, indexed only when a lookup misses.
+  let everyPrevious: Map<string, string> | null = null;
+  const previousFingerprint = (group: SavedGroup | undefined, key: string) => {
+    const same = group?.snapshot[key];
+    if (same !== undefined) return same;
+    everyPrevious ??= new Map(
+      [...previous.values()].flatMap(({ snapshot }) =>
+        Object.entries(snapshot),
+      ),
+    );
+    return everyPrevious.get(key);
+  };
+  const seen = new Set<string>();
+  const claim = (key: string) => {
+    if (seen.has(key))
+      throw new TypeError(
+        `Stream ${stream.name} returned key ${key} twice in one scan`,
+      );
+    seen.add(key);
+  };
+  const current = new Map<string, SavedGroup>();
+  for await (const group of groups) {
+    if (current.has(group.key))
+      throw new TypeError(
+        `Stream ${stream.name} returned group ${group.key} twice in one scan`,
+      );
+    const before = previous.get(group.key);
+    if (
+      group.fingerprint !== null &&
+      before?.fingerprint === group.fingerprint
+    ) {
+      for (const key of Object.keys(before.snapshot)) claim(key);
+      current.set(group.key, before);
+      continue;
+    }
+    const snapshot = new Map<string, string>();
+    for await (const data of group.records()) {
+      const key = deduplication.key(data);
+      claim(key);
+      const fingerprint = fingerprintOf(stream, data);
+      snapshot.set(key, fingerprint);
+      if (previousFingerprint(before, key) !== fingerprint)
+        yield { stream: stream.name, data };
+    }
+    current.set(group.key, {
+      fingerprint: group.fingerprint,
+      snapshot: sortedObject(snapshot),
+    });
+  }
+  for (const { snapshot } of previous.values())
+    for (const key of Object.keys(snapshot))
+      if (!seen.has(key))
+        yield {
+          type: 'DELETE',
+          stream: stream.name,
+          key: keyObject(stream, key),
+        };
+  yield {
+    type: 'STATE',
+    stream: stream.name,
+    state: { groups: sortedObject(current) },
+  };
+}
+
+function assertSnapshotStream(stream: Stream): void {
+  if (!stream.sourceDefinedCursor || !stream.emitsDeletes)
+    throw new TypeError(
+      `Stream ${stream.name} must declare sourceDefinedCursor and emitsDeletes to diff snapshots`,
+    );
+}
+
+// Sorted by key, so equal scans save byte-identical state.
+function sortedObject<Value>(
+  entries: ReadonlyMap<string, Value>,
+): Record<string, Value> {
+  return Object.fromEntries(
+    [...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
 }
 
 // The previous snapshot, as diffSnapshot wrote it.

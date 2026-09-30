@@ -23,7 +23,13 @@ export {
   type SchemaRecord,
   validateRecords,
 } from './core/record-validation.ts';
-export { diffSnapshot, type SnapshotState } from './core/snapshot.ts';
+export {
+  diffGroupedSnapshot,
+  diffSnapshot,
+  type GroupedSnapshotState,
+  type SnapshotGroup,
+  type SnapshotState,
+} from './core/snapshot.ts';
 export {
   type DeleteMessage,
   type ExtractionCoverage,

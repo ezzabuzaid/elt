@@ -173,6 +173,13 @@ The state is `{ snapshot: { <primary key JSON>: <SHA-256 of the record> } }`. Ea
 - **Cost:** the source still reads everything each run; only destination writes shrink. The state holds one key and a 43-character fingerprint per row, so it grows with the stream.
 - **Reset:** resetting the checkpoint makes the next run reload everything but forgets which rows exist, so rows deleted upstream meanwhile stay behind. Reset together with clearing the target, or run a full-refresh overwrite.
 
+When the records come from inputs the source can fingerprint without reading them, such as files whose stat identifies their content, `diffGroupedSnapshot(stream, groups, state)` skips the reading too. Each group is `{ key, fingerprint, records() }`: one input, a fingerprint of it, and a function that reads its records. A group whose fingerprint equals the one saved for its key keeps its saved rows and `records()` is never called; every other group, and any group whose fingerprint is `null`, is read and diffed record by record. The state is `{ groups: { <group key>: { fingerprint, snapshot } } }`, with `snapshot` as above.
+
+- **Deletions:** a key that no group produced this run, carried or read, is deleted, so a vanished input deletes its rows and a changed one deletes rows it no longer produces. The groups must still come from a complete listing: the source enumerates every input on every run and skips only the reading.
+- **Fingerprints:** a fingerprint must change whenever the group's records could, including when the source's own parsing changes. A version constant in the fingerprint does that. A fingerprint that misses a change keeps stale rows without any error.
+- **Moves:** a row that moves to another group is compared with its previous fingerprint wherever it was, so it loads only if it changed. A key produced twice in one run, including by a carried group, and a group key repeated in one run are rejected.
+- **Airbyte:** the [file-based cursor](https://github.com/airbytehq/airbyte-python-cdk/blob/d5536bc78c261a5f7d89595cb811c8bad676e251/airbyte_cdk/sources/file_based/stream/cursor/default_file_based_cursor.py#L82-L111) also skips unchanged files, but by modification time alone, keeps at most 10,000 files before falling back to a time window, and never emits deletions. Groups keep every fingerprint, compare it for equality rather than recency, and delete from the complete listing.
+
 ### Partitioned streams
 
 One source can read a stream as several partitions, such as one per Search Console property or per account. The stream declares `partitionKey`, a subset of its `primaryKey`; the source lists the partitions from its configuration and receives each one in `extract`:

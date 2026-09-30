@@ -21,6 +21,7 @@ import {
   Copy,
   type CopyConfiguration,
   type Destination,
+  diffGroupedSnapshot,
   diffSnapshot,
   type FileContent,
   LocalFiles,
@@ -953,6 +954,191 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
   await assert.rejects(
     Array.fromAsync(diffSnapshot(plain, [], null)),
     /must declare sourceDefinedCursor and emitsDeletes/,
+  );
+});
+
+test('grouped snapshot diffs keep unchanged groups without reading them, and still delete what no group produced', async () => {
+  type Row = { id: string; name: string };
+  type Group = { key: string; fingerprint: string | null; rows: Row[] };
+  let groups: Group[] = [];
+  const read: string[] = [];
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, name: { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  class GroupedSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'grouped-snapshot-test';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      yield* diffGroupedSnapshot(
+        configuration.stream,
+        groups.map(({ key, fingerprint, rows }) => ({
+          key,
+          fingerprint,
+          records() {
+            read.push(key);
+            return rows;
+          },
+        })),
+        state,
+      );
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-group-'));
+  const source = new GroupedSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const copy = new Copy(items, destination.table('items'), {
+    id: 'items',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [copy],
+      }),
+    ],
+  });
+  const names = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT id, name FROM items ORDER BY id')
+      .all()
+      .map(({ id, name }) => `${id}:${name}`);
+  };
+  const run = async (next: Group[]) => {
+    groups = next;
+    read.length = 0;
+    return await pipeline.run();
+  };
+
+  assert.deepEqual(
+    await run([
+      {
+        key: 'one',
+        fingerprint: 'v1',
+        rows: [
+          { id: 'a', name: 'A' },
+          { id: 'b', name: 'B' },
+        ],
+      },
+      { key: 'two', fingerprint: 'v1', rows: [{ id: 'c', name: 'C' }] },
+    ]),
+    [{ copy, count: 3, deleted: 0 }],
+  );
+
+  // one is unchanged, so it is carried without a read even though its input
+  // now says something else; two changed, and only its changed row loads.
+  assert.deepEqual(
+    await run([
+      {
+        key: 'one',
+        fingerprint: 'v1',
+        rows: [{ id: 'a', name: 'never read' }],
+      },
+      {
+        key: 'two',
+        fingerprint: 'v2',
+        rows: [
+          { id: 'c', name: 'C2' },
+          { id: 'd', name: 'D' },
+        ],
+      },
+    ]),
+    [{ copy, count: 2, deleted: 0 }],
+  );
+  assert.deepEqual(read, ['two']);
+  assert.deepEqual(names(), ['a:A', 'b:B', 'c:C2', 'd:D']);
+
+  // A vanished group deletes its rows; a changed group deletes rows it no
+  // longer produces; an unknown fingerprint is always read, and its
+  // unchanged rows load nothing.
+  assert.deepEqual(
+    await run([
+      { key: 'two', fingerprint: 'v3', rows: [{ id: 'c', name: 'C2' }] },
+      { key: 'three', fingerprint: null, rows: [{ id: 'e', name: 'E' }] },
+    ]),
+    [{ copy, count: 1, deleted: 3 }],
+  );
+  assert.deepEqual(names(), ['c:C2', 'e:E']);
+  assert.deepEqual(
+    await run([
+      { key: 'two', fingerprint: 'v3', rows: [] },
+      { key: 'three', fingerprint: null, rows: [{ id: 'e', name: 'E' }] },
+    ]),
+    [{ copy, count: 0, deleted: 0 }],
+  );
+  assert.deepEqual(read, ['three']);
+
+  // A row that moves to another group is compared with where it was, so an
+  // unchanged row loads nothing and is not deleted.
+  assert.deepEqual(
+    await run([
+      { key: 'two', fingerprint: 'v4', rows: [] },
+      { key: 'three', fingerprint: null, rows: [{ id: 'e', name: 'E' }] },
+      { key: 'four', fingerprint: 'v1', rows: [{ id: 'c', name: 'C2' }] },
+    ]),
+    [{ copy, count: 0, deleted: 0 }],
+  );
+  assert.deepEqual(names(), ['c:C2', 'e:E']);
+
+  // A key a carried group already holds cannot come from another group, and a
+  // group cannot appear twice: either fails the scan before it deletes anything.
+  const failing: [Group[], RegExp][] = [
+    [
+      [
+        { key: 'four', fingerprint: 'v1', rows: [] },
+        { key: 'five', fingerprint: 'v1', rows: [{ id: 'c', name: 'C' }] },
+      ],
+      /returned key \["c"\] twice in one scan/,
+    ],
+    [
+      [
+        { key: 'four', fingerprint: 'v1', rows: [] },
+        { key: 'four', fingerprint: 'v1', rows: [] },
+      ],
+      /returned group four twice in one scan/,
+    ],
+  ];
+  for (const [scan, message] of failing)
+    await assert.rejects(run(scan), message);
+  assert.deepEqual(names(), ['c:C2', 'e:E']);
+  assert.deepEqual(
+    await run([
+      { key: 'three', fingerprint: null, rows: [{ id: 'e', name: 'E' }] },
+      { key: 'four', fingerprint: 'v1', rows: [] },
+    ]),
+    [{ copy, count: 0, deleted: 0 }],
   );
 });
 
