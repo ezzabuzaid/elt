@@ -1103,7 +1103,7 @@ Left out: iCloud sync bookkeeping (`history_events`, `history_event_listeners`, 
 
 ### Scope
 
-`collectionIds` names profiles: it selects history, profiles, windows, tab groups, tabs, recently closed windows and tabs, and downloads. Dates select history visits, and the history items, tag links and tags those visits reach; tombstones and everything else load whole. Bookmarks, the Reading List and iCloud Tabs belong to no profile and load whole; the Apple plugin leaves them out of a scoped import.
+`collectionIds` names profiles: it selects history, profiles, windows, tab groups, tabs, recently closed windows and tabs, and downloads. Folders of no profile, such as the pinned-tab folders, load under any profile's scope. Dates select history visits, and the history items, tag links and tags those visits reach; tombstones and everything else load whole. Bookmarks, the Reading List and iCloud Tabs belong to no profile and load whole; the Apple plugin leaves them out of a scoped import.
 
 ### Changes and deletions
 

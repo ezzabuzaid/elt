@@ -123,13 +123,15 @@ export class TabsReader {
     );
   }
 
+  // Folders of no profile, such as pinned tabs, are shared by every profile,
+  // so any profile's scope keeps them.
   get tabGroups(): Row[] {
     return this.#rows.filter(
       (row) =>
         row.type === folder &&
         row.id !== rootId &&
         row.subtype !== profileSubtype &&
-        this.#included(row),
+        (this.profileOf(row) === null || this.#included(row)),
     );
   }
 

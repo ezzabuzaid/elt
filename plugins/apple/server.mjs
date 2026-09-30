@@ -70798,9 +70798,11 @@ var TabsReader = class {
       (window) => selected(this.scope.collectionIds, this.uuid(window.active_profile_id))
     );
   }
+  // Folders of no profile, such as pinned tabs, are shared by every profile,
+  // so any profile's scope keeps them.
   get tabGroups() {
     return this.#rows.filter(
-      (row) => row.type === folder && row.id !== rootId && row.subtype !== profileSubtype && this.#included(row)
+      (row) => row.type === folder && row.id !== rootId && row.subtype !== profileSubtype && (this.profileOf(row) === null || this.#included(row))
     );
   }
   get tabs() {
