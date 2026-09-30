@@ -12,7 +12,9 @@ if (process.platform !== 'darwin')
   throw new Error('Apple requires Codex on a Mac.');
 
 const plugin = new ApplePlugin();
-const server = new McpServer({ name: 'apple', version: '0.4.0' });
+// Also plugins/apple/.codex-plugin/plugin.json; the newest running version leads.
+const version = '0.4.1';
+const server = new McpServer({ name: 'apple', version });
 // McpServer turns a thrown error into an isError result.
 const json = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -187,4 +189,4 @@ process.stdin.once('end', () => stopping.abort());
 process.once('SIGTERM', () => stopping.abort());
 process.once('SIGINT', () => stopping.abort());
 await server.connect(new StdioServerTransport());
-await keepFresh(plugin.directory, stopping.signal);
+await keepFresh(plugin.directory, stopping.signal, version);

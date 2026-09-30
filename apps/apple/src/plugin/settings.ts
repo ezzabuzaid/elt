@@ -119,7 +119,7 @@ export class Settings implements Disposable {
     try {
       chmodSync(path, 0o600);
       this.database.exec(
-        'CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS import_status (import TEXT PRIMARY KEY, value TEXT NOT NULL);',
+        'CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS import_status (import TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);',
       );
     } catch (error) {
       this.database.close();
@@ -173,6 +173,30 @@ export class Settings implements Disposable {
       this.database.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  // Each running plugin server's version, seen within the last heartbeats;
+  // servers gone for an hour are forgotten.
+  heartbeat(id: string, version: string, now: number) {
+    this.database
+      .prepare(
+        'INSERT INTO servers VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version, seen_at=excluded.seen_at',
+      )
+      .run(id, version, now);
+    this.database
+      .prepare('DELETE FROM servers WHERE seen_at < ?')
+      .run(now - 3_600_000);
+  }
+
+  runningVersions(since: number): string[] {
+    return this.database
+      .prepare('SELECT version FROM servers WHERE seen_at >= ?')
+      .all(since)
+      .map((row) => String(row.version));
+  }
+
+  forgetServer(id: string) {
+    this.database.prepare('DELETE FROM servers WHERE id=?').run(id);
   }
 
   [Symbol.dispose]() {

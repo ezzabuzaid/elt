@@ -25263,7 +25263,7 @@ var require_encoding_detect = __commonJS({
     function isSJIS(data) {
       var i = 0;
       var len = data && data.length;
-      var b, lead;
+      var b, lead2;
       for (; i < len; i++) {
         b = data[i];
         if (b > 255) {
@@ -25275,10 +25275,10 @@ var require_encoding_detect = __commonJS({
         if (b === 160 || b > 252 || i + 1 >= len) {
           return false;
         }
-        lead = b;
+        lead2 = b;
         b = data[++i];
         if (b < 64 || b > 252 || b === 127 || // IBM extended character area ends at 0xFC4B
-        lead === 252 && b > 75) {
+        lead2 === 252 && b > 75) {
           return false;
         }
       }
@@ -27137,10 +27137,10 @@ var require_src = __commonJS({
     var EncodingDetect = require_encoding_detect();
     var EncodingConvert = require_encoding_convert();
     var KanaCaseTable = require_kana_case_table();
-    var version2 = require_package().version;
+    var version3 = require_package().version;
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     var Encoding = {
-      version: version2,
+      version: version3,
       /**
        * Encoding orders
        */
@@ -33701,11 +33701,11 @@ function datetimeRegex(args) {
   regex = `${regex}(${opts.join("|")})`;
   return new RegExp(`^${regex}$`);
 }
-function isValidIP(ip, version2) {
-  if ((version2 === "v4" || !version2) && ipv4Regex.test(ip)) {
+function isValidIP(ip, version3) {
+  if ((version3 === "v4" || !version3) && ipv4Regex.test(ip)) {
     return true;
   }
-  if ((version2 === "v6" || !version2) && ipv6Regex.test(ip)) {
+  if ((version3 === "v6" || !version3) && ipv6Regex.test(ip)) {
     return true;
   }
   return false;
@@ -33732,11 +33732,11 @@ function isValidJWT(jwt2, alg) {
     return false;
   }
 }
-function isValidCidr(ip, version2) {
-  if ((version2 === "v4" || !version2) && ipv4CidrRegex.test(ip)) {
+function isValidCidr(ip, version3) {
+  if ((version3 === "v4" || !version3) && ipv4CidrRegex.test(ip)) {
     return true;
   }
-  if ((version2 === "v6" || !version2) && ipv6CidrRegex.test(ip)) {
+  if ((version3 === "v6" || !version3) && ipv6CidrRegex.test(ip)) {
     return true;
   }
   return false;
@@ -38437,10 +38437,10 @@ function nanoidOfLength(length) {
 var duration = /^P(?:(\d+W)|(?!.*W)(?=\d|T\d)(\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+([.,]\d+)?S)?)?)$/;
 var extendedDuration = /^[-+]?P(?!$)(?:(?:[-+]?\d+Y)|(?:[-+]?\d+[.,]\d+Y$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:(?:[-+]?\d+W)|(?:[-+]?\d+[.,]\d+W$))?(?:(?:[-+]?\d+D)|(?:[-+]?\d+[.,]\d+D$))?(?:T(?=[\d+-])(?:(?:[-+]?\d+H)|(?:[-+]?\d+[.,]\d+H$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:[-+]?\d+(?:[.,]\d+)?S)?)??$/;
 var guid = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
-var uuid = (version2) => {
-  if (!version2)
+var uuid = (version3) => {
+  if (!version3)
     return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;
-  return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version2}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
+  return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version3}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
 };
 var uuid4 = /* @__PURE__ */ uuid(4);
 var uuid6 = /* @__PURE__ */ uuid(6);
@@ -56537,10 +56537,10 @@ function fromJSONSchema(schema, params) {
   } catch {
     throw new Error("fromJSONSchema input is not valid JSON (possibly cyclic); use $defs/$ref for recursive schemas");
   }
-  const version2 = detectVersion(normalized, params?.defaultTarget);
+  const version3 = detectVersion(normalized, params?.defaultTarget);
   const defs = normalized.$defs || normalized.definitions || {};
   const ctx = {
-    version: version2,
+    version: version3,
     defs,
     refs: /* @__PURE__ */ new Map(),
     processing: /* @__PURE__ */ new Set(),
@@ -63961,10 +63961,10 @@ async function mailVersionDirectory(root) {
   const info = plistObject(
     await readMailPlist(join2(root, "PersistenceInfo.plist"))
   );
-  const version2 = info.LastUsedVersionDirectoryName;
-  if (typeof version2 !== "string" || !/^V\d+$/.test(version2))
+  const version3 = info.LastUsedVersionDirectoryName;
+  if (typeof version3 !== "string" || !/^V\d+$/.test(version3))
     throw new MailSchemaError("Mail has no valid current version directory");
-  return join2(root, version2);
+  return join2(root, version3);
 }
 async function inspectMailFile(path) {
   const info = await stat(path, { bigint: true });
@@ -66344,14 +66344,14 @@ var AppleContactsSource = class extends Source {
     var _stack = [];
     try {
       if (signal.aborted) return;
-      const version2 = __using(_stack, new AddressBookVersion(this.directory));
-      let seen = version2.current;
+      const version3 = __using(_stack, new AddressBookVersion(this.directory));
+      let seen = version3.current;
       yield streams4;
       try {
         for await (const _2 of setInterval(this.pollIntervalMs, void 0, {
           signal
         })) {
-          const current = version2.current;
+          const current = version3.current;
           if (current === seen) continue;
           seen = current;
           yield streams4;
@@ -67654,9 +67654,9 @@ var MailScan = class {
   // matching fingerprint means the saved records came from these bytes.
   #fingerprint(id11, file2) {
     const { detached, indexed } = this.#messageInputs();
-    const identity = ({ path, version: version2 }) => [
+    const identity = ({ path, version: version3 }) => [
       relative2(this.store.path, path),
-      version2
+      version3
     ];
     return createHash6("sha256").update(
       JSON.stringify([
@@ -68042,8 +68042,8 @@ var AppleMailSource = class extends Source {
       const database = __using(_stack, new DatabaseSync3(join7(path, "MailData/Envelope Index"), {
         readOnly: true
       }));
-      const version2 = database.prepare("PRAGMA data_version");
-      let seen = version2.get()?.data_version;
+      const version3 = database.prepare("PRAGMA data_version");
+      let seen = version3.get()?.data_version;
       let changed = false;
       let failure4 = null;
       const resources = __using(_stack, new DisposableStack());
@@ -68058,7 +68058,7 @@ var AppleMailSource = class extends Source {
       try {
         for await (const _2 of setInterval2(1e3, void 0, { signal })) {
           if (failure4 !== null) throw failure4;
-          const current = version2.get()?.data_version;
+          const current = version3.get()?.data_version;
           if (!changed && current === seen) continue;
           changed = false;
           seen = current;
@@ -68673,12 +68673,12 @@ function messageEdits(row) {
   const edited = isObject2(summary) ? summary.ec : void 0;
   if (!isObject2(edited)) return [];
   return Object.entries(edited).flatMap(
-    ([part, versions]) => (Array.isArray(versions) ? versions : []).map((entry, version2) => {
+    ([part, versions]) => (Array.isArray(versions) ? versions : []).map((entry, version3) => {
       const body = isObject2(entry) ? entry.t : void 0;
       return {
         messageGuid: row.messageGuid,
         partIndex: Number(part),
-        version: version2,
+        version: version3,
         editedAt: isObject2(entry) ? appleTime(entry.d) : null,
         text: body instanceof Uint8Array ? attributedText(body) : null,
         entry: plistJSON(entry)
@@ -68739,14 +68739,14 @@ var AppleMessagesSource = class extends Source {
     var _stack = [];
     try {
       if (signal.aborted) return;
-      const version2 = __using(_stack, new ChatDatabaseVersion(this.path));
-      let seen = version2.current;
+      const version3 = __using(_stack, new ChatDatabaseVersion(this.path));
+      let seen = version3.current;
       yield streams4;
       try {
         for await (const _2 of setInterval3(this.pollIntervalMs, void 0, {
           signal
         })) {
-          const current = version2.current;
+          const current = version3.current;
           if (current === seen) continue;
           seen = current;
           yield streams4;
@@ -70001,8 +70001,8 @@ var AppleNotesSource = class extends Source {
     var _stack = [];
     try {
       if (signal.aborted) return;
-      const version2 = __using(_stack, new NoteStoreVersion(this.path));
-      let seen = version2.current;
+      const version3 = __using(_stack, new NoteStoreVersion(this.path));
+      let seen = version3.current;
       await this.launch();
       let nextLaunch = Date.now() + this.launchIntervalMs;
       yield streams4;
@@ -70014,7 +70014,7 @@ var AppleNotesSource = class extends Source {
             await this.launch();
             nextLaunch = Date.now() + this.launchIntervalMs;
           }
-          const current = version2.current;
+          const current = version3.current;
           if (current === seen) continue;
           seen = current;
           yield streams4;
@@ -70438,6 +70438,7 @@ var apps = {
 };
 
 // apps/apple/src/plugin/freshness.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { mkdirSync as mkdirSync3 } from "node:fs";
 import { join as join15 } from "node:path";
 import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
@@ -70516,7 +70517,7 @@ var Settings = class {
     try {
       chmodSync(path, 384);
       this.database.exec(
-        "CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS import_status (import TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        "CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS import_status (import TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);"
       );
     } catch (error62) {
       this.database.close();
@@ -70552,6 +70553,20 @@ var Settings = class {
       this.database.exec("ROLLBACK");
       throw error62;
     }
+  }
+  // Each running plugin server's version, seen within the last heartbeats;
+  // servers gone for an hour are forgotten.
+  heartbeat(id11, version3, now) {
+    this.database.prepare(
+      "INSERT INTO servers VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version, seen_at=excluded.seen_at"
+    ).run(id11, version3, now);
+    this.database.prepare("DELETE FROM servers WHERE seen_at < ?").run(now - 36e5);
+  }
+  runningVersions(since) {
+    return this.database.prepare("SELECT version FROM servers WHERE seen_at >= ?").all(since).map((row) => String(row.version));
+  }
+  forgetServer(id11) {
+    this.database.prepare("DELETE FROM servers WHERE id=?").run(id11);
   }
   [Symbol.dispose]() {
     this.database.close();
@@ -71506,56 +71521,115 @@ async function watchImports(directory, configuration, signal) {
   } catch {
   }
 }
-async function followSelection(directory, selection, changed, signal) {
+function outdated(directory, id11, version3) {
+  const newer = (candidate) => {
+    const [left, right] = [candidate, version3].map(
+      (value) => value.split(".").map(Number)
+    );
+    for (let part = 0; part < 3; part++)
+      if (left?.[part] !== right?.[part])
+        return (left?.[part] ?? 0) > (right?.[part] ?? 0);
+    return false;
+  };
+  try {
+    var _stack = [];
+    try {
+      const settings = __using(_stack, new Settings(directory));
+      const now = Date.now();
+      settings.heartbeat(id11, version3, now);
+      return settings.runningVersions(now - 1e4).some(newer);
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  } catch {
+    return false;
+  }
+}
+async function followSelection(directory, selection, id11, version3, changed, newer, signal) {
   try {
     for await (const _ of setInterval5(1e3, void 0, { signal }))
       try {
-        if (JSON.stringify(readConfiguration(directory)) !== selection)
+        if (outdated(directory, id11, version3)) newer.abort();
+        else if (JSON.stringify(readConfiguration(directory)) !== selection)
           changed.abort();
       } catch {
       }
   } catch {
   }
 }
-async function keepFresh(directory, signal) {
-  var _stack = [];
+async function acquire(directory, id11, version3, signal) {
+  for (; ; ) {
+    if (!outdated(directory, id11, version3)) {
+      const held = lease(directory);
+      if (held !== null) return held;
+    }
+    try {
+      await sleep2(2e3, void 0, { signal });
+    } catch {
+      return null;
+    }
+  }
+}
+async function lead(directory, id11, version3, signal) {
+  const newer = new AbortController();
+  const leading = AbortSignal.any([signal, newer.signal]);
+  while (!leading.aborted) {
+    const changed = new AbortController();
+    const watching = AbortSignal.any([leading, changed.signal]);
+    let following = Promise.resolve();
+    try {
+      const configuration = readConfiguration(directory);
+      following = followSelection(
+        directory,
+        JSON.stringify(configuration),
+        id11,
+        version3,
+        changed,
+        newer,
+        watching
+      );
+      removeStaleImports(directory, configuration);
+      if (configuration !== null)
+        await watchImports(directory, configuration, watching);
+    } catch {
+    }
+    await sleep2(6e4, void 0, { signal: watching }).catch(() => {
+    });
+    changed.abort();
+    await following;
+  }
+}
+async function keepFresh(directory, signal, version3) {
+  const id11 = randomUUID2();
   try {
-    let leader = lease(directory);
-    while (leader === null) {
-      try {
-        await sleep2(2e3, void 0, { signal });
-      } catch {
-        return;
-      }
-      leader = lease(directory);
-    }
-    const _lease = __using(_stack, leader);
     while (!signal.aborted) {
-      const changed = new AbortController();
-      const watching = AbortSignal.any([signal, changed.signal]);
-      let following = Promise.resolve();
+      var _stack = [];
       try {
-        const configuration = readConfiguration(directory);
-        following = followSelection(
-          directory,
-          JSON.stringify(configuration),
-          changed,
-          watching
-        );
-        removeStaleImports(directory, configuration);
-        if (configuration !== null)
-          await watchImports(directory, configuration, watching);
-      } catch {
+        const leader = await acquire(directory, id11, version3, signal);
+        if (leader === null) return;
+        const _lease = __using(_stack, leader);
+        await lead(directory, id11, version3, signal);
+      } catch (_) {
+        var _error = _, _hasError = true;
+      } finally {
+        __callDispose(_stack, _error, _hasError);
       }
-      await sleep2(6e4, void 0, { signal: watching }).catch(() => {
-      });
-      changed.abort();
-      await following;
     }
-  } catch (_) {
-    var _error = _, _hasError = true;
   } finally {
-    __callDispose(_stack, _error, _hasError);
+    try {
+      var _stack2 = [];
+      try {
+        const settings = __using(_stack2, new Settings(directory));
+        settings.forgetServer(id11);
+      } catch (_2) {
+        var _error2 = _2, _hasError2 = true;
+      } finally {
+        __callDispose(_stack2, _error2, _hasError2);
+      }
+    } catch {
+    }
   }
 }
 
@@ -71932,7 +72006,8 @@ async function setUpWithForms(plugin2, ask) {
 if (process.platform !== "darwin")
   throw new Error("Apple requires Codex on a Mac.");
 var plugin = new ApplePlugin();
-var server = new McpServer({ name: "apple", version: "0.4.0" });
+var version2 = "0.4.1";
+var server = new McpServer({ name: "apple", version: version2 });
 var json2 = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }]
 });
@@ -72090,4 +72165,4 @@ process.stdin.once("end", () => stopping.abort());
 process.once("SIGTERM", () => stopping.abort());
 process.once("SIGINT", () => stopping.abort());
 await server.connect(new StdioServerTransport());
-await keepFresh(plugin.directory, stopping.signal);
+await keepFresh(plugin.directory, stopping.signal, version2);

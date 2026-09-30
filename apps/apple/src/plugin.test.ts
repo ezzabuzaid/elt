@@ -106,7 +106,7 @@ test('the leading server keeps leading when its settings cannot be read, and let
   // A directory where the settings file belongs fails every read of them.
   mkdirSync(join(scratch.path, 'settings.sqlite'));
   const stopping = new AbortController();
-  const running = keepFresh(scratch.path, stopping.signal);
+  const running = keepFresh(scratch.path, stopping.signal, '0.4.1');
   try {
     await sleep(1_500);
     assert.equal(leaderRunning(scratch.path), true);
@@ -201,4 +201,42 @@ test('the Settings page switches apps on and off and describes each import as Op
     ['mail'],
   );
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
+});
+
+test('a newer plugin server takes the lead from an older one, and the older one leads again once the newer one stops', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const older = new AbortController();
+  const olderRunning = keepFresh(scratch.path, older.signal, '0.4.1');
+  const newer = new AbortController();
+  let newerRunning: Promise<void> | undefined;
+  const again = new AbortController();
+  let againRunning: Promise<void> | undefined;
+  try {
+    await sleep(500);
+    assert.equal(leaderRunning(scratch.path), true);
+    newerRunning = keepFresh(scratch.path, newer.signal, '0.10.0');
+    // The older leader steps down on its next check; the newer one takes
+    // the lease on its next attempt.
+    await sleep(4_000);
+    older.abort();
+    await olderRunning;
+    // Had the older server still led, its exit would have left the lease free.
+    assert.equal(leaderRunning(scratch.path), true);
+
+    // An older version installed again leads once the newer server stops.
+    againRunning = keepFresh(scratch.path, again.signal, '0.4.1');
+    await sleep(2_500);
+    newer.abort();
+    await newerRunning;
+    await sleep(2_500);
+    assert.equal(leaderRunning(scratch.path), true);
+  } finally {
+    older.abort();
+    newer.abort();
+    again.abort();
+    await Promise.all([olderRunning, newerRunning, againRunning]);
+  }
+  assert.equal(leaderRunning(scratch.path), false);
 });
