@@ -158,22 +158,9 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
   const forms: string[] = [];
   client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
     forms.push(params.message);
-    if (forms.length === 1) {
-      // A person reads the form for longer than the SDK's 60 s request default.
-      await sleep(61_000);
-      return { action: 'accept', content: { apps: ['notes'] } };
-    }
-    // Every choice as the form prefills it.
-    const properties =
-      'requestedSchema' in params ? params.requestedSchema.properties : {};
-    return {
-      action: 'accept',
-      content: Object.fromEntries(
-        Object.entries(properties).flatMap(([name, property]) =>
-          'default' in property ? [[name, property.default]] : [],
-        ),
-      ),
-    };
+    // A person reads the form for longer than the SDK's 60 s request default.
+    await sleep(61_000);
+    return { action: 'accept', content: { apps: ['notes'] } };
   });
   const other = new Client({ name: 'another-chat', version: '1.0.0' });
   const transport = await connect(client);
@@ -211,9 +198,9 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
 
     // Setup returns once the answers are saved; the import runs apart from it.
     const setUp = await invoke(client, 'apple_setup');
-    assert.equal(forms.length, 2);
+    // One form: the apps. Notes is imported in full without further questions.
+    assert.equal(forms.length, 1);
     assert.match(forms[0] ?? '', /Choose the Apple apps/);
-    assert.match(forms[1] ?? '', /Notes/);
     assert.deepEqual(setUp.unavailable, []);
     assert.deepEqual(
       setUp.apps.map(({ app }: { app: string }) => app),

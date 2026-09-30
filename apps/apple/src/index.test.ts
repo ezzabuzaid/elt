@@ -314,7 +314,7 @@ const notesPipeline = (source: AppleNotesSource, directory: string) => {
   };
 };
 
-test('Apple setup forms save the chosen Notes folders, report an app macOS denied, and leave setup unchanged when cancelled', async (t) => {
+test('Apple setup forms import each chosen app in full unless the user customizes, report an app macOS denied, and leave setup unchanged when cancelled', async (t) => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-forms-'));
   const path = await noteStoreFixture(join(scratch.path, 'native'));
   const openNative = NoteStore.open;
@@ -345,18 +345,46 @@ test('Apple setup forms save the chosen Notes folders, report an app macOS denie
     return result;
   };
 
-  const connected = await setUp(
-    { action: 'accept', content: { apps: ['notes', 'messages'] } },
+  // One form: the apps. Each chosen app is imported in full.
+  const connected = await setUp({
+    action: 'accept',
+    content: { apps: ['notes', 'messages'] },
+  });
+  assert.equal(forms.length, 1);
+  assert.deepEqual(forms[0]?.requestedSchema.properties.customize, {
+    type: 'boolean',
+    title: 'Choose accounts, folders and dates for each app',
+    default: false,
+  });
+  assert.equal(connected.changed, true);
+  assert.ok('unavailable' in connected);
+  assert.deepEqual(
+    connected.unavailable.map(({ app }) => app),
+    ['messages'],
+  );
+  // Setup only saves the answers; the leading server imports them.
+  const [everything] = connected.apps;
+  assert.deepEqual(everything?.scope, {});
+  assert.equal(everything?.includeAttachments, true);
+  assert.equal(everything?.database, null);
+  assert.equal(everything?.sync, null);
+
+  // Customizing adds one form per app. The fixture's single account leaves
+  // nothing to choose, so the form asks only for folders and attachments.
+  const narrowed = await setUp(
+    { action: 'accept', content: { apps: ['notes'], customize: true } },
     {
       action: 'accept',
-      content: {
-        accounts: ['ACCOUNT-1'],
-        folders: ['FOLDER-NOTES'],
-        attachments: true,
-      },
+      content: { folders: ['FOLDER-NOTES'], attachments: false },
     },
   );
   assert.equal(forms.length, 2);
+  assert.deepEqual(Object.keys(forms[1]?.requestedSchema.properties ?? {}), [
+    'folders',
+    'from',
+    'until',
+    'attachments',
+  ]);
   assert.deepEqual(forms[1]?.requestedSchema.properties.folders, {
     type: 'array',
     title: 'Folders',
@@ -370,21 +398,19 @@ test('Apple setup forms save the chosen Notes folders, report an app macOS denie
     },
     default: ['FOLDER-CHILD', 'FOLDER-NOTES', 'FOLDER-TRASH'],
   });
-  assert.equal(connected.changed, true);
-  assert.ok('unavailable' in connected);
-  assert.deepEqual(
-    connected.unavailable.map(({ app }) => app),
-    ['messages'],
-  );
-  // Setup only saves the answers; the leading server imports them.
-  const [notes] = connected.apps;
+  const [notes] = narrowed.apps;
   assert.ok(notes);
   assert.deepEqual(notes.scope, { collectionIds: ['FOLDER-NOTES'] });
-  assert.equal(notes.database, null);
-  assert.equal(notes.sync, null);
+  assert.equal(notes.includeAttachments, false);
+
+  // Setting up again without customizing keeps what the user narrowed.
+  const kept = await setUp({ action: 'accept', content: { apps: ['notes'] } });
+  assert.equal(forms.length, 1);
+  assert.deepEqual(kept.apps[0]?.scope, notes.scope);
+  assert.equal(kept.apps[0]?.includeAttachments, false);
 
   const cancelled = await setUp(
-    { action: 'accept', content: { apps: ['notes'] } },
+    { action: 'accept', content: { apps: ['notes'], customize: true } },
     { action: 'cancel' },
   );
   assert.deepEqual(forms[1]?.requestedSchema.properties.folders?.default, [
@@ -394,7 +420,7 @@ test('Apple setup forms save the chosen Notes folders, report an app macOS denie
   assert.deepEqual(cancelled.apps[0]?.scope, notes.scope);
 
   const declined = await setUp(
-    { action: 'accept', content: { apps: ['notes'] } },
+    { action: 'accept', content: { apps: ['notes'], customize: true } },
     { action: 'decline' },
   );
   assert.ok('skipped' in declined);

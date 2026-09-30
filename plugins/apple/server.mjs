@@ -5383,7 +5383,7 @@ var require_uniqueItems = __commonJS({
         if (!$data && !schema)
           return;
         const valid = gen.let("valid");
-        const itemTypes = parentSchema.items ? (0, dataType_1.getSchemaTypes)(parentSchema.items) : [];
+        const itemTypes2 = parentSchema.items ? (0, dataType_1.getSchemaTypes)(parentSchema.items) : [];
         cxt.block$data(valid, validateUniqueItems, (0, codegen_1._)`${schemaCode} === false`);
         cxt.ok(valid);
         function validateUniqueItems() {
@@ -5394,16 +5394,16 @@ var require_uniqueItems = __commonJS({
           gen.if((0, codegen_1._)`${i} > 1`, () => (canOptimize() ? loopN : loopN2)(i, j));
         }
         function canOptimize() {
-          return itemTypes.length > 0 && !itemTypes.some((t) => t === "object" || t === "array");
+          return itemTypes2.length > 0 && !itemTypes2.some((t) => t === "object" || t === "array");
         }
         function loopN(i, j) {
           const item = gen.name("item");
-          const wrongType = (0, dataType_1.checkDataTypes)(itemTypes, item, it.opts.strictNumbers, dataType_1.DataType.Wrong);
+          const wrongType = (0, dataType_1.checkDataTypes)(itemTypes2, item, it.opts.strictNumbers, dataType_1.DataType.Wrong);
           const indices = gen.const("indices", (0, codegen_1._)`{}`);
           gen.for((0, codegen_1._)`;${i}--;`, () => {
             gen.let(item, (0, codegen_1._)`${data}[${i}]`);
             gen.if(wrongType, (0, codegen_1._)`continue`);
-            if (itemTypes.length > 1)
+            if (itemTypes2.length > 1)
               gen.if((0, codegen_1._)`typeof ${item} == "string"`, (0, codegen_1._)`${item} += "_"`);
             gen.if((0, codegen_1._)`typeof ${indices}[${item}] == "number"`, () => {
               gen.assign(j, (0, codegen_1._)`${indices}[${item}]`);
@@ -63351,26 +63351,39 @@ function message(error62) {
 }
 
 // packages/elt/dist/core/record-validation.js
-var scalarTypes = /* @__PURE__ */ new Set(["string", "integer", "number", "boolean", "null"]);
+var itemTypes = /* @__PURE__ */ new Set(["string", "integer", "number", "boolean"]);
+var scalarTypes = /* @__PURE__ */ new Set([...itemTypes, "null"]);
+var typesOf = (field) => typeof field.type === "string" ? [field.type] : field.type;
+var isArrayField = (field) => typesOf(field).includes("array");
+function supported(field) {
+  const types = typesOf(field);
+  if (!isArrayField(field))
+    return field.items === void 0 && types.every((type) => scalarTypes.has(type));
+  const { items } = field;
+  return types.every((type) => type === "array" || type === "null") && // Constraints on an array field belong on its items.
+  field.enum === void 0 && field.format === void 0 && field.minimum === void 0 && field.maximum === void 0 && field.minLength === void 0 && items !== null && typeof items === "object" && itemTypes.has(items.type);
+}
+function scalarValid(field, types, value) {
+  const typed = types.some((type) => type === "integer" ? Number.isSafeInteger(value) : type === "number" ? typeof value === "number" && Number.isFinite(value) : (type === "string" || type === "boolean") && typeof value === type);
+  return typed && (field.enum === void 0 || field.enum.includes(value)) && !(typeof value === "number" && (field.minimum !== void 0 && value < field.minimum || field.maximum !== void 0 && value > field.maximum)) && !(typeof value === "string" && field.minLength !== void 0 && value.length < field.minLength) && !(field.format === "date-time" && !isTimestamp(value)) && !(field.format === "date" && !isCalendarDate(value));
+}
 function validateRecords(stream, records, source) {
   if (!Array.isArray(records))
     throw new TypeError(`${source} returned invalid ${stream.name} records`);
   const fields = Object.entries(stream.jsonSchema.properties);
-  for (const [name, field] of fields) {
-    const types = typeof field.type === "string" ? [field.type] : field.type;
-    if (!types.every((type) => scalarTypes.has(type)))
+  for (const [name, field] of fields)
+    if (!supported(field))
       throw new TypeError(`Stream ${stream.name}.${name} declares an unsupported type`);
-  }
   for (const record3 of records) {
     if (record3 === null || typeof record3 !== "object" || Array.isArray(record3) || Object.keys(record3).length !== fields.length)
       throw new TypeError(`${source} returned an invalid ${stream.name} record`);
     for (const [name, field] of fields) {
       const value = Reflect.get(record3, name);
-      const types = typeof field.type === "string" ? [field.type] : field.type;
+      const types = typesOf(field);
       if (value === null && types.includes("null"))
         continue;
-      const valid = types.some((type) => type === "integer" ? Number.isSafeInteger(value) : type === "number" ? typeof value === "number" && Number.isFinite(value) : (type === "string" || type === "boolean") && typeof value === type);
-      if (!valid || field.enum !== void 0 && !field.enum.includes(value) || typeof value === "number" && (field.minimum !== void 0 && value < field.minimum || field.maximum !== void 0 && value > field.maximum) || typeof value === "string" && field.minLength !== void 0 && value.length < field.minLength || field.format === "date-time" && !isTimestamp(value) || field.format === "date" && !isCalendarDate(value))
+      const valid = isArrayField(field) ? Array.isArray(value) && value.every((item) => scalarValid(field.items, [field.items.type], item)) : scalarValid(field, types, value);
+      if (!valid)
         throw new TypeError(`${source} returned invalid ${stream.name}.${name}`);
     }
   }
@@ -70651,12 +70664,17 @@ var SQLiteColumn = class _SQLiteColumn {
   isPrimaryKey;
   nullable;
   optional;
+  // An array of kind, stored as a JSON array in TEXT.
+  array;
   fileRead;
   constructor(name, kind, options) {
     if (!name || name.includes("\0"))
       throw new TypeError("Invalid column name");
     if (!Object.hasOwn(storageTypes, kind))
       throw new TypeError("Unsupported SQLite column type");
+    this.array = options.array ?? false;
+    if (this.array && (kind === "blob" || options.primaryKey))
+      throw new TypeError("Array columns hold scalar values and cannot be keys");
     this.fileRead = options.fileRead;
     if (this.fileRead !== void 0 && (!(this.fileRead instanceof FileRead) || this.fileRead.name !== name))
       throw new TypeError("Column file read must match its name");
@@ -70673,6 +70691,7 @@ var SQLiteColumn = class _SQLiteColumn {
       nullable: false,
       optional: false,
       primaryKey: true,
+      array: this.array,
       fileRead: this.fileRead
     });
   }
@@ -70681,11 +70700,12 @@ var SQLiteColumn = class _SQLiteColumn {
       nullable: false,
       optional: false,
       primaryKey: this.isPrimaryKey,
+      array: this.array,
       fileRead: this.fileRead
     });
   }
   from(file2) {
-    if (this.kind !== "blob" && this.kind !== "text")
+    if (this.array || this.kind !== "blob" && this.kind !== "text")
       throw new TypeError("Files require a BLOB column, parsed TEXT or a stored TEXT reference");
     return new _SQLiteColumn(this.name, this.kind, {
       nullable: this.nullable,
@@ -70714,10 +70734,13 @@ var SQLiteColumn = class _SQLiteColumn {
     return this.kind === "blob" && this.fileRead !== void 0;
   }
   get storageType() {
+    if (this.array)
+      return "TEXT";
     return this.storesFile ? "INTEGER" : storageTypes[this.kind];
   }
   get definition() {
-    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? " PRIMARY KEY" : ""}${this.required ? " NOT NULL" : ""}${this.kind === "boolean" ? ` CHECK (${this.quotedName} IN (0, 1))` : ""}`;
+    const check2 = this.array ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')` : this.kind === "boolean" ? ` CHECK (${this.quotedName} IN (0, 1))` : "";
+    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? " PRIMARY KEY" : ""}${this.required ? " NOT NULL" : ""}${check2}`;
   }
   encode(record3) {
     if (record3 === null || typeof record3 !== "object" || Array.isArray(record3))
@@ -70730,6 +70753,11 @@ var SQLiteColumn = class _SQLiteColumn {
     const value = Reflect.get(record3, this.name);
     if (value === null && this.nullable)
       return null;
+    if (this.array) {
+      if (Array.isArray(value) && value.every((element) => this.#element(element)))
+        return JSON.stringify(value);
+      throw new TypeError(`Column "${this.name}" requires an array of ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
+    }
     switch (this.kind) {
       case "text":
         if (typeof value === "string")
@@ -70753,11 +70781,40 @@ var SQLiteColumn = class _SQLiteColumn {
     }
     throw new TypeError(`Column "${this.name}" requires ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
   }
+  // Whether a JSON array element keeps this kind's value exactly.
+  #element(value) {
+    switch (this.kind) {
+      case "text":
+        return typeof value === "string";
+      case "boolean":
+        return typeof value === "boolean";
+      case "integer":
+        return Number.isSafeInteger(value);
+      case "real":
+        return typeof value === "number" && Number.isFinite(value);
+      default:
+        return false;
+    }
+  }
 };
 
 // packages/destinations/sqlite/dist/sqlite-columns.js
+function scalarKind(name, type) {
+  switch (type) {
+    case "string":
+      return "text";
+    case "integer":
+      return "integer";
+    case "number":
+      return "real";
+    case "boolean":
+      return "boolean";
+    default:
+      throw new TypeError(`Unsupported JSON Schema type for field ${name}: ${String(type)}`);
+  }
+}
 var SQLiteColumns = class {
-  // ponytail: flat scalar schemas only; add nested mapping when a source requires it.
+  // Scalars, and arrays of scalars as JSON arrays in TEXT.
   static fromSchema(schema) {
     const { properties: properties6, required: required3 } = schema;
     if (schema.type !== "object" || properties6 === null || typeof properties6 !== "object" || Array.isArray(properties6))
@@ -70775,30 +70832,19 @@ var SQLiteColumns = class {
       const types = typeof type === "string" ? [type] : type;
       if (!Array.isArray(types) || !types.every((value) => typeof value === "string") || new Set(types).size !== types.length)
         throw new TypeError(`Unsupported JSON Schema type for field ${name}`);
-      const scalarTypes2 = types.filter((value) => value !== "null");
-      if (scalarTypes2.length !== 1)
+      const valueTypes = types.filter((value) => value !== "null");
+      if (valueTypes.length !== 1)
         throw new TypeError(`SQLite requires one scalar type for field ${name}`);
-      let kind;
-      switch (scalarTypes2[0]) {
-        case "string":
-          kind = "text";
-          break;
-        case "integer":
-          kind = "integer";
-          break;
-        case "number":
-          kind = "real";
-          break;
-        case "boolean":
-          kind = "boolean";
-          break;
-        default:
-          throw new TypeError(`Unsupported JSON Schema type for field ${name}: ${scalarTypes2[0]}`);
-      }
+      const array2 = valueTypes[0] === "array";
+      const items = array2 ? Reflect.get(field, "items") : field;
+      if (items === null || typeof items !== "object" || Array.isArray(items))
+        throw new TypeError(`Unsupported JSON Schema items for field ${name}`);
+      const kind = scalarKind(name, array2 ? Reflect.get(items, "type") : valueTypes[0]);
       return new SQLiteColumn(name, kind, {
         nullable: types.includes("null"),
         optional: !requiredFields.has(name),
-        primaryKey: false
+        primaryKey: false,
+        array: array2
       });
     });
   }
@@ -71873,7 +71919,7 @@ function scopeForm(app, rows, previous) {
       title: choice.label(row, rows)
     })).sort((left, right) => left.title.localeCompare(right.title));
     return { choice, options, ids: options.map((option) => option.const) };
-  }).filter(({ ids: ids2 }) => ids2.length > 0);
+  }).filter(({ ids: ids2 }) => ids2.length > 1);
   const properties6 = {};
   for (const { choice, options, ids: ids2 } of offered) {
     const earlier = previous?.scope[choice.scope]?.filter(
@@ -71948,7 +71994,7 @@ async function setUpWithForms(plugin2, ask) {
   const unchanged = () => ({ changed: false, ...plugin2.status() });
   const picked = await ask({
     mode: "form",
-    message: "Choose the Apple apps Codex can read on this Mac. macOS may ask for access to each app.",
+    message: "Choose the Apple apps Codex can read on this Mac. Each app is imported in full; macOS may ask for access to each one.",
     requestedSchema: {
       type: "object",
       properties: {
@@ -71962,12 +72008,18 @@ async function setUpWithForms(plugin2, ask) {
             }))
           },
           default: [...previous.keys()]
+        },
+        customize: {
+          type: "boolean",
+          title: "Choose accounts, folders and dates for each app",
+          default: false
         }
       },
       required: ["apps"]
     }
   });
   if (picked.action !== "accept") return unchanged();
+  const customize = picked.content?.customize === true;
   const configuration = [];
   const skipped = [];
   const unavailable = [];
@@ -71983,6 +72035,12 @@ async function setUpWithForms(plugin2, ask) {
       });
       const kept = previous.get(app);
       if (kept !== void 0) configuration.push(kept);
+      continue;
+    }
+    if (!customize) {
+      configuration.push(
+        previous.get(app) ?? { app, scope: {}, includeAttachments: true }
+      );
       continue;
     }
     const { form, read } = scopeForm(app, rows, previous.get(app));
@@ -72006,7 +72064,7 @@ async function setUpWithForms(plugin2, ask) {
 if (process.platform !== "darwin")
   throw new Error("Apple requires Codex on a Mac.");
 var plugin = new ApplePlugin();
-var version2 = "0.4.1";
+var version2 = "0.4.2";
 var server = new McpServer({ name: "apple", version: version2 });
 var json2 = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }]

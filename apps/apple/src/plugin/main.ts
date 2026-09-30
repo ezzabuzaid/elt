@@ -13,7 +13,7 @@ if (process.platform !== 'darwin')
 
 const plugin = new ApplePlugin();
 // Also plugins/apple/.codex-plugin/plugin.json; the newest running version leads.
-const version = '0.4.1';
+const version = '0.4.2';
 const server = new McpServer({ name: 'apple', version });
 // McpServer turns a thrown error into an isError result.
 const json = (value: unknown) => ({

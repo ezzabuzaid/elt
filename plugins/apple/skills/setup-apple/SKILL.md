@@ -9,7 +9,7 @@ The Apple plugin imports the apps, accounts, collections and dates the user choo
 
 ## Set up with forms
 
-1. Call `apple_setup`. It shows the user a form to choose apps, then one form per chosen app for its accounts, collections, dates and attachments, prefilled with the current selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat.
+1. Call `apple_setup`. It shows the user one form to choose apps. Each chosen app is imported in full with attachments (Calendar: last year through next year), and an app set up before keeps its earlier selection. Only if the user ticks "Choose accounts, folders and dates for each app" does one form per app follow, prefilled with the current selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat.
 2. Read its result:
    - `changed: false`: the user cancelled; nothing changed.
    - `skipped`: apps the user chose not to connect.
@@ -34,7 +34,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
 
 ## Report the result
 
-Report connected apps, scope, last successful sync and any per-app failures. A partial sync is incomplete data. Explain that content is stored locally on their Mac and passed to Codex when used to answer their requests. The plugin keeps the copy current while Codex is open, following changes in each app, and catches up the next time Codex opens; nothing runs after Codex closes. With Notes connected, it keeps Notes running hidden while Codex is open, because only Notes syncs iCloud notes to the Mac. Apps can be switched on or off any time under Plugins › Apple › Settings, which also shows each app's sync status; a switched-on app imports everything. Run setup again to choose accounts, folders, dates or attachments.
+Report connected apps, scope, last successful sync and any per-app failures. A partial sync is incomplete data. Explain that content is stored locally on their Mac and passed to Codex when used to answer their requests. The plugin keeps the copy current while Codex is open, following changes in each app, and catches up the next time Codex opens; nothing runs after Codex closes. With Notes connected, it keeps Notes running hidden while Codex is open, because only Notes syncs iCloud notes to the Mac. Apps can be switched on or off any time under Plugins › Apple › Settings, which also shows each app's sync status; a switched-on app imports everything. To narrow an app, run Set up Apple again and tick "Choose accounts, folders and dates for each app"; when the user asks in chat instead (for example, only a work mailbox), follow "Set up in chat" for that app.
 
 ## Gotchas
 

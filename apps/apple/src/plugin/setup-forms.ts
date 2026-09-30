@@ -34,7 +34,8 @@ function scopeForm(app: App, rows: ChoiceRows, previous?: AppConfiguration) {
         .sort((left, right) => left.title.localeCompare(right.title));
       return { choice, options, ids: options.map((option) => option.const) };
     })
-    .filter(({ ids }) => ids.length > 0);
+    // One option leaves nothing to choose: all of one is everything.
+    .filter(({ ids }) => ids.length > 1);
   const properties: Record<string, PrimitiveSchemaDefinition> = {};
   for (const { choice, options, ids } of offered) {
     const earlier = previous?.scope[choice.scope]?.filter((id) =>
@@ -102,9 +103,12 @@ function scopeForm(app: App, rows: ChoiceRows, previous?: AppConfiguration) {
   return { form, read };
 }
 
-// Setup where the user answers in forms: the apps first, then one form per
-// app. Declining an app's form skips it; cancelling leaves setup unchanged.
-// It returns once the answers are saved; the leading server imports them.
+// Setup where the user answers in forms. The first form chooses the apps;
+// each is imported in full (Calendar within its default window), or keeps
+// what it imported before. Only a user who asks to customize gets one form
+// per app for its accounts, collections, dates and attachments; declining an
+// app's form skips it. Cancelling leaves setup unchanged. It returns once
+// the answers are saved; the leading server imports them.
 export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   const previous = new Map(
     plugin
@@ -118,7 +122,7 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   const picked = await ask({
     mode: 'form',
     message:
-      'Choose the Apple apps Codex can read on this Mac. macOS may ask for access to each app.',
+      'Choose the Apple apps Codex can read on this Mac. Each app is imported in full; macOS may ask for access to each one.',
     requestedSchema: {
       type: 'object',
       properties: {
@@ -133,11 +137,17 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
           },
           default: [...previous.keys()],
         },
+        customize: {
+          type: 'boolean',
+          title: 'Choose accounts, folders and dates for each app',
+          default: false,
+        },
       },
       required: ['apps'],
     },
   });
   if (picked.action !== 'accept') return unchanged();
+  const customize = picked.content?.customize === true;
   const configuration: AppConfiguration[] = [];
   const skipped: App[] = [];
   const unavailable: { app: App; error: string; permissions: string }[] = [];
@@ -153,6 +163,12 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       });
       const kept = previous.get(app);
       if (kept !== undefined) configuration.push(kept);
+      continue;
+    }
+    if (!customize) {
+      configuration.push(
+        previous.get(app) ?? { app, scope: {}, includeAttachments: true },
+      );
       continue;
     }
     const { form, read } = scopeForm(app, rows, previous.get(app));
