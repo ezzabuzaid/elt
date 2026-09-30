@@ -5,6 +5,7 @@ import {
   mkdtempDisposable,
   readdir,
   readFile,
+  rename,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -611,6 +612,87 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
       (result) => result.count === 0 && result.deleted === 0,
     ),
   );
+});
+
+test('Mail message streams re-read only messages whose files or index attachment rows changed', async (t) => {
+  t.mock.method(osa, 'execute', async () =>
+    JSON.stringify({ accounts: [], smtpServers: [] }),
+  );
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-groups-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  const source = new AppleMailSource(store.root);
+  const run = await pipeline(source, dir.path);
+  const out = join(dir.path, 'out.sqlite');
+  const changed = async () =>
+    Object.fromEntries(
+      (await run.run())
+        .filter(({ count, deleted }) => count > 0 || deleted > 0)
+        .map(({ copy, count, deleted }) => [copy.from.name, { count, deleted }]),
+    );
+  const groups = () =>
+    Object.fromEntries(
+      rows(
+        join(dir.path, 'state.sqlite'),
+        "SELECT id, state FROM checkpoints WHERE id IN ('messageFiles','messageHeaders','messageParts','attachments') ORDER BY id",
+      ).map(({ id, state }) => [id, JSON.parse(String(state)).groups]),
+    );
+  await run.run();
+  const saved = groups();
+  assert.deepEqual(Object.keys(saved.messageHeaders), ['1']);
+  assert.deepEqual(Object.keys(saved.messageFiles), ['1', '2']);
+  // Message 2 has no file yet; its indexed attachment is still a group.
+  assert.deepEqual(Object.keys(saved.attachments), ['1', '2']);
+
+  assert.deepEqual(await changed(), {});
+  assert.deepEqual(groups(), saved);
+
+  // An index-only attachment renamed in the index reloads that row alone,
+  // beside the index table's own row.
+  using upstream = new DatabaseSync(store.index);
+  upstream.exec("UPDATE attachments SET name='renamed.txt' WHERE message=2");
+  assert.deepEqual(await changed(), {
+    indexedAttachments: { count: 1, deleted: 0 },
+    attachments: { count: 1, deleted: 0 },
+  });
+  assert.deepEqual(
+    rows(out, "SELECT filename FROM attachments WHERE messageId='2'"),
+    [{ filename: 'renamed.txt' }],
+  );
+  assert.equal(
+    groups().messageHeaders['1'].fingerprint,
+    saved.messageHeaders['1'].fingerprint,
+  );
+
+  // A partial download completed under the full name is read again: the
+  // file row changes, and identical MIME content loads nothing.
+  await rename(
+    join(store.data, 'Messages/1.partial.emlx'),
+    join(store.data, 'Messages/1.emlx'),
+  );
+  assert.deepEqual(await changed(), { messageFiles: { count: 1, deleted: 0 } });
+  assert.deepEqual(
+    rows(out, "SELECT partial FROM messageFiles WHERE messageId='1'"),
+    [{ partial: 0 }],
+  );
+
+  // New bytes in the same file are read again.
+  const edited = mime.replace('Received: first', 'Received: edited');
+  await writeFile(
+    join(store.data, 'Messages/1.emlx'),
+    `${Buffer.byteLength(edited)}\n${edited}`,
+  );
+  const edit = await changed();
+  assert.deepEqual(Object.keys(edit).sort(), ['messageFiles', 'messageHeaders']);
+  assert.match(
+    String(
+      rows(
+        out,
+        "SELECT value FROM messageHeaders WHERE name='received' ORDER BY position",
+      )[0]?.value,
+    ),
+    /^edited$/,
+  );
+  assert.deepEqual(await changed(), {});
 });
 
 test('Mail failures keep stored rows and checkpoints; absent stores and unknown schemas fail explicitly', async (t) => {

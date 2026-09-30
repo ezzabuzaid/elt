@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { watch } from 'node:fs';
 import { copyFile, rm } from 'node:fs/promises';
 import { extname, join, relative } from 'node:path';
@@ -7,9 +8,11 @@ import type { ExtractionCoverage } from 'elt';
 import {
   Catalog,
   type CopyConfiguration,
+  diffGroupedSnapshot,
   diffSnapshot,
   type FieldSchema,
   type SchemaRecord,
+  type SnapshotGroup,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -20,6 +23,7 @@ import { readMailMime } from '../../platform/macos/mail-mime.ts';
 import {
   assertMailFile,
   hashMailFile,
+  type MailFile,
   MailSchemaError,
   MailStore,
   mailVersionDirectory,
@@ -338,6 +342,28 @@ const streams = {
 const catalog = new Catalog(Object.values(streams));
 type StreamName = keyof typeof streams;
 
+// Streams read from each message's files, one snapshot group per message.
+const messageStreams = [
+  'messageFiles',
+  'messageHeaders',
+  'messageParts',
+  'attachments',
+] as const;
+type MessageStream = (typeof messageStreams)[number];
+const isMessageStream = (name: StreamName): name is MessageStream =>
+  (messageStreams as readonly string[]).includes(name);
+
+// Part of every message group's fingerprint: raise it whenever parsing or a
+// message stream's records change, so saved messages are read again.
+const messageParserVersion = 1;
+
+type Entry = { data: Record<string, unknown>; file: string | null };
+type IndexedAttachment = Record<string, unknown> & { message: string };
+type MessageInputs = {
+  detached: Map<string, [string, MailFile[]][]>;
+  indexed: Map<string, IndexedAttachment[]>;
+};
+
 function requiredString(
   object: Record<string, PlistValue>,
   key: string,
@@ -524,6 +550,7 @@ class MailScan implements AsyncDisposable {
     accounts: SchemaRecord<typeof metadata>[];
     smtpServers: SchemaRecord<typeof metadata>[];
   }> | null = null;
+  #inputs: MessageInputs | null = null;
 
   constructor(
     readonly store: MailStore,
@@ -532,27 +559,125 @@ class MailScan implements AsyncDisposable {
     this.accepts = mailSelection(store, scope);
   }
 
-  async *mime(
-    name: 'messageHeaders' | 'messageParts' | 'attachments',
-  ): AsyncGenerator<{ data: Record<string, unknown>; file: string | null }> {
-    const indexedAttachments = this.store.database.prepare(
-      'SELECT CAST(message AS TEXT) AS message, attachment_id, name FROM attachments ORDER BY ROWID',
-    );
-    const remaining = new Map(
-      indexedAttachments
-        .all()
-        .filter((row) => this.accepts('indexedAttachments', row))
-        .map((row) => [`${row.message}:${row.attachment_id}`, row]),
-    );
-    // ponytail: one archive scan per MIME view, with staging bounded by one
-    // message. A shared streaming scan could reduce repeated I/O.
+  // Each message's inputs besides its .emlx, gathered once per scan: detached
+  // files by part, and the attachment rows the index knows for it.
+  #messageInputs(): MessageInputs {
+    this.#inputs ??= (() => {
+      const detached = new Map<string, [string, MailFile[]][]>();
+      for (const [key, files] of [...this.store.attachments].sort(([a], [b]) =>
+        a < b ? -1 : a > b ? 1 : 0,
+      )) {
+        const id = key.slice(0, key.indexOf(':'));
+        detached.set(id, [...(detached.get(id) ?? []), [key, files]]);
+      }
+      const indexed = new Map<string, IndexedAttachment[]>();
+      for (const row of this.store.database
+        .prepare(
+          'SELECT CAST(message AS TEXT) AS message, attachment_id, name FROM attachments ORDER BY ROWID',
+        )
+        .all()) {
+        if (!this.accepts('indexedAttachments', row)) continue;
+        const message = row.message as string;
+        indexed.set(message, [
+          ...(indexed.get(message) ?? []),
+          { ...row, message },
+        ]);
+      }
+      return { detached, indexed };
+    })();
+    return this.#inputs;
+  }
+
+  // Everything a message's records are read from. The .emlx and detached
+  // files are identified by their stat (device, inode, size, and mtime and
+  // ctime in nanoseconds); a rewrite within one timestamp tick still changes
+  // ctime, and a file that changes while it is read fails the read, so a
+  // matching fingerprint means the saved records came from these bytes.
+  #fingerprint(id: string, file: MailFile | undefined): string {
+    const { detached, indexed } = this.#messageInputs();
+    const identity = ({ path, version }: MailFile) => [
+      relative(this.store.path, path),
+      version,
+    ];
+    return createHash('sha256')
+      .update(
+        JSON.stringify([
+          messageParserVersion,
+          file === undefined ? null : identity(file),
+          (detached.get(id) ?? []).map(([key, files]) => [
+            key,
+            files.map(identity),
+          ]),
+          (indexed.get(id) ?? []).map((row) => [row.attachment_id, row.name]),
+        ]),
+      )
+      .digest('base64url');
+  }
+
+  // One group per selected message, in index order. Selection runs on every
+  // scan; only reading a message whose inputs are unchanged is skipped.
+  async *groups(name: MessageStream): AsyncGenerator<SnapshotGroup<Entry>> {
+    const { indexed } = this.#messageInputs();
+    const listed = new Set<string>();
     for (const row of this.store.database
       .prepare('SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID')
       .iterate()) {
-      const id = row.id as string;
       if (!this.accepts('messages', row)) continue;
+      const id = row.id as string;
+      listed.add(id);
       const file = this.store.messages.get(id);
-      if (file === undefined) continue;
+      if (
+        file === undefined &&
+        (name === 'messageHeaders' ||
+          name === 'messageParts' ||
+          (name === 'attachments' && !indexed.has(id)))
+      )
+        continue;
+      yield {
+        key: id,
+        fingerprint: this.#fingerprint(id, file),
+        records: () => this.#messageEntries(name, id, file),
+      };
+    }
+    if (name !== 'attachments') return;
+    // The index can know an attachment of a message it no longer lists.
+    for (const [id, rows] of indexed)
+      if (!listed.has(id))
+        yield {
+          key: id,
+          fingerprint: this.#fingerprint(id, undefined),
+          records: () => this.#indexedEntries(rows),
+        };
+  }
+
+  async *#messageEntries(
+    name: MessageStream,
+    id: string,
+    file: MailFile | undefined,
+  ): AsyncGenerator<Entry> {
+    if (name === 'messageFiles') {
+      const data: SchemaRecord<typeof fileFields> = {
+        messageId: id,
+        relativePath:
+          file === undefined ? null : relative(this.store.path, file.path),
+        availableLocally: file !== undefined,
+        partial:
+          file === undefined ? null : file.path.endsWith('.partial.emlx'),
+        size: file === undefined ? null : file.size,
+        sha256: file === undefined ? null : await hashMailFile(file),
+      };
+      yield { data, file: file === undefined ? null : file.path };
+      if (file !== undefined) await assertMailFile(file);
+      return;
+    }
+    // Index rows no MIME part claimed; attachments reports them on their own.
+    const unclaimed = new Map(
+      (this.#messageInputs().indexed.get(id) ?? []).map((row) => [
+        String(row.attachment_id),
+        row,
+      ]),
+    );
+    if (file !== undefined) {
       const { headers, parts } = await readMailMime(
         this.store,
         id,
@@ -562,34 +687,34 @@ class MailScan implements AsyncDisposable {
         (part) =>
           name === 'messageParts' ||
           part.isAttachment ||
-          remaining.has(`${id}:${part.partId}`),
+          unclaimed.has(part.partId),
       );
       try {
-        if (name === 'messageHeaders') {
+        if (name === 'messageHeaders')
           for (const header of headers)
             yield { data: { ...header }, file: null };
-        } else {
+        else
           for (const part of parts) {
-            const indexKey = `${id}:${part.record.partId}`;
-            const indexed = remaining.has(indexKey);
+            const indexed = unclaimed.delete(part.record.partId);
             part.record.isAttachment ||= indexed;
-            remaining.delete(indexKey);
             if (name === 'messageParts')
-              yield {
-                data: { ...part.record, text: part.text },
-                file: null,
-              };
+              yield { data: { ...part.record, text: part.text }, file: null };
             else if (part.record.isAttachment)
               yield { data: { ...part.record }, file: part.path };
           }
-        }
       } finally {
         for (const part of parts) if (part.path !== null) await rm(part.path);
       }
     }
-    if (name !== 'attachments') return;
-    // The index can know an attachment before its message/MIME file arrives.
-    for (const [key, row] of remaining) {
+    if (name === 'attachments') yield* this.#indexedEntries(unclaimed.values());
+  }
+
+  // Attachments the index knows before their message or MIME file arrives.
+  async *#indexedEntries(
+    rows: Iterable<IndexedAttachment>,
+  ): AsyncGenerator<Entry> {
+    for (const row of rows) {
+      const key = `${row.message}:${row.attachment_id}`;
       if (
         typeof row.attachment_id !== 'string' ||
         !/^\d+(?:\.\d+)*$/.test(row.attachment_id)
@@ -602,7 +727,7 @@ class MailScan implements AsyncDisposable {
         throw new MailSchemaError(`Ambiguous indexed Mail attachment ${key}`);
       const file = candidates?.[0];
       const record: SchemaRecord<typeof partFields> = {
-        messageId: row.message as string,
+        messageId: row.message,
         partId: row.attachment_id,
         parentPartId: null,
         contentType: null,
@@ -697,9 +822,7 @@ class MailScan implements AsyncDisposable {
     return { accounts, smtpServers };
   }
 
-  async *read(
-    name: StreamName,
-  ): AsyncGenerator<{ data: Record<string, unknown>; file: string | null }> {
+  async *read(name: StreamName): AsyncGenerator<Entry> {
     if (name in mailTables) {
       const definition = mailTables[name as keyof typeof mailTables];
       for (const row of this.store.database.prepare(definition.sql).iterate()) {
@@ -717,35 +840,8 @@ class MailScan implements AsyncDisposable {
         if (this.accepts(name, data)) yield { data, file: null };
       return;
     }
-    if (name === 'messageFiles') {
-      for (const row of this.store.database
-        .prepare(
-          'SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID',
-        )
-        .iterate()) {
-        if (!this.accepts('messages', row)) continue;
-        const file = this.store.messages.get(row.id as string);
-        const data: SchemaRecord<typeof fileFields> = {
-          messageId: row.id as string,
-          relativePath:
-            file === undefined ? null : relative(this.store.path, file.path),
-          availableLocally: file !== undefined,
-          partial:
-            file === undefined ? null : file.path.endsWith('.partial.emlx'),
-          size: file === undefined ? null : file.size,
-          sha256: file === undefined ? null : await hashMailFile(file),
-        };
-        yield { data, file: file === undefined ? null : file.path };
-        if (file !== undefined) await assertMailFile(file);
-      }
-      return;
-    }
-    if (
-      name === 'messageHeaders' ||
-      name === 'messageParts' ||
-      name === 'attachments'
-    ) {
-      yield* this.mime(name);
+    if (isMessageStream(name)) {
+      for await (const group of this.groups(name)) yield* group.records();
       return;
     }
     if (name === 'mailboxProperties' || name === 'configuration') {
@@ -920,21 +1016,32 @@ export class AppleMailSource extends Source<MailScan> {
     scan: MailScan,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
+    const name = stream.name as StreamName;
     let file: string | null = null;
-    async function* records() {
-      for await (const entry of scan.read(stream.name as StreamName)) {
-        if (!scan.accepts(stream.name as StreamName, entry.data)) continue;
+    async function* records(entries: AsyncIterable<Entry> | Iterable<Entry>) {
+      for await (const entry of entries) {
+        if (!scan.accepts(name, entry.data)) continue;
         file = entry.file;
         yield* validateRecords(stream, [entry.data], 'Mail');
       }
     }
+    async function* groups(from: MessageStream) {
+      for await (const group of scan.groups(from))
+        yield {
+          key: group.key,
+          fingerprint: group.fingerprint,
+          records: () => records(group.records()),
+        };
+    }
     const messages =
-      configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records(), state)
-        : (async function* () {
-            for await (const data of records())
+      configuration.syncMode !== 'incremental'
+        ? (async function* () {
+            for await (const data of records(scan.read(name)))
               yield { stream: stream.name, data };
-          })();
+          })()
+        : isMessageStream(name)
+          ? diffGroupedSnapshot(stream, groups(name), state)
+          : diffSnapshot(stream, records(scan.read(name)), state);
     for await (const message of messages)
       yield 'type' in message || configuration.fileReads.length === 0
         ? message
