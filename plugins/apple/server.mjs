@@ -62107,9 +62107,10 @@ var StdioServerTransport = class {
 };
 
 // apps/apple/src/plugin/apple-plugin.ts
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
+import { setTimeout as sleep3 } from "node:timers/promises";
 
 // packages/elt/dist/core/deduplication.js
 var Deduplication = class {
@@ -63220,7 +63221,7 @@ var Pipeline = class {
     let wake = Promise.withResolvers();
     let finished = false;
     let failed = false;
-    let failure2;
+    let failure3;
     const receive = (async () => {
       let initial = true;
       try {
@@ -63244,7 +63245,7 @@ var Pipeline = class {
       } catch (error62) {
         if (!(watching.aborted && error62 instanceof Error && error62.name === "AbortError")) {
           failed = true;
-          failure2 = error62;
+          failure3 = error62;
         }
       } finally {
         finished = true;
@@ -63254,7 +63255,7 @@ var Pipeline = class {
     try {
       while (!watching.aborted) {
         if (failed)
-          throw failure2;
+          throw failure3;
         if (pending.size === 0) {
           if (finished)
             return;
@@ -63267,7 +63268,7 @@ var Pipeline = class {
         yield await this.#pass(connection, steps);
       }
       if (failed)
-        throw failure2;
+        throw failure3;
     } catch (error62) {
       stopped.push(connectionError(connection, error62));
       await this.#recordFailure(connection, error62).catch((cause) => stopped.push(connectionError(connection, cause)));
@@ -63380,8 +63381,7 @@ function validateRecords(stream, records, source) {
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
 async function* diffSnapshot(stream, records, state) {
-  if (!stream.sourceDefinedCursor || !stream.emitsDeletes)
-    throw new TypeError(`Stream ${stream.name} must declare sourceDefinedCursor and emitsDeletes to diff snapshots`);
+  assertSnapshotStream(stream);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
   const current = /* @__PURE__ */ new Map();
@@ -63401,8 +63401,72 @@ async function* diffSnapshot(stream, records, state) {
         stream: stream.name,
         key: keyObject(stream, key)
       };
-  const snapshot = Object.fromEntries([...current].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+  const snapshot = sortedObject(current);
   yield { type: "STATE", stream: stream.name, state: { snapshot } };
+}
+async function* diffGroupedSnapshot(stream, groups, state) {
+  assertSnapshotStream(stream);
+  const deduplication = new Deduplication(stream, stream.primaryKey);
+  const previous = new Map(Object.entries(state?.groups ?? {}));
+  let everyPrevious = null;
+  const previousFingerprint = (group2, key) => {
+    const same = group2?.snapshot[key];
+    if (same !== void 0)
+      return same;
+    everyPrevious ??= new Map([...previous.values()].flatMap(({ snapshot }) => Object.entries(snapshot)));
+    return everyPrevious.get(key);
+  };
+  const seen = /* @__PURE__ */ new Set();
+  const claim2 = (key) => {
+    if (seen.has(key))
+      throw new TypeError(`Stream ${stream.name} returned key ${key} twice in one scan`);
+    seen.add(key);
+  };
+  const current = /* @__PURE__ */ new Map();
+  for await (const group2 of groups) {
+    if (current.has(group2.key))
+      throw new TypeError(`Stream ${stream.name} returned group ${group2.key} twice in one scan`);
+    const before = previous.get(group2.key);
+    if (group2.fingerprint !== null && before?.fingerprint === group2.fingerprint) {
+      for (const key of Object.keys(before.snapshot))
+        claim2(key);
+      current.set(group2.key, before);
+      continue;
+    }
+    const snapshot = /* @__PURE__ */ new Map();
+    for await (const data of group2.records()) {
+      const key = deduplication.key(data);
+      claim2(key);
+      const fingerprint = fingerprintOf(stream, data);
+      snapshot.set(key, fingerprint);
+      if (previousFingerprint(before, key) !== fingerprint)
+        yield { stream: stream.name, data };
+    }
+    current.set(group2.key, {
+      fingerprint: group2.fingerprint,
+      snapshot: sortedObject(snapshot)
+    });
+  }
+  for (const { snapshot } of previous.values())
+    for (const key of Object.keys(snapshot))
+      if (!seen.has(key))
+        yield {
+          type: "DELETE",
+          stream: stream.name,
+          key: keyObject(stream, key)
+        };
+  yield {
+    type: "STATE",
+    stream: stream.name,
+    state: { groups: sortedObject(current) }
+  };
+}
+function assertSnapshotStream(stream) {
+  if (!stream.sourceDefinedCursor || !stream.emitsDeletes)
+    throw new TypeError(`Stream ${stream.name} must declare sourceDefinedCursor and emitsDeletes to diff snapshots`);
+}
+function sortedObject(entries) {
+  return Object.fromEntries([...entries].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
 }
 function readSnapshot(state) {
   return new Map(Object.entries(state?.snapshot ?? {}));
@@ -63485,10 +63549,26 @@ var CheckpointStore = class {
 };
 
 // packages/elt/dist/state/sync-history.js
+var SyncHistory = class {
+  // Refuses, without I/O, a connection this history cannot record.
+  validate(_connection) {
+  }
+};
 function copyStatus({ count, deleted, failures }) {
   if (failures.length === 0)
     return "succeeded";
   return count + deleted > 0 ? "partial" : "failed";
+}
+function passStatus(outcomes) {
+  if (outcomes.every(({ failures }) => failures.length === 0))
+    return "succeeded";
+  return outcomes.some((outcome) => copyStatus(outcome) !== "failed") ? "partial" : "failed";
+}
+function passError(outcomes) {
+  const incomplete = outcomes.filter(({ failures }) => failures.length > 0);
+  if (incomplete.length === 0)
+    return null;
+  return `The following copies did not load completely: ${incomplete.map(describeFailures).join("; ")}`;
 }
 
 // packages/elt/dist/storage/local-files.js
@@ -64037,9 +64117,9 @@ var NativeProcess = class {
     try {
       if (signal.aborted) return;
       const child = spawn(file2, args, { stdio: ["ignore", "pipe", "pipe"] });
-      let failure2;
+      let failure3;
       child.on("error", (error62) => {
-        failure2 = error62;
+        failure3 = error62;
       });
       const closed = new Promise(
         (resolve4) => child.once("close", () => resolve4())
@@ -64055,7 +64135,7 @@ var NativeProcess = class {
       try {
         for await (const line of lines) yield line;
         await closed;
-        if (failure2) throw failure2;
+        if (failure3) throw failure3;
         if (!signal.aborted && child.exitCode !== 0)
           throw Object.assign(new Error(`${file2} exited: ${stderr.trim()}`), {
             stderr,
@@ -64080,7 +64160,7 @@ var CalendarUnavailableError = class extends Error {
   name = "CalendarUnavailableError";
   constructor(cause) {
     super(
-      "Calendar requires macOS 14 or later and full Calendar access for the process running the export. Allow access in System Settings > Privacy & Security > Calendars. A sandbox can prevent access even when permission is granted.",
+      "Calendar requires full Calendar access for the process running the export. Allow access in System Settings > Privacy & Security > Calendars. A sandbox can prevent access even when permission is granted.",
       { cause }
     );
   }
@@ -64089,7 +64169,7 @@ var RemindersUnavailableError = class extends Error {
   name = "RemindersUnavailableError";
   constructor(cause) {
     super(
-      "Reminders requires macOS 14 or later and full Reminders access for the process running the export. Allow access in System Settings > Privacy & Security > Reminders. A sandbox can prevent access even when permission is granted.",
+      "Reminders requires full Reminders access for the process running the export. Allow access in System Settings > Privacy & Security > Reminders. A sandbox can prevent access even when permission is granted.",
       { cause }
     );
   }
@@ -64143,13 +64223,13 @@ var EventKit = class {
     const controller = new AbortController();
     const changes = this.watch(controller.signal)[Symbol.asyncIterator]();
     let count = 0;
-    let failure2;
+    let failure3;
     await changes.next();
     const counting = (async () => {
       try {
         while (!(await changes.next()).done) count++;
       } catch (error62) {
-        if (!controller.signal.aborted) failure2 = { error: error62 };
+        if (!controller.signal.aborted) failure3 = { error: error62 };
       }
     })();
     try {
@@ -64157,7 +64237,7 @@ var EventKit = class {
         const before = count;
         const value = await read();
         await sleep(settleMs);
-        if (failure2 !== void 0) throw failure2.error;
+        if (failure3 !== void 0) throw failure3.error;
         if (count === before) return value;
       }
       throw new EventKitChangingError(this.entity, attempts);
@@ -66379,6 +66459,7 @@ function contactSelection(store, scope) {
 }
 
 // apps/apple/src/sources/apple-mail/apple-mail-source.ts
+import { createHash as createHash6 } from "node:crypto";
 import { watch } from "node:fs";
 import { copyFile as copyFile2, rm as rm4 } from "node:fs/promises";
 import { extname as extname4, join as join7, relative as relative2 } from "node:path";
@@ -67382,6 +67463,14 @@ var streams2 = {
   )
 };
 var catalog3 = new Catalog(Object.values(streams2));
+var messageStreams = [
+  "messageFiles",
+  "messageHeaders",
+  "messageParts",
+  "attachments"
+];
+var isMessageStream = (name) => messageStreams.includes(name);
+var messageParserVersion = 1;
 function requiredString(object3, key) {
   const value = object3[key];
   if (typeof value !== "string" || value === "")
@@ -67531,51 +67620,135 @@ var MailScan = class {
   store;
   accepts;
   #accounts = null;
-  async *mime(name) {
-    const indexedAttachments = this.store.database.prepare(
-      "SELECT CAST(message AS TEXT) AS message, attachment_id, name FROM attachments ORDER BY ROWID"
-    );
-    const remaining = new Map(
-      indexedAttachments.all().filter((row) => this.accepts("indexedAttachments", row)).map((row) => [`${row.message}:${row.attachment_id}`, row])
-    );
+  #inputs = null;
+  // Each message's inputs besides its .emlx, gathered once per scan: detached
+  // files by part, and the attachment rows the index knows for it.
+  #messageInputs() {
+    this.#inputs ??= (() => {
+      const detached = /* @__PURE__ */ new Map();
+      for (const [key, files] of [...this.store.attachments].sort(
+        ([a], [b]) => a < b ? -1 : a > b ? 1 : 0
+      )) {
+        const id11 = key.slice(0, key.indexOf(":"));
+        detached.set(id11, [...detached.get(id11) ?? [], [key, files]]);
+      }
+      const indexed = /* @__PURE__ */ new Map();
+      for (const row of this.store.database.prepare(
+        "SELECT CAST(message AS TEXT) AS message, attachment_id, name FROM attachments ORDER BY ROWID"
+      ).all()) {
+        if (!this.accepts("indexedAttachments", row)) continue;
+        const message3 = row.message;
+        indexed.set(message3, [
+          ...indexed.get(message3) ?? [],
+          { ...row, message: message3 }
+        ]);
+      }
+      return { detached, indexed };
+    })();
+    return this.#inputs;
+  }
+  // Everything a message's records are read from. The .emlx and detached
+  // files are identified by their stat (device, inode, size, and mtime and
+  // ctime in nanoseconds); a rewrite within one timestamp tick still changes
+  // ctime, and a file that changes while it is read fails the read, so a
+  // matching fingerprint means the saved records came from these bytes.
+  #fingerprint(id11, file2) {
+    const { detached, indexed } = this.#messageInputs();
+    const identity = ({ path, version: version2 }) => [
+      relative2(this.store.path, path),
+      version2
+    ];
+    return createHash6("sha256").update(
+      JSON.stringify([
+        messageParserVersion,
+        file2 === void 0 ? null : identity(file2),
+        (detached.get(id11) ?? []).map(([key, files]) => [
+          key,
+          files.map(identity)
+        ]),
+        (indexed.get(id11) ?? []).map((row) => [row.attachment_id, row.name])
+      ])
+    ).digest("base64url");
+  }
+  // One group per selected message, in index order. Selection runs on every
+  // scan; only reading a message whose inputs are unchanged is skipped.
+  async *groups(name) {
+    const { indexed } = this.#messageInputs();
+    const listed = /* @__PURE__ */ new Set();
     for (const row of this.store.database.prepare("SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID").iterate()) {
-      const id11 = row.id;
       if (!this.accepts("messages", row)) continue;
+      const id11 = row.id;
+      listed.add(id11);
       const file2 = this.store.messages.get(id11);
-      if (file2 === void 0) continue;
+      if (file2 === void 0 && (name === "messageHeaders" || name === "messageParts" || name === "attachments" && !indexed.has(id11)))
+        continue;
+      yield {
+        key: id11,
+        fingerprint: this.#fingerprint(id11, file2),
+        records: () => this.#messageEntries(name, id11, file2)
+      };
+    }
+    if (name !== "attachments") return;
+    for (const [id11, rows] of indexed)
+      if (!listed.has(id11))
+        yield {
+          key: id11,
+          fingerprint: this.#fingerprint(id11, void 0),
+          records: () => this.#indexedEntries(rows)
+        };
+  }
+  async *#messageEntries(name, id11, file2) {
+    if (name === "messageFiles") {
+      const data = {
+        messageId: id11,
+        relativePath: file2 === void 0 ? null : relative2(this.store.path, file2.path),
+        availableLocally: file2 !== void 0,
+        partial: file2 === void 0 ? null : file2.path.endsWith(".partial.emlx"),
+        size: file2 === void 0 ? null : file2.size,
+        sha256: file2 === void 0 ? null : await hashMailFile(file2)
+      };
+      yield { data, file: file2 === void 0 ? null : file2.path };
+      if (file2 !== void 0) await assertMailFile(file2);
+      return;
+    }
+    const unclaimed = new Map(
+      (this.#messageInputs().indexed.get(id11) ?? []).map((row) => [
+        String(row.attachment_id),
+        row
+      ])
+    );
+    if (file2 !== void 0) {
       const { headers, parts } = await readMailMime(
         this.store,
         id11,
         file2,
         name === "messageHeaders",
         name === "attachments",
-        (part) => name === "messageParts" || part.isAttachment || remaining.has(`${id11}:${part.partId}`)
+        (part) => name === "messageParts" || part.isAttachment || unclaimed.has(part.partId)
       );
       try {
-        if (name === "messageHeaders") {
+        if (name === "messageHeaders")
           for (const header of headers)
             yield { data: { ...header }, file: null };
-        } else {
+        else
           for (const part of parts) {
-            const indexKey = `${id11}:${part.record.partId}`;
-            const indexed = remaining.has(indexKey);
+            const indexed = unclaimed.delete(part.record.partId);
             part.record.isAttachment ||= indexed;
-            remaining.delete(indexKey);
             if (name === "messageParts")
-              yield {
-                data: { ...part.record, text: part.text },
-                file: null
-              };
+              yield { data: { ...part.record, text: part.text }, file: null };
             else if (part.record.isAttachment)
               yield { data: { ...part.record }, file: part.path };
           }
-        }
       } finally {
         for (const part of parts) if (part.path !== null) await rm4(part.path);
       }
     }
-    if (name !== "attachments") return;
-    for (const [key, row] of remaining) {
+    if (name === "attachments") yield* this.#indexedEntries(unclaimed.values());
+  }
+  // Attachments the index knows before their message or MIME file arrives.
+  async *#indexedEntries(rows) {
+    for (const row of rows) {
+      const key = `${row.message}:${row.attachment_id}`;
       if (typeof row.attachment_id !== "string" || !/^\d+(?:\.\d+)*$/.test(row.attachment_id))
         throw new MailSchemaError(
           `Invalid indexed Mail attachment part ${key}`
@@ -67674,27 +67847,8 @@ var MailScan = class {
         if (this.accepts(name, data)) yield { data, file: null };
       return;
     }
-    if (name === "messageFiles") {
-      for (const row of this.store.database.prepare(
-        "SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID"
-      ).iterate()) {
-        if (!this.accepts("messages", row)) continue;
-        const file2 = this.store.messages.get(row.id);
-        const data = {
-          messageId: row.id,
-          relativePath: file2 === void 0 ? null : relative2(this.store.path, file2.path),
-          availableLocally: file2 !== void 0,
-          partial: file2 === void 0 ? null : file2.path.endsWith(".partial.emlx"),
-          size: file2 === void 0 ? null : file2.size,
-          sha256: file2 === void 0 ? null : await hashMailFile(file2)
-        };
-        yield { data, file: file2 === void 0 ? null : file2.path };
-        if (file2 !== void 0) await assertMailFile(file2);
-      }
-      return;
-    }
-    if (name === "messageHeaders" || name === "messageParts" || name === "attachments") {
-      yield* this.mime(name);
+    if (isMessageStream(name)) {
+      for await (const group2 of this.groups(name)) yield* group2.records();
       return;
     }
     if (name === "mailboxProperties" || name === "configuration") {
@@ -67850,18 +68004,27 @@ var AppleMailSource = class extends Source {
   }
   async *extract(configuration, state, _partition, scan) {
     const { stream } = configuration;
+    const name = stream.name;
     let file2 = null;
-    async function* records() {
-      for await (const entry of scan.read(stream.name)) {
-        if (!scan.accepts(stream.name, entry.data)) continue;
+    async function* records(entries) {
+      for await (const entry of entries) {
+        if (!scan.accepts(name, entry.data)) continue;
         file2 = entry.file;
         yield* validateRecords(stream, [entry.data], "Mail");
       }
     }
-    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records(), state) : (async function* () {
-      for await (const data of records())
+    async function* groups(from) {
+      for await (const group2 of scan.groups(from))
+        yield {
+          key: group2.key,
+          fingerprint: group2.fingerprint,
+          records: () => records(group2.records())
+        };
+    }
+    const messages = configuration.syncMode !== "incremental" ? (async function* () {
+      for await (const data of records(scan.read(name)))
         yield { stream: stream.name, data };
-    })();
+    })() : isMessageStream(name) ? diffGroupedSnapshot(stream, groups(name), state) : diffSnapshot(stream, records(scan.read(name)), state);
     for await (const message3 of messages)
       yield "type" in message3 || configuration.fileReads.length === 0 ? message3 : { ...message3, file: file2 };
   }
@@ -67882,19 +68045,19 @@ var AppleMailSource = class extends Source {
       const version2 = database.prepare("PRAGMA data_version");
       let seen = version2.get()?.data_version;
       let changed = false;
-      let failure2 = null;
+      let failure3 = null;
       const resources = __using(_stack, new DisposableStack());
       const watcher = watch(this.path, { recursive: true, signal }, () => {
         changed = true;
       });
       resources.defer(() => watcher.close());
       watcher.on("error", (error62) => {
-        failure2 = error62;
+        failure3 = error62;
       });
       yield selected2;
       try {
         for await (const _2 of setInterval2(1e3, void 0, { signal })) {
-          if (failure2 !== null) throw failure2;
+          if (failure3 !== null) throw failure3;
           const current = version2.get()?.data_version;
           if (!changed && current === seen) continue;
           changed = false;
@@ -69963,7 +70126,7 @@ function dateComponentsRow(reminderId, kind, components) {
       dateComponentNames.map((name) => [name, components[name] ?? null])
     ),
     leapMonth: components.leapMonth,
-    repeatedDay: components.repeatedDay ?? null
+    repeatedDay: components.repeatedDay
   };
 }
 
@@ -70074,8 +70237,8 @@ var catalog6 = eventKitCatalog(
           description: "NSDateComponents.isLeapMonth: whether month is a leap month in the set's calendar."
         },
         repeatedDay: {
-          type: ["boolean", "null"],
-          description: "NSDateComponents.isRepeatedDay; NULL where this macOS does not provide it."
+          ...boolean10,
+          description: "NSDateComponents.isRepeatedDay: whether day is a repeated day in the set's calendar."
         }
       }
     },
@@ -70274,8 +70437,15 @@ var apps = {
   }
 };
 
+// apps/apple/src/plugin/freshness.ts
+import { mkdirSync as mkdirSync3 } from "node:fs";
+import { join as join15 } from "node:path";
+import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
+import { setInterval as setInterval5, setTimeout as sleep2 } from "node:timers/promises";
+
 // apps/apple/src/plugin/settings.ts
-import { chmodSync, mkdirSync } from "node:fs";
+import { createHash as createHash7 } from "node:crypto";
+import { chmodSync, mkdirSync, readdirSync as readdirSync2, rmSync } from "node:fs";
 import { join as join13 } from "node:path";
 import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 var appSchema = external_exports.enum(appNames);
@@ -70316,6 +70486,26 @@ var configurationSchema = external_exports.strictObject({
       });
   }
 });
+function importDirectory(directory, item) {
+  const key = createHash7("sha256").update(JSON.stringify([item.scope, item.includeAttachments])).digest("hex").slice(0, 16);
+  return join13(directory, item.app, key);
+}
+function removeStaleImports(directory, configuration) {
+  for (const app of appNames) {
+    const item = configuration?.apps.find((selected2) => selected2.app === app);
+    const kept = item === void 0 ? null : importDirectory(directory, item);
+    const root = join13(directory, app);
+    let entries;
+    try {
+      entries = readdirSync2(root);
+    } catch {
+      continue;
+    }
+    for (const entry of entries)
+      if (join13(root, entry) !== kept)
+        rmSync(join13(root, entry), { recursive: true, force: true });
+  }
+}
 var Settings = class {
   database;
   constructor(directory) {
@@ -70326,7 +70516,7 @@ var Settings = class {
     try {
       chmodSync(path, 384);
       this.database.exec(
-        "CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_status (app TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        "CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS import_status (import TEXT PRIMARY KEY, value TEXT NOT NULL);"
       );
     } catch (error62) {
       this.database.close();
@@ -70337,21 +70527,23 @@ var Settings = class {
     const row = this.database.prepare("SELECT value FROM configuration WHERE id=1").get();
     return row === void 0 ? null : configurationSchema.parse(JSON.parse(String(row.value)));
   }
-  syncResult(app) {
-    const row = this.database.prepare("SELECT value FROM sync_status WHERE app=?").get(app);
+  // The last pass of the import in one import directory.
+  syncResult(importPath) {
+    const row = this.database.prepare("SELECT value FROM import_status WHERE import=?").get(importPath);
     return row === void 0 ? void 0 : JSON.parse(String(row.value));
   }
-  saveSyncResult(app, result) {
+  saveSyncResult(importPath, result) {
     this.database.prepare(
-      "INSERT INTO sync_status VALUES(?,?) ON CONFLICT(app) DO UPDATE SET value=excluded.value"
-    ).run(app, JSON.stringify(result));
+      "INSERT INTO import_status VALUES(?,?) ON CONFLICT(import) DO UPDATE SET value=excluded.value"
+    ).run(importPath, JSON.stringify(result));
   }
-  // Saves the selection and forgets the sync history of the apps it changes.
-  saveConfiguration(configuration, changed) {
+  // Saves the selection and forgets the status of every other import.
+  saveConfiguration(configuration, imports) {
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      for (const app of changed)
-        this.database.prepare("DELETE FROM sync_status WHERE app=?").run(app);
+      this.database.prepare(
+        "DELETE FROM import_status WHERE import NOT IN (SELECT value FROM json_each(?))"
+      ).run(JSON.stringify(imports));
       this.database.prepare(
         "INSERT INTO configuration VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value"
       ).run(JSON.stringify(configuration));
@@ -70365,18 +70557,6 @@ var Settings = class {
     this.database.close();
   }
 };
-function lockOperations(directory) {
-  const database = new DatabaseSync6(join13(directory, "operation.sqlite"));
-  try {
-    database.exec("BEGIN IMMEDIATE");
-  } catch {
-    database.close();
-    throw new Error(
-      "Apple setup or sync is already running in another Codex chat. Try again when it finishes."
-    );
-  }
-  return { [Symbol.dispose]: () => database.close() };
-}
 
 // apps/apple/src/plugin/sync.ts
 import { mkdirSync as mkdirSync2 } from "node:fs";
@@ -70649,7 +70829,7 @@ import { resolve as resolve3 } from "node:path";
 import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-writer.js
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-file-store.js
@@ -70718,7 +70898,7 @@ var SQLiteWriter = class extends Writer {
     database.exec(`DELETE FROM ${this.table.quotedName}`);
   }
   get hash() {
-    return createHash6("sha256").update(this.table.location).digest("hex");
+    return createHash8("sha256").update(this.table.location).digest("hex");
   }
   get dedupIndex() {
     return quote2(`_mac_elt_dedup_${this.hash}`);
@@ -71126,126 +71306,254 @@ var attachmentRef = {
   type: ["string", "null"],
   description: "Managed local copy when bytes are available"
 };
-async function importApp(directory, { app, scope, includeAttachments }, lastSucceededAt) {
-  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const failure2 = (error62) => `${error62 instanceof Error ? error62.message : String(error62)} ${apps[app].permissions}`;
-  try {
-    const source = apps[app].source(scope);
-    const catalog7 = await source.discover();
-    const omitted = new Set(
-      Object.keys(scope).length > 0 ? apps[app].unscoped ?? [] : []
-    );
-    const streams4 = catalog7.streams.filter(
-      (stream) => !omitted.has(stream.name)
-    );
-    const withFiles = (stream) => includeAttachments && stream.supportsFileTransfer === true && !apps[app].storeCopies?.includes(stream.name);
-    const appDirectory = join14(directory, app);
-    mkdirSync2(appDirectory, { recursive: true, mode: 448 });
-    const destination = new SQLiteDestination({
-      path: join14(appDirectory, "data.sqlite")
-    });
-    const files = new LocalFiles({ directory: join14(appDirectory, "files") });
-    const pipeline2 = new Pipeline({
-      connections: [
-        new Connection({
-          name: app,
-          source,
-          destination,
-          checkpoints: new SQLiteCheckpointStore({
-            path: join14(appDirectory, "checkpoints.sqlite")
-          }),
-          steps: streams4.map(
-            (stream) => new Copy(
-              stream,
-              withFiles(stream) ? destination.table(stream.name, (columns2) => [
-                ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                columns2.text("attachmentRef").from(stream.file.store(files))
-              ]) : destination.table(stream.name),
-              {
-                id: `${app}:${stream.name}`,
-                syncMode: "incremental",
-                destinationSyncMode: "append_dedup"
+async function appConnection(directory, item) {
+  const { app, scope, includeAttachments } = item;
+  const source = apps[app].source(scope);
+  const catalog7 = await source.discover();
+  const omitted = new Set(
+    Object.keys(scope).length > 0 ? apps[app].unscoped ?? [] : []
+  );
+  const streams4 = catalog7.streams.filter((stream) => !omitted.has(stream.name));
+  const withFiles = (stream) => includeAttachments && stream.supportsFileTransfer === true && !apps[app].storeCopies?.includes(stream.name);
+  const importPath = importDirectory(directory, item);
+  mkdirSync2(importPath, { recursive: true, mode: 448 });
+  const destination = new SQLiteDestination({
+    path: join14(importPath, "data.sqlite")
+  });
+  const files = new LocalFiles({ directory: join14(importPath, "files") });
+  {
+    var _stack = [];
+    try {
+      const data = __using(_stack, new DatabaseSync10(destination.path));
+      data.exec(
+        "CREATE TABLE IF NOT EXISTS _apple_catalog (name TEXT PRIMARY KEY, schema_json TEXT NOT NULL, coverage_json TEXT NOT NULL);"
+      );
+      const publish = data.prepare(
+        "INSERT INTO _apple_catalog VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET schema_json=excluded.schema_json, coverage_json=excluded.coverage_json"
+      );
+      for (const stream of streams4)
+        publish.run(
+          stream.name,
+          JSON.stringify(
+            withFiles(stream) ? {
+              ...stream.jsonSchema,
+              properties: {
+                ...stream.jsonSchema.properties,
+                attachmentRef
               }
-            )
-          )
-        })
-      ]
+            } : stream.jsonSchema
+          ),
+          JSON.stringify(source.coverage(stream))
+        );
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  }
+  return new Connection({
+    name: app,
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join14(importPath, "checkpoints.sqlite")
+    }),
+    steps: streams4.map(
+      (stream) => new Copy(
+        stream,
+        withFiles(stream) ? destination.table(stream.name, (columns2) => [
+          ...SQLiteColumns.fromSchema(stream.jsonSchema),
+          columns2.text("attachmentRef").from(stream.file.store(files))
+        ]) : destination.table(stream.name),
+        {
+          id: `${app}:${stream.name}`,
+          syncMode: "incremental",
+          destinationSyncMode: "append_dedup"
+        }
+      )
+    )
+  });
+}
+
+// apps/apple/src/plugin/freshness.ts
+function lease(directory) {
+  const database = new DatabaseSync11(join15(directory, "watch.sqlite"));
+  try {
+    database.exec("BEGIN IMMEDIATE");
+    return database;
+  } catch {
+    database.close();
+    return null;
+  }
+}
+function leaderRunning(directory) {
+  const held = lease(directory);
+  held?.close();
+  return held === null;
+}
+var failure2 = (app, error62) => `${error62 instanceof Error ? error62.message : String(error62)} ${apps[app].permissions}`;
+function save(directory, importPath, result) {
+  var _stack = [];
+  try {
+    const settings = __using(_stack, new Settings(directory));
+    settings.saveSyncResult(importPath, result);
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+function lastSuccess(directory, importPath) {
+  var _stack = [];
+  try {
+    const settings = __using(_stack, new Settings(directory));
+    return settings.syncResult(importPath)?.lastSucceededAt;
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+var ImportHistory = class extends SyncHistory {
+  constructor(directory, configuration) {
+    super();
+    this.directory = directory;
+    this.configuration = configuration;
+  }
+  directory;
+  configuration;
+  async begin(connection) {
+    const item = this.configuration.apps.find(
+      ({ app }) => app === connection.name
+    );
+    if (item === void 0)
+      throw new TypeError(`No selected app for connection ${connection.name}`);
+    const importPath = importDirectory(this.directory, item);
+    const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const lastSucceededAt = lastSuccess(this.directory, importPath);
+    save(this.directory, importPath, {
+      state: "running",
+      startedAt,
+      lastSucceededAt
     });
-    {
-      var _stack = [];
+    return {
+      finish: async (outcomes) => {
+        const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+        const state = passStatus(outcomes);
+        const error62 = passError(outcomes);
+        save(this.directory, importPath, {
+          state,
+          startedAt,
+          finishedAt,
+          lastSucceededAt: state === "succeeded" ? finishedAt : lastSucceededAt,
+          ...error62 !== null && { error: failure2(item.app, error62) },
+          streams: outcomes.map(({ copy, count, deleted, failures }) => ({
+            name: copy.from.name,
+            count,
+            deleted,
+            ...failures.length > 0 && {
+              errors: failures.map(({ error: error63 }) => String(error63))
+            }
+          }))
+        });
+      },
+      fail: async (error62) => {
+        save(this.directory, importPath, {
+          state: "failed",
+          startedAt,
+          finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          lastSucceededAt,
+          error: failure2(item.app, error62)
+        });
+      }
+    };
+  }
+};
+function readConfiguration(directory) {
+  var _stack = [];
+  try {
+    const settings = __using(_stack, new Settings(directory));
+    return settings.configuration();
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+async function watchImports(directory, configuration, signal) {
+  const connections = [];
+  for (const item of configuration.apps)
+    try {
+      connections.push(await appConnection(directory, item));
+    } catch (error62) {
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      save(directory, importDirectory(directory, item), {
+        state: "failed",
+        startedAt: now,
+        finishedAt: now,
+        error: failure2(item.app, error62)
+      });
+    }
+  if (connections.length === 0) return;
+  const pipeline2 = new Pipeline({
+    connections,
+    history: new ImportHistory(directory, configuration)
+  });
+  try {
+    for await (const _pass of pipeline2.watch({ signal })) ;
+  } catch {
+  }
+}
+async function keepFresh(directory, signal) {
+  var _stack = [];
+  try {
+    mkdirSync3(directory, { recursive: true, mode: 448 });
+    let leader = lease(directory);
+    while (leader === null) {
       try {
-        const data = __using(_stack, new DatabaseSync10(destination.path));
-        data.exec(
-          "CREATE TABLE IF NOT EXISTS _apple_catalog (name TEXT PRIMARY KEY, schema_json TEXT NOT NULL, coverage_json TEXT NOT NULL);"
-        );
-        const publish = data.prepare(
-          "INSERT INTO _apple_catalog VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET schema_json=excluded.schema_json, coverage_json=excluded.coverage_json"
-        );
-        for (const stream of streams4)
-          publish.run(
-            stream.name,
-            JSON.stringify(
-              withFiles(stream) ? {
-                ...stream.jsonSchema,
-                properties: {
-                  ...stream.jsonSchema.properties,
-                  attachmentRef
-                }
-              } : stream.jsonSchema
-            ),
-            JSON.stringify(source.coverage(stream))
-          );
-      } catch (_) {
-        var _error = _, _hasError = true;
+        await sleep2(2e3, void 0, { signal });
+      } catch {
+        return;
+      }
+      leader = lease(directory);
+    }
+    const _lease = __using(_stack, leader);
+    while (!signal.aborted) {
+      const configuration = readConfiguration(directory);
+      const selection = JSON.stringify(configuration);
+      const changed = new AbortController();
+      const watching = AbortSignal.any([signal, changed.signal]);
+      const polling = (async () => {
+        try {
+          for await (const _2 of setInterval5(1e3, void 0, {
+            signal: watching
+          }))
+            if (JSON.stringify(readConfiguration(directory)) !== selection)
+              changed.abort();
+        } catch {
+        }
+      })();
+      try {
+        removeStaleImports(directory, configuration);
+        if (configuration !== null)
+          await watchImports(directory, configuration, watching);
+        await sleep2(6e4, void 0, { signal: watching }).catch(() => {
+        });
       } finally {
-        __callDispose(_stack, _error, _hasError);
+        changed.abort();
+        await polling;
       }
     }
-    try {
-      const results = await pipeline2.run();
-      const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-      return {
-        state: "succeeded",
-        startedAt,
-        finishedAt,
-        lastSucceededAt: finishedAt,
-        streams: results.map((result) => ({
-          name: result.copy.from.name,
-          count: result.count,
-          deleted: result.deleted
-        }))
-      };
-    } catch (error62) {
-      if (!(error62 instanceof PipelineError)) throw error62;
-      return {
-        state: error62.results.some((result) => copyStatus(result) !== "failed") ? "partial" : "failed",
-        startedAt,
-        finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        lastSucceededAt,
-        error: failure2(error62),
-        streams: error62.results.map((result) => ({
-          name: result.copy.from.name,
-          state: copyStatus(result),
-          count: result.count,
-          deleted: result.deleted,
-          errors: result.failures.map((item) => String(item.error))
-        }))
-      };
-    }
-  } catch (error62) {
-    return {
-      state: "failed",
-      startedAt,
-      finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      lastSucceededAt,
-      error: failure2(error62)
-    };
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
   }
 }
 
 // apps/apple/src/plugin/apple-plugin.ts
 var ApplePlugin = class {
-  constructor(directory = join15(
+  constructor(directory = join16(
     homedir6(),
     "Library/Application Support/Context Compiler/Apple"
   )) {
@@ -71257,14 +71565,17 @@ var ApplePlugin = class {
     try {
       const settings = __using(_stack, new Settings(this.directory));
       const configuration = settings.configuration();
+      const leading = leaderRunning(this.directory);
       return {
         configured: configuration !== null,
         apps: (configuration?.apps ?? []).map((item) => {
-          const database = join15(this.directory, item.app, "data.sqlite");
+          const importPath = importDirectory(this.directory, item);
+          const database = join16(importPath, "data.sqlite");
+          const sync = settings.syncResult(importPath) ?? null;
           return {
             ...item,
             database: existsSync(database) ? database : null,
-            sync: settings.syncResult(item.app) ?? null,
+            sync: sync?.state === "running" && !leading ? { ...sync, state: "interrupted" } : sync,
             permissions: apps[item.app].permissions
           };
         })
@@ -71275,6 +71586,8 @@ var ApplePlugin = class {
       __callDispose(_stack, _error, _hasError);
     }
   }
+  // A changed scope is a new import: the leading server loads it and removes
+  // the previous one, and nothing reads an import that is not selected.
   configure(input2) {
     const requested = configurationSchema.parse(input2);
     const configuration = configurationSchema.parse({
@@ -71287,21 +71600,17 @@ var ApplePlugin = class {
       var _stack = [];
       try {
         const settings = __using(_stack, new Settings(this.directory));
-        const _lock = __using(_stack, lockOperations(this.directory));
-        const previous = settings.configuration();
-        const selection = (from, app) => JSON.stringify(from?.apps.find((item) => item.app === app) ?? null);
-        const changed = appNames.filter(
-          (app) => selection(previous, app) !== selection(configuration, app)
+        settings.saveConfiguration(
+          configuration,
+          configuration.apps.map((item) => importDirectory(this.directory, item))
         );
-        for (const app of changed)
-          rmSync(join15(this.directory, app), { recursive: true, force: true });
-        settings.saveConfiguration(configuration, changed);
       } catch (_) {
         var _error = _, _hasError = true;
       } finally {
         __callDispose(_stack, _error, _hasError);
       }
     }
+    removeStaleImports(this.directory, configuration);
     return this.status();
   }
   async options(app) {
@@ -71337,41 +71646,26 @@ var ApplePlugin = class {
       note: definition3.note
     };
   }
+  // Waits, up to four minutes, while an app's import has not finished its
+  // first pass or is running one, so an answer can use current data.
   async sync(only) {
-    {
-      var _stack = [];
-      try {
-        const settings = __using(_stack, new Settings(this.directory));
-        const _lock = __using(_stack, lockOperations(this.directory));
-        const configuration = settings.configuration();
-        if (configuration === null)
-          throw new Error(
-            "Choose the Apple apps to connect with Set up Apple first."
-          );
-        if (only?.some(
-          (app) => !configuration.apps.some((item) => item.app === app)
-        ))
-          throw new Error("Sync can only access apps selected during setup.");
-        for (const item of configuration.apps) {
-          if (only !== void 0 && !only.includes(item.app)) continue;
-          const { lastSucceededAt } = settings.syncResult(item.app) ?? {};
-          settings.saveSyncResult(item.app, {
-            state: "running",
-            startedAt: (/* @__PURE__ */ new Date()).toISOString(),
-            lastSucceededAt
-          });
-          settings.saveSyncResult(
-            item.app,
-            await importApp(this.directory, item, lastSucceededAt)
-          );
-        }
-      } catch (_) {
-        var _error = _, _hasError = true;
-      } finally {
-        __callDispose(_stack, _error, _hasError);
-      }
+    const configuration = this.status();
+    if (!configuration.configured)
+      throw new Error(
+        "Choose the Apple apps to connect with Set up Apple first."
+      );
+    if (only?.some((app) => !configuration.apps.some((item) => item.app === app)))
+      throw new Error("Sync can only access apps selected during setup.");
+    const deadline = Date.now() + 24e4;
+    for (; ; ) {
+      const status = this.status();
+      const leading = leaderRunning(this.directory);
+      const waiting = status.apps.some(
+        ({ app, sync }) => (only === void 0 || only.includes(app)) && (sync?.state === "running" || sync === null && leading)
+      );
+      if (!waiting || Date.now() >= deadline) return status;
+      await sleep3(1e3);
     }
-    return this.status();
   }
 };
 
@@ -71513,15 +71807,19 @@ async function setUpWithForms(plugin2, ask) {
     }
     configuration.push(read(answer.content));
   }
-  plugin2.configure({ apps: configuration });
-  return { changed: true, skipped, unavailable, ...await plugin2.sync() };
+  return {
+    changed: true,
+    skipped,
+    unavailable,
+    ...plugin2.configure({ apps: configuration })
+  };
 }
 
 // apps/apple/src/plugin/main.ts
 if (process.platform !== "darwin")
   throw new Error("Apple requires Codex on a Mac.");
 var plugin = new ApplePlugin();
-var server = new McpServer({ name: "apple", version: "0.2.2" });
+var server = new McpServer({ name: "apple", version: "0.3.0" });
 var json2 = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }]
 });
@@ -71540,7 +71838,7 @@ server.registerTool(
 server.registerTool(
   "apple_setup",
   {
-    description: "Set up Apple with forms the user answers: which apps, then for each app its accounts, collections, dates and attachments. Saves the answers, syncs, and reports skipped apps and apps macOS did not allow. Hosts without form support return an error; set up with apple_options and apple_configure there.",
+    description: "Set up Apple with forms the user answers: which apps, then for each app its accounts, collections, dates and attachments. Saves the answers and reports skipped apps and apps macOS did not allow; the import then runs in the background, so call apple_sync to wait for it. Hosts without form support return an error; set up with apple_options and apple_configure there.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -71548,8 +71846,8 @@ server.registerTool(
       openWorldHint: false
     }
   },
-  // A person answers each form, so it waits as long as the tool call may run
-  // (tool_timeout_sec in plugins/apple/.mcp.json), not the SDK's 60 seconds.
+  // A person answers each form: wait for them, not the SDK's 60 seconds.
+  // Codex pauses the tool call's timeout while a form is open.
   async () => json2(
     await setUpWithForms(
       plugin,
@@ -71573,7 +71871,7 @@ server.registerTool(
 server.registerTool(
   "apple_configure",
   {
-    description: "Save the complete selection of Apple apps and scopes. Omitted apps are disconnected. Changed scopes delete that app\u2019s previous imported copy and attachments, then require a new sync. Does not modify Apple apps. Call only for the user\u2019s confirmed selection.",
+    description: "Save the complete selection of Apple apps and scopes. Omitted apps are disconnected. A changed scope deletes that app\u2019s previous imported copy and attachments and imports it again in the background. Does not modify Apple apps. Call only for the user\u2019s confirmed selection.",
     inputSchema: configurationSchema,
     annotations: {
       readOnlyHint: false,
@@ -71587,7 +71885,7 @@ server.registerTool(
 server.registerTool(
   "apple_sync",
   {
-    description: "Import current content from configured apps into private local SQLite data. Reads only selected scopes, copies attachments if enabled, records per-app failures and finishes after one pass. Omit apps to sync all selected apps.",
+    description: "Wait until the imports of the selected apps are current, up to four minutes, then return their status. Imports run in the background while Codex is open and follow changes in each app; this only waits for a first import or a running pass. Omit apps to wait for all selected apps.",
     inputSchema: {
       apps: external_exports.array(appSchema).min(1).max(appNames.length).optional()
     },
@@ -71600,4 +71898,10 @@ server.registerTool(
   },
   async ({ apps: apps2 }) => json2(await plugin.sync(apps2))
 );
+var stopping = new AbortController();
+server.server.onclose = () => stopping.abort();
+process.stdin.once("end", () => stopping.abort());
+process.once("SIGTERM", () => stopping.abort());
+process.once("SIGINT", () => stopping.abort());
 await server.connect(new StdioServerTransport());
+await keepFresh(plugin.directory, stopping.signal);

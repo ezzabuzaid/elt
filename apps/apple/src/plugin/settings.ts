@@ -1,8 +1,9 @@
-import { chmodSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { type App, appNames, apps } from './apps.ts';
+import { appNames, apps } from './apps.ts';
 
 export const appSchema = z.enum(appNames);
 const ids = z
@@ -64,8 +65,41 @@ export const configurationSchema = z
 export type Configuration = z.infer<typeof configurationSchema>;
 export type AppConfiguration = Configuration['apps'][number];
 
+// Where an app's import lives: one directory per selection, so a pass still
+// writing an earlier selection never touches the current one.
+export function importDirectory(directory: string, item: AppConfiguration) {
+  const key = createHash('sha256')
+    .update(JSON.stringify([item.scope, item.includeAttachments]))
+    .digest('hex')
+    .slice(0, 16);
+  return join(directory, item.app, key);
+}
+
+// Removes every import but the selected one of each app, including the imports
+// of apps no longer selected.
+export function removeStaleImports(
+  directory: string,
+  configuration: Configuration | null,
+) {
+  for (const app of appNames) {
+    const item = configuration?.apps.find((selected) => selected.app === app);
+    const kept = item === undefined ? null : importDirectory(directory, item);
+    const root = join(directory, app);
+    let entries: string[];
+    try {
+      entries = readdirSync(root);
+    } catch {
+      continue;
+    }
+    for (const entry of entries)
+      if (join(root, entry) !== kept)
+        rmSync(join(root, entry), { recursive: true, force: true });
+  }
+}
+
 export type SyncResult = {
-  state: 'running' | 'succeeded' | 'partial' | 'failed';
+  // interrupted: running when no server was left to finish it.
+  state: 'running' | 'succeeded' | 'partial' | 'failed' | 'interrupted';
   startedAt: string;
   finishedAt?: string;
   lastSucceededAt?: string;
@@ -85,7 +119,7 @@ export class Settings implements Disposable {
     try {
       chmodSync(path, 0o600);
       this.database.exec(
-        'CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_status (app TEXT PRIMARY KEY, value TEXT NOT NULL);',
+        'CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS import_status (import TEXT PRIMARY KEY, value TEXT NOT NULL);',
       );
     } catch (error) {
       this.database.close();
@@ -102,29 +136,33 @@ export class Settings implements Disposable {
       : configurationSchema.parse(JSON.parse(String(row.value)));
   }
 
-  syncResult(app: App): SyncResult | undefined {
+  // The last pass of the import in one import directory.
+  syncResult(importPath: string): SyncResult | undefined {
     const row = this.database
-      .prepare('SELECT value FROM sync_status WHERE app=?')
-      .get(app);
+      .prepare('SELECT value FROM import_status WHERE import=?')
+      .get(importPath);
     return row === undefined
       ? undefined
       : (JSON.parse(String(row.value)) as SyncResult);
   }
 
-  saveSyncResult(app: App, result: SyncResult) {
+  saveSyncResult(importPath: string, result: SyncResult) {
     this.database
       .prepare(
-        'INSERT INTO sync_status VALUES(?,?) ON CONFLICT(app) DO UPDATE SET value=excluded.value',
+        'INSERT INTO import_status VALUES(?,?) ON CONFLICT(import) DO UPDATE SET value=excluded.value',
       )
-      .run(app, JSON.stringify(result));
+      .run(importPath, JSON.stringify(result));
   }
 
-  // Saves the selection and forgets the sync history of the apps it changes.
-  saveConfiguration(configuration: Configuration, changed: readonly App[]) {
+  // Saves the selection and forgets the status of every other import.
+  saveConfiguration(configuration: Configuration, imports: readonly string[]) {
     this.database.exec('BEGIN IMMEDIATE');
     try {
-      for (const app of changed)
-        this.database.prepare('DELETE FROM sync_status WHERE app=?').run(app);
+      this.database
+        .prepare(
+          'DELETE FROM import_status WHERE import NOT IN (SELECT value FROM json_each(?))',
+        )
+        .run(JSON.stringify(imports));
       this.database
         .prepare(
           'INSERT INTO configuration VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value',
@@ -140,19 +178,4 @@ export class Settings implements Disposable {
   [Symbol.dispose]() {
     this.database.close();
   }
-}
-
-// One setup or sync at a time per Mac, across Codex chats. The native lock
-// releases when its process exits.
-export function lockOperations(directory: string): Disposable {
-  const database = new DatabaseSync(join(directory, 'operation.sqlite'));
-  try {
-    database.exec('BEGIN IMMEDIATE');
-  } catch {
-    database.close();
-    throw new Error(
-      'Apple setup or sync is already running in another Codex chat. Try again when it finishes.',
-    );
-  }
-  return { [Symbol.dispose]: () => database.close() };
 }

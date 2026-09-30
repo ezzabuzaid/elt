@@ -1,13 +1,19 @@
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { CopyConfiguration, StreamStatus } from 'elt';
-import { type App, appNames, apps, type ChoiceRows } from './apps.ts';
-import { configurationSchema, lockOperations, Settings } from './settings.ts';
-import { importApp } from './sync.ts';
+import { type App, apps, type ChoiceRows } from './apps.ts';
+import { leaderRunning } from './freshness.ts';
+import {
+  configurationSchema,
+  importDirectory,
+  removeStaleImports,
+  Settings,
+} from './settings.ts';
 
-// Setup and sync for the Codex plugin. Agents read the imported data.sqlite
-// files directly; this class only writes them.
+// Setup and status for the Codex plugin. The leading server's keepFresh
+// writes each app's data.sqlite; agents read those files directly.
 export class ApplePlugin {
   constructor(
     readonly directory = join(
@@ -19,20 +25,28 @@ export class ApplePlugin {
   status() {
     using settings = new Settings(this.directory);
     const configuration = settings.configuration();
+    const leading = leaderRunning(this.directory);
     return {
       configured: configuration !== null,
       apps: (configuration?.apps ?? []).map((item) => {
-        const database = join(this.directory, item.app, 'data.sqlite');
+        const importPath = importDirectory(this.directory, item);
+        const database = join(importPath, 'data.sqlite');
+        const sync = settings.syncResult(importPath) ?? null;
         return {
           ...item,
           database: existsSync(database) ? database : null,
-          sync: settings.syncResult(item.app) ?? null,
+          sync:
+            sync?.state === 'running' && !leading
+              ? { ...sync, state: 'interrupted' as const }
+              : sync,
           permissions: apps[item.app].permissions,
         };
       }),
     };
   }
 
+  // A changed scope is a new import: the leading server loads it and removes
+  // the previous one, and nothing reads an import that is not selected.
   configure(input: unknown) {
     const requested = configurationSchema.parse(input);
     const configuration = configurationSchema.parse({
@@ -43,17 +57,12 @@ export class ApplePlugin {
     });
     {
       using settings = new Settings(this.directory);
-      using _lock = lockOperations(this.directory);
-      const previous = settings.configuration();
-      const selection = (from: typeof configuration | null, app: App) =>
-        JSON.stringify(from?.apps.find((item) => item.app === app) ?? null);
-      const changed = appNames.filter(
-        (app) => selection(previous, app) !== selection(configuration, app),
+      settings.saveConfiguration(
+        configuration,
+        configuration.apps.map((item) => importDirectory(this.directory, item)),
       );
-      for (const app of changed)
-        rmSync(join(this.directory, app), { recursive: true, force: true });
-      settings.saveConfiguration(configuration, changed);
     }
+    removeStaleImports(this.directory, configuration);
     return this.status();
   }
 
@@ -93,35 +102,29 @@ export class ApplePlugin {
     };
   }
 
+  // Waits, up to four minutes, while an app's import has not finished its
+  // first pass or is running one, so an answer can use current data.
   async sync(only?: readonly App[]) {
-    {
-      using settings = new Settings(this.directory);
-      using _lock = lockOperations(this.directory);
-      const configuration = settings.configuration();
-      if (configuration === null)
-        throw new Error(
-          'Choose the Apple apps to connect with Set up Apple first.',
-        );
-      if (
-        only?.some(
-          (app) => !configuration.apps.some((item) => item.app === app),
-        )
-      )
-        throw new Error('Sync can only access apps selected during setup.');
-      for (const item of configuration.apps) {
-        if (only !== undefined && !only.includes(item.app)) continue;
-        const { lastSucceededAt } = settings.syncResult(item.app) ?? {};
-        settings.saveSyncResult(item.app, {
-          state: 'running',
-          startedAt: new Date().toISOString(),
-          lastSucceededAt,
-        });
-        settings.saveSyncResult(
-          item.app,
-          await importApp(this.directory, item, lastSucceededAt),
-        );
-      }
+    const configuration = this.status();
+    if (!configuration.configured)
+      throw new Error(
+        'Choose the Apple apps to connect with Set up Apple first.',
+      );
+    if (
+      only?.some((app) => !configuration.apps.some((item) => item.app === app))
+    )
+      throw new Error('Sync can only access apps selected during setup.');
+    const deadline = Date.now() + 240_000;
+    for (;;) {
+      const status = this.status();
+      const leading = leaderRunning(this.directory);
+      const waiting = status.apps.some(
+        ({ app, sync }) =>
+          (only === undefined || only.includes(app)) &&
+          (sync?.state === 'running' || (sync === null && leading)),
+      );
+      if (!waiting || Date.now() >= deadline) return status;
+      await sleep(1_000);
     }
-    return this.status();
   }
 }

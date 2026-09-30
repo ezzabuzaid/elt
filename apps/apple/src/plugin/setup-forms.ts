@@ -104,6 +104,7 @@ function scopeForm(app: App, rows: ChoiceRows, previous?: AppConfiguration) {
 
 // Setup where the user answers in forms: the apps first, then one form per
 // app. Declining an app's form skips it; cancelling leaves setup unchanged.
+// It returns once the answers are saved; the leading server imports them.
 export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   const previous = new Map(
     plugin
@@ -163,6 +164,10 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
     }
     configuration.push(read(answer.content));
   }
-  plugin.configure({ apps: configuration });
-  return { changed: true, skipped, unavailable, ...(await plugin.sync()) };
+  return {
+    changed: true,
+    skipped,
+    unavailable,
+    ...plugin.configure({ apps: configuration }),
+  };
 }

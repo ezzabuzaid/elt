@@ -1,16 +1,23 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { ApplePlugin } from './plugin/apple-plugin.ts';
+import { importDirectory, Settings } from './plugin/settings.ts';
 
-function importedNotes(directory: string) {
-  mkdirSync(join(directory, 'notes'), { recursive: true });
-  using database = new DatabaseSync(join(directory, 'notes/data.sqlite'));
+// Stands in for the leading server's import of one app selection.
+function imported(
+  directory: string,
+  item: Parameters<typeof importDirectory>[1],
+) {
+  const path = importDirectory(directory, item);
+  mkdirSync(path, { recursive: true });
+  using database = new DatabaseSync(join(path, 'data.sqlite'));
   database.exec("CREATE TABLE notes(id TEXT); INSERT INTO notes VALUES('n1');");
+  return join(path, 'data.sqlite');
 }
 
 test('Apple setup rejects invalid choices and fills the Calendar default range', async () => {
@@ -37,33 +44,49 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
   assert.ok(calendar.scope.startAt < calendar.scope.endAt);
 });
 
-test('Apple setup keeps an unchanged app, discards a changed or disconnected one, and refuses a concurrent operation', async () => {
+test('Apple setup keeps an unchanged import, removes a changed or disconnected one, and reports a pass no server finishes as interrupted', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = new ApplePlugin(scratch.path);
-  const notes = { app: 'notes', scope: { collectionIds: ['folder-1'] } };
+  const notes = {
+    app: 'notes' as const,
+    scope: { collectionIds: ['folder-1'] },
+    includeAttachments: true,
+  };
   assert.equal(plugin.configure({ apps: [notes] }).apps[0]?.database, null);
-  importedNotes(scratch.path);
-  const database = join(scratch.path, 'notes/data.sqlite');
+  const database = imported(scratch.path, notes);
   assert.equal(
     new ApplePlugin(scratch.path).status().apps[0]?.database,
     database,
   );
-  {
-    using lock = new DatabaseSync(join(scratch.path, 'operation.sqlite'));
-    lock.exec('BEGIN IMMEDIATE');
-    assert.throws(() => plugin.configure({ apps: [] }), /another Codex chat/);
-    await assert.rejects(plugin.sync(), /another Codex chat/);
-  }
   plugin.configure({ apps: [notes] });
   assert.equal(existsSync(database), true);
-  plugin.configure({
-    apps: [{ app: 'notes', scope: { collectionIds: ['folder-2'] } }],
-  });
-  assert.equal(existsSync(join(scratch.path, 'notes')), false);
-  importedNotes(scratch.path);
+
+  // A pass left running by a server that exited is not waited for.
+  {
+    using settings = new Settings(scratch.path);
+    settings.saveSyncResult(importDirectory(scratch.path, notes), {
+      state: 'running',
+      startedAt: new Date().toISOString(),
+    });
+  }
+  assert.equal(plugin.status().apps[0]?.sync?.state, 'interrupted');
+  assert.equal((await plugin.sync())?.apps[0]?.sync?.state, 'interrupted');
+  {
+    using lease = new DatabaseSync(join(scratch.path, 'watch.sqlite'));
+    lease.exec('BEGIN IMMEDIATE');
+    assert.equal(plugin.status().apps[0]?.sync?.state, 'running');
+  }
+
+  const changed = { ...notes, scope: { collectionIds: ['folder-2'] } };
+  plugin.configure({ apps: [changed] });
+  assert.equal(existsSync(database), false);
+  const [current] = plugin.status().apps;
+  assert.equal(current?.database, null);
+  assert.equal(current?.sync, null);
+  imported(scratch.path, changed);
   plugin.configure({ apps: [] });
-  assert.equal(existsSync(join(scratch.path, 'notes')), false);
+  assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
   await assert.rejects(plugin.sync(['notes']), /selected during setup/);
 });

@@ -627,7 +627,10 @@ test('Mail message streams re-read only messages whose files or index attachment
     Object.fromEntries(
       (await run.run())
         .filter(({ count, deleted }) => count > 0 || deleted > 0)
-        .map(({ copy, count, deleted }) => [copy.from.name, { count, deleted }]),
+        .map(({ copy, count, deleted }) => [
+          copy.from.name,
+          { count, deleted },
+        ]),
     );
   const groups = () =>
     Object.fromEntries(
@@ -682,7 +685,10 @@ test('Mail message streams re-read only messages whose files or index attachment
     `${Buffer.byteLength(edited)}\n${edited}`,
   );
   const edit = await changed();
-  assert.deepEqual(Object.keys(edit).sort(), ['messageFiles', 'messageHeaders']);
+  assert.deepEqual(Object.keys(edit).sort(), [
+    'messageFiles',
+    'messageHeaders',
+  ]);
   assert.match(
     String(
       rows(

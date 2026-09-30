@@ -6,7 +6,6 @@ import {
   cpSync,
   existsSync,
   lstatSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
 } from 'node:fs';
@@ -19,6 +18,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { noteStoreFixture } from './fixtures/notes-store.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
 
@@ -41,8 +41,8 @@ function read(database: string, sql: string, ...commands: string[]) {
   return { rows: JSON.parse(stdout || '[]'), stderr, status };
 }
 
-test('the committed Apple plugin installs from the repo marketplace, sets up through Codex bundled Node and serves its imports to the skill read command', {
-  timeout: 150_000,
+test('the committed Apple plugin installs from the repo marketplace, sets up through Codex bundled Node, keeps its import current in the background and serves it to the skill read command', {
+  timeout: 180_000,
 }, async (t) => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
   const marketplace = JSON.parse(
@@ -80,6 +80,18 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     existsSync(runtime),
     'Open the ChatGPT desktop app to install the Codex bundled runtime',
   );
+  // The user's Notes, where the server looks for them under this HOME.
+  const noteStore = await noteStoreFixture(
+    join(scratch.path, 'Library/Group Containers/group.com.apple.notes'),
+  );
+  const retitle = (title: string) => {
+    using database = new DatabaseSync(noteStore);
+    database
+      .prepare(
+        "UPDATE ZICCLOUDSYNCINGOBJECT SET ZTITLE1 = ? WHERE ZIDENTIFIER = 'NOTE-RICH'",
+      )
+      .run(title);
+  };
   let diagnostics = '';
   const launch = () => {
     const transport = new StdioClientTransport({
@@ -94,7 +106,46 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     });
     return transport;
   };
-  const transport = launch();
+  const connect = async (client: Client) => {
+    const transport = launch();
+    await client.connect(transport, { signal: t.signal, timeout: 5_000 });
+    return transport;
+  };
+  const call = (client: Client, name: string, args?: Record<string, unknown>) =>
+    client.callTool({ name, arguments: args }, undefined, {
+      signal: t.signal,
+      timeout: 90_000,
+    });
+  const invoke = async (
+    client: Client,
+    name: string,
+    args?: Record<string, unknown>,
+  ) => {
+    const result = await call(client, name, args);
+    assert.notEqual(result.isError, true, JSON.stringify(result.content));
+    assert.ok(Array.isArray(result.content));
+    const block = result.content[0];
+    assert.equal(block?.type, 'text');
+    return JSON.parse(block.text);
+  };
+  // Waits for the leading server to import a change without any tool call.
+  const imported = async (client: Client, title: string) => {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const [notes] = (await invoke(client, 'apple_status')).apps;
+      if (
+        notes.sync?.state === 'succeeded' &&
+        read(
+          notes.database,
+          'SELECT title FROM notes WHERE title = @title',
+          `.parameter set @title "'${title}'"`,
+        ).rows.length === 1
+      )
+        return notes;
+      await sleep(500);
+    }
+    assert.fail(`The import never showed ${title}`);
+  };
+
   const client = new Client(
     { name: 'apple-e2e', version: '1.0.0' },
     { capabilities: { elicitation: { form: {} } } },
@@ -102,25 +153,27 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
   const forms: string[] = [];
   client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
     forms.push(params.message);
-    // A person reads the form for longer than the SDK's 60 s request default.
-    await sleep(61_000);
-    return { action: 'accept', content: { apps: ['notes'] } };
+    if (forms.length === 1) {
+      // A person reads the form for longer than the SDK's 60 s request default.
+      await sleep(61_000);
+      return { action: 'accept', content: { apps: ['notes'] } };
+    }
+    // Every choice as the form prefills it.
+    const properties =
+      'requestedSchema' in params ? params.requestedSchema.properties : {};
+    return {
+      action: 'accept',
+      content: Object.fromEntries(
+        Object.entries(properties).flatMap(([name, property]) =>
+          'default' in property ? [[name, property.default]] : [],
+        ),
+      ),
+    };
   });
-  const call = (name: string, args?: Record<string, unknown>) =>
-    client.callTool({ name, arguments: args }, undefined, {
-      signal: t.signal,
-      timeout: 90_000,
-    });
-  const invoke = async (name: string, args?: Record<string, unknown>) => {
-    const result = await call(name, args);
-    assert.notEqual(result.isError, true, JSON.stringify(result.content));
-    assert.ok(Array.isArray(result.content));
-    const block = result.content[0];
-    assert.equal(block?.type, 'text');
-    return JSON.parse(block.text);
-  };
+  const other = new Client({ name: 'another-chat', version: '1.0.0' });
+  const transport = await connect(client);
+  const otherTransport = await connect(other);
   try {
-    await client.connect(transport, { signal: t.signal, timeout: 5_000 });
     assert.deepEqual(
       (await client.listTools()).tools.map((tool) => tool.name).sort(),
       [
@@ -131,82 +184,100 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
         'apple_sync',
       ],
     );
-    assert.equal((await invoke('apple_status')).configured, false);
-    assert.deepEqual((await call('apple_sync', {})).content, [
+    assert.equal((await invoke(client, 'apple_status')).configured, false);
+    assert.deepEqual((await call(client, 'apple_sync', {})).content, [
       {
         type: 'text',
         text: 'Choose the Apple apps to connect with Set up Apple first.',
       },
     ]);
-    // Notes is unreadable under the scratch HOME, so only the app form shows.
-    const setUp = await invoke('apple_setup');
-    const [appsForm, ...others] = forms;
-    assert.ok(appsForm);
-    assert.deepEqual(others, []);
-    assert.match(appsForm, /Choose the Apple apps/);
+    assert.deepEqual((await call(other, 'apple_setup')).content, [
+      { type: 'text', text: 'Client does not support form elicitation.' },
+    ]);
+
+    // Setup returns once the answers are saved; the import runs apart from it.
+    const setUp = await invoke(client, 'apple_setup');
+    assert.equal(forms.length, 2);
+    assert.match(forms[0] ?? '', /Choose the Apple apps/);
+    assert.match(forms[1] ?? '', /Notes/);
+    assert.deepEqual(setUp.unavailable, []);
     assert.deepEqual(
-      setUp.unavailable.map(({ app }: { app: string }) => app),
+      setUp.apps.map(({ app }: { app: string }) => app),
       ['notes'],
     );
-    assert.deepEqual(setUp.apps, []);
-
-    const withoutForms = new Client({ name: 'no-forms', version: '1.0.0' });
-    try {
-      await withoutForms.connect(launch(), {
-        signal: t.signal,
-        timeout: 5_000,
-      });
-      assert.deepEqual(
-        (await withoutForms.callTool({ name: 'apple_setup' })).content,
-        [{ type: 'text', text: 'Client does not support form elicitation.' }],
-      );
-    } finally {
-      await withoutForms.close();
-    }
-
-    await invoke('apple_configure', { apps: [{ app: 'notes' }] });
-    assert.equal((await invoke('apple_status')).apps[0].database, null);
-    assert.equal(
-      (await call('apple_options', { app: 'invalid' })).isError,
-      true,
-    );
-
-    // Stand in for a sync of the user's Notes.
-    const imported = join(
-      scratch.path,
-      'Library/Application Support/Context Compiler/Apple/notes',
-    );
-    mkdirSync(imported, { recursive: true });
-    {
-      using database = new DatabaseSync(join(imported, 'data.sqlite'));
-      database.exec(`CREATE TABLE notes(id TEXT PRIMARY KEY, name TEXT);
-        CREATE TABLE _apple_catalog(name TEXT PRIMARY KEY, schema_json TEXT, coverage_json TEXT);
-        INSERT INTO notes VALUES('n1','It''s selected'),('n2','Other');
-        INSERT INTO _apple_catalog VALUES('notes','{}','{}');`);
-    }
-    const [notes] = (await invoke('apple_status')).apps;
-    assert.equal(notes.database, join(imported, 'data.sqlite'));
+    const [synced] = (await invoke(client, 'apple_sync', {})).apps;
+    assert.equal(synced.sync.state, 'succeeded', JSON.stringify(synced.sync));
     assert.deepEqual(
-      read(notes.database, 'SELECT name FROM _apple_catalog;').rows,
+      read(
+        synced.database,
+        "SELECT name FROM _apple_catalog WHERE name = 'notes';",
+      ).rows,
       [{ name: 'notes' }],
     );
     assert.deepEqual(
       read(
-        notes.database,
-        'SELECT id FROM notes WHERE name = @name',
-        `.parameter set @name "'It''s selected'"`,
+        synced.database,
+        'SELECT id FROM notes WHERE title = @title',
+        `.parameter set @title "'Groceries'"`,
       ).rows,
-      [{ id: 'n1' }],
+      [{ id: 'NOTE-RICH' }],
     );
-    const write = read(notes.database, 'DELETE FROM notes;');
+    const write = read(synced.database, 'DELETE FROM notes;');
     assert.match(write.stderr, /readonly/);
-    assert.deepEqual(
-      read(notes.database, 'SELECT count(*) AS n FROM notes;').rows,
-      [{ n: 2 }],
+    const [catalog] = read(
+      synced.database,
+      "SELECT schema_json FROM _apple_catalog WHERE name = 'attachments';",
+    ).rows;
+    assert.ok(JSON.parse(catalog.schema_json).properties.attachmentRef);
+    const [attachment] = read(
+      synced.database,
+      'SELECT attachmentRef FROM attachments WHERE id = @id',
+      `.parameter set @id "'ATT-FILE'"`,
+    ).rows;
+    assert.equal(
+      readFileSync(String(attachment.attachmentRef), 'utf8'),
+      'attached words',
     );
+
+    // An app macOS does not allow fails alone, and Notes keeps its import.
+    await invoke(client, 'apple_configure', {
+      apps: [
+        {
+          app: 'notes',
+          scope: synced.scope,
+          includeAttachments: synced.includeAttachments,
+        },
+        { app: 'messages' },
+      ],
+    });
+    const [kept, messages] = (await invoke(client, 'apple_sync', {})).apps;
+    assert.equal(kept.database, synced.database);
+    assert.equal(kept.sync.state, 'succeeded', JSON.stringify(kept.sync));
+    assert.equal(messages.sync.state, 'failed', JSON.stringify(messages.sync));
+    assert.match(messages.sync.error, /Full Disk Access/);
+
+    // A change in Notes reaches the import while nobody calls a tool.
+    retitle('Groceries (edited)');
+    await imported(client, 'Groceries (edited)');
+    assert.equal(
+      (await invoke(other, 'apple_status')).apps[0].database,
+      synced.database,
+    );
+    assert.equal(
+      (await call(client, 'apple_options', { app: 'invalid' })).isError,
+      true,
+    );
+
+    // When the leading chat closes, another chat's server keeps importing.
+    await client.close();
+    await transport.close();
+    retitle('Groceries (after handoff)');
+    await imported(other, 'Groceries (after handoff)');
   } finally {
     await client.close();
     await transport.close();
+    await other.close();
+    await otherTransport.close();
   }
   assert.ok(!diagnostics.includes('Error'), diagnostics);
 });

@@ -5,12 +5,12 @@ description: Answer questions about Apple app content imported by the Apple plug
 
 # Query Apple apps
 
-The Apple plugin imports each selected app into its own SQLite file. `apple_status` lists the selected apps, the path of each `database`, its scope and its last sync. Every file has an `_apple_catalog` table: one row per table, with its JSON schema (`schema_json`) and what the import covers (`coverage_json`). Read these files with `/usr/bin/sqlite3 -readonly`; the plugin's tools only set up and sync.
+The Apple plugin imports each selected app into its own SQLite file and keeps it current in the background while Codex is open. `apple_status` lists the selected apps, the path of each `database`, its scope and its last sync. Every file has an `_apple_catalog` table: one row per table, with its JSON schema (`schema_json`) and what the import covers (`coverage_json`). Read these files with `/usr/bin/sqlite3 -readonly`; the plugin's tools only set up and sync.
 
 ## Answer a question
 
 1. Call `apple_status`. If setup is missing or a needed app is not selected, use `$setup-apple` with the user's choice. Use only selected apps.
-2. Call `apple_sync` with the apps the question needs, then read `apple_status` again for the result and each `database` path.
+2. For each app the question needs, check its `sync`. If it is `null` (not imported yet) or its `state` is `running`, call `apple_sync` with those apps: it waits for the import, up to four minutes, and returns the same status. Otherwise read right away; do not call `apple_sync` before every answer.
 3. Read the catalog of each app you need:
 
    ```sh
@@ -46,5 +46,5 @@ The Apple plugin imports each selected app into its own SQLite file. `apple_stat
 ## Done when
 
 - The answer rests on rows you read, and counts or aggregates stand in for results too large to list.
-- Coverage and sync status separate "no matching rows" from content that is excluded, inaccessible or stale. A partial or failed sync names the app and its last successful sync.
+- Coverage and sync status separate "no matching rows" from content that is excluded, inaccessible or stale. A partial or failed sync names the app and its last successful sync. An `interrupted` sync stopped when its Codex chat closed and resumes the next time the plugin runs; answer from its last successful sync and say so.
 - Gaps are stated in terms the user can act on, such as granting Calendar access or widening a date range.
