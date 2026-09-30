@@ -14,7 +14,7 @@ import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
 import { PostgresSession, schemaLock } from './postgres-session.ts';
-import type { PostgresTable } from './postgres-table.ts';
+import type { PostgresReaderView, PostgresTable } from './postgres-table.ts';
 
 // The load's one connection; statements run inside its open transaction.
 export type Transaction = postgres.Sql;
@@ -173,10 +173,10 @@ export abstract class PostgresWriter extends Writer {
             column.name,
             `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`,
           ];
-        if (column.fileRead?.outputType === 'text')
+        if (column.fileRead?.file.storage !== undefined)
           return [
             column.name,
-            'Opaque reference to an externally stored attachment. NULL when the source file is unavailable.',
+            `${column.fileRead.file.storage.reference} NULL when the source file is unavailable.`,
           ];
         return [
           column.name,
@@ -186,6 +186,15 @@ export abstract class PostgresWriter extends Writer {
     );
     this.#columnComments.loaded_at =
       'Start time of the load that last wrote this row, not the source modification time or the most recent successful sync.';
+    if (table.readerView === undefined) return;
+    const undescribed = Object.entries(this.#columnComments).flatMap(
+      ([column, comment]) => (comment === null ? [column] : []),
+    );
+    if (meaning === null) undescribed.unshift('the stream');
+    if (undescribed.length > 0)
+      throw new TypeError(
+        `Reader view ${table.readerView.schema}.${table.readerView.name} needs JSON Schema descriptions for ${undescribed.join(', ')} of stream ${this.stream.name}`,
+      );
   }
 
   protected abstract initialize(transaction: Transaction): Promise<void>;
@@ -345,6 +354,64 @@ export abstract class PostgresWriter extends Writer {
     await committed?.(this.values(connection.sql));
   }
 
+  // COMMENT does not accept bind parameters. Let Postgres quote identifiers
+  // and literals, including NULL to clear annotations removed from the schema.
+  async #comment(
+    sql: Transaction,
+    kind: 'TABLE' | 'VIEW',
+    schema: string,
+    name: string,
+  ): Promise<void> {
+    const comments = await sql.unsafe<{ statement: string }[]>(
+      `SELECT format('COMMENT ON ${kind} %I.%I IS %L', $1::text, $2::text, $3::text) AS statement
+       UNION ALL
+       SELECT format('COMMENT ON COLUMN %I.%I.%I IS %L', $1::text, $2::text, key, value)
+       FROM jsonb_each_text($4::jsonb)`,
+      [schema, name, this.#tableComment, sql.json(this.#columnComments)],
+    );
+    await sql.unsafe(comments.map(({ statement }) => statement).join(';'));
+  }
+
+  // Created only when absent and never replaced inside the load: replacing a
+  // view readers can see would lock them out until this load commits. A view
+  // of other columns or another table is refused rather than adopted.
+  async #installReaderView(
+    sql: Transaction,
+    reader: PostgresReaderView,
+  ): Promise<void> {
+    const view = `${quote(reader.schema)}.${quote(reader.name)}`;
+    const [existing] = await sql.unsafe<
+      { relkind: string; columns: string[]; reads: boolean }[]
+    >(
+      `SELECT c.relkind,
+         ARRAY(SELECT attname::text FROM pg_attribute
+           WHERE attrelid = c.oid AND attnum > 0 AND NOT attisdropped ORDER BY attnum) AS columns,
+         EXISTS (SELECT 1 FROM pg_rewrite r JOIN pg_depend d
+           ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+           WHERE r.ev_class = c.oid AND d.refobjid = to_regclass($2)) AS reads
+       FROM pg_class c WHERE c.oid = to_regclass($1)`,
+      [view, this.qualifiedName],
+    );
+    if (existing === undefined) {
+      await sql.unsafe(
+        `CREATE VIEW ${view} AS SELECT ${this.fields.join(', ')} FROM ${this.qualifiedName}`,
+      );
+      return;
+    }
+    const expected = [
+      ...this.table.columns.map(({ name }) => name),
+      'loaded_at',
+    ];
+    if (
+      existing.relkind !== 'v' ||
+      !existing.reads ||
+      existing.columns.join('\0') !== expected.join('\0')
+    )
+      throw new TypeError(
+        `${view} is not a view of exactly ${this.qualifiedName}; drop it or reset the warehouse`,
+      );
+  }
+
   // One stream's load inside the run's shared transaction. Operations wait in
   // a session-private TEMP stage, so another stream's commit never publishes
   // them and a crash leaves nothing behind; commit merges them into the target
@@ -372,21 +439,12 @@ export abstract class PostgresWriter extends Writer {
       await this.own(sql, writer);
       await this.initialize(sql);
       for (const store of stores) await store.initialize(sql);
-      // COMMENT does not accept bind parameters. Let Postgres quote identifiers
-      // and literals, including NULL to clear annotations removed from the schema.
-      const comments = await sql.unsafe<{ statement: string }[]>(
-        `SELECT format('COMMENT ON TABLE %I.%I IS %L', $1::text, $2::text, $3::text) AS statement
-         UNION ALL
-         SELECT format('COMMENT ON COLUMN %I.%I.%I IS %L', $1::text, $2::text, key, value)
-         FROM jsonb_each_text($4::jsonb)`,
-        [
-          this.schema,
-          this.table.name,
-          this.#tableComment,
-          sql.json(this.#columnComments),
-        ],
-      );
-      await sql.unsafe(comments.map(({ statement }) => statement).join(';'));
+      await this.#comment(sql, 'TABLE', this.schema, this.table.name);
+      if (this.table.readerView !== undefined) {
+        await this.#installReaderView(sql, this.table.readerView);
+        const { schema, name } = this.table.readerView;
+        await this.#comment(sql, 'VIEW', schema, name);
+      }
       await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${stage}`);
       await sql.unsafe(
         `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,

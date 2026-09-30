@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import {
   mkdtempDisposable,
   readdir,
@@ -26,45 +25,16 @@ import {
   type SourceWatchOptions,
   Stream,
 } from 'elt';
-import postgres from 'postgres';
+import type postgres from 'postgres';
 import {
   PostgresCheckpointStore,
+  PostgresColumns,
   PostgresDestination,
   PostgresSyncHistory,
   publishPostgresViews,
 } from './index.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
-
-const server =
-  process.env.TEST_DATABASE_URL ??
-  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
-
-// A database of its own for one test, dropped when the test ends.
-async function scratchDatabase() {
-  const admin = postgres(server, { max: 1, onnotice: () => {} });
-  const name = `elt_test_${randomUUID().replaceAll('-', '')}`;
-  try {
-    await admin.unsafe(`CREATE DATABASE "${name}"`);
-  } catch (cause) {
-    await admin.end();
-    throw new Error(
-      `Test Postgres at ${new URL(server).host} is unavailable. Start it with: npx nx run infra:up`,
-      { cause },
-    );
-  }
-  const url = new URL(server);
-  url.pathname = `/${name}`;
-  const sql = postgres(url.href, { max: 2, onnotice: () => {} });
-  return {
-    url: url.href,
-    sql,
-    async [Symbol.asyncDispose]() {
-      await sql.end();
-      await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);
-      await admin.end();
-    },
-  };
-}
+import { scratchDatabase } from './testing.ts';
 
 // Emits whatever the test sets on `messages`, then an empty checkpoint.
 class Messages extends Source {
@@ -2785,4 +2755,201 @@ test('stream_status keeps each stream own latest outcome when a watch pass reads
   const [latest] = await sql`SELECT latest_attempt_id FROM marts.sync_status`;
   assert.equal(streamA?.latest_attempt_id, latest?.latest_attempt_id);
   assert.equal(streamA?.last_successful_attempt_id, latest?.latest_attempt_id);
+});
+
+// A described stream loaded with a stored file field and a reader view.
+function readerNotes(database: { url: string }, files: LocalFiles) {
+  const stream = new Stream({
+    name: 'notes',
+    jsonSchema: {
+      type: 'object',
+      description: 'One row per note.',
+      properties: {
+        id: { type: 'integer', description: 'Note ID.' },
+        title: { type: 'string', description: 'Note title.' },
+      },
+      required: ['id', 'title'],
+    },
+    primaryKey: ['id'],
+    sourceDefinedCursor: true,
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    emitsDeletes: true,
+    supportsFileTransfer: true,
+  });
+  const source = new Messages(stream);
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const copy = new Copy(
+    stream,
+    destination
+      .table('raw_notes', (columns) => [
+        ...PostgresColumns.fromSchema(stream.jsonSchema),
+        columns.text('ref').from(stream.file.store(files)),
+      ])
+      .withReaderView('marts', 'notes'),
+    {
+      id: 'notes',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+    },
+  );
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [copy],
+      }),
+    ],
+  });
+  return { stream, source, destination, copy, pipeline };
+}
+
+test('a reader view shows exactly the loaded columns and their descriptions, follows changes without being recreated, and never locks readers out', async () => {
+  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reader-pg-'));
+  try {
+    await using database = await scratchDatabase();
+    const { sql } = database;
+    await sql`CREATE SCHEMA marts`;
+    const path = join(scratch.path, 'note.txt');
+    await writeFile(path, 'body');
+    const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+    const { source, destination, copy, pipeline } = readerNotes(
+      database,
+      files,
+    );
+    source.messages = [
+      { stream: 'notes', data: { id: 1, title: 'First' }, file: path },
+      { stream: 'notes', data: { id: 2, title: 'Second' }, file: null },
+    ];
+    await pipeline.run();
+
+    const view = async () => [
+      ...(await sql`SELECT id, title, ref, loaded_at FROM marts.notes ORDER BY id`),
+    ];
+    const [first, second] = await view();
+    assert.equal(await readFile(String(first?.ref), 'utf8'), 'body');
+    assert.equal(second?.ref, null);
+    const descriptions = async (relation: string) => [
+      ...(await sql`SELECT a.attname AS name, col_description(a.attrelid, a.attnum) AS description
+        FROM pg_attribute a WHERE a.attrelid = ${relation}::regclass AND a.attnum > 0 ORDER BY a.attnum`),
+    ];
+    const viewColumns = await descriptions('marts.notes');
+    assert.deepEqual(
+      viewColumns.map(({ name }) => name),
+      ['id', 'title', 'ref', 'loaded_at'],
+    );
+    assert.deepEqual(viewColumns, await descriptions('raw.raw_notes'));
+    assert.equal(
+      viewColumns[2]?.description,
+      `${files.reference} NULL when the source file is unavailable.`,
+    );
+    const [comments] =
+      await sql`SELECT obj_description('marts.notes'::regclass) AS view,
+      obj_description('raw.raw_notes'::regclass) AS "table"`;
+    assert.match(String(comments?.view), /One row per note\./);
+    assert.equal(comments?.view, comments?.table);
+
+    const oid = async () =>
+      (await sql`SELECT 'marts.notes'::regclass::oid AS oid`)[0]?.oid;
+    const created = await oid();
+    source.messages = [
+      { stream: 'notes', data: { id: 1, title: 'Renamed' }, file: path },
+      { type: 'DELETE', stream: 'notes', key: { id: 2 } },
+    ];
+    await pipeline.run();
+    assert.deepEqual(
+      (await view()).map(({ id, title }) => ({ id, title })),
+      [{ id: '1', title: 'Renamed' }],
+    );
+    assert.equal(await oid(), created);
+
+    // A load holds its transaction open while it reads; readers of the view
+    // it keeps must not wait behind it.
+    const load = await destination.load();
+    try {
+      await using stage = await load.prepare(copy.configuration, copy.to, {
+        writer: copy.writer(source),
+        resuming: true,
+      });
+      assert.ok(stage);
+      const blocking = await sql`SELECT mode FROM pg_locks
+        WHERE relation = 'marts.notes'::regclass AND pid <> pg_backend_pid()
+        AND mode = 'AccessExclusiveLock'`;
+      assert.deepEqual([...blocking], []);
+      await sql.begin(async (reader) => {
+        await reader`SET LOCAL lock_timeout = '200ms'`;
+        assert.equal(
+          (await reader`SELECT count(*)::int AS n FROM marts.notes`)[0]?.n,
+          1,
+        );
+      });
+    } finally {
+      await load[Symbol.asyncDispose]();
+    }
+  } finally {
+    await scratch[Symbol.asyncDispose]();
+  }
+});
+
+test('a reader view needs every column described and refuses a view it did not create', async () => {
+  await using database = await scratchDatabase();
+  const { sql } = database;
+  await sql`CREATE SCHEMA marts`;
+  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reader-pg-'));
+  try {
+    const files = new LocalFiles({ directory: scratch.path });
+    const undescribed = new Stream({
+      name: 'notes',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'integer' }, title: { type: 'string' } },
+      },
+      supportedSyncModes: ['full_refresh'],
+    });
+    const destination = new PostgresDestination({
+      url: database.url,
+      schema: 'raw',
+    });
+    assert.throws(
+      () =>
+        destination.validate(
+          new Copy(
+            undescribed,
+            destination.table('raw_notes').withReaderView('marts', 'notes'),
+          ).configuration,
+          destination.table('raw_notes').withReaderView('marts', 'notes'),
+        ),
+      /Reader view marts\.notes needs JSON Schema descriptions for the stream, id, title of stream notes/,
+    );
+
+    await sql`CREATE VIEW marts.notes AS SELECT 1 AS id`;
+    const definition = async () =>
+      (await sql`SELECT pg_get_viewdef('marts.notes'::regclass) AS d`)[0]?.d;
+    const before = await definition();
+    const { source, pipeline } = readerNotes(database, files);
+    source.messages = [{ stream: 'notes', data: { id: 1, title: 'A' } }];
+    await assert.rejects(pipeline.run(), (error: unknown) => {
+      assert.ok(error instanceof PipelineError);
+      assert.match(
+        String(error.cause),
+        /"marts"\."notes" is not a view of exactly "raw"\."raw_notes"/,
+      );
+      return true;
+    });
+    assert.equal(await definition(), before);
+    assert.equal(
+      (await sql`SELECT to_regclass('raw.raw_notes') AS t`)[0]?.t,
+      null,
+    );
+  } finally {
+    await scratch[Symbol.asyncDispose]();
+  }
 });
