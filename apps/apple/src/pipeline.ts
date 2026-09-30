@@ -1,11 +1,6 @@
-import { join, resolve } from 'node:path';
-import { Connection, Copy, LocalFiles, Pipeline, type Source } from 'elt';
-import {
-  PostgresCheckpointStore,
-  PostgresColumns,
-  PostgresDestination,
-  PostgresSyncHistory,
-} from 'elt-postgresql';
+import { resolve } from 'node:path';
+import { Pipeline, type Source } from 'elt';
+import { PostgresSyncHistory } from 'elt-postgresql';
 import {
   GMAIL_READONLY_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE,
@@ -20,42 +15,14 @@ import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
 import { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
 import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
+import { warehouseConnection } from './warehouse-connection.ts';
 
 const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
-
-// Every stream of one Apple source, loaded incrementally into its own schema
-// beside its checkpoints.
-async function apple(name: string, source: Source) {
-  const schema = `apple_${name}`;
-  const destination = new PostgresDestination({ url: warehouseUrl, schema });
-  const files = new LocalFiles({
-    directory: join(resolve('outputs'), `apple-${name}-files`),
+const apple = (name: string, source: Source) =>
+  warehouseConnection(name, source, {
+    url: warehouseUrl,
+    outputs: resolve('outputs'),
   });
-  const { streams } = await source.discover();
-  return new Connection({
-    name: `apple-${name}`,
-    source,
-    destination,
-    checkpoints: new PostgresCheckpointStore({ url: warehouseUrl, schema }),
-    steps: streams.map(
-      (stream) =>
-        new Copy(
-          stream,
-          stream.supportsFileTransfer
-            ? destination.table(`raw_${stream.name}`, (columns) => [
-                ...PostgresColumns.fromSchema(stream.jsonSchema),
-                columns.text('attachmentRef').from(stream.file.store(files)),
-              ])
-            : destination.table(`raw_${stream.name}`),
-          {
-            id: `apple-${name}:${stream.name}`,
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-          },
-        ),
-    ),
-  });
-}
 
 // Calendar downloads attachments stored in Google Drive and Gmail.
 const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;

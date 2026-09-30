@@ -26,6 +26,7 @@ import {
   SQLiteColumns,
   SQLiteDestination,
 } from 'elt-sqlite';
+import { appleWarehouse } from './fixtures/apple-warehouse.ts';
 import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
 import {
   MailSchemaError,
@@ -869,4 +870,90 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
     assert.deepEqual(bytes(destination.path, 'images', row.bytes), images[i]);
     assert.deepEqual(await readFile(String(row.attachmentRef)), images[i]);
   }
+});
+
+test('Mail reads as documented views whose MIME, rule and subject joins hold, with raw dates and missing files explicit', async (t) => {
+  t.mock.method(osa, 'execute', async () =>
+    JSON.stringify({
+      accounts: [{ id: 'ACCOUNT', name: 'Synthetic' }],
+      smtpServers: [{ name: 'Synthetic SMTP' }],
+    }),
+  );
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-marts-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  await using warehouse = await appleWarehouse(
+    'mail',
+    new AppleMailSource(store.root),
+    join(dir.path, 'outputs'),
+  );
+  const { agent } = warehouse;
+  await warehouse.load();
+
+  assert.equal(
+    (
+      await agent`SELECT count(*)::int AS n FROM catalog WHERE kind = 'view' AND name LIKE 'mail_%'`
+    )[0]?.n,
+    42,
+  );
+  assert.deepEqual(
+    (
+      await agent`
+        SELECT m.id, s.subject, count(r.id)::int AS recipients
+        FROM mail_messages m
+        JOIN mail_subjects s ON s.id = m.subject
+        LEFT JOIN mail_recipients r ON r.message = m.id
+        GROUP BY m.id, s.subject ORDER BY m.id`
+    ).map((found) => ({ ...found })),
+    [
+      { id: '1', subject: 'Hello 🌍', recipients: 1 },
+      { id: '2', subject: 'Hello 🌍', recipients: 0 },
+    ],
+  );
+  const [parts] = await agent`
+    SELECT count(*) FILTER (WHERE p."partId" IS NOT NULL)::int AS parented,
+      count(*) FILTER (WHERE p."partId" IS NULL)::int AS orphaned
+    FROM mail_message_parts c
+    LEFT JOIN mail_message_parts p ON p."messageId" = c."messageId" AND p."partId" = c."parentPartId"
+    WHERE c."parentPartId" IS NOT NULL`;
+  assert.ok(Number(parts?.parented) > 0);
+  assert.equal(parts?.orphaned, 0);
+  assert.deepEqual(
+    (
+      await agent`SELECT value FROM mail_message_headers WHERE name = 'received' ORDER BY position`
+    ).map(({ value }) => value),
+    ['first', 'second'],
+  );
+  const [conditions] = await agent`
+    SELECT count(*)::int AS total, count(r.id)::int AS matched
+    FROM mail_rule_conditions c
+    LEFT JOIN mail_rules r ON r.scope = c.scope AND r.id = c."ownerId"`;
+  assert.ok(Number(conditions?.total) > 0);
+  assert.equal(conditions?.matched, conditions?.total);
+  assert.deepEqual(
+    (await agent`SELECT "startDateRaw" FROM mail_events`).map(
+      ({ startDateRaw }) => startDateRaw,
+    ),
+    [123],
+  );
+  const attachments = await agent`
+    SELECT "availableLocally", "attachmentRef" FROM mail_attachments ORDER BY "messageId", "partId"`;
+  assert.equal(
+    await readFile(String(attachments[0]?.attachmentRef), 'utf8'),
+    '%PDF-fixture',
+  );
+  assert.deepEqual(
+    attachments
+      .filter(({ availableLocally }) => !availableLocally)
+      .map(({ attachmentRef }) => attachmentRef),
+    [null, null],
+  );
+  assert.deepEqual(
+    (
+      await agent`SELECT "messageId", "availableLocally" FROM mail_message_files ORDER BY "messageId"`
+    ).map((found) => ({ ...found })),
+    [
+      { messageId: '1', availableLocally: true },
+      { messageId: '2', availableLocally: false },
+    ],
+  );
 });

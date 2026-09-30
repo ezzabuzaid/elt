@@ -8,6 +8,7 @@ import {
   Catalog,
   type CopyConfiguration,
   diffSnapshot,
+  type FieldSchema,
   type SchemaRecord,
   Source,
   type SourceMessage,
@@ -77,68 +78,259 @@ const fileFields = {
   sha256: nullableText,
 } as const;
 
+// Each stream describes every field for readers; the mapped type makes a
+// missing description a compile error.
+function described<const Fields extends Readonly<Record<string, FieldSchema>>>(
+  fields: Fields,
+  descriptions: { readonly [Name in keyof Fields]: string },
+): Record<string, FieldSchema> {
+  const meaning: Readonly<Record<string, string>> = descriptions;
+  return Object.fromEntries(
+    Object.entries(fields).map(([name, field]) => [
+      name,
+      { ...field, description: meaning[name] },
+    ]),
+  );
+}
+
+const plistProperties =
+  'The property list converted to JSON: data values become Base64 strings, dates ISO 8601 strings and integers beyond 2^53 decimal strings. Kept as data; this source does not interpret its keys.';
+const localMessageId =
+  'Refers to messages.id within this source (the local id, not the Message-ID hash in messages.messageId).';
+const partId =
+  'Dotted MIME part number, such as 1 or 1.2. The root of a multipart message is TEXT; a single-part message is 1, as in the index. Equals indexedAttachments.attachmentId for attachments Mail indexes.';
+const sha256 = 'SHA-256 of the bytes as lowercase hexadecimal';
+
 const streams = {
-  accounts: mailStream('accounts', metadata, ['id'], false),
-  smtpServers: mailStream('smtpServers', metadata, ['id'], false),
+  accounts: mailStream(
+    'accounts',
+    'One record per Mail account reported by Mail scripting, plus one On My Mac record for each local:// mailbox host that scripting does not list. Primary key id. The host of mailboxes.url matches id. properties is JSON data; no password or authentication property is read.',
+    described(metadata, {
+      id: 'Account id returned by Mail scripting, or the host of a local:// mailbox URL for an added On My Mac account. The host of mailboxes.url matches it within this source.',
+      properties:
+        'JSON object of the account properties read through Mail scripting: id, name, type, enabled, emailAddresses, fullName, userName, serverName, port, usesSsl and directory. An added On My Mac account has only type local and name On My Mac. Kept as data without interpretation.',
+    }),
+    ['id'],
+    false,
+  ),
+  smtpServers: mailStream(
+    'smtpServers',
+    'One record per SMTP server reported by Mail scripting. Primary key id, the server name. No link to accounts is proven, so no join is stated and scoped imports omit this stream.',
+    described(metadata, {
+      id: 'Server name returned by Mail scripting.',
+      properties:
+        'JSON object of the server properties read through Mail scripting: name, userName, serverName, port, usesSsl and enabled. No password is read. Kept as data without interpretation.',
+    }),
+    ['id'],
+    false,
+  ),
   ...tableStreams,
   mailboxProperties: mailStream(
     'mailboxProperties',
-    { relativePath: text, properties: text },
+    'One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.',
+    described(
+      { relativePath: text, properties: text },
+      {
+        relativePath:
+          'Path of the Info.plist file relative to the current Mail version directory.',
+        properties: plistProperties,
+      },
+    ),
     ['relativePath'],
     false,
   ),
   rules: mailStream(
     'rules',
-    { ...scopedMetadata, enabled: { type: ['boolean', 'null'] } },
+    'One record per Mail rule in MailData/SyncedRules.plist (scope Synced) or MailData/UnsyncedRules.plist (scope Unsynced). Primary key (scope, id). Conditions are ruleConditions rows, joined by (scope, ownerId) to (scope, id). Scoped imports omit this stream.',
+    described(
+      { ...scopedMetadata, enabled: { type: ['boolean', 'null'] } },
+      {
+        scope:
+          'Synced for a rule read from MailData/SyncedRules.plist, Unsynced for one read from MailData/UnsyncedRules.plist.',
+        id: 'RuleId value of the rule; with scope, the primary key.',
+        properties: `The whole rule dictionary, including its Criteria. ${plistProperties}`,
+        enabled:
+          'Value stored for this RuleId in MailData/RulesActiveState.plist; NULL when that file is absent or has no entry for the rule.',
+      },
+    ),
     ['scope', 'id'],
     false,
   ),
   ruleConditions: mailStream(
     'ruleConditions',
-    conditionFields,
+    "One record per entry of a rule's Criteria list, in stored order. Primary key (scope, ownerId, position). Join (scope, ownerId) to rules (scope, id) within this source. A rule without Criteria has no rows. Scoped imports omit this stream.",
+    described(conditionFields, {
+      scope:
+        'Scope of the owning rule, Synced or Unsynced; joins to rules.scope together with ownerId.',
+      ownerId:
+        'RuleId of the owning rule; join (scope, ownerId) to rules (scope, id) within this source.',
+      position:
+        "Zero-based position of the condition in the rule's Criteria list.",
+      properties: `The condition dictionary. ${plistProperties}`,
+    }),
     ['scope', 'ownerId', 'position'],
     false,
   ),
   smartMailboxes: mailStream(
     'smartMailboxes',
-    { ...metadata, parentId: nullableText },
+    'One record per smart mailbox dictionary in MailData/SyncedSmartMailboxes.plist, including those nested under MailboxChildren. Primary key id. parentId refers to the containing smart mailbox. Conditions are smartMailboxConditions rows whose ownerId is id. Scoped imports omit this stream.',
+    described(
+      { ...metadata, parentId: nullableText },
+      {
+        id: 'MailboxID value of the smart mailbox.',
+        properties: `The whole smart mailbox dictionary, including its MailboxCriteria and nested MailboxChildren. ${plistProperties}`,
+        parentId:
+          'Refers to smartMailboxes.id of the smart mailbox whose MailboxChildren contains this one; NULL at the top level.',
+      },
+    ),
     ['id'],
     false,
   ),
   smartMailboxConditions: mailStream(
     'smartMailboxConditions',
-    conditionFields,
+    "One record per entry of a smart mailbox's MailboxCriteria list, in stored order. Primary key (scope, ownerId, position). ownerId refers to smartMailboxes.id within this source; these conditions do not join to rules. Scoped imports omit this stream.",
+    described(conditionFields, {
+      scope:
+        'Always Synced: only MailData/SyncedSmartMailboxes.plist is read. smartMailboxes has no scope field, so join on ownerId alone.',
+      ownerId:
+        'MailboxID of the owning smart mailbox; refers to smartMailboxes.id within this source.',
+      position:
+        "Zero-based position of the condition in the smart mailbox's MailboxCriteria list.",
+      properties: `The condition dictionary. ${plistProperties}`,
+    }),
     ['scope', 'ownerId', 'position'],
     false,
   ),
   signatures: mailStream(
     'signatures',
-    { id: text, content: text },
+    'One record per .mailsignature file in the current Mail store. Primary key id. No link to accounts is stated; scoped imports omit this stream.',
+    described(
+      { id: text, content: text },
+      {
+        id: 'File name of the .mailsignature file without its extension.',
+        content:
+          'The whole file read as UTF-8 text, including its MIME headers; not parsed.',
+      },
+    ),
     ['id'],
     false,
   ),
   configuration: mailStream(
     'configuration',
-    { relativePath: text, properties: text },
+    'One record per property list file under a MailData or Signatures directory of the current Mail store, except files under RemoteContentURLCache or BiomeStream. Primary key relativePath. It includes the rule and smart mailbox files that rules and smartMailboxes also read. Scoped imports omit this stream.',
+    described(
+      { relativePath: text, properties: text },
+      {
+        relativePath:
+          'Path of the property list file relative to the current Mail version directory.',
+        properties: plistProperties,
+      },
+    ),
     ['relativePath'],
     false,
   ),
-  messageFiles: mailStream('messageFiles', fileFields, ['messageId'], true),
+  messageFiles: mailStream(
+    'messageFiles',
+    "One record per messages row, describing its EMLX message file on this Mac. Primary key messageId. The row exists even when no file is present: availableLocally is false and the file fields are NULL. EMLX files that no messages row names are not included. The transferred file is the original EMLX bytes, including Mail's leading byte count line and trailing property list.",
+    described(fileFields, {
+      messageId: localMessageId,
+      relativePath:
+        'Path of <id>.emlx or <id>.partial.emlx relative to the current Mail version directory; NULL when no file is present.',
+      availableLocally:
+        'Whether an EMLX file for this message was present when the run read the store. False does not mean the message was deleted.',
+      partial:
+        'True when the file is named <id>.partial.emlx, false when <id>.emlx; NULL when no file is present. This source does not interpret the name further; detached attachment bytes are resolved in messageParts and attachments.',
+      size: 'Size of the EMLX file in bytes; NULL when no file is present.',
+      sha256: `${sha256} of the whole EMLX file; NULL when no file is present.`,
+    }),
+    ['messageId'],
+    true,
+  ),
   messageHeaders: mailStream(
     'messageHeaders',
-    headersFields,
+    'One record per header line of each MIME part of a locally available message file, in stored order; repeated header names stay separate rows. Primary key (messageId, partId, position). (messageId, partId) joins to messageParts (messageId, partId). Messages without a local file have no rows. An attached message/rfc822 is one part; its inner headers are not split out.',
+    described(headersFields, {
+      messageId: localMessageId,
+      partId: `${partId} Joins to messageParts.partId with messageId.`,
+      position:
+        "Zero-based position of the header within its part's header block, preserving the stored order.",
+      name: 'Header name as keyed by the MIME parser, in lowercase.',
+      value:
+        'Header value with folded lines joined and encoded words decoded to text; the original line is in rawLineBase64.',
+      rawLineBase64:
+        'Bytes of the whole header line as the MIME parser keeps it, including folded continuation lines joined with CRLF, as Base64.',
+    }),
     ['messageId', 'partId', 'position'],
     false,
   ),
   messageParts: mailStream(
     'messageParts',
-    { ...partFields, text: nullableText },
+    'One record per MIME part, including multipart containers, of each locally available message file. Primary key (messageId, partId). parentPartId links a part to its container: join (messageId, parentPartId) to messageParts (messageId, partId). Messages without a local file have no rows (see messageFiles). A detached part whose separate file is missing stays as a row with availableLocally false. An attached message/rfc822 is one part; its inner parts are not expanded.',
+    described(
+      { ...partFields, text: nullableText },
+      {
+        messageId: localMessageId,
+        partId,
+        parentPartId:
+          'partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for the root part.',
+        contentType:
+          'Media type as parsed from Content-Type by the MIME parser, which supplies its own default when the header is absent; NULL when the parser reports none.',
+        charset: 'Charset parameter of Content-Type; NULL when absent.',
+        transferEncoding:
+          'Content-Transfer-Encoding value; NULL when absent or empty.',
+        disposition:
+          'Content-Disposition type, such as attachment or inline; NULL when absent.',
+        filename:
+          "Filename as parsed from the part's headers by the MIME parser; NULL when absent.",
+        contentId: 'Content-ID header value; NULL when absent.',
+        isMultipart:
+          'Whether the part is a multipart container; containers carry no decoded bytes.',
+        isAttachment:
+          'True when indexedAttachments lists this part, or when a non-multipart part has a filename, an attachment disposition, is an attached message or has a media type other than text/*.',
+        declaredBytes:
+          "Byte count from the part's X-Apple-Content-Length header; NULL when absent. A part with this count and an empty body is read from its separate file under the message's Attachments directory.",
+        decodedBytes:
+          'Bytes after transfer decoding, or the size of the separate file for a detached part; NULL for multipart containers and for detached parts whose file is missing.',
+        availableLocally:
+          'False only for a detached part whose separate file is missing on this Mac; true otherwise, including multipart containers.',
+        sha256: `${sha256} after transfer decoding, or of the separate file for a detached part; NULL for multipart containers and missing detached parts.`,
+        text: 'Text of a text/* part decoded with its charset (UTF-8 when none is declared), including a detached part read from its separate file; NULL for other media types, multipart containers and missing detached parts. Decoded from the message itself; no document parser is applied.',
+      },
+    ),
     ['messageId', 'partId'],
     false,
   ),
   attachments: mailStream(
     'attachments',
-    partFields,
+    'One record per attachment: each MIME part with isAttachment true in a locally available message file, plus each indexedAttachments row whose part was not found in one (index-only rows). Index attachment metadata can exist before the message or attachment file is downloaded. Primary key (messageId, partId), the same key as messageParts and as (message, attachmentId) in indexedAttachments. Index-only rows have NULL MIME fields. availableLocally tells whether the bytes are on this Mac; the transferred file is the decoded attachment, and an attached message stays one complete file.',
+    described(partFields, {
+      messageId: localMessageId,
+      partId,
+      parentPartId:
+        'partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for a root part and for index-only rows.',
+      contentType:
+        'Media type as parsed from Content-Type by the MIME parser; NULL for index-only rows or when the parser reports none.',
+      charset:
+        'Charset parameter of Content-Type; NULL when absent or for index-only rows.',
+      transferEncoding:
+        'Content-Transfer-Encoding value; NULL when absent, empty or for index-only rows.',
+      disposition:
+        'Content-Disposition type, such as attachment or inline; NULL when absent or for index-only rows.',
+      filename:
+        "Filename as parsed from the part's headers by the MIME parser; for index-only rows, the name in indexedAttachments.name. NULL when neither exists.",
+      contentId:
+        'Content-ID header value; NULL when absent or for index-only rows.',
+      isMultipart:
+        'Whether the part is a multipart container; false for index-only rows.',
+      isAttachment: 'Always true in this stream.',
+      declaredBytes:
+        "Byte count from the part's X-Apple-Content-Length header; NULL when absent or for index-only rows.",
+      decodedBytes:
+        "Bytes after transfer decoding, or the size of the separate file under the message's Attachments directory; NULL when the bytes are not on this Mac.",
+      availableLocally:
+        'Whether the attachment bytes are on this Mac. False for a detached or index-only attachment whose file has not been downloaded; a later run updates the row once the file appears.',
+      sha256: `${sha256} of the attachment; NULL when the bytes are not on this Mac.`,
+    }),
     ['messageId', 'partId'],
     true,
   ),

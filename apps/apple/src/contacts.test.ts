@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { mkdtempDisposable } from 'node:fs/promises';
+import { mkdtempDisposable, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
@@ -13,6 +13,7 @@ import {
   SQLiteColumns,
   SQLiteDestination,
 } from 'elt-sqlite';
+import { appleWarehouse } from './fixtures/apple-warehouse.ts';
 import {
   ContactsSchemaError,
   ContactsUnavailableError,
@@ -1179,4 +1180,101 @@ test('a Contacts watch loads each commit contactsd makes and each account added'
   }
 
   assert.deepEqual(batches, [4, 1, 1]);
+});
+
+test('Contacts reads as documented views whose joins keep one row per contact', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'contacts-marts-'),
+  );
+  await using warehouse = await appleWarehouse(
+    'contacts',
+    new AppleContactsSource(
+      addressBookFixture(join(scratch.path, 'AddressBook')),
+    ),
+    join(scratch.path, 'outputs'),
+  );
+  const { agent } = warehouse;
+  await warehouse.load();
+
+  assert.equal(
+    (
+      await agent`SELECT count(*)::int AS n FROM catalog WHERE kind = 'view' AND name LIKE 'contacts_%'`
+    )[0]?.n,
+    24,
+  );
+  // Each one-to-many stream is aggregated before joining, so every contact
+  // counts once however many phones and groups it has.
+  assert.deepEqual(
+    (
+      await agent`
+        SELECT c.id, c."birthdayYear", coalesce(p.n, 0)::int AS phones,
+          coalesce(g.n, 0)::int AS groups, a."calendarIdentifier" AS alternate
+        FROM contacts_contacts c
+        LEFT JOIN (SELECT "contactId", count(*) AS n FROM contacts_phone_numbers GROUP BY 1) p ON p."contactId" = c.id
+        LEFT JOIN (SELECT "contactId", count(*) AS n FROM contacts_group_members GROUP BY 1) g ON g."contactId" = c.id
+        LEFT JOIN contacts_alternate_birthdays a ON a."contactId" = c.id
+        ORDER BY c.id`
+    ).map((found) => ({ ...found })),
+    [
+      {
+        id: 'ALAN:ABPerson',
+        birthdayYear: null,
+        phones: 1,
+        groups: 1,
+        alternate: null,
+      },
+      {
+        id: 'BOB:ABPerson',
+        birthdayYear: null,
+        phones: 0,
+        groups: 0,
+        alternate: null,
+      },
+      {
+        id: 'GRACE:ABPerson',
+        birthdayYear: '1906',
+        phones: 1,
+        groups: 1,
+        alternate: 'chinese',
+      },
+      {
+        id: 'ME:ABPerson',
+        birthdayYear: null,
+        phones: 0,
+        groups: 0,
+        alternate: null,
+      },
+    ],
+  );
+  assert.deepEqual(
+    (
+      await agent`SELECT s."parentGroupId", s."childGroupId", child.kind
+        FROM contacts_group_subgroups s JOIN contacts_groups child ON child.id = s."childGroupId"`
+    ).map((found) => ({ ...found })),
+    [
+      {
+        parentGroupId: 'FRIENDS:ABGroup',
+        childGroupId: 'SMART:ABGroup',
+        kind: 'smartGroup',
+      },
+    ],
+  );
+  const images = await agent`
+    SELECT "contactId", kind, storage, "attachmentRef" FROM contacts_images ORDER BY "contactId"`;
+  assert.deepEqual(
+    images.map(({ contactId, kind, storage }) => [contactId, kind, storage]),
+    [
+      ['BOB:ABPerson', 'thumbnail', 'external'],
+      ['GRACE:ABPerson', 'thumbnail', 'inline'],
+      ['ME:ABPerson', 'image', 'external'],
+    ],
+  );
+  assert.deepEqual(
+    await readFile(String(images[0]?.attachmentRef)),
+    Buffer.from('not really a jpeg'),
+  );
+  await assert.rejects(
+    agent`SELECT * FROM apple_contacts.raw_contacts`,
+    /permission denied for schema apple_contacts/,
+  );
 });

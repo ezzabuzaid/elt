@@ -63328,15 +63328,15 @@ var Pipeline = class {
   // Two copies with different writers into one target fail before any copy
   // runs rather than after the first commits.
   #assertOwners() {
-    const owners = /* @__PURE__ */ new Map();
+    const owners2 = /* @__PURE__ */ new Map();
     for (const connection of this.connections)
       for (const copy of connection.steps) {
-        const location4 = connection.destination.location(copy.to);
+        const location3 = connection.destination.location(copy.to);
         const writer = copy.writer(connection.source);
-        const owner = owners.get(location4);
+        const owner = owners2.get(location3);
         if (owner !== void 0 && owner !== writer)
-          throw new TargetOwnedError(location4, owner, writer);
-        owners.set(location4, writer);
+          throw new TargetOwnedError(location3, owner, writer);
+        owners2.set(location3, writer);
       }
   }
 };
@@ -63510,6 +63510,7 @@ async function syncDirectory(path) {
 var LocalFiles = class extends FileStorage {
   directory;
   identity;
+  reference = "Absolute path, on the machine that ran the load, of a copy of the source file bytes. Named by content hash, keeping a short source extension, and kept only while a row references it. Not the source file name, a URL or extracted text.";
   constructor({ directory }) {
     super();
     if (typeof directory !== "string" || directory.length === 0 || directory.includes("\0") || !directory.isWellFormed())
@@ -64228,86 +64229,252 @@ var eventKitFields = {
   location
 };
 var eventKitAccountFields = {
-  id,
-  name: text,
-  type: ordinal,
-  isDelegate: boolean4
+  id: {
+    ...id,
+    description: "EventKit EKSource.sourceIdentifier; accountId of the calendar or list stream within this source refers to it."
+  },
+  name: { ...text, description: "EventKit EKSource.title." },
+  type: {
+    ...ordinal,
+    description: "EventKit EKSource.sourceType raw value (EKSourceType): 0 local, 1 Exchange, 2 CalDAV, 3 MobileMe, 4 subscribed, 5 birthdays. Unknown codes are kept as numbers."
+  },
+  isDelegate: {
+    ...boolean4,
+    description: "EventKit EKSource.isDelegate: whether the account is delegated by another user."
+  }
 };
 var eventKitCalendarFields = {
-  id,
-  accountId: id,
-  name: text,
-  type: ordinal,
-  writable: boolean4,
-  subscribed: boolean4,
-  immutable: boolean4,
-  colorRed: color,
-  colorGreen: color,
-  colorBlue: color,
-  colorAlpha: color,
-  supportedAvailabilities: ordinal,
-  allowedEntityTypes: ordinal
+  id: {
+    ...id,
+    description: "EventKit EKCalendar.calendarIdentifier. Apple documents that a full sync can replace it, so it is not a stable identity."
+  },
+  accountId: {
+    ...id,
+    description: "EventKit EKCalendar.source.sourceIdentifier: the owning account; refers to accounts.id within this source."
+  },
+  name: { ...text, description: "EventKit EKCalendar.title." },
+  type: {
+    ...ordinal,
+    description: "EventKit EKCalendar.type raw value (EKCalendarType): 0 local, 1 CalDAV, 2 Exchange, 3 subscription, 4 birthday. Apple reports a subscribed CalDAV calendar as 1 with subscribed true. Unknown codes are kept as numbers."
+  },
+  writable: {
+    ...boolean4,
+    description: "EventKit EKCalendar.allowsContentModifications: whether items can be added, removed or modified in it."
+  },
+  subscribed: { ...boolean4, description: "EventKit EKCalendar.isSubscribed." },
+  immutable: {
+    ...boolean4,
+    description: "EventKit EKCalendar.isImmutable: the calendar itself cannot be modified or deleted. It does not prevent adding items."
+  },
+  colorRed: {
+    ...color,
+    description: "Red component (0 to 1) of EventKit EKCalendar.color converted to sRGB; NULL when the calendar has no color."
+  },
+  colorGreen: {
+    ...color,
+    description: "Green component (0 to 1) of EventKit EKCalendar.color converted to sRGB; NULL when the calendar has no color."
+  },
+  colorBlue: {
+    ...color,
+    description: "Blue component (0 to 1) of EventKit EKCalendar.color converted to sRGB; NULL when the calendar has no color."
+  },
+  colorAlpha: {
+    ...color,
+    description: "Alpha component (0 to 1) of EventKit EKCalendar.color converted to sRGB; NULL when the calendar has no color."
+  },
+  supportedAvailabilities: {
+    ...ordinal,
+    description: "EventKit EKCalendar.supportedEventAvailabilities bitmask (EKCalendarEventAvailabilityMask): 1 busy, 2 free, 4 tentative, 8 unavailable; 0 when the calendar does not support event availability."
+  },
+  allowedEntityTypes: {
+    ...ordinal,
+    description: "EventKit EKCalendar.allowedEntityTypes bitmask (EKEntityMask): 1 events, 2 reminders."
+  }
 };
-function eventKitRelatedFields(ownerKey) {
+function eventKitLocationFields(property) {
   return {
-    attendees: {
-      id,
-      [ownerKey]: id,
-      position: ordinal,
-      kind: text,
-      name: nullableText,
-      url: nullableText,
-      status: ordinal,
-      role: ordinal,
-      type: ordinal,
-      isCurrentUser: boolean4
+    locationTitle: {
+      ...location.locationTitle,
+      description: `EventKit ${property}.title; NULL when there is no structured location or it has no title.`
     },
-    alarms: {
-      id,
-      [ownerKey]: id,
-      position: ordinal,
-      type: ordinal,
-      relativeOffset: number4,
-      absoluteAt: nullableTimestamp,
-      emailAddress: nullableText,
-      soundName: nullableText,
-      proximity: ordinal,
-      ...location
+    latitude: {
+      ...location.latitude,
+      description: `Latitude in degrees of EventKit ${property}.geoLocation; NULL when there is no structured location or it has no coordinate.`
     },
-    recurrenceRules: {
-      id,
-      [ownerKey]: id,
-      position: ordinal,
-      calendarIdentifier: text,
-      frequency: ordinal,
-      interval: { ...integer2, minimum: 1 },
-      firstDayOfWeek: { ...integer2, minimum: 0, maximum: 7 },
-      endAt: nullableTimestamp,
-      occurrenceCount: ordinal
+    longitude: {
+      ...location.longitude,
+      description: `Longitude in degrees of EventKit ${property}.geoLocation; NULL when there is no structured location or it has no coordinate.`
     },
-    recurrenceRuleValues: {
-      id,
-      [ownerKey]: id,
-      ruleId: id,
-      component: text,
-      position: ordinal,
-      value: integer2,
-      weekNumber: { type: ["integer", "null"] }
+    radius: {
+      ...location.radius,
+      description: `EventKit ${property}.radius in meters; 0 means EventKit's default radius. NULL when there is no structured location.`
     }
   };
 }
-function eventKitCatalog(properties6, {
+var owners = {
+  eventId: {
+    key: "Owning event occurrence; refers to events.eventId within this source.",
+    kind: "'organizer' for EventKit EKEvent.organizer, always at position 0, or 'attendee' for an entry of EKCalendarItem.attendees.",
+    relativeOffset: "EventKit EKAlarm.relativeOffset: seconds from the event start at which the alarm fires, negative before it. Apple documents an alarm as either relative or absolute, so it is not the trigger when absoluteAt is set."
+  },
+  reminderId: {
+    key: "Owning reminder; refers to reminders.id within this source.",
+    kind: "Always 'attendee': an entry of EventKit EKCalendarItem.attendees. Reminders read no organizer.",
+    relativeOffset: "EventKit EKAlarm.relativeOffset in seconds. Apple documents it relative to an event start; which reminder date anchors it is not documented, so it is kept unconverted. Apple documents an alarm as either relative or absolute, so it is not the trigger when absoluteAt is set."
+  }
+};
+function eventKitRelatedFields(ownerKey) {
+  const owner = owners[ownerKey];
+  return {
+    attendees: {
+      id: {
+        ...id,
+        description: `JSON [${ownerKey}, kind, position]; unique within this stream.`
+      },
+      [ownerKey]: { ...id, description: owner.key },
+      position: {
+        ...ordinal,
+        description: "Order among the owner's participants of the same kind. Attendees are numbered in content order (URL, name, role, type), not EventKit's order, which changes between reads."
+      },
+      kind: { ...text, description: owner.kind },
+      name: {
+        ...nullableText,
+        description: "EventKit EKParticipant.name; NULL when EventKit has none."
+      },
+      url: {
+        ...nullableText,
+        description: "EventKit EKParticipant.URL as a string."
+      },
+      status: {
+        ...ordinal,
+        description: "EventKit EKParticipant.participantStatus raw value (EKParticipantStatus): 0 unknown, 1 pending, 2 accepted, 3 declined, 4 tentative, 5 delegated, 6 completed, 7 in process. Unknown codes are kept as numbers."
+      },
+      role: {
+        ...ordinal,
+        description: "EventKit EKParticipant.participantRole raw value (EKParticipantRole): 0 unknown, 1 required, 2 optional, 3 chair, 4 non-participant. Unknown codes are kept as numbers."
+      },
+      type: {
+        ...ordinal,
+        description: "EventKit EKParticipant.participantType raw value (EKParticipantType): 0 unknown, 1 person, 2 room, 3 resource, 4 group. Unknown codes are kept as numbers."
+      },
+      isCurrentUser: {
+        ...boolean4,
+        description: "EventKit EKParticipant.isCurrentUser: whether the participant is the owner of this account."
+      }
+    },
+    alarms: {
+      id: {
+        ...id,
+        description: `JSON [${ownerKey}, position]; unique within this stream.`
+      },
+      [ownerKey]: { ...id, description: owner.key },
+      position: {
+        ...ordinal,
+        description: "Order among the owner's alarms, numbered in content order, not EventKit's order, which changes between reads."
+      },
+      type: {
+        ...ordinal,
+        description: "EventKit EKAlarm.type raw value (EKAlarmType): 0 display, 1 audio, 2 procedure (opens a URL), 3 email. Unknown codes are kept as numbers."
+      },
+      relativeOffset: { ...number4, description: owner.relativeOffset },
+      absoluteAt: {
+        ...nullableTimestamp,
+        description: "EventKit EKAlarm.absoluteDate as a UTC timestamp; NULL for a relative alarm."
+      },
+      emailAddress: {
+        ...nullableText,
+        description: "EventKit EKAlarm.emailAddress, the recipient of an email alarm; NULL when unset."
+      },
+      soundName: {
+        ...nullableText,
+        description: "EventKit EKAlarm.soundName, the system sound of an audio alarm; NULL when unset."
+      },
+      proximity: {
+        ...ordinal,
+        description: "EventKit EKAlarm.proximity raw value (EKAlarmProximity): 0 none, 1 fires on entering, 2 on leaving the structured location. Unknown codes are kept as numbers."
+      },
+      ...eventKitLocationFields("EKAlarm.structuredLocation")
+    },
+    recurrenceRules: {
+      id: {
+        ...id,
+        description: `JSON [${ownerKey}, "recurrenceRule", position]; recurrenceRuleValues.ruleId refers to it.`
+      },
+      [ownerKey]: { ...id, description: owner.key },
+      position: {
+        ...ordinal,
+        description: "Index in EventKit EKCalendarItem.recurrenceRules, in the order EventKit returns them."
+      },
+      calendarIdentifier: {
+        ...text,
+        description: "EventKit EKRecurrenceRule.calendarIdentifier: the calendar system the rule uses."
+      },
+      frequency: {
+        ...ordinal,
+        description: "EventKit EKRecurrenceRule.frequency raw value (EKRecurrenceFrequency): 0 daily, 1 weekly, 2 monthly, 3 yearly. Unknown codes are kept as numbers."
+      },
+      interval: {
+        ...integer2,
+        minimum: 1,
+        description: "EventKit EKRecurrenceRule.interval: the rule repeats every interval frequency units, such as 2 with weekly for every other week."
+      },
+      firstDayOfWeek: {
+        ...integer2,
+        minimum: 0,
+        maximum: 7,
+        description: "EventKit EKRecurrenceRule.firstDayOfTheWeek: 1 Sunday through 7 Saturday; 0 when the rule does not set it."
+      },
+      endAt: {
+        ...nullableTimestamp,
+        description: "EventKit EKRecurrenceRule.recurrenceEnd.endDate as a UTC timestamp; NULL when the rule ends after a count or never ends."
+      },
+      occurrenceCount: {
+        ...ordinal,
+        description: "EventKit EKRecurrenceRule.recurrenceEnd.occurrenceCount; 0 when the rule ends at endAt or never ends. endAt NULL with 0 here means no end."
+      }
+    },
+    recurrenceRuleValues: {
+      id: {
+        ...id,
+        description: "JSON [ruleId, component, position]; unique within this stream."
+      },
+      [ownerKey]: { ...id, description: owner.key },
+      ruleId: {
+        ...id,
+        description: "Owning rule; refers to recurrenceRules.id within this source."
+      },
+      component: {
+        ...text,
+        description: "The EventKit EKRecurrenceRule list property this value belongs to: daysOfTheWeek (iCalendar BYDAY), daysOfTheMonth (BYMONTHDAY), daysOfTheYear (BYYEARDAY), weeksOfTheYear (BYWEEKNO), monthsOfTheYear (BYMONTH) or setPositions (BYSETPOS)."
+      },
+      position: {
+        ...ordinal,
+        description: "Index in that EventKit list, in the order EventKit returns it."
+      },
+      value: {
+        ...integer2,
+        description: "For daysOfTheWeek, EKRecurrenceDayOfWeek.dayOfTheWeek (EKWeekday): 1 Sunday through 7 Saturday. Otherwise the list entry; negative values count from the end of the month or year (setPositions: from the end of the set)."
+      },
+      weekNumber: {
+        type: ["integer", "null"],
+        description: "For daysOfTheWeek, EventKit EKRecurrenceDayOfWeek.weekNumber, which Apple's plain dayOfWeek: constructor sets to 0; NULL for every other component."
+      }
+    }
+  };
+}
+function eventKitCatalog(streams4, {
   snapshot = false,
   fileTransfer = []
 } = {}) {
   return new Catalog(
-    Object.entries(properties6).map(
-      ([name, fields]) => new Stream({
+    Object.entries(streams4).map(
+      ([name, { description, properties: properties6 }]) => new Stream({
         name,
         jsonSchema: {
           type: "object",
-          properties: fields,
-          required: Object.keys(fields)
+          description,
+          properties: properties6,
+          required: Object.keys(properties6)
         },
         primaryKey: ["id"],
         supportedSyncModes: snapshot ? ["full_refresh", "incremental"] : ["full_refresh"],
@@ -64703,7 +64870,7 @@ function calendarRows(documents, scope) {
   const accounts2 = [];
   const calendars = [];
   const events = /* @__PURE__ */ new Map();
-  const related = [];
+  const related3 = [];
   const exports = [];
   for (const document of documents) {
     if (document.type === "account") accounts2.push(document);
@@ -64713,7 +64880,7 @@ function calendarRows(documents, scope) {
       const event = eventRow(document);
       if (events.has(event.eventId)) continue;
       events.set(event.eventId, event);
-      related.push(relatedRows(document, event.eventId, "eventId"));
+      related3.push(relatedRows(document, event.eventId, "eventId"));
     }
   }
   const collections2 = scopedCollections(scope, accounts2, calendars);
@@ -64728,12 +64895,12 @@ function calendarRows(documents, scope) {
       }))
     ],
     ["events", [...events.values()]],
-    ["attendees", related.flatMap((rows) => rows.attendees)],
-    ["alarms", related.flatMap((rows) => rows.alarms)],
-    ["recurrenceRules", related.flatMap((rows) => rows.recurrenceRules)],
+    ["attendees", related3.flatMap((rows) => rows.attendees)],
+    ["alarms", related3.flatMap((rows) => rows.alarms)],
+    ["recurrenceRules", related3.flatMap((rows) => rows.recurrenceRules)],
     [
       "recurrenceRuleValues",
-      related.flatMap((rows) => rows.recurrenceRuleValues)
+      related3.flatMap((rows) => rows.recurrenceRuleValues)
     ],
     ...icsStreams.map((stream) => [
       stream,
@@ -64794,84 +64961,277 @@ var {
   nullableDate: nullableDate2,
   boolean: boolean5,
   ordinal: ordinal2,
-  integer: integer3,
-  location: location3
+  integer: integer3
 } = eventKitFields;
+var related = eventKitRelatedFields("eventId");
+var perOccurrence = "Rows belong to an occurrence, not a series: each selected occurrence of a recurring series repeats them, so counts across a series multiply.";
+var icsItem = {
+  calendarId: {
+    ...id2,
+    description: "EventKit calendar identifier of the exported item; refers to calendars.id within this source."
+  },
+  calendarItemId: {
+    ...id2,
+    description: "EventKit EKCalendarItem.calendarItemIdentifier of the exported item. With calendarId it matches events of every occurrence of that item."
+  }
+};
 var catalog = eventKitCatalog(
   {
-    accounts: eventKitAccountFields,
-    calendars: { ...eventKitCalendarFields, description: text2 },
+    accounts: {
+      description: "One source record per EventKit account (EKSource) in this Mac's event store, including accounts without event calendars. No date filter: the event window does not restrict it. An import scope keeps the selected accounts; a calendar scope also drops accounts owning no selected calendar. Relationships name source streams, not destination tables.",
+      properties: eventKitAccountFields
+    },
+    calendars: {
+      description: "One source record per event calendar visible through EventKit on this Mac. No date filter: the event window does not restrict it. An import scope keeps only the selected calendars. accountId refers to accounts.id; events and ICS rows refer to id through calendarId. Relationships name source streams, not destination tables.",
+      properties: {
+        ...eventKitCalendarFields,
+        description: {
+          ...text2,
+          description: "Calendar.app's calendar description, read from EKCalendar's private notes property; empty when the calendar has none."
+        }
+      }
+    },
     events: {
-      id: id2,
-      eventId: id2,
-      calendarId: id2,
-      calendarItemId: id2,
-      externalId: nullableText2,
-      nativeEventId: nullableText2,
-      name: text2,
-      body: nullableText2,
-      location: nullableText2,
-      url: nullableText2,
-      startAt: timestamp3,
-      endAt: timestamp3,
-      allDay: boolean5,
-      startDate: nullableDate2,
-      endDate: nullableDate2,
-      timeZone: nullableText2,
-      createdAt: nullableTimestamp2,
-      modifiedAt: nullableTimestamp2,
-      occurrenceAt: nullableTimestamp2,
-      occurrenceDate: nullableDate2,
-      detached: boolean5,
-      status: ordinal2,
-      availability: integer3,
-      birthdayContactId: nullableText2,
-      ...location3
+      description: "One source record per event occurrence, not per series: a recurring event yields one record for each occurrence overlapping the configured UTC interval [startAt, endAt); a zero-duration event must start inside it. Key id equals eventId, JSON [calendarId, calendarItemId, occurrenceKey]; never substitute nativeEventId or startAt for it. attendees, alarms, recurrenceRules and recurrenceRuleValues join on eventId. ICS rows describe the whole native item at (calendarId, calendarItemId) and can cover occurrences outside the interval; only a nonrecurring VEVENT carries eventId. startAt and endAt are UTC instants; startDate and endDate are local calendar dates, set for all-day events only. Only calendars visible on this Mac within the import scope are read. Relationships name source streams, not destination tables.",
+      properties: {
+        id: { ...id2, description: "Same value as eventId; the record key." },
+        eventId: {
+          ...id2,
+          description: "Occurrence identity: JSON [calendarId, calendarItemId, occurrenceKey]. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here."
+        },
+        calendarId: {
+          ...id2,
+          description: "EventKit EKCalendarItem.calendar.calendarIdentifier; refers to calendars.id within this source."
+        },
+        calendarItemId: {
+          ...id2,
+          description: "EventKit EKCalendarItem.calendarItemIdentifier of the native item; every occurrence of a recurring series shares it. ICS rows relate on (calendarId, calendarItemId). Apple documents that a full sync can replace it."
+        },
+        externalId: {
+          ...nullableText2,
+          description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier shared by every occurrence of a series; NULL when EventKit has none. Apple documents duplicates across calendars (imports, shared or delegated calendars), so it is not unique."
+        },
+        nativeEventId: {
+          ...nullableText2,
+          description: "EventKit EKEvent.eventIdentifier; NULL when EventKit has none. Apple documents that it can change when the event moves calendar or syncs; it is not the occurrence identity."
+        },
+        name: { ...text2, description: "EventKit EKCalendarItem.title." },
+        body: {
+          ...nullableText2,
+          description: "EventKit EKCalendarItem.notes; NULL when unset."
+        },
+        location: {
+          ...nullableText2,
+          description: "EventKit EKCalendarItem.location; NULL when unset."
+        },
+        url: {
+          ...nullableText2,
+          description: "EventKit EKCalendarItem.URL as a string; NULL when unset."
+        },
+        startAt: {
+          ...timestamp3,
+          description: "EventKit EKEvent.startDate as a UTC timestamp. Apple returns a floating event, such as an all-day event, in the default time zone of the process that read it; use startDate for all-day days."
+        },
+        endAt: {
+          ...timestamp3,
+          description: "EventKit EKEvent.endDate as a UTC timestamp; never before startAt. Floating events use the reading process time zone, as startAt does."
+        },
+        allDay: { ...boolean5, description: "EventKit EKEvent.isAllDay." },
+        startDate: {
+          ...nullableDate2,
+          description: "For an all-day event, the local calendar date of EventKit EKEvent.startDate in the default time zone of the process that read it, as Calendar shows it; NULL for a timed event."
+        },
+        endDate: {
+          ...nullableDate2,
+          description: "For an all-day event, the local calendar date of EventKit EKEvent.endDate in the default time zone of the process that read it, not adjusted to an inclusive or exclusive end; NULL for a timed event."
+        },
+        timeZone: {
+          ...nullableText2,
+          description: "EventKit EKCalendarItem.timeZone identifier; NULL for a floating event, which Apple documents as occurring at the same wall-clock time in every time zone."
+        },
+        createdAt: {
+          ...nullableTimestamp2,
+          description: "EventKit EKCalendarItem.creationDate as a UTC timestamp; NULL when EventKit has none."
+        },
+        modifiedAt: {
+          ...nullableTimestamp2,
+          description: "EventKit EKCalendarItem.lastModifiedDate as a UTC timestamp; NULL when EventKit has none."
+        },
+        occurrenceAt: {
+          ...nullableTimestamp2,
+          description: "EventKit EKEvent.occurrenceDate as a UTC timestamp: when this occurrence was originally scheduled, unchanged when it is detached and moved. NULL for a nonrecurring event."
+        },
+        occurrenceDate: {
+          ...nullableDate2,
+          description: "Local calendar date of EventKit EKEvent.occurrenceDate in the default time zone of the process that read it, set only for a recurring all-day event; NULL otherwise."
+        },
+        detached: {
+          ...boolean5,
+          description: "EventKit EKEvent.isDetached: an occurrence of a recurring series changed from what the series generates."
+        },
+        status: {
+          ...ordinal2,
+          description: "EventKit EKEvent.status raw value (EKEventStatus): 0 none, 1 confirmed, 2 tentative, 3 canceled. Apple documents only canceled as reliable. Unknown codes are kept as numbers."
+        },
+        availability: {
+          ...integer3,
+          description: "EventKit EKEvent.availability raw value (EKEventAvailability): -1 not supported by the calendar, 0 busy, 1 free, 2 tentative, 3 unavailable. Unknown codes are kept as numbers."
+        },
+        birthdayContactId: {
+          ...nullableText2,
+          description: "EventKit EKEvent.birthdayContactIdentifier, a Contacts framework contact identifier set only for events of the Birthdays calendar; NULL otherwise. Not verified to match identifiers of the Apple Contacts source."
+        },
+        ...eventKitLocationFields("EKEvent.structuredLocation")
+      }
     },
     icsComponents: {
-      id: id2,
-      calendarId: id2,
-      calendarItemId: id2,
-      parentId: nullableText2,
-      position: ordinal2,
-      name: text2,
-      uid: nullableText2,
-      recurrenceId: nullableText2,
-      recurrenceIdTimeZone: nullableText2,
-      eventId: nullableText2
+      description: "One source record per iCalendar component in the private EventKit ICS export of each native item with an occurrence in the event window: the VCALENDAR root, the VEVENT master, exception VEVENTs carrying RECURRENCE-ID, their alarms and any other exported component. Each item is exported once and whole, so a recurring series can describe occurrences outside the window. Grain is the native item (calendarId, calendarItemId), not an occurrence: eventId is set only for a nonrecurring VEVENT. Joining recurring components to events on (calendarId, calendarItemId) repeats them once per occurrence, so aggregate occurrences before joining. The ICS streams are read only when one is selected; on a macOS without the private export the read fails instead of loading no rows. Relationships name source streams, not destination tables.",
+      properties: {
+        id: {
+          ...id2,
+          description: 'JSON [calendarId, calendarItemId, path], where path lists child positions from the root VCALENDAR ("0", "0.1", \u2026).'
+        },
+        ...icsItem,
+        parentId: {
+          ...nullableText2,
+          description: "Enclosing component; refers to icsComponents.id within this source. NULL for the root VCALENDAR."
+        },
+        position: {
+          ...ordinal2,
+          description: "Order among sibling components, numbered in content order: EventKit's export order changes between reads."
+        },
+        name: {
+          ...text2,
+          description: "Component name as exported, uppercased, such as VCALENDAR, VEVENT or VALARM."
+        },
+        uid: {
+          ...nullableText2,
+          description: "Raw value of the component's UID property; NULL when it has none."
+        },
+        recurrenceId: {
+          ...nullableText2,
+          description: "Raw, unparsed value of the component's RECURRENCE-ID property, which marks a component overriding one occurrence of a series; NULL when absent."
+        },
+        recurrenceIdTimeZone: {
+          ...nullableText2,
+          description: "First TZID parameter value of RECURRENCE-ID; NULL when RECURRENCE-ID is absent or has no TZID."
+        },
+        eventId: {
+          ...nullableText2,
+          description: "events.eventId of the nonrecurring event this VEVENT exactly describes: set only for a VEVENT without RECURRENCE-ID of an item that has no recurrence rules and is not detached. NULL for every other component, including all components of a recurring item, which relate at (calendarId, calendarItemId)."
+        }
+      }
     },
     icsProperties: {
-      id: id2,
-      componentId: id2,
-      calendarId: id2,
-      calendarItemId: id2,
-      position: ordinal2,
-      name: text2,
-      value: text2
+      description: "One source record per property line of an icsComponents component, in export order, except DTSTAMP: EventKit sets it to the export time, so it is omitted. Values are raw iCalendar text; vendor X- properties are kept. ATTACH properties also appear in icsAttachments. Relationships name source streams, not destination tables.",
+      properties: {
+        id: {
+          ...id2,
+          description: "JSON [calendarId, calendarItemId, path, position], extending the component path; icsParameters.propertyId and icsAttachments.propertyId refer to it."
+        },
+        componentId: {
+          ...id2,
+          description: "Owning component; refers to icsComponents.id within this source."
+        },
+        ...icsItem,
+        position: {
+          ...ordinal2,
+          description: "Index among the component's properties in export order, counted after DTSTAMP is removed."
+        },
+        name: {
+          ...text2,
+          description: "Property name as exported, uppercased, including vendor X- names."
+        },
+        value: {
+          ...text2,
+          description: "Raw property value as exported after line unfolding: no TEXT unescaping, date parsing or decoding. An inline ATTACH value is a whole base64 file."
+        }
+      }
     },
     icsAttachments: {
-      id: id2,
-      propertyId: id2,
-      componentId: id2,
-      calendarId: id2,
-      calendarItemId: id2,
-      uri: text2,
-      filename: nullableText2,
-      formatType: nullableText2,
-      inline: boolean5
+      description: "One source record per ATTACH property in the ICS export; the same property also remains in icsProperties with its parameters in icsParameters. File bytes can be inline (base64 in uri), remote (retrieved only by the attachment fetcher the app supplies) or unavailable: an attachment record exists even when no bytes are exported. Relationships name source streams, not destination tables.",
+      properties: {
+        id: {
+          ...id2,
+          description: "Same value as propertyId; the record key."
+        },
+        propertyId: {
+          ...id2,
+          description: "The ATTACH property; refers to icsProperties.id within this source."
+        },
+        componentId: {
+          ...id2,
+          description: "Component holding the ATTACH property; refers to icsComponents.id within this source."
+        },
+        ...icsItem,
+        uri: {
+          ...text2,
+          description: "Raw ATTACH value: the base64 file content when inline is true, otherwise the attachment URI."
+        },
+        filename: {
+          ...nullableText2,
+          description: "First value of the ATTACH X-APPLE-FILENAME parameter, else of FILENAME; NULL when neither is present."
+        },
+        formatType: {
+          ...nullableText2,
+          description: "First value of the ATTACH FMTTYPE parameter, a media type; NULL when absent."
+        },
+        inline: {
+          ...boolean5,
+          description: "Whether ATTACH carries VALUE=BINARY or ENCODING=BASE64, so uri holds the file content itself rather than a location."
+        }
+      }
     },
     icsParameters: {
-      id: id2,
-      propertyId: id2,
-      componentId: id2,
-      calendarId: id2,
-      calendarItemId: id2,
-      position: ordinal2,
-      valuePosition: ordinal2,
-      name: text2,
-      value: text2
+      description: "One source record per value of each iCalendar property parameter: a comma-separated multi-value parameter yields one record per value. Relationships name source streams, not destination tables.",
+      properties: {
+        id: {
+          ...id2,
+          description: "JSON [calendarId, calendarItemId, path, propertyPosition, position, valuePosition], extending the property id."
+        },
+        propertyId: {
+          ...id2,
+          description: "Owning property; refers to icsProperties.id within this source."
+        },
+        componentId: {
+          ...id2,
+          description: "Component of the owning property; refers to icsComponents.id within this source."
+        },
+        ...icsItem,
+        position: {
+          ...ordinal2,
+          description: "Index of the parameter within its property, in export order."
+        },
+        valuePosition: {
+          ...ordinal2,
+          description: "Index of this value within the parameter."
+        },
+        name: {
+          ...text2,
+          description: "Parameter name as exported, uppercased."
+        },
+        value: {
+          ...text2,
+          description: "One parameter value, with surrounding double quotes removed and RFC 6868 caret escapes (^n, ^', ^^) decoded; otherwise as exported."
+        }
+      }
     },
-    ...eventKitRelatedFields("eventId")
+    attendees: {
+      description: `One source record per participant of an event occurrence: its organizer and each attendee. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
+      properties: related.attendees
+    },
+    alarms: {
+      description: `One source record per EventKit alarm of an event occurrence. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
+      properties: related.alarms
+    },
+    recurrenceRules: {
+      description: `One source record per EventKit recurrence rule of a recurring event occurrence. ${perOccurrence} eventId refers to events.eventId; recurrenceRuleValues holds each rule's list values. Relationships name source streams, not destination tables.`,
+      properties: related.recurrenceRules
+    },
+    recurrenceRuleValues: {
+      description: `One source record per entry of a recurrence rule's day, week, month or set-position lists. ${perOccurrence} ruleId refers to recurrenceRules.id and eventId to events.eventId. Relationships name source streams, not destination tables.`,
+      properties: related.recurrenceRuleValues
+    }
   },
   { snapshot: true, fileTransfer: ["icsAttachments"] }
 );
@@ -65254,6 +65614,30 @@ var kinds = {
     `(SELECT o.ZUNIQUEID FROM ZABCDRECORD o WHERE o.Z_PK = ${column})`
   ]
 };
+var conversions = {
+  text: "as stored",
+  integer: "as stored",
+  number: "as stored",
+  boolean: "with 0 read as false and any other stored value as true",
+  timestamp: "Core Data seconds since 2001-01-01 converted to a UTC instant with millisecond precision",
+  data: "a binary property list as JSON (keyed archives unarchived, nested bytes as Base64), other bytes as Base64",
+  record: "a ZABCDRECORD reference resolved to that record's ZUNIQUEID"
+};
+var unverified = "Meaning not verified: Apple does not document this store.";
+function provenance(kind, table2, column) {
+  const absent = kind === "record" ? "NULL when unset or no record matches" : "NULL when the store holds no value";
+  return `AddressBook ${table2}.${column}, ${conversions[kind]}; ${absent}. ${unverified}`;
+}
+function explained(fields, meanings) {
+  const described2 = { ...fields };
+  for (const [name, description] of Object.entries(meanings)) {
+    const field = fields[name];
+    if (field === void 0)
+      throw new TypeError(`Contacts has no field ${name} to describe`);
+    described2[name] = [{ ...field[0], description }, field[1]];
+  }
+  return described2;
+}
 var required2 = /* @__PURE__ */ new Map();
 var requiredEntities = /* @__PURE__ */ new Set();
 function requires(table2, columns2) {
@@ -65267,7 +65651,11 @@ function attributes(table2, alias, list2) {
     for (const token of words(names)) {
       const [name = token, column = `Z${name.toUpperCase()}`] = token.split(":");
       requires(table2, column);
-      fields[name] = kinds[kind](`${alias}.${column}`);
+      const [schema, sql] = kinds[kind](`${alias}.${column}`);
+      fields[name] = [
+        { ...schema, description: provenance(kind, table2, column) },
+        sql
+      ];
     }
   return fields;
 }
@@ -65275,13 +65663,29 @@ function calendarDate(table2, alias, attribute, [year, month, day2]) {
   const column = `Z${attribute.toUpperCase()}`;
   requires(table2, column);
   const part = (format) => `CAST(strftime('${format}', ${alias}.${column} + ${appleEpoch2}, 'unixepoch') AS INTEGER)`;
+  const read = `of the date in AddressBook ${table2}.${column}, Core Data seconds since 2001-01-01 read as a Gregorian UTC date`;
   return {
     [year]: [
-      nullableInteger,
+      {
+        ...nullableInteger,
+        description: `Year ${read}; NULL when no date is stored or its year is 1604, the year Contacts stores for a date without a year.`
+      },
       `CASE WHEN ${part("%Y")} = 1604 THEN NULL ELSE ${part("%Y")} END`
     ],
-    [month]: [nullableInteger, part("%m")],
-    [day2]: [nullableInteger, part("%d")]
+    [month]: [
+      {
+        ...nullableInteger,
+        description: `Month (1-12) ${read}; NULL when no date is stored.`
+      },
+      part("%m")
+    ],
+    [day2]: [
+      {
+        ...nullableInteger,
+        description: `Day of the month ${read}; NULL when no date is stored.`
+      },
+      part("%d")
+    ]
   };
 }
 var record2 = (alias) => attributes("ZABCDRECORD", alias, {
@@ -65295,10 +65699,15 @@ function entities(alias, names) {
   requires("Z_PRIMARYKEY", "Z_ENT Z_NAME");
   for (const name of Object.keys(names)) requiredEntities.add(name);
   const list2 = Object.keys(names).map((name) => `'${name}'`).join(", ");
+  const meanings = Object.entries(names).map(([name, kind]) => `${kind} for ${name}`).join(", ");
   return {
     join: `JOIN Z_PRIMARYKEY ${alias}_entity ON ${alias}_entity.Z_ENT = ${alias}.Z_ENT AND ${alias}_entity.Z_NAME IN (${list2})`,
     kind: [
-      { ...text3, enum: Object.values(names) },
+      {
+        ...text3,
+        enum: Object.values(names),
+        description: `Core Data entity of this record, from Z_PRIMARYKEY.Z_NAME: ${meanings}. Apple does not document how these entities differ.`
+      },
       `CASE ${alias}_entity.Z_NAME ${Object.entries(names).map(([name, kind]) => `WHEN '${name}' THEN '${kind}'`).join(" ")} END`
     ]
   };
@@ -65315,19 +65724,29 @@ var group = entities("g", {
 var container = entities("r", { CNCDContainer: "container" });
 function labeled(table2, alias, list2) {
   requires(table2, "ZUNIQUEID");
-  return {
-    id: [id3, `${alias}.ZUNIQUEID`],
-    ...attributes(table2, alias, {
-      record: "contactId:ZOWNER",
-      text: "label",
-      boolean: "isPrimary isPrivate",
-      integer: "orderingIndex iOSLegacyIdentifier"
-    }),
-    ...attributes(table2, alias, list2)
-  };
+  return explained(
+    {
+      id: [id3, `${alias}.ZUNIQUEID`],
+      ...attributes(table2, alias, {
+        record: "contactId:ZOWNER",
+        text: "label",
+        boolean: "isPrimary isPrivate",
+        integer: "orderingIndex iOSLegacyIdentifier"
+      }),
+      ...attributes(table2, alias, list2)
+    },
+    {
+      id: `Identifier of this labeled value, AddressBook ${table2}.ZUNIQUEID; the primary key.`,
+      contactId: `Owning contact: ${table2}.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id within this source; a contact can have many of these values. NULL when unset or no record matches.`,
+      label: `Label from AddressBook ${table2}.ZLABEL, as stored and not localized: a built-in label is a token such as _$!<Mobile>!$_, a custom label is its own text. NULL when the store holds no value; it can also be empty text.`
+    }
+  );
 }
-function definition(fields, from, primaryKey, { distinct = false } = {}) {
+var labeledValue = "Primary key id; contactId refers to contacts.id, and a contact can have several. label is the stored, unlocalized label. isPrimary, isPrivate and orderingIndex pass through as stored; whether orderingIndex orders a contact's values densely or uniquely is not verified.";
+var localStores = "Read from this Mac's Contacts stores, On My Mac and one per account under AddressBook/Sources, so it holds what has synced to this Mac rather than a complete cloud account; a configured container selection limits it further. Relationships name source streams, not destination tables, and identifiers name native records, not people merged across stores.";
+function definition(description, fields, from, primaryKey, { distinct = false } = {}) {
   return {
+    description,
     properties: Object.fromEntries(
       Object.entries(fields).map(([name, [schema]]) => [name, schema])
     ),
@@ -65358,92 +65777,147 @@ var uniqueIdOf = (table2, column) => [
 ];
 var definitions = {
   containers: definition(
-    {
-      id: [id3, "r.ZUNIQUEID"],
-      // The Sources directory the store sits in, or null for On My Mac;
-      // filled per store.
-      source: [nullableText3, "NULL"],
-      ...attributes("ZABCDRECORD", "r", {
-        text: "name:ZNAME1 externalIdentifier providerIdentifier remoteLocation serialNumber",
-        integer: "type guardianFlags",
-        boolean: "isAll",
-        timestamp: "lastSyncDate",
-        record: "meContactId:ZME"
-      }),
-      ...record2("r")
-    },
+    "One row per Contacts container, a CNCDContainer record in a store. Primary key id. contacts.containerId, contacts.meOfContainerId and groups.containerId refer to id.",
+    explained(
+      {
+        id: [id3, "r.ZUNIQUEID"],
+        // Filled per store.
+        source: [nullableText3, "NULL"],
+        ...attributes("ZABCDRECORD", "r", {
+          text: "name:ZNAME1 externalIdentifier providerIdentifier remoteLocation serialNumber",
+          integer: "type guardianFlags",
+          boolean: "isAll",
+          timestamp: "lastSyncDate",
+          record: "meContactId:ZME"
+        }),
+        ...record2("r")
+      },
+      {
+        id: "Container identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key.",
+        source: "Directory name under AddressBook/Sources of the account store this container was read from; NULL for the On My Mac store at the AddressBook root.",
+        meContactId: "AddressBook ZABCDRECORD.ZME resolved to that record's ZUNIQUEID. Join to contacts.id within this source. NULL when unset or no record matches."
+      }
+    ),
     `ZABCDRECORD r ${container.join}`,
     ["id"]
   ),
   groups: definition(
-    {
-      id: [id3, "g.ZUNIQUEID"],
-      kind: group.kind,
-      ...attributes("ZABCDRECORD", "g", {
-        record: "containerId:ZCONTAINER",
-        text: "name tmpRemoteLocation",
-        integer: "externalGroupBehavior",
-        data: "modifiedUniqueIdsData searchElementData"
-      }),
-      ...record2("g")
-    },
+    "One row per group record: an ABCDGroup, ABCDSubscribedGroup or ABCDSmartGroup, told apart by kind. Primary key id; containerId refers to containers.id. Stored members are in groupMembers, stored nesting in groupSubgroups and distribution-list configuration rows in distributionListConfigs.",
+    explained(
+      {
+        id: [id3, "g.ZUNIQUEID"],
+        kind: group.kind,
+        ...attributes("ZABCDRECORD", "g", {
+          record: "containerId:ZCONTAINER",
+          text: "name tmpRemoteLocation",
+          integer: "externalGroupBehavior",
+          data: "modifiedUniqueIdsData searchElementData"
+        }),
+        ...record2("g")
+      },
+      {
+        id: "Group identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key. groupMembers.groupId, groupSubgroups.parentGroupId, groupSubgroups.childGroupId and distributionListConfigs.groupId refer to it.",
+        containerId: "Owning container: AddressBook ZABCDRECORD.ZCONTAINER resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches."
+      }
+    ),
     `ZABCDRECORD g ${group.join}`,
     ["id"]
   ),
   groupMembers: definition(
-    { groupId: [id3, "g.ZUNIQUEID"], contactId: [id3, "c.ZUNIQUEID"] },
+    "One row per group membership stored in the AddressBook table Z_22PARENTGROUPS. Primary key (groupId, contactId). Only stored memberships appear; the connector does not evaluate smart group criteria.",
+    explained(
+      { groupId: [id3, "g.ZUNIQUEID"], contactId: [id3, "c.ZUNIQUEID"] },
+      {
+        groupId: "Group identifier (ZABCDRECORD.ZUNIQUEID of Z_22PARENTGROUPS.Z_19PARENTGROUPS1); refers to groups.id within this source.",
+        contactId: "Member contact identifier (ZABCDRECORD.ZUNIQUEID of Z_22PARENTGROUPS.Z_22CONTACTS); refers to contacts.id within this source. A contact can belong to many groups."
+      }
+    ),
     "Z_22PARENTGROUPS j JOIN ZABCDRECORD g ON g.Z_PK = j.Z_19PARENTGROUPS1 JOIN ZABCDRECORD c ON c.Z_PK = j.Z_22CONTACTS",
     ["groupId", "contactId"]
   ),
   groupSubgroups: definition(
-    { parentGroupId: [id3, "p.ZUNIQUEID"], childGroupId: [id3, "g.ZUNIQUEID"] },
+    "One row per direct parent-child link between groups stored in the AddressBook table Z_18PARENTGROUPS. Primary key (parentGroupId, childGroupId), both groups.id within this source. Deeper nesting is a chain of rows; a child can have several parents.",
+    explained(
+      { parentGroupId: [id3, "p.ZUNIQUEID"], childGroupId: [id3, "g.ZUNIQUEID"] },
+      {
+        parentGroupId: "Parent group identifier (ZABCDRECORD.ZUNIQUEID of Z_18PARENTGROUPS.Z_19PARENTGROUPS); refers to groups.id within this source.",
+        childGroupId: "Child group identifier (ZABCDRECORD.ZUNIQUEID of Z_18PARENTGROUPS.Z_18CHILDGROUPS); refers to groups.id within this source."
+      }
+    ),
     "Z_18PARENTGROUPS j JOIN ZABCDRECORD p ON p.Z_PK = j.Z_19PARENTGROUPS JOIN ZABCDRECORD g ON g.Z_PK = j.Z_18CHILDGROUPS",
     ["parentGroupId", "childGroupId"]
   ),
   contacts: definition(
-    {
-      id: [id3, "c.ZUNIQUEID"],
-      kind: contact.kind,
-      ...attributes("ZABCDRECORD", "c", {
-        record: "containerId:ZCONTAINER1 meOfContainerId:ZCONTAINERWHERECONTACTISME",
-        text: "title firstName middleName lastName suffix nickname maidenName phoneticFirstName phoneticMiddleName phoneticLastName phoneticOrganization phonemeData organization department jobTitle linkId identityUniqueId preferredApplePersonaIdentifier preferredLikenessSource imageType imageReference cropRect cropRectID wallpaperURI downtimeWhitelist tmpHomePage",
-        integer: "privacyFlags",
-        boolean: "preferredForLinkName preferredForLinkPhoto",
-        timestamp: "imageSyncFailedTime wallpaperSyncFailedTime",
-        data: "imageHash cropRectHash avatarRecipeData memojiMetadata sensitiveContentConfiguration wallpaper"
-      }),
-      ...calendarDate("ZABCDRECORD", "c", "birthday", [
-        "birthdayYear",
-        "birthdayMonth",
-        "birthdayDay"
-      ]),
-      ...record2("c")
-    },
+    "One row per contact record: an ABCDContact or ABCDSubscribedContact, told apart by kind. Primary key id; containerId refers to containers.id. Multi-valued details are separate streams keyed by their own id with contactId: phoneNumbers, emailAddresses, postalAddresses, urlAddresses, socialProfiles, messagingAddresses, relatedNames, contactDates, calendarUris, addressingGrammars and likenesses; alertTones, notes, alternateBirthdays and images also carry contactId, and groupMembers lists stored group membership. The same person in two stores is two rows; this source does not merge them.",
+    explained(
+      {
+        id: [id3, "c.ZUNIQUEID"],
+        kind: contact.kind,
+        ...attributes("ZABCDRECORD", "c", {
+          record: "containerId:ZCONTAINER1 meOfContainerId:ZCONTAINERWHERECONTACTISME",
+          text: "title firstName middleName lastName suffix nickname maidenName phoneticFirstName phoneticMiddleName phoneticLastName phoneticOrganization phonemeData organization department jobTitle linkId identityUniqueId preferredApplePersonaIdentifier preferredLikenessSource imageType imageReference cropRect cropRectID wallpaperURI downtimeWhitelist tmpHomePage",
+          integer: "privacyFlags",
+          boolean: "preferredForLinkName preferredForLinkPhoto",
+          timestamp: "imageSyncFailedTime wallpaperSyncFailedTime",
+          data: "imageHash cropRectHash avatarRecipeData memojiMetadata sensitiveContentConfiguration wallpaper"
+        }),
+        ...calendarDate("ZABCDRECORD", "c", "birthday", [
+          "birthdayYear",
+          "birthdayMonth",
+          "birthdayDay"
+        ]),
+        ...record2("c")
+      },
+      {
+        id: "Contact identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key. contactId fields in other streams of this source refer to it.",
+        containerId: "Owning container: AddressBook ZABCDRECORD.ZCONTAINER1 resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches.",
+        meOfContainerId: "AddressBook ZABCDRECORD.ZCONTAINERWHERECONTACTISME resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches."
+      }
+    ),
     `ZABCDRECORD c ${contact.join}`,
     ["id"]
   ),
   notes: definition(
-    {
-      contactId: [id3, "c.ZUNIQUEID"],
-      ...attributes("ZABCDNOTE", "n", { text: "text", data: "richTextData" })
-    },
+    "One row per contact that has a note record in the AddressBook table ZABCDNOTE. Primary key contactId, which refers to contacts.id; one note per contact is assumed, since the store does not enforce it.",
+    explained(
+      {
+        contactId: [id3, "c.ZUNIQUEID"],
+        ...attributes("ZABCDNOTE", "n", { text: "text", data: "richTextData" })
+      },
+      {
+        contactId: "Owning contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDNOTE.ZCONTACT); the primary key. Refers to contacts.id within this source."
+      }
+    ),
     "ZABCDNOTE n JOIN ZABCDRECORD c ON c.Z_PK = n.ZCONTACT",
     ["contactId"]
   ),
-  // The non-Gregorian birthday (CNContact.nonGregorianBirthday).
+  // Date components owned by a contact, presumably CNContact.nonGregorianBirthday.
   alternateBirthdays: definition(
-    {
-      contactId: [id3, "c.ZUNIQUEID"],
-      ...attributes("ZABCDDATECOMPONENTS", "d", {
-        text: "uniqueId calendarIdentifier",
-        integer: "era year month day iOSLegacyIdentifier",
-        boolean: "isLeapMonth"
-      })
-    },
+    "One row per date components record owned by a contact in the AddressBook table ZABCDDATECOMPONENTS, presumed to be the contact's non-Gregorian birthday; not verified. Primary key contactId, which refers to contacts.id; one record per contact is assumed, since the store does not enforce it. Components stay in the calendar named by calendarIdentifier and are not converted, so they do not compare with the contact's Gregorian birthdayYear, birthdayMonth and birthdayDay.",
+    explained(
+      {
+        contactId: [id3, "c.ZUNIQUEID"],
+        ...attributes("ZABCDDATECOMPONENTS", "d", {
+          text: "uniqueId calendarIdentifier",
+          integer: "era year month day iOSLegacyIdentifier",
+          boolean: "isLeapMonth"
+        })
+      },
+      {
+        contactId: "Owning contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDATECOMPONENTS.ZCONTACT); the primary key. Refers to contacts.id within this source.",
+        uniqueId: "Native identifier of this date-components record, AddressBook ZABCDDATECOMPONENTS.ZUNIQUEID, as stored; no other stream refers to it.",
+        calendarIdentifier: "Calendar identifier as stored in AddressBook ZABCDDATECOMPONENTS.ZCALENDARIDENTIFIER; names the calendar that era, year, month and day are counted in.",
+        era: "Era component as stored in AddressBook ZABCDDATECOMPONENTS.ZERA, in the calendar named by calendarIdentifier; NULL when the store holds no value.",
+        year: "Year component as stored in AddressBook ZABCDDATECOMPONENTS.ZYEAR, in the calendar named by calendarIdentifier and not converted; not comparable with contacts.birthdayYear. NULL when the store holds no value.",
+        month: "Month component as stored in AddressBook ZABCDDATECOMPONENTS.ZMONTH, in the calendar named by calendarIdentifier; NULL when the store holds no value.",
+        day: "Day component as stored in AddressBook ZABCDDATECOMPONENTS.ZDAY, in the calendar named by calendarIdentifier; NULL when the store holds no value."
+      }
+    ),
     "ZABCDDATECOMPONENTS d JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT",
     ["contactId"]
   ),
   phoneNumbers: definition(
+    `One row per phone number of a contact, a labeled value in the AddressBook table ZABCDPHONENUMBER. ${labeledValue} distributionListConfigs.phoneId refers to id.`,
     labeled("ZABCDPHONENUMBER", "p", {
       text: "fullNumber countryCode areaCode localNumber extension"
     }),
@@ -65451,11 +65925,13 @@ var definitions = {
     ["id"]
   ),
   emailAddresses: definition(
+    `One row per email address of a contact, a labeled value in the AddressBook table ZABCDEMAILADDRESS. ${labeledValue} distributionListConfigs.emailId refers to id.`,
     labeled("ZABCDEMAILADDRESS", "e", { text: "address" }),
     "ZABCDEMAILADDRESS e",
     ["id"]
   ),
   postalAddresses: definition(
+    `One row per postal address of a contact, a labeled value in the AddressBook table ZABCDPOSTALADDRESS. ${labeledValue} distributionListConfigs.addressId refers to id.`,
     labeled("ZABCDPOSTALADDRESS", "a", {
       text: "street subLocality city state region zipCode countryName countryCode sama",
       data: "customValuesDictionary"
@@ -65464,11 +65940,13 @@ var definitions = {
     ["id"]
   ),
   urlAddresses: definition(
+    `One row per URL of a contact, a labeled value in the AddressBook table ZABCDURLADDRESS. ${labeledValue}`,
     labeled("ZABCDURLADDRESS", "u", { text: "url" }),
     "ZABCDURLADDRESS u",
     ["id"]
   ),
   socialProfiles: definition(
+    `One row per social profile of a contact, a labeled value in the AddressBook table ZABCDSOCIALPROFILE. ${labeledValue}`,
     labeled("ZABCDSOCIALPROFILE", "s", {
       text: "serviceName username userIdentifier urlString displayname bundleIdentifiersString teamIdentifier",
       data: "customValuesData"
@@ -65478,24 +65956,32 @@ var definitions = {
   ),
   // Instant message addresses; service is ABCDService's name, such as SkypeInstant.
   messagingAddresses: definition(
-    {
-      ...labeled("ZABCDMESSAGINGADDRESS", "m", {
-        text: "address userIdentifier bundleIdentifiersString teamIdentifier"
-      }),
-      service: [
-        nullableText3,
-        "(SELECT s.ZSERVICENAME FROM ZABCDSERVICE s WHERE s.Z_PK = m.ZSERVICE)"
-      ]
-    },
+    `One row per instant messaging address of a contact, a labeled value in the AddressBook table ZABCDMESSAGINGADDRESS. ${labeledValue}`,
+    explained(
+      {
+        ...labeled("ZABCDMESSAGINGADDRESS", "m", {
+          text: "address userIdentifier bundleIdentifiersString teamIdentifier"
+        }),
+        service: [
+          nullableText3,
+          "(SELECT s.ZSERVICENAME FROM ZABCDSERVICE s WHERE s.Z_PK = m.ZSERVICE)"
+        ]
+      },
+      {
+        service: "Service name as stored: AddressBook ZABCDSERVICE.ZSERVICENAME of the service record ZABCDMESSAGINGADDRESS.ZSERVICE references, such as SkypeInstant; NULL when unset or no service record matches."
+      }
+    ),
     "ZABCDMESSAGINGADDRESS m",
     ["id"]
   ),
   relatedNames: definition(
+    `One row per related name of a contact, a labeled value in the AddressBook table ZABCDRELATEDNAME. ${labeledValue}`,
     labeled("ZABCDRELATEDNAME", "n", { text: "name" }),
     "ZABCDRELATEDNAME n",
     ["id"]
   ),
   contactDates: definition(
+    `One row per labeled date of a contact in the AddressBook table ZABCDCONTACTDATE, split into Gregorian year, month and day; year is NULL for a date stored without a year. ${labeledValue}`,
     {
       ...labeled("ZABCDCONTACTDATE", "d", {}),
       ...calendarDate("ZABCDCONTACTDATE", "d", "date", [
@@ -65508,16 +65994,19 @@ var definitions = {
     ["id"]
   ),
   calendarUris: definition(
+    `One row per calendar URI of a contact, a labeled value in the AddressBook table ZABCDCALENDARURI. ${labeledValue}`,
     labeled("ZABCDCALENDARURI", "u", { text: "url" }),
     "ZABCDCALENDARURI u",
     ["id"]
   ),
   addressingGrammars: definition(
+    `One row per addressing grammar value of a contact, a labeled value in the AddressBook table ZABCDADDRESSINGGRAMMAR; the value is exported as stored and its format is not documented by Apple. ${labeledValue}`,
     labeled("ZABCDADDRESSINGGRAMMAR", "g", { text: "addressingGrammar" }),
     "ZABCDADDRESSINGGRAMMAR g",
     ["id"]
   ),
   likenesses: definition(
+    `One row per likeness value of a contact, a labeled value in the AddressBook table ZABCDLIKENESS; kind, version and data are exported as stored and their meaning is not documented by Apple. ${labeledValue}`,
     labeled("ZABCDLIKENESS", "l", {
       integer: "kind",
       text: "version",
@@ -65527,85 +66016,150 @@ var definitions = {
     ["id"]
   ),
   alertTones: definition(
-    {
-      id: [id3, "t.ZUNIQUEID"],
-      ...attributes("ZABCDALERTTONE", "t", {
-        record: "contactId:ZOWNER",
-        text: "type toneData",
-        integer: "iOSLegacyIdentifier"
-      })
-    },
+    "One row per alert tone record of a contact in the AddressBook table ZABCDALERTTONE. Primary key id; contactId refers to contacts.id, and a contact can have several. type and toneData are exported as stored and their values are not documented by Apple.",
+    explained(
+      {
+        id: [id3, "t.ZUNIQUEID"],
+        ...attributes("ZABCDALERTTONE", "t", {
+          record: "contactId:ZOWNER",
+          text: "type toneData",
+          integer: "iOSLegacyIdentifier"
+        })
+      },
+      {
+        id: "Alert tone identifier, AddressBook ZABCDALERTTONE.ZUNIQUEID; the primary key.",
+        contactId: "Owning contact: ZABCDALERTTONE.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id within this source. NULL when unset or no record matches."
+      }
+    ),
     "ZABCDALERTTONE t",
     ["id"]
   ),
   // Values of custom properties, on any record, with their property's definition.
   customPropertyValues: definition(
-    {
-      id: [id3, "v.ZUNIQUEID"],
-      ...attributes("ZABCDCUSTOMPROPERTY", "p", {
-        text: "propertyName recordType",
-        integer: "valueType"
-      }),
-      ...attributes("ZABCDCUSTOMPROPERTYVALUE", "v", {
-        record: "recordId:ZOWNER",
-        text: "label stringValue",
-        boolean: "isPrimary isPrivate",
-        integer: "orderingIndex iOSLegacyIdentifier dateValueYear",
-        number: "numberValue",
-        timestamp: "dateValue",
-        data: "dataValue"
-      })
-    },
+    "One row per custom property value in the AddressBook table ZABCDCUSTOMPROPERTYVALUE, on any record, with its property definition from ZABCDCUSTOMPROPERTY. Primary key id. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export. propertyName, recordType and valueType are NULL when the value has no definition record. Which of stringValue, numberValue, dateValue and dataValue holds the value is not verified against valueType.",
+    explained(
+      {
+        id: [id3, "v.ZUNIQUEID"],
+        ...attributes("ZABCDCUSTOMPROPERTY", "p", {
+          text: "propertyName recordType",
+          integer: "valueType"
+        }),
+        ...attributes("ZABCDCUSTOMPROPERTYVALUE", "v", {
+          record: "recordId:ZOWNER",
+          text: "label stringValue",
+          boolean: "isPrimary isPrivate",
+          integer: "orderingIndex iOSLegacyIdentifier dateValueYear",
+          number: "numberValue",
+          timestamp: "dateValue",
+          data: "dataValue"
+        })
+      },
+      {
+        id: "Custom property value identifier, AddressBook ZABCDCUSTOMPROPERTYVALUE.ZUNIQUEID; the primary key.",
+        propertyName: `Property name as stored in AddressBook ZABCDCUSTOMPROPERTY.ZPROPERTYNAME, the definition ZABCDCUSTOMPROPERTYVALUE.ZCUSTOMPROPERTY references; NULL when the store holds no value or no definition record matches. ${unverified}`,
+        recordType: `AddressBook ZABCDCUSTOMPROPERTY.ZRECORDTYPE of the referenced definition, as stored; NULL when the store holds no value or no definition record matches. ${unverified}`,
+        valueType: `AddressBook ZABCDCUSTOMPROPERTY.ZVALUETYPE of the referenced definition, as stored; NULL when the store holds no value or no definition record matches. ${unverified}`,
+        recordId: "Owning record: ZABCDCUSTOMPROPERTYVALUE.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export. NULL when unset or no record matches."
+      }
+    ),
     "ZABCDCUSTOMPROPERTYVALUE v LEFT JOIN ZABCDCUSTOMPROPERTY p ON p.Z_PK = v.ZCUSTOMPROPERTY",
     ["id"]
   ),
   remoteLocations: definition(
-    {
-      id: [id3, "l.ZUNIQUEID"],
-      ...attributes("ZABCDREMOTELOCATION", "l", {
-        record: "recordId:ZOWNER",
-        text: "label url",
-        boolean: "isPrimary isPrivate",
-        integer: "orderingIndex"
-      })
-    },
+    "One row per remote location record in the AddressBook table ZABCDREMOTELOCATION, on any record. Primary key id. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export.",
+    explained(
+      {
+        id: [id3, "l.ZUNIQUEID"],
+        ...attributes("ZABCDREMOTELOCATION", "l", {
+          record: "recordId:ZOWNER",
+          text: "label url",
+          boolean: "isPrimary isPrivate",
+          integer: "orderingIndex"
+        })
+      },
+      {
+        id: "Remote location identifier, AddressBook ZABCDREMOTELOCATION.ZUNIQUEID; the primary key.",
+        recordId: "Owning record: ZABCDREMOTELOCATION.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export. NULL when unset or no record matches."
+      }
+    ),
     "ZABCDREMOTELOCATION l",
     ["id"]
   ),
   // vCard lines Contacts kept without understanding them. They have no
   // identifier, so the line itself is part of the key.
   unknownProperties: definition(
-    {
-      recordId: [id3, "r.ZUNIQUEID"],
-      propertyName: [text3, "u.ZPROPERTYNAME"],
-      originalLine: [text3, "u.ZORIGINALLINE"]
-    },
+    "One row per distinct vCard line that Contacts kept without interpreting it, from the AddressBook table ZABCDUNKNOWNPROPERTY. The native rows have no identifier, so the primary key is (recordId, propertyName, originalLine); the same line stored twice on one record is one row. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export.",
+    explained(
+      {
+        recordId: [id3, "r.ZUNIQUEID"],
+        propertyName: [text3, "u.ZPROPERTYNAME"],
+        originalLine: [text3, "u.ZORIGINALLINE"]
+      },
+      {
+        recordId: "Owning record identifier (ZABCDRECORD.ZUNIQUEID of ZABCDUNKNOWNPROPERTY.ZOWNER). Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export.",
+        propertyName: "vCard property name as stored in AddressBook ZABCDUNKNOWNPROPERTY.ZPROPERTYNAME.",
+        originalLine: "The original vCard line from AddressBook ZABCDUNKNOWNPROPERTY.ZORIGINALLINE, which stores bytes: exported as Base64 of those bytes, so decoding it recovers the exact line, unless those bytes form a binary property list, which loads as JSON instead. Text the store holds as text passes through unchanged."
+      }
+    ),
     "ZABCDUNKNOWNPROPERTY u JOIN ZABCDRECORD r ON r.Z_PK = u.ZOWNER",
     ["recordId", "propertyName", "originalLine"],
     { distinct: true }
   ),
   // The address a distribution list (group) uses for each member.
   distributionListConfigs: definition(
-    {
-      groupId: [id3, "g.ZUNIQUEID"],
-      contactId: [id3, "c.ZUNIQUEID"],
-      propertyName: [text3, "d.ZPROPERTYNAME"],
-      emailId: uniqueIdOf("ZABCDEMAILADDRESS", "d.ZEMAIL"),
-      phoneId: uniqueIdOf("ZABCDPHONENUMBER", "d.ZPHONE"),
-      addressId: uniqueIdOf("ZABCDPOSTALADDRESS", "d.ZADDRESS")
-    },
+    "One row per record in the AddressBook table ZABCDDISTRIBUTIONLISTCONFIG, which references a group, a contact and optionally an email address, phone number or postal address record; what the record means is not documented by Apple. Primary key (groupId, contactId, propertyName), assumed unique since the store does not enforce it. emailId, phoneId and addressId refer to emailAddresses.id, phoneNumbers.id and postalAddresses.id within this source.",
+    explained(
+      {
+        groupId: [id3, "g.ZUNIQUEID"],
+        contactId: [id3, "c.ZUNIQUEID"],
+        propertyName: [text3, "d.ZPROPERTYNAME"],
+        emailId: uniqueIdOf("ZABCDEMAILADDRESS", "d.ZEMAIL"),
+        phoneId: uniqueIdOf("ZABCDPHONENUMBER", "d.ZPHONE"),
+        addressId: uniqueIdOf("ZABCDPOSTALADDRESS", "d.ZADDRESS")
+      },
+      {
+        groupId: "Group identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDISTRIBUTIONLISTCONFIG.ZGROUP); refers to groups.id within this source.",
+        contactId: "Member contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDISTRIBUTIONLISTCONFIG.ZCONTACT); refers to contacts.id within this source.",
+        propertyName: `Property name as stored in AddressBook ZABCDDISTRIBUTIONLISTCONFIG.ZPROPERTYNAME; part of the key. ${unverified}`,
+        emailId: "Email address record referenced by ZABCDDISTRIBUTIONLISTCONFIG.ZEMAIL, resolved to that ZABCDEMAILADDRESS record's ZUNIQUEID. Join to emailAddresses.id within this source. NULL when unset or no record matches.",
+        phoneId: "Phone number record referenced by ZABCDDISTRIBUTIONLISTCONFIG.ZPHONE, resolved to that ZABCDPHONENUMBER record's ZUNIQUEID. Join to phoneNumbers.id within this source. NULL when unset or no record matches.",
+        addressId: "Postal address record referenced by ZABCDDISTRIBUTIONLISTCONFIG.ZADDRESS, resolved to that ZABCDPOSTALADDRESS record's ZUNIQUEID. Join to postalAddresses.id within this source. NULL when unset or no record matches."
+      }
+    ),
     "ZABCDDISTRIBUTIONLISTCONFIG d JOIN ZABCDRECORD g ON g.Z_PK = d.ZGROUP JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT",
     ["groupId", "contactId", "propertyName"]
   ),
   // A contact's photo and thumbnail, each inline or in _EXTERNAL_DATA.
   images: {
+    description: "One row per stored contact image, from AddressBook ZABCDRECORD.ZIMAGEDATA (kind image) and ZTHUMBNAILIMAGEDATA (kind thumbnail): at most two rows per contact. Primary key (contactId, kind); contactId refers to contacts.id. byteLength and sha256 are computed from the bytes when extracted; a stored external file that cannot be read fails the extraction instead of producing a row.",
     properties: {
-      contactId: id3,
-      kind: { ...text3, enum: ["image", "thumbnail"] },
-      storage: { ...text3, enum: ["inline", "external"] },
-      externalId: nullableText3,
-      byteLength: { type: "integer", minimum: 0 },
-      sha256: text3
+      contactId: {
+        ...id3,
+        description: "Contact identifier, AddressBook ZABCDRECORD.ZUNIQUEID; refers to contacts.id within this source. Part of the primary key with kind."
+      },
+      kind: {
+        ...text3,
+        enum: ["image", "thumbnail"],
+        description: "Which stored image this row is: image for ZABCDRECORD.ZIMAGEDATA, thumbnail for ZABCDRECORD.ZTHUMBNAILIMAGEDATA. Part of the primary key with contactId."
+      },
+      storage: {
+        ...text3,
+        enum: ["inline", "external"],
+        description: "Where Contacts keeps the bytes in its own store: inline inside the database column, or external in a file under the store's .AddressBook-v22_SUPPORT/_EXTERNAL_DATA directory. It describes the native source, not an exported file."
+      },
+      externalId: {
+        ...nullableText3,
+        description: "Contacts' storage identifier for external bytes: the file name under .AddressBook-v22_SUPPORT/_EXTERNAL_DATA recorded in the column. NULL when storage is inline. It is not an exported file."
+      },
+      byteLength: {
+        type: "integer",
+        minimum: 0,
+        description: "Size in bytes of the stored image: the inline bytes after the storage marker, or the external file. Computed by this connector at extraction."
+      },
+      sha256: {
+        ...text3,
+        description: "Lowercase hexadecimal SHA-256 of the same bytes byteLength counts, computed by this connector at extraction."
+      }
     },
     primaryKey: ["contactId", "kind"],
     sql: `SELECT c.ZUNIQUEID AS contactId, c.ZIMAGEDATA AS image, c.ZTHUMBNAILIMAGEDATA AS thumbnail FROM ZABCDRECORD c ${contact.join} WHERE c.ZIMAGEDATA IS NOT NULL OR c.ZTHUMBNAILIMAGEDATA IS NOT NULL`,
@@ -65628,6 +66182,7 @@ var streams = Object.fromEntries(
       name,
       jsonSchema: {
         type: "object",
+        description: `${definition3.description} ${localStores}`,
         properties: definition3.properties,
         required: Object.keys(definition3.properties)
       },
@@ -66041,20 +66596,46 @@ var OSA = class {
 var osa_default = new OSA();
 
 // apps/apple/src/sources/apple-mail/mail-tables.ts
+var rawDates = /* @__PURE__ */ new Set([
+  "due_by",
+  "end_date",
+  "follow_up_end_date",
+  "follow_up_start_date",
+  "last_modified",
+  "read_later_date",
+  "send_later_date",
+  "smime_capabilities_date",
+  "start_date"
+]);
+var rawDate = (column, kind) => kind === "number" && rawDates.has(column);
 var fieldName = (column, kind) => (column === "ROWID" ? "id" : column.replace(
   /_([a-z])/g,
   (_, letter) => letter.toUpperCase()
-)) + (kind === "base64" ? "Base64" : kind === "number" && /date|timestamp|last_modified|due_by/.test(column) ? "Raw" : "");
-function table(name, keys, columns2) {
+)) + (kind === "base64" ? "Base64" : rawDate(column, kind) ? "Raw" : "");
+var undocumented = "Meaning not documented by Apple.";
+function provenance2(name, column, kind, key) {
+  const value = column === "ROWID" ? "the local row identifier, loaded as decimal text" : {
+    id: "an integer loaded as decimal text to keep 64-bit precision",
+    time: "Unix seconds converted to a UTC timestamp with millisecond precision",
+    base64: "BLOB bytes encoded as Base64; a stored text value passes through unchanged",
+    text: "text as stored",
+    number: rawDate(column, kind) ? "raw number as stored; its date epoch is unverified, so it is not converted" : "number as stored"
+  }[kind];
+  return `Envelope Index ${name}.${column}, ${value}${key ? "" : "; NULL when the index stores no value"}.`;
+}
+function table(name, description, keys, columns2, meanings) {
+  const meaning = meanings;
   const properties6 = {};
   const select = [];
   const blobs = [];
   for (const [column, kind] of Object.entries(columns2)) {
     const field = fieldName(column, kind);
-    const scalar = kind === "number" ? keys.includes(column) ? "integer" : "number" : "string";
+    const key = keys.includes(column);
+    const scalar = kind === "number" ? key ? "integer" : "number" : "string";
     properties6[field] = {
-      type: keys.includes(column) ? scalar : [scalar, "null"],
-      ...kind === "time" ? { format: "date-time" } : {}
+      type: key ? scalar : [scalar, "null"],
+      ...kind === "time" ? { format: "date-time" } : {},
+      description: `${provenance2(name, column, kind, key)} ${meaning[column] ?? undocumented}`
     };
     const expression = kind === "id" ? `CAST("${column}" AS TEXT)` : kind === "time" ? `strftime('%Y-%m-%dT%H:%M:%fZ', "${column}", 'unixepoch')` : `"${column}"`;
     select.push(`${expression} AS "${field}"`);
@@ -66062,6 +66643,7 @@ function table(name, keys, columns2) {
   }
   return {
     name,
+    description: `${description} Read from the Envelope Index ${name} table; index row identifiers are local to this Mac. Relationships name source streams within this source, not destination tables.`,
     columns: Object.keys(columns2),
     properties: properties6,
     primaryKey: keys.map((key) => fieldName(key, columns2[key])),
@@ -66070,234 +66652,460 @@ function table(name, keys, columns2) {
   };
 }
 var mailTables = {
-  messages: table("messages", ["ROWID"], {
-    ROWID: "id",
-    message_id: "id",
-    global_message_id: "id",
-    remote_id: "id",
-    document_id: "base64",
-    sender: "id",
-    subject_prefix: "text",
-    subject: "id",
-    summary: "id",
-    date_sent: "time",
-    date_received: "time",
-    mailbox: "id",
-    remote_mailbox: "id",
-    flags: "number",
-    read: "number",
-    flagged: "number",
-    deleted: "number",
-    size: "number",
-    conversation_id: "id",
-    date_last_viewed: "time",
-    list_id_hash: "id",
-    unsubscribe_type: "number",
-    searchable_message: "id",
-    brand_indicator: "id",
-    display_date: "time",
-    flag_color: "number",
-    color: "text",
-    type: "number",
-    fuzzy_ancestor: "id",
-    automated_conversation: "number",
-    root_status: "number",
-    is_urgent: "number"
-  }),
-  mailboxes: table("mailboxes", ["ROWID"], {
-    ROWID: "id",
-    url: "text",
-    total_count: "number",
-    unread_count: "number",
-    deleted_count: "number",
-    unseen_count: "number",
-    unread_count_adjusted_for_duplicates: "number",
-    change_identifier: "text",
-    source: "number",
-    alleged_change_identifier: "text"
-  }),
-  addresses: table("addresses", ["ROWID"], {
-    ROWID: "id",
-    address: "text",
-    comment: "text"
-  }),
-  recipients: table("recipients", ["ROWID"], {
-    ROWID: "id",
-    message: "id",
-    address: "id",
-    type: "number",
-    position: "number"
-  }),
-  indexedAttachments: table("attachments", ["ROWID"], {
-    ROWID: "id",
-    message: "id",
-    attachment_id: "text",
-    name: "text"
-  }),
-  messageMailboxes: table("labels", ["message_id", "mailbox_id"], {
-    message_id: "id",
-    mailbox_id: "id"
-  }),
-  serverMessages: table("server_messages", ["ROWID"], {
-    ROWID: "id",
-    message: "id",
-    mailbox: "id",
-    sequence_identifier: "number",
-    read: "number",
-    deleted: "number",
-    replied: "number",
-    flagged: "number",
-    draft: "number",
-    forwarded: "number",
-    redirected: "number",
-    junk_level_set_by_user: "number",
-    junk_level: "number",
-    flag_color: "number",
-    remote_id: "id"
-  }),
-  serverMessageMailboxes: table("server_labels", ["server_message", "label"], {
-    server_message: "id",
-    label: "id"
-  }),
-  conversations: table("conversations", ["conversation_id"], {
-    conversation_id: "id",
-    flags: "number",
-    sync_key: "text"
-  }),
+  messages: table(
+    "messages",
+    "One record per message row in the local Mail index, across all accounts. Primary key id. Mailbox membership is its own grain: messageMailboxes holds message and mailbox pairs beside messages.mailbox and messages.remoteMailbox. subject, summary and sender hold identifiers that need explicit joins to subjects.id, summaries.id and addresses.id, and recipients are rows of recipients. The index declares no foreign keys for these references; they follow how this source reads the index, and a live store resolved every one. Bodies and headers are in messageParts and messageHeaders; whether the message file is on this Mac is in messageFiles.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      message_id: "id",
+      global_message_id: "id",
+      remote_id: "id",
+      document_id: "base64",
+      sender: "id",
+      subject_prefix: "text",
+      subject: "id",
+      summary: "id",
+      date_sent: "time",
+      date_received: "time",
+      mailbox: "id",
+      remote_mailbox: "id",
+      flags: "number",
+      read: "number",
+      flagged: "number",
+      deleted: "number",
+      size: "number",
+      conversation_id: "id",
+      date_last_viewed: "time",
+      list_id_hash: "id",
+      unsubscribe_type: "number",
+      searchable_message: "id",
+      brand_indicator: "id",
+      display_date: "time",
+      flag_color: "number",
+      color: "text",
+      type: "number",
+      fuzzy_ancestor: "id",
+      automated_conversation: "number",
+      root_status: "number",
+      is_urgent: "number"
+    },
+    {
+      ROWID: "Local message identifier. messageMailboxes.messageId, recipients.message, indexedAttachments.message, serverMessages.message, messageReferences.message, events.messageId, messageFiles.messageId, messageHeaders.messageId, messageParts.messageId and attachments.messageId refer to it within this source.",
+      message_id: "Hash Mail stores for the message's Message-ID, not this stream's id. conversationMessages.messageId and messageGlobalData.messageId hold the same hash within this source. It is not unique in the captured index schema, so a join on it can match several messages rows.",
+      global_message_id: "Refers to messageGlobalData.id within this source; the captured index schema does not make it unique.",
+      sender: "Refers to addresses.id within this source, which holds the address text.",
+      subject: "Refers to subjects.id within this source, which holds the subject text.",
+      summary: "Refers to summaries.id within this source, which holds the summary text.",
+      mailbox: "Refers to mailboxes.id within this source. A message can belong to further mailboxes through messageMailboxes.",
+      remote_mailbox: "Refers to mailboxes.id within this source.",
+      conversation_id: `${undocumented} This source relates messages to conversations through conversationMessages, not this column.`,
+      brand_indicator: "Refers to brandIndicators.id within this source."
+    }
+  ),
+  mailboxes: table(
+    "mailboxes",
+    "One record per mailbox row in the local Mail index, identified by its URL. Primary key id. Messages relate through messageMailboxes (many to many), messages.mailbox and messages.remoteMailbox; server messages through serverMessages.mailbox and serverMessageMailboxes.label. Count columns are passed through as stored, not recomputed from messages.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      url: "text",
+      total_count: "number",
+      unread_count: "number",
+      deleted_count: "number",
+      unseen_count: "number",
+      unread_count_adjusted_for_duplicates: "number",
+      change_identifier: "text",
+      source: "number",
+      alleged_change_identifier: "text"
+    },
+    {
+      ROWID: "Local mailbox identifier. messageMailboxes.mailboxId, messages.mailbox, messages.remoteMailbox, serverMessages.mailbox and serverMessageMailboxes.label refer to it within this source.",
+      url: "Mailbox URL, unique in the captured index schema. Its host matches accounts.id within this source; accounts adds an On My Mac row for each local:// host that Mail scripting does not list."
+    }
+  ),
+  addresses: table(
+    "addresses",
+    "One record per distinct address and comment pair in the local Mail index; the captured index schema keeps each pair once. Primary key id. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to id; addressMetadata matches on the address text instead.",
+    ["ROWID"],
+    { ROWID: "id", address: "text", comment: "text" },
+    {
+      ROWID: "Local address identifier. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to it within this source.",
+      address: "Address text; the captured index schema compares it case-insensitively. addressMetadata.address holds the same text within this source."
+    }
+  ),
+  recipients: table(
+    "recipients",
+    "One record per address in one recipient position of one message. Primary key id. message refers to messages.id and address to addresses.id; the captured index schema keeps (message, type, position) unique and does not enforce message, so rows whose message is gone are kept. A message has many recipients: count messages at message grain (distinct message) after joining.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      message: "id",
+      address: "id",
+      type: "number",
+      position: "number"
+    },
+    {
+      ROWID: "Local recipient row identifier.",
+      message: "Refers to messages.id within this source; not enforced by the index, so it can match no message.",
+      address: "Refers to addresses.id within this source."
+    }
+  ),
+  indexedAttachments: table(
+    "attachments",
+    "One record per attachment Mail records in its index for a message, which can exist before the message file or the attachment file is downloaded. Primary key id. message refers to messages.id; (message, attachmentId) matches (messageId, partId) in attachments and, once the message file is local, in messageParts. This stream carries no bytes or availability; the attachments stream does.",
+    ["ROWID"],
+    { ROWID: "id", message: "id", attachment_id: "text", name: "text" },
+    {
+      ROWID: "Local index attachment row identifier.",
+      message: "Refers to messages.id within this source.",
+      attachment_id: "MIME part number of the attachment, such as 2 or 1.2; equals partId in attachments and messageParts within this source.",
+      name: "Attachment name recorded by the index; attachments.filename uses it when the MIME part is not available locally."
+    }
+  ),
+  messageMailboxes: table(
+    "labels",
+    "One record per message and mailbox membership; a message can belong to several mailboxes. Primary key (messageId, mailboxId). messageId refers to messages.id and mailboxId to mailboxes.id. Joining messages through this stream repeats a message once per mailbox: count at message grain.",
+    ["message_id", "mailbox_id"],
+    { message_id: "id", mailbox_id: "id" },
+    {
+      message_id: "Refers to messages.id within this source (the local id, not the hash in messages.messageId).",
+      mailbox_id: "Refers to mailboxes.id within this source."
+    }
+  ),
+  serverMessages: table(
+    "server_messages",
+    "One record per server message row, kept in a table separate from messages. Primary key id. message refers to messages.id and mailbox to mailboxes.id; (mailbox, remoteId) is unique in the captured index schema. Further mailbox memberships are in serverMessageMailboxes.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      message: "id",
+      mailbox: "id",
+      sequence_identifier: "number",
+      read: "number",
+      deleted: "number",
+      replied: "number",
+      flagged: "number",
+      draft: "number",
+      forwarded: "number",
+      redirected: "number",
+      junk_level_set_by_user: "number",
+      junk_level: "number",
+      flag_color: "number",
+      remote_id: "id"
+    },
+    {
+      ROWID: "Local server message identifier; serverMessageMailboxes.serverMessage refers to it within this source.",
+      message: "Refers to messages.id within this source; the index sets it to NULL when that message row is deleted.",
+      mailbox: "Refers to mailboxes.id within this source.",
+      remote_id: `${undocumented} Unique together with mailbox in the captured index schema.`
+    }
+  ),
+  serverMessageMailboxes: table(
+    "server_labels",
+    "One record per server message and mailbox membership. Primary key (serverMessage, label). serverMessage refers to serverMessages.id and label to mailboxes.id. Joining through this stream repeats a server message once per mailbox: count at server message grain.",
+    ["server_message", "label"],
+    { server_message: "id", label: "id" },
+    {
+      server_message: "Refers to serverMessages.id within this source.",
+      label: "Refers to mailboxes.id within this source."
+    }
+  ),
+  conversations: table(
+    "conversations",
+    "One record per conversation row in the local Mail index. Primary key conversationId. Messages belong to conversations through conversationMessages.",
+    ["conversation_id"],
+    { conversation_id: "id", flags: "number", sync_key: "text" },
+    {
+      conversation_id: "Local conversation identifier; conversationMessages.conversationId refers to it within this source."
+    }
+  ),
   conversationMessages: table(
     "conversation_id_message_id",
+    "One record per conversation and message membership. Primary key (conversationId, messageId). conversationId refers to conversations.conversationId; messageId is the Message-ID hash in messages.messageId, not messages.id. That hash is not unique in messages, so a join can match several messages rows: count at message grain.",
     ["conversation_id", "message_id"],
-    { conversation_id: "id", message_id: "id", date_sent: "time" }
+    { conversation_id: "id", message_id: "id", date_sent: "time" },
+    {
+      conversation_id: "Refers to conversations.conversationId within this source.",
+      message_id: "Message-ID hash; matches messages.messageId within this source, not messages.id."
+    }
   ),
-  messageReferences: table("message_references", ["ROWID"], {
-    ROWID: "id",
-    message: "id",
-    reference: "id",
-    is_originator: "number"
-  }),
-  messageGlobalData: table("message_global_data", ["ROWID"], {
-    ROWID: "id",
-    message_id: "id",
-    follow_up_start_date: "number",
-    follow_up_end_date: "number",
-    follow_up_jsonstringformodelevaluationforsuggestions: "text",
-    due_by: "number",
-    read_later_date: "number",
-    send_later_date: "number",
-    validation_state: "number",
-    model_category: "number",
-    model_subcategory: "number",
-    category_model_version: "number",
-    category_is_temporary: "number",
-    model_analytics: "text",
-    model_high_impact: "number",
-    generated_summary: "id",
-    urgent: "number",
-    message_id_header: "text"
-  }),
-  subjects: table("subjects", ["ROWID"], { ROWID: "id", subject: "text" }),
-  summaries: table("summaries", ["ROWID"], { ROWID: "id", summary: "text" }),
-  generatedSummaries: table("generated_summaries", ["ROWID"], {
-    ROWID: "id",
-    summary: "base64",
-    status: "number"
-  }),
-  messageMetadata: table("message_metadata", ["message_id"], {
-    message_id: "id",
-    timestamp: "number",
-    json_values: "text"
-  }),
-  dataDetectionResults: table("data_detection_results", ["ROWID"], {
-    ROWID: "id",
-    global_message_id: "id",
-    category: "text",
-    value: "text"
-  }),
-  richLinks: table("rich_links", ["ROWID"], {
-    ROWID: "id",
-    title: "text",
-    url: "text",
-    hash: "text"
-  }),
+  messageReferences: table(
+    "message_references",
+    "One record per reference a message row carries. Primary key id. message refers to messages.id; reference is a Message-ID hash in the same space as messages.messageId and can match no messages row.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      message: "id",
+      reference: "id",
+      is_originator: "number"
+    },
+    {
+      ROWID: "Local message reference row identifier.",
+      message: "Refers to messages.id within this source.",
+      reference: "Message-ID hash in the same space as messages.messageId within this source; not enforced by the index, so it can match no messages row."
+    }
+  ),
+  messageGlobalData: table(
+    "message_global_data",
+    "One record per message global data row in the local Mail index. Primary key id. messages.globalMessageId and messageRichLinks.globalMessageId refer to id; messageId holds the Message-ID hash of messages.messageId; generatedSummary refers to generatedSummaries.id. Raw-suffixed numbers keep their stored values because their date epoch is unverified.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      message_id: "id",
+      follow_up_start_date: "number",
+      follow_up_end_date: "number",
+      follow_up_jsonstringformodelevaluationforsuggestions: "text",
+      due_by: "number",
+      read_later_date: "number",
+      send_later_date: "number",
+      validation_state: "number",
+      model_category: "number",
+      model_subcategory: "number",
+      category_model_version: "number",
+      category_is_temporary: "number",
+      model_analytics: "text",
+      model_high_impact: "number",
+      generated_summary: "id",
+      urgent: "number",
+      message_id_header: "text"
+    },
+    {
+      ROWID: "Local identifier; messages.globalMessageId and messageRichLinks.globalMessageId refer to it within this source.",
+      message_id: "Message-ID hash, the same value as messages.messageId within this source; unique in the captured index schema.",
+      generated_summary: "Refers to generatedSummaries.id within this source."
+    }
+  ),
+  subjects: table(
+    "subjects",
+    "One record per distinct subject text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.subject refers to id: join from messages to read a message's subject.",
+    ["ROWID"],
+    { ROWID: "id", subject: "text" },
+    {
+      ROWID: "Local subject identifier; messages.subject refers to it within this source.",
+      subject: "Subject text Mail stores for its messages, passed through as collected."
+    }
+  ),
+  summaries: table(
+    "summaries",
+    "One record per distinct summary text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.summary refers to id: join from messages to read a message's summary.",
+    ["ROWID"],
+    { ROWID: "id", summary: "text" },
+    {
+      ROWID: "Local summary identifier; messages.summary refers to it within this source.",
+      summary: "Summary text Mail already stores, passed through as collected; this connector generates no summaries."
+    }
+  ),
+  generatedSummaries: table(
+    "generated_summaries",
+    "One record per generated summary row in the local Mail index. Primary key id. messageGlobalData.generatedSummary refers to id. The summary is a binary payload exported as Base64 without decoding.",
+    ["ROWID"],
+    { ROWID: "id", summary: "base64", status: "number" },
+    {
+      ROWID: "Local generated summary identifier; messageGlobalData.generatedSummary refers to it within this source.",
+      summary: `${undocumented} Mail's stored payload; this connector does not decode it.`
+    }
+  ),
+  messageMetadata: table(
+    "message_metadata",
+    "One record per message metadata row in the local Mail index. Primary key messageId. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream. jsonValues is native JSON text passed through as data.",
+    ["message_id"],
+    { message_id: "id", timestamp: "number", json_values: "text" },
+    {
+      message_id: `${undocumented} Not proven to refer to messages.id or messages.messageId, so no join is stated.`,
+      json_values: `${undocumented} Native JSON text passed through without interpretation.`
+    }
+  ),
+  dataDetectionResults: table(
+    "data_detection_results",
+    "One record per detection result row in the local Mail index: a category and value. Primary key id. (globalMessageId, category, value) is unique in the captured index schema. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      global_message_id: "id",
+      category: "text",
+      value: "text"
+    },
+    {
+      ROWID: "Local detection result row identifier.",
+      global_message_id: `${undocumented} Not proven to refer to messageGlobalData.id, so no join is stated.`
+    }
+  ),
+  richLinks: table(
+    "rich_links",
+    "One record per rich link row in the local Mail index. Primary key id. messageRichLinks.richLink refers to id; hash is unique in the captured index schema.",
+    ["ROWID"],
+    { ROWID: "id", title: "text", url: "text", hash: "text" },
+    {
+      ROWID: "Local rich link identifier; messageRichLinks.richLink refers to it within this source.",
+      hash: `${undocumented} Unique in the captured index schema.`
+    }
+  ),
   messageRichLinks: table(
     "message_rich_links",
+    "One record per message global data row and rich link pair. Primary key (globalMessageId, richLink). globalMessageId refers to messageGlobalData.id, reached from messages through messages.globalMessageId; richLink refers to richLinks.id. A message can have several links: count at message grain.",
     ["global_message_id", "rich_link"],
-    { global_message_id: "id", rich_link: "id" }
+    { global_message_id: "id", rich_link: "id" },
+    {
+      global_message_id: "Refers to messageGlobalData.id within this source.",
+      rich_link: "Refers to richLinks.id within this source."
+    }
   ),
-  protectedMessageData: table("protected_message_data", ["ROWID"], {
-    ROWID: "id",
-    data: "text"
-  }),
-  brandIndicators: table("brand_indicators", ["ROWID"], {
-    ROWID: "id",
-    url: "text",
-    indicator: "base64",
-    indicator_hash: "text",
-    hash_algorithm: "text"
-  }),
-  brandIndicatorEvidence: table("brand_indicator_evidence", ["ROWID"], {
-    ROWID: "id",
-    brand_indicator: "id",
-    url: "text",
-    evidence: "base64",
-    unverified_messages: "text"
-  }),
-  addressMetadata: table("address_metadata", ["ROWID"], {
-    ROWID: "id",
-    address: "text",
-    smime_capabilities: "text",
-    smime_capabilities_date: "number"
-  }),
-  businesses: table("businesses", ["ROWID"], {
-    ROWID: "id",
-    address_comment: "text",
-    domain: "text",
-    brand_id: "id",
-    localized_brand_name: "text"
-  }),
-  businessAddresses: table("business_addresses", ["ROWID"], {
-    ROWID: "id",
-    address: "id",
-    business: "id",
-    category: "number",
-    last_modified: "number",
-    last_bcs_sync: "time"
-  }),
-  businessCategories: table("business_categories", ["ROWID"], {
-    ROWID: "id",
-    business: "id",
-    category: "number"
-  }),
-  senders: table("senders", ["ROWID"], {
-    ROWID: "id",
-    contact_identifier: "text",
-    bucket: "number",
-    user_initiated: "number"
-  }),
-  senderAddresses: table("sender_addresses", ["address"], {
-    address: "id",
-    sender: "id"
-  }),
-  events: table("events", ["ROWID"], {
-    ROWID: "id",
-    message_id: "id",
-    start_date: "number",
-    end_date: "number",
-    location: "text",
-    out_of_date: "number",
-    processed: "number",
-    is_all_day: "number",
-    associated_id_string: "text",
-    original_receiving_account: "text",
-    ical_uid: "text",
-    is_response_requested: "number"
-  })
+  protectedMessageData: table(
+    "protected_message_data",
+    "One record per protected message data row in the local Mail index. Primary key id. data is an opaque native payload passed through as text. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.",
+    ["ROWID"],
+    { ROWID: "id", data: "text" },
+    {
+      ROWID: `${undocumented} Not proven to refer to any other stream, so no join is stated.`,
+      data: `${undocumented} Opaque native payload passed through without interpretation.`
+    }
+  ),
+  brandIndicators: table(
+    "brand_indicators",
+    "One record per brand indicator row in the local Mail index. Primary key id. messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to id; url is unique in the captured index schema. indicator is binary, exported as Base64 without decoding.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      url: "text",
+      indicator: "base64",
+      indicator_hash: "text",
+      hash_algorithm: "text"
+    },
+    {
+      ROWID: "Local brand indicator identifier; messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to it within this source.",
+      url: `${undocumented} Unique in the captured index schema.`
+    }
+  ),
+  brandIndicatorEvidence: table(
+    "brand_indicator_evidence",
+    "One record per brand indicator evidence row in the local Mail index. Primary key id. brandIndicator refers to brandIndicators.id; (brandIndicator, url) is unique in the captured index schema. evidence is binary, exported as Base64 without decoding.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      brand_indicator: "id",
+      url: "text",
+      evidence: "base64",
+      unverified_messages: "text"
+    },
+    {
+      ROWID: "Local brand indicator evidence row identifier.",
+      brand_indicator: "Refers to brandIndicators.id within this source."
+    }
+  ),
+  addressMetadata: table(
+    "address_metadata",
+    "One record per address metadata row in the local Mail index. Primary key id. address holds address text, unique in the captured index schema, and matches addresses.address, not addresses.id.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      address: "text",
+      smime_capabilities: "text",
+      smime_capabilities_date: "number"
+    },
+    {
+      ROWID: "Local address metadata row identifier.",
+      address: "Address text matching addresses.address within this source; the captured index schema compares both case-insensitively."
+    }
+  ),
+  businesses: table(
+    "businesses",
+    "One record per business row in the local Mail index. Primary key id. businessAddresses.business and businessCategories.business refer to id. The captured index schema requires each row to hold either addressComment and domain, or brandId and localizedBrandName, and leaves the other pair NULL.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      address_comment: "text",
+      domain: "text",
+      brand_id: "id",
+      localized_brand_name: "text"
+    },
+    {
+      ROWID: "Local business identifier; businessAddresses.business and businessCategories.business refer to it within this source."
+    }
+  ),
+  businessAddresses: table(
+    "business_addresses",
+    "One record per address assigned to a business. Primary key id. address refers to addresses.id, unique in the captured index schema, and business refers to businesses.id.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      address: "id",
+      business: "id",
+      category: "number",
+      last_modified: "number",
+      last_bcs_sync: "time"
+    },
+    {
+      ROWID: "Local business address row identifier.",
+      address: "Refers to addresses.id within this source; unique in the captured index schema.",
+      business: "Refers to businesses.id within this source."
+    }
+  ),
+  businessCategories: table(
+    "business_categories",
+    "One record per business category row in the local Mail index. Primary key id. business refers to businesses.id and is unique in the captured index schema.",
+    ["ROWID"],
+    { ROWID: "id", business: "id", category: "number" },
+    {
+      ROWID: "Local business category row identifier.",
+      business: "Refers to businesses.id within this source; unique in the captured index schema."
+    }
+  ),
+  senders: table(
+    "senders",
+    "One record per sender row in the local Mail index. Primary key id. senderAddresses.sender refers to id; contactIdentifier is unique in the captured index schema.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      contact_identifier: "text",
+      bucket: "number",
+      user_initiated: "number"
+    },
+    {
+      ROWID: "Local sender identifier; senderAddresses.sender refers to it within this source.",
+      contact_identifier: `${undocumented} Unique in the captured index schema.`
+    }
+  ),
+  senderAddresses: table(
+    "sender_addresses",
+    "One record per address assigned to a sender. Primary key address. address refers to addresses.id and sender to senders.id; each address has at most one sender.",
+    ["address"],
+    { address: "id", sender: "id" },
+    {
+      address: "Refers to addresses.id within this source.",
+      sender: "Refers to senders.id within this source."
+    }
+  ),
+  events: table(
+    "events",
+    "One record per event row the local Mail index stores for a message. Primary key id. messageId refers to messages.id, the local id, not the Message-ID hash. startDateRaw and endDateRaw keep stored numbers because their date epoch is unverified.",
+    ["ROWID"],
+    {
+      ROWID: "id",
+      message_id: "id",
+      start_date: "number",
+      end_date: "number",
+      location: "text",
+      out_of_date: "number",
+      processed: "number",
+      is_all_day: "number",
+      associated_id_string: "text",
+      original_receiving_account: "text",
+      ical_uid: "text",
+      is_response_requested: "number"
+    },
+    {
+      ROWID: "Local event row identifier.",
+      message_id: "Refers to messages.id within this source (the local id, not messages.messageId)."
+    }
+  )
 };
-function mailStream(name, properties6, primaryKey, files) {
+function mailStream(name, description, properties6, primaryKey, files) {
   return new Stream({
     name,
     jsonSchema: {
       type: "object",
+      description,
       properties: properties6,
       required: Object.keys(properties6)
     },
@@ -66311,7 +67119,13 @@ function mailStream(name, properties6, primaryKey, files) {
 var tableStreams = Object.fromEntries(
   Object.entries(mailTables).map(([name, definition3]) => [
     name,
-    mailStream(name, definition3.properties, definition3.primaryKey, false)
+    mailStream(
+      name,
+      definition3.description,
+      definition3.properties,
+      definition3.primaryKey,
+      false
+    )
   ])
 );
 
@@ -66361,68 +67175,208 @@ var fileFields = {
   size: nullableNumber2,
   sha256: nullableText4
 };
+function described(fields, descriptions) {
+  const meaning = descriptions;
+  return Object.fromEntries(
+    Object.entries(fields).map(([name, field]) => [
+      name,
+      { ...field, description: meaning[name] }
+    ])
+  );
+}
+var plistProperties = "The property list converted to JSON: data values become Base64 strings, dates ISO 8601 strings and integers beyond 2^53 decimal strings. Kept as data; this source does not interpret its keys.";
+var localMessageId = "Refers to messages.id within this source (the local id, not the Message-ID hash in messages.messageId).";
+var partId2 = "Dotted MIME part number, such as 1 or 1.2. The root of a multipart message is TEXT; a single-part message is 1, as in the index. Equals indexedAttachments.attachmentId for attachments Mail indexes.";
+var sha2562 = "SHA-256 of the bytes as lowercase hexadecimal";
 var streams2 = {
-  accounts: mailStream("accounts", metadata, ["id"], false),
-  smtpServers: mailStream("smtpServers", metadata, ["id"], false),
+  accounts: mailStream(
+    "accounts",
+    "One record per Mail account reported by Mail scripting, plus one On My Mac record for each local:// mailbox host that scripting does not list. Primary key id. The host of mailboxes.url matches id. properties is JSON data; no password or authentication property is read.",
+    described(metadata, {
+      id: "Account id returned by Mail scripting, or the host of a local:// mailbox URL for an added On My Mac account. The host of mailboxes.url matches it within this source.",
+      properties: "JSON object of the account properties read through Mail scripting: id, name, type, enabled, emailAddresses, fullName, userName, serverName, port, usesSsl and directory. An added On My Mac account has only type local and name On My Mac. Kept as data without interpretation."
+    }),
+    ["id"],
+    false
+  ),
+  smtpServers: mailStream(
+    "smtpServers",
+    "One record per SMTP server reported by Mail scripting. Primary key id, the server name. No link to accounts is proven, so no join is stated and scoped imports omit this stream.",
+    described(metadata, {
+      id: "Server name returned by Mail scripting.",
+      properties: "JSON object of the server properties read through Mail scripting: name, userName, serverName, port, usesSsl and enabled. No password is read. Kept as data without interpretation."
+    }),
+    ["id"],
+    false
+  ),
   ...tableStreams,
   mailboxProperties: mailStream(
     "mailboxProperties",
-    { relativePath: text4, properties: text4 },
+    "One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.",
+    described(
+      { relativePath: text4, properties: text4 },
+      {
+        relativePath: "Path of the Info.plist file relative to the current Mail version directory.",
+        properties: plistProperties
+      }
+    ),
     ["relativePath"],
     false
   ),
   rules: mailStream(
     "rules",
-    { ...scopedMetadata, enabled: { type: ["boolean", "null"] } },
+    "One record per Mail rule in MailData/SyncedRules.plist (scope Synced) or MailData/UnsyncedRules.plist (scope Unsynced). Primary key (scope, id). Conditions are ruleConditions rows, joined by (scope, ownerId) to (scope, id). Scoped imports omit this stream.",
+    described(
+      { ...scopedMetadata, enabled: { type: ["boolean", "null"] } },
+      {
+        scope: "Synced for a rule read from MailData/SyncedRules.plist, Unsynced for one read from MailData/UnsyncedRules.plist.",
+        id: "RuleId value of the rule; with scope, the primary key.",
+        properties: `The whole rule dictionary, including its Criteria. ${plistProperties}`,
+        enabled: "Value stored for this RuleId in MailData/RulesActiveState.plist; NULL when that file is absent or has no entry for the rule."
+      }
+    ),
     ["scope", "id"],
     false
   ),
   ruleConditions: mailStream(
     "ruleConditions",
-    conditionFields,
+    "One record per entry of a rule's Criteria list, in stored order. Primary key (scope, ownerId, position). Join (scope, ownerId) to rules (scope, id) within this source. A rule without Criteria has no rows. Scoped imports omit this stream.",
+    described(conditionFields, {
+      scope: "Scope of the owning rule, Synced or Unsynced; joins to rules.scope together with ownerId.",
+      ownerId: "RuleId of the owning rule; join (scope, ownerId) to rules (scope, id) within this source.",
+      position: "Zero-based position of the condition in the rule's Criteria list.",
+      properties: `The condition dictionary. ${plistProperties}`
+    }),
     ["scope", "ownerId", "position"],
     false
   ),
   smartMailboxes: mailStream(
     "smartMailboxes",
-    { ...metadata, parentId: nullableText4 },
+    "One record per smart mailbox dictionary in MailData/SyncedSmartMailboxes.plist, including those nested under MailboxChildren. Primary key id. parentId refers to the containing smart mailbox. Conditions are smartMailboxConditions rows whose ownerId is id. Scoped imports omit this stream.",
+    described(
+      { ...metadata, parentId: nullableText4 },
+      {
+        id: "MailboxID value of the smart mailbox.",
+        properties: `The whole smart mailbox dictionary, including its MailboxCriteria and nested MailboxChildren. ${plistProperties}`,
+        parentId: "Refers to smartMailboxes.id of the smart mailbox whose MailboxChildren contains this one; NULL at the top level."
+      }
+    ),
     ["id"],
     false
   ),
   smartMailboxConditions: mailStream(
     "smartMailboxConditions",
-    conditionFields,
+    "One record per entry of a smart mailbox's MailboxCriteria list, in stored order. Primary key (scope, ownerId, position). ownerId refers to smartMailboxes.id within this source; these conditions do not join to rules. Scoped imports omit this stream.",
+    described(conditionFields, {
+      scope: "Always Synced: only MailData/SyncedSmartMailboxes.plist is read. smartMailboxes has no scope field, so join on ownerId alone.",
+      ownerId: "MailboxID of the owning smart mailbox; refers to smartMailboxes.id within this source.",
+      position: "Zero-based position of the condition in the smart mailbox's MailboxCriteria list.",
+      properties: `The condition dictionary. ${plistProperties}`
+    }),
     ["scope", "ownerId", "position"],
     false
   ),
   signatures: mailStream(
     "signatures",
-    { id: text4, content: text4 },
+    "One record per .mailsignature file in the current Mail store. Primary key id. No link to accounts is stated; scoped imports omit this stream.",
+    described(
+      { id: text4, content: text4 },
+      {
+        id: "File name of the .mailsignature file without its extension.",
+        content: "The whole file read as UTF-8 text, including its MIME headers; not parsed."
+      }
+    ),
     ["id"],
     false
   ),
   configuration: mailStream(
     "configuration",
-    { relativePath: text4, properties: text4 },
+    "One record per property list file under a MailData or Signatures directory of the current Mail store, except files under RemoteContentURLCache or BiomeStream. Primary key relativePath. It includes the rule and smart mailbox files that rules and smartMailboxes also read. Scoped imports omit this stream.",
+    described(
+      { relativePath: text4, properties: text4 },
+      {
+        relativePath: "Path of the property list file relative to the current Mail version directory.",
+        properties: plistProperties
+      }
+    ),
     ["relativePath"],
     false
   ),
-  messageFiles: mailStream("messageFiles", fileFields, ["messageId"], true),
+  messageFiles: mailStream(
+    "messageFiles",
+    "One record per messages row, describing its EMLX message file on this Mac. Primary key messageId. The row exists even when no file is present: availableLocally is false and the file fields are NULL. EMLX files that no messages row names are not included. The transferred file is the original EMLX bytes, including Mail's leading byte count line and trailing property list.",
+    described(fileFields, {
+      messageId: localMessageId,
+      relativePath: "Path of <id>.emlx or <id>.partial.emlx relative to the current Mail version directory; NULL when no file is present.",
+      availableLocally: "Whether an EMLX file for this message was present when the run read the store. False does not mean the message was deleted.",
+      partial: "True when the file is named <id>.partial.emlx, false when <id>.emlx; NULL when no file is present. This source does not interpret the name further; detached attachment bytes are resolved in messageParts and attachments.",
+      size: "Size of the EMLX file in bytes; NULL when no file is present.",
+      sha256: `${sha2562} of the whole EMLX file; NULL when no file is present.`
+    }),
+    ["messageId"],
+    true
+  ),
   messageHeaders: mailStream(
     "messageHeaders",
-    headersFields,
+    "One record per header line of each MIME part of a locally available message file, in stored order; repeated header names stay separate rows. Primary key (messageId, partId, position). (messageId, partId) joins to messageParts (messageId, partId). Messages without a local file have no rows. An attached message/rfc822 is one part; its inner headers are not split out.",
+    described(headersFields, {
+      messageId: localMessageId,
+      partId: `${partId2} Joins to messageParts.partId with messageId.`,
+      position: "Zero-based position of the header within its part's header block, preserving the stored order.",
+      name: "Header name as keyed by the MIME parser, in lowercase.",
+      value: "Header value with folded lines joined and encoded words decoded to text; the original line is in rawLineBase64.",
+      rawLineBase64: "Bytes of the whole header line as the MIME parser keeps it, including folded continuation lines joined with CRLF, as Base64."
+    }),
     ["messageId", "partId", "position"],
     false
   ),
   messageParts: mailStream(
     "messageParts",
-    { ...partFields, text: nullableText4 },
+    "One record per MIME part, including multipart containers, of each locally available message file. Primary key (messageId, partId). parentPartId links a part to its container: join (messageId, parentPartId) to messageParts (messageId, partId). Messages without a local file have no rows (see messageFiles). A detached part whose separate file is missing stays as a row with availableLocally false. An attached message/rfc822 is one part; its inner parts are not expanded.",
+    described(
+      { ...partFields, text: nullableText4 },
+      {
+        messageId: localMessageId,
+        partId: partId2,
+        parentPartId: "partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for the root part.",
+        contentType: "Media type as parsed from Content-Type by the MIME parser, which supplies its own default when the header is absent; NULL when the parser reports none.",
+        charset: "Charset parameter of Content-Type; NULL when absent.",
+        transferEncoding: "Content-Transfer-Encoding value; NULL when absent or empty.",
+        disposition: "Content-Disposition type, such as attachment or inline; NULL when absent.",
+        filename: "Filename as parsed from the part's headers by the MIME parser; NULL when absent.",
+        contentId: "Content-ID header value; NULL when absent.",
+        isMultipart: "Whether the part is a multipart container; containers carry no decoded bytes.",
+        isAttachment: "True when indexedAttachments lists this part, or when a non-multipart part has a filename, an attachment disposition, is an attached message or has a media type other than text/*.",
+        declaredBytes: "Byte count from the part's X-Apple-Content-Length header; NULL when absent. A part with this count and an empty body is read from its separate file under the message's Attachments directory.",
+        decodedBytes: "Bytes after transfer decoding, or the size of the separate file for a detached part; NULL for multipart containers and for detached parts whose file is missing.",
+        availableLocally: "False only for a detached part whose separate file is missing on this Mac; true otherwise, including multipart containers.",
+        sha256: `${sha2562} after transfer decoding, or of the separate file for a detached part; NULL for multipart containers and missing detached parts.`,
+        text: "Text of a text/* part decoded with its charset (UTF-8 when none is declared), including a detached part read from its separate file; NULL for other media types, multipart containers and missing detached parts. Decoded from the message itself; no document parser is applied."
+      }
+    ),
     ["messageId", "partId"],
     false
   ),
   attachments: mailStream(
     "attachments",
-    partFields,
+    "One record per attachment: each MIME part with isAttachment true in a locally available message file, plus each indexedAttachments row whose part was not found in one (index-only rows). Index attachment metadata can exist before the message or attachment file is downloaded. Primary key (messageId, partId), the same key as messageParts and as (message, attachmentId) in indexedAttachments. Index-only rows have NULL MIME fields. availableLocally tells whether the bytes are on this Mac; the transferred file is the decoded attachment, and an attached message stays one complete file.",
+    described(partFields, {
+      messageId: localMessageId,
+      partId: partId2,
+      parentPartId: "partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for a root part and for index-only rows.",
+      contentType: "Media type as parsed from Content-Type by the MIME parser; NULL for index-only rows or when the parser reports none.",
+      charset: "Charset parameter of Content-Type; NULL when absent or for index-only rows.",
+      transferEncoding: "Content-Transfer-Encoding value; NULL when absent, empty or for index-only rows.",
+      disposition: "Content-Disposition type, such as attachment or inline; NULL when absent or for index-only rows.",
+      filename: "Filename as parsed from the part's headers by the MIME parser; for index-only rows, the name in indexedAttachments.name. NULL when neither exists.",
+      contentId: "Content-ID header value; NULL when absent or for index-only rows.",
+      isMultipart: "Whether the part is a multipart container; false for index-only rows.",
+      isAttachment: "Always true in this stream.",
+      declaredBytes: "Byte count from the part's X-Apple-Content-Length header; NULL when absent or for index-only rows.",
+      decodedBytes: "Bytes after transfer decoding, or the size of the separate file under the message's Attachments directory; NULL when the bytes are not on this Mac.",
+      availableLocally: "Whether the attachment bytes are on this Mac. False for a detached or index-only attachment whose file has not been downloaded; a later run updates the row once the file appears.",
+      sha256: `${sha2562} of the attachment; NULL when the bytes are not on this Mac.`
+    }),
     ["messageId", "partId"],
     true
   )
@@ -67071,21 +68025,63 @@ var nullableInteger2 = { type: ["integer", "null"] };
 var appleMilliseconds = (column) => `CASE WHEN ${column} IS NULL OR ${column} = 0 THEN NULL WHEN abs(${column}) > 100000000000 THEN ${column} / 1000000 ELSE ${column} * 1000 END`;
 var camel = (column) => column.replaceAll(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 var words2 = (list2 = "") => list2.split(/\s+/).filter(Boolean);
-function columns(alias, kinds2) {
-  const loaders = [
-    ["text", text5, (column) => column],
-    ["nullableText", nullableText5, (column) => column],
-    ["integer", nullableInteger2, (column) => column],
-    ["boolean", boolean6, (column) => column],
-    ["timestamp", nullableTimestamp4, appleMilliseconds],
-    ["base64", nullableText5, (column) => column]
+var kinds2 = {
+  text: { schema: text5, select: (column) => column, loads: "text" },
+  nullableText: {
+    schema: nullableText5,
+    select: (column) => column,
+    loads: "text; NULL when chat.db stores NULL"
+  },
+  integer: {
+    schema: nullableInteger2,
+    select: (column) => column,
+    loads: "integer passed through unchanged; NULL when chat.db stores NULL"
+  },
+  boolean: {
+    schema: boolean6,
+    select: (column) => column,
+    loads: "0/1 flag loaded as a boolean; any nonzero value is true"
+  },
+  timestamp: {
+    schema: nullableTimestamp4,
+    select: appleMilliseconds,
+    loads: "nanoseconds, or seconds for magnitudes up to 10^11, since 2001-01-01 UTC, converted to a UTC instant truncated to milliseconds; NULL when chat.db stores 0 or NULL"
+  },
+  base64: {
+    schema: nullableText5,
+    select: (column) => column,
+    loads: "bytes; a binary property list loads as JSON text, with NSKeyedArchiver archives unarchived, nested data as Base64, dates as ISO 8601 and integers beyond 2^53 as strings, and any other bytes load as Base64; NULL when chat.db stores NULL"
+  }
+};
+var unverified2 = "Meaning not documented by Apple.";
+var provenance3 = ({ name }, column, kind) => `chat.db ${name}.${column}: ${kinds2[kind].loads}.`;
+function native(table2, column, kind) {
+  const { schema, select } = kinds2[kind];
+  return [
+    {
+      ...schema,
+      description: `${provenance3(table2, column, kind)} ${unverified2}`
+    },
+    select(`${table2.alias}.${column}`)
   ];
+}
+function columns(table2, list2, meanings) {
+  const listed = Object.values(list2).flatMap(words2);
+  const unknown2 = Object.keys(meanings).filter(
+    (column) => !listed.includes(column)
+  );
+  if (unknown2.length > 0)
+    throw new TypeError(
+      `Meanings for columns ${table2.name} does not list: ${unknown2.join(", ")}`
+    );
   const properties6 = {};
   const select = [];
-  for (const [kind, schema, expression] of loaders)
-    for (const column of words2(kinds2[kind])) {
-      properties6[camel(column)] = schema;
-      select.push(`${expression(`${alias}.${column}`)} AS "${camel(column)}"`);
+  for (const kind of Object.keys(kinds2))
+    for (const column of words2(list2[kind])) {
+      const [schema, expression] = native(table2, column, kind);
+      const meaning = meanings[column];
+      properties6[camel(column)] = meaning === void 0 ? schema : { ...schema, description: meaning };
+      select.push(`${expression} AS "${camel(column)}"`);
     }
   return { properties: properties6, select };
 }
@@ -67104,83 +68100,195 @@ function definition2(keys, from, table2 = { properties: {}, select: [] }, extra 
     ].join(", ")} FROM ${from}`
   };
 }
-var message2 = columns("m", {
-  nullableText: "text subject service_center country service account account_guid cache_roomnames group_title associated_message_guid balloon_bundle_id expressive_send_style_id ck_record_id ck_record_change_tag destination_caller_id reply_to_guid thread_originator_guid thread_originator_part syndication_ranges synced_syndication_ranges bia_reference_id fallback_hash associated_message_emoji ck_chat_id",
-  integer: "replace version type error item_type group_action_type share_status share_direction expire_state message_action_type message_source associated_message_type associated_message_range_location associated_message_range_length ck_sync_state sort_id part_count schedule_type schedule_state index_state",
-  boolean: "is_delivered is_finished is_emote is_from_me is_empty is_delayed is_auto_reply is_prepared is_read is_system_message is_sent has_dd_results is_service_message is_forward was_downgraded is_archive cache_has_attachments was_data_detected was_deduplicated is_audio_message is_played is_expirable is_corrupt is_spam has_unseen_mention was_delivered_quietly did_notify_recipient was_detonated is_stewie is_sos is_critical is_kt_verified is_pending_satellite_send needs_relay sent_or_received_off_grid is_time_sensitive",
-  timestamp: "date date_read date_delivered date_played time_expressive_send_played date_retracted date_edited date_recovered",
-  base64: "attributedBody payload_data message_summary_info"
-});
-var chat = columns("c", {
-  nullableText: "chat_identifier service_name room_name account_id account_login last_addressed_handle display_name group_id engram_id server_change_token original_group_id cloudkit_record_id last_addressed_sim_id",
-  integer: "style state successful_query ck_sync_state syndication_type",
-  boolean: "is_archived is_filtered is_blackholed is_recovered is_deleting_incoming_messages is_pending_review",
-  timestamp: "last_read_message_timestamp syndication_date",
-  base64: "properties"
-});
-var handle = columns("h", {
-  text: "id service",
-  nullableText: "country uncanonicalized_id person_centric_id"
-});
-var attachment = columns("a", {
-  text: "original_guid",
-  nullableText: "filename uti mime_type transfer_name ck_record_id emoji_image_content_identifier emoji_image_short_description",
-  integer: "transfer_state total_bytes ck_sync_state preview_generation_state",
-  boolean: "is_outgoing is_sticker hide_attachment is_commsafety_sensitive",
-  timestamp: "created_date start_date",
-  base64: "user_info sticker_user_info attribution_info ck_server_change_token_blob"
-});
-var chatGuid = [id4, "c.guid"];
+var tables = {
+  message: { name: "message", alias: "m" },
+  chat: { name: "chat", alias: "c" },
+  handle: { name: "handle", alias: "h" },
+  attachment: { name: "attachment", alias: "a" },
+  chatLookup: { name: "chat_lookup", alias: "l" },
+  chatService: { name: "chat_service", alias: "s" },
+  chatMessage: { name: "chat_message_join", alias: "j" },
+  chatRecoverable: { name: "chat_recoverable_message_join", alias: "j" },
+  recoverablePart: { name: "recoverable_message_part", alias: "p" }
+};
+var message2 = columns(
+  tables.message,
+  {
+    nullableText: "text subject service_center country service account account_guid cache_roomnames group_title associated_message_guid balloon_bundle_id expressive_send_style_id ck_record_id ck_record_change_tag destination_caller_id reply_to_guid thread_originator_guid thread_originator_part syndication_ranges synced_syndication_ranges bia_reference_id fallback_hash associated_message_emoji ck_chat_id",
+    integer: "replace version type error item_type group_action_type share_status share_direction expire_state message_action_type message_source associated_message_type associated_message_range_location associated_message_range_length ck_sync_state sort_id part_count schedule_type schedule_state index_state",
+    boolean: "is_delivered is_finished is_emote is_from_me is_empty is_delayed is_auto_reply is_prepared is_read is_system_message is_sent has_dd_results is_service_message is_forward was_downgraded is_archive cache_has_attachments was_data_detected was_deduplicated is_audio_message is_played is_expirable is_corrupt is_spam has_unseen_mention was_delivered_quietly did_notify_recipient was_detonated is_stewie is_sos is_critical is_kt_verified is_pending_satellite_send needs_relay sent_or_received_off_grid is_time_sensitive",
+    timestamp: "date date_read date_delivered date_played time_expressive_send_played date_retracted date_edited date_recovered",
+    base64: "attributedBody payload_data message_summary_info"
+  },
+  {
+    text: "Message body: chat.db message.text, or, when that is NULL, the plain text of the NSAttributedString archived in message.attributedBody, which is its first NSString. NULL when neither holds text. attributedBody keeps the archive itself.",
+    date: `${provenance3(tables.message, "date", "timestamp")} An import date scope selects messages by this time; which moment Messages records is not documented by Apple.`,
+    attributedBody: `${provenance3(tables.message, "attributedBody", "base64")} Messages archives the message body here as an NSAttributedString in NeXT typedstream form, which is not a property list and so loads as Base64; text is decoded from it when message.text is NULL. Its other attributes are not decoded.`,
+    payload_data: `${provenance3(tables.message, "payload_data", "base64")} A richLinkMetadata object in it is decoded into the linkPreviews stream; the meaning of its other contents is not documented by Apple.`,
+    message_summary_info: `${provenance3(tables.message, "message_summary_info", "base64")} Its "ec" entry is decoded into the messageEdits stream; the meaning of its other keys is not documented by Apple.`
+  }
+);
+var chat = columns(
+  tables.chat,
+  {
+    nullableText: "chat_identifier service_name room_name account_id account_login last_addressed_handle display_name group_id engram_id server_change_token original_group_id cloudkit_record_id last_addressed_sim_id",
+    integer: "style state successful_query ck_sync_state syndication_type",
+    boolean: "is_archived is_filtered is_blackholed is_recovered is_deleting_incoming_messages is_pending_review",
+    timestamp: "last_read_message_timestamp syndication_date",
+    base64: "properties"
+  },
+  {
+    account_id: `${provenance3(tables.chat, "account_id", "nullableText")} An import scope's account selection matches chats by this value. ${unverified2}`
+  }
+);
+var handle = columns(
+  tables.handle,
+  {
+    text: "id service",
+    nullableText: "country uncanonicalized_id person_centric_id"
+  },
+  {
+    id: `${provenance3(tables.handle, "id", "text")} Unique only together with service: the same id can recur under another service. messages.handle, messages.otherHandle and chatHandles.handleId refer to it within this source, each together with its service field. ${unverified2}`,
+    service: `${provenance3(tables.handle, "service", "text")} The second half of this stream's composite key (id, service). messages.handleService, messages.otherHandleService and chatHandles.handleService refer to it within this source. ${unverified2}`
+  }
+);
+var attachment = columns(
+  tables.attachment,
+  {
+    text: "original_guid",
+    nullableText: "filename uti mime_type transfer_name ck_record_id emoji_image_content_identifier emoji_image_short_description",
+    integer: "transfer_state total_bytes ck_sync_state preview_generation_state",
+    boolean: "is_outgoing is_sticker hide_attachment is_commsafety_sensitive",
+    timestamp: "created_date start_date",
+    base64: "user_info sticker_user_info attribution_info ck_server_change_token_blob"
+  },
+  {
+    filename: `${provenance3(tables.attachment, "filename", "nullableText")} The path Messages stores for the attachment's file, absolute or home-relative as ~/\u2026; the file is exported from this path. A path does not prove the file exists: see availableLocally.`
+  }
+);
+var chatGuid = [
+  {
+    ...id4,
+    description: "chat.db chat.guid of the chat; refers to chats.guid within this source."
+  },
+  "c.guid"
+];
 var integer4 = eventKitFields.integer;
-var messageGuid = [id4, "m.guid"];
+var messageReference = {
+  ...id4,
+  description: "chat.db message.guid of the message; refers to messages.guid within this source."
+};
+var messageGuid = [messageReference, "m.guid"];
+var localStore = "Read from this Mac's chat.db, not from iCloud: it holds only what Messages keeps locally, and an import scope recorded in extraction coverage can narrow it further. Relationships use GUIDs, which survive the renumbering of local ROWIDs when Messages in iCloud rebuilds chat.db, and name source streams, not destination tables.";
+var countAtMessageGrain = "Many-to-many: joining messages through this stream repeats a message once per linked row, so count messages at message grain, as distinct messageGuid.";
 var definitions2 = {
   chats: {
-    ...definition2({ guid: chatGuid }, "chat c", chat),
+    description: `One record per chat in chat.db's chat table, keyed by guid. Its handles are in chatHandles, its messages in chatMessages, or in recoverableMessages while recoverable after deletion, its lookup identifiers in chatLookups and its services in chatServices, each by chatGuid. ${localStore}`,
+    ...definition2(
+      {
+        guid: [
+          {
+            ...id4,
+            description: "chat.db chat.guid; this stream's primary key. chatGuid in chatLookups, chatServices, chatHandles, chatMessages, recoverableMessages and recoverableMessageParts refers to it within this source."
+          },
+          "c.guid"
+        ]
+      },
+      "chat c",
+      chat
+    ),
     primaryKey: ["guid"]
   },
   handles: {
+    description: `One record per handle in chat.db's handle table, keyed by the composite (id, service): the same id can appear once per service, so every join uses both fields. messages.handle and messages.handleService join handles.id and handles.service, likewise messages.otherHandle and messages.otherHandleService; chatHandles joins by handleId and handleService. ${localStore}`,
     ...definition2({}, "handle h", handle),
     primaryKey: ["id", "service"]
   },
-  // The identifiers Messages resolves to a chat, unique per domain.
+  // chat.db's chat_lookup rows, unique per identifier and domain.
   chatLookups: {
+    description: `One record per row of chat.db chat_lookup, keyed by (identifier, domain), which chat.db keeps unique; what a lookup means is not documented by Apple. chatGuid refers to chats.guid. ${localStore}`,
     ...definition2(
       {
-        identifier: [text5, "l.identifier"],
-        domain: [text5, "l.domain"],
+        identifier: native(tables.chatLookup, "identifier", "text"),
+        domain: native(tables.chatLookup, "domain", "text"),
         chatGuid,
-        priority: [nullableInteger2, "l.priority"]
+        priority: native(tables.chatLookup, "priority", "integer")
       },
       "chat_lookup l JOIN chat c ON c.ROWID = l.chat"
     ),
     primaryKey: ["identifier", "domain"]
   },
   chatServices: {
+    description: `One record per chat and service pair in chat.db chat_service, keyed by (chatGuid, service). chatGuid refers to chats.guid. ${localStore}`,
     ...definition2(
-      { chatGuid, service: [text5, "s.service"] },
+      { chatGuid, service: native(tables.chatService, "service", "text") },
       "chat_service s JOIN chat c ON c.ROWID = s.chat"
     ),
     primaryKey: ["chatGuid", "service"]
   },
   chatHandles: {
+    description: `One record per handle linked to a chat in chat.db chat_handle_join, keyed by (chatGuid, handleId, handleService). chatGuid refers to chats.guid; handleId and handleService together join handles.id and handles.service. A chat can link many handles and a handle many chats. ${localStore}`,
     ...definition2(
       {
         chatGuid,
-        handleId: [text5, "h.id"],
-        handleService: [text5, "h.service"]
+        handleId: [
+          {
+            ...text5,
+            description: "chat.db handle.id of the linked handle; together with handleService refers to handles (id, service) within this source."
+          },
+          "h.id"
+        ],
+        handleService: [
+          {
+            ...text5,
+            description: "chat.db handle.service of the linked handle; together with handleId refers to handles (id, service) within this source."
+          },
+          "h.service"
+        ]
       },
       "chat_handle_join j JOIN chat c ON c.ROWID = j.chat_id JOIN handle h ON h.ROWID = j.handle_id"
     ),
     primaryKey: ["chatGuid", "handleId", "handleService"]
   },
   messages: {
+    description: `One record per message in chat.db's message table, keyed by guid. A message recoverable after deletion keeps its record, and its chat link is in recoverableMessages instead of chatMessages (observed on a live store; Apple does not document this table). handle and handleService join handles.id and handles.service, likewise otherHandle and otherHandleService. Chats link through chatMessages and attachments through messageAttachments; both are many-to-many, so joining through them repeats a message: count messages in this stream, or as distinct guid after such a join. Edit versions decoded from messageSummaryInfo are in messageEdits and rich links decoded from payloadData in linkPreviews. chat.db's iCloud deletion bookkeeping (deleted_messages, sync_deleted_*) is not exported. ${localStore}`,
     ...definition2(
       {
-        guid: messageGuid,
-        handle: [nullableText5, "h.id"],
-        handleService: [nullableText5, "h.service"],
-        otherHandle: [nullableText5, "o.id"],
-        otherHandleService: [nullableText5, "o.service"]
+        guid: [
+          {
+            ...id4,
+            description: "chat.db message.guid; this stream's primary key. messageGuid in chatMessages, messageAttachments, messageEdits, linkPreviews, recoverableMessages and recoverableMessageParts refers to it within this source."
+          },
+          "m.guid"
+        ],
+        handle: [
+          {
+            ...nullableText5,
+            description: "chat.db handle.id of the handle message.handle_id points to; together with handleService refers to handles (id, service) within this source. NULL when message.handle_id matches no handle. Which participant it names is not documented by Apple."
+          },
+          "h.id"
+        ],
+        handleService: [
+          {
+            ...nullableText5,
+            description: "chat.db handle.service of the handle message.handle_id points to; together with handle refers to handles (id, service) within this source. NULL when message.handle_id matches no handle."
+          },
+          "h.service"
+        ],
+        otherHandle: [
+          {
+            ...nullableText5,
+            description: "chat.db handle.id of the handle message.other_handle points to; together with otherHandleService refers to handles (id, service) within this source. NULL when message.other_handle matches no handle. Which participant it names is not documented by Apple."
+          },
+          "o.id"
+        ],
+        otherHandleService: [
+          {
+            ...nullableText5,
+            description: "chat.db handle.service of the handle message.other_handle points to; together with otherHandle refers to handles (id, service) within this source. NULL when message.other_handle matches no handle."
+          },
+          "o.service"
+        ]
       },
       "message m LEFT JOIN handle h ON h.ROWID = m.handle_id LEFT JOIN handle o ON o.ROWID = m.other_handle",
       message2
@@ -67188,12 +68296,13 @@ var definitions2 = {
     primaryKey: ["guid"]
   },
   chatMessages: {
+    description: `One record per chat and message link in chat.db chat_message_join, keyed by (chatGuid, messageGuid). chatGuid refers to chats.guid and messageGuid to messages.guid. ${countAtMessageGrain} A message recoverable after deletion is linked through recoverableMessages instead (observed on a live store; Apple does not document this table). ${localStore}`,
     ...definition2(
       {
         chatGuid,
         messageGuid,
-        messageDate: [nullableTimestamp4, appleMilliseconds("j.message_date")],
-        indexState: [nullableInteger2, "j.index_state"]
+        messageDate: native(tables.chatMessage, "message_date", "timestamp"),
+        indexState: native(tables.chatMessage, "index_state", "integer")
       },
       "chat_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id"
     ),
@@ -67201,16 +68310,41 @@ var definitions2 = {
   },
   // The rich link a URL message shows, decoded from its payload_data archive.
   linkPreviews: {
+    description: `One record per message whose chat.db message.payload_data archive holds a richLinkMetadata object, keyed by messageGuid, which refers to messages.guid. metadata keeps the object's archived class as "$class"; url, originalUrl and title follow Apple's LPLinkMetadata documentation. Other messages have no record; messages.payloadData keeps the archive. ${localStore}`,
     properties: {
-      messageGuid: id4,
-      url: nullableText5,
-      originalUrl: nullableText5,
-      title: nullableText5,
-      summary: nullableText5,
-      siteName: nullableText5,
-      itemType: nullableText5,
-      creator: nullableText5,
-      metadata: text5
+      messageGuid: messageReference,
+      url: {
+        ...nullableText5,
+        description: "richLinkMetadata.URL, which Apple documents as the URL that returned the metadata, taking server-side redirects into account; NULL when absent or not text."
+      },
+      originalUrl: {
+        ...nullableText5,
+        description: "richLinkMetadata.originalURL, which Apple documents as the original URL of the metadata request; NULL when absent or not text."
+      },
+      title: {
+        ...nullableText5,
+        description: "richLinkMetadata.title, which Apple documents as a representative title for the URL; NULL when absent or not text."
+      },
+      summary: {
+        ...nullableText5,
+        description: `richLinkMetadata.summary; NULL when absent or not text. ${unverified2}`
+      },
+      siteName: {
+        ...nullableText5,
+        description: `richLinkMetadata.siteName; NULL when absent or not text. ${unverified2}`
+      },
+      itemType: {
+        ...nullableText5,
+        description: `richLinkMetadata.itemType; NULL when absent or not text. ${unverified2}`
+      },
+      creator: {
+        ...nullableText5,
+        description: `richLinkMetadata.creator; NULL when absent or not text. ${unverified2}`
+      },
+      metadata: {
+        ...text5,
+        description: 'The whole unarchived richLinkMetadata object as JSON, with its "$class", nested data as Base64 and dates as ISO 8601; keeps the fields not extracted above.'
+      }
     },
     primaryKey: ["messageGuid"],
     sql: `SELECT m.guid AS messageGuid, m.payload_data AS payload FROM message m WHERE m.payload_data IS NOT NULL`,
@@ -67219,56 +68353,107 @@ var definitions2 = {
   // Earlier versions of edited message parts, from message_summary_info's
   // "ec" (edited content): part index -> versions, each a date and an archived body.
   messageEdits: {
+    description: `One record per edit-history entry that chat.db message.message_summary_info stores under "ec", keyed by (messageGuid, partIndex, version); messageGuid refers to messages.guid. Messages without that history have no record; messages.messageSummaryInfo keeps the archive. ${localStore}`,
     properties: {
-      messageGuid: id4,
-      partIndex: integer4,
-      version: integer4,
-      editedAt: nullableTimestamp4,
-      text: nullableText5,
-      entry: text5
+      messageGuid: messageReference,
+      partIndex: {
+        ...integer4,
+        description: `The "ec" key the entry is stored under, as a number, which the connector reads as the index of the edited message part. ${unverified2}`
+      },
+      version: {
+        ...integer4,
+        description: "The entry's 0-based position in its part's stored list, in stored order."
+      },
+      editedAt: {
+        ...nullableTimestamp4,
+        description: `The entry's "d" time: a property list date, or nanoseconds, or seconds for magnitudes up to 10^11, since 2001-01-01 UTC, converted to a UTC instant; NULL when d is absent or not a time. Which moment it records is not documented by Apple.`
+      },
+      text: {
+        ...nullableText5,
+        description: `Plain text of the entry's "t" NSAttributedString archive in typedstream form, its first NSString; NULL when t is absent, not bytes or holds no string.`
+      },
+      entry: {
+        ...text5,
+        description: 'The whole entry as JSON, with "t" as Base64 and dates as ISO 8601; keeps the keys not extracted above.'
+      }
     },
     primaryKey: ["messageGuid", "partIndex", "version"],
     sql: `SELECT m.guid AS messageGuid, m.message_summary_info AS summary FROM message m WHERE m.message_summary_info IS NOT NULL`,
     expand: messageEdits
   },
-  // Recently Deleted: Messages keeps the message row but moves its chat link here.
+  // A recoverable message keeps its message row but is linked to its chat here.
   recoverableMessages: {
+    description: `One record per chat and message link in chat.db chat_recoverable_message_join, keyed by (chatGuid, messageGuid): a message recoverable after deletion keeps its messages record and is linked to its chat here instead of in chatMessages (observed on a live store; Apple does not document this table). chatGuid refers to chats.guid and messageGuid to messages.guid; the message's parts are in recoverableMessageParts. ${countAtMessageGrain} ${localStore}`,
     ...definition2(
       {
         chatGuid,
         messageGuid,
-        deleteDate: [nullableTimestamp4, appleMilliseconds("j.delete_date")],
-        ckSyncState: [nullableInteger2, "j.ck_sync_state"]
+        deleteDate: native(tables.chatRecoverable, "delete_date", "timestamp"),
+        ckSyncState: native(tables.chatRecoverable, "ck_sync_state", "integer")
       },
       "chat_recoverable_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id"
     ),
     primaryKey: ["chatGuid", "messageGuid"]
   },
   recoverableMessageParts: {
+    description: `One record per message part in chat.db recoverable_message_part, for messages recoverable after deletion, keyed by (chatGuid, messageGuid, partIndex). chatGuid refers to chats.guid and messageGuid to messages.guid; (chatGuid, messageGuid) joins recoverableMessages. ${localStore}`,
     ...definition2(
       {
         chatGuid,
         messageGuid,
-        partIndex: [eventKitFields.integer, "p.part_index"],
-        deleteDate: [nullableTimestamp4, appleMilliseconds("p.delete_date")],
-        partText: [nullableText5, "p.part_text"],
-        ckSyncState: [nullableInteger2, "p.ck_sync_state"]
+        partIndex: [
+          {
+            ...eventKitFields.integer,
+            description: `chat.db recoverable_message_part.part_index: integer passed through unchanged. ${unverified2}`
+          },
+          "p.part_index"
+        ],
+        deleteDate: native(tables.recoverablePart, "delete_date", "timestamp"),
+        partText: native(tables.recoverablePart, "part_text", "base64"),
+        ckSyncState: native(tables.recoverablePart, "ck_sync_state", "integer")
       },
       "recoverable_message_part p JOIN chat c ON c.ROWID = p.chat_id JOIN message m ON m.ROWID = p.message_id"
     ),
     primaryKey: ["chatGuid", "messageGuid", "partIndex"]
   },
   attachments: {
-    ...definition2({ guid: [id4, "a.guid"] }, "attachment a", attachment, {
-      // Changes when an offloaded file downloads, so the diff reloads its bytes.
-      availableLocally: boolean6
-    }),
+    description: `One record per attachment in chat.db's attachment table, keyed by guid; messageAttachments links attachments to messages, many-to-many. A record can exist without a readable file: availableLocally reports whether the stored filename was reachable when read, which changes, for example when an offloaded file downloads, independently of message and attachment dates. ${localStore}`,
+    ...definition2(
+      {
+        guid: [
+          {
+            ...id4,
+            description: "chat.db attachment.guid; this stream's primary key. messageAttachments.attachmentGuid refers to it within this source."
+          },
+          "a.guid"
+        ]
+      },
+      "attachment a",
+      attachment,
+      {
+        // Changes when an offloaded file downloads, so the diff reloads its bytes.
+        availableLocally: {
+          ...boolean6,
+          description: "Whether the file at filename, with ~/ expanded to the home directory, was accessible to the export when this record was read; false when filename is NULL or the path is not accessible, such as a file not downloaded to this Mac. File bytes are exported only when true."
+        }
+      }
+    ),
     primaryKey: ["guid"],
     files: true
   },
   messageAttachments: {
+    description: `One record per message and attachment link in chat.db message_attachment_join, keyed by (messageGuid, attachmentGuid). messageGuid refers to messages.guid and attachmentGuid to attachments.guid. ${countAtMessageGrain} ${localStore}`,
     ...definition2(
-      { messageGuid, attachmentGuid: [id4, "a.guid"] },
+      {
+        messageGuid,
+        attachmentGuid: [
+          {
+            ...id4,
+            description: "chat.db attachment.guid of the linked attachment; refers to attachments.guid within this source."
+          },
+          "a.guid"
+        ]
+      },
       "message_attachment_join j JOIN message m ON m.ROWID = j.message_id JOIN attachment a ON a.ROWID = j.attachment_id"
     ),
     primaryKey: ["messageGuid", "attachmentGuid"]
@@ -67281,6 +68466,7 @@ var streams3 = Object.fromEntries(
       name,
       jsonSchema: {
         type: "object",
+        description: definition3.description,
         properties: definition3.properties,
         required: Object.keys(definition3.properties)
       },
@@ -68724,7 +69910,7 @@ function reminderRows(documents, scope) {
     else if (document.type === "reminder") reminders.push(document);
   }
   const collections2 = scopedCollections(scope, accounts2, lists);
-  const related = reminders.map(
+  const related3 = reminders.map(
     (reminder) => relatedRows(reminder, reminder.id, "reminderId")
   );
   return /* @__PURE__ */ new Map([
@@ -68740,12 +69926,12 @@ function reminderRows(documents, scope) {
         })
       )
     ],
-    ["attendees", related.flatMap((rows) => rows.attendees)],
-    ["alarms", related.flatMap((rows) => rows.alarms)],
-    ["recurrenceRules", related.flatMap((rows) => rows.recurrenceRules)],
+    ["attendees", related3.flatMap((rows) => rows.attendees)],
+    ["alarms", related3.flatMap((rows) => rows.alarms)],
+    ["recurrenceRules", related3.flatMap((rows) => rows.recurrenceRules)],
     [
       "recurrenceRuleValues",
-      related.flatMap((rows) => rows.recurrenceRuleValues)
+      related3.flatMap((rows) => rows.recurrenceRuleValues)
     ]
   ]);
 }
@@ -68783,38 +69969,132 @@ function dateComponentsRow(reminderId, kind, components) {
 
 // apps/apple/src/sources/apple-reminders/apple-reminders-source.ts
 var { id: id10, text: text10, nullableText: nullableText10, nullableTimestamp: nullableTimestamp8, integer: integer5, boolean: boolean10 } = eventKitFields;
+var related2 = eventKitRelatedFields("reminderId");
 var catalog6 = eventKitCatalog(
   {
-    accounts: eventKitAccountFields,
-    lists: eventKitCalendarFields,
+    accounts: {
+      description: "One source record per EventKit account (EKSource) in this Mac's store, including accounts without reminder lists. An import scope keeps the selected accounts; a list scope also drops accounts owning no selected list. Relationships name source streams, not destination tables.",
+      properties: eventKitAccountFields
+    },
+    lists: {
+      description: "One source record per reminder list (an EventKit calendar for reminders) visible on this Mac. An import scope keeps only the selected lists. accountId refers to accounts.id; reminders.listId refers to id. Relationships name source streams, not destination tables.",
+      properties: eventKitCalendarFields
+    },
     reminders: {
-      id: id10,
-      listId: id10,
-      externalId: nullableText10,
-      name: text10,
-      body: nullableText10,
-      location: nullableText10,
-      url: nullableText10,
-      timeZone: nullableText10,
-      createdAt: nullableTimestamp8,
-      modifiedAt: nullableTimestamp8,
-      completed: boolean10,
-      completedAt: nullableTimestamp8,
-      priority: { ...integer5, minimum: 0, maximum: 9 }
+      description: "One source record per reminder visible through EventKit on this Mac, completed reminders included, limited to the selected lists when an import scope is set. No date filter. Start and due dates live in dateComponents as native component sets; no UTC due timestamp is derived. dateComponents, attendees, alarms, recurrenceRules and recurrenceRuleValues refer to id through reminderId; listId refers to lists.id. Relationships name source streams, not destination tables.",
+      properties: {
+        id: {
+          ...id10,
+          description: "EventKit EKCalendarItem.calendarItemIdentifier; related streams refer to it through reminderId. Apple documents that a full sync can replace it."
+        },
+        listId: {
+          ...id10,
+          description: "EventKit EKCalendarItem.calendar.calendarIdentifier: the owning list; refers to lists.id within this source."
+        },
+        externalId: {
+          ...nullableText10,
+          description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier; NULL when EventKit has none. Apple documents duplicates across calendars and, for Exchange reminders, different values between devices, so it is not unique."
+        },
+        name: { ...text10, description: "EventKit EKCalendarItem.title." },
+        body: {
+          ...nullableText10,
+          description: "EventKit EKCalendarItem.notes; NULL when unset."
+        },
+        location: {
+          ...nullableText10,
+          description: "EventKit EKCalendarItem.location; NULL when unset."
+        },
+        url: {
+          ...nullableText10,
+          description: "EventKit EKCalendarItem.URL as a string; NULL when unset."
+        },
+        timeZone: {
+          ...nullableText10,
+          description: "EventKit EKCalendarItem.timeZone identifier; NULL when EventKit has none, which Apple documents as floating. The start and due component sets carry their own time zones in dateComponents."
+        },
+        createdAt: {
+          ...nullableTimestamp8,
+          description: "EventKit EKCalendarItem.creationDate as a UTC timestamp; NULL when EventKit has none."
+        },
+        modifiedAt: {
+          ...nullableTimestamp8,
+          description: "EventKit EKCalendarItem.lastModifiedDate as a UTC timestamp; NULL when EventKit has none."
+        },
+        completed: {
+          ...boolean10,
+          description: "EventKit EKReminder.isCompleted."
+        },
+        completedAt: {
+          ...nullableTimestamp8,
+          description: "EventKit EKReminder.completionDate as a UTC timestamp; NULL when EventKit has none."
+        },
+        priority: {
+          ...integer5,
+          minimum: 0,
+          maximum: 9,
+          description: "EventKit EKReminder.priority: 0 no priority, 1 highest through 9 lowest. Apple follows RFC 5545 (1 to 4 high, 5 medium, 6 to 9 low); its EKReminderPriority constants are 1 high, 5 medium and 9 low."
+        }
+      }
     },
     dateComponents: {
-      id: id10,
-      reminderId: id10,
-      kind: { ...text10, enum: ["start", "due"] },
-      calendarIdentifier: nullableText10,
-      timeZone: nullableText10,
-      ...Object.fromEntries(
-        dateComponentNames.map((name) => [name, { type: ["integer", "null"] }])
-      ),
-      leapMonth: boolean10,
-      repeatedDay: { type: ["boolean", "null"] }
+      description: "One source record per start or due date a reminder sets; a reminder without that date has no record. Each record keeps EventKit's NSDateComponents set whole: calendar, time zone, leap month and every component, with a missing component NULL and no manufactured UTC timestamp. A date without a time has NULL hour, minute and second. reminderId refers to reminders.id. Relationships name source streams, not destination tables.",
+      properties: {
+        id: {
+          ...id10,
+          description: "JSON [reminderId, kind]; unique within this stream."
+        },
+        reminderId: {
+          ...id10,
+          description: "Owning reminder; refers to reminders.id within this source."
+        },
+        kind: {
+          ...text10,
+          enum: ["start", "due"],
+          description: "start for EventKit EKReminder.startDateComponents, due for EKReminder.dueDateComponents."
+        },
+        calendarIdentifier: {
+          ...nullableText10,
+          description: "Identifier of the NSDateComponents calendar, the calendar system the components count in; NULL when the set has no calendar."
+        },
+        timeZone: {
+          ...nullableText10,
+          description: "NSDateComponents.timeZone identifier; NULL for a floating date, which Apple documents as a nil time zone."
+        },
+        ...Object.fromEntries(
+          dateComponentNames.map((name) => [
+            name,
+            {
+              type: ["integer", "null"],
+              description: `NSDateComponents.${name}; NULL when the set leaves it undefined or this macOS does not provide it.`
+            }
+          ])
+        ),
+        leapMonth: {
+          ...boolean10,
+          description: "NSDateComponents.isLeapMonth: whether month is a leap month in the set's calendar."
+        },
+        repeatedDay: {
+          type: ["boolean", "null"],
+          description: "NSDateComponents.isRepeatedDay; NULL where this macOS does not provide it."
+        }
+      }
     },
-    ...eventKitRelatedFields("reminderId")
+    attendees: {
+      description: "One source record per attendee EventKit lists for a reminder. reminderId refers to reminders.id. Relationships name source streams, not destination tables.",
+      properties: related2.attendees
+    },
+    alarms: {
+      description: "One source record per EventKit alarm of a reminder, whether it fires at a time or at a location. reminderId refers to reminders.id. Relationships name source streams, not destination tables.",
+      properties: related2.alarms
+    },
+    recurrenceRules: {
+      description: "One source record per EventKit recurrence rule of a reminder. reminderId refers to reminders.id; recurrenceRuleValues holds each rule's list values. Relationships name source streams, not destination tables.",
+      properties: related2.recurrenceRules
+    },
+    recurrenceRuleValues: {
+      description: "One source record per entry of a recurrence rule's day, week, month or set-position lists. ruleId refers to recurrenceRules.id and reminderId to reminders.id. Relationships name source streams, not destination tables.",
+      properties: related2.recurrenceRuleValues
+    }
   },
   { snapshot: true }
 );
@@ -68931,16 +70211,18 @@ var apps = {
       }
     ],
     accounts: true,
-    dateField: "dateReceived (dateSent if absent)",
+    datedBy: "date received (date sent if missing)",
     permissions: `${fullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
     unscoped: restrictedMailStreams,
+    // Each message's raw .emlx; messageParts already holds its decoded text.
+    storeCopies: ["messageFiles"],
     source: (scope) => new AppleMailSource(mailDirectory, scope)
   },
   notes: {
     title: "Notes",
     choices: [accounts, collections("folders")],
     accounts: true,
-    dateField: "modifiedAt",
+    datedBy: "date last edited",
     permissions: `${fullDiskAccess} Open Notes to let it finish syncing iCloud changes.`,
     note: "Exact containing folders; select descendants separately. Smart folders are saved searches and cannot be selected as containing folders.",
     source: (scope) => new AppleNotesSource({ scope })
@@ -68956,7 +70238,7 @@ var apps = {
       }
     ],
     accounts: false,
-    dateField: "date",
+    datedBy: "message date",
     permissions: `${fullDiskAccess} Only messages synced to this Mac can be imported.`,
     source: (scope) => new AppleMessagesSource(void 0, void 0, scope)
   },
@@ -68964,7 +70246,7 @@ var apps = {
     title: "Contacts",
     choices: [{ ...accounts, stream: "containers", scope: "collectionIds" }],
     accounts: false,
-    dateField: null,
+    datedBy: null,
     permissions: "Allow ChatGPT when macOS asks for Contacts access, or turn it on in System Settings > Privacy & Security > Contacts. Full Disk Access for ChatGPT also works.",
     source: (scope) => new AppleContactsSource(void 0, void 0, scope)
   },
@@ -68972,7 +70254,7 @@ var apps = {
     title: "Calendar",
     choices: [accounts, collections("calendars")],
     accounts: true,
-    dateField: "event occurrence overlap",
+    datedBy: "event dates (events that overlap the range)",
     permissions: "Allow full Calendar access when macOS asks. Access can be changed under System Settings > Privacy & Security > Calendars.",
     defaultScope: calendarDefaults,
     source: (scope) => new AppleCalendarSource({
@@ -68986,7 +70268,7 @@ var apps = {
     title: "Reminders",
     choices: [accounts, collections("lists")],
     accounts: true,
-    dateField: null,
+    datedBy: null,
     permissions: "Allow full Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.",
     source: (scope) => new AppleRemindersSource(scope)
   }
@@ -69027,7 +70309,7 @@ var configurationSchema = external_exports.strictObject({
         code: "custom",
         message: `${app}: choose collections instead of account IDs`
       });
-    if (apps[app].dateField === null && (scope.startAt !== void 0 || scope.endAt !== void 0))
+    if (apps[app].datedBy === null && (scope.startAt !== void 0 || scope.endAt !== void 0))
       context.addIssue({
         code: "custom",
         message: `${app}: date filtering is unavailable; choose collections`
@@ -69468,8 +70750,8 @@ var SQLiteWriter = class extends Writer {
     else if (owner !== writer)
       throw new TargetOwnedError(this.table.name, String(owner), writer);
   }
-  exists(database, location4) {
-    return database.prepare(`SELECT 1 FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`).get(location4) !== void 0;
+  exists(database, location3) {
+    return database.prepare(`SELECT 1 FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`).get(location3) !== void 0;
   }
   values(database) {
     const { table: table2 } = this;
@@ -69631,13 +70913,13 @@ var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
       const selected2 = table2.columns.find((column2) => column2.name === field);
       if (selected2 === void 0)
         throw new TypeError(`Deduplication requires destination column ${field}`);
-      const kinds2 = {
+      const kinds3 = {
         string: "text",
         number: "real",
         integer: "integer",
         boolean: "boolean"
       };
-      if (selected2.kind !== kinds2[this.deduplication.type(field)])
+      if (selected2.kind !== kinds3[this.deduplication.type(field)])
         throw new TypeError(`Deduplication column ${field} must preserve the source scalar type`);
       return selected2;
     };
@@ -69856,7 +71138,7 @@ async function importApp(directory, { app, scope, includeAttachments }, lastSucc
     const streams4 = catalog7.streams.filter(
       (stream) => !omitted.has(stream.name)
     );
-    const withFiles = (stream) => includeAttachments && stream.supportsFileTransfer === true;
+    const withFiles = (stream) => includeAttachments && stream.supportsFileTransfer === true && !apps[app].storeCopies?.includes(stream.name);
     const appDirectory = join14(directory, app);
     mkdirSync2(appDirectory, { recursive: true, mode: 448 });
     const destination = new SQLiteDestination({
@@ -70050,7 +71332,7 @@ var ApplePlugin = class {
       app,
       choices,
       permissions: definition3.permissions,
-      dateField: definition3.dateField,
+      datedBy: definition3.datedBy,
       defaultScope: definition3.defaultScope?.(),
       note: definition3.note
     };
@@ -70128,12 +71410,12 @@ function scopeForm(app, rows, previous) {
     ...definition3.defaultScope?.(),
     ...previous?.scope
   };
-  if (definition3.dateField !== null) {
+  if (definition3.datedBy !== null) {
     properties6.from = {
       type: "string",
       format: "date",
       title: "From",
-      description: `First day to include, by ${definition3.dateField}. Leave empty to start at the earliest.`,
+      description: `First day to include, by ${definition3.datedBy}. Leave empty to start at the earliest.`,
       ...startAt && { default: day(new Date(startAt)) }
     };
     properties6.until = {
