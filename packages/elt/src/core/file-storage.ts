@@ -5,6 +5,9 @@ import type { FileContent } from './file-content.ts';
 export abstract class FileStorage {
   abstract readonly identity: string;
 
+  // What a reference returned by save() is, for readers of the field holding it.
+  abstract readonly reference: string;
+
   // Resolves only after the complete object is published. Retries must reuse
   // the reference, and new content must not overwrite a referenced object.
   abstract save(scope: string, content: FileContent): Promise<string>;

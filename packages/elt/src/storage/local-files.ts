@@ -12,6 +12,8 @@ async function syncDirectory(path: string): Promise<void> {
 export class LocalFiles extends FileStorage {
   readonly directory: string;
   readonly identity: string;
+  readonly reference =
+    'Absolute path, on the machine that ran the load, of a copy of the source file bytes. Named by content hash, keeping a short source extension, and kept only while a row references it. Not the source file name, a URL or extracted text.';
 
   constructor({ directory }: { directory: string }) {
     super();

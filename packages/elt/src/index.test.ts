@@ -45,6 +45,7 @@ test('file storage declarations validate identities and keep parsing separate wi
   });
   const storage = new (class extends FileStorage {
     override identity = 'test-store';
+    override reference = 'A test reference.';
     override async save(): Promise<string> {
       throw new Error('unexpected save');
     }
