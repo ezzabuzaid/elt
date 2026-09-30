@@ -53,7 +53,7 @@ Copy this checklist into your response and tick it off as you go:
 
 ### Records
 
-- Validate every record with `validateRecords(stream, records, '<Source>')` against the stream schema (`type` with nullable unions, `enum`, `minimum`/`maximum`, `minLength`, `format: 'date-time' | 'date'`). Derive record types with `SchemaRecord<typeof properties>`; never hand-write validators or duplicate types.
+- Validate every record with `validateRecords(stream, records, '<Source>')` against the stream schema (`type` with nullable unions, `enum`, `minimum`/`maximum`, `minLength`, `format: 'date-time' | 'date'`, and `type: 'array'` with an `items` schema for a list of values; a collection whose members have fields is its own stream). Derive record types with `SchemaRecord<typeof properties>`; never hand-write validators or duplicate types.
 - Missing values stay `null`. Timestamps are canonical UTC (`isTimestamp`); local calendar dates stay dates (`isCalendarDate`).
 - Preserve error causes.
 - Do not add console logging or output, including debug tables and consent-link printing. Preserve errors and exit statuses; examples should follow the same rule.

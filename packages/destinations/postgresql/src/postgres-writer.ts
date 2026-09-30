@@ -453,7 +453,7 @@ export abstract class PostgresWriter extends Writer {
     const { columns } = this.table;
     // One JSON parameter per batch, cast back per column: no bind-parameter
     // limit. Declared text so the driver sends it as given.
-    const insert = `INSERT INTO ${stage} (${seq}, ${op}, ${columns.map((column) => column.quotedName).join(', ')}) SELECT (row->>0)::bigint, row->>1, ${columns.map((column, index) => `(row->>${index + 2})::${column.storageType}`).join(', ')} FROM json_array_elements($1::text::json) AS row`;
+    const insert = `INSERT INTO ${stage} (${seq}, ${op}, ${columns.map((column) => column.quotedName).join(', ')}) SELECT (row->>0)::bigint, row->>1, ${columns.map((column, index) => column.valueFrom('row', index + 2)).join(', ')} FROM json_array_elements($1::text::json) AS row`;
     let pending: EncodedValue[][] = [];
     let next = 0;
     const flush = async () => {

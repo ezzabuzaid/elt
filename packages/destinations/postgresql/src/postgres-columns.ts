@@ -1,10 +1,36 @@
 import type { Stream } from 'elt';
 import { PostgresColumn } from './postgres-column.ts';
 
+function scalarKind(
+  name: string,
+  type: unknown,
+  format: unknown,
+): PostgresColumn['kind'] {
+  switch (type) {
+    case 'string':
+      return format === 'date'
+        ? 'date'
+        : format === 'date-time'
+          ? 'timestamp'
+          : 'text';
+    case 'integer':
+      return 'integer';
+    case 'number':
+      return 'real';
+    case 'boolean':
+      return 'boolean';
+    default:
+      throw new TypeError(
+        `Unsupported JSON Schema type for field ${name}: ${String(type)}`,
+      );
+  }
+}
+
 // Postgres column declarations are independent of a source or connection.
 export class PostgresColumns {
-  // Flat scalar schemas only. Unlike SQLite, the string formats get their own
-  // types, so readers can do date arithmetic without parsing text.
+  // Scalars and arrays of scalars. Unlike SQLite, the string formats get their
+  // own types, so readers can do date arithmetic without parsing text, and an
+  // array is a native array of its item type.
   static fromSchema(schema: Stream['jsonSchema']): readonly PostgresColumn[] {
     const { properties, required } = schema;
     if (
@@ -42,40 +68,27 @@ export class PostgresColumns {
           new Set(types).size !== types.length
         )
           throw new TypeError(`Unsupported JSON Schema type for field ${name}`);
-        const scalarTypes = types.filter((value) => value !== 'null');
-        if (scalarTypes.length !== 1)
+        const valueTypes = types.filter((value) => value !== 'null');
+        if (valueTypes.length !== 1)
           throw new TypeError(
             `Postgres requires one scalar type for field ${name}`,
           );
-        const format: unknown = Reflect.get(field, 'format');
-        let kind: PostgresColumn['kind'];
-        switch (scalarTypes[0]) {
-          case 'string':
-            kind =
-              format === 'date'
-                ? 'date'
-                : format === 'date-time'
-                  ? 'timestamp'
-                  : 'text';
-            break;
-          case 'integer':
-            kind = 'integer';
-            break;
-          case 'number':
-            kind = 'real';
-            break;
-          case 'boolean':
-            kind = 'boolean';
-            break;
-          default:
-            throw new TypeError(
-              `Unsupported JSON Schema type for field ${name}: ${scalarTypes[0]}`,
-            );
-        }
+        const array = valueTypes[0] === 'array';
+        const items: unknown = array ? Reflect.get(field, 'items') : field;
+        if (items === null || typeof items !== 'object' || Array.isArray(items))
+          throw new TypeError(
+            `Unsupported JSON Schema items for field ${name}`,
+          );
+        const kind = scalarKind(
+          name,
+          array ? Reflect.get(items, 'type') : valueTypes[0],
+          Reflect.get(items, 'format'),
+        );
         return new PostgresColumn(name, kind, {
           nullable: types.includes('null'),
           optional: !requiredFields.has(name),
           primaryKey: false,
+          array,
         });
       },
     );

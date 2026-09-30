@@ -2113,6 +2113,165 @@ test('a checkpoint lost between commit and save replays to the same rows', async
   );
 });
 
+test('array fields load as native arrays of their item type, in order, and an unchanged snapshot writes nothing', async () => {
+  await using database = await scratchDatabase();
+  const lists = new Stream({
+    name: 'lists',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        counts: { type: 'array', items: { type: 'integer' } },
+        words: { type: ['array', 'null'], items: { type: 'string' } },
+        ratios: { type: 'array', items: { type: 'number' } },
+        flags: { type: 'array', items: { type: 'boolean' } },
+        days: { type: 'array', items: { type: 'string', format: 'date' } },
+        times: {
+          type: 'array',
+          items: { type: 'string', format: 'date-time' },
+        },
+      },
+      required: ['id', 'counts', 'words', 'ratios', 'flags', 'days', 'times'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  class Snapshots extends ScriptedSource {
+    rows: Record<string, unknown>[] = [];
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      yield* diffSnapshot(configuration.stream, this.rows, state);
+    }
+  }
+  const source = new Snapshots([lists], {});
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(lists, destination.table('lists'), incremental('lists')),
+        ],
+      }),
+    ],
+  });
+  const a = {
+    id: 'a',
+    counts: [3, 1, 9007199254740991],
+    words: ['b', 'a', 'b'],
+    ratios: [0.5, -2],
+    flags: [true, false],
+    days: ['0000-03-01', '2024-02-29'],
+    times: ['2025-01-02T03:04:05.006Z'],
+  };
+  const b = {
+    id: 'b',
+    counts: [],
+    words: null,
+    ratios: [],
+    flags: [],
+    days: [],
+    times: [],
+  };
+  source.rows = [a, b];
+
+  const [first] = await pipeline.run();
+  const [unchanged] = await pipeline.run();
+  source.rows = [{ ...a, counts: [3, 1] }, b];
+  const [changed] = await pipeline.run();
+
+  assert.deepEqual([first?.count, unchanged?.count, changed?.count], [2, 0, 1]);
+  assert.deepEqual(
+    (
+      await database.sql`SELECT column_name, data_type, udt_name, is_nullable FROM information_schema.columns WHERE table_schema = 'raw' AND table_name = 'lists' AND data_type = 'ARRAY' ORDER BY ordinal_position`
+    ).map((column) => ({ ...column })),
+    [
+      {
+        column_name: 'counts',
+        data_type: 'ARRAY',
+        udt_name: '_int8',
+        is_nullable: 'NO',
+      },
+      {
+        column_name: 'words',
+        data_type: 'ARRAY',
+        udt_name: '_text',
+        is_nullable: 'YES',
+      },
+      {
+        column_name: 'ratios',
+        data_type: 'ARRAY',
+        udt_name: '_float8',
+        is_nullable: 'NO',
+      },
+      {
+        column_name: 'flags',
+        data_type: 'ARRAY',
+        udt_name: '_bool',
+        is_nullable: 'NO',
+      },
+      {
+        column_name: 'days',
+        data_type: 'ARRAY',
+        udt_name: '_date',
+        is_nullable: 'NO',
+      },
+      {
+        column_name: 'times',
+        data_type: 'ARRAY',
+        udt_name: '_timestamptz',
+        is_nullable: 'NO',
+      },
+    ],
+  );
+  assert.deepEqual(
+    (
+      await database.sql`SELECT id, counts::text, words::text, ratios::text, flags::text,
+        days[1] = DATE '0001-03-01 BC' AS year_zero, days[2]::text AS leap_day,
+        times[1] = TIMESTAMPTZ '2025-01-02T03:04:05.006Z' AS instant,
+        cardinality(times) AS times
+        FROM raw.lists ORDER BY id`
+    ).map((row) => ({ ...row })),
+    [
+      {
+        id: 'a',
+        counts: '{3,1}',
+        words: '{b,a,b}',
+        ratios: '{0.5,-2}',
+        flags: '{t,f}',
+        year_zero: true,
+        leap_day: '2024-02-29',
+        instant: true,
+        times: 1,
+      },
+      {
+        id: 'b',
+        counts: '{}',
+        words: null,
+        ratios: '{}',
+        flags: '{}',
+        year_zero: null,
+        leap_day: null,
+        instant: null,
+        times: 0,
+      },
+    ],
+  );
+});
+
 test("a statement that fails in one stream's merge does not erase a sibling's stage", async () => {
   await using database = await scratchDatabase();
   const staged = scripted('staged');

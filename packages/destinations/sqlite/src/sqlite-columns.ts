@@ -1,9 +1,26 @@
 import type { Stream } from 'elt';
 import { SQLiteColumn } from './sqlite-column.ts';
 
+function scalarKind(name: string, type: unknown): SQLiteColumn['kind'] {
+  switch (type) {
+    case 'string':
+      return 'text';
+    case 'integer':
+      return 'integer';
+    case 'number':
+      return 'real';
+    case 'boolean':
+      return 'boolean';
+    default:
+      throw new TypeError(
+        `Unsupported JSON Schema type for field ${name}: ${String(type)}`,
+      );
+  }
+}
+
 // SQLite column declarations are independent of a source or connection.
 export class SQLiteColumns {
-  // ponytail: flat scalar schemas only; add nested mapping when a source requires it.
+  // Scalars, and arrays of scalars as JSON arrays in TEXT.
   static fromSchema(schema: Stream['jsonSchema']): readonly SQLiteColumn[] {
     const { properties, required } = schema;
     if (
@@ -41,34 +58,26 @@ export class SQLiteColumns {
           new Set(types).size !== types.length
         )
           throw new TypeError(`Unsupported JSON Schema type for field ${name}`);
-        const scalarTypes = types.filter((value) => value !== 'null');
-        if (scalarTypes.length !== 1)
+        const valueTypes = types.filter((value) => value !== 'null');
+        if (valueTypes.length !== 1)
           throw new TypeError(
             `SQLite requires one scalar type for field ${name}`,
           );
-        let kind: SQLiteColumn['kind'];
-        switch (scalarTypes[0]) {
-          case 'string':
-            kind = 'text';
-            break;
-          case 'integer':
-            kind = 'integer';
-            break;
-          case 'number':
-            kind = 'real';
-            break;
-          case 'boolean':
-            kind = 'boolean';
-            break;
-          default:
-            throw new TypeError(
-              `Unsupported JSON Schema type for field ${name}: ${scalarTypes[0]}`,
-            );
-        }
+        const array = valueTypes[0] === 'array';
+        const items: unknown = array ? Reflect.get(field, 'items') : field;
+        if (items === null || typeof items !== 'object' || Array.isArray(items))
+          throw new TypeError(
+            `Unsupported JSON Schema items for field ${name}`,
+          );
+        const kind = scalarKind(
+          name,
+          array ? Reflect.get(items, 'type') : valueTypes[0],
+        );
         return new SQLiteColumn(name, kind, {
           nullable: types.includes('null'),
           optional: !requiredFields.has(name),
           primaryKey: false,
+          array,
         });
       },
     );

@@ -93,6 +93,93 @@ test('the public ELT API copies source records into SQLite', async () => {
   assert.deepEqual({ ...row }, { id: 'record-1', name: 'Test record' });
 });
 
+test('array fields load as JSON arrays that SQLite checks and reads element by element', async () => {
+  class ListSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'lists';
+    readonly lists = new Stream({
+      name: 'lists',
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          counts: { type: 'array', items: { type: 'integer' } },
+          words: { type: ['array', 'null'], items: { type: 'string' } },
+          flags: { type: 'array', items: { type: 'boolean' } },
+        },
+        required: ['id', 'counts', 'words', 'flags'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh'],
+    });
+
+    protected readonly catalog = new Catalog([this.lists]);
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract(configuration: CopyConfiguration) {
+      yield {
+        stream: configuration.stream.name,
+        data: { id: 'a', counts: [3, 1], words: ['b', 'a'], flags: [true] },
+      };
+      yield {
+        stream: configuration.stream.name,
+        data: { id: 'b', counts: [], words: null, flags: [] },
+      };
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-lists-'));
+  const source = new ListSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'lists.sqlite'),
+  });
+  const copy = new Copy(source.lists, destination.table('lists'));
+
+  const results = await new Pipeline({
+    connections: [
+      new Connection({ name: 'test', source, destination, steps: [copy] }),
+    ],
+  }).run();
+
+  assert.deepEqual(results, [{ copy, count: 2, deleted: 0 }]);
+  {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    assert.deepEqual(
+      database
+        .prepare(
+          "SELECT id, counts, words, flags, (SELECT group_concat(value, '+') FROM json_each(lists.counts)) AS summed FROM lists ORDER BY id",
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          id: 'a',
+          counts: '[3,1]',
+          words: '["b","a"]',
+          flags: '[true]',
+          summed: '3+1',
+        },
+        { id: 'b', counts: '[]', words: null, flags: '[]', summed: null },
+      ],
+    );
+  }
+  using writable = new DatabaseSync(destination.path);
+  assert.throws(
+    () => writable.exec("UPDATE lists SET counts = '{}' WHERE id = 'a'"),
+    /CHECK constraint failed/,
+  );
+});
+
 test('a source accepts only the stream objects from its own catalog', async () => {
   class OwnedSource extends Source {
     override coverage() {

@@ -29,7 +29,12 @@ const dataTypes = {
 } as const;
 
 // A value the batch insert can carry through JSON and cast back to the column type.
-export type EncodedValue = string | number | boolean | null;
+export type EncodedValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly (string | number | boolean)[];
 
 // ISO years count astronomically, so year 0000 is 1 BC, which Postgres spells
 // as year 0001 with a BC suffix; every other year reads the same in both.
@@ -44,6 +49,8 @@ export class PostgresColumn {
   readonly isPrimaryKey: boolean;
   readonly nullable: boolean;
   readonly optional: boolean;
+  // An array of kind, stored as a native Postgres array of that type.
+  readonly array: boolean;
   readonly fileRead?: FileRead;
 
   constructor(
@@ -53,12 +60,18 @@ export class PostgresColumn {
       nullable: boolean;
       optional: boolean;
       primaryKey: boolean;
+      array?: boolean;
       fileRead?: FileRead;
     },
   ) {
     identifier(name, 'column name');
     if (!Object.hasOwn(storageTypes, kind))
       throw new TypeError('Unsupported Postgres column type');
+    this.array = options.array ?? false;
+    if (this.array && (kind === 'blob' || options.primaryKey))
+      throw new TypeError(
+        'Array columns hold scalar values and cannot be keys',
+      );
     this.fileRead = options.fileRead;
     if (
       this.fileRead !== undefined &&
@@ -79,6 +92,7 @@ export class PostgresColumn {
       nullable: false,
       optional: false,
       primaryKey: true,
+      array: this.array,
       fileRead: this.fileRead,
     });
   }
@@ -88,12 +102,13 @@ export class PostgresColumn {
       nullable: false,
       optional: false,
       primaryKey: this.isPrimaryKey,
+      array: this.array,
       fileRead: this.fileRead,
     });
   }
 
   from(file: FileReference): PostgresColumn {
-    if (this.kind !== 'blob' && this.kind !== 'text')
+    if (this.array || (this.kind !== 'blob' && this.kind !== 'text'))
       throw new TypeError(
         'Files require a BLOB column, parsed TEXT or a stored TEXT reference',
       );
@@ -127,11 +142,20 @@ export class PostgresColumn {
   }
 
   get storageType(): string {
-    return this.storesFile ? 'UUID' : storageTypes[this.kind];
+    if (this.storesFile) return 'UUID';
+    return `${storageTypes[this.kind]}${this.array ? '[]' : ''}`;
   }
 
   get dataType(): string {
-    return this.storesFile ? 'uuid' : dataTypes[this.kind];
+    if (this.storesFile) return 'uuid';
+    return this.array ? 'ARRAY' : dataTypes[this.kind];
+  }
+
+  // This column's value read back from element index of a JSON batch row. An
+  // array's elements are cast one by one, in order; a JSON null stays NULL.
+  valueFrom(row: string, index: number): string {
+    if (!this.array) return `(${row}->>${index})::${this.storageType}`;
+    return `CASE WHEN json_typeof(${row}->${index}) = 'array' THEN ARRAY(SELECT element.value::${storageTypes[this.kind]} FROM json_array_elements_text(${row}->${index}) WITH ORDINALITY AS element (value, position) ORDER BY element.position) END`;
   }
 
   get definition(): string {
@@ -147,6 +171,25 @@ export class PostgresColumn {
     }
     const value: unknown = Reflect.get(record, this.name);
     if (value === null && this.nullable) return null;
+    if (this.array) {
+      if (Array.isArray(value)) {
+        const elements = value.map((element) => this.#scalar(element));
+        if (elements.every((element) => element !== undefined))
+          return elements as (string | number | boolean)[];
+      }
+      throw new TypeError(
+        `Column "${this.name}" requires an array of ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
+      );
+    }
+    const encoded = this.#scalar(value);
+    if (encoded !== undefined) return encoded;
+    throw new TypeError(
+      `Column "${this.name}" requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
+    );
+  }
+
+  // One scalar in its batch encoding, or undefined when the kind rejects it.
+  #scalar(value: unknown): string | number | boolean | undefined {
     switch (this.kind) {
       case 'text':
         if (typeof value === 'string' && !value.includes('\0')) return value;
@@ -183,8 +226,6 @@ export class PostgresColumn {
         } else if (value instanceof Uint8Array)
           return `\\x${Buffer.from(value).toString('hex')}`;
     }
-    throw new TypeError(
-      `Column "${this.name}" requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
-    );
+    return undefined;
   }
 }

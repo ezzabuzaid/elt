@@ -17,6 +17,8 @@ export class SQLiteColumn {
   readonly isPrimaryKey: boolean;
   readonly nullable: boolean;
   readonly optional: boolean;
+  // An array of kind, stored as a JSON array in TEXT.
+  readonly array: boolean;
   readonly fileRead?: FileRead;
 
   constructor(
@@ -26,6 +28,7 @@ export class SQLiteColumn {
       nullable: boolean;
       optional: boolean;
       primaryKey: boolean;
+      array?: boolean;
       fileRead?: FileRead;
     },
   ) {
@@ -33,6 +36,11 @@ export class SQLiteColumn {
       throw new TypeError('Invalid column name');
     if (!Object.hasOwn(storageTypes, kind))
       throw new TypeError('Unsupported SQLite column type');
+    this.array = options.array ?? false;
+    if (this.array && (kind === 'blob' || options.primaryKey))
+      throw new TypeError(
+        'Array columns hold scalar values and cannot be keys',
+      );
     this.fileRead = options.fileRead;
     if (
       this.fileRead !== undefined &&
@@ -53,6 +61,7 @@ export class SQLiteColumn {
       nullable: false,
       optional: false,
       primaryKey: true,
+      array: this.array,
       fileRead: this.fileRead,
     });
   }
@@ -62,12 +71,13 @@ export class SQLiteColumn {
       nullable: false,
       optional: false,
       primaryKey: this.isPrimaryKey,
+      array: this.array,
       fileRead: this.fileRead,
     });
   }
 
   from(file: FileReference): SQLiteColumn {
-    if (this.kind !== 'blob' && this.kind !== 'text')
+    if (this.array || (this.kind !== 'blob' && this.kind !== 'text'))
       throw new TypeError(
         'Files require a BLOB column, parsed TEXT or a stored TEXT reference',
       );
@@ -102,11 +112,17 @@ export class SQLiteColumn {
   }
 
   get storageType(): string {
+    if (this.array) return 'TEXT';
     return this.storesFile ? 'INTEGER' : storageTypes[this.kind];
   }
 
   get definition(): string {
-    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? ' PRIMARY KEY' : ''}${this.required ? ' NOT NULL' : ''}${this.kind === 'boolean' ? ` CHECK (${this.quotedName} IN (0, 1))` : ''}`;
+    const check = this.array
+      ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')`
+      : this.kind === 'boolean'
+        ? ` CHECK (${this.quotedName} IN (0, 1))`
+        : '';
+    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? ' PRIMARY KEY' : ''}${this.required ? ' NOT NULL' : ''}${check}`;
   }
 
   encode(record: unknown): SQLInputValue {
@@ -118,6 +134,16 @@ export class SQLiteColumn {
     }
     const value: unknown = Reflect.get(record, this.name);
     if (value === null && this.nullable) return null;
+    if (this.array) {
+      if (
+        Array.isArray(value) &&
+        value.every((element) => this.#element(element))
+      )
+        return JSON.stringify(value);
+      throw new TypeError(
+        `Column "${this.name}" requires an array of ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
+      );
+    }
     switch (this.kind) {
       case 'text':
         if (typeof value === 'string') return value;
@@ -146,5 +172,21 @@ export class SQLiteColumn {
     throw new TypeError(
       `Column "${this.name}" requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
     );
+  }
+
+  // Whether a JSON array element keeps this kind's value exactly.
+  #element(value: unknown): boolean {
+    switch (this.kind) {
+      case 'text':
+        return typeof value === 'string';
+      case 'boolean':
+        return typeof value === 'boolean';
+      case 'integer':
+        return Number.isSafeInteger(value);
+      case 'real':
+        return typeof value === 'number' && Number.isFinite(value);
+      default:
+        return false;
+    }
   }
 }

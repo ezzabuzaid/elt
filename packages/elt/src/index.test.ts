@@ -104,6 +104,11 @@ test('record validation enforces every property of the stream schema', () => {
         done: { type: 'boolean' },
         at: { type: ['string', 'null'], format: 'date-time' },
         on: { type: 'string', format: 'date' },
+        tags: { type: 'array', items: { type: 'string', minLength: 1 } },
+        seen: {
+          type: ['array', 'null'],
+          items: { type: 'string', format: 'date-time' },
+        },
       },
     },
     supportedSyncModes: ['full_refresh'],
@@ -116,9 +121,13 @@ test('record validation enforces every property of the stream schema', () => {
     done: false,
     at: null,
     on: '2024-02-29',
+    tags: ['x', 'y'],
+    seen: null,
   };
 
   assert.deepEqual(validateRecords(stream, [valid], 'Test'), [valid]);
+  const listed = { ...valid, tags: [], seen: ['2025-01-02T03:04:05.000Z'] };
+  assert.deepEqual(validateRecords(stream, [listed], 'Test'), [listed]);
   const rejects = (records: unknown, message: string) =>
     assert.throws(() => validateRecords(stream, records, 'Test'), { message });
   rejects({}, 'Test returned invalid items records');
@@ -138,20 +147,34 @@ test('record validation enforces every property of the stream schema', () => {
     ['done', 'false'],
     ['at', '2025-01-02T03:04:05Z'],
     ['on', '2025-02-29'],
+    ['tags', 'x'],
+    ['tags', null],
+    ['tags', ['']],
+    ['tags', ['x', 1]],
+    ['seen', ['2025-01-02T03:04:05Z']],
+    ['seen', [null]],
   ] as const)
     rejects(
       [{ ...valid, [field]: value }],
       `Test returned invalid items.${field}`,
     );
-  const unsupported = new Stream({
-    name: 'nested',
-    jsonSchema: { type: 'object', properties: { tags: { type: 'array' } } },
-    supportedSyncModes: ['full_refresh'],
-  });
-  assert.throws(
-    () => validateRecords(unsupported, [], 'Test'),
-    /nested\.tags declares an unsupported type/,
-  );
+  for (const tags of [
+    { type: 'array' },
+    { type: 'array', items: { type: 'null' } },
+    { type: ['array', 'string'], items: { type: 'string' } },
+    { type: 'string', items: { type: 'string' } },
+    { type: 'array', minLength: 1, items: { type: 'string' } },
+  ]) {
+    const unsupported = new Stream({
+      name: 'nested',
+      jsonSchema: { type: 'object', properties: { tags } },
+      supportedSyncModes: ['full_refresh'],
+    });
+    assert.throws(
+      () => validateRecords(unsupported, [], 'Test'),
+      /nested\.tags declares an unsupported type/,
+    );
+  }
 });
 
 type ReadContext = AsyncDisposable & { readonly id: number };

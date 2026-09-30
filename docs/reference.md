@@ -122,7 +122,9 @@ Both deduplication modes need a key: the stream's own, or for a keyless stream t
 
 The greatest cursor wins. Older arrivals are ignored after validation. Equal cursors retain the first stored record, including across runs. This makes replay deterministic; a source that changes content without changing its cursor cannot distinguish those versions. Text uses UTF-8 byte order, matching SQLite `BINARY`; timestamps should use one canonical UTC ISO format. All observations are validated, even losing versions.
 
-SQLite inference maps flat JSON Schema fields: `string` → `TEXT`, `integer` → `INTEGER`, `number` → `REAL`, `boolean` → `INTEGER` with a 0/1 constraint. Nullable scalars are supported for ordinary fields. Missing optional fields become SQL `NULL`. Explicit columns support `text`, `integer`, `real`, `blob`, and `boolean`; they allow null unless marked `.notNull()` or `.primaryKey()`. Missing/undefined explicit fields fail. An explicit projection can omit unsupported nested fields.
+Stream properties are scalars or arrays of one scalar type. An array field declares `type: 'array'` (or `['array', 'null']`) and an `items` schema carrying the element's type, `enum`, range, `minLength` and date `format`; `validateRecords` checks every element, and constraints on the array itself are refused. Arrays hold lists of values, such as keywords or daily counts. A collection whose members have fields of their own stays a separate stream of rows. Arrays cannot be keys or cursors.
+
+SQLite inference maps flat JSON Schema fields: `string` → `TEXT`, `integer` → `INTEGER`, `number` → `REAL`, `boolean` → `INTEGER` with a 0/1 constraint, and an array → `TEXT` holding a JSON array, checked by `json_valid` and `json_type(...) = 'array'` and read with `json_each`. Nullable scalars and arrays are supported for ordinary fields. Missing optional fields become SQL `NULL`. Explicit columns support `text`, `integer`, `real`, `blob`, and `boolean`; they allow null unless marked `.notNull()` or `.primaryKey()`. Missing/undefined explicit fields fail. An explicit projection can omit unsupported nested fields.
 
 SQLite creates strict tables. Existing SQL constraints remain authoritative; there are no schema migrations. Table names starting with `_mac_elt_` are reserved. Deduplication additionally verifies stored key/cursor column types and rejects null keys/cursors. It uses native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html) and a reserved `_mac_elt_dedup_*` unique index. Changing to ordinary append/overwrite removes that mode-owned index while retaining explicit constraints. An existing append-history table with repeated keys must be replaced with `overwrite_dedup` before incremental deduplication can start.
 
@@ -560,8 +562,9 @@ Inferred columns follow the stream schema, and unlike SQLite the string formats 
 | `integer` | `BIGINT` |
 | `number` | `DOUBLE PRECISION` |
 | `boolean` | `BOOLEAN` |
+| `array` of any of the above | a native array of that type, such as `BIGINT[]` or `TIMESTAMPTZ[]` |
 
-ISO dates count years astronomically and Postgres does not, so year `0000` loads as `0001 BC`, the same day; every other year is written as given.
+Arrays keep their element order and load a JSON `null` as SQL `NULL`; readers use `= ANY(...)`, `unnest()` and `cardinality()`, and `marts.catalog` shows the element type. ISO dates count years astronomically and Postgres does not, so year `0000` loads as `0001 BC`, the same day; every other year is written as given.
 
 Explicit columns use `columns.text/integer/real/boolean/date/timestamp/blob(field)` with `.notNull()` and `.primaryKey()`. A plain `blob()` stores BYTEA; `blob().from(file)` streams originals into chunk tables, and `text().from(file).parse(parser)` stores parsed text. See [attachment storage](#attachment-files-and-document-parsing). Identifiers are case-sensitive and limited to 63 bytes, because Postgres would silently truncate a longer one; `_mac_elt_` names and a `loaded_at` column are reserved, and `pg_` schemas are refused.
 
@@ -930,7 +933,7 @@ The `icsComponents`, `icsProperties`, and `icsParameters` streams read each item
 
 ### Streams
 
-All eleven streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables or Markdown targets. Related collections are separate scalar rows, preserving their data without adding JSON columns to SQLite.
+All eleven streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables or Markdown targets. Related collections, whose members carry fields of their own, are separate streams of rows.
 
 | Stream | Contents and relationships |
 | --- | --- |
