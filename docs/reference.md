@@ -1115,14 +1115,14 @@ Checked live on 2026-09-30 against macOS 27.0 (26A428) and Safari 27.0 by drivin
 
 - `origin`: a visit on this Mac stayed 0 after Safari uploaded it (sync generation 1635); 736 visits synced from an iPhone arrived as 1. Launching Safari after five weeks fetched only the last two weeks of the iPhone's history.
 - A second profile wrote its visit to `Profiles/<serverId>/History.db`, not the default `History.db`; its tabs named the profile by `external_uuid`. Deleting the profile (Safari asks to "stop using Profiles" when it is the last extra one) removed its folder, rows and Favorites folder; the next load deleted its history, tabs and groups.
-- Deleting a history item wrote a tombstone with an unbounded start and an encrypted 208-byte URL; each of six deletions wrote one, and the next load deleted the visits and items.
+- Deleting a history item wrote a tombstone with an unbounded start and an encrypted 208-byte URL; each of six deletions wrote one, and the next load deleted the visits and items. History › Clear History for the last hour wrote one tombstone with that hour as its range and no URL.
 - A bookmark saved with a description stored it as `previewText` with `previewTextIsUserDefined`. New Reading List items reached `Bookmarks.plist` only minutes later, at Safari's next write; removing them and the bookmark deleted their rows.
 - Pinning a tab moved it under the `pinned` folder; a new named tab group sat under the root folder with its own `TopScopedBookmarkList` Favorites.
 - A plain download recorded its final path; an archive Safari opened on its own recorded paths inside a removed `.download` folder. Clearing the Downloads list emptied `Downloads.plist` and deleted the rows.
 - Safari keeps the previous session's windows and tabs in `SafariTabs.db` until the next session replaces them.
 - A second load with no changes, with Safari running, wrote nothing.
 
-Unverified: a tombstone for a cleared time range without a URL (clearing a range would erase the user's real history), iCloud Tabs close requests (making one closes a real tab on another device), and shared tab groups (they need a second iCloud account).
+Unverified: iCloud Tabs close requests (making one closes a real tab on another device), and shared tab groups (they need a second iCloud account).
 
 ## Google Search Console
 

@@ -167,6 +167,14 @@ test('Safari reads history, iCloud Tabs, bookmarks and recently closed tabs as d
         unbounded: true,
         deviceId: 'DEVICE-1',
       },
+      // Clearing a time range records the range and no URL.
+      {
+        id: '3',
+        url: null,
+        encryptedUrl: null,
+        unbounded: false,
+        deviceId: 'DEVICE-1',
+      },
     ],
   );
   // Every profile keeps its own History.db; its rows carry the profile.
@@ -768,7 +776,7 @@ test('Safari scope keeps the chosen profiles and visit dates, and leaves unattri
     visits: 3,
     items: 3,
     tags: 1,
-    tombstones: 2,
+    tombstones: 3,
     closed: 3,
     tabs: 5,
     groups: 7,
@@ -792,7 +800,7 @@ test('Safari scope keeps the chosen profiles and visit dates, and leaves unattri
     visits: 3,
     items: 2,
     tags: 1,
-    tombstones: 2,
+    tombstones: 3,
     closed: 3,
     tabs: 4,
     groups: 5,

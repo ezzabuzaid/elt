@@ -383,6 +383,17 @@ export async function safariFixture(root: string) {
         65793,
       );
     history
+      .prepare('INSERT INTO history_tombstones VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(
+        3,
+        appleSeconds('2026-01-04T10:00:00Z'),
+        appleSeconds('2026-01-04T11:00:00Z'),
+        null,
+        7,
+        'DEVICE-1',
+        65793,
+      );
+    history
       .prepare('INSERT INTO history_tags VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(1, 1, 200, 'Q2063', 'JSON', appleSeconds('2026-01-11T00:00:00Z'), 0);
     history
