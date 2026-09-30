@@ -178,6 +178,8 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
         'apple_sync',
       ],
     );
+    // The server names the installed version, which decides who leads.
+    assert.equal(client.getServerVersion()?.version, manifest.version);
     // The plugin page's native Settings section names two of those tools.
     assert.deepEqual(
       OpenAISettingsCapabilitySchema.parse(

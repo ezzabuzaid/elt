@@ -7016,8 +7016,8 @@ var require_formats = __commonJS({
         return false;
       const year = +matches[1];
       const month = +matches[2];
-      const day2 = +matches[3];
-      return month >= 1 && month <= 12 && day2 >= 1 && day2 <= (month === 2 && isLeapYear(year) ? 29 : DAYS[month]);
+      const day = +matches[3];
+      return month >= 1 && month <= 12 && day >= 1 && day <= (month === 2 && isLeapYear(year) ? 29 : DAYS[month]);
     }
     function compareDate(d1, d2) {
       if (!(d1 && d2))
@@ -32827,6 +32827,9 @@ var require_mailsplit = __commonJS({
     };
   }
 });
+
+// apps/apple/src/plugin/main.ts
+import { readFileSync } from "node:fs";
 
 // node_modules/zod/v3/helpers/util.js
 var util;
@@ -64706,9 +64709,9 @@ function relatedRows(item, itemId, ownerKey) {
       value: value2,
       weekNumber
     });
-    for (const [index, day2] of rule.daysOfTheWeek.entries())
+    for (const [index, day] of rule.daysOfTheWeek.entries())
       recurrenceRuleValues.push(
-        value("daysOfTheWeek", index, day2.day, day2.weekNumber)
+        value("daysOfTheWeek", index, day.day, day.weekNumber)
       );
     for (const component2 of [
       "daysOfTheMonth",
@@ -65752,7 +65755,7 @@ function attributes(table2, alias, list3) {
     }
   return fields;
 }
-function calendarDate(table2, alias, attribute, [year, month, day2]) {
+function calendarDate(table2, alias, attribute, [year, month, day]) {
   const column = `Z${attribute.toUpperCase()}`;
   requires(table2, column);
   const part = (format) => `CAST(strftime('${format}', ${alias}.${column} + ${appleEpoch2}, 'unixepoch') AS INTEGER)`;
@@ -65772,7 +65775,7 @@ function calendarDate(table2, alias, attribute, [year, month, day2]) {
       },
       part("%m")
     ],
-    [day2]: [
+    [day]: [
       {
         ...nullableInteger,
         description: `Day of the month ${read}; NULL when no date is stored.`
@@ -74558,87 +74561,6 @@ function settingsUpdate(plugin2, set2) {
 }
 
 // apps/apple/src/plugin/setup-forms.ts
-var pad = (value) => String(value).padStart(2, "0");
-var day = (instant2) => `${instant2.getFullYear()}-${pad(instant2.getMonth() + 1)}-${pad(instant2.getDate())}`;
-var midnight = (date5, days = 0) => {
-  const instant2 = /* @__PURE__ */ new Date(`${date5}T00:00:00`);
-  instant2.setDate(instant2.getDate() + days);
-  return instant2.toISOString();
-};
-var capitalized = (text13) => `${text13.charAt(0).toUpperCase()}${text13.slice(1)}`;
-function scopeForm(app, rows, previous) {
-  const definition3 = apps[app];
-  const offered = definition3.choices.map((choice) => {
-    const options = (rows[choice.stream] ?? []).map((row) => ({
-      const: choice.id(row),
-      title: choice.label(row, rows)
-    })).sort((left, right) => left.title.localeCompare(right.title));
-    return { choice, options, ids: options.map((option) => option.const) };
-  }).filter(({ ids: ids2 }) => ids2.length > 1);
-  const properties29 = {};
-  for (const { choice, options, ids: ids2 } of offered) {
-    const earlier = previous?.scope[choice.scope]?.filter(
-      (id12) => ids2.includes(id12)
-    );
-    properties29[choice.stream] = {
-      type: "array",
-      title: capitalized(choice.stream),
-      minItems: 1,
-      items: { anyOf: options },
-      default: earlier?.length ? earlier : ids2
-    };
-  }
-  const { startAt, endAt } = {
-    ...definition3.defaultScope?.(),
-    ...previous?.scope
-  };
-  if (definition3.datedBy !== null) {
-    properties29.from = {
-      type: "string",
-      format: "date",
-      title: "From",
-      description: `First day to include, by ${definition3.datedBy}. Leave empty to start at the earliest.`,
-      ...startAt && { default: day(new Date(startAt)) }
-    };
-    properties29.until = {
-      type: "string",
-      format: "date",
-      title: "Until",
-      description: "Last day to include. Leave empty to include the latest.",
-      ...endAt && { default: day(new Date(Date.parse(endAt) - 1)) }
-    };
-  }
-  properties29.attachments = {
-    type: "boolean",
-    title: "Copy attachments",
-    default: previous?.includeAttachments ?? true
-  };
-  const form = {
-    mode: "form",
-    message: [
-      `${definition3.title}: choose what Codex can read. With everything checked, items added later are included too.`,
-      definition3.note
-    ].filter(Boolean).join(" "),
-    requestedSchema: {
-      type: "object",
-      properties: properties29,
-      required: offered.map(({ choice }) => choice.stream)
-    }
-  };
-  const read = (answer) => {
-    const scope = {};
-    for (const { choice, ids: ids2 } of offered) {
-      const chosen = answer[choice.stream];
-      if (ids2.some((id12) => !chosen.includes(id12))) scope[choice.scope] = chosen;
-    }
-    if (typeof answer.from === "string" && answer.from)
-      scope.startAt = midnight(answer.from);
-    if (typeof answer.until === "string" && answer.until)
-      scope.endAt = midnight(answer.until, 1);
-    return { app, scope, includeAttachments: answer.attachments !== false };
-  };
-  return { form, read };
-}
 async function setUpWithForms(plugin2, ask) {
   const previous = new Map(
     plugin2.status().apps.map(({ app, scope, includeAttachments }) => [
@@ -74646,7 +74568,6 @@ async function setUpWithForms(plugin2, ask) {
       { app, scope, includeAttachments }
     ])
   );
-  const unchanged = () => ({ changed: false, ...plugin2.status() });
   const picked = await ask({
     mode: "form",
     message: "Choose the Apple apps Codex can read on this Mac. Each app is imported in full; macOS may ask for access to each one.",
@@ -74663,25 +74584,20 @@ async function setUpWithForms(plugin2, ask) {
             }))
           },
           default: [...previous.keys()]
-        },
-        customize: {
-          type: "boolean",
-          title: "Choose accounts, folders and dates for each app",
-          default: false
         }
       },
       required: ["apps"]
     }
   });
-  if (picked.action !== "accept") return unchanged();
-  const customize = picked.content?.customize === true;
+  if (picked.action !== "accept") return { changed: false, ...plugin2.status() };
   const configuration = [];
-  const skipped = [];
   const unavailable = [];
   for (const app of appSchema.array().parse(picked.content?.apps)) {
-    let rows;
     try {
-      rows = (await plugin2.options(app)).choices;
+      await plugin2.options(app);
+      configuration.push(
+        previous.get(app) ?? { app, scope: {}, includeAttachments: true }
+      );
     } catch (error62) {
       unavailable.push({
         app,
@@ -74690,26 +74606,10 @@ async function setUpWithForms(plugin2, ask) {
       });
       const kept = previous.get(app);
       if (kept !== void 0) configuration.push(kept);
-      continue;
     }
-    if (!customize) {
-      configuration.push(
-        previous.get(app) ?? { app, scope: {}, includeAttachments: true }
-      );
-      continue;
-    }
-    const { form, read } = scopeForm(app, rows, previous.get(app));
-    const answer = await ask(form);
-    if (answer.action === "cancel") return unchanged();
-    if (answer.action === "decline" || answer.content === void 0) {
-      skipped.push(app);
-      continue;
-    }
-    configuration.push(read(answer.content));
   }
   return {
     changed: true,
-    skipped,
     unavailable,
     ...plugin2.configure({ apps: configuration })
   };
@@ -74719,7 +74619,14 @@ async function setUpWithForms(plugin2, ask) {
 if (process.platform !== "darwin")
   throw new Error("Apple requires Codex on a Mac.");
 var plugin = new ApplePlugin();
-var version2 = "0.4.2";
+var { version: version2 } = external_exports.object({ version: external_exports.string() }).parse(
+  JSON.parse(
+    readFileSync(
+      new URL("./.codex-plugin/plugin.json", import.meta.url),
+      "utf8"
+    )
+  )
+);
 var server = new McpServer({ name: "apple", version: version2 });
 var json2 = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }]
@@ -74739,7 +74646,7 @@ server.registerTool(
 server.registerTool(
   "apple_setup",
   {
-    description: "Set up Apple with forms the user answers: which apps, then for each app its accounts, collections, dates and attachments. Saves the answers and reports skipped apps and apps macOS did not allow; the import then runs in the background, so call apple_sync to wait for it. Hosts without form support return an error; set up with apple_options and apple_configure there.",
+    description: "Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, so call apple_sync to wait for it. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,

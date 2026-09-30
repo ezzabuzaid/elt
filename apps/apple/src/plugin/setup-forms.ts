@@ -1,114 +1,19 @@
 import type {
   ElicitRequestFormParams,
   ElicitResult,
-  PrimitiveSchemaDefinition,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { ApplePlugin } from './apple-plugin.ts';
-import { type App, appNames, apps, type ChoiceRows } from './apps.ts';
+import { type App, appNames, apps } from './apps.ts';
 import { type AppConfiguration, appSchema } from './settings.ts';
 
 export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
-type Answer = NonNullable<ElicitResult['content']>;
 
-// Forms show local calendar days; scopes hold UTC instants with an exclusive end.
-const pad = (value: number) => String(value).padStart(2, '0');
-const day = (instant: Date) =>
-  `${instant.getFullYear()}-${pad(instant.getMonth() + 1)}-${pad(instant.getDate())}`;
-const midnight = (date: string, days = 0) => {
-  const instant = new Date(`${date}T00:00:00`);
-  instant.setDate(instant.getDate() + days);
-  return instant.toISOString();
-};
-const capitalized = (text: string) =>
-  `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
-
-function scopeForm(app: App, rows: ChoiceRows, previous?: AppConfiguration) {
-  const definition = apps[app];
-  const offered = definition.choices
-    .map((choice) => {
-      const options = (rows[choice.stream] ?? [])
-        .map((row) => ({
-          const: choice.id(row),
-          title: choice.label(row, rows),
-        }))
-        .sort((left, right) => left.title.localeCompare(right.title));
-      return { choice, options, ids: options.map((option) => option.const) };
-    })
-    // One option leaves nothing to choose: all of one is everything.
-    .filter(({ ids }) => ids.length > 1);
-  const properties: Record<string, PrimitiveSchemaDefinition> = {};
-  for (const { choice, options, ids } of offered) {
-    const earlier = previous?.scope[choice.scope]?.filter((id) =>
-      ids.includes(id),
-    );
-    properties[choice.stream] = {
-      type: 'array',
-      title: capitalized(choice.stream),
-      minItems: 1,
-      items: { anyOf: options },
-      default: earlier?.length ? earlier : ids,
-    };
-  }
-  const { startAt, endAt } = {
-    ...definition.defaultScope?.(),
-    ...previous?.scope,
-  };
-  if (definition.datedBy !== null) {
-    properties.from = {
-      type: 'string',
-      format: 'date',
-      title: 'From',
-      description: `First day to include, by ${definition.datedBy}. Leave empty to start at the earliest.`,
-      ...(startAt && { default: day(new Date(startAt)) }),
-    };
-    properties.until = {
-      type: 'string',
-      format: 'date',
-      title: 'Until',
-      description: 'Last day to include. Leave empty to include the latest.',
-      ...(endAt && { default: day(new Date(Date.parse(endAt) - 1)) }),
-    };
-  }
-  properties.attachments = {
-    type: 'boolean',
-    title: 'Copy attachments',
-    default: previous?.includeAttachments ?? true,
-  };
-  const form: ElicitRequestFormParams = {
-    mode: 'form',
-    message: [
-      `${definition.title}: choose what Codex can read. With everything checked, items added later are included too.`,
-      definition.note,
-    ]
-      .filter(Boolean)
-      .join(' '),
-    requestedSchema: {
-      type: 'object',
-      properties,
-      required: offered.map(({ choice }) => choice.stream),
-    },
-  };
-  const read = (answer: Answer): AppConfiguration => {
-    const scope: AppConfiguration['scope'] = {};
-    for (const { choice, ids } of offered) {
-      const chosen = answer[choice.stream] as string[];
-      if (ids.some((id) => !chosen.includes(id))) scope[choice.scope] = chosen;
-    }
-    if (typeof answer.from === 'string' && answer.from)
-      scope.startAt = midnight(answer.from);
-    if (typeof answer.until === 'string' && answer.until)
-      scope.endAt = midnight(answer.until, 1);
-    return { app, scope, includeAttachments: answer.attachments !== false };
-  };
-  return { form, read };
-}
-
-// Setup where the user answers in forms. The first form chooses the apps;
-// each is imported in full (Calendar within its default window), or keeps
-// what it imported before. Only a user who asks to customize gets one form
-// per app for its accounts, collections, dates and attachments; declining an
-// app's form skips it. Cancelling leaves setup unchanged. It returns once
-// the answers are saved; the leading server imports them.
+// Setup in one form: which apps. Each chosen app is imported from all its
+// accounts and collections with attachments (Calendar within its default
+// window), or keeps a narrower selection the user asked for earlier. Each is
+// opened first, so macOS asks for access now and a denied app is reported.
+// Cancelling leaves setup unchanged. It returns once the answers are saved;
+// the leading server imports them.
 export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   const previous = new Map(
     plugin
@@ -118,7 +23,6 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
         { app, scope, includeAttachments },
       ]),
   );
-  const unchanged = () => ({ changed: false, ...plugin.status() });
   const picked = await ask({
     mode: 'form',
     message:
@@ -137,24 +41,19 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
           },
           default: [...previous.keys()],
         },
-        customize: {
-          type: 'boolean',
-          title: 'Choose accounts, folders and dates for each app',
-          default: false,
-        },
       },
       required: ['apps'],
     },
   });
-  if (picked.action !== 'accept') return unchanged();
-  const customize = picked.content?.customize === true;
+  if (picked.action !== 'accept') return { changed: false, ...plugin.status() };
   const configuration: AppConfiguration[] = [];
-  const skipped: App[] = [];
   const unavailable: { app: App; error: string; permissions: string }[] = [];
   for (const app of appSchema.array().parse(picked.content?.apps)) {
-    let rows: ChoiceRows;
     try {
-      rows = (await plugin.options(app)).choices;
+      await plugin.options(app);
+      configuration.push(
+        previous.get(app) ?? { app, scope: {}, includeAttachments: true },
+      );
     } catch (error) {
       unavailable.push({
         app,
@@ -163,26 +62,10 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       });
       const kept = previous.get(app);
       if (kept !== undefined) configuration.push(kept);
-      continue;
     }
-    if (!customize) {
-      configuration.push(
-        previous.get(app) ?? { app, scope: {}, includeAttachments: true },
-      );
-      continue;
-    }
-    const { form, read } = scopeForm(app, rows, previous.get(app));
-    const answer = await ask(form);
-    if (answer.action === 'cancel') return unchanged();
-    if (answer.action === 'decline' || answer.content === undefined) {
-      skipped.push(app);
-      continue;
-    }
-    configuration.push(read(answer.content));
   }
   return {
     changed: true,
-    skipped,
     unavailable,
     ...plugin.configure({ apps: configuration }),
   };

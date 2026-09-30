@@ -9,10 +9,9 @@ The Apple plugin imports the apps, accounts, collections and dates the user choo
 
 ## Set up with forms
 
-1. Call `apple_setup`. It shows the user one form to choose apps. Each chosen app is imported in full with attachments (Calendar: last year through next year), and an app set up before keeps its earlier selection. Only if the user ticks "Choose accounts, folders and dates for each app" does one form per app follow, prefilled with the current selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat.
+1. Call `apple_setup`. It shows the user one form to choose apps. Each chosen app is imported from all its accounts, folders and dates with attachments (Calendar: last year through next year); an app narrowed earlier keeps that selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat, and do not ask about accounts, folders or dates unless the user brings them up.
 2. Read its result:
    - `changed: false`: the user cancelled; nothing changed.
-   - `skipped`: apps the user chose not to connect.
    - `unavailable`: apps macOS did not allow. Give their `permissions` guidance as steps. Full Disk Access has no macOS prompt: the user turns on ChatGPT in System Settings, then quits and reopens ChatGPT, which ends this chat, so tell them to run Set up Apple again afterwards. Treat these apps as inaccessible, never as empty.
 3. If anything changed, call `apple_sync` to wait for the first import, then report as described in "Report the result". An app still `running` after the wait keeps importing; say so rather than calling it empty.
 
@@ -35,7 +34,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
 
 ## Report the result
 
-Report connected apps, scope, last successful sync and any per-app failures. A partial sync is incomplete data. Explain that content is stored locally on their Mac and passed to Codex when used to answer their requests. The plugin keeps the copy current while Codex is open, following changes in each app, and catches up the next time Codex opens; nothing runs after Codex closes. With Notes connected, it keeps Notes running hidden while Codex is open, because only Notes syncs iCloud notes to the Mac. Apps can be switched on or off any time under Plugins › Apple › Settings, which also shows each app's sync status; a switched-on app imports everything. To narrow an app, run Set up Apple again and tick "Choose accounts, folders and dates for each app"; when the user asks in chat instead (for example, only a work mailbox), follow "Set up in chat" for that app.
+Report connected apps, scope, last successful sync and any per-app failures. A partial sync is incomplete data. Explain that content is stored locally on their Mac and passed to Codex when used to answer their requests. The plugin keeps the copy current while Codex is open, following changes in each app, and catches up the next time Codex opens; nothing runs after Codex closes. With Notes connected, it keeps Notes running hidden while Codex is open, because only Notes syncs iCloud notes to the Mac. Apps can be switched on or off any time under Plugins › Apple › Settings, which also shows each app's sync status; a switched-on app imports everything. Only when the user asks to narrow an app (for example, only a work mailbox or one Notes folder), follow "Set up in chat" for that app.
 
 ## Gotchas
 

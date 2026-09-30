@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -12,8 +13,18 @@ if (process.platform !== 'darwin')
   throw new Error('Apple requires Codex on a Mac.');
 
 const plugin = new ApplePlugin();
-// Also plugins/apple/.codex-plugin/plugin.json; the newest running version leads.
-const version = '0.4.2';
+// The installed plugin's version, from the manifest beside this bundle; the
+// newest running version leads background sync.
+const { version } = z
+  .object({ version: z.string() })
+  .parse(
+    JSON.parse(
+      readFileSync(
+        new URL('./.codex-plugin/plugin.json', import.meta.url),
+        'utf8',
+      ),
+    ),
+  );
 const server = new McpServer({ name: 'apple', version });
 // McpServer turns a thrown error into an isError result.
 const json = (value: unknown) => ({
@@ -37,7 +48,7 @@ server.registerTool(
   'apple_setup',
   {
     description:
-      'Set up Apple with forms the user answers: which apps, then for each app its accounts, collections, dates and attachments. Saves the answers and reports skipped apps and apps macOS did not allow; the import then runs in the background, so call apple_sync to wait for it. Hosts without form support return an error; set up with apple_options and apple_configure there.',
+      'Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, so call apple_sync to wait for it. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,

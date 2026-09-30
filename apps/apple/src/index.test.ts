@@ -314,7 +314,7 @@ const notesPipeline = (source: AppleNotesSource, directory: string) => {
   };
 };
 
-test('Apple setup forms import each chosen app in full unless the user customizes, report an app macOS denied, and leave setup unchanged when cancelled', async (t) => {
+test('Apple setup asks only which apps, imports each in full or as narrowed before, reports an app macOS denied, and changes nothing when cancelled', async (t) => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-forms-'));
   const path = await noteStoreFixture(join(scratch.path, 'native'));
   const openNative = NoteStore.open;
@@ -345,17 +345,15 @@ test('Apple setup forms import each chosen app in full unless the user customize
     return result;
   };
 
-  // One form: the apps. Each chosen app is imported in full.
+  // One form, the apps: each chosen app is imported in full.
   const connected = await setUp({
     action: 'accept',
     content: { apps: ['notes', 'messages'] },
   });
   assert.equal(forms.length, 1);
-  assert.deepEqual(forms[0]?.requestedSchema.properties.customize, {
-    type: 'boolean',
-    title: 'Choose accounts, folders and dates for each app',
-    default: false,
-  });
+  assert.deepEqual(Object.keys(forms[0]?.requestedSchema.properties ?? {}), [
+    'apps',
+  ]);
   assert.equal(connected.changed, true);
   assert.ok('unavailable' in connected);
   assert.deepEqual(
@@ -363,69 +361,24 @@ test('Apple setup forms import each chosen app in full unless the user customize
     ['messages'],
   );
   // Setup only saves the answers; the leading server imports them.
-  const [everything] = connected.apps;
-  assert.deepEqual(everything?.scope, {});
-  assert.equal(everything?.includeAttachments, true);
-  assert.equal(everything?.database, null);
-  assert.equal(everything?.sync, null);
+  const [notes] = connected.apps;
+  assert.deepEqual(notes?.scope, {});
+  assert.equal(notes?.includeAttachments, true);
+  assert.equal(notes?.database, null);
+  assert.equal(notes?.sync, null);
 
-  // Customizing adds one form per app. The fixture's single account leaves
-  // nothing to choose, so the form asks only for folders and attachments.
-  const narrowed = await setUp(
-    { action: 'accept', content: { apps: ['notes'], customize: true } },
-    {
-      action: 'accept',
-      content: { folders: ['FOLDER-NOTES'], attachments: false },
-    },
-  );
-  assert.equal(forms.length, 2);
-  assert.deepEqual(Object.keys(forms[1]?.requestedSchema.properties ?? {}), [
-    'folders',
-    'from',
-    'until',
-    'attachments',
-  ]);
-  assert.deepEqual(forms[1]?.requestedSchema.properties.folders, {
-    type: 'array',
-    title: 'Folders',
-    minItems: 1,
-    items: {
-      anyOf: [
-        { const: 'FOLDER-CHILD', title: 'iCloud / Child' },
-        { const: 'FOLDER-NOTES', title: 'iCloud / Notes' },
-        { const: 'FOLDER-TRASH', title: 'iCloud / Recently Deleted' },
-      ],
-    },
-    default: ['FOLDER-CHILD', 'FOLDER-NOTES', 'FOLDER-TRASH'],
+  // A selection the user narrowed in chat survives setting up again.
+  const narrowed = { collectionIds: ['FOLDER-NOTES'] };
+  plugin.configure({
+    apps: [{ app: 'notes', scope: narrowed, includeAttachments: false }],
   });
-  const [notes] = narrowed.apps;
-  assert.ok(notes);
-  assert.deepEqual(notes.scope, { collectionIds: ['FOLDER-NOTES'] });
-  assert.equal(notes.includeAttachments, false);
-
-  // Setting up again without customizing keeps what the user narrowed.
   const kept = await setUp({ action: 'accept', content: { apps: ['notes'] } });
-  assert.equal(forms.length, 1);
-  assert.deepEqual(kept.apps[0]?.scope, notes.scope);
+  assert.deepEqual(kept.apps[0]?.scope, narrowed);
   assert.equal(kept.apps[0]?.includeAttachments, false);
 
-  const cancelled = await setUp(
-    { action: 'accept', content: { apps: ['notes'], customize: true } },
-    { action: 'cancel' },
-  );
-  assert.deepEqual(forms[1]?.requestedSchema.properties.folders?.default, [
-    'FOLDER-NOTES',
-  ]);
+  const cancelled = await setUp({ action: 'cancel' });
   assert.equal(cancelled.changed, false);
-  assert.deepEqual(cancelled.apps[0]?.scope, notes.scope);
-
-  const declined = await setUp(
-    { action: 'accept', content: { apps: ['notes'], customize: true } },
-    { action: 'decline' },
-  );
-  assert.ok('skipped' in declined);
-  assert.deepEqual(declined.skipped, ['notes']);
-  assert.deepEqual(declined.apps, []);
+  assert.deepEqual(cancelled.apps[0]?.scope, narrowed);
 });
 
 test('Notes scope excludes other folders from records, attachments and checkpoints', async () => {
