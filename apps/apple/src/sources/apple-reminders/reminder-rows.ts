@@ -111,6 +111,6 @@ function dateComponentsRow(
       dateComponentNames.map((name) => [name, components[name] ?? null]),
     ),
     leapMonth: components.leapMonth,
-    repeatedDay: components.repeatedDay ?? null,
+    repeatedDay: components.repeatedDay,
   };
 }

@@ -144,9 +144,9 @@ const catalog = eventKitCatalog(
             "NSDateComponents.isLeapMonth: whether month is a leap month in the set's calendar.",
         },
         repeatedDay: {
-          type: ['boolean', 'null'],
+          ...boolean,
           description:
-            'NSDateComponents.isRepeatedDay; NULL where this macOS does not provide it.',
+            "NSDateComponents.isRepeatedDay: whether day is a repeated day in the set's calendar.",
         },
       },
     },

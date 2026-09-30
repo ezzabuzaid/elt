@@ -134,7 +134,7 @@ export type DateComponentsDocument = {
   readonly yearForWeekOfYear?: number;
   readonly dayOfYear?: number;
   readonly leapMonth: boolean;
-  readonly repeatedDay?: boolean;
+  readonly repeatedDay: boolean;
 };
 
 export type ReminderDocument = CalendarItemDocument & {

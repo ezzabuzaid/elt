@@ -8,7 +8,7 @@ export class CalendarUnavailableError extends Error {
 
   constructor(cause: unknown) {
     super(
-      'Calendar requires macOS 14 or later and full Calendar access for the process running the export. Allow access in System Settings > Privacy & Security > Calendars. A sandbox can prevent access even when permission is granted.',
+      'Calendar requires full Calendar access for the process running the export. Allow access in System Settings > Privacy & Security > Calendars. A sandbox can prevent access even when permission is granted.',
       { cause },
     );
   }
@@ -19,7 +19,7 @@ export class RemindersUnavailableError extends Error {
 
   constructor(cause: unknown) {
     super(
-      'Reminders requires macOS 14 or later and full Reminders access for the process running the export. Allow access in System Settings > Privacy & Security > Reminders. A sandbox can prevent access even when permission is granted.',
+      'Reminders requires full Reminders access for the process running the export. Allow access in System Settings > Privacy & Security > Reminders. A sandbox can prevent access even when permission is granted.',
       { cause },
     );
   }

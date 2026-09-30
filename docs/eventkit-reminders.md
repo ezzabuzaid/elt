@@ -1,6 +1,6 @@
 # EventKit Reminders: research and implementation
 
-Verified on macOS 26.6.2 on 2026-09-21. The connector supports macOS 14 and later. This document covers the public API needed to extract Reminders; creation, editing, deletion, UI presentation, and notification delivery are outside the export's scope.
+Verified on macOS 26.6.2 on 2026-09-21. The connector supports macOS 27, the release the helper is built for. This document covers the public API needed to extract Reminders; creation, editing, deletion, UI presentation, and notification delivery are outside the export's scope.
 
 ## Decision and design
 
@@ -8,7 +8,7 @@ Verified on macOS 26.6.2 on 2026-09-21. The connector supports macOS 14 and late
 
 The design is the **Adapter pattern**, using the existing `Source` contract. `AppleRemindersSource` translates native objects into immutable stream descriptions and validated records consumed by `Copy`, `Pipeline`, SQLite, and Markdown. Calendar and Reminders reuse native projection and validation through composition:
 
-- [eventkit/](../apps/apple/src/platform/macos/eventkit): the Swift helper. `eventkit read '<json request>'` checks access, fetches the reminders, and writes one JSON document per line (account, list, reminder); `eventkit watch reminders` prints `changed` per `EKEventStoreChangedNotification`. The Nx target `apple:eventkit` builds it as a universal (arm64 and x86_64) binary with an embedded `Info.plist` carrying the Calendars and Reminders full-access usage descriptions.
+- [eventkit/](../apps/apple/src/platform/macos/eventkit): the Swift helper. `eventkit read '<json request>'` checks access, fetches the reminders, and writes one JSON document per line (account, list, reminder); `eventkit watch reminders` prints `changed` per `EKEventStoreChangedNotification`. The Nx target `apple:eventkit` builds it as a universal (arm64 and x86_64) binary.
 - [eventkit.ts](../apps/apple/src/platform/macos/eventkit.ts): the native `EventKit` class spawns the helper through [native-process.ts](../apps/apple/src/platform/macos/native-process.ts), parses its lines, maps its access failures to `RemindersUnavailableError`, and repeats reads that a store change disturbed. It does not import ELT or know about sources, streams, catalogs, or schemas. [eventkit-documents.ts](../apps/apple/src/platform/macos/eventkit-documents.ts) types the helper's documents.
 - [eventkit-schema.ts](../apps/apple/src/sources/eventkit-schema.ts): connector-owned field schemas, catalog construction, and record validation.
 - [eventkit-rows.ts](../apps/apple/src/sources/eventkit-rows.ts): rows shared with Calendar: accounts, lists, participants, alarms, and recurrence, with JSON-array IDs, ISO timestamps, content-order positions, and scope filtering.
@@ -23,7 +23,7 @@ Calendar keeps its own occurrence-window and occurrence-identity behavior.
 
 | Surface | Evidence and extraction choice |
 | --- | --- |
-| Permissions | `requestFullAccessToRemindersWithCompletion:` is available from macOS 14. Reminders access is separate from Calendar/Automation permissions. The host must provide its usage description and required entitlements. Permission checks occur during extraction. |
+| Permissions | Reminders access is separate from Calendar/Automation permissions. A sandbox can block access even when permission is granted. Permission checks occur during extraction. |
 | Lists and accounts | `EKSource` exposes identifier, title, type and delegate status. `EKCalendar` exposes source, identifier, title, native type, writability, subscription/immutability, color and entity/availability masks. Query calendars with reminder entity type `1`. `store.sources` can include accounts without visible reminder lists. |
 | Reminders | `EKReminder` adds start/due components, completion, completion date and priority to `EKCalendarItem`. The base class exposes identifiers, calendar, title, location, notes, URL, time zone, creation/modification dates, attendees, alarms and recurrence. Nullable dates remain nullable; a completed reminder may have no completion timestamp. |
 | Fetching | `predicateForRemindersInCalendars(nil)` selects all available reminders, including completed items. `fetchRemindersMatchingPredicate:completion:` completes asynchronously. A nil completion result means failure. The returned request token supports cancellation. |
@@ -39,9 +39,9 @@ No native tags, attachment export, flagged status, parent-reminder relationships
 
 ## Native helper and failure behavior
 
-The helper checks authorization against the macOS 14 statuses. When access is undecided or write-only it asks for full access through `osascript`, because macOS answers a command-line helper's own request with "not granted" and shows no prompt; the grant goes to the terminal or app running the export, which the helper inherits. It waits at most 30 seconds for the answer. Without full access it writes `REMINDERS_UNAVAILABLE` to stderr and exits 1, which Node raises as `RemindersUnavailableError`; it checks again after the read, so access revoked mid-read fails too. `fetchRemindersMatchingPredicate:completion:` waits at most 60 seconds and cancels on timeout; a nil result fails the read. Invalid output, permission denial, and timeouts cannot become successful empty exports. The surrounding destination transaction/staging preserves the prior target on a failed copy.
+When access is undecided or write-only it asks for full access through `osascript`, because macOS answers a command-line helper's own request with "not granted" and shows no prompt; the grant goes to the terminal or app running the export, which the helper inherits. It waits at most 30 seconds for the answer. Without full access it writes `REMINDERS_UNAVAILABLE` to stderr and exits 1, which Node raises as `RemindersUnavailableError`; it checks again after the read, so access revoked mid-read fails too. `fetchRemindersMatchingPredicate:completion:` waits at most 60 seconds and cancels on timeout; a nil result fails the read. Invalid output, permission denial, and timeouts cannot become successful empty exports. The surrounding destination transaction/staging preserves the prior target on a failed copy.
 
-`NSDateComponentUndefined` maps to null. New Foundation selectors are checked before use: `dayOfYear` requires macOS 15 and `isRepeatedDay` requires macOS 26. Other platforms return null for those unavailable properties. No date normalization is done by the connector. A probe also found that mutating the same unsaved reminder from a floating due date to a zoned due date can retain a nil time zone; extraction preserves what EventKit returns.
+`NSDateComponentUndefined` maps to null. No date normalization is done by the connector. A probe also found that mutating the same unsaved reminder from a floating due date to a zoned due date can retain a nil time zone; extraction preserves what EventKit returns.
 
 All eight streams are flat scalar schemas. Date-component rows use `[reminderId, kind]`; alarm/attendee/rule rows use their parent's ID and position. These are snapshot identities: attendees and alarms are numbered in content order, and adding or editing one can renumber its siblings. One helper process reads every selected stream, and the read repeats when a store change arrives during it (see [EventKit consistency](reference.md#eventkit-consistency)), so relationships between streams agree. The helper streams its output with no size cap and no process timeout; a failed export restarts its copy.
 

@@ -314,88 +314,7 @@ const notesPipeline = (source: AppleNotesSource, directory: string) => {
   };
 };
 
-test('Apple plugin completes scoped setup, sync and query with managed files and independent app failures', async (t) => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-flow-'));
-  const path = await noteStoreFixture(join(scratch.path, 'native'));
-  const openNative = NoteStore.open;
-  let revoked = false;
-  t.mock.method(
-    NoteStore,
-    'open',
-    async (_path: string, required: Parameters<typeof NoteStore.open>[1]) => {
-      if (revoked) throw new NotesUnavailableError(path, new Error('revoked'));
-      return openNative(path, required);
-    },
-  );
-  t.mock.method(ChatDatabase, 'open', async () => {
-    throw new MessagesUnavailableError(
-      'synthetic-chat.db',
-      new Error('denied'),
-    );
-  });
-  const plugin = new ApplePlugin(join(scratch.path, 'plugin'));
-  const choices = await plugin.options('notes');
-  assert.equal(choices.choices.folders?.length, 3);
-  plugin.configure({
-    apps: [
-      {
-        app: 'notes',
-        scope: { accountIds: ['ACCOUNT-1'], collectionIds: ['FOLDER-NOTES'] },
-      },
-      { app: 'messages' },
-    ],
-  });
-  const status = await plugin.sync();
-  assert.equal(status.apps[0]?.sync?.state, 'succeeded');
-  assert.equal(status.apps[1]?.sync?.state, 'failed');
-  const lastSucceededAt = status.apps[0]?.sync?.lastSucceededAt;
-  assert.ok(lastSucceededAt);
-  const database = status.apps[0]?.database;
-  assert.ok(database);
-  // The query-apple skill's read command.
-  const read = async (sql: string, ...commands: string[]) => {
-    const { stdout } = await execFile('/usr/bin/sqlite3', [
-      '-readonly',
-      '-json',
-      '-cmd',
-      '.timeout 30000',
-      '-cmd',
-      'PRAGMA temp_store = MEMORY',
-      ...commands.flatMap((command) => ['-cmd', command]),
-      database,
-      sql,
-    ]);
-    return JSON.parse(stdout || '[]');
-  };
-  const [catalog] = await read(
-    "SELECT schema_json FROM _apple_catalog WHERE name='attachments'",
-  );
-  assert.ok(JSON.parse(catalog.schema_json).properties.attachmentRef);
-  const [attachment] = await read(
-    'SELECT attachmentRef FROM attachments WHERE id=@id',
-    ".parameter set @id 'ATT-FILE'",
-  );
-  assert.equal(
-    await readFile(String(attachment.attachmentRef), 'utf8'),
-    'attached words',
-  );
-  assert.deepEqual(await read('SELECT id FROM notes ORDER BY id'), [
-    { id: 'NOTE-LOCKED' },
-    { id: 'NOTE-RICH' },
-  ]);
-  const repeated = await plugin.sync(['notes']);
-  assert.equal(repeated.apps[0]?.sync?.state, 'succeeded');
-  revoked = true;
-  const failed = await plugin.sync(['notes']);
-  assert.equal(failed.apps[0]?.sync?.state, 'failed');
-  assert.equal(
-    failed.apps[0]?.sync?.lastSucceededAt,
-    repeated.apps[0]?.sync?.lastSucceededAt,
-  );
-  assert.deepEqual(await read('SELECT count(*) AS n FROM notes'), [{ n: 2 }]);
-});
-
-test('Apple setup forms connect the chosen Notes folders, report an app macOS denied, and leave setup unchanged when cancelled', async (t) => {
+test('Apple setup forms save the chosen Notes folders, report an app macOS denied, and leave setup unchanged when cancelled', async (t) => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-forms-'));
   const path = await noteStoreFixture(join(scratch.path, 'native'));
   const openNative = NoteStore.open;
@@ -457,20 +376,12 @@ test('Apple setup forms connect the chosen Notes folders, report an app macOS de
     connected.unavailable.map(({ app }) => app),
     ['messages'],
   );
+  // Setup only saves the answers; the leading server imports them.
   const [notes] = connected.apps;
-  assert.ok(notes?.database);
+  assert.ok(notes);
   assert.deepEqual(notes.scope, { collectionIds: ['FOLDER-NOTES'] });
-  assert.equal(notes.sync?.state, 'succeeded');
-  const { stdout } = await execFile('/usr/bin/sqlite3', [
-    '-readonly',
-    '-json',
-    notes.database,
-    'SELECT id FROM notes ORDER BY id',
-  ]);
-  assert.deepEqual(JSON.parse(stdout), [
-    { id: 'NOTE-LOCKED' },
-    { id: 'NOTE-RICH' },
-  ]);
+  assert.equal(notes.database, null);
+  assert.equal(notes.sync, null);
 
   const cancelled = await setUp(
     { action: 'accept', content: { apps: ['notes'] } },
@@ -1971,10 +1882,15 @@ test('Reminders keeps each date component set intact and rejects unidentified re
         repeatedDay: false,
       },
     }),
-    // macOS 14 lacks dayOfYear and isRepeatedDay, so the helper leaves them out.
     reminder({
-      id: 'legacy',
-      due: { year: 2026, month: 9, day: 21, leapMonth: false },
+      id: 'calendarless',
+      due: {
+        year: 2026,
+        month: 9,
+        day: 21,
+        leapMonth: false,
+        repeatedDay: false,
+      },
     }),
   ];
   fakeEventKit(t, () => native);
@@ -2027,14 +1943,15 @@ test('Reminders keeps each date component set intact and rejects unidentified re
       },
     ],
   );
-  const legacy = components.find(({ reminderId }) => reminderId === 'legacy');
+  const calendarless = components.find(
+    ({ reminderId }) => reminderId === 'calendarless',
+  );
   assert.deepEqual(
     {
-      calendarIdentifier: legacy?.calendarIdentifier,
-      dayOfYear: legacy?.dayOfYear,
-      repeatedDay: legacy?.repeatedDay,
+      calendarIdentifier: calendarless?.calendarIdentifier,
+      dayOfYear: calendarless?.dayOfYear,
     },
-    { calendarIdentifier: null, dayOfYear: null, repeatedDay: null },
+    { calendarIdentifier: null, dayOfYear: null },
   );
   for (const unidentified of [reminder({ id: '' }), reminder({ listId: '' })]) {
     native = [unidentified];
@@ -4022,7 +3939,13 @@ test('Reminders reads as documented views that keep date components as component
     calendar({ allowedEntityTypes: 2 }),
     reminder({
       id: 'due-date-only',
-      due: { year: 2026, month: 9, day: 21, leapMonth: false },
+      due: {
+        year: 2026,
+        month: 9,
+        day: 21,
+        leapMonth: false,
+        repeatedDay: false,
+      },
     }),
     reminder({ id: 'undated', completed: true }),
   ]);

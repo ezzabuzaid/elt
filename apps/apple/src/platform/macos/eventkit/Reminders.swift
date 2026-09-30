@@ -18,44 +18,33 @@ struct DateComponentsDocument: Encodable {
   let weekOfMonth: Int?
   let weekOfYear: Int?
   let yearForWeekOfYear: Int?
-  // Absent before macOS 15.
   let dayOfYear: Int?
   let leapMonth: Bool
-  // Absent where NSDateComponents has no isRepeatedDay.
-  let repeatedDay: Bool?
+  let repeatedDay: Bool
 
-  // Reads NSDateComponents by selector, so a component this macOS lacks stays
-  // absent instead of following the SDK the helper was built with.
   init?(_ value: DateComponents?) {
     guard let value else { return nil }
     let components = value as NSDateComponents
-    let component = { (name: String) -> Int? in
-      guard components.responds(to: NSSelectorFromString(name)),
-        let number = components.value(forKey: name) as? Int, number != NSDateComponentUndefined
-      else { return nil }
-      return number
-    }
+    let defined = { (number: Int) in number == NSDateComponentUndefined ? nil : number }
     calendarIdentifier = (components.calendar as NSCalendar?)?.calendarIdentifier.rawValue
     timeZone = components.timeZone?.identifier
-    era = component("era")
-    year = component("year")
-    month = component("month")
-    day = component("day")
-    hour = component("hour")
-    minute = component("minute")
-    second = component("second")
-    nanosecond = component("nanosecond")
-    weekday = component("weekday")
-    weekdayOrdinal = component("weekdayOrdinal")
-    quarter = component("quarter")
-    weekOfMonth = component("weekOfMonth")
-    weekOfYear = component("weekOfYear")
-    yearForWeekOfYear = component("yearForWeekOfYear")
-    dayOfYear = component("dayOfYear")
+    era = defined(components.era)
+    year = defined(components.year)
+    month = defined(components.month)
+    day = defined(components.day)
+    hour = defined(components.hour)
+    minute = defined(components.minute)
+    second = defined(components.second)
+    nanosecond = defined(components.nanosecond)
+    weekday = defined(components.weekday)
+    weekdayOrdinal = defined(components.weekdayOrdinal)
+    quarter = defined(components.quarter)
+    weekOfMonth = defined(components.weekOfMonth)
+    weekOfYear = defined(components.weekOfYear)
+    yearForWeekOfYear = defined(components.yearForWeekOfYear)
+    dayOfYear = defined(components.dayOfYear)
     leapMonth = components.isLeapMonth
-    repeatedDay =
-      components.responds(to: NSSelectorFromString("isRepeatedDay"))
-      ? components.value(forKey: "repeatedDay") as? Bool : nil
+    repeatedDay = components.isRepeatedDay
   }
 }
 

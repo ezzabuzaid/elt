@@ -22,33 +22,31 @@ enum Entity: String, Decodable {
   var marker: String { self == .events ? "CALENDAR_UNAVAILABLE" : "REMINDERS_UNAVAILABLE" }
 }
 
-// The macOS 14 authorization values: 0 undetermined, 1 restricted, 2 denied,
-// 3 full access, 4 write-only.
-private func authorization(_ entity: Entity) -> Int {
-  EKEventStore.authorizationStatus(for: entity.type).rawValue
+private func authorization(_ entity: Entity) -> EKAuthorizationStatus {
+  EKEventStore.authorizationStatus(for: entity.type)
 }
 
 func requireAccess(_ entity: Entity, message: String) throws {
-  guard authorization(entity) == 3 else {
-    throw HelperError("\(entity.marker): \(message); status=\(authorization(entity))")
+  guard authorization(entity) == .fullAccess else {
+    throw HelperError("\(entity.marker): \(message); status=\(authorization(entity).rawValue)")
   }
 }
 
 // Asks for full access when it was never decided or only write access was granted.
 func openStore(_ entity: Entity) throws -> EKEventStore {
-  guard #available(macOS 14, *) else {
-    throw HelperError("\(entity.marker): macOS 14 or later is required")
+  if [.notDetermined, .writeOnly].contains(authorization(entity)) {
+    try requestThroughOsascript(entity)
   }
-  if [0, 4].contains(authorization(entity)) { try requestThroughOsascript(entity) }
   try requireAccess(entity, message: "full access is required")
   return EKEventStore()
 }
 
 // macOS answers this helper's own access request with "not granted" and shows
-// no prompt (verified on macOS 27, signed or not). The same request from
-// osascript, run under the same terminal or app, prompts; the grant belongs to
-// that terminal or app, which this helper inherits. The script waits up to 30
-// seconds for the answer.
+// no prompt: only binaries with Apple's private
+// com.apple.private.tcc.allow-prompting entitlement may prompt, and osascript
+// carries it. Run under the same terminal or app, osascript prompts, and the
+// grant belongs to that terminal or app, which this helper inherits. The script
+// waits up to 30 seconds for the answer.
 private func requestThroughOsascript(_ entity: Entity) throws {
   let request =
     entity == .events
