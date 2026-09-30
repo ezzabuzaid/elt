@@ -9,7 +9,7 @@ import {
   SearchConsoleQuotaError,
 } from './platform/google/search-console-api.ts';
 import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
-import { scratchWarehouse } from './test-warehouse.ts';
+import { searchConsoleDatabase } from './test-warehouse.ts';
 
 const SITE = 'sc-domain:example.com';
 const NOW = () => new Date('2026-09-22T00:00:00.000Z');
@@ -69,7 +69,7 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
       },
     ],
   }));
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
@@ -137,7 +137,7 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
       },
     ],
   }));
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
@@ -216,7 +216,7 @@ test('a fractional click count is refused rather than stored', async () => {
       },
     ],
   }));
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
@@ -256,7 +256,7 @@ test('analytics pagination follows startRow until a short page', async () => {
     const rowLimit = Number(call.data?.['rowLimit'] ?? 0);
     return { rows: startRow === 0 ? page(0, rowLimit) : page(rowLimit, 3) };
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
@@ -295,7 +295,7 @@ test('sitemaps convert int64 text and second-precision times', async () => {
       },
     ],
   }));
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     fetch: async () =>
@@ -403,7 +403,7 @@ test('inspection covers every sitemap and search URL once, shared by all three s
       '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/a</loc></url><url><loc>https://example.com/c?x=1&amp;y=2</loc></url></urlset>',
     );
   };
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     fetch,
@@ -491,7 +491,7 @@ test('watching invalidates only when the property actually changed', async () =>
       },
     ],
   }));
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     searchTypes: ['WEB'],
@@ -551,7 +551,7 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
       ],
     };
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
@@ -590,7 +590,7 @@ test('the history window clamps to the last day of a shorter start month', async
     if (call.data?.['startDate']) requests.push(String(call.data['startDate']));
     return { rows: [] };
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination } = warehouse;
   // Sixteen months before 31 March is 30 November, which has no 31st. An
   // unclamped subtraction rolls into December and drops a month of history.
@@ -640,7 +640,7 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
     if (call.data?.['startDate']) windows.push(String(call.data['startDate']));
     return { rows };
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     breakdownMonths: 3,
@@ -741,7 +741,7 @@ test('two properties share tables through one source without deleting each other
       rows: [{ clicks: 1, ctr: 0.1, impressions: 10, keys, position: 3 }],
     };
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const pipeline = (siteUrls: string[], name = 'search-console') => {
     const source = new SearchConsoleSource({
@@ -821,7 +821,7 @@ test('an unverified property is not offered as a readable site', async () => {
       },
     ],
   }));
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
@@ -1002,7 +1002,7 @@ test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
       throw httpError(429, { retryAfter: '45' });
     },
   };
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
@@ -1094,7 +1094,7 @@ test('an incremental sites copy deletes a property that is no longer listed', as
     { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:b.example' },
   ];
   const { requester } = recorder(() => ({ siteEntry }));
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
@@ -1180,7 +1180,7 @@ test('one source loads every property; a newly listed one backfills while the ot
       ],
     };
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const run = (siteUrls: string[]) => {
     const source = new SearchConsoleSource({
@@ -1271,7 +1271,7 @@ test('a property without permission is reported by name while the others load an
       ],
     };
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
@@ -1346,7 +1346,7 @@ test('watching invalidates when only one of several properties changed', async (
       },
     ],
   }));
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
@@ -1420,7 +1420,7 @@ test('a property without permission is reported in each batch while watching goe
       ],
     };
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     now: NOW,
@@ -1538,7 +1538,7 @@ function inspectionProperty({
   return { requester, fetch, inspected };
 }
 
-type Warehouse = Awaited<ReturnType<typeof scratchWarehouse>>;
+type Warehouse = Awaited<ReturnType<typeof searchConsoleDatabase>>;
 
 async function inspectionRun(
   source: SearchConsoleSource,
@@ -1591,7 +1591,7 @@ test('sitemaps in every format feed the inspection universe', async () => {
         '<feed xmlns="http://www.w3.org/2005/Atom"><link rel="self" href="https://example.com/atom.xml"/><entry><link href="https://example.com/a"/></entry></feed>',
     },
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
 
   await inspectionRun(
     new SearchConsoleSource({
@@ -1653,7 +1653,7 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
         'https://example.com/good.xml': 'https://example.com/g\n',
       },
     });
-    await using warehouse = await scratchWarehouse();
+    await using warehouse = await searchConsoleDatabase();
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
       ...property,
@@ -1715,7 +1715,7 @@ test('rolling refresh inspects new URLs first, then the stalest, and skips fresh
       siteUrls: [SITE],
     });
   const hour = 60 * 60 * 1000;
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const calls = async () => {
     const before = property.inspected.length;
     await inspectionRun(source(), warehouse);
@@ -1758,7 +1758,7 @@ test('the daily quota stops inspection cleanly and resumes after Pacific midnigh
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
-    await using warehouse = await scratchWarehouse();
+    await using warehouse = await searchConsoleDatabase();
 
     await inspectionRun(source, warehouse);
     // Live, the exhausted daily quota answers 429 rateLimitExceeded with no
@@ -1811,7 +1811,7 @@ test('one inspection serves all three streams, and a URL that leaves is deleted 
     'urlInspectionSitemaps',
     'urlInspectionReferrers',
   ] as const;
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
 
   await inspectionRun(source, warehouse, ['urlInspection']);
   // The other two streams load later: they reuse the inspections already made.
@@ -1875,7 +1875,7 @@ test('the three inspection streams read together inspect each URL once', async (
     'urlInspectionSitemaps',
     'urlInspectionReferrers',
   ] as const;
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
 
   await inspectionRun(source, warehouse, all);
 
@@ -1933,7 +1933,7 @@ test('inspections run concurrently, a rejected URL becomes a row, and a server e
       };
     },
   };
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
 
   await inspectionRun(
     new SearchConsoleSource({
@@ -1966,7 +1966,7 @@ test('inspections run concurrently, a rejected URL becomes a row, and a server e
     inspect: (url) =>
       url.endsWith('/5') ? googleError(500) : { verdict: 'PASS' },
   });
-  await using broken = await scratchWarehouse();
+  await using broken = await searchConsoleDatabase();
   await assert.rejects(
     inspectionRun(
       new SearchConsoleSource({
@@ -2041,7 +2041,7 @@ test('watching wakes inspection streams when URLs fall due, not when traffic cha
     searchTypes: ['WEB'],
     siteUrls: [SITE],
   });
-  await using warehouse = await scratchWarehouse();
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints } = warehouse;
   const copy = (stream: typeof source.urlInspection, id: string, extra = {}) =>
     new Copy(stream, destination.table(id), {

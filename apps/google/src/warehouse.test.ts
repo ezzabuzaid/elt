@@ -8,11 +8,12 @@ import {
   PostgresDestination,
   PostgresSyncHistory,
 } from 'elt-postgresql';
+import { scratchWarehouse } from 'elt-postgresql/testing';
 import postgres from 'postgres';
 import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
+import { installSearchConsoleMarts } from './sources/search-console/search-console-marts.ts';
 import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
-import { RAW, scratchWarehouse } from './test-warehouse.ts';
-import { installSearchConsoleMarts } from './warehouse/search-console-marts.ts';
+import { RAW } from './test-warehouse.ts';
 
 const NOW = () => new Date('2026-09-22T00:00:00.000Z');
 const contract = new URL(
@@ -41,23 +42,10 @@ type Google = {
  * fake Search Console, and its marts are installed as the app installs them.
  */
 async function warehouse(siteUrls: string[], google: Google) {
-  const base = await scratchWarehouse();
-  const as = (username: string, password: string) => {
-    const url = new URL(base.url);
-    url.username = username;
-    url.password = password;
-    return url.href;
-  };
-  await base.sql.unsafe(
-    `ALTER DATABASE "${new URL(base.url).pathname.slice(1)}" OWNER TO warehouse`,
-  );
-  await base.sql.unsafe(await readFile(contract, 'utf8'));
-  const loaderUrl = as('warehouse', 'warehouse');
+  const base = await scratchWarehouse(await readFile(contract, 'utf8'));
+  const loaderUrl = base.url;
   const loader = postgres(loaderUrl, { max: 1, onnotice: () => {} });
-  const agent = postgres(as('agent_reader', 'agent'), {
-    max: 1,
-    onnotice: () => {},
-  });
+  const { agent } = base;
   const destination = new PostgresDestination({ url: loaderUrl, schema: RAW });
   const checkpoints = new PostgresCheckpointStore({
     url: loaderUrl,
@@ -99,35 +87,41 @@ async function warehouse(siteUrls: string[], google: Google) {
       };
     },
   };
+  const run = async () => {
+    const source = new SearchConsoleSource({
+      requester,
+      siteUrls,
+      now: NOW,
+      searchTypes: ['WEB', 'DISCOVER'],
+    });
+    const history = new PostgresSyncHistory({ url: loaderUrl });
+    await history.install();
+    await new Pipeline({
+      history,
+      connections: [
+        new Connection({
+          name: 'google-search-console',
+          source,
+          destination,
+          checkpoints,
+          steps: searchConsoleCopies(source, (table) =>
+            destination.table(table),
+          ),
+        }),
+      ],
+    }).run();
+  };
+  const publish = () => installSearchConsoleMarts(loader, { raw: RAW });
   return {
     agent,
+    loader,
+    run,
+    publish,
     async load() {
-      const source = new SearchConsoleSource({
-        requester,
-        siteUrls,
-        now: NOW,
-        searchTypes: ['WEB', 'DISCOVER'],
-      });
-      const history = new PostgresSyncHistory({ url: loaderUrl });
-      await history.install();
-      await new Pipeline({
-        history,
-        connections: [
-          new Connection({
-            name: 'google-search-console',
-            source,
-            destination,
-            checkpoints,
-            steps: searchConsoleCopies(source, (table) =>
-              destination.table(table),
-            ),
-          }),
-        ],
-      }).run();
-      await installSearchConsoleMarts(loader, { raw: RAW });
+      await run();
+      await publish();
     },
     async [Symbol.asyncDispose]() {
-      await agent.end();
       await loader.end();
       await base[Symbol.asyncDispose]();
     },
@@ -284,7 +278,7 @@ test('a re-read day settles, and query rows Google stopped reporting drop out of
   const freshness = async () =>
     (
       await store.agent`
-        SELECT latest_date::text, latest_settled_date::text FROM freshness
+        SELECT latest_date::text, latest_settled_date::text FROM search_console_freshness
         WHERE relation = 'search_console_queries_daily'`
     ).map((found) => ({ ...found }));
 
@@ -302,7 +296,8 @@ test('a re-read day settles, and query rows Google stopped reporting drop out of
     row(['2026-09-20', 'kept'], 2, 20),
     row(['2026-09-21', 'provisional'], 1, 5),
   ];
-  await store.load();
+  // Views read the raw tables directly, so no publication follows this load.
+  await store.run();
 
   assert.deepEqual(await read(), [
     { date: '2026-09-20', query: 'kept', settled: true },
@@ -349,10 +344,80 @@ test('everything the agent can see explains itself', async () => {
   // Every reader relation and column is described; internal functions are omitted.
   assert.deepEqual(
     kinds.map((found) => found.kind),
-    ['column', 'table', 'view'],
+    ['column', 'view'],
   );
   assert.deepEqual(
     paths.map((found) => found.page_path),
     ['/', '/a/b'],
   );
+});
+
+test('publication names missing raw tables, publishes after a partial load, and leaves views it does not own alone', async () => {
+  const google: Google = {
+    analytics: ({ dimensions }) => {
+      if (dimensions.join() === 'date,page') throw new Error('pages failed');
+      return dimensions.join() === 'date' ? [row(['2026-09-20'], 3, 30)] : [];
+    },
+  };
+  await using store = await warehouse([SITE], google);
+  await store.loader.begin(async (sql) => {
+    await sql`CREATE VIEW marts.other_source_items AS SELECT 1 AS id, now() AS loaded_at`;
+    await sql`COMMENT ON VIEW marts.other_source_items IS 'Owned elsewhere.'`;
+  });
+  const other = async () =>
+    (
+      await store.loader`SELECT pg_get_viewdef('marts.other_source_items'::regclass) AS definition,
+        obj_description('marts.other_source_items'::regclass) AS comment`
+    ).map((found) => ({ ...found }));
+  const before = await other();
+
+  await assert.rejects(
+    store.publish(),
+    /need raw tables that do not exist yet: google_search_console\.sites, .*google_search_console\.search_pages_daily/,
+  );
+  assert.deepEqual(
+    [
+      ...(await store.agent`SELECT name FROM catalog WHERE name LIKE 'search_console%'`),
+    ],
+    [],
+  );
+
+  await assert.rejects(store.run(), /did not load completely/);
+  await store.publish();
+
+  assert.deepEqual(
+    [
+      ...(await store.agent`SELECT count(*)::int AS n FROM search_console_pages_daily`),
+    ],
+    [{ n: 0 }],
+  );
+  assert.deepEqual(
+    (
+      await store.agent`SELECT status FROM stream_status WHERE stream = 'searchAnalyticsPages'`
+    ).map(({ status }) => status),
+    ['failed'],
+  );
+  assert.deepEqual(
+    (
+      await store.agent`SELECT relation, latest_date::text, loaded_at FROM search_console_freshness
+        WHERE relation IN ('search_console_totals_daily', 'search_console_pages_daily') ORDER BY relation`
+    ).map(({ relation, latest_date, loaded_at }) => ({
+      relation,
+      latest_date,
+      loaded: loaded_at instanceof Date,
+    })),
+    [
+      {
+        relation: 'search_console_pages_daily',
+        latest_date: null,
+        loaded: false,
+      },
+      {
+        relation: 'search_console_totals_daily',
+        latest_date: '2026-09-20',
+        loaded: true,
+      },
+    ],
+  );
+  assert.deepEqual(await other(), before);
 });

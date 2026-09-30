@@ -1,11 +1,5 @@
-import { randomUUID } from 'node:crypto';
-
 import { PostgresCheckpointStore, PostgresDestination } from 'elt-postgresql';
-import postgres from 'postgres';
-
-export const testServer =
-  process.env.TEST_DATABASE_URL ??
-  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
+import { scratchDatabase } from 'elt-postgresql/testing';
 
 export const RAW = 'google_search_console';
 
@@ -14,34 +8,19 @@ export const RAW = 'google_search_console';
  * Search Console destination and checkpoints in the raw schema, and a
  * session whose unqualified names resolve there.
  */
-export async function scratchWarehouse() {
-  const admin = postgres(testServer, { max: 1, onnotice: () => {} });
-  const name = `gsc_test_${randomUUID().replaceAll('-', '')}`;
-  try {
-    await admin.unsafe(`CREATE DATABASE "${name}"`);
-  } catch (cause) {
-    await admin.end();
-    throw new Error(
-      `Test Postgres at ${new URL(testServer).host} is unavailable. Start it with: npx nx run infra:up`,
-      { cause },
-    );
-  }
-  const url = new URL(testServer);
-  url.pathname = `/${name}`;
-  const sql = postgres(url.href, {
+export async function searchConsoleDatabase() {
+  const database = await scratchDatabase({
     max: 1,
-    onnotice: () => {},
     connection: { search_path: RAW },
   });
   return {
-    url: url.href,
-    sql,
-    destination: new PostgresDestination({ url: url.href, schema: RAW }),
-    checkpoints: new PostgresCheckpointStore({ url: url.href, schema: RAW }),
-    async [Symbol.asyncDispose]() {
-      await sql.end();
-      await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);
-      await admin.end();
-    },
+    url: database.url,
+    sql: database.sql,
+    destination: new PostgresDestination({ url: database.url, schema: RAW }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.url,
+      schema: RAW,
+    }),
+    [Symbol.asyncDispose]: () => database[Symbol.asyncDispose](),
   };
 }

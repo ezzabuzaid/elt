@@ -11,8 +11,8 @@ import {
 } from 'google-auth';
 import postgres from 'postgres';
 import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
+import { installSearchConsoleMarts } from './sources/search-console/search-console-marts.ts';
 import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
-import { installSearchConsoleMarts } from './warehouse/search-console-marts.ts';
 
 const siteUrls = ['sc-domain:ezz.sh'];
 const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';

@@ -1,6 +1,6 @@
 import { type PostgresView, publishPostgresViews } from 'elt-postgresql';
 import type postgres from 'postgres';
-import { searchConsoleTables as tables } from '../sources/search-console/search-console-copies.ts';
+import { searchConsoleTables as tables } from './search-console-copies.ts';
 
 type View = Omit<PostgresView, 'query'> & {
   readonly select: (raw: string) => string;
@@ -26,6 +26,8 @@ const positionWeight =
 const measures = `clicks, impressions, CASE WHEN position IS NULL THEN 0 ELSE impressions END AS ranked_impressions, coalesce(position * impressions, 0) AS position_weight`;
 const pagePath =
   'The page URL path without host, query or fragment; / for the root. Use it to match pages across sources.';
+const urlPath = (url: string) =>
+  `CASE WHEN ${url} ~* '^[a-z][a-z0-9+.-]*://' THEN coalesce(nullif(substring(${url} FROM '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*([^?#]*)'), ''), '/') END`;
 
 // Each breakdown row a re-read no longer returns keeps its older load time;
 // only the latest load of a day is what Google reports now.
@@ -88,7 +90,7 @@ const views: readonly View[] = [
     description:
       'Web clicks and impressions per landing page and day. Counted per page, so they do not add up to search_console_totals_daily either.',
     select: (raw) =>
-      `SELECT "siteUrl" AS site_url, "date", page, marts._url_path(page) AS page_path, ${measures}, settled, loaded_at FROM ${latestLoad(`${raw}.${quote(tables.searchAnalyticsPages)}`)}`,
+      `SELECT "siteUrl" AS site_url, "date", page, ${urlPath('page')} AS page_path, ${measures}, settled, loaded_at FROM ${latestLoad(`${raw}.${quote(tables.searchAnalyticsPages)}`)}`,
     columns: {
       site_url: site,
       date,
@@ -187,7 +189,7 @@ const views: readonly View[] = [
     description:
       'Google’s index status for the pages with the most recent impressions, one row per inspected URL.',
     select: (raw) =>
-      `SELECT "siteUrl" AS site_url, "inspectionUrl" AS inspection_url, marts._url_path("inspectionUrl") AS page_path, verdict, "coverageState" AS coverage_state, "robotsTxtState" AS robots_txt_state, "indexingState" AS indexing_state, "pageFetchState" AS page_fetch_state, "crawledAs" AS crawled_as, "googleCanonical" AS google_canonical, "userCanonical" AS user_canonical, "lastCrawlTime" AS last_crawl_time, "inspectionResultLink" AS inspection_result_link, "mobileUsabilityVerdict" AS mobile_usability_verdict, "richResultsVerdict" AS rich_results_verdict, "ampVerdict" AS amp_verdict, loaded_at FROM ${raw}.${quote(tables.urlInspection)}`,
+      `SELECT "siteUrl" AS site_url, "inspectionUrl" AS inspection_url, ${urlPath('"inspectionUrl"')} AS page_path, verdict, "coverageState" AS coverage_state, "robotsTxtState" AS robots_txt_state, "indexingState" AS indexing_state, "pageFetchState" AS page_fetch_state, "crawledAs" AS crawled_as, "googleCanonical" AS google_canonical, "userCanonical" AS user_canonical, "lastCrawlTime" AS last_crawl_time, "inspectionResultLink" AS inspection_result_link, "mobileUsabilityVerdict" AS mobile_usability_verdict, "richResultsVerdict" AS rich_results_verdict, "ampVerdict" AS amp_verdict, loaded_at FROM ${raw}.${quote(tables.urlInspection)}`,
     columns: {
       site_url: site,
       inspection_url: 'The inspected page URL.',
@@ -237,50 +239,40 @@ const views: readonly View[] = [
   },
 ];
 
-// Objects the views below depend on, created before them.
-const supporting = [
-  `CREATE OR REPLACE FUNCTION marts._url_path(url text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE
-    RETURN CASE WHEN url ~* '^[a-z][a-z0-9+.-]*://' THEN coalesce(nullif(substring(url FROM '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*([^?#]*)'), ''), '/') END`,
-  `CREATE TABLE IF NOT EXISTS marts.freshness (relation text PRIMARY KEY, latest_date date, latest_settled_date date, loaded_at timestamptz)`,
-  `COMMENT ON TABLE marts.freshness IS 'Observed row dates and maximum row load time per content view, recomputed after publication. Not declared extraction coverage or last successful sync; consult sync_status and extraction_coverage.'`,
-  `COMMENT ON COLUMN marts.freshness.relation IS 'The view it describes.'`,
-  `COMMENT ON COLUMN marts.freshness.latest_date IS 'The latest day in the view; NULL for views without a date.'`,
-  `COMMENT ON COLUMN marts.freshness.latest_settled_date IS 'The latest day Google will no longer restate; NULL for views without settled days.'`,
-  `COMMENT ON COLUMN marts.freshness.loaded_at IS 'Maximum loaded_at among rows currently in the view. The load that last wrote those rows, not source modification time, last successful sync, or watcher health. NULL for empty views.'`,
-  `CREATE OR REPLACE FUNCTION marts._refresh_freshness() RETURNS void LANGUAGE plpgsql AS $$
-    DECLARE
-      candidate record;
-    BEGIN
-      DELETE FROM marts.freshness;
-      FOR candidate IN
-        SELECT c.relname,
-          bool_or(a.attname = 'date') AS has_date,
-          bool_or(a.attname = 'settled') AS has_settled
-        FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-        WHERE c.relnamespace = 'marts'::regnamespace AND c.relkind = 'v'
-        GROUP BY c.relname
-        HAVING bool_or(a.attname = 'loaded_at')
-      LOOP
-        EXECUTE format(
-          'INSERT INTO marts.freshness SELECT %L, %s, %s, max(loaded_at) FROM marts.%I',
-          candidate.relname,
-          CASE WHEN candidate.has_date THEN 'max(date)' ELSE 'NULL::date' END,
-          CASE WHEN candidate.has_date AND candidate.has_settled THEN 'max(date) FILTER (WHERE settled)' ELSE 'NULL::date' END,
-          candidate.relname);
-      END LOOP;
-    END $$`,
-];
-
 function quote(name: string): string {
   return `"${name.replaceAll('"', '""')}"`;
 }
 
+const freshness: View = {
+  name: 'search_console_freshness',
+  description:
+    'Observed row dates and maximum row load time per Search Console view, computed when read. Not declared extraction coverage or last successful sync; consult sync_status and extraction_coverage.',
+  select: () =>
+    views
+      .filter(({ columns }) => 'loaded_at' in columns)
+      .map(({ name, columns }) => {
+        const dated = 'date' in columns;
+        const settled = dated && 'settled' in columns;
+        return `SELECT '${name}'::text AS relation, ${dated ? 'max("date")' : 'NULL::date'} AS latest_date, ${settled ? 'max("date") FILTER (WHERE settled)' : 'NULL::date'} AS latest_settled_date, max(loaded_at) AS loaded_at FROM marts.${name}`;
+      })
+      .join(' UNION ALL '),
+  columns: {
+    relation: 'The search_console view it describes.',
+    latest_date: 'The latest day in the view; NULL for views without a date.',
+    latest_settled_date:
+      'The latest day Google will no longer restate; NULL for views without settled days.',
+    loaded_at:
+      'Maximum loaded_at among rows currently in the view. The load that last wrote those rows, not source modification time, last successful sync, or watcher health. NULL for empty views.',
+  },
+};
+
 /**
  * Search Console's marts over the raw tables elt loaded into `raw`. The
  * calculations the data needs to be read correctly live in the views, so a
- * reader sums additive columns and cannot average a rate or a rank. Run after
- * the raw tables exist; it replaces its own views every time. The database
- * grants readers every relation in marts, so nothing here grants access.
+ * reader sums additive columns and cannot average a rate or a rank. Every raw
+ * table must exist first; a missing one is named and nothing is replaced. The
+ * database grants readers every relation in marts, so nothing here grants
+ * access.
  */
 export async function installSearchConsoleMarts(
   sql: postgres.Sql,
@@ -289,15 +281,19 @@ export async function installSearchConsoleMarts(
   const schema = quote(raw);
   await sql.begin(async (transaction) => {
     await transaction`SET LOCAL lock_timeout = '35s'`;
-    await transaction`SELECT pg_advisory_xact_lock(hashtextextended('mac-elt:marts', 0))`;
-    for (const statement of supporting) await transaction.unsafe(statement);
+    const missing = await transaction<{ name: string }[]>`
+      SELECT name FROM unnest(${Object.values(tables)}::text[]) AS name
+      WHERE to_regclass(format('%I.%I', ${raw}::text, name)) IS NULL`;
+    if (missing.length > 0)
+      throw new Error(
+        `Search Console marts need raw tables that do not exist yet: ${missing.map(({ name }) => `${raw}.${name}`).join(', ')}`,
+      );
     await publishPostgresViews(transaction, {
       schema: 'marts',
-      views: views.map(({ select, ...view }) => ({
+      views: [...views, freshness].map(({ select, ...view }) => ({
         ...view,
         query: select(schema),
       })),
     });
-    await transaction`SELECT marts._refresh_freshness()`;
   });
 }
