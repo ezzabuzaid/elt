@@ -46,7 +46,7 @@ The MCP tools only set up, report status and wait for imports. Each selection im
 
 ### Library and exporter
 
-Use **Node.js 26** and npm. The Apple connectors require macOS; Calendar and Reminders require **macOS 14 or later**.
+Use **Node.js 26** and npm. The Apple connectors require macOS; Calendar and Reminders require **macOS 27**, the release the EventKit helper is built for.
 
 The packages are currently private npm workspaces. Use this checkout; the examples import its local `elt` package.
 
