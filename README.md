@@ -46,6 +46,17 @@ Setup shows forms: first the apps, then each app's accounts, folders or other co
 
 The MCP tools only set up; the settings file's `selected_apps` view lists each selected app and where its import lives. Each selection imports into `~/Library/Application Support/Context Compiler/Apple/<app>/<selection>`: `data.sqlite`, where each stream loads into a `raw_<stream>` table read through a described view, beside the `catalog`, `sync_status`, `stream_status` and `extraction_coverage` views elt-sqlite publishes, plus checkpoints and managed attachment copies. The query skill reads each `data.sqlite` directly with `sqlite3 -readonly`; the Codex sandbox also denies writes there. While Codex is open, one plugin server per Mac keeps every selected app's import current: the first pass loads each app, then each app's own change watcher triggers the next, and a pass reads only what changed (Mail skips messages whose files are unchanged). Setup returns once the answers are saved; an app that has not finished its first import is reported as importing. Every pass is recorded in the app's own file, so a reader judges freshness from the file it queries. A changed scope is a new import; the previous copy is removed. After install, the plugin's page in ChatGPT (Plugins › Apple) has a native Settings section, served through the `openai/settings` MCP extension: a switch per app with its sync status. The setup skill can be run again to change or disconnect apps. It accesses content already available on the Mac; Calendar keeps remote attachment links without requiring Google sign-in. Scoped Mail omits global settings and native metadata streams whose ownership cannot be established. This desktop workflow is separate from the Postgres exporter described below.
 
+### Apple CLI
+
+[`apps/cli`](apps/cli/src/main.ts) reads the same Apple connectors from a terminal, into its own store under `outputs/cli`, separate from the plugin's. Run it with `npx nx run cli:start -- <command>`:
+
+- `setup` asks which apps to import and, optionally, which accounts, collections and dates to narrow each one to; `setup --app notes --collection <id> --since 2025-01-01 --app mail` does the same without prompts, each narrowing flag applying to the `--app` before it, and `options <app>` lists the IDs. Changing an app's selection removes its import, so the next sync loads it again.
+- `sync` loads every selected app once, showing each stream's progress, and `sync --watch` keeps them current until stopped. A second sync of the same store is refused while one runs. Ctrl-C stops a sync, watching or not, at once with exit status 130; what it committed stays, `status` shows the pass as interrupted, and the next sync resumes it.
+- `status` reports each app's latest pass, last success and database; a pass that was stopped shows as interrupted.
+- `query <app> --tables` lists each stream's view, its rows and its declared coverage, and `query <app> "<sql>"` runs one read-only statement. Each app's `catalog` view lists every view and column with its description.
+
+Each app's `outputs/cli/<app>/data.sqlite` holds `raw_<stream>` tables read through described views named after their streams (`inline_attachments` for `inlineAttachments`), with the sync history and `catalog` views elt-sqlite publishes. macOS grants access to the terminal app that runs the CLI, so it needs its own Full Disk Access, Contacts, Calendar and Reminders grants; a denied app fails alone and names the grant. Without a terminal, or with `--json`, output is JSON (one line per pass for `sync`) and nothing prompts.
+
 ### Library and exporter
 
 Use **Node.js 26** and npm. The Apple connectors require macOS; Calendar and Reminders require **macOS 27**, the release the EventKit helper is built for.
@@ -377,6 +388,7 @@ packages/destinations/postgresql/ Postgres destination and checkpoint store (elt
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
 apps/apple/            Apple connectors, native bridges, document parser, and example app
 apps/google/           Google connectors and example app
+apps/cli/              Terminal CLI over the Apple connectors (setup, sync, status, query)
 docs/                  Detailed behavior and native API research
 infra/                 Local Postgres warehouse and optional MCP server
 ```

@@ -22,6 +22,9 @@
     },
     {
       "path": "./apps/apple"
+    },
+    {
+      "path": "./apps/cli"
     }
   ]
 }
