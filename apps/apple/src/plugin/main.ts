@@ -2,11 +2,10 @@ import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { ApplePlugin } from './apple-plugin.ts';
+import { ApplePlugin, appSchema, configurationSchema } from './apple-plugin.ts';
 import { appNames } from './apps.ts';
 import { keepFresh } from './freshness.ts';
 import { settingsRead, settingsUpdate } from './native-settings.ts';
-import { appSchema, configurationSchema } from './settings.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
 if (process.platform !== 'darwin')

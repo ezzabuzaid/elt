@@ -6,8 +6,9 @@ import {
   SQLiteColumns,
   SQLiteDestination,
 } from 'elt-sqlite';
+import { importDirectory } from 'import-store';
+import type { AppConfiguration } from './apple-plugin.ts';
 import { apps } from './apps.ts';
-import { type AppConfiguration, importDirectory } from './settings.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);

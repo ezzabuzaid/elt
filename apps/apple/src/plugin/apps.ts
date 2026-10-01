@@ -1,4 +1,5 @@
 import type { Source } from 'elt';
+import type { AppFacts } from 'import-store';
 import { mailDirectory } from '../platform/macos/mail-store.ts';
 import { AppleBooksSource } from '../sources/apple-books/apple-books-source.ts';
 import { AppleCalendarSource } from '../sources/apple-calendar/apple-calendar-source.ts';
@@ -39,7 +40,6 @@ export type Choice = {
 type AppDefinition = {
   readonly title: string;
   readonly choices: readonly Choice[];
-  readonly accounts: boolean;
   // How dates select records, in the user's words; null when they cannot.
   readonly datedBy: string | null;
   readonly permissions: string;
@@ -113,7 +113,6 @@ export const apps: Record<App, AppDefinition> = {
         },
       },
     ],
-    accounts: true,
     datedBy: 'date received (date sent if missing)',
     permissions: `${fullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
     unscoped: restrictedMailStreams,
@@ -124,7 +123,6 @@ export const apps: Record<App, AppDefinition> = {
   notes: {
     title: 'Notes',
     choices: [accounts, collections('folders')],
-    accounts: true,
     datedBy: 'date last edited',
     permissions: `${fullDiskAccess} Open Notes to let it finish syncing iCloud changes.`,
     note: 'Exact containing folders; select descendants separately. Smart folders are saved searches and cannot be selected as containing folders.',
@@ -140,7 +138,6 @@ export const apps: Record<App, AppDefinition> = {
         label: (row) => String(row.displayName || row.chatIdentifier),
       },
     ],
-    accounts: false,
     datedBy: 'message date',
     permissions: `${fullDiskAccess} Only messages synced to this Mac can be imported.`,
     source: (scope) => new AppleMessagesSource(undefined, undefined, scope),
@@ -148,7 +145,6 @@ export const apps: Record<App, AppDefinition> = {
   contacts: {
     title: 'Contacts',
     choices: [{ ...accounts, stream: 'containers', scope: 'collectionIds' }],
-    accounts: false,
     datedBy: null,
     permissions:
       'Allow ChatGPT when macOS asks for Contacts access, or turn it on in System Settings > Privacy & Security > Contacts. Full Disk Access for ChatGPT also works.',
@@ -157,7 +153,6 @@ export const apps: Record<App, AppDefinition> = {
   calendar: {
     title: 'Calendar',
     choices: [accounts, collections('calendars')],
-    accounts: true,
     datedBy: 'event dates (events that overlap the range)',
     permissions:
       'Allow full Calendar access when macOS asks. Access can be changed under System Settings > Privacy & Security > Calendars.',
@@ -173,7 +168,6 @@ export const apps: Record<App, AppDefinition> = {
   reminders: {
     title: 'Reminders',
     choices: [accounts, collections('lists')],
-    accounts: true,
     datedBy: null,
     permissions:
       'Allow full Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.',
@@ -190,7 +184,6 @@ export const apps: Record<App, AppDefinition> = {
         label: (row) => String(row.title ?? 'Default profile'),
       },
     ],
-    accounts: false,
     datedBy: 'visit time',
     permissions: `${fullDiskAccess} Open Safari to let it fetch history and tabs from your other devices.`,
     note: 'Profiles select history, windows, tab groups, tabs, recently closed tabs and downloads. Dates select history visits, and the pages and topics those visits reach.',
@@ -209,9 +202,21 @@ export const apps: Record<App, AppDefinition> = {
     title: 'Books',
     // Books' collections are built-in lists; everything is imported.
     choices: [],
-    accounts: false,
     datedBy: null,
     permissions: `${fullDiskAccess} Books does not need to be open. Books stored only in iCloud are listed without their files; open them in Books to download them.`,
     source: () => new AppleBooksSource(),
   },
 };
+
+const isApp = (app: string): app is App =>
+  (appNames as readonly string[]).includes(app);
+
+// What an app can be narrowed by, for the selection rules both hosts share.
+export function appFacts(app: string): AppFacts {
+  if (!isApp(app)) throw new TypeError(`Unknown Apple app ${app}`);
+  const { choices, datedBy } = apps[app];
+  return {
+    narrowsBy: (kind) => choices.some(({ scope }) => scope === kind),
+    datedBy,
+  };
+}

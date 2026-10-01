@@ -1,6 +1,9 @@
-import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
+import type {
+  AppConfiguration,
+  ApplePlugin,
+  ImportSync,
+} from './apple-plugin.ts';
 import { type App, appNames, apps } from './apps.ts';
-import type { AppConfiguration } from './settings.ts';
 
 // The plugin page's native Settings section (the openai/settings MCP
 // extension): one switch per app, described by that app's import status.

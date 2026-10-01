@@ -1,78 +1,51 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { setInterval, setTimeout as sleep } from 'node:timers/promises';
 import { Pipeline } from 'elt';
 import { installSQLiteCatalog, SQLiteSyncHistory } from 'elt-sqlite';
-import {
-  type Configuration,
-  importDirectory,
-  NewerStoreError,
-  removeStaleImports,
-  Settings,
-} from './settings.ts';
+import { ImportStore, lease } from 'import-store';
+import { type Configuration, configurationSchema } from './apple-plugin.ts';
+import { forgetServer, outdated } from './leadership.ts';
 import { appConnection } from './sync.ts';
 
-// The lock of the one server per Mac that keeps imports current. SQLite
-// releases it when its connection closes or its process exits. null when
-// another server holds it, or it cannot be opened now.
-function lease(directory: string): DatabaseSync | null {
-  let database: DatabaseSync | undefined;
-  try {
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    database = new DatabaseSync(join(directory, 'watch.sqlite'));
-    database.exec('BEGIN IMMEDIATE');
-    return database;
-  } catch {
-    database?.close();
-    return null;
-  }
-}
-
-export function leaderRunning(directory: string): boolean {
-  const held = lease(directory);
-  held?.close();
-  return held === null;
-}
-
 function readConfiguration(directory: string): Configuration {
-  using settings = new Settings(directory);
-  return settings.configuration();
+  using store = new ImportStore(directory);
+  return configurationSchema.parse({ apps: store.selections() });
 }
 
-// Republishes what readers see in the settings file, so a newer plugin's
-// view reaches readers before anyone changes the selection.
-function publishSettings(directory: string) {
-  using settings = new Settings(directory);
-  settings.publish();
+// Republishes what readers see in the settings file, removes imports no
+// longer selected, and rolls back what a pass stopped mid-commit left, so
+// readers that cannot write can open every import before this server's
+// first pass.
+function tidy(directory: string) {
+  using store = new ImportStore(directory);
+  store.publish();
+  store.removeStaleImports();
+  for (const selection of store.selections()) store.recover(selection);
 }
 
 // Watches the selected apps until the signal aborts: every app's first pass
 // loads it, then each source's own watcher decides when to sync again. Each
 // pass is recorded in its app's data.sqlite, beside the catalog readers query;
 // an app whose connection cannot be built has no pipeline to record it, so its
-// failure is kept in the settings until it builds.
+// failure is kept in the store's settings until it builds.
 async function watchImports(
   directory: string,
   configuration: Configuration,
   signal: AbortSignal,
 ) {
   const imports = [];
-  for (const item of configuration.apps) {
-    const importPath = importDirectory(directory, item);
+  for (const item of configuration.apps)
     try {
       imports.push(await appConnection(directory, item));
-      using settings = new Settings(directory);
-      settings.clearConnectionFailure(importPath);
+      using store = new ImportStore(directory);
+      store.clearConnectionFailure(item);
     } catch (error) {
-      using settings = new Settings(directory);
-      settings.saveConnectionFailure(
-        importPath,
+      using store = new ImportStore(directory);
+      store.saveConnectionFailure(
+        item,
         error instanceof Error ? error.message : String(error),
       );
     }
-  }
   if (imports.length === 0) return;
   const history = new SQLiteSyncHistory();
   const destinations = imports.map(({ destination }) => destination);
@@ -86,30 +59,6 @@ async function watchImports(
     for await (const _pass of pipeline.watch({ signal }));
   } catch {
     // Every failure is recorded against its app by the history.
-  }
-}
-
-// Whether a newer plugin server is running, after recording this server as
-// running, or a newer layout owns the settings file. A server that stopped
-// cleanly removed itself; one that crashed stops counting once its heartbeat
-// is ten seconds old.
-function outdated(directory: string, id: string, version: string): boolean {
-  const newer = (candidate: string) => {
-    const [left, right] = [candidate, version].map((value) =>
-      value.split('.').map(Number),
-    );
-    for (let part = 0; part < 3; part++)
-      if (left?.[part] !== right?.[part])
-        return (left?.[part] ?? 0) > (right?.[part] ?? 0);
-    return false;
-  };
-  try {
-    using settings = new Settings(directory);
-    const now = Date.now();
-    settings.heartbeat(id, version, now);
-    return settings.runningVersions(now - 10_000).some(newer);
-  } catch (error) {
-    return error instanceof NewerStoreError;
   }
 }
 
@@ -144,7 +93,7 @@ async function acquire(
   id: string,
   version: string,
   signal: AbortSignal,
-): Promise<DatabaseSync | null> {
+): Promise<Disposable | null> {
   for (;;) {
     if (!outdated(directory, id, version)) {
       const held = lease(directory);
@@ -182,8 +131,7 @@ async function lead(
         newer,
         watching,
       );
-      publishSettings(directory);
-      removeStaleImports(directory, configuration);
+      tidy(directory);
       await watchImports(directory, configuration, watching);
     } catch {
       // Retried below, once the selection changes or a minute passes.
@@ -215,8 +163,7 @@ export async function keepFresh(
     }
   } finally {
     try {
-      using settings = new Settings(directory);
-      settings.forgetServer(id);
+      forgetServer(directory, id);
     } catch {
       // Unreachable settings: the heartbeat goes stale on its own.
     }

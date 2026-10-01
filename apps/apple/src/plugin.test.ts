@@ -13,17 +13,15 @@ import {
 } from '@openai/mcp-extensions/server';
 import { Connection } from 'elt';
 import { SQLiteDestination, SQLiteSyncHistory } from 'elt-sqlite';
+import { importDirectory, leaseHeld } from 'import-store';
+import type { AppConfiguration } from './plugin/apple-plugin.ts';
 import { ApplePlugin } from './plugin/apple-plugin.ts';
 import { apps } from './plugin/apps.ts';
-import { keepFresh, leaderRunning } from './plugin/freshness.ts';
+import { keepFresh } from './plugin/freshness.ts';
 import { settingsRead, settingsUpdate } from './plugin/native-settings.ts';
-import { importDirectory } from './plugin/settings.ts';
 
 // Stands in for the leading server's import of one app selection.
-function imported(
-  directory: string,
-  item: Parameters<typeof importDirectory>[1],
-) {
+function imported(directory: string, item: AppConfiguration) {
   const path = importDirectory(directory, item);
   mkdirSync(path, { recursive: true });
   using database = new DatabaseSync(join(path, 'data.sqlite'));
@@ -33,10 +31,7 @@ function imported(
 
 // Begins passes of one app selection's import, recorded in its data.sqlite as
 // the leading server's history records them.
-async function passes(
-  directory: string,
-  item: Parameters<typeof importDirectory>[1],
-) {
+async function passes(directory: string, item: AppConfiguration) {
   const path = importDirectory(directory, item);
   mkdirSync(path, { recursive: true });
   const destination = new SQLiteDestination({
@@ -65,7 +60,10 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
       /date filtering/,
     ],
     [[{ app: 'messages', scope: { accountIds: ['a'] } }], /account IDs/],
-    [[{ app: 'notes', scope: { collectionIds: [] } }], /too small/i],
+    [
+      [{ app: 'notes', scope: { collectionIds: [] } }],
+      /at least one collection/,
+    ],
     [[{ app: 'notes' }, { app: 'notes' }], /once/],
     [[{ app: 'photos' }], /app/],
   ] as const)
@@ -150,7 +148,7 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   await begin();
   assert.equal(plugin.status().apps[0]?.sync?.state, 'interrupted');
   {
-    using lease = new DatabaseSync(join(scratch.path, 'watch.sqlite'));
+    using lease = new DatabaseSync(join(scratch.path, 'lease.sqlite'));
     lease.exec('BEGIN IMMEDIATE');
     assert.equal(plugin.status().apps[0]?.sync?.state, 'running');
   }
@@ -176,12 +174,12 @@ test('the leading server keeps leading when its settings cannot be read, and let
   const running = keepFresh(scratch.path, stopping.signal, '0.4.1');
   try {
     await sleep(1_500);
-    assert.equal(leaderRunning(scratch.path), true);
+    assert.equal(leaseHeld(scratch.path), true);
   } finally {
     stopping.abort();
   }
   await running;
-  assert.equal(leaderRunning(scratch.path), false);
+  assert.equal(leaseHeld(scratch.path), false);
 });
 
 test('the Settings page switches apps on and off and describes each import as OpenAI’s settings schema requires', async () => {
@@ -223,7 +221,7 @@ test('the Settings page switches apps on and off and describes each import as Op
     'Paused: resumes the next time Codex runs the Apple plugin.',
   );
   {
-    using lease = new DatabaseSync(join(scratch.path, 'watch.sqlite'));
+    using lease = new DatabaseSync(join(scratch.path, 'lease.sqlite'));
     lease.exec('BEGIN IMMEDIATE');
     assert.match(described().notes ?? '', /^Importing since /);
   }
@@ -285,7 +283,7 @@ test('a server whose code predates the settings file refuses to change apps and 
   const running = keepFresh(scratch.path, stopping.signal, '99.0.0');
   try {
     await sleep(1_500);
-    assert.equal(leaderRunning(scratch.path), false);
+    assert.equal(leaseHeld(scratch.path), false);
   } finally {
     stopping.abort();
   }
@@ -329,7 +327,7 @@ test('a newer plugin server takes the lead from an older one, and the older one 
   let againRunning: Promise<void> | undefined;
   try {
     await sleep(500);
-    assert.equal(leaderRunning(scratch.path), true);
+    assert.equal(leaseHeld(scratch.path), true);
     newerRunning = keepFresh(scratch.path, newer.signal, '0.10.0');
     // The older leader steps down on its next check; the newer one takes
     // the lease on its next attempt.
@@ -337,7 +335,7 @@ test('a newer plugin server takes the lead from an older one, and the older one 
     older.abort();
     await olderRunning;
     // Had the older server still led, its exit would have left the lease free.
-    assert.equal(leaderRunning(scratch.path), true);
+    assert.equal(leaseHeld(scratch.path), true);
 
     // An older version installed again leads once the newer server stops.
     againRunning = keepFresh(scratch.path, again.signal, '0.4.1');
@@ -345,12 +343,12 @@ test('a newer plugin server takes the lead from an older one, and the older one 
     newer.abort();
     await newerRunning;
     await sleep(2_500);
-    assert.equal(leaderRunning(scratch.path), true);
+    assert.equal(leaseHeld(scratch.path), true);
   } finally {
     older.abort();
     newer.abort();
     again.abort();
     await Promise.all([olderRunning, newerRunning, againRunning]);
   }
-  assert.equal(leaderRunning(scratch.path), false);
+  assert.equal(leaseHeld(scratch.path), false);
 });

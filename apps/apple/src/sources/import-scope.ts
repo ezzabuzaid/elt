@@ -1,11 +1,6 @@
-// Native collection IDs: Notes folders, Mail mailboxes, Messages chats,
-// Contacts containers, Calendar calendars, or Reminders lists.
-export type ImportScope = {
-  readonly accountIds?: readonly string[];
-  readonly collectionIds?: readonly string[];
-  readonly startAt?: string;
-  readonly endAt?: string;
-};
+import type { ImportScope } from 'import-store';
+
+export type { ImportScope };
 
 export function selected(
   ids: readonly string[] | undefined,

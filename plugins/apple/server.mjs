@@ -62110,10 +62110,9 @@ var StdioServerTransport = class {
 };
 
 // apps/apple/src/plugin/apple-plugin.ts
-import { existsSync as existsSync2 } from "node:fs";
+import { existsSync as existsSync3 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
 import { join as join24 } from "node:path";
-import { DatabaseSync as DatabaseSync15 } from "node:sqlite";
 
 // packages/elt/dist/core/deduplication.js
 var Deduplication = class {
@@ -63889,14 +63888,1423 @@ var LocalFiles = class extends FileStorage {
   }
 };
 
+// packages/import-store/dist/import-store.js
+import { chmodSync as chmodSync2, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { join as join3 } from "node:path";
+import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
+
+// packages/destinations/sqlite/dist/sqlite-catalog.js
+import { DatabaseSync } from "node:sqlite";
+
+// packages/destinations/sqlite/dist/sqlite-descriptions.js
+var descriptions = '"_elt_descriptions"';
+function createDescriptions(database) {
+  database.exec(`CREATE TABLE IF NOT EXISTS ${descriptions} ("relation" TEXT NOT NULL COLLATE NOCASE, "column" TEXT NOT NULL COLLATE NOCASE, "data_type" TEXT, "description" TEXT NOT NULL, PRIMARY KEY ("relation", "column")) STRICT`);
+}
+function describe3(database, relation, description, columns3) {
+  createDescriptions(database);
+  database.exec(`DELETE FROM ${descriptions} WHERE "relation" NOT IN (SELECT "name" FROM sqlite_schema)`);
+  database.prepare(`DELETE FROM ${descriptions} WHERE "relation" = ?`).run(relation);
+  const declared = new Map(database.prepare('SELECT "name", "type" FROM pragma_table_info(?)').all(relation).map(({ name, type }) => [
+    String(name).toLowerCase(),
+    String(type).toLowerCase() || null
+  ]));
+  const insert = database.prepare(`INSERT INTO ${descriptions} ("relation", "column", "data_type", "description") VALUES (?, ?, ?, ?)`);
+  insert.run(relation, "", null, description);
+  for (const [column, { description: description2, dataType }] of Object.entries(columns3))
+    if (description2 !== null)
+      insert.run(relation, column, dataType ?? declared.get(column.toLowerCase()) ?? null, description2);
+}
+
+// packages/destinations/sqlite/dist/sqlite-views.js
+var quote = (name) => `"${name.replaceAll('"', '""')}"`;
+function text(value, what) {
+  if (typeof value !== "string" || !value.trim() || value.includes("\0") || !value.isWellFormed())
+    throw new TypeError(`Invalid ${what}`);
+}
+function publishSQLiteViews(database, { views }) {
+  const names = /* @__PURE__ */ new Set();
+  for (const view of views) {
+    text(view.name, "view name");
+    if (/^_elt_/i.test(view.name))
+      throw new TypeError("View names starting with _elt_ are reserved");
+    if (names.has(view.name.toLowerCase()))
+      throw new TypeError("Duplicate view names");
+    names.add(view.name.toLowerCase());
+    text(view.query, "view query");
+    text(view.description, "view description");
+    for (const [column, description] of Object.entries(view.columns)) {
+      text(column, "column name");
+      text(description, "column description");
+    }
+  }
+  if (views.length === 0)
+    return;
+  database.exec("SAVEPOINT publish");
+  try {
+    for (const view of views.toReversed())
+      database.exec(`DROP VIEW IF EXISTS ${quote(view.name)}`);
+    for (const view of views) {
+      database.prepare(`CREATE VIEW ${quote(view.name)} AS ${view.query}`).run();
+      const columns3 = database.prepare('SELECT "name" FROM pragma_table_info(?)').all(view.name).map(({ name }) => String(name));
+      if (columns3.length !== Object.keys(view.columns).length || columns3.some((name) => !Object.hasOwn(view.columns, name)))
+        throw new TypeError(`View ${quote(view.name)} must describe exactly its output columns: ${columns3.join(", ")}`);
+      describe3(database, view.name, view.description, Object.fromEntries(Object.entries(view.columns).map(([column, description]) => [
+        column,
+        { description }
+      ])));
+    }
+    database.exec("RELEASE publish");
+  } catch (error62) {
+    if (database.isTransaction) {
+      database.exec("ROLLBACK TO publish");
+      database.exec("RELEASE publish");
+    }
+    throw error62;
+  }
+}
+
+// packages/destinations/sqlite/dist/sqlite-catalog.js
+function installSQLiteCatalog({ path }) {
+  var _stack = [];
+  try {
+    if (path === ":memory:")
+      throw new TypeError("A SQLite catalog requires a database file");
+    const database = __using(_stack, new DatabaseSync(path, { timeout: 3e4 }));
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      createDescriptions(database);
+      publishSQLiteViews(database, {
+        views: [
+          {
+            ...readerCatalog,
+            query: `SELECT 'view' AS "kind", s."name" AS "name", NULL AS "data_type", d."description" AS "description"
+            FROM sqlite_schema s JOIN ${descriptions} d ON d."relation" = s."name" AND d."column" = ''
+            WHERE s."type" = 'view'
+            UNION ALL
+            SELECT 'column', s."name" || '.' || c."column", c."data_type", c."description"
+            FROM sqlite_schema s JOIN ${descriptions} d ON d."relation" = s."name" AND d."column" = ''
+            JOIN ${descriptions} c ON c."relation" = s."name" AND c."column" <> ''
+            WHERE s."type" = 'view'
+            ORDER BY 2`
+          }
+        ]
+      });
+      database.exec("COMMIT");
+    } catch (error62) {
+      if (database.isTransaction)
+        database.exec("ROLLBACK");
+      throw error62;
+    }
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+
+// packages/destinations/sqlite/dist/sqlite-checkpoint-store.js
+import { chmodSync } from "node:fs";
+import { resolve as resolve2 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+var SQLiteCheckpointStore = class extends CheckpointStore {
+  path;
+  constructor({ path }) {
+    super();
+    if (!path || path === ":memory:" || path.includes("\0"))
+      throw new TypeError("Checkpoints require a persistent SQLite file");
+    this.path = resolve2(path);
+    Object.freeze(this);
+  }
+  async session(_ids, work) {
+    var _stack = [];
+    try {
+      const database = __using(_stack, this.open());
+      database.exec("BEGIN IMMEDIATE");
+      const durable = (statement, ...values) => {
+        database.prepare(statement).run(...values);
+        database.exec("COMMIT");
+        database.exec("BEGIN IMMEDIATE");
+      };
+      try {
+        const result = await work({
+          read: async (id12) => {
+            const saved = database.prepare("SELECT binding, state FROM checkpoints WHERE id = ?").get(id12);
+            return saved === void 0 ? void 0 : { binding: String(saved.binding), state: String(saved.state) };
+          },
+          save: async (id12, { binding, state }) => durable("INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state", id12, binding, state),
+          remove: async (id12) => durable("DELETE FROM checkpoints WHERE id = ?", id12)
+        });
+        database.exec("COMMIT");
+        return result;
+      } catch (error62) {
+        if (database.isTransaction)
+          database.exec("ROLLBACK");
+        throw error62;
+      }
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  }
+  open() {
+    const database = new DatabaseSync2(this.path);
+    try {
+      chmodSync(this.path, 384);
+      database.exec("CREATE TABLE IF NOT EXISTS checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL) STRICT");
+      return database;
+    } catch (error62) {
+      database.close();
+      throw error62;
+    }
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-column.js
+var storageTypes = {
+  text: "TEXT",
+  integer: "INTEGER",
+  real: "REAL",
+  blob: "BLOB",
+  boolean: "INTEGER",
+  date: "TEXT",
+  timestamp: "TEXT"
+};
+function canonical2(kind, name) {
+  switch (kind) {
+    case "boolean":
+      return ` CHECK (${name} IN (0, 1))`;
+    case "date":
+      return ` CHECK (date(${name}) IS ${name})`;
+    case "timestamp":
+      return ` CHECK (strftime('%Y-%m-%dT%H:%M:%fZ', ${name}) IS ${name})`;
+    default:
+      return "";
+  }
+}
+var SQLiteColumn = class _SQLiteColumn {
+  name;
+  kind;
+  required;
+  isPrimaryKey;
+  nullable;
+  optional;
+  // An array of kind, stored as a JSON array in TEXT.
+  array;
+  fileRead;
+  constructor(name, kind, options) {
+    if (!name || name.includes("\0"))
+      throw new TypeError("Invalid column name");
+    if (!Object.hasOwn(storageTypes, kind))
+      throw new TypeError("Unsupported SQLite column type");
+    this.array = options.array ?? false;
+    if (this.array && (kind === "blob" || options.primaryKey))
+      throw new TypeError("Array columns hold scalar values and cannot be keys");
+    this.fileRead = options.fileRead;
+    if (this.fileRead !== void 0 && (!(this.fileRead instanceof FileRead) || this.fileRead.name !== name))
+      throw new TypeError("Column file read must match its name");
+    this.name = name;
+    this.kind = kind;
+    this.isPrimaryKey = options.primaryKey;
+    this.nullable = !options.primaryKey && options.nullable;
+    this.optional = !options.primaryKey && options.optional;
+    this.required = !this.nullable && !this.optional;
+    Object.freeze(this);
+  }
+  primaryKey() {
+    return new _SQLiteColumn(this.name, this.kind, {
+      nullable: false,
+      optional: false,
+      primaryKey: true,
+      array: this.array,
+      fileRead: this.fileRead
+    });
+  }
+  notNull() {
+    return new _SQLiteColumn(this.name, this.kind, {
+      nullable: false,
+      optional: false,
+      primaryKey: this.isPrimaryKey,
+      array: this.array,
+      fileRead: this.fileRead
+    });
+  }
+  from(file2) {
+    if (this.array || this.kind !== "blob" && this.kind !== "text")
+      throw new TypeError("Files require a BLOB column, parsed TEXT or a stored TEXT reference");
+    return new _SQLiteColumn(this.name, this.kind, {
+      nullable: this.nullable,
+      optional: this.optional,
+      primaryKey: this.isPrimaryKey,
+      fileRead: new FileRead(this.name, file2, this.fileRead?.parser)
+    });
+  }
+  parse(parser) {
+    if (this.kind !== "text")
+      throw new TypeError("Document parsing requires a TEXT column");
+    if (this.fileRead === void 0)
+      throw new TypeError("Select a source file before selecting a parser");
+    return new _SQLiteColumn(this.name, this.kind, {
+      nullable: this.nullable,
+      optional: this.optional,
+      primaryKey: this.isPrimaryKey,
+      fileRead: new FileRead(this.name, this.fileRead.file, parser)
+    });
+  }
+  get quotedName() {
+    return `"${this.name.replaceAll('"', '""')}"`;
+  }
+  // Original file bytes live in a chunk table; the column keeps the file's id.
+  get storesFile() {
+    return this.kind === "blob" && this.fileRead !== void 0;
+  }
+  get storageType() {
+    if (this.array)
+      return "TEXT";
+    return this.storesFile ? "INTEGER" : storageTypes[this.kind];
+  }
+  // The column's type as readers see it in the catalog.
+  get dataType() {
+    if (this.storesFile)
+      return "integer";
+    return this.array ? `${this.kind}[]` : this.kind;
+  }
+  get definition() {
+    const check2 = this.array ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')` : canonical2(this.kind, this.quotedName);
+    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? " PRIMARY KEY" : ""}${this.required ? " NOT NULL" : ""}${check2}`;
+  }
+  encode(record3) {
+    if (record3 === null || typeof record3 !== "object" || Array.isArray(record3))
+      throw new TypeError(`Record is missing column "${this.name}"`);
+    if (!Object.hasOwn(record3, this.name)) {
+      if (this.optional)
+        return null;
+      throw new TypeError(`Record is missing column "${this.name}"`);
+    }
+    const value = Reflect.get(record3, this.name);
+    if (value === null && this.nullable)
+      return null;
+    if (this.array) {
+      if (Array.isArray(value) && value.every((element) => this.#element(element)))
+        return JSON.stringify(value);
+      throw new TypeError(`Column "${this.name}" requires an array of ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
+    }
+    switch (this.kind) {
+      case "text":
+        if (typeof value === "string")
+          return value;
+        break;
+      case "boolean":
+        if (typeof value === "boolean")
+          return Number(value);
+        break;
+      case "integer":
+        if (typeof value === "bigint" && value >= -(2n ** 63n) && value < 2n ** 63n || typeof value === "number" && Number.isSafeInteger(value))
+          return value;
+        break;
+      case "date":
+        if (isCalendarDate(value))
+          return value;
+        break;
+      case "timestamp":
+        if (isTimestamp(value))
+          return value;
+        break;
+      case "real":
+        if (typeof value === "number" && Number.isFinite(value))
+          return value;
+        break;
+      case "blob":
+        if (this.storesFile ? Number.isSafeInteger(value) : value instanceof Uint8Array)
+          return value;
+    }
+    throw new TypeError(`Column "${this.name}" requires ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
+  }
+  // Whether a JSON array element keeps this kind's value exactly.
+  #element(value) {
+    switch (this.kind) {
+      case "text":
+        return typeof value === "string";
+      case "boolean":
+        return typeof value === "boolean";
+      case "integer":
+        return Number.isSafeInteger(value);
+      case "real":
+        return typeof value === "number" && Number.isFinite(value);
+      case "date":
+        return isCalendarDate(value);
+      case "timestamp":
+        return isTimestamp(value);
+      default:
+        return false;
+    }
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-columns.js
+function scalarKind(name, type, format) {
+  switch (type) {
+    case "string":
+      return format === "date" ? "date" : format === "date-time" ? "timestamp" : "text";
+    case "integer":
+      return "integer";
+    case "number":
+      return "real";
+    case "boolean":
+      return "boolean";
+    default:
+      throw new TypeError(`Unsupported JSON Schema type for field ${name}: ${String(type)}`);
+  }
+}
+var SQLiteColumns = class {
+  // Scalars, and arrays of scalars as JSON arrays in TEXT. The date and
+  // date-time string formats keep their kind, as in Postgres.
+  static fromSchema(schema) {
+    const { properties: properties39, required: required3 } = schema;
+    if (schema.type !== "object" || properties39 === null || typeof properties39 !== "object" || Array.isArray(properties39))
+      throw new TypeError("SQLite requires an object schema with explicit properties");
+    if (required3 !== void 0 && (!Array.isArray(required3) || !required3.every((name) => typeof name === "string")))
+      throw new TypeError("JSON Schema required must be an array of field names");
+    const requiredFields = new Set(required3);
+    for (const name of requiredFields)
+      if (!Object.hasOwn(properties39, name))
+        throw new TypeError(`Schema does not describe field ${name}`);
+    return Object.entries(properties39).map(([name, field]) => {
+      if (field === null || typeof field !== "object" || Array.isArray(field))
+        throw new TypeError(`Unsupported JSON Schema for field ${name}`);
+      const type = Reflect.get(field, "type");
+      const types = typeof type === "string" ? [type] : type;
+      if (!Array.isArray(types) || !types.every((value) => typeof value === "string") || new Set(types).size !== types.length)
+        throw new TypeError(`Unsupported JSON Schema type for field ${name}`);
+      const valueTypes = types.filter((value) => value !== "null");
+      if (valueTypes.length !== 1)
+        throw new TypeError(`SQLite requires one scalar type for field ${name}`);
+      const array2 = valueTypes[0] === "array";
+      const items = array2 ? Reflect.get(field, "items") : field;
+      if (items === null || typeof items !== "object" || Array.isArray(items))
+        throw new TypeError(`Unsupported JSON Schema items for field ${name}`);
+      const kind = scalarKind(name, array2 ? Reflect.get(items, "type") : valueTypes[0], Reflect.get(items, "format"));
+      return new SQLiteColumn(name, kind, {
+        nullable: types.includes("null"),
+        optional: !requiredFields.has(name),
+        primaryKey: false,
+        array: array2
+      });
+    });
+  }
+  text(field) {
+    return new SQLiteColumn(field, "text", {
+      nullable: true,
+      optional: false,
+      primaryKey: false
+    });
+  }
+  integer(field) {
+    return new SQLiteColumn(field, "integer", {
+      nullable: true,
+      optional: false,
+      primaryKey: false
+    });
+  }
+  real(field) {
+    return new SQLiteColumn(field, "real", {
+      nullable: true,
+      optional: false,
+      primaryKey: false
+    });
+  }
+  date(field) {
+    return new SQLiteColumn(field, "date", {
+      nullable: true,
+      optional: false,
+      primaryKey: false
+    });
+  }
+  timestamp(field) {
+    return new SQLiteColumn(field, "timestamp", {
+      nullable: true,
+      optional: false,
+      primaryKey: false
+    });
+  }
+  blob(field) {
+    return new SQLiteColumn(field, "blob", {
+      nullable: true,
+      optional: false,
+      primaryKey: false
+    });
+  }
+  boolean(field) {
+    return new SQLiteColumn(field, "boolean", {
+      nullable: true,
+      optional: false,
+      primaryKey: false
+    });
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-destination.js
+import { resolve as resolve3 } from "node:path";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+
+// packages/destinations/sqlite/dist/sqlite-writer.js
+import { createHash as createHash3 } from "node:crypto";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+
+// packages/destinations/sqlite/dist/sqlite-file-store.js
+var quote2 = (name) => `"${name.replaceAll('"', '""')}"`;
+var SQLiteFileStore = class _SQLiteFileStore {
+  static chunkSize = 4 * 1024 * 1024;
+  name;
+  #next;
+  #insert;
+  constructor(database, table2, column) {
+    this.name = _SQLiteFileStore.tableName(table2, column);
+    const chunks = quote2(this.name);
+    database.exec(`CREATE TABLE IF NOT EXISTS ${chunks} ("file" INTEGER NOT NULL, "n" INTEGER NOT NULL, "bytes" BLOB NOT NULL, PRIMARY KEY ("file", "n")) STRICT`);
+    database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_delete`)} AFTER DELETE ON ${table2.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
+    database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_update`)} AFTER UPDATE OF ${column.quotedName} ON ${table2.quotedName} WHEN old.${column.quotedName} IS NOT new.${column.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
+    this.#next = database.prepare(`SELECT coalesce(max("file"), 0) + 1 AS "file" FROM ${chunks}`);
+    this.#insert = database.prepare(`INSERT INTO ${chunks} ("file", "n", "bytes") VALUES (?, ?, ?)`);
+  }
+  static tableName(table2, column) {
+    return `_elt_files_${table2.location}_${column.name.toLowerCase()}`;
+  }
+  // An empty file still stores one empty chunk, so its id stays reserved.
+  async save(content) {
+    const file2 = Number(this.#next.get()?.file);
+    let n = 0;
+    for await (const chunk of content.chunks(_SQLiteFileStore.chunkSize))
+      this.#insert.run(file2, n++, chunk);
+    if (n === 0)
+      this.#insert.run(file2, 0, new Uint8Array());
+    return file2;
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-writer.js
+function lockWriter(path) {
+  const lock = new DatabaseSync3(path === ":memory:" ? path : `${path}.writer-lock`);
+  try {
+    lock.exec("BEGIN EXCLUSIVE");
+    return { [Symbol.dispose]: () => lock.close() };
+  } catch (error62) {
+    lock.close();
+    throw error62;
+  }
+}
+var quote3 = (name) => `"${name.replaceAll('"', '""')}"`;
+var seq = '"_elt_seq"';
+var op = '"_elt_op"';
+var SQLiteWriter = class extends Writer {
+  configuration;
+  path;
+  table;
+  #description;
+  constructor(configuration, path, table2) {
+    super(configuration.stream);
+    this.configuration = configuration;
+    this.path = path;
+    this.table = table2;
+    this.#description = describeTarget(configuration, table2.columns, (column) => `Integer reference to the source file's original bytes. Join ${quote3(SQLiteFileStore.tableName(table2, column))} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`);
+    if (table2.readerView === void 0)
+      return;
+    const missing = undescribed(this.#description);
+    if (missing.length > 0)
+      throw new TypeError(`Reader view ${table2.readerView} needs JSON Schema descriptions for ${missing.join(", ")} of stream ${this.stream.name}`);
+  }
+  // Inserts each staged record, in order.
+  append(database, stage, loadedAt) {
+    database.prepare(`INSERT INTO ${this.table.quotedName} (${this.fields.join(", ")}) SELECT ${this.table.columns.map((column) => column.quotedName).join(", ")}, ? FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`).run(loadedAt);
+  }
+  // An overwrite replaces the target at its first commit.
+  get replaces() {
+    return false;
+  }
+  // Empties the target a replacing commit is about to fill.
+  replace(database) {
+    database.exec(`DELETE FROM ${this.table.quotedName}`);
+  }
+  get hash() {
+    return createHash3("sha256").update(this.table.location).digest("hex");
+  }
+  get dedupIndex() {
+    return quote3(`_elt_dedup_${this.hash}`);
+  }
+  get fields() {
+    return [
+      ...this.table.columns.map((column) => column.quotedName),
+      '"loaded_at"'
+    ];
+  }
+  encode(record3) {
+    return this.table.columns.map((column) => column.encode(record3));
+  }
+  // Only a load that identifies rows by key can remove one.
+  deletionKeys(_key) {
+    throw new TypeError("Only deduplicating loads can apply deletions");
+  }
+  // The owner lives beside the table it guards and commits with the load. A
+  // dropped table releases it, since nothing it held remains.
+  writers(database) {
+    database.exec('CREATE TABLE IF NOT EXISTS "_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT');
+  }
+  own(database, writer) {
+    this.writers(database);
+    database.exec(`DELETE FROM "_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`);
+    const owner = database.prepare('SELECT "writer" FROM "_elt_writers" WHERE "target" = ?').get(this.table.location)?.writer;
+    if (owner === void 0)
+      database.prepare('INSERT INTO "_elt_writers" ("target", "writer") VALUES (?, ?)').run(this.table.location, writer);
+    else if (owner !== writer)
+      throw new TargetOwnedError(this.table.name, String(owner), writer);
+  }
+  exists(database, location3) {
+    return database.prepare(`SELECT 1 FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`).get(location3) !== void 0;
+  }
+  values(database) {
+    const { table: table2 } = this;
+    return async function* (field) {
+      const column = table2.columns.find((column2) => column2.name === field);
+      if (column === void 0)
+        throw new TypeError(`Unknown target field: ${field}`);
+      if (!database.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE").get(table2.name, field))
+        return;
+      for (const row of database.prepare(`SELECT ${column.quotedName} AS value FROM ${table2.quotedName}`).iterate())
+        yield row.value;
+    };
+  }
+  async clear(writer, committed) {
+    var _stack = [];
+    try {
+      const _lock = __using(_stack, lockWriter(this.path));
+      const database = __using(_stack, new DatabaseSync3(this.path));
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        this.writers(database);
+        const owner = database.prepare('SELECT "writer" FROM "_elt_writers" WHERE "target" = ?').get(this.table.location)?.writer;
+        if (owner !== void 0 && owner !== writer)
+          throw new TargetOwnedError(this.table.name, String(owner), writer);
+        if (this.exists(database, this.table.location)) {
+          database.exec(`DELETE FROM ${this.table.quotedName}`);
+          for (const column of this.table.columns) {
+            const chunks = SQLiteFileStore.tableName(this.table, column);
+            if (column.storesFile && this.exists(database, chunks))
+              database.exec(`DELETE FROM ${quote3(chunks)}`);
+          }
+        }
+        database.prepare('DELETE FROM "_elt_writers" WHERE "target" = ?').run(this.table.location);
+        database.exec("COMMIT");
+        database.exec("BEGIN IMMEDIATE");
+        await committed?.(this.values(database));
+        database.exec("ROLLBACK");
+      } catch (error62) {
+        if (database.isTransaction)
+          database.exec("ROLLBACK");
+        throw error62;
+      }
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  }
+  // What the table, its reader view and their columns say to readers,
+  // rewritten with every load so they follow the stream's schema.
+  describe(database) {
+    const dataTypes = new Map([
+      ...this.table.columns.map(({ name, dataType }) => [name, dataType]),
+      ["loaded_at", "timestamp"]
+    ]);
+    const columns3 = Object.fromEntries(Object.entries(this.#description.columns).map(([name, description]) => [
+      name,
+      { description, dataType: dataTypes.get(name) }
+    ]));
+    describe3(database, this.table.name, this.#description.table, columns3);
+    if (this.table.readerView !== void 0)
+      describe3(database, this.table.readerView, this.#description.table, columns3);
+  }
+  // Created only when absent and never replaced inside the load: replacing a
+  // view readers can see would lock them out until this load commits. A view
+  // of other columns or another table is refused rather than adopted.
+  installReaderView(database, view) {
+    const definition3 = `CREATE VIEW ${quote3(view)} AS SELECT ${this.fields.join(", ")} FROM ${this.table.quotedName}`;
+    const existing = database.prepare('SELECT "type", "sql" FROM sqlite_schema WHERE lower("name") = lower(?)').get(view);
+    if (existing === void 0) {
+      database.exec(definition3);
+      return;
+    }
+    if (existing.type !== "view" || existing.sql !== definition3)
+      throw new TypeError(`${quote3(view)} is not a view of exactly ${this.table.quotedName}; drop it or delete the database`);
+  }
+  // Refuses a target another writer owns, or a resumed one that was dropped,
+  // and prepares it inside a savepoint, so a refused target leaves the shared
+  // transaction as it was.
+  prepare(database, { writer, resuming }, loadedAt) {
+    const name = quote3(`_elt_stage_${this.hash}`);
+    const stage = `temp.${name}`;
+    const files = this.table.columns.filter((column) => column.storesFile);
+    database.exec("SAVEPOINT prepare");
+    let stores;
+    try {
+      if (resuming && !this.exists(database, this.table.location))
+        throw new TargetMissingError(this.table.name, writer);
+      this.own(database, writer);
+      database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
+      database.exec(this.table.createTableSQL);
+      stores = files.map((column) => ({
+        column,
+        store: new SQLiteFileStore(database, this.table, column)
+      }));
+      for (const { column, store } of stores)
+        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
+      this.initialize(database);
+      if (this.table.readerView !== void 0)
+        this.installReaderView(database, this.table.readerView);
+      this.describe(database);
+      database.exec(`DROP TABLE IF EXISTS ${stage}`);
+      database.exec(`CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(", ")})`);
+      database.exec("RELEASE prepare");
+    } catch (error62) {
+      database.exec("ROLLBACK TO prepare");
+      database.exec("RELEASE prepare");
+      throw error62;
+    }
+    const columns3 = this.table.columns.map((column) => column.quotedName);
+    const record3 = database.prepare(`INSERT INTO ${stage} (${op}, ${columns3.join(", ")}) VALUES ('R', ${columns3.map(() => "?").join(", ")})`);
+    const staged = (column) => `SELECT ${column.quotedName} FROM ${stage} WHERE ${column.quotedName} IS NOT NULL`;
+    const drop = () => {
+      for (const { column, store } of stores)
+        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
+      database.exec(`DELETE FROM ${stage}`);
+    };
+    let replaced = false;
+    return {
+      values: this.values(database),
+      apply: async (operation) => {
+        if (operation.type === "DELETE") {
+          const [keys, values] = this.deletionKeys(operation.key);
+          database.prepare(`INSERT INTO ${stage} (${op}, ${keys.map((column) => column.quotedName).join(", ")}) VALUES ('D', ${keys.map(() => "?").join(", ")})`).run(...values);
+          return;
+        }
+        let data = operation.data;
+        for (const { column, store } of stores) {
+          const content = Reflect.get(Object(data), column.name);
+          if (content instanceof FileContent)
+            data = {
+              ...Object(data),
+              [column.name]: await store.save(content)
+            };
+        }
+        record3.run(...this.encode(data));
+      },
+      commit: async () => {
+        database.exec("SAVEPOINT merge");
+        try {
+          if (this.replaces && !replaced)
+            this.replace(database);
+          this.merge(database, stage, loadedAt);
+          drop();
+          database.exec("RELEASE merge");
+        } catch (error62) {
+          if (database.isTransaction) {
+            database.exec("ROLLBACK TO merge");
+            database.exec("RELEASE merge");
+          }
+          throw error62;
+        }
+        replaced = true;
+        database.exec("COMMIT");
+        database.exec("BEGIN IMMEDIATE");
+      },
+      discard: async () => drop(),
+      [Symbol.asyncDispose]: async () => {
+        drop();
+        database.exec(`DROP TABLE ${stage}`);
+      }
+    };
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-append-writer.js
+var SQLiteAppendWriter = class extends SQLiteWriter {
+  constructor(configuration, path, table2) {
+    super(configuration, path, table2);
+    Object.freeze(this);
+  }
+  initialize() {
+  }
+  merge(database, stage, loadedAt) {
+    this.append(database, stage, loadedAt);
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-deduplicating-writer.js
+var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
+  deduplication;
+  keys;
+  cursor;
+  constructor(configuration, path, table2) {
+    super(configuration, path, table2);
+    this.deduplication = configuration.deduplication();
+    const inferred = SQLiteColumns.fromSchema(configuration.stream.jsonSchema);
+    const column = (field) => {
+      const selected2 = table2.columns.find((column2) => column2.name === field);
+      if (selected2 === void 0)
+        throw new TypeError(`Deduplication requires destination column ${field}`);
+      if (selected2.kind !== inferred.find((column2) => column2.name === field)?.kind)
+        throw new TypeError(`Deduplication column ${field} must preserve the source scalar type`);
+      return selected2;
+    };
+    this.keys = Object.freeze(this.deduplication.primaryKey.map(column));
+    const { cursorField } = this.deduplication;
+    this.cursor = cursorField === void 0 ? void 0 : column(cursorField);
+    Object.freeze(this);
+  }
+  get replaces() {
+    return this.configuration.destinationSyncMode === "overwrite_dedup";
+  }
+  initialize(database) {
+    const existing = database.prepare(`PRAGMA table_info(${this.table.quotedName})`).all();
+    const tracked = this.cursor === void 0 ? this.keys : [...this.keys, this.cursor];
+    for (const column of tracked) {
+      if (!existing.some((field) => field.name === column.name && field.type === column.storageType))
+        throw new TypeError(`Existing deduplication column ${column.name} has an incompatible storage type`);
+    }
+    if (this.replaces)
+      return;
+    if (database.prepare(`SELECT 1 FROM ${this.table.quotedName} WHERE ${tracked.map((column) => `${column.quotedName} IS NULL`).join(" OR ")} LIMIT 1`).get())
+      throw new TypeError("Existing deduplication keys and cursors must be non-null");
+    this.index(database);
+  }
+  replace(database) {
+    super.replace(database);
+    this.index(database);
+  }
+  index(database) {
+    database.exec(`CREATE UNIQUE INDEX ${this.dedupIndex} ON ${this.table.quotedName} (${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(", ")})`);
+  }
+  // The result of applying the staged operations one at a time: a staged
+  // DELETE removes its key, and only records after a key's last DELETE count.
+  // replace keeps the newest extraction, so a restated fact overwrites the
+  // loaded one; cursor_newer keeps the greatest cursor (the first on ties) and
+  // the guard that rejects out-of-order replay.
+  merge(database, stage, loadedAt) {
+    const keys = this.keys.map((column) => column.quotedName);
+    const same = (left, right) => keys.map((key) => `${left}.${key} = ${right}.${key}`).join(" AND ");
+    database.exec(`DELETE FROM ${this.table.quotedName} WHERE (${keys.join(", ")}) IN (SELECT ${keys.join(", ")} FROM ${stage} WHERE ${op} = 'D')`);
+    const { cursor } = this;
+    const guarded = this.configuration.dedupPolicy !== "replace" && cursor !== void 0;
+    const order = guarded ? `"staged".${cursor.quotedName} COLLATE BINARY DESC, "staged".${seq}` : `"staged".${seq} DESC`;
+    const columns3 = this.table.columns.map((column) => column.quotedName);
+    database.prepare(`WITH "deleted" AS (SELECT ${keys.join(", ")}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(", ")}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(", ")} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) INSERT INTO ${this.table.quotedName} AS "_elt_target" (${this.fields.join(", ")}) SELECT ${columns3.join(", ")}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1) ORDER BY ${seq} ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(", ")}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(", ")}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_elt_target".${cursor.quotedName}` : ""}`).run(loadedAt);
+  }
+  encode(record3) {
+    this.deduplication.key(record3);
+    if (this.cursor !== void 0)
+      this.deduplication.cursor(record3);
+    return super.encode(record3);
+  }
+  deletionKeys(key) {
+    this.deduplication.key(key);
+    return [this.keys, this.keys.map((column) => column.encode(key))];
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-overwrite-writer.js
+var SQLiteOverwriteWriter = class extends SQLiteWriter {
+  constructor(configuration, path, table2) {
+    super(configuration, path, table2);
+    Object.freeze(this);
+  }
+  get replaces() {
+    return true;
+  }
+  initialize() {
+  }
+  merge(database, stage, loadedAt) {
+    this.append(database, stage, loadedAt);
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-table.js
+var SQLiteTable = class _SQLiteTable extends Target {
+  name;
+  columns;
+  // The name readers query: a documented view of exactly this table.
+  readerView;
+  constructor(name, columns3, readerView) {
+    if (!name || name.includes("\0"))
+      throw new TypeError("Invalid table name");
+    if (/^_elt_/i.test(name))
+      throw new TypeError("Table names starting with _elt_ are reserved");
+    if (readerView !== void 0) {
+      if (!readerView || readerView.includes("\0"))
+        throw new TypeError("Invalid view name");
+      if (/^_elt_/i.test(readerView))
+        throw new TypeError("View names starting with _elt_ are reserved");
+      if (readerView.toLowerCase() === name.toLowerCase())
+        throw new TypeError("A reader view needs a name of its own");
+    }
+    if (columns3 !== void 0 && (!Array.isArray(columns3) || columns3.length === 0 || !columns3.every((column) => column instanceof SQLiteColumn)))
+      throw new TypeError("A table requires at least one SQLite column");
+    const names = (columns3 ?? []).map((column) => column.name.toLowerCase());
+    if (names.includes("loaded_at"))
+      throw new TypeError("loaded_at is reserved for load metadata");
+    if (new Set(names).size !== names.length)
+      throw new TypeError("Duplicate column names");
+    if ((columns3 ?? []).filter((column) => column.isPrimaryKey).length > 1)
+      throw new TypeError("Only one primary-key column is supported");
+    const fileReads = (columns3 ?? []).flatMap((column) => column.fileRead === void 0 ? [] : [column.fileRead]);
+    for (const column of columns3 ?? []) {
+      if (column.fileRead === void 0)
+        continue;
+      if (column.fileRead.outputType === "bytes" ? column.kind !== "blob" : column.kind !== "text")
+        throw new TypeError("Original files require a BLOB column; parsed text and stored references require a TEXT column");
+    }
+    super(fileReads);
+    this.name = name;
+    this.columns = Object.freeze([...columns3 ?? []]);
+    this.readerView = readerView;
+    Object.freeze(this);
+  }
+  // Loads also keep a view of this table under another name, created with the
+  // table and described by the same descriptions, which every column then needs.
+  withReaderView(name) {
+    return new _SQLiteTable(this.name, this.columns.length === 0 ? void 0 : this.columns, name);
+  }
+  resolve(stream) {
+    if (this.columns.length === 0)
+      return new _SQLiteTable(this.name, SQLiteColumns.fromSchema(stream.jsonSchema), this.readerView);
+    const properties39 = stream.jsonSchema.properties;
+    if (properties39 !== null && typeof properties39 === "object" && !Array.isArray(properties39)) {
+      for (const column of this.columns) {
+        if (column.fileRead === void 0 && !Object.hasOwn(properties39, column.name))
+          throw new TypeError(`Stream ${stream.name} does not describe column ${column.name}`);
+      }
+    }
+    return this;
+  }
+  // SQLite compares ASCII identifiers case-insensitively, so one table has one location.
+  get location() {
+    return this.name.replaceAll(/[A-Z]/g, (letter) => letter.toLowerCase());
+  }
+  get quotedName() {
+    return `"${this.name.replaceAll('"', '""')}"`;
+  }
+  get createTableSQL() {
+    if (this.columns.length === 0)
+      throw new TypeError("Resolve inferred columns before creating a table");
+    return `CREATE TABLE IF NOT EXISTS ${this.quotedName} (${this.columns.map((column) => column.definition).join(", ")}, "loaded_at" TEXT NOT NULL${canonical2("timestamp", '"loaded_at"')}) STRICT`;
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-destination.js
+var SQLiteDestination = class extends Destination {
+  supportedDestinationSyncModes = Object.freeze([
+    "overwrite",
+    "append",
+    "append_dedup",
+    "overwrite_dedup"
+  ]);
+  path;
+  constructor({ path }) {
+    super();
+    if (!path)
+      throw new TypeError("SQLite requires a database path");
+    this.path = path === ":memory:" ? path : resolve3(path);
+    Object.freeze(this);
+  }
+  identity(target) {
+    return JSON.stringify({ type: "sqlite", path: this.path, target });
+  }
+  location(target) {
+    return `${this.path}#${target.location}`;
+  }
+  // The writer lock spans all commits; each stream still publishes separately.
+  async load() {
+    const resources = new DisposableStack();
+    let database;
+    try {
+      resources.use(lockWriter(this.path));
+      database = resources.use(new DatabaseSync4(this.path));
+      database.exec("BEGIN IMMEDIATE");
+    } catch (error62) {
+      resources.dispose();
+      throw error62;
+    }
+    const loadedAt = (/* @__PURE__ */ new Date()).toISOString();
+    return {
+      prepare: async (configuration, target, binding) => this.createWriter(configuration, target).prepare(database, binding, loadedAt),
+      [Symbol.asyncDispose]: async () => {
+        try {
+          if (database.isTransaction)
+            database.exec("ROLLBACK");
+        } finally {
+          resources.dispose();
+        }
+      }
+    };
+  }
+  table(name, configure) {
+    return new SQLiteTable(name, configure?.(new SQLiteColumns()));
+  }
+  createWriter(configuration, target) {
+    this.validateConfiguration(configuration, target);
+    if (!(target instanceof SQLiteTable))
+      throw new TypeError("SQLite requires SQLite table targets");
+    if (configuration.syncMode === "incremental" && this.path === ":memory:")
+      throw new TypeError("Incremental SQLite requires a persistent destination file");
+    const table2 = target.resolve(configuration.stream);
+    switch (configuration.destinationSyncMode) {
+      case "append_dedup":
+      case "overwrite_dedup":
+        return new SQLiteDeduplicatingWriter(configuration, this.path, table2);
+      case "append":
+        return new SQLiteAppendWriter(configuration, this.path, table2);
+      case "overwrite":
+        return new SQLiteOverwriteWriter(configuration, this.path, table2);
+      default:
+        throw new TypeError(`Destination does not support ${configuration.destinationSyncMode}`);
+    }
+  }
+};
+
+// packages/destinations/sqlite/dist/sqlite-sync-history.js
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
+
+// packages/destinations/sqlite/dist/sqlite-sync-history-schema.js
+var attempts = '"_elt_sync_attempts"';
+var coverage = '"_elt_extraction_coverage"';
+var now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+var status = `"status" TEXT NOT NULL DEFAULT 'running' CHECK ("status" IN ('running', 'succeeded', 'partial', 'failed'))`;
+var syncHistoryTables = [
+  `CREATE TABLE IF NOT EXISTS ${attempts} (
+    "id" INTEGER PRIMARY KEY,
+    "connector" TEXT NOT NULL CHECK (trim("connector") <> ''), "source" TEXT NOT NULL,
+    "started_at" TEXT NOT NULL, "completed_at" TEXT, ${status}, "error" TEXT,
+    CHECK (("status" = 'running') = ("completed_at" IS NULL))
+  ) STRICT`,
+  `CREATE INDEX IF NOT EXISTS "_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
+  `CREATE TABLE IF NOT EXISTS ${coverage} (
+    "attempt_id" INTEGER NOT NULL REFERENCES ${attempts}("id"),
+    "stream" TEXT NOT NULL, "target_schema" TEXT NOT NULL, "target_table" TEXT NOT NULL,
+    "sync_mode" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL,
+    "description" TEXT NOT NULL CHECK (trim("description") <> ''),
+    "selection" TEXT NOT NULL CHECK (json_valid("selection")), ${status},
+    "written_count" INTEGER CHECK ("written_count" >= 0),
+    "deleted_count" INTEGER CHECK ("deleted_count" >= 0),
+    "failures" TEXT NOT NULL DEFAULT '[]' CHECK (json_valid("failures")),
+    PRIMARY KEY ("attempt_id", "stream")
+  ) STRICT`
+];
+var queries = {
+  sync_attempts: `SELECT "id" AS "attempt_id", "connector", "source", "started_at", "completed_at", "status", "error" FROM ${attempts}`,
+  extraction_coverage: `SELECT c."attempt_id", a."connector", a."source", a."started_at", a."completed_at",
+      c."stream", c."target_schema", c."target_table",
+      EXISTS (SELECT 1 FROM sqlite_schema t WHERE t."type" = 'table' AND lower(t."name") = lower(c."target_table")) AS "target_exists",
+      c."sync_mode", c."destination_sync_mode", c."description", c."selection",
+      c."status", c."written_count", c."deleted_count", c."failures"
+      FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"`,
+  sync_status: `WITH "success" AS (
+        SELECT "connector", "id", "completed_at", row_number() OVER (PARTITION BY "connector" ORDER BY "completed_at" DESC, "id" DESC) AS "rank"
+        FROM ${attempts} WHERE "status" = 'succeeded'
+      ), "latest" AS (
+        SELECT *, row_number() OVER (PARTITION BY "connector" ORDER BY "id" DESC) AS "rank" FROM ${attempts}
+      )
+      SELECT a."connector", a."id" AS "latest_attempt_id", a."started_at", a."completed_at", a."status", a."error",
+        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
+      FROM "latest" a LEFT JOIN "success" s ON s."connector" = a."connector" AND s."rank" = 1
+      WHERE a."rank" = 1 ORDER BY a."connector"`,
+  stream_status: `WITH "declared" AS (
+        SELECT a."connector", c."stream", c."target_schema", c."target_table", a."id", a."started_at", a."completed_at", c."status",
+          row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."id" DESC) AS "rank"
+        FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"
+      ), "success" AS (
+        SELECT a."connector", c."stream", a."id", a."completed_at",
+          row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."completed_at" DESC, a."id" DESC) AS "rank"
+        FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id" WHERE c."status" = 'succeeded'
+      )
+      SELECT d."connector", d."stream", d."target_schema", d."target_table",
+        d."id" AS "latest_attempt_id", d."started_at", d."completed_at", d."status",
+        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
+      FROM "declared" d LEFT JOIN "success" s ON s."connector" = d."connector" AND s."stream" = d."stream" AND s."rank" = 1
+      WHERE d."rank" = 1 ORDER BY d."connector", d."stream"`
+};
+var syncHistoryViews = Object.values(syncHistoryRelations).map((relation) => ({ ...relation, query: queries[relation.name] }));
+
+// packages/destinations/sqlite/dist/sqlite-sync-history.js
+var busyTimeout = 3e4;
+var SQLiteSyncHistory = class extends SyncHistory {
+  constructor() {
+    super();
+    Object.freeze(this);
+  }
+  validate(connection) {
+    this.#path(connection);
+  }
+  // Every selected stream is declared before reading, even if it produces no
+  // rows or the process dies: an unfinished attempt stays running, never success.
+  async begin(connection, copies) {
+    const path = this.#path(connection);
+    const id12 = write(path, (database) => {
+      const attempt2 = database.prepare(`INSERT INTO ${attempts} ("connector", "source", "started_at") VALUES (?, ?, ${now}) RETURNING "id"`).get(connection.name, connection.source.identity);
+      if (attempt2 === void 0)
+        throw new Error("Sync attempt was not recorded");
+      const id13 = Number(attempt2.id);
+      const declare = database.prepare(`INSERT INTO ${coverage} ("attempt_id", "stream", "target_schema", "target_table", "sync_mode", "destination_sync_mode", "description", "selection") VALUES (?, ?, 'main', ?, ?, ?, ?, ?)`);
+      for (const { copy, coverage: coverage3 } of copies)
+        declare.run(id13, copy.from.name, copy.to.name, copy.configuration.syncMode, copy.configuration.destinationSyncMode, coverage3.description, JSON.stringify(coverage3.selection));
+      return id13;
+    });
+    return {
+      finish: async (outcomes) => this.#finish(path, id12, outcomes),
+      fail: async (error62) => write(path, (database) => {
+        database.prepare(`UPDATE ${coverage} SET "status" = 'failed', "failures" = ? WHERE "attempt_id" = ?`).run(JSON.stringify([{ partition: null, error: message2(error62) }]), id12);
+        database.prepare(`UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ? WHERE "id" = ?`).run(message2(error62), id12);
+      })
+    };
+  }
+  // Creates the history's tables and publishes its views in each file; safe
+  // to repeat.
+  async install(destinations) {
+    for (const destination of destinations)
+      write(persistent(destination), (database) => {
+        for (const statement of syncHistoryTables)
+          database.exec(statement);
+        publishSQLiteViews(database, { views: syncHistoryViews });
+      });
+  }
+  #path({ name, destination }) {
+    if (!(destination instanceof SQLiteDestination))
+      throw new TypeError(`Connection ${name}: SQLite sync history records SQLite destinations only`);
+    return persistent(destination);
+  }
+  #finish(path, id12, outcomes) {
+    write(path, (database) => {
+      const record3 = database.prepare(`UPDATE ${coverage} SET "status" = ?, "written_count" = ?, "deleted_count" = ?, "failures" = ? WHERE "attempt_id" = ? AND "stream" = ?`);
+      for (const outcome of outcomes)
+        record3.run(copyStatus(outcome), outcome.count, outcome.deleted, JSON.stringify(outcome.failures.map(({ partition, error: error62 }) => ({
+          partition,
+          error: message2(error62)
+        }))), id12, outcome.copy.from.name);
+      database.prepare(`UPDATE ${attempts} SET "completed_at" = ${now}, "status" = ?, "error" = ? WHERE "id" = ?`).run(passStatus(outcomes), passError(outcomes), id12);
+    });
+  }
+};
+function persistent({ path }) {
+  if (path === ":memory:")
+    throw new TypeError("SQLite sync history requires a destination file");
+  return path;
+}
+function write(path, work) {
+  var _stack = [];
+  try {
+    const database = __using(_stack, new DatabaseSync5(path, { timeout: busyTimeout }));
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = work(database);
+      database.exec("COMMIT");
+      return result;
+    } catch (error62) {
+      if (database.isTransaction)
+        database.exec("ROLLBACK");
+      throw error62;
+    }
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+function message2(error62) {
+  return error62 instanceof Error ? error62.message : String(error62);
+}
+
+// packages/import-store/dist/selection.js
+var named = { accountIds: "account", collectionIds: "collection" };
+function selectionProblems(selections, facts) {
+  const problems = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const { app, scope } of selections) {
+    if (seen.has(app))
+      problems.push(`${app}: choose each app once`);
+    seen.add(app);
+    const traits = facts(app);
+    for (const kind of ["accountIds", "collectionIds"]) {
+      const ids2 = scope[kind];
+      if (ids2 === void 0)
+        continue;
+      if (!traits.narrowsBy(kind))
+        problems.push(`${app}: cannot be narrowed by ${named[kind]} IDs`);
+      if (ids2.length === 0)
+        problems.push(`${app}: choose at least one ${named[kind]}`);
+      if (new Set(ids2).size !== ids2.length)
+        problems.push(`${app}: choose each ${named[kind]} once`);
+    }
+    if (traits.datedBy === null && (scope.startAt !== void 0 || scope.endAt !== void 0))
+      problems.push(`${app}: date filtering is unavailable`);
+    if (scope.startAt !== void 0 && scope.endAt !== void 0 && scope.startAt >= scope.endAt)
+      problems.push(`${app}: start must precede end`);
+  }
+  return problems;
+}
+
+// packages/import-store/dist/store-layout.js
+import { createHash as createHash4 } from "node:crypto";
+import { join as join2 } from "node:path";
+var storeLayout = 3;
+var NewerLayoutError = class extends Error {
+  constructor() {
+    super("A newer version wrote this store; use that version.");
+  }
+};
+function importDirectory(root, selection) {
+  const key = createHash4("sha256").update(JSON.stringify([
+    storeLayout,
+    selection.scope,
+    selection.includeAttachments
+  ])).digest("hex").slice(0, 16);
+  return join2(root, selection.app, key);
+}
+
+// packages/import-store/dist/import-store.js
+var passFields = {
+  started_at: external_exports.string(),
+  last_successful_sync_at: external_exports.string().nullable()
+};
+var pass = (row) => ({
+  state: row.status,
+  startedAt: row.started_at,
+  completedAt: row.completed_at,
+  lastSucceededAt: row.last_successful_sync_at,
+  error: row.error
+});
+var passSchema = external_exports.union([
+  external_exports.object({
+    ...passFields,
+    status: external_exports.literal("running"),
+    completed_at: external_exports.null(),
+    error: external_exports.null()
+  }).transform(pass),
+  external_exports.object({
+    ...passFields,
+    status: external_exports.literal("succeeded"),
+    completed_at: external_exports.string(),
+    error: external_exports.null()
+  }).transform(pass),
+  external_exports.object({
+    ...passFields,
+    status: external_exports.enum(["partial", "failed"]),
+    completed_at: external_exports.string(),
+    error: external_exports.string()
+  }).transform(pass)
+]);
+var selectedApps = {
+  name: "selected_apps",
+  description: "The Apple apps the user chose to import, in the order chosen. An app missing here is not imported. Each import is its own SQLite file: open database to read its records, catalog and sync_status.",
+  columns: {
+    app: "Apple app, such as mail, notes or messages.",
+    scope: "JSON of the chosen accounts (accountIds), collections (collectionIds) and dates (startAt inclusive, endAt exclusive); an absent key means all.",
+    include_attachments: "1 when attachment bytes are copied beside the records, 0 for metadata only.",
+    database: "Path of the SQLite file the import loads. It may not exist yet while the first import starts.",
+    connection_error: "Why the import could not start, such as missing macOS access; NULL when it started. An app with an error is inaccessible, not empty.",
+    connection_failed_at: "When the import last failed to start, as an ISO 8601 UTC timestamp; NULL when it started.",
+    permissions: "What the user can do in macOS to give access to this app."
+  },
+  query: `SELECT s."app", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",
+      f."error" AS "connection_error", f."failed_at" AS "connection_failed_at", s."permissions"
+    FROM "selections" s LEFT JOIN "connection_failures" f ON f."directory" = s."directory"
+    ORDER BY s."position"`
+};
+var ImportStore = class {
+  root;
+  settings;
+  constructor(root) {
+    this.root = root;
+    mkdirSync(root, { recursive: true, mode: 448 });
+    chmodSync2(root, 448);
+    const path = join3(root, "settings.sqlite");
+    this.settings = new DatabaseSync6(path);
+    try {
+      chmodSync2(path, 384);
+      if (this.layout() !== storeLayout)
+        this.rebuild();
+      this.settings.exec("CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, app TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL);");
+    } catch (error62) {
+      this.settings.close();
+      throw error62;
+    }
+  }
+  layout() {
+    return Number(this.settings.prepare("PRAGMA user_version").get()?.user_version);
+  }
+  // Refuses a file a newer layout wrote, and empties one an older layout
+  // wrote: stored settings are disposable, so the user sets up again.
+  rebuild() {
+    this.settings.exec("BEGIN IMMEDIATE");
+    try {
+      const layout = this.layout();
+      if (layout > storeLayout)
+        throw new NewerLayoutError();
+      if (layout < storeLayout) {
+        for (const { type, name } of this.settings.prepare("SELECT type, name FROM sqlite_schema WHERE type IN ('view', 'table') AND name NOT LIKE 'sqlite_%' ORDER BY type = 'table'").all())
+          this.settings.exec(`DROP ${type === "view" ? "VIEW" : "TABLE"} IF EXISTS "${String(name).replaceAll('"', '""')}"`);
+        this.settings.exec(`PRAGMA user_version = ${storeLayout}`);
+      }
+      this.settings.exec("COMMIT");
+    } catch (error62) {
+      this.settings.exec("ROLLBACK");
+      throw error62;
+    }
+  }
+  selections() {
+    return this.settings.prepare("SELECT app, scope, include_attachments FROM selections ORDER BY position").all().map((row) => ({
+      app: String(row.app),
+      scope: JSON.parse(String(row.scope)),
+      includeAttachments: row.include_attachments === 1
+    }));
+  }
+  // Saves a selection that has no problems, with what macOS needs granted for
+  // each app, forgets the failures of every other import, removes those
+  // imports and publishes what readers see.
+  select(selections, { facts, permissions }) {
+    const problems = selectionProblems(selections, facts);
+    if (problems.length > 0)
+      throw new Error(problems.join("\n"));
+    this.settings.exec("BEGIN IMMEDIATE");
+    try {
+      this.settings.exec("DELETE FROM selections");
+      const insert = this.settings.prepare("INSERT INTO selections VALUES(?,?,?,?,?,?)");
+      for (const [position, selection] of selections.entries())
+        insert.run(position, selection.app, JSON.stringify(selection.scope), selection.includeAttachments ? 1 : 0, this.directory(selection), permissions(selection));
+      this.settings.exec("DELETE FROM connection_failures WHERE directory NOT IN (SELECT directory FROM selections)");
+      this.settings.exec("COMMIT");
+    } catch (error62) {
+      this.settings.exec("ROLLBACK");
+      throw error62;
+    }
+    this.removeStaleImports();
+    this.publish();
+  }
+  // Removes every import directory but the selected one of each app,
+  // including those of apps no longer selected.
+  removeStaleImports() {
+    const kept = new Set(this.selections().map((selection) => this.directory(selection)));
+    for (const app of readdirSync(this.root, { withFileTypes: true }))
+      if (app.isDirectory()) {
+        for (const entry of readdirSync(join3(this.root, app.name)))
+          if (!kept.has(join3(this.root, app.name, entry)))
+            rmSync(join3(this.root, app.name, entry), {
+              recursive: true,
+              force: true
+            });
+      }
+  }
+  // Publishes selected_apps and the catalog that lists it; safe to repeat.
+  publish() {
+    publishSQLiteViews(this.settings, { views: [selectedApps] });
+    installSQLiteCatalog({ path: join3(this.root, "settings.sqlite") });
+  }
+  directory(selection) {
+    return importDirectory(this.root, selection);
+  }
+  database(selection) {
+    return join3(this.directory(selection), "data.sqlite");
+  }
+  // Opens an import's data.sqlite for reading only, waiting while a pass
+  // commits. A pass stopped mid-commit leaves a hot journal that only a
+  // writable connection rolls back, and until then every read-only open fails,
+  // so one writable read recovers it first.
+  read(selection) {
+    this.recover(selection);
+    return new DatabaseSync6(this.database(selection), {
+      readOnly: true,
+      timeout: 3e4
+    });
+  }
+  // Rolls back a hot journal a stopped pass left in an import, so readers that
+  // cannot write, such as a sandboxed sqlite3 -readonly, can open it. An
+  // import with no file yet has nothing to recover.
+  recover(selection) {
+    var _stack = [];
+    try {
+      if (!existsSync(this.database(selection)))
+        return;
+      const recovery = __using(_stack, new DatabaseSync6(this.database(selection), {
+        timeout: 3e4
+      }));
+      recovery.prepare("SELECT count(*) FROM sqlite_schema").get();
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  }
+  // The import's latest pass; null until its history is installed and has
+  // begun one.
+  latestPass(selection) {
+    var _stack = [];
+    try {
+      if (!existsSync(this.database(selection)))
+        return null;
+      const data = __using(_stack, this.read(selection));
+      const installed = data.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'").get();
+      if (installed === void 0)
+        return null;
+      const row = data.prepare("SELECT status, started_at, completed_at, error, last_successful_sync_at FROM sync_status").get();
+      return row === void 0 ? null : passSchema.parse(row);
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  }
+  connectionFailure(selection) {
+    const row = this.settings.prepare("SELECT error, failed_at FROM connection_failures WHERE directory=?").get(this.directory(selection));
+    return row === void 0 ? void 0 : { error: String(row.error), failedAt: String(row.failed_at) };
+  }
+  saveConnectionFailure(selection, error62) {
+    this.settings.prepare("INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(directory) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at").run(this.directory(selection), error62);
+  }
+  clearConnectionFailure(selection) {
+    this.settings.prepare("DELETE FROM connection_failures WHERE directory=?").run(this.directory(selection));
+  }
+  [Symbol.dispose]() {
+    this.settings.close();
+  }
+};
+
+// packages/import-store/dist/lease.js
+import { mkdirSync as mkdirSync2 } from "node:fs";
+import { join as join4 } from "node:path";
+import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
+function lease(root) {
+  let database;
+  try {
+    mkdirSync2(root, { recursive: true, mode: 448 });
+    database = new DatabaseSync7(join4(root, "lease.sqlite"));
+    database.exec("BEGIN IMMEDIATE");
+    return database;
+  } catch {
+    database?.close();
+    return null;
+  }
+}
+function leaseHeld(root) {
+  const held = lease(root);
+  held?.[Symbol.dispose]();
+  return held === null;
+}
+
 // apps/apple/src/platform/macos/mail-store.ts
 import { execFile } from "node:child_process";
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdtempDisposable, readdir as readdir2, readFile, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, join as join2, relative, sep } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { basename, join as join5, relative, sep } from "node:path";
+import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 import { promisify } from "node:util";
 
 // apps/apple/src/platform/macos/plist.ts
@@ -64115,7 +65523,7 @@ function classNameOf(value) {
 
 // apps/apple/src/platform/macos/mail-store.ts
 var execute = promisify(execFile);
-var mailDirectory = join2(homedir(), "Library/Mail");
+var mailDirectory = join5(homedir(), "Library/Mail");
 var MailUnavailableError = class extends Error {
   name = "MailUnavailableError";
   constructor(path, cause) {
@@ -64152,12 +65560,12 @@ function plistObject(value) {
 }
 async function mailVersionDirectory(root) {
   const info = plistObject(
-    await readMailPlist(join2(root, "PersistenceInfo.plist"))
+    await readMailPlist(join5(root, "PersistenceInfo.plist"))
   );
   const version3 = info.LastUsedVersionDirectoryName;
   if (typeof version3 !== "string" || !/^V\d+$/.test(version3))
     throw new MailSchemaError("Mail has no valid current version directory");
-  return join2(root, version3);
+  return join5(root, version3);
 }
 async function inspectMailFile(path) {
   const info = await stat(path, { bigint: true });
@@ -64183,7 +65591,7 @@ async function assertMailFile(file2) {
 }
 async function hashMailFile(file2) {
   await assertMailFile(file2);
-  const hash2 = createHash3("sha256");
+  const hash2 = createHash5("sha256");
   for await (const chunk of createReadStream(file2.path)) hash2.update(chunk);
   await assertMailFile(file2);
   return hash2.digest("hex");
@@ -64208,7 +65616,7 @@ var MailStore = class _MailStore {
     let database;
     try {
       path = await mailVersionDirectory(root);
-      database = new DatabaseSync(join2(path, "MailData/Envelope Index"), {
+      database = new DatabaseSync8(join5(path, "MailData/Envelope Index"), {
         readOnly: true
       });
     } catch (cause) {
@@ -64230,7 +65638,7 @@ var MailStore = class _MailStore {
           `Unsupported Mail index schema: missing ${missing.join(", ")}`
         );
       const scratch = resources.use(
-        await mkdtempDisposable(join2(tmpdir(), "apple-mail-"))
+        await mkdtempDisposable(join5(tmpdir(), "apple-mail-"))
       );
       const store = new _MailStore(path, database, scratch, resources);
       const entries = await readdir2(path, {
@@ -64239,7 +65647,7 @@ var MailStore = class _MailStore {
       });
       for (const entry of entries) {
         if (!entry.isFile()) continue;
-        const filePath = join2(entry.parentPath, entry.name);
+        const filePath = join5(entry.parentPath, entry.name);
         const segments = relative(path, filePath).split(sep);
         const attachment2 = segments.indexOf("Attachments");
         if (/^\d+(\.partial)?\.emlx$/.test(entry.name)) {
@@ -64292,21 +65700,21 @@ var MailStore = class _MailStore {
 // apps/apple/src/sources/apple-books/apple-books-source.ts
 import { mkdtempDisposable as mkdtempDisposable2, rm as rm2, stat as stat2 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join7 } from "node:path";
+import { join as join10 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
 // apps/apple/src/platform/macos/books-store.ts
 import { readFile as readFile2 } from "node:fs/promises";
 import { homedir as homedir2 } from "node:os";
-import { join as join3 } from "node:path";
+import { join as join6 } from "node:path";
 import {
-  DatabaseSync as DatabaseSync2
+  DatabaseSync as DatabaseSync9
 } from "node:sqlite";
-var booksContainer = join3(
+var booksContainer = join6(
   homedir2(),
   "Library/Containers/com.apple.iBooksX/Data"
 );
-var booksGroupContainer = join3(
+var booksGroupContainer = join6(
   homedir2(),
   "Library/Group Containers/group.com.apple.iBooks"
 );
@@ -64330,7 +65738,7 @@ var BooksSchemaError = class extends Error {
 var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
 var open4 = (path) => {
   try {
-    return new DatabaseSync2(path, { readOnly: true });
+    return new DatabaseSync9(path, { readOnly: true });
   } catch (cause) {
     if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
       throw new BooksUnavailableError(path, cause);
@@ -64402,7 +65810,7 @@ var localAppleStoreCoverage = Object.freeze({
 });
 
 // apps/apple/src/sources/apple-books/books-scan.ts
-import { join as join4 } from "node:path";
+import { join as join7 } from "node:path";
 
 // apps/apple/src/platform/macos/protobuf.ts
 var ProtobufMessage = class _ProtobufMessage {
@@ -64656,32 +66064,32 @@ var defaultBooksLocation = Object.freeze({
   container: booksContainer,
   groupContainer: booksGroupContainer
 });
-var bookData = (group2) => join4(group2, "Documents/BCCloudData-BookDataStoreService");
+var bookData = (group2) => join7(group2, "Documents/BCCloudData-BookDataStoreService");
 var storeFiles = ({ container: container2, groupContainer }) => ({
-  library: join4(
+  library: join7(
     container2,
     "Documents/BKLibrary/BKLibrary-1-091020131601.sqlite"
   ),
-  annotations: join4(
+  annotations: join7(
     container2,
     "Documents/AEAnnotation/AEAnnotation_v10312011_1727_local.sqlite"
   ),
-  assetData: join4(bookData(groupContainer), "BCAssetData/BCAssetData"),
-  readingHistory: join4(
+  assetData: join7(bookData(groupContainer), "BCAssetData/BCAssetData"),
+  readingHistory: join7(
     bookData(groupContainer),
     "CRDTModelSync-ReadingHistoryModel/CRDTModelSync-ReadingHistoryModel"
   ),
-  purchases: join4(
+  purchases: join7(
     groupContainer,
     "Documents/BKJaliscoServerSource/BKJaliscoServerSource-v09182016.sqlite"
   ),
-  themes: join4(
+  themes: join7(
     container2,
     "Library/Application Support/Books/BookTheme.sqlite"
   ),
-  preferences: join4(container2, "Library/Preferences/com.apple.iBooksX.plist")
+  preferences: join7(container2, "Library/Preferences/com.apple.iBooksX.plist")
 });
-var sharedPreferences = ({ groupContainer }) => join4(groupContainer, "Library/Preferences/group.com.apple.iBooks.plist");
+var sharedPreferences = ({ groupContainer }) => join7(groupContainer, "Library/Preferences/group.com.apple.iBooks.plist");
 var databaseStores = /* @__PURE__ */ new Set([
   "library",
   "annotations",
@@ -64999,25 +66407,25 @@ var BooksScan = class _BooksScan {
 };
 
 // apps/apple/src/sources/apple-books/books-stream.ts
-var text = { type: "string" };
+var text2 = { type: "string" };
 var nullableText = { type: ["string", "null"] };
 var integer3 = { type: "integer" };
 var nullableInteger = { type: ["integer", "null"] };
 var booksFields = {
-  id: { ...text, minLength: 1 },
+  id: { ...text2, minLength: 1 },
   nullableId: { ...nullableText, minLength: 1 },
-  text,
+  text: text2,
   nullableText,
   integer: integer3,
   nullableInteger,
   nullableNumber: { type: ["number", "null"] },
   boolean: { type: "boolean" },
   nullableBoolean: { type: ["boolean", "null"] },
-  timestamp: { ...text, format: "date-time" },
+  timestamp: { ...text2, format: "date-time" },
   nullableTimestamp: { ...nullableText, format: "date-time" },
-  date: { ...text, format: "date" },
+  date: { ...text2, format: "date" },
   assetId: {
-    ...text,
+    ...text2,
     minLength: 1,
     description: "Books asset identifier (a 32-character hex string for books added from files); refers to libraryAssets.assetId within this source."
   }
@@ -65056,7 +66464,7 @@ var distantPast = -63114076800;
 var distantFuture = 63113904e3;
 var coreDataTime = (value) => typeof value === "number" && Number.isFinite(value) && value > distantPast && value < distantFuture ? new Date(Math.round((value + appleEpochSeconds) * 1e3)).toISOString() : null;
 var plistTime = (value) => value instanceof Date && value.getUTCFullYear() > 1 && value.getUTCFullYear() < 4001 ? value.toISOString() : null;
-var text2 = (value) => typeof value === "string" && value !== "" ? value : null;
+var text3 = (value) => typeof value === "string" && value !== "" ? value : null;
 var integer4 = (value) => typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 var number4 = (value) => typeof value === "number" && Number.isFinite(value) ? value : null;
 var flag = (value) => value === 1 || value === true;
@@ -65158,22 +66566,22 @@ var AnnotationsStream = class extends BooksStream {
     const kindCode = integer4(row.ZANNOTATIONTYPE);
     return {
       id: row.ZANNOTATIONUUID,
-      assetId: text2(row.ZANNOTATIONASSETID),
+      assetId: text3(row.ZANNOTATIONASSETID),
       kind: kindCode === null ? null : kinds[kindCode] ?? null,
       kindCode,
       style: integer4(row.ZANNOTATIONSTYLE),
       underline: flag(row.ZANNOTATIONISUNDERLINE),
       deleted: flag(row.ZANNOTATIONDELETED),
-      selectedText: text2(row.ZANNOTATIONSELECTEDTEXT),
-      representativeText: text2(row.ZANNOTATIONREPRESENTATIVETEXT),
-      note: text2(row.ZANNOTATIONNOTE),
-      chapter: text2(row.ZFUTUREPROOFING5),
-      location: text2(row.ZANNOTATIONLOCATION),
+      selectedText: text3(row.ZANNOTATIONSELECTEDTEXT),
+      representativeText: text3(row.ZANNOTATIONREPRESENTATIVETEXT),
+      note: text3(row.ZANNOTATIONNOTE),
+      chapter: text3(row.ZFUTUREPROOFING5),
+      location: text3(row.ZANNOTATIONLOCATION),
       rangeStart: integer4(row.ZPLLOCATIONRANGESTART),
       rangeEnd: integer4(row.ZPLLOCATIONRANGEEND),
       physicalLocation: integer4(row.ZPLABSOLUTEPHYSICALLOCATION),
-      storageId: text2(row.ZPLSTORAGEUUID),
-      creator: text2(row.ZANNOTATIONCREATORIDENTIFIER),
+      storageId: text3(row.ZPLSTORAGEUUID),
+      creator: text3(row.ZANNOTATIONCREATORIDENTIFIER),
       createdAt: coreDataTime(row.ZANNOTATIONCREATIONDATE),
       modifiedAt: coreDataTime(row.ZANNOTATIONMODIFICATIONDATE)
     };
@@ -65320,27 +66728,27 @@ var AssetDetailsStream = class extends BooksStream {
       tasteSyncedToStore: nullableFlag(row.ZTASTESYNCEDTOSTORE),
       audiobookPosition: number4(row.ZBOOKMARKTIME),
       audiobookPositionUpdatedAt: coreDataTime(row.ZDATEPLAYBACKTIMEUPDATED),
-      position: text2(row.ZREADINGPOSITIONCFISTRING),
+      position: text3(row.ZREADINGPOSITIONCFISTRING),
       positionRangeStart: integer4(row.ZREADINGPOSITIONLOCATIONRANGESTART),
       positionRangeEnd: integer4(row.ZREADINGPOSITIONLOCATIONRANGEEND),
       positionPhysicalLocation: integer4(
         row.ZREADINGPOSITIONABSOLUTEPHYSICALLOCATION
       ),
-      positionStorageId: text2(row.ZREADINGPOSITIONSTORAGEUUID),
-      positionAssetVersion: text2(row.ZREADINGPOSITIONASSETVERSION),
-      positionAnnotationVersion: text2(row.ZREADINGPOSITIONANNOTATIONVERSION),
+      positionStorageId: text3(row.ZREADINGPOSITIONSTORAGEUUID),
+      positionAssetVersion: text3(row.ZREADINGPOSITIONASSETVERSION),
+      positionAnnotationVersion: text3(row.ZREADINGPOSITIONANNOTATIONVERSION),
       positionUpdatedAt: coreDataTime(row.ZREADINGPOSITIONLOCATIONUPDATEDATE)
     };
   }
 };
 
 // apps/apple/src/sources/apple-books/streams/book-files-stream.ts
-import { join as join6 } from "node:path";
+import { join as join9 } from "node:path";
 
 // apps/apple/src/platform/macos/icloud-files.ts
 import { execFile as execFile2 } from "node:child_process";
 import { lstat as lstat2, readdir as readdir3 } from "node:fs/promises";
-import { join as join5 } from "node:path";
+import { join as join8 } from "node:path";
 import { promisify as promisify2 } from "node:util";
 var run = promisify2(execFile2);
 var dataless = 1073741824;
@@ -65396,10 +66804,10 @@ async function localFiles(item) {
   const pending = [""];
   while (pending.length > 0) {
     const relative4 = pending.pop();
-    const entries = await readdir3(join5(item, relative4), {
+    const entries = await readdir3(join8(item, relative4), {
       withFileTypes: true
     });
-    const paths = entries.map((entry) => join5(item, relative4, entry.name));
+    const paths = entries.map((entry) => join8(item, relative4, entry.name));
     const local = await localPaths(paths);
     for (const [index, entry] of entries.entries()) {
       const path = paths[index];
@@ -65638,7 +67046,7 @@ var BookFilesStream = class extends BooksStream {
     const files = exportable(record3.path, await localFiles(record3.path));
     if (files === null) return null;
     if (single(files)) return files[0]?.path ?? null;
-    const target = join6(staging, `${record3.assetId}.epub`);
+    const target = join9(staging, `${record3.assetId}.epub`);
     await writeEpub(files, target);
     return target;
   }
@@ -65746,8 +67154,8 @@ var CollectionsStream = class extends BooksStream {
   record(row) {
     return {
       collectionId: row.ZCOLLECTIONID,
-      title: text2(row.ZTITLE),
-      details: text2(row.ZDETAILS),
+      title: text3(row.ZTITLE),
+      details: text3(row.ZDETAILS),
       deleted: flag(row.ZDELETEDFLAG),
       hidden: flag(row.ZHIDDEN),
       placeholder: flag(row.ZPLACEHOLDER),
@@ -66049,43 +67457,43 @@ var LibraryAssetsStream = class extends BooksStream {
     const contentTypeCode = integer4(row.ZCONTENTTYPE);
     return {
       assetId: row.ZASSETID,
-      title: text2(row.ZTITLE),
-      sortTitle: text2(row.ZSORTTITLE),
-      author: text2(row.ZAUTHOR),
-      sortAuthor: text2(row.ZSORTAUTHOR),
+      title: text3(row.ZTITLE),
+      sortTitle: text3(row.ZSORTTITLE),
+      author: text3(row.ZAUTHOR),
+      sortAuthor: text3(row.ZSORTAUTHOR),
       authorCount: integer4(row.ZAUTHORCOUNT),
       authorNames: base643(row.ZAUTHORNAMES),
       narratorCount: integer4(row.ZNARRATORCOUNT),
       narratorNames: base643(row.ZNARRATORNAMES),
-      genre: text2(row.ZGENRE),
+      genre: text3(row.ZGENRE),
       genres: base643(row.ZGENRES),
-      language: text2(row.ZLANGUAGE),
-      bookDescription: text2(row.ZBOOKDESCRIPTION),
-      comments: text2(row.ZCOMMENTS),
-      grouping: text2(row.ZGROUPING),
-      year: text2(row.ZYEAR),
-      kind: text2(row.ZKIND),
+      language: text3(row.ZLANGUAGE),
+      bookDescription: text3(row.ZBOOKDESCRIPTION),
+      comments: text3(row.ZCOMMENTS),
+      grouping: text3(row.ZGROUPING),
+      year: text3(row.ZYEAR),
+      kind: text3(row.ZKIND),
       contentType: contentTypeCode === null ? null : contentTypes[contentTypeCode] ?? null,
       contentTypeCode,
-      mappedAssetId: text2(row.ZMAPPEDASSETID),
+      mappedAssetId: text3(row.ZMAPPEDASSETID),
       mappedAssetContentTypeCode: integer4(row.ZMAPPEDASSETCONTENTTYPE),
-      temporaryAssetId: text2(row.ZTEMPORARYASSETID),
-      epubId: text2(row.ZEPUBID),
-      assetGuid: text2(row.ZASSETGUID),
-      storeId: text2(row.ZSTOREID),
-      storePlaylistId: text2(row.ZSTOREPLAYLISTID),
-      familyId: text2(row.ZFAMILYID),
-      accountId: text2(row.ZACCOUNTID),
-      purchasedDsid: text2(row.ZPURCHASEDDSID),
-      downloadedDsid: text2(row.ZDOWNLOADEDDSID),
-      dataSource: text2(row.ZDATASOURCEIDENTIFIER),
-      path: text2(row.ZPATH),
-      url: text2(row.ZURL),
-      permalink: text2(row.ZPERMLINK),
-      coverUrl: text2(row.ZCOVERURL),
+      temporaryAssetId: text3(row.ZTEMPORARYASSETID),
+      epubId: text3(row.ZEPUBID),
+      assetGuid: text3(row.ZASSETGUID),
+      storeId: text3(row.ZSTOREID),
+      storePlaylistId: text3(row.ZSTOREPLAYLISTID),
+      familyId: text3(row.ZFAMILYID),
+      accountId: text3(row.ZACCOUNTID),
+      purchasedDsid: text3(row.ZPURCHASEDDSID),
+      downloadedDsid: text3(row.ZDOWNLOADEDDSID),
+      dataSource: text3(row.ZDATASOURCEIDENTIFIER),
+      path: text3(row.ZPATH),
+      url: text3(row.ZURL),
+      permalink: text3(row.ZPERMLINK),
+      coverUrl: text3(row.ZCOVERURL),
       coverAspectRatio: number4(row.ZCOVERASPECTRATIO),
-      coverWritingMode: text2(row.ZCOVERWRITINGMODE),
-      pageProgressionDirection: text2(row.ZPAGEPROGRESSIONDIRECTION),
+      coverWritingMode: text3(row.ZCOVERWRITINGMODE),
+      pageProgressionDirection: text3(row.ZPAGEPROGRESSIONDIRECTION),
       pageCount: integer4(row.ZPAGECOUNT),
       fileSize: integer4(row.ZFILESIZE),
       duration: number4(row.ZDURATION),
@@ -66117,7 +67525,7 @@ var LibraryAssetsStream = class extends BooksStream {
       isEphemeral: nullableFlag(row.ZISEPHEMERAL),
       isStoreAudiobook: nullableFlag(row.ZISSTOREAUDIOBOOK),
       isSupplementalContent: nullableFlag(row.ZISSUPPLEMENTALCONTENT),
-      supplementalContentParentAssetId: text2(
+      supplementalContentParentAssetId: text3(
         row.supplementalContentParentAssetId
       ),
       isTrackedAsRecent: nullableFlag(row.ZISTRACKEDASRECENT),
@@ -66127,11 +67535,11 @@ var LibraryAssetsStream = class extends BooksStream {
       state: integer4(row.ZSTATE),
       combinedState: integer4(row.ZCOMBINEDSTATE),
       versionNumber: number4(row.ZVERSIONNUMBER),
-      version: text2(row.ZVERSIONNUMBERHUMANREADABLE),
-      seriesId: text2(row.ZSERIESID),
-      seriesContainerAssetId: text2(row.seriesContainerAssetId),
+      version: text3(row.ZVERSIONNUMBERHUMANREADABLE),
+      seriesId: text3(row.ZSERIESID),
+      seriesContainerAssetId: text3(row.seriesContainerAssetId),
       sequenceNumber: number4(row.ZSEQUENCENUMBER),
-      sequenceDisplayName: text2(row.ZSEQUENCEDISPLAYNAME),
+      sequenceDisplayName: text3(row.ZSEQUENCEDISPLAYNAME),
       seriesIsOrdered: nullableFlag(row.ZSERIESISORDERED),
       seriesIsHidden: nullableFlag(row.ZSERIESISHIDDEN),
       seriesIsCloudOnly: nullableFlag(row.ZSERIESISCLOUDONLY)
@@ -66208,13 +67616,13 @@ var PurchasesStream = class extends BooksStream {
   record(row) {
     return {
       storeId: String(row.ZSTOREID),
-      title: text2(row.ZTITLE),
-      sortTitle: text2(row.ZSORTEDTITLE),
-      artist: text2(row.ZARTIST),
-      sortAuthor: text2(row.ZSORTEDAUTHOR),
-      genre: text2(row.ZGENRE),
-      fileExtension: text2(row.ZFILEEXTENSION),
-      version: text2(row.ZDISPLAYVERSION),
+      title: text3(row.ZTITLE),
+      sortTitle: text3(row.ZSORTEDTITLE),
+      artist: text3(row.ZARTIST),
+      sortAuthor: text3(row.ZSORTEDAUTHOR),
+      genre: text3(row.ZGENRE),
+      fileExtension: text3(row.ZFILEEXTENSION),
+      version: text3(row.ZDISPLAYVERSION),
       purchasedAt: coreDataTime(row.ZPURCHASEDAT),
       expectedAt: coreDataTime(row.ZEXPECTEDDATE),
       isAudiobook: nullableFlag(row.ZISAUDIOBOOK),
@@ -66226,7 +67634,7 @@ var PurchasesStream = class extends BooksStream {
       isReadAloud: nullableFlag(row.ZISREADALOUD),
       purchaseHistoryId: integer4(row.ZPURCHASEHISTORYID),
       storeAccountId: integer4(row.ZSTOREACCOUNTID),
-      artworkUrl: text2(row.ZARTWORKURLSTRING)
+      artworkUrl: text3(row.ZARTWORKURLSTRING)
     };
   }
 };
@@ -66448,9 +67856,9 @@ var ReviewsStream = class extends BooksStream {
       id: row.ZASSETREVIEWID,
       deleted: flag(row.ZDELETEDFLAG),
       starRating: integer4(row.ZSTARRATING),
-      title: text2(row.ZREVIEWTITLE),
-      body: text2(row.ZREVIEWBODY),
-      userId: text2(row.ZUSERID),
+      title: text3(row.ZREVIEWTITLE),
+      body: text3(row.ZREVIEWBODY),
+      userId: text3(row.ZUSERID),
       modifiedAt: coreDataTime(row.ZMODIFICATIONDATE)
     };
   }
@@ -66630,7 +68038,7 @@ var AppleBooksSource = class extends Source {
         yield* messages;
         return;
       }
-      const staging = __using(_stack, await mkdtempDisposable2(join7(tmpdir2(), "elt-books-")), true);
+      const staging = __using(_stack, await mkdtempDisposable2(join10(tmpdir2(), "elt-books-")), true);
       for await (const message4 of messages) {
         if ("type" in message4) {
           yield message4;
@@ -66662,7 +68070,7 @@ async function fingerprint(path) {
 // apps/apple/src/sources/apple-calendar/apple-calendar-source.ts
 import { lstat as lstat3, mkdtempDisposable as mkdtempDisposable3, writeFile } from "node:fs/promises";
 import { tmpdir as tmpdir3 } from "node:os";
-import { extname as extname2, join as join8 } from "node:path";
+import { extname as extname2, join as join11 } from "node:path";
 
 // apps/apple/src/platform/macos/eventkit.ts
 import { setTimeout as sleep } from "node:timers/promises";
@@ -66841,14 +68249,14 @@ var EventKit = class {
 };
 
 // apps/apple/src/sources/eventkit-schema.ts
-var text3 = { type: "string" };
-var id = { ...text3, minLength: 1 };
+var text4 = { type: "string" };
+var id = { ...text4, minLength: 1 };
 var nullableText8 = { type: ["string", "null"] };
 var integer5 = { type: "integer" };
 var ordinal = { ...integer5, minimum: 0 };
 var boolean9 = { type: "boolean" };
 var number5 = { type: "number" };
-var timestamp = { ...text3, format: "date-time" };
+var timestamp = { ...text4, format: "date-time" };
 var nullableTimestamp9 = { ...nullableText8, format: "date-time" };
 var nullableDate = { ...nullableText8, format: "date" };
 var color = { type: ["number", "null"], minimum: 0, maximum: 1 };
@@ -66859,7 +68267,7 @@ var location = {
   radius: { type: ["number", "null"], minimum: 0 }
 };
 var eventKitFields = {
-  text: text3,
+  text: text4,
   id,
   nullableText: nullableText8,
   integer: integer5,
@@ -66876,7 +68284,7 @@ var eventKitAccountFields = {
     ...id,
     description: "EventKit EKSource.sourceIdentifier; accountId of the calendar or list stream within this source refers to it."
   },
-  name: { ...text3, description: "EventKit EKSource.title." },
+  name: { ...text4, description: "EventKit EKSource.title." },
   type: {
     ...ordinal,
     description: "EventKit EKSource.sourceType raw value (EKSourceType): 0 local, 1 Exchange, 2 CalDAV, 3 MobileMe, 4 subscribed, 5 birthdays. Unknown codes are kept as numbers."
@@ -66895,7 +68303,7 @@ var eventKitCalendarFields = {
     ...id,
     description: "EventKit EKCalendar.source.sourceIdentifier: the owning account; refers to accounts.id within this source."
   },
-  name: { ...text3, description: "EventKit EKCalendar.title." },
+  name: { ...text4, description: "EventKit EKCalendar.title." },
   type: {
     ...ordinal,
     description: "EventKit EKCalendar.type raw value (EKCalendarType): 0 local, 1 CalDAV, 2 Exchange, 3 subscription, 4 birthday. Apple reports a subscribed CalDAV calendar as 1 with subscribed true. Unknown codes are kept as numbers."
@@ -66979,7 +68387,7 @@ function eventKitRelatedFields(ownerKey) {
         ...ordinal,
         description: "Order among the owner's participants of the same kind. Attendees are numbered in content order (URL, name, role, type), not EventKit's order, which changes between reads."
       },
-      kind: { ...text3, description: owner.kind },
+      kind: { ...text4, description: owner.kind },
       name: {
         ...nullableText8,
         description: "EventKit EKParticipant.name; NULL when EventKit has none."
@@ -67049,7 +68457,7 @@ function eventKitRelatedFields(ownerKey) {
         description: "Index in EventKit EKCalendarItem.recurrenceRules, in the order EventKit returns them."
       },
       calendarIdentifier: {
-        ...text3,
+        ...text4,
         description: "EventKit EKRecurrenceRule.calendarIdentifier: the calendar system the rule uses."
       },
       frequency: {
@@ -67087,7 +68495,7 @@ function eventKitRelatedFields(ownerKey) {
         description: "Owning rule; refers to recurrenceRules.id within this source."
       },
       component: {
-        ...text3,
+        ...text4,
         description: "The EventKit EKRecurrenceRule list property this value belongs to: daysOfTheWeek (iCalendar BYDAY), daysOfTheMonth (BYMONTHDAY), daysOfTheYear (BYYEARDAY), weeksOfTheYear (BYWEEKNO), monthsOfTheYear (BYMONTH) or setPositions (BYSETPOS)."
       },
       position: {
@@ -67597,7 +69005,7 @@ function eventRow(occurrence) {
 // apps/apple/src/sources/apple-calendar/apple-calendar-source.ts
 var {
   id: id2,
-  text: text4,
+  text: text5,
   nullableText: nullableText9,
   timestamp: timestamp3,
   nullableTimestamp: nullableTimestamp10,
@@ -67629,7 +69037,7 @@ var catalog2 = eventKitCatalog(
       properties: {
         ...eventKitCalendarFields,
         description: {
-          ...text4,
+          ...text5,
           description: "Calendar.app's calendar description, read from EKCalendar's private notes property; empty when the calendar has none."
         }
       }
@@ -67658,7 +69066,7 @@ var catalog2 = eventKitCatalog(
           ...nullableText9,
           description: "EventKit EKEvent.eventIdentifier; NULL when EventKit has none. Apple documents that it can change when the event moves calendar or syncs; it is not the occurrence identity."
         },
-        name: { ...text4, description: "EventKit EKCalendarItem.title." },
+        name: { ...text5, description: "EventKit EKCalendarItem.title." },
         body: {
           ...nullableText9,
           description: "EventKit EKCalendarItem.notes; NULL when unset."
@@ -67744,7 +69152,7 @@ var catalog2 = eventKitCatalog(
           description: "Order among sibling components, numbered in content order: EventKit's export order changes between reads."
         },
         name: {
-          ...text4,
+          ...text5,
           description: "Component name as exported, uppercased, such as VCALENDAR, VEVENT or VALARM."
         },
         uid: {
@@ -67782,11 +69190,11 @@ var catalog2 = eventKitCatalog(
           description: "Index among the component's properties in export order, counted after DTSTAMP is removed."
         },
         name: {
-          ...text4,
+          ...text5,
           description: "Property name as exported, uppercased, including vendor X- names."
         },
         value: {
-          ...text4,
+          ...text5,
           description: "Raw property value as exported after line unfolding: no TEXT unescaping, date parsing or decoding. An inline ATTACH value is a whole base64 file."
         }
       }
@@ -67808,7 +69216,7 @@ var catalog2 = eventKitCatalog(
         },
         ...icsItem,
         uri: {
-          ...text4,
+          ...text5,
           description: "Raw ATTACH value: the base64 file content when inline is true, otherwise the attachment URI."
         },
         filename: {
@@ -67850,11 +69258,11 @@ var catalog2 = eventKitCatalog(
           description: "Index of this value within the parameter."
         },
         name: {
-          ...text4,
+          ...text5,
           description: "Parameter name as exported, uppercased."
         },
         value: {
-          ...text4,
+          ...text5,
           description: "One parameter value, with surrounding double quotes removed and RFC 6868 caret escapes (^n, ^', ^^) decoded; otherwise as exported."
         }
       }
@@ -68008,10 +69416,10 @@ var AppleCalendarSource = class extends Source {
         calendarItemId: String(data.calendarItemId)
       };
       const scratch = __using(_stack, await mkdtempDisposable3(
-        join8(tmpdir3(), "context-compiler-calendar-attachment-")
+        join11(tmpdir3(), "context-compiler-calendar-attachment-")
       ), true);
       const extension = attachment2.filename === null ? "" : extname2(attachment2.filename);
-      const path = join8(scratch.path, `content${extension}`);
+      const path = join11(scratch.path, `content${extension}`);
       let saved;
       if (data.inline === true) {
         await writeFile(path, Buffer.from(attachment2.uri, "base64"));
@@ -68042,21 +69450,21 @@ function checkEventDates(event) {
 }
 
 // apps/apple/src/sources/apple-contacts/apple-contacts-source.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import { createReadStream as createReadStream2 } from "node:fs";
 import { mkdtempDisposable as mkdtempDisposable4, rm as rm3, stat as stat3, writeFile as writeFile2 } from "node:fs/promises";
 import { tmpdir as tmpdir4 } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join13 } from "node:path";
 import { setInterval as setInterval2 } from "node:timers/promises";
 
 // apps/apple/src/platform/macos/address-book.ts
-import { readdirSync } from "node:fs";
+import { readdirSync as readdirSync2 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join12 } from "node:path";
 import {
-  DatabaseSync as DatabaseSync3
+  DatabaseSync as DatabaseSync10
 } from "node:sqlite";
-var addressBookDirectory = join9(
+var addressBookDirectory = join12(
   homedir3(),
   "Library/Application Support/AddressBook"
 );
@@ -68081,7 +69489,7 @@ var ContactsSchemaError = class extends Error {
 var unavailableCodes2 = /* @__PURE__ */ new Set([14, 23]);
 var open6 = (path) => {
   try {
-    return new DatabaseSync3(path, { readOnly: true });
+    return new DatabaseSync10(path, { readOnly: true });
   } catch (cause) {
     if (cause instanceof Error && "errcode" in cause && unavailableCodes2.has(Number(cause.errcode)))
       throw new ContactsUnavailableError(path, cause);
@@ -68089,16 +69497,16 @@ var open6 = (path) => {
   }
 };
 function storeDirectories(directory) {
-  const sources = join9(directory, "Sources");
+  const sources = join12(directory, "Sources");
   let entries;
   try {
-    entries = readdirSync(sources, { withFileTypes: true });
+    entries = readdirSync2(sources, { withFileTypes: true });
   } catch (cause) {
     throw new ContactsUnavailableError(sources, cause);
   }
   return [
     { source: null, directory },
-    ...entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().map((source) => ({ source, directory: join9(sources, source) }))
+    ...entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().map((source) => ({ source, directory: join12(sources, source) }))
   ];
 }
 var AddressBookStore = class {
@@ -68111,7 +69519,7 @@ var AddressBookStore = class {
   directory;
   #database;
   get path() {
-    return join9(this.directory, storeFile);
+    return join12(this.directory, storeFile);
   }
   all(sql) {
     return this.#database.prepare(sql).all();
@@ -68126,7 +69534,7 @@ var AddressBookStore = class {
       return {
         storage: "external",
         id: id12,
-        path: join9(
+        path: join12(
           this.directory,
           ".AddressBook-v22_SUPPORT/_EXTERNAL_DATA",
           id12
@@ -68153,7 +69561,7 @@ var AddressBook = class _AddressBook {
     const stores = [];
     try {
       for (const store of storeDirectories(directory)) {
-        const path = join9(store.directory, storeFile);
+        const path = join12(store.directory, storeFile);
         const database = open6(path);
         stores.push(
           new AddressBookStore(store.source, store.directory, database)
@@ -68194,7 +69602,7 @@ var AddressBookVersion = class {
   #stores = /* @__PURE__ */ new Map();
   get current() {
     const paths = storeDirectories(this.directory).map(
-      ({ directory }) => join9(directory, storeFile)
+      ({ directory }) => join12(directory, storeFile)
     );
     for (const [path, { database }] of this.#stores)
       if (!paths.includes(path)) {
@@ -68232,7 +69640,7 @@ function withinDates(scope, value) {
 }
 
 // apps/apple/src/sources/apple-contacts/contacts-streams.ts
-var { text: text5, id: id3, nullableText: nullableText10, nullableTimestamp: nullableTimestamp11 } = eventKitFields;
+var { text: text6, id: id3, nullableText: nullableText10, nullableTimestamp: nullableTimestamp11 } = eventKitFields;
 var nullableInteger11 = { type: ["integer", "null"] };
 var nullableNumber4 = { type: ["number", "null"] };
 var nullableBoolean6 = { type: ["boolean", "null"] };
@@ -68341,7 +69749,7 @@ function entities(alias, names) {
     join: `JOIN Z_PRIMARYKEY ${alias}_entity ON ${alias}_entity.Z_ENT = ${alias}.Z_ENT AND ${alias}_entity.Z_NAME IN (${list3})`,
     kind: [
       {
-        ...text5,
+        ...text6,
         enum: Object.values(names),
         description: `Core Data entity of this record, from Z_PRIMARYKEY.Z_NAME: ${meanings}. Apple does not document how these entities differ.`
       },
@@ -68729,8 +70137,8 @@ var definitions = {
     explained(
       {
         recordId: [id3, "r.ZUNIQUEID"],
-        propertyName: [text5, "u.ZPROPERTYNAME"],
-        originalLine: [text5, "u.ZORIGINALLINE"]
+        propertyName: [text6, "u.ZPROPERTYNAME"],
+        originalLine: [text6, "u.ZORIGINALLINE"]
       },
       {
         recordId: "Owning record identifier (ZABCDRECORD.ZUNIQUEID of ZABCDUNKNOWNPROPERTY.ZOWNER). Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export.",
@@ -68749,7 +70157,7 @@ var definitions = {
       {
         groupId: [id3, "g.ZUNIQUEID"],
         contactId: [id3, "c.ZUNIQUEID"],
-        propertyName: [text5, "d.ZPROPERTYNAME"],
+        propertyName: [text6, "d.ZPROPERTYNAME"],
         emailId: uniqueIdOf("ZABCDEMAILADDRESS", "d.ZEMAIL"),
         phoneId: uniqueIdOf("ZABCDPHONENUMBER", "d.ZPHONE"),
         addressId: uniqueIdOf("ZABCDPOSTALADDRESS", "d.ZADDRESS")
@@ -68775,12 +70183,12 @@ var definitions = {
         description: "Contact identifier, AddressBook ZABCDRECORD.ZUNIQUEID; refers to contacts.id within this source. Part of the primary key with kind."
       },
       kind: {
-        ...text5,
+        ...text6,
         enum: ["image", "thumbnail"],
         description: "Which stored image this row is: image for ZABCDRECORD.ZIMAGEDATA, thumbnail for ZABCDRECORD.ZTHUMBNAILIMAGEDATA. Part of the primary key with contactId."
       },
       storage: {
-        ...text5,
+        ...text6,
         enum: ["inline", "external"],
         description: "Where Contacts keeps the bytes in its own store: inline inside the database column, or external in a file under the store's .AddressBook-v22_SUPPORT/_EXTERNAL_DATA directory. It describes the native source, not an exported file."
       },
@@ -68794,7 +70202,7 @@ var definitions = {
         description: "Size in bytes of the stored image: the inline bytes after the storage marker, or the external file. Computed by this connector at extraction."
       },
       sha256: {
-        ...text5,
+        ...text6,
         description: "Lowercase hexadecimal SHA-256 of the same bytes byteLength counts, computed by this connector at extraction."
       }
     },
@@ -68844,7 +70252,7 @@ function recordFrom(name, row) {
 var catalog3 = new Catalog(Object.values(streams));
 var imageKey = (contactId, kind) => JSON.stringify([contactId, kind]);
 async function sha256(data) {
-  const hash2 = createHash4("sha256");
+  const hash2 = createHash6("sha256");
   if (data.storage === "inline") hash2.update(data.bytes);
   else
     for await (const chunk of createReadStream2(data.path)) hash2.update(chunk);
@@ -68946,7 +70354,7 @@ var AppleContactsSource = class extends Source {
         return;
       }
       const staging = __using(_stack, await mkdtempDisposable4(
-        join10(tmpdir4(), "elt-contacts-")
+        join13(tmpdir4(), "elt-contacts-")
       ), true);
       let staged = 0;
       for await (const message4 of messages) {
@@ -68963,7 +70371,7 @@ var AppleContactsSource = class extends Source {
           yield { ...message4, file: data.path };
           continue;
         }
-        const path = join10(staging.path, String(staged++));
+        const path = join13(staging.path, String(staged++));
         await writeFile2(path, data.bytes);
         yield { ...message4, file: path };
         await rm3(path);
@@ -69016,21 +70424,21 @@ function contactSelection(store, scope) {
 }
 
 // apps/apple/src/sources/apple-mail/apple-mail-source.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import { watch } from "node:fs";
 import { copyFile as copyFile2, rm as rm5 } from "node:fs/promises";
-import { extname as extname4, join as join12, relative as relative2 } from "node:path";
-import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+import { extname as extname4, join as join15, relative as relative2 } from "node:path";
+import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 import { setInterval as setInterval3 } from "node:timers/promises";
 
 // apps/apple/src/platform/macos/mail-mime.ts
 var import_mailsplit = __toESM(require_mailsplit(), 1);
 var import_libmime = __toESM(require_libmime(), 1);
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 import { once } from "node:events";
 import { createReadStream as createReadStream3, createWriteStream } from "node:fs";
 import { copyFile, open as open7, rm as rm4 } from "node:fs/promises";
-import { basename as basename2, extname as extname3, join as join11 } from "node:path";
+import { basename as basename2, extname as extname3, join as join14 } from "node:path";
 import { pipeline, finished as streamFinished } from "node:stream/promises";
 function partId(node2) {
   if (node2.partNr === false)
@@ -69162,12 +70570,12 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
           if (node2.multipart !== false || !decode3(record3)) continue;
           const extension = node2.filename === false ? node2.contentType === "text/html" ? ".html" : node2.contentType !== false && node2.contentType.startsWith("text/") ? ".txt" : "" : extname3(node2.filename);
           if (stageFiles)
-            part.path = join11(
+            part.path = join14(
               store.scratch.path,
               `${messageId}-${id12}${extension}`
             );
           const decoder2 = node2.getDecoder();
-          const hash2 = createHash5("sha256");
+          const hash2 = createHash7("sha256");
           const textDecoder = !stageFiles && record3.contentType !== null && record3.contentType.startsWith("text/") ? new TextDecoder(
             record3.charset === null ? void 0 : record3.charset
           ) : null;
@@ -69768,13 +71176,13 @@ var tableStreams = Object.fromEntries(
 );
 
 // apps/apple/src/sources/apple-mail/apple-mail-source.ts
-var text6 = { type: "string" };
+var text7 = { type: "string" };
 var nullableText11 = { type: ["string", "null"] };
 var nullableNumber5 = { type: ["number", "null"] };
 var flag2 = { type: "boolean" };
 var partFields = {
-  messageId: text6,
-  partId: text6,
+  messageId: text7,
+  partId: text7,
   parentPartId: nullableText11,
   contentType: nullableText11,
   charset: nullableText11,
@@ -69789,24 +71197,24 @@ var partFields = {
   availableLocally: flag2,
   sha256: nullableText11
 };
-var metadata = { id: text6, properties: text6 };
-var scopedMetadata = { scope: text6, ...metadata };
+var metadata = { id: text7, properties: text7 };
+var scopedMetadata = { scope: text7, ...metadata };
 var conditionFields = {
-  scope: text6,
-  ownerId: text6,
+  scope: text7,
+  ownerId: text7,
   position: { type: "integer" },
-  properties: text6
+  properties: text7
 };
 var headersFields = {
-  messageId: text6,
-  partId: text6,
+  messageId: text7,
+  partId: text7,
   position: { type: "integer" },
-  name: text6,
-  value: text6,
-  rawLineBase64: text6
+  name: text7,
+  value: text7,
+  rawLineBase64: text7
 };
 var fileFields = {
-  messageId: text6,
+  messageId: text7,
   relativePath: nullableText11,
   availableLocally: flag2,
   partial: { type: ["boolean", "null"] },
@@ -69852,7 +71260,7 @@ var streams2 = {
     "mailboxProperties",
     "One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.",
     described(
-      { relativePath: text6, properties: text6 },
+      { relativePath: text7, properties: text7 },
       {
         relativePath: "Path of the Info.plist file relative to the current Mail version directory.",
         properties: plistProperties
@@ -69918,7 +71326,7 @@ var streams2 = {
     "signatures",
     "One record per .mailsignature file in the current Mail store. Primary key id. No link to accounts is stated; scoped imports omit this stream.",
     described(
-      { id: text6, content: text6 },
+      { id: text7, content: text7 },
       {
         id: "File name of the .mailsignature file without its extension.",
         content: "The whole file read as UTF-8 text, including its MIME headers; not parsed."
@@ -69931,7 +71339,7 @@ var streams2 = {
     "configuration",
     "One record per property list file under a MailData or Signatures directory of the current Mail store, except files under RemoteContentURLCache or BiomeStream. Primary key relativePath. It includes the rule and smart mailbox files that rules and smartMailboxes also read. Scoped imports omit this stream.",
     described(
-      { relativePath: text6, properties: text6 },
+      { relativePath: text7, properties: text7 },
       {
         relativePath: "Path of the property list file relative to the current Mail version directory.",
         properties: plistProperties
@@ -70085,7 +71493,7 @@ function mailSelection(store, scope) {
   const addressText = new Set(
     rows("addresses").filter((row) => addresses.has(row.id)).map((row) => row.address)
   );
-  const servers = new Set(
+  const servers2 = new Set(
     rows("serverMessages").filter((row) => ids2.has(row.message) && mailboxes.has(row.mailbox)).map((row) => row.id)
   );
   const conversations = new Set(
@@ -70127,9 +71535,9 @@ function mailSelection(store, scope) {
       case "messageMailboxes":
         return ids2.has(row.messageId) && mailboxes.has(row.mailboxId);
       case "serverMessages":
-        return servers.has(row.id);
+        return servers2.has(row.id);
       case "serverMessageMailboxes":
-        return servers.has(row.serverMessage) && mailboxes.has(row.label);
+        return servers2.has(row.serverMessage) && mailboxes.has(row.label);
       case "conversationMessages":
         return hashes.has(row.messageId);
       case "conversations":
@@ -70215,7 +71623,7 @@ var MailScan = class {
       relative2(this.store.path, path),
       version3
     ];
-    return createHash6("sha256").update(
+    return createHash8("sha256").update(
       JSON.stringify([
         messageParserVersion,
         file2 === void 0 ? null : identity(file2),
@@ -70333,7 +71741,7 @@ var MailScan = class {
       };
       let path = null;
       if (file2 !== void 0) {
-        path = join12(
+        path = join15(
           this.store.scratch.path,
           `indexed-${row.message}-${row.attachment_id}${extname4(file2.path)}`
         );
@@ -70596,7 +72004,7 @@ var AppleMailSource = class extends Source {
     try {
       if (signal.aborted) return;
       const path = await mailVersionDirectory(this.path);
-      const database = __using(_stack, new DatabaseSync4(join12(path, "MailData/Envelope Index"), {
+      const database = __using(_stack, new DatabaseSync11(join15(path, "MailData/Envelope Index"), {
         readOnly: true
       }));
       const version3 = database.prepare("PRAGMA data_version");
@@ -70636,16 +72044,16 @@ var AppleMailSource = class extends Source {
 // apps/apple/src/sources/apple-messages/apple-messages-source.ts
 import { access } from "node:fs/promises";
 import { homedir as homedir5 } from "node:os";
-import { join as join14 } from "node:path";
+import { join as join17 } from "node:path";
 import { setInterval as setInterval4 } from "node:timers/promises";
 
 // apps/apple/src/platform/macos/chat-database.ts
 import { homedir as homedir4 } from "node:os";
-import { join as join13 } from "node:path";
+import { join as join16 } from "node:path";
 import {
-  DatabaseSync as DatabaseSync5
+  DatabaseSync as DatabaseSync12
 } from "node:sqlite";
-var messagesDirectory = join13(homedir4(), "Library/Messages");
+var messagesDirectory = join16(homedir4(), "Library/Messages");
 var MessagesUnavailableError = class extends Error {
   name = "MessagesUnavailableError";
   constructor(path, cause) {
@@ -70658,7 +72066,7 @@ var MessagesUnavailableError = class extends Error {
 var unavailableCodes3 = /* @__PURE__ */ new Set([14, 23]);
 var open8 = (path) => {
   try {
-    return new DatabaseSync5(path, { readOnly: true });
+    return new DatabaseSync12(path, { readOnly: true });
   } catch (cause) {
     if (cause instanceof Error && "errcode" in cause && unavailableCodes3.has(Number(cause.errcode)))
       throw new MessagesUnavailableError(path, cause);
@@ -70684,7 +72092,7 @@ var ChatDatabase = class _ChatDatabase {
   constructor(database) {
     this.#database = database;
   }
-  static async open(path = join13(messagesDirectory, "chat.db")) {
+  static async open(path = join16(messagesDirectory, "chat.db")) {
     const database = open8(path);
     try {
       database.exec("BEGIN");
@@ -70740,13 +72148,13 @@ function indexOf(haystack, needle) {
 }
 
 // apps/apple/src/sources/apple-messages/messages-streams.ts
-var { text: text7, id: id4, nullableText: nullableText12, boolean: boolean11, nullableTimestamp: nullableTimestamp12 } = eventKitFields;
+var { text: text8, id: id4, nullableText: nullableText12, boolean: boolean11, nullableTimestamp: nullableTimestamp12 } = eventKitFields;
 var nullableInteger12 = { type: ["integer", "null"] };
 var appleMilliseconds = (column) => `CASE WHEN ${column} IS NULL OR ${column} = 0 THEN NULL WHEN abs(${column}) > 100000000000 THEN ${column} / 1000000 ELSE ${column} * 1000 END`;
 var camel = (column) => column.replaceAll(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 var words2 = (list3 = "") => list3.split(/\s+/).filter(Boolean);
 var kinds3 = {
-  text: { schema: text7, select: (column) => column, loads: "text" },
+  text: { schema: text8, select: (column) => column, loads: "text" },
   nullableText: {
     schema: nullableText12,
     select: (column) => column,
@@ -70831,7 +72239,7 @@ var tables = {
   chatRecoverable: { name: "chat_recoverable_message_join", alias: "j" },
   recoverablePart: { name: "recoverable_message_part", alias: "p" }
 };
-var message2 = columns2(
+var message3 = columns2(
   tables.message,
   {
     nullableText: "text subject service_center country service account account_guid cache_roomnames group_title associated_message_guid balloon_bundle_id expressive_send_style_id ck_record_id ck_record_change_tag destination_caller_id reply_to_guid thread_originator_guid thread_originator_part syndication_ranges synced_syndication_ranges bia_reference_id fallback_hash associated_message_emoji ck_chat_id",
@@ -70953,14 +72361,14 @@ var definitions2 = {
         chatGuid,
         handleId: [
           {
-            ...text7,
+            ...text8,
             description: "chat.db handle.id of the linked handle; together with handleService refers to handles (id, service) within this source."
           },
           "h.id"
         ],
         handleService: [
           {
-            ...text7,
+            ...text8,
             description: "chat.db handle.service of the linked handle; together with handleId refers to handles (id, service) within this source."
           },
           "h.service"
@@ -71011,7 +72419,7 @@ var definitions2 = {
         ]
       },
       "message m LEFT JOIN handle h ON h.ROWID = m.handle_id LEFT JOIN handle o ON o.ROWID = m.other_handle",
-      message2
+      message3
     ),
     primaryKey: ["guid"]
   },
@@ -71062,7 +72470,7 @@ var definitions2 = {
         description: `richLinkMetadata.creator; NULL when absent or not text. ${unverified2}`
       },
       metadata: {
-        ...text7,
+        ...text8,
         description: 'The whole unarchived richLinkMetadata object as JSON, with its "$class", nested data as Base64 and dates as ISO 8601; keeps the fields not extracted above.'
       }
     },
@@ -71093,7 +72501,7 @@ var definitions2 = {
         description: `Plain text of the entry's "t" NSAttributedString archive in typedstream form, its first NSString; NULL when t is absent, not bytes or holds no string.`
       },
       entry: {
-        ...text7,
+        ...text8,
         description: 'The whole entry as JSON, with "t" as Base64 and dates as ISO 8601; keeps the keys not extracted above.'
       }
     },
@@ -71254,9 +72662,9 @@ function recordFrom2(name, row) {
 
 // apps/apple/src/sources/apple-messages/apple-messages-source.ts
 var catalog5 = new Catalog(Object.values(streams3));
-var attachmentPath = (filename) => filename.startsWith("~/") ? join14(homedir5(), filename.slice(2)) : filename;
+var attachmentPath = (filename) => filename.startsWith("~/") ? join17(homedir5(), filename.slice(2)) : filename;
 var AppleMessagesSource = class extends Source {
-  constructor(path = join14(messagesDirectory, "chat.db"), pollIntervalMs = 1e3, scope = {}) {
+  constructor(path = join17(messagesDirectory, "chat.db"), pollIntervalMs = 1e3, scope = {}) {
     super();
     this.path = path;
     this.pollIntervalMs = pollIntervalMs;
@@ -71405,16 +72813,16 @@ function messageSelection(database, scope) {
 }
 
 // apps/apple/src/sources/apple-notes/apple-notes-source.ts
-import { join as join17 } from "node:path";
+import { join as join20 } from "node:path";
 import { setInterval as setInterval5 } from "node:timers/promises";
 
 // apps/apple/src/platform/macos/note-store.ts
 import { homedir as homedir6 } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join18 } from "node:path";
 import {
-  DatabaseSync as DatabaseSync6
+  DatabaseSync as DatabaseSync13
 } from "node:sqlite";
-var notesContainer = join15(
+var notesContainer = join18(
   homedir6(),
   "Library/Group Containers/group.com.apple.notes"
 );
@@ -71438,7 +72846,7 @@ var NotesSchemaError = class extends Error {
 var unavailableCodes4 = /* @__PURE__ */ new Set([14, 23]);
 var open9 = (path) => {
   try {
-    return new DatabaseSync6(path, { readOnly: true });
+    return new DatabaseSync13(path, { readOnly: true });
   } catch (cause) {
     if (cause instanceof Error && "errcode" in cause && unavailableCodes4.has(Number(cause.errcode)))
       throw new NotesUnavailableError(path, cause);
@@ -71547,13 +72955,13 @@ var AppleNotesStream = class {
 };
 
 // apps/apple/src/sources/apple-notes/accounts-stream.ts
-var { id: id5, text: text8, ordinal: ordinal3 } = notesFields;
+var { id: id5, text: text9, ordinal: ordinal3 } = notesFields;
 var properties11 = {
   id: {
     ...id5,
     description: "Notes account identifier; referenced by the accountId fields of other streams from this source."
   },
-  name: { ...text8, description: "Account name displayed by Notes." },
+  name: { ...text9, description: "Account name displayed by Notes." },
   type: {
     ...ordinal3,
     description: "Numeric account type stored by Notes; an opaque category, not a quantity."
@@ -71583,7 +72991,7 @@ var AccountsStream = class extends AppleNotesStream {
 import { access as access2 } from "node:fs/promises";
 
 // apps/apple/src/sources/apple-notes/notes-scan.ts
-import { dirname as dirname2, join as join16 } from "node:path";
+import { dirname as dirname2, join as join19 } from "node:path";
 
 // apps/apple/src/platform/macos/note-document.ts
 import { gunzipSync, inflateSync } from "node:zlib";
@@ -72022,7 +73430,7 @@ var NotesScan = class {
   file(row) {
     if (row.locked === 1 || typeof row.account !== "string" || typeof row.media !== "string" || typeof row.ZFILENAME !== "string")
       return null;
-    return join16(
+    return join19(
       dirname2(this.store.path),
       "Accounts",
       row.account,
@@ -72063,7 +73471,7 @@ ${markdownTable(grid)}
 var {
   id: id6,
   nullableId,
-  text: text9,
+  text: text10,
   nullableText: nullableText13,
   ordinal: ordinal4,
   nullableNumber: nullableNumber6,
@@ -72084,7 +73492,7 @@ var properties12 = {
     description: "Parent attachment identifier in attachments.id within this source, such as a scan gallery containing pages; NULL for a top-level attachment."
   },
   type: {
-    ...text9,
+    ...text10,
     description: "Uniform type identifier recorded by Notes, such as com.apple.notes.table. public.data is emitted when Notes has no type value."
   },
   title: {
@@ -72210,7 +73618,7 @@ var AttachmentsStream = class extends AppleNotesStream {
 };
 
 // apps/apple/src/sources/apple-notes/folders-stream.ts
-var { id: id7, nullableId: nullableId2, text: text10, ordinal: ordinal5, nullableText: nullableText14, boolean: boolean13 } = notesFields;
+var { id: id7, nullableId: nullableId2, text: text11, ordinal: ordinal5, nullableText: nullableText14, boolean: boolean13 } = notesFields;
 var properties13 = {
   id: {
     ...id7,
@@ -72224,7 +73632,7 @@ var properties13 = {
     ...nullableId2,
     description: "Parent folder identifier in folders.id within this source; NULL for a root folder."
   },
-  name: { ...text10, description: "Folder title displayed by Notes." },
+  name: { ...text11, description: "Folder title displayed by Notes." },
   type: {
     ...ordinal5,
     description: "Numeric folder category stored by Notes. 1 means Recently Deleted; its notes remain exported until permanently deleted."
@@ -72263,7 +73671,7 @@ var FoldersStream = class extends AppleNotesStream {
 };
 
 // apps/apple/src/sources/apple-notes/inline-attachments-stream.ts
-var { id: id8, text: text11, nullableText: nullableText15, nullableTimestamp: nullableTimestamp14 } = notesFields;
+var { id: id8, text: text12, nullableText: nullableText15, nullableTimestamp: nullableTimestamp14 } = notesFields;
 var properties14 = {
   id: { ...id8, description: "Notes identifier of this inline attachment." },
   noteId: {
@@ -72271,7 +73679,7 @@ var properties14 = {
     description: "Containing note identifier; refers to notes.id within this source. One note can contain many inline attachments."
   },
   type: {
-    ...text11,
+    ...text12,
     description: "Notes type identifier, such as com.apple.notes.inlinetextattachment.hashtag; distinguishes tags, mentions, note links and calculation results."
   },
   text: {
@@ -72422,7 +73830,7 @@ var AppleNotesSource = class extends Source {
   launch;
   scope;
   constructor({
-    path = join17(notesContainer, "NoteStore.sqlite"),
+    path = join20(notesContainer, "NoteStore.sqlite"),
     // How often a watch checks the store for commits.
     pollIntervalMs = 1e3,
     // How often a watch makes sure Notes runs: macOS closes a hidden Notes
@@ -72586,7 +73994,7 @@ function dateComponentsRow(reminderId, kind, components) {
 }
 
 // apps/apple/src/sources/apple-reminders/apple-reminders-source.ts
-var { id: id10, text: text12, nullableText: nullableText17, nullableTimestamp: nullableTimestamp16, integer: integer8, boolean: boolean15 } = eventKitFields;
+var { id: id10, text: text13, nullableText: nullableText17, nullableTimestamp: nullableTimestamp16, integer: integer8, boolean: boolean15 } = eventKitFields;
 var related2 = eventKitRelatedFields("reminderId");
 var catalog7 = eventKitCatalog(
   {
@@ -72613,7 +74021,7 @@ var catalog7 = eventKitCatalog(
           ...nullableText17,
           description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier; NULL when EventKit has none. Apple documents duplicates across calendars and, for Exchange reminders, different values between devices, so it is not unique."
         },
-        name: { ...text12, description: "EventKit EKCalendarItem.title." },
+        name: { ...text13, description: "EventKit EKCalendarItem.title." },
         body: {
           ...nullableText17,
           description: "EventKit EKCalendarItem.notes; NULL when unset."
@@ -72666,7 +74074,7 @@ var catalog7 = eventKitCatalog(
           description: "Owning reminder; refers to reminders.id within this source."
         },
         kind: {
-          ...text12,
+          ...text13,
           enum: ["start", "due"],
           description: "start for EventKit EKReminder.startDateComponents, due for EKReminder.dueDateComponents."
         },
@@ -72771,18 +74179,18 @@ var AppleRemindersSource = class extends Source {
 
 // apps/apple/src/sources/apple-safari/apple-safari-source.ts
 import { readdir as readdir4, stat as stat4 } from "node:fs/promises";
-import { join as join20 } from "node:path";
+import { join as join23 } from "node:path";
 import { setInterval as setInterval6 } from "node:timers/promises";
 
 // apps/apple/src/platform/macos/safari-store.ts
 import { readFile as readFile3 } from "node:fs/promises";
 import { homedir as homedir7 } from "node:os";
-import { join as join18 } from "node:path";
+import { join as join21 } from "node:path";
 import {
-  DatabaseSync as DatabaseSync7
+  DatabaseSync as DatabaseSync14
 } from "node:sqlite";
-var safariDirectory = join18(homedir7(), "Library/Safari");
-var safariContainer = join18(
+var safariDirectory = join21(homedir7(), "Library/Safari");
+var safariContainer = join21(
   homedir7(),
   "Library/Containers/com.apple.Safari/Data/Library/Safari"
 );
@@ -72806,7 +74214,7 @@ var SafariSchemaError = class extends Error {
 var unavailableCodes5 = /* @__PURE__ */ new Set([14, 23]);
 var open10 = (path) => {
   try {
-    return new DatabaseSync7(path, { readOnly: true });
+    return new DatabaseSync14(path, { readOnly: true });
   } catch (cause) {
     if (cause instanceof Error && "errcode" in cause && unavailableCodes5.has(Number(cause.errcode)))
       throw new SafariUnavailableError(path, cause);
@@ -72870,7 +74278,7 @@ async function readSafariPlist(path) {
 }
 
 // apps/apple/src/sources/apple-safari/safari-scan.ts
-import { join as join19 } from "node:path";
+import { join as join22 } from "node:path";
 
 // apps/apple/src/sources/apple-safari/safari-values.ts
 var defaultProfile = "DefaultProfile";
@@ -72880,7 +74288,7 @@ var distantFuture2 = 63113904e3;
 var appleTime2 = (value) => typeof value === "number" && Number.isFinite(value) && value > distantPast2 && value < distantFuture2 ? new Date(Math.round((value + appleEpochSeconds3) * 1e3)).toISOString() : null;
 var plistTime2 = (value) => value instanceof Date && value.getUTCFullYear() > 1 && value.getUTCFullYear() < 4001 ? value.toISOString() : null;
 var base644 = (value) => value instanceof Uint8Array ? Buffer.from(value).toString("base64") : null;
-var text13 = (value) => typeof value === "string" && value !== "" ? value : null;
+var text14 = (value) => typeof value === "string" && value !== "" ? value : null;
 var integer9 = (value) => typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 var number7 = (value) => typeof value === "number" && Number.isFinite(value) ? value : null;
 var flag4 = (value) => value === 1 || value === true;
@@ -73293,10 +74701,10 @@ var TabsReader = class {
     return this.#byId.get(id12);
   }
   uuid(id12) {
-    return text13(this.#byId.get(id12)?.external_uuid);
+    return text14(this.#byId.get(id12)?.external_uuid);
   }
   windowUuid(id12) {
-    return text13(this.#windows.find((window) => window.id === id12)?.uuid);
+    return text14(this.#windows.find((window) => window.id === id12)?.uuid);
   }
   kind(row) {
     const uuid5 = row.external_uuid;
@@ -73316,8 +74724,8 @@ var TabsReader = class {
   profileOf(row) {
     if (row.type !== folder) {
       const context = dictionary3(this.attributes(row)[1].TabPageContextIDKey);
-      const named2 = text13(context.profileIdentifier);
-      if (named2 !== null) return named2;
+      const named3 = text14(context.profileIdentifier);
+      if (named3 !== null) return named3;
     }
     for (let current = row; current !== void 0; current = this.#byId.get(current.parent)) {
       if (current.type === folder && current.subtype === profileSubtype)
@@ -73354,14 +74762,14 @@ var plist = (value) => value instanceof Uint8Array ? dictionary3(parseBinaryPlis
 
 // apps/apple/src/sources/apple-safari/safari-scan.ts
 var storeFiles2 = ({ directory, container: container2 }) => ({
-  history: join19(directory, "History.db"),
-  tabs: join19(container2, "SafariTabs.db"),
-  cloudTabs: join19(container2, "CloudTabs.db"),
-  bookmarks: join19(directory, "Bookmarks.plist"),
-  closedTabs: join19(directory, "RecentlyClosedTabs.plist"),
-  downloads: join19(directory, "Downloads.plist")
+  history: join22(directory, "History.db"),
+  tabs: join22(container2, "SafariTabs.db"),
+  cloudTabs: join22(container2, "CloudTabs.db"),
+  bookmarks: join22(directory, "Bookmarks.plist"),
+  closedTabs: join22(directory, "RecentlyClosedTabs.plist"),
+  downloads: join22(directory, "Downloads.plist")
 });
-var profileHistory = ({ directory, container: container2 }, serverId) => serverId === defaultProfile ? join19(directory, "History.db") : join19(container2, "Profiles", serverId, "History.db");
+var profileHistory = ({ directory, container: container2 }, serverId) => serverId === defaultProfile ? join22(directory, "History.db") : join22(container2, "Profiles", serverId, "History.db");
 var databaseStores2 = /* @__PURE__ */ new Set([
   "history",
   "tabs",
@@ -73471,24 +74879,24 @@ var SafariScan = class _SafariScan {
 };
 
 // apps/apple/src/sources/apple-safari/safari-stream.ts
-var text14 = { type: "string" };
+var text15 = { type: "string" };
 var nullableText18 = { type: ["string", "null"] };
 var integer10 = { type: "integer" };
 var nullableInteger13 = { type: ["integer", "null"] };
 var safariFields = {
-  id: { ...text14, minLength: 1 },
+  id: { ...text15, minLength: 1 },
   nullableId: { ...nullableText18, minLength: 1 },
-  text: text14,
+  text: text15,
   nullableText: nullableText18,
   integer: integer10,
   nullableInteger: nullableInteger13,
   ordinal: { ...integer10, minimum: 0 },
   nullableNumber: { type: ["number", "null"] },
   boolean: { type: "boolean" },
-  timestamp: { ...text14, format: "date-time" },
+  timestamp: { ...text15, format: "date-time" },
   nullableTimestamp: { ...nullableText18, format: "date-time" },
   profileId: {
-    ...text14,
+    ...text15,
     minLength: 1,
     description: "Safari profile identifier; refers to profiles.id within this source. The default profile is DefaultProfile."
   }
@@ -73608,18 +75016,18 @@ var BookmarksStream = class extends SafariStream {
       parentId,
       position,
       kind: kinds4[node2.WebBookmarkType],
-      title: text13(node2.Title) ?? text13(dictionary3(node2.URIDictionary).title),
-      url: text13(node2.URLString),
-      identifier: text13(node2.WebBookmarkIdentifier),
+      title: text14(node2.Title) ?? text14(dictionary3(node2.URIDictionary).title),
+      url: text14(node2.URLString),
+      identifier: text14(node2.WebBookmarkIdentifier),
       hidden: flag4(node2.ShouldOmitFromUI),
       addedAt: plistTime2(node2.dateAdded),
-      description: text13(node2.previewText),
+      description: text14(node2.previewText),
       descriptionUserDefined: flag4(node2.previewTextIsUserDefined),
-      featureText: text13(node2.featureText),
+      featureText: text14(node2.featureText),
       metadataFetchFailures: integer9(
         dictionary3(node2.ReadingListNonSync).BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey
       ),
-      serverId: text13(dictionary3(node2.Sync).ServerID)
+      serverId: text14(dictionary3(node2.Sync).ServerID)
     };
   }
 };
@@ -73700,14 +75108,14 @@ var ClosedTabsStream = class extends SafariStream {
       id: state.TabUUID,
       closedWindowId,
       position,
-      windowId: text13(state.WindowUUID),
+      windowId: text14(state.WindowUUID),
       profileId: state.ProfileUUID,
-      title: text13(state.TabTitle),
-      url: text13(state.TabURL),
+      title: text14(state.TabTitle),
+      url: text14(state.TabURL),
       closedAt: plistTime2(state.DateClosed),
       lastVisitedAt: plistTime2(state.LastVisitTime),
       tabIndex: integer9(state.TabIndex),
-      tabGroupId: text13(state.TabGroupForTab),
+      tabGroupId: text14(state.TabGroupForTab),
       tabGroupType: flag4(state.TabGroupTypeForTabKey),
       ancestorTabIds: strings(state.AncestorTabUUIDsKey),
       muted: flag4(state.IsMuted),
@@ -73818,8 +75226,8 @@ var windowState = (state) => ({
   favoritesBarHidden: flag4(state.FavoritesBarHidden),
   readingListSidebarVisible: flag4(state.PrefersReadingListSidebarVisible),
   sidebarMode: integer9(state.WindowUnifiedSidebarMode),
-  frame: text13(state.WindowContentRect),
-  addressFieldText: text13(state.CustomUnifiedFieldText)
+  frame: text14(state.WindowContentRect),
+  addressFieldText: text14(state.CustomUnifiedFieldText)
 });
 
 // apps/apple/src/sources/apple-safari/streams/closed-windows-stream.ts
@@ -73860,7 +75268,7 @@ var ClosedWindowsStream = class extends SafariStream {
       id: state.WindowUUID,
       position,
       profileId: state.ProfileUUID,
-      activeTabGroupId: text13(state.activeTabGroupUUID),
+      activeTabGroupId: text14(state.activeTabGroupUUID),
       ...windowState(state)
     };
   }
@@ -73949,8 +75357,8 @@ var CloudTabDevicesStream = class extends SafariStream {
   record(row) {
     return {
       id: row.device_uuid,
-      name: text13(row.device_name),
-      type: text13(row.device_type_identifier),
+      name: text14(row.device_name),
+      type: text14(row.device_type_identifier),
       duplicateName: flag4(row.has_duplicate_device_name),
       ephemeral: flag4(row.is_ephemeral_device),
       modifiedAt: appleTime2(row.last_modified)
@@ -74064,20 +75472,20 @@ var CloudTabsStream = class extends SafariStream {
     return {
       id: row.tab_uuid,
       deviceId: row.device_uuid,
-      title: text13(row.title),
+      title: text14(row.title),
       url: row.url,
       showingReader: flag4(row.is_showing_reader),
       pinned: flag4(row.is_pinned),
       readerScrollPageIndex: integer9(row.reader_scroll_position_page_index),
-      sceneId: text13(row.scene_id),
+      sceneId: text14(row.scene_id),
       lastViewedAt: row.last_viewed_time === 0 ? null : appleTime2(row.last_viewed_time),
-      topic: text13(row.topic_title)
+      topic: text14(row.topic_title)
     };
   }
 };
 
 // apps/apple/src/sources/apple-safari/streams/downloads-stream.ts
-import { existsSync } from "node:fs";
+import { existsSync as existsSync2 } from "node:fs";
 var { boolean: boolean20, nullableText: nullableText24, nullableTimestamp: nullableTimestamp18, nullableInteger: nullableInteger15 } = safariFields;
 var properties24 = {
   id: { ...safariFields.id, description: "Download identifier." },
@@ -74137,16 +75545,16 @@ var DownloadsStream = class extends SafariStream {
     const path = entry.DownloadEntryPath;
     return {
       id: entry.DownloadEntryIdentifier,
-      profileId: text13(entry.DownloadEntryProfileUUIDStringKey),
+      profileId: text14(entry.DownloadEntryProfileUUIDStringKey),
       url: entry.DownloadEntryURL,
       path,
-      openedPath: text13(entry.DownloadEntryPostPath),
+      openedPath: text14(entry.DownloadEntryPostPath),
       addedAt: plistTime2(entry.DownloadEntryDateAddedKey),
       finishedAt: plistTime2(entry.DownloadEntryDateFinishedKey),
       bytesReceived: integer9(entry.DownloadEntryProgressBytesSoFar),
       bytesTotal: integer9(entry.DownloadEntryProgressTotalToLoad),
       removeWhenDone: flag4(entry.DownloadEntryRemoveWhenDoneKey),
-      availableLocally: existsSync(path)
+      availableLocally: existsSync2(path)
     };
   }
   // The original file, not a copy: downloads reach gigabytes and readers
@@ -74259,7 +75667,7 @@ var HistoryItemsStream = class extends SafariStream {
       profileId: row.$profile,
       id: row.id,
       url: row.url,
-      domainExpansion: text13(row.domain_expansion),
+      domainExpansion: text14(row.domain_expansion),
       visitCount: row.visit_count,
       visitCountScore: row.visit_count_score,
       dailyVisitCounts: counts(row.daily_visit_counts),
@@ -74384,10 +75792,10 @@ var HistoryTombstonesStream = class extends SafariStream {
       id: row.id,
       startAt: appleTime2(row.start_time),
       endAt: appleTime2(row.end_time),
-      url: text13(row.url),
+      url: text14(row.url),
       encryptedUrl: base644(row.url),
       generation: row.generation,
-      deviceId: text13(row.udid),
+      deviceId: text14(row.udid),
       attributes: row.attributes
     };
   }
@@ -74469,7 +75877,7 @@ var HistoryVisitsStream = class extends SafariStream {
       id: row.id,
       itemId: row.history_item,
       visitedAt: appleTime2(row.visit_time),
-      title: text13(row.title),
+      title: text14(row.title),
       loadSuccessful: flag4(row.load_successful),
       httpNonGet: flag4(row.http_non_get),
       synthesized: flag4(row.synthesized),
@@ -74605,15 +76013,15 @@ var ProfilesStream = class extends SafariStream {
     return {
       id: row.external_uuid,
       serverId: row.server_id,
-      title: text13(row.title),
+      title: text14(row.title),
       position: row.order_index,
-      symbol: text13(extra.SymbolImageName),
-      colorName: text13(color2.colorName),
+      symbol: text14(extra.SymbolImageName),
+      colorName: text14(color2.colorName),
       red: number7(color2.redComponent),
       green: number7(color2.greenComponent),
       blue: number7(color2.blueComponent),
       alpha: number7(color2.alphaComponent),
-      favoritesFolderServerId: text13(extra.CustomFavoritesFolderServerID),
+      favoritesFolderServerId: text14(extra.CustomFavoritesFolderServerID),
       addedAt: plistTime2(dictionary3(extra["com.apple.Bookmark"]).DateAdded),
       modifiedAt: appleTime2(row.last_modified)
     };
@@ -74703,13 +76111,13 @@ var ReadingListItemsStream = class extends SafariStream {
     return {
       id: node2.WebBookmarkUUID,
       position,
-      title: text13(dictionary3(node2.URIDictionary).title),
+      title: text14(dictionary3(node2.URIDictionary).title),
       url: node2.URLString,
       addedAt: plistTime2(saved.DateAdded),
       lastViewedAt: plistTime2(saved.DateLastViewed),
-      previewText: text13(saved.PreviewText) ?? text13(node2.previewText),
-      imageUrl: text13(node2.imageURL),
-      fetchedTitle: text13(fetched.Title),
+      previewText: text14(saved.PreviewText) ?? text14(node2.previewText),
+      imageUrl: text14(node2.imageURL),
+      fetchedTitle: text14(fetched.Title),
       fetchedAt: plistTime2(fetched.DateLastFetched),
       fetchResult: integer9(fetched.FetchResult),
       failedLoads: integer9(
@@ -74719,7 +76127,7 @@ var ReadingListItemsStream = class extends SafariStream {
       metadataFetchFailures: integer9(
         fetched.BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey
       ),
-      featureText: text13(node2.featureText)
+      featureText: text14(node2.featureText)
     };
   }
 };
@@ -74802,12 +76210,12 @@ var TabGroupsStream = class extends SafariStream {
       parentId: row.parent === 0 ? null : tabs.uuid(row.parent),
       profileId: tabs.profileOf(row),
       kind: tabs.kind(row),
-      title: text13(row.title),
+      title: text14(row.title),
       position: row.order_index,
       hidden: flag4(row.hidden),
       lastSelectedTabId: tabs.uuid(row.last_selected_child),
-      deviceType: text13(extra.DeviceTypeIdentifier),
-      topic: text13(row.topic_title),
+      deviceType: text14(extra.DeviceTypeIdentifier),
+      topic: text14(row.topic_title),
       addedAt: plistTime2(dictionary3(extra["com.apple.Bookmark"]).DateAdded),
       modifiedAt: appleTime2(row.last_modified),
       closedAt: appleTime2(row.date_closed)
@@ -74865,13 +76273,13 @@ var TabHistoryEntriesStream = class extends SafariStream {
       tabId: tab.external_uuid,
       position,
       current,
-      url: text13(entry.SessionHistoryEntryURL),
-      originalUrl: text13(entry.SessionHistoryEntryOriginalURL),
-      title: text13(entry.SessionHistoryEntryTitle),
+      url: text14(entry.SessionHistoryEntryURL),
+      originalUrl: text14(entry.SessionHistoryEntryOriginalURL),
+      title: text14(entry.SessionHistoryEntryTitle),
       scriptCreated: flag4(
         entry.SessionHistoryEntryWasCreatedByJSWithoutUserInteraction
       ),
-      externalUrlPolicy: text13(
+      externalUrlPolicy: text14(
         entry.SessionHistoryEntryShouldOpenExternalURLsPolicyKey
       )
     };
@@ -75034,16 +76442,16 @@ var TabsStream = class extends SafariStream {
       tabGroupId: tabs.uuid(row.parent),
       kind: parent !== void 0 && tabs.kind(parent) === "favorites" ? "favorite" : "tab",
       profileId: tabs.profileOf(row),
-      windowId: text13(local.WindowUUID),
+      windowId: text14(local.WindowUUID),
       position: row.order_index,
       tabIndex: integer9(local.TabIndex),
-      title: text13(row.title),
-      url: text13(row.url),
-      localTitle: text13(extra.LocalTitle),
-      localUrl: text13(extra.LocalURL),
+      title: text14(row.title),
+      url: text14(row.url),
+      localTitle: text14(extra.LocalTitle),
+      localUrl: text14(extra.LocalURL),
       pinned: flag4(extra.IsPinned) || flag4(local.IsPinned),
-      pinnedTitle: text13(extra.PinnedTitle) ?? text13(local.PinnedPageTitle),
-      pinnedUrl: text13(extra.PinnedAddress) ?? text13(local.PinnedPageURL),
+      pinnedTitle: text14(extra.PinnedTitle) ?? text14(local.PinnedPageTitle),
+      pinnedUrl: text14(extra.PinnedAddress) ?? text14(local.PinnedPageURL),
       addedAt: plistTime2(dictionary3(extra["com.apple.Bookmark"]).DateAdded),
       lastViewedAt: plistTime2(extra.DateLastViewed),
       lastVisitedAt: plistTime2(local.LastVisitTime),
@@ -75058,13 +76466,13 @@ var TabsStream = class extends SafariStream {
       disposable: flag4(local.IsDisposable),
       safeToLoad: flag4(local.SafeToLoad),
       ancestorTabIds: strings(local.AncestorTabUUIDsKey),
-      deviceId: text13(extra.DeviceIdentifier),
-      topic: text13(row.topic_title) ?? text13(context.topicID),
-      pageLanguage: text13(context.pageLanguage),
-      pageSummary: text13(context.summary),
+      deviceId: text14(extra.DeviceIdentifier),
+      topic: text14(row.topic_title) ?? text14(context.topicID),
+      pageLanguage: text14(context.pageLanguage),
+      pageSummary: text14(context.summary),
       pageKeywords: strings(context.keywords),
       pageKeywordWeights: list2(context.keywordsWeights),
-      featureText: text13(extra.featureText)
+      featureText: text14(extra.featureText)
     };
   }
 };
@@ -75206,7 +76614,7 @@ var WindowsStream = class extends SafariStream {
       localTabGroupId: tabs.uuid(row.local_tab_group_id),
       privateTabGroupId: tabs.uuid(row.private_tab_group_id),
       lastSession: flag4(row.is_last_session),
-      sceneId: text13(row.scene_id),
+      sceneId: text14(row.scene_id),
       ...state,
       closedAt: appleTime2(row.date_closed) ?? state.closedAt
     };
@@ -75370,7 +76778,7 @@ var AppleSafariSource = class extends Source {
   }
 };
 async function historyFiles(location3) {
-  const profiles = join20(location3.container, "Profiles");
+  const profiles = join23(location3.container, "Profiles");
   const found = await readdir4(profiles, { withFileTypes: true }).catch(
     (error62) => {
       if (error62 instanceof Error && "code" in error62 && error62.code === "ENOENT")
@@ -75380,7 +76788,7 @@ async function historyFiles(location3) {
   );
   const others = await Promise.all(
     found.filter((entry) => entry.isDirectory()).map(async (entry) => {
-      const path = join20(profiles, entry.name, "History.db");
+      const path = join23(profiles, entry.name, "History.db");
       return await fingerprint2(path) === "missing" ? [] : [path];
     })
   );
@@ -75416,12 +76824,12 @@ function calendarDefaults(now2 = /* @__PURE__ */ new Date()) {
   return { startAt: start.toISOString(), endAt: end.toISOString() };
 }
 var byId = (row) => String(row.id);
-var named = (row) => String(row.name);
+var named2 = (row) => String(row.name);
 var accounts = {
   stream: "accounts",
   scope: "accountIds",
   id: byId,
-  label: named
+  label: named2
 };
 var collections = (stream) => ({
   stream,
@@ -75431,7 +76839,7 @@ var collections = (stream) => ({
     const account = rows.accounts?.find(
       (candidate) => candidate.id === row.accountId
     );
-    return account === void 0 ? named(row) : `${named(account)} / ${named(row)}`;
+    return account === void 0 ? named2(row) : `${named2(account)} / ${named2(row)}`;
   }
 });
 var fullDiskAccess = "Turn on ChatGPT in System Settings > Privacy & Security > Full Disk Access, then quit and reopen ChatGPT. macOS does not ask for this access.";
@@ -75458,7 +76866,6 @@ var apps = {
         }
       }
     ],
-    accounts: true,
     datedBy: "date received (date sent if missing)",
     permissions: `${fullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
     unscoped: restrictedMailStreams,
@@ -75469,7 +76876,6 @@ var apps = {
   notes: {
     title: "Notes",
     choices: [accounts, collections("folders")],
-    accounts: true,
     datedBy: "date last edited",
     permissions: `${fullDiskAccess} Open Notes to let it finish syncing iCloud changes.`,
     note: "Exact containing folders; select descendants separately. Smart folders are saved searches and cannot be selected as containing folders.",
@@ -75485,7 +76891,6 @@ var apps = {
         label: (row) => String(row.displayName || row.chatIdentifier)
       }
     ],
-    accounts: false,
     datedBy: "message date",
     permissions: `${fullDiskAccess} Only messages synced to this Mac can be imported.`,
     source: (scope) => new AppleMessagesSource(void 0, void 0, scope)
@@ -75493,7 +76898,6 @@ var apps = {
   contacts: {
     title: "Contacts",
     choices: [{ ...accounts, stream: "containers", scope: "collectionIds" }],
-    accounts: false,
     datedBy: null,
     permissions: "Allow ChatGPT when macOS asks for Contacts access, or turn it on in System Settings > Privacy & Security > Contacts. Full Disk Access for ChatGPT also works.",
     source: (scope) => new AppleContactsSource(void 0, void 0, scope)
@@ -75501,7 +76905,6 @@ var apps = {
   calendar: {
     title: "Calendar",
     choices: [accounts, collections("calendars")],
-    accounts: true,
     datedBy: "event dates (events that overlap the range)",
     permissions: "Allow full Calendar access when macOS asks. Access can be changed under System Settings > Privacy & Security > Calendars.",
     defaultScope: calendarDefaults,
@@ -75515,7 +76918,6 @@ var apps = {
   reminders: {
     title: "Reminders",
     choices: [accounts, collections("lists")],
-    accounts: true,
     datedBy: null,
     permissions: "Allow full Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.",
     source: (scope) => new AppleRemindersSource(scope)
@@ -75531,7 +76933,6 @@ var apps = {
         label: (row) => String(row.title ?? "Default profile")
       }
     ],
-    accounts: false,
     datedBy: "visit time",
     permissions: `${fullDiskAccess} Open Safari to let it fetch history and tabs from your other devices.`,
     note: "Profiles select history, windows, tab groups, tabs, recently closed tabs and downloads. Dates select history visits, and the pages and topics those visits reach.",
@@ -75550,1657 +76951,48 @@ var apps = {
     title: "Books",
     // Books' collections are built-in lists; everything is imported.
     choices: [],
-    accounts: false,
     datedBy: null,
     permissions: `${fullDiskAccess} Books does not need to be open. Books stored only in iCloud are listed without their files; open them in Books to download them.`,
     source: () => new AppleBooksSource()
   }
 };
-
-// apps/apple/src/plugin/freshness.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { mkdirSync as mkdirSync3 } from "node:fs";
-import { join as join23 } from "node:path";
-import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
-import { setInterval as setInterval7, setTimeout as sleep2 } from "node:timers/promises";
-
-// packages/destinations/sqlite/dist/sqlite-catalog.js
-import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
-
-// packages/destinations/sqlite/dist/sqlite-descriptions.js
-var descriptions = '"_elt_descriptions"';
-function createDescriptions(database) {
-  database.exec(`CREATE TABLE IF NOT EXISTS ${descriptions} ("relation" TEXT NOT NULL COLLATE NOCASE, "column" TEXT NOT NULL COLLATE NOCASE, "data_type" TEXT, "description" TEXT NOT NULL, PRIMARY KEY ("relation", "column")) STRICT`);
-}
-function describe3(database, relation, description, columns3) {
-  createDescriptions(database);
-  database.exec(`DELETE FROM ${descriptions} WHERE "relation" NOT IN (SELECT "name" FROM sqlite_schema)`);
-  database.prepare(`DELETE FROM ${descriptions} WHERE "relation" = ?`).run(relation);
-  const declared = new Map(database.prepare('SELECT "name", "type" FROM pragma_table_info(?)').all(relation).map(({ name, type }) => [
-    String(name).toLowerCase(),
-    String(type).toLowerCase() || null
-  ]));
-  const insert = database.prepare(`INSERT INTO ${descriptions} ("relation", "column", "data_type", "description") VALUES (?, ?, ?, ?)`);
-  insert.run(relation, "", null, description);
-  for (const [column, { description: description2, dataType }] of Object.entries(columns3))
-    if (description2 !== null)
-      insert.run(relation, column, dataType ?? declared.get(column.toLowerCase()) ?? null, description2);
+var isApp = (app) => appNames.includes(app);
+function appFacts(app) {
+  if (!isApp(app)) throw new TypeError(`Unknown Apple app ${app}`);
+  const { choices, datedBy } = apps[app];
+  return {
+    narrowsBy: (kind) => choices.some(({ scope }) => scope === kind),
+    datedBy
+  };
 }
 
-// packages/destinations/sqlite/dist/sqlite-views.js
-var quote = (name) => `"${name.replaceAll('"', '""')}"`;
-function text15(value, what) {
-  if (typeof value !== "string" || !value.trim() || value.includes("\0") || !value.isWellFormed())
-    throw new TypeError(`Invalid ${what}`);
-}
-function publishSQLiteViews(database, { views }) {
-  const names = /* @__PURE__ */ new Set();
-  for (const view of views) {
-    text15(view.name, "view name");
-    if (/^_elt_/i.test(view.name))
-      throw new TypeError("View names starting with _elt_ are reserved");
-    if (names.has(view.name.toLowerCase()))
-      throw new TypeError("Duplicate view names");
-    names.add(view.name.toLowerCase());
-    text15(view.query, "view query");
-    text15(view.description, "view description");
-    for (const [column, description] of Object.entries(view.columns)) {
-      text15(column, "column name");
-      text15(description, "column description");
-    }
-  }
-  if (views.length === 0)
-    return;
-  database.exec("SAVEPOINT publish");
-  try {
-    for (const view of views.toReversed())
-      database.exec(`DROP VIEW IF EXISTS ${quote(view.name)}`);
-    for (const view of views) {
-      database.prepare(`CREATE VIEW ${quote(view.name)} AS ${view.query}`).run();
-      const columns3 = database.prepare('SELECT "name" FROM pragma_table_info(?)').all(view.name).map(({ name }) => String(name));
-      if (columns3.length !== Object.keys(view.columns).length || columns3.some((name) => !Object.hasOwn(view.columns, name)))
-        throw new TypeError(`View ${quote(view.name)} must describe exactly its output columns: ${columns3.join(", ")}`);
-      describe3(database, view.name, view.description, Object.fromEntries(Object.entries(view.columns).map(([column, description]) => [
-        column,
-        { description }
-      ])));
-    }
-    database.exec("RELEASE publish");
-  } catch (error62) {
-    if (database.isTransaction) {
-      database.exec("ROLLBACK TO publish");
-      database.exec("RELEASE publish");
-    }
-    throw error62;
-  }
-}
-
-// packages/destinations/sqlite/dist/sqlite-catalog.js
-function installSQLiteCatalog({ path }) {
-  var _stack = [];
-  try {
-    if (path === ":memory:")
-      throw new TypeError("A SQLite catalog requires a database file");
-    const database = __using(_stack, new DatabaseSync8(path, { timeout: 3e4 }));
-    database.exec("BEGIN IMMEDIATE");
-    try {
-      createDescriptions(database);
-      publishSQLiteViews(database, {
-        views: [
-          {
-            ...readerCatalog,
-            query: `SELECT 'view' AS "kind", s."name" AS "name", NULL AS "data_type", d."description" AS "description"
-            FROM sqlite_schema s JOIN ${descriptions} d ON d."relation" = s."name" AND d."column" = ''
-            WHERE s."type" = 'view'
-            UNION ALL
-            SELECT 'column', s."name" || '.' || c."column", c."data_type", c."description"
-            FROM sqlite_schema s JOIN ${descriptions} d ON d."relation" = s."name" AND d."column" = ''
-            JOIN ${descriptions} c ON c."relation" = s."name" AND c."column" <> ''
-            WHERE s."type" = 'view'
-            ORDER BY 2`
-          }
-        ]
-      });
-      database.exec("COMMIT");
-    } catch (error62) {
-      if (database.isTransaction)
-        database.exec("ROLLBACK");
-      throw error62;
-    }
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
-}
-
-// packages/destinations/sqlite/dist/sqlite-checkpoint-store.js
-import { chmodSync } from "node:fs";
-import { resolve as resolve2 } from "node:path";
-import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
-var SQLiteCheckpointStore = class extends CheckpointStore {
-  path;
-  constructor({ path }) {
-    super();
-    if (!path || path === ":memory:" || path.includes("\0"))
-      throw new TypeError("Checkpoints require a persistent SQLite file");
-    this.path = resolve2(path);
-    Object.freeze(this);
-  }
-  async session(_ids, work) {
-    var _stack = [];
-    try {
-      const database = __using(_stack, this.open());
-      database.exec("BEGIN IMMEDIATE");
-      const durable = (statement, ...values) => {
-        database.prepare(statement).run(...values);
-        database.exec("COMMIT");
-        database.exec("BEGIN IMMEDIATE");
-      };
-      try {
-        const result = await work({
-          read: async (id12) => {
-            const saved = database.prepare("SELECT binding, state FROM checkpoints WHERE id = ?").get(id12);
-            return saved === void 0 ? void 0 : { binding: String(saved.binding), state: String(saved.state) };
-          },
-          save: async (id12, { binding, state }) => durable("INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state", id12, binding, state),
-          remove: async (id12) => durable("DELETE FROM checkpoints WHERE id = ?", id12)
-        });
-        database.exec("COMMIT");
-        return result;
-      } catch (error62) {
-        if (database.isTransaction)
-          database.exec("ROLLBACK");
-        throw error62;
-      }
-    } catch (_) {
-      var _error = _, _hasError = true;
-    } finally {
-      __callDispose(_stack, _error, _hasError);
-    }
-  }
-  open() {
-    const database = new DatabaseSync9(this.path);
-    try {
-      chmodSync(this.path, 384);
-      database.exec("CREATE TABLE IF NOT EXISTS checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL) STRICT");
-      return database;
-    } catch (error62) {
-      database.close();
-      throw error62;
-    }
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-column.js
-var storageTypes = {
-  text: "TEXT",
-  integer: "INTEGER",
-  real: "REAL",
-  blob: "BLOB",
-  boolean: "INTEGER",
-  date: "TEXT",
-  timestamp: "TEXT"
-};
-function canonical2(kind, name) {
-  switch (kind) {
-    case "boolean":
-      return ` CHECK (${name} IN (0, 1))`;
-    case "date":
-      return ` CHECK (date(${name}) IS ${name})`;
-    case "timestamp":
-      return ` CHECK (strftime('%Y-%m-%dT%H:%M:%fZ', ${name}) IS ${name})`;
-    default:
-      return "";
-  }
-}
-var SQLiteColumn = class _SQLiteColumn {
-  name;
-  kind;
-  required;
-  isPrimaryKey;
-  nullable;
-  optional;
-  // An array of kind, stored as a JSON array in TEXT.
-  array;
-  fileRead;
-  constructor(name, kind, options) {
-    if (!name || name.includes("\0"))
-      throw new TypeError("Invalid column name");
-    if (!Object.hasOwn(storageTypes, kind))
-      throw new TypeError("Unsupported SQLite column type");
-    this.array = options.array ?? false;
-    if (this.array && (kind === "blob" || options.primaryKey))
-      throw new TypeError("Array columns hold scalar values and cannot be keys");
-    this.fileRead = options.fileRead;
-    if (this.fileRead !== void 0 && (!(this.fileRead instanceof FileRead) || this.fileRead.name !== name))
-      throw new TypeError("Column file read must match its name");
-    this.name = name;
-    this.kind = kind;
-    this.isPrimaryKey = options.primaryKey;
-    this.nullable = !options.primaryKey && options.nullable;
-    this.optional = !options.primaryKey && options.optional;
-    this.required = !this.nullable && !this.optional;
-    Object.freeze(this);
-  }
-  primaryKey() {
-    return new _SQLiteColumn(this.name, this.kind, {
-      nullable: false,
-      optional: false,
-      primaryKey: true,
-      array: this.array,
-      fileRead: this.fileRead
-    });
-  }
-  notNull() {
-    return new _SQLiteColumn(this.name, this.kind, {
-      nullable: false,
-      optional: false,
-      primaryKey: this.isPrimaryKey,
-      array: this.array,
-      fileRead: this.fileRead
-    });
-  }
-  from(file2) {
-    if (this.array || this.kind !== "blob" && this.kind !== "text")
-      throw new TypeError("Files require a BLOB column, parsed TEXT or a stored TEXT reference");
-    return new _SQLiteColumn(this.name, this.kind, {
-      nullable: this.nullable,
-      optional: this.optional,
-      primaryKey: this.isPrimaryKey,
-      fileRead: new FileRead(this.name, file2, this.fileRead?.parser)
-    });
-  }
-  parse(parser) {
-    if (this.kind !== "text")
-      throw new TypeError("Document parsing requires a TEXT column");
-    if (this.fileRead === void 0)
-      throw new TypeError("Select a source file before selecting a parser");
-    return new _SQLiteColumn(this.name, this.kind, {
-      nullable: this.nullable,
-      optional: this.optional,
-      primaryKey: this.isPrimaryKey,
-      fileRead: new FileRead(this.name, this.fileRead.file, parser)
-    });
-  }
-  get quotedName() {
-    return `"${this.name.replaceAll('"', '""')}"`;
-  }
-  // Original file bytes live in a chunk table; the column keeps the file's id.
-  get storesFile() {
-    return this.kind === "blob" && this.fileRead !== void 0;
-  }
-  get storageType() {
-    if (this.array)
-      return "TEXT";
-    return this.storesFile ? "INTEGER" : storageTypes[this.kind];
-  }
-  // The column's type as readers see it in the catalog.
-  get dataType() {
-    if (this.storesFile)
-      return "integer";
-    return this.array ? `${this.kind}[]` : this.kind;
-  }
-  get definition() {
-    const check2 = this.array ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')` : canonical2(this.kind, this.quotedName);
-    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? " PRIMARY KEY" : ""}${this.required ? " NOT NULL" : ""}${check2}`;
-  }
-  encode(record3) {
-    if (record3 === null || typeof record3 !== "object" || Array.isArray(record3))
-      throw new TypeError(`Record is missing column "${this.name}"`);
-    if (!Object.hasOwn(record3, this.name)) {
-      if (this.optional)
-        return null;
-      throw new TypeError(`Record is missing column "${this.name}"`);
-    }
-    const value = Reflect.get(record3, this.name);
-    if (value === null && this.nullable)
-      return null;
-    if (this.array) {
-      if (Array.isArray(value) && value.every((element) => this.#element(element)))
-        return JSON.stringify(value);
-      throw new TypeError(`Column "${this.name}" requires an array of ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
-    }
-    switch (this.kind) {
-      case "text":
-        if (typeof value === "string")
-          return value;
-        break;
-      case "boolean":
-        if (typeof value === "boolean")
-          return Number(value);
-        break;
-      case "integer":
-        if (typeof value === "bigint" && value >= -(2n ** 63n) && value < 2n ** 63n || typeof value === "number" && Number.isSafeInteger(value))
-          return value;
-        break;
-      case "date":
-        if (isCalendarDate(value))
-          return value;
-        break;
-      case "timestamp":
-        if (isTimestamp(value))
-          return value;
-        break;
-      case "real":
-        if (typeof value === "number" && Number.isFinite(value))
-          return value;
-        break;
-      case "blob":
-        if (this.storesFile ? Number.isSafeInteger(value) : value instanceof Uint8Array)
-          return value;
-    }
-    throw new TypeError(`Column "${this.name}" requires ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
-  }
-  // Whether a JSON array element keeps this kind's value exactly.
-  #element(value) {
-    switch (this.kind) {
-      case "text":
-        return typeof value === "string";
-      case "boolean":
-        return typeof value === "boolean";
-      case "integer":
-        return Number.isSafeInteger(value);
-      case "real":
-        return typeof value === "number" && Number.isFinite(value);
-      case "date":
-        return isCalendarDate(value);
-      case "timestamp":
-        return isTimestamp(value);
-      default:
-        return false;
-    }
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-columns.js
-function scalarKind(name, type, format) {
-  switch (type) {
-    case "string":
-      return format === "date" ? "date" : format === "date-time" ? "timestamp" : "text";
-    case "integer":
-      return "integer";
-    case "number":
-      return "real";
-    case "boolean":
-      return "boolean";
-    default:
-      throw new TypeError(`Unsupported JSON Schema type for field ${name}: ${String(type)}`);
-  }
-}
-var SQLiteColumns = class {
-  // Scalars, and arrays of scalars as JSON arrays in TEXT. The date and
-  // date-time string formats keep their kind, as in Postgres.
-  static fromSchema(schema) {
-    const { properties: properties39, required: required3 } = schema;
-    if (schema.type !== "object" || properties39 === null || typeof properties39 !== "object" || Array.isArray(properties39))
-      throw new TypeError("SQLite requires an object schema with explicit properties");
-    if (required3 !== void 0 && (!Array.isArray(required3) || !required3.every((name) => typeof name === "string")))
-      throw new TypeError("JSON Schema required must be an array of field names");
-    const requiredFields = new Set(required3);
-    for (const name of requiredFields)
-      if (!Object.hasOwn(properties39, name))
-        throw new TypeError(`Schema does not describe field ${name}`);
-    return Object.entries(properties39).map(([name, field]) => {
-      if (field === null || typeof field !== "object" || Array.isArray(field))
-        throw new TypeError(`Unsupported JSON Schema for field ${name}`);
-      const type = Reflect.get(field, "type");
-      const types = typeof type === "string" ? [type] : type;
-      if (!Array.isArray(types) || !types.every((value) => typeof value === "string") || new Set(types).size !== types.length)
-        throw new TypeError(`Unsupported JSON Schema type for field ${name}`);
-      const valueTypes = types.filter((value) => value !== "null");
-      if (valueTypes.length !== 1)
-        throw new TypeError(`SQLite requires one scalar type for field ${name}`);
-      const array2 = valueTypes[0] === "array";
-      const items = array2 ? Reflect.get(field, "items") : field;
-      if (items === null || typeof items !== "object" || Array.isArray(items))
-        throw new TypeError(`Unsupported JSON Schema items for field ${name}`);
-      const kind = scalarKind(name, array2 ? Reflect.get(items, "type") : valueTypes[0], Reflect.get(items, "format"));
-      return new SQLiteColumn(name, kind, {
-        nullable: types.includes("null"),
-        optional: !requiredFields.has(name),
-        primaryKey: false,
-        array: array2
-      });
-    });
-  }
-  text(field) {
-    return new SQLiteColumn(field, "text", {
-      nullable: true,
-      optional: false,
-      primaryKey: false
-    });
-  }
-  integer(field) {
-    return new SQLiteColumn(field, "integer", {
-      nullable: true,
-      optional: false,
-      primaryKey: false
-    });
-  }
-  real(field) {
-    return new SQLiteColumn(field, "real", {
-      nullable: true,
-      optional: false,
-      primaryKey: false
-    });
-  }
-  date(field) {
-    return new SQLiteColumn(field, "date", {
-      nullable: true,
-      optional: false,
-      primaryKey: false
-    });
-  }
-  timestamp(field) {
-    return new SQLiteColumn(field, "timestamp", {
-      nullable: true,
-      optional: false,
-      primaryKey: false
-    });
-  }
-  blob(field) {
-    return new SQLiteColumn(field, "blob", {
-      nullable: true,
-      optional: false,
-      primaryKey: false
-    });
-  }
-  boolean(field) {
-    return new SQLiteColumn(field, "boolean", {
-      nullable: true,
-      optional: false,
-      primaryKey: false
-    });
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-destination.js
-import { resolve as resolve3 } from "node:path";
-import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
-
-// packages/destinations/sqlite/dist/sqlite-writer.js
-import { createHash as createHash7 } from "node:crypto";
-import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
-
-// packages/destinations/sqlite/dist/sqlite-file-store.js
-var quote2 = (name) => `"${name.replaceAll('"', '""')}"`;
-var SQLiteFileStore = class _SQLiteFileStore {
-  static chunkSize = 4 * 1024 * 1024;
-  name;
-  #next;
-  #insert;
-  constructor(database, table2, column) {
-    this.name = _SQLiteFileStore.tableName(table2, column);
-    const chunks = quote2(this.name);
-    database.exec(`CREATE TABLE IF NOT EXISTS ${chunks} ("file" INTEGER NOT NULL, "n" INTEGER NOT NULL, "bytes" BLOB NOT NULL, PRIMARY KEY ("file", "n")) STRICT`);
-    database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_delete`)} AFTER DELETE ON ${table2.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
-    database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_update`)} AFTER UPDATE OF ${column.quotedName} ON ${table2.quotedName} WHEN old.${column.quotedName} IS NOT new.${column.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
-    this.#next = database.prepare(`SELECT coalesce(max("file"), 0) + 1 AS "file" FROM ${chunks}`);
-    this.#insert = database.prepare(`INSERT INTO ${chunks} ("file", "n", "bytes") VALUES (?, ?, ?)`);
-  }
-  static tableName(table2, column) {
-    return `_elt_files_${table2.location}_${column.name.toLowerCase()}`;
-  }
-  // An empty file still stores one empty chunk, so its id stays reserved.
-  async save(content) {
-    const file2 = Number(this.#next.get()?.file);
-    let n = 0;
-    for await (const chunk of content.chunks(_SQLiteFileStore.chunkSize))
-      this.#insert.run(file2, n++, chunk);
-    if (n === 0)
-      this.#insert.run(file2, 0, new Uint8Array());
-    return file2;
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-writer.js
-function lockWriter(path) {
-  const lock = new DatabaseSync10(path === ":memory:" ? path : `${path}.writer-lock`);
-  try {
-    lock.exec("BEGIN EXCLUSIVE");
-    return { [Symbol.dispose]: () => lock.close() };
-  } catch (error62) {
-    lock.close();
-    throw error62;
-  }
-}
-var quote3 = (name) => `"${name.replaceAll('"', '""')}"`;
-var seq = '"_elt_seq"';
-var op = '"_elt_op"';
-var SQLiteWriter = class extends Writer {
-  configuration;
-  path;
-  table;
-  #description;
-  constructor(configuration, path, table2) {
-    super(configuration.stream);
-    this.configuration = configuration;
-    this.path = path;
-    this.table = table2;
-    this.#description = describeTarget(configuration, table2.columns, (column) => `Integer reference to the source file's original bytes. Join ${quote3(SQLiteFileStore.tableName(table2, column))} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`);
-    if (table2.readerView === void 0)
-      return;
-    const missing = undescribed(this.#description);
-    if (missing.length > 0)
-      throw new TypeError(`Reader view ${table2.readerView} needs JSON Schema descriptions for ${missing.join(", ")} of stream ${this.stream.name}`);
-  }
-  // Inserts each staged record, in order.
-  append(database, stage, loadedAt) {
-    database.prepare(`INSERT INTO ${this.table.quotedName} (${this.fields.join(", ")}) SELECT ${this.table.columns.map((column) => column.quotedName).join(", ")}, ? FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`).run(loadedAt);
-  }
-  // An overwrite replaces the target at its first commit.
-  get replaces() {
-    return false;
-  }
-  // Empties the target a replacing commit is about to fill.
-  replace(database) {
-    database.exec(`DELETE FROM ${this.table.quotedName}`);
-  }
-  get hash() {
-    return createHash7("sha256").update(this.table.location).digest("hex");
-  }
-  get dedupIndex() {
-    return quote3(`_elt_dedup_${this.hash}`);
-  }
-  get fields() {
-    return [
-      ...this.table.columns.map((column) => column.quotedName),
-      '"loaded_at"'
-    ];
-  }
-  encode(record3) {
-    return this.table.columns.map((column) => column.encode(record3));
-  }
-  // Only a load that identifies rows by key can remove one.
-  deletionKeys(_key) {
-    throw new TypeError("Only deduplicating loads can apply deletions");
-  }
-  // The owner lives beside the table it guards and commits with the load. A
-  // dropped table releases it, since nothing it held remains.
-  writers(database) {
-    database.exec('CREATE TABLE IF NOT EXISTS "_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT');
-  }
-  own(database, writer) {
-    this.writers(database);
-    database.exec(`DELETE FROM "_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`);
-    const owner = database.prepare('SELECT "writer" FROM "_elt_writers" WHERE "target" = ?').get(this.table.location)?.writer;
-    if (owner === void 0)
-      database.prepare('INSERT INTO "_elt_writers" ("target", "writer") VALUES (?, ?)').run(this.table.location, writer);
-    else if (owner !== writer)
-      throw new TargetOwnedError(this.table.name, String(owner), writer);
-  }
-  exists(database, location3) {
-    return database.prepare(`SELECT 1 FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`).get(location3) !== void 0;
-  }
-  values(database) {
-    const { table: table2 } = this;
-    return async function* (field) {
-      const column = table2.columns.find((column2) => column2.name === field);
-      if (column === void 0)
-        throw new TypeError(`Unknown target field: ${field}`);
-      if (!database.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE").get(table2.name, field))
-        return;
-      for (const row of database.prepare(`SELECT ${column.quotedName} AS value FROM ${table2.quotedName}`).iterate())
-        yield row.value;
-    };
-  }
-  async clear(writer, committed) {
-    var _stack = [];
-    try {
-      const _lock = __using(_stack, lockWriter(this.path));
-      const database = __using(_stack, new DatabaseSync10(this.path));
-      database.exec("BEGIN IMMEDIATE");
-      try {
-        this.writers(database);
-        const owner = database.prepare('SELECT "writer" FROM "_elt_writers" WHERE "target" = ?').get(this.table.location)?.writer;
-        if (owner !== void 0 && owner !== writer)
-          throw new TargetOwnedError(this.table.name, String(owner), writer);
-        if (this.exists(database, this.table.location)) {
-          database.exec(`DELETE FROM ${this.table.quotedName}`);
-          for (const column of this.table.columns) {
-            const chunks = SQLiteFileStore.tableName(this.table, column);
-            if (column.storesFile && this.exists(database, chunks))
-              database.exec(`DELETE FROM ${quote3(chunks)}`);
-          }
-        }
-        database.prepare('DELETE FROM "_elt_writers" WHERE "target" = ?').run(this.table.location);
-        database.exec("COMMIT");
-        database.exec("BEGIN IMMEDIATE");
-        await committed?.(this.values(database));
-        database.exec("ROLLBACK");
-      } catch (error62) {
-        if (database.isTransaction)
-          database.exec("ROLLBACK");
-        throw error62;
-      }
-    } catch (_) {
-      var _error = _, _hasError = true;
-    } finally {
-      __callDispose(_stack, _error, _hasError);
-    }
-  }
-  // What the table, its reader view and their columns say to readers,
-  // rewritten with every load so they follow the stream's schema.
-  describe(database) {
-    const dataTypes = new Map([
-      ...this.table.columns.map(({ name, dataType }) => [name, dataType]),
-      ["loaded_at", "timestamp"]
-    ]);
-    const columns3 = Object.fromEntries(Object.entries(this.#description.columns).map(([name, description]) => [
-      name,
-      { description, dataType: dataTypes.get(name) }
-    ]));
-    describe3(database, this.table.name, this.#description.table, columns3);
-    if (this.table.readerView !== void 0)
-      describe3(database, this.table.readerView, this.#description.table, columns3);
-  }
-  // Created only when absent and never replaced inside the load: replacing a
-  // view readers can see would lock them out until this load commits. A view
-  // of other columns or another table is refused rather than adopted.
-  installReaderView(database, view) {
-    const definition3 = `CREATE VIEW ${quote3(view)} AS SELECT ${this.fields.join(", ")} FROM ${this.table.quotedName}`;
-    const existing = database.prepare('SELECT "type", "sql" FROM sqlite_schema WHERE lower("name") = lower(?)').get(view);
-    if (existing === void 0) {
-      database.exec(definition3);
-      return;
-    }
-    if (existing.type !== "view" || existing.sql !== definition3)
-      throw new TypeError(`${quote3(view)} is not a view of exactly ${this.table.quotedName}; drop it or delete the database`);
-  }
-  // Refuses a target another writer owns, or a resumed one that was dropped,
-  // and prepares it inside a savepoint, so a refused target leaves the shared
-  // transaction as it was.
-  prepare(database, { writer, resuming }, loadedAt) {
-    const name = quote3(`_elt_stage_${this.hash}`);
-    const stage = `temp.${name}`;
-    const files = this.table.columns.filter((column) => column.storesFile);
-    database.exec("SAVEPOINT prepare");
-    let stores;
-    try {
-      if (resuming && !this.exists(database, this.table.location))
-        throw new TargetMissingError(this.table.name, writer);
-      this.own(database, writer);
-      database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
-      database.exec(this.table.createTableSQL);
-      stores = files.map((column) => ({
-        column,
-        store: new SQLiteFileStore(database, this.table, column)
-      }));
-      for (const { column, store } of stores)
-        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
-      this.initialize(database);
-      if (this.table.readerView !== void 0)
-        this.installReaderView(database, this.table.readerView);
-      this.describe(database);
-      database.exec(`DROP TABLE IF EXISTS ${stage}`);
-      database.exec(`CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(", ")})`);
-      database.exec("RELEASE prepare");
-    } catch (error62) {
-      database.exec("ROLLBACK TO prepare");
-      database.exec("RELEASE prepare");
-      throw error62;
-    }
-    const columns3 = this.table.columns.map((column) => column.quotedName);
-    const record3 = database.prepare(`INSERT INTO ${stage} (${op}, ${columns3.join(", ")}) VALUES ('R', ${columns3.map(() => "?").join(", ")})`);
-    const staged = (column) => `SELECT ${column.quotedName} FROM ${stage} WHERE ${column.quotedName} IS NOT NULL`;
-    const drop = () => {
-      for (const { column, store } of stores)
-        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
-      database.exec(`DELETE FROM ${stage}`);
-    };
-    let replaced = false;
-    return {
-      values: this.values(database),
-      apply: async (operation) => {
-        if (operation.type === "DELETE") {
-          const [keys, values] = this.deletionKeys(operation.key);
-          database.prepare(`INSERT INTO ${stage} (${op}, ${keys.map((column) => column.quotedName).join(", ")}) VALUES ('D', ${keys.map(() => "?").join(", ")})`).run(...values);
-          return;
-        }
-        let data = operation.data;
-        for (const { column, store } of stores) {
-          const content = Reflect.get(Object(data), column.name);
-          if (content instanceof FileContent)
-            data = {
-              ...Object(data),
-              [column.name]: await store.save(content)
-            };
-        }
-        record3.run(...this.encode(data));
-      },
-      commit: async () => {
-        database.exec("SAVEPOINT merge");
-        try {
-          if (this.replaces && !replaced)
-            this.replace(database);
-          this.merge(database, stage, loadedAt);
-          drop();
-          database.exec("RELEASE merge");
-        } catch (error62) {
-          if (database.isTransaction) {
-            database.exec("ROLLBACK TO merge");
-            database.exec("RELEASE merge");
-          }
-          throw error62;
-        }
-        replaced = true;
-        database.exec("COMMIT");
-        database.exec("BEGIN IMMEDIATE");
-      },
-      discard: async () => drop(),
-      [Symbol.asyncDispose]: async () => {
-        drop();
-        database.exec(`DROP TABLE ${stage}`);
-      }
-    };
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-append-writer.js
-var SQLiteAppendWriter = class extends SQLiteWriter {
-  constructor(configuration, path, table2) {
-    super(configuration, path, table2);
-    Object.freeze(this);
-  }
-  initialize() {
-  }
-  merge(database, stage, loadedAt) {
-    this.append(database, stage, loadedAt);
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-deduplicating-writer.js
-var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
-  deduplication;
-  keys;
-  cursor;
-  constructor(configuration, path, table2) {
-    super(configuration, path, table2);
-    this.deduplication = configuration.deduplication();
-    const inferred = SQLiteColumns.fromSchema(configuration.stream.jsonSchema);
-    const column = (field) => {
-      const selected2 = table2.columns.find((column2) => column2.name === field);
-      if (selected2 === void 0)
-        throw new TypeError(`Deduplication requires destination column ${field}`);
-      if (selected2.kind !== inferred.find((column2) => column2.name === field)?.kind)
-        throw new TypeError(`Deduplication column ${field} must preserve the source scalar type`);
-      return selected2;
-    };
-    this.keys = Object.freeze(this.deduplication.primaryKey.map(column));
-    const { cursorField } = this.deduplication;
-    this.cursor = cursorField === void 0 ? void 0 : column(cursorField);
-    Object.freeze(this);
-  }
-  get replaces() {
-    return this.configuration.destinationSyncMode === "overwrite_dedup";
-  }
-  initialize(database) {
-    const existing = database.prepare(`PRAGMA table_info(${this.table.quotedName})`).all();
-    const tracked = this.cursor === void 0 ? this.keys : [...this.keys, this.cursor];
-    for (const column of tracked) {
-      if (!existing.some((field) => field.name === column.name && field.type === column.storageType))
-        throw new TypeError(`Existing deduplication column ${column.name} has an incompatible storage type`);
-    }
-    if (this.replaces)
-      return;
-    if (database.prepare(`SELECT 1 FROM ${this.table.quotedName} WHERE ${tracked.map((column) => `${column.quotedName} IS NULL`).join(" OR ")} LIMIT 1`).get())
-      throw new TypeError("Existing deduplication keys and cursors must be non-null");
-    this.index(database);
-  }
-  replace(database) {
-    super.replace(database);
-    this.index(database);
-  }
-  index(database) {
-    database.exec(`CREATE UNIQUE INDEX ${this.dedupIndex} ON ${this.table.quotedName} (${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(", ")})`);
-  }
-  // The result of applying the staged operations one at a time: a staged
-  // DELETE removes its key, and only records after a key's last DELETE count.
-  // replace keeps the newest extraction, so a restated fact overwrites the
-  // loaded one; cursor_newer keeps the greatest cursor (the first on ties) and
-  // the guard that rejects out-of-order replay.
-  merge(database, stage, loadedAt) {
-    const keys = this.keys.map((column) => column.quotedName);
-    const same = (left, right) => keys.map((key) => `${left}.${key} = ${right}.${key}`).join(" AND ");
-    database.exec(`DELETE FROM ${this.table.quotedName} WHERE (${keys.join(", ")}) IN (SELECT ${keys.join(", ")} FROM ${stage} WHERE ${op} = 'D')`);
-    const { cursor } = this;
-    const guarded = this.configuration.dedupPolicy !== "replace" && cursor !== void 0;
-    const order = guarded ? `"staged".${cursor.quotedName} COLLATE BINARY DESC, "staged".${seq}` : `"staged".${seq} DESC`;
-    const columns3 = this.table.columns.map((column) => column.quotedName);
-    database.prepare(`WITH "deleted" AS (SELECT ${keys.join(", ")}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(", ")}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(", ")} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) INSERT INTO ${this.table.quotedName} AS "_elt_target" (${this.fields.join(", ")}) SELECT ${columns3.join(", ")}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1) ORDER BY ${seq} ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(", ")}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(", ")}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_elt_target".${cursor.quotedName}` : ""}`).run(loadedAt);
-  }
-  encode(record3) {
-    this.deduplication.key(record3);
-    if (this.cursor !== void 0)
-      this.deduplication.cursor(record3);
-    return super.encode(record3);
-  }
-  deletionKeys(key) {
-    this.deduplication.key(key);
-    return [this.keys, this.keys.map((column) => column.encode(key))];
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-overwrite-writer.js
-var SQLiteOverwriteWriter = class extends SQLiteWriter {
-  constructor(configuration, path, table2) {
-    super(configuration, path, table2);
-    Object.freeze(this);
-  }
-  get replaces() {
-    return true;
-  }
-  initialize() {
-  }
-  merge(database, stage, loadedAt) {
-    this.append(database, stage, loadedAt);
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-table.js
-var SQLiteTable = class _SQLiteTable extends Target {
-  name;
-  columns;
-  // The name readers query: a documented view of exactly this table.
-  readerView;
-  constructor(name, columns3, readerView) {
-    if (!name || name.includes("\0"))
-      throw new TypeError("Invalid table name");
-    if (/^_elt_/i.test(name))
-      throw new TypeError("Table names starting with _elt_ are reserved");
-    if (readerView !== void 0) {
-      if (!readerView || readerView.includes("\0"))
-        throw new TypeError("Invalid view name");
-      if (/^_elt_/i.test(readerView))
-        throw new TypeError("View names starting with _elt_ are reserved");
-      if (readerView.toLowerCase() === name.toLowerCase())
-        throw new TypeError("A reader view needs a name of its own");
-    }
-    if (columns3 !== void 0 && (!Array.isArray(columns3) || columns3.length === 0 || !columns3.every((column) => column instanceof SQLiteColumn)))
-      throw new TypeError("A table requires at least one SQLite column");
-    const names = (columns3 ?? []).map((column) => column.name.toLowerCase());
-    if (names.includes("loaded_at"))
-      throw new TypeError("loaded_at is reserved for load metadata");
-    if (new Set(names).size !== names.length)
-      throw new TypeError("Duplicate column names");
-    if ((columns3 ?? []).filter((column) => column.isPrimaryKey).length > 1)
-      throw new TypeError("Only one primary-key column is supported");
-    const fileReads = (columns3 ?? []).flatMap((column) => column.fileRead === void 0 ? [] : [column.fileRead]);
-    for (const column of columns3 ?? []) {
-      if (column.fileRead === void 0)
-        continue;
-      if (column.fileRead.outputType === "bytes" ? column.kind !== "blob" : column.kind !== "text")
-        throw new TypeError("Original files require a BLOB column; parsed text and stored references require a TEXT column");
-    }
-    super(fileReads);
-    this.name = name;
-    this.columns = Object.freeze([...columns3 ?? []]);
-    this.readerView = readerView;
-    Object.freeze(this);
-  }
-  // Loads also keep a view of this table under another name, created with the
-  // table and described by the same descriptions, which every column then needs.
-  withReaderView(name) {
-    return new _SQLiteTable(this.name, this.columns.length === 0 ? void 0 : this.columns, name);
-  }
-  resolve(stream) {
-    if (this.columns.length === 0)
-      return new _SQLiteTable(this.name, SQLiteColumns.fromSchema(stream.jsonSchema), this.readerView);
-    const properties39 = stream.jsonSchema.properties;
-    if (properties39 !== null && typeof properties39 === "object" && !Array.isArray(properties39)) {
-      for (const column of this.columns) {
-        if (column.fileRead === void 0 && !Object.hasOwn(properties39, column.name))
-          throw new TypeError(`Stream ${stream.name} does not describe column ${column.name}`);
-      }
-    }
-    return this;
-  }
-  // SQLite compares ASCII identifiers case-insensitively, so one table has one location.
-  get location() {
-    return this.name.replaceAll(/[A-Z]/g, (letter) => letter.toLowerCase());
-  }
-  get quotedName() {
-    return `"${this.name.replaceAll('"', '""')}"`;
-  }
-  get createTableSQL() {
-    if (this.columns.length === 0)
-      throw new TypeError("Resolve inferred columns before creating a table");
-    return `CREATE TABLE IF NOT EXISTS ${this.quotedName} (${this.columns.map((column) => column.definition).join(", ")}, "loaded_at" TEXT NOT NULL${canonical2("timestamp", '"loaded_at"')}) STRICT`;
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-destination.js
-var SQLiteDestination = class extends Destination {
-  supportedDestinationSyncModes = Object.freeze([
-    "overwrite",
-    "append",
-    "append_dedup",
-    "overwrite_dedup"
-  ]);
-  path;
-  constructor({ path }) {
-    super();
-    if (!path)
-      throw new TypeError("SQLite requires a database path");
-    this.path = path === ":memory:" ? path : resolve3(path);
-    Object.freeze(this);
-  }
-  identity(target) {
-    return JSON.stringify({ type: "sqlite", path: this.path, target });
-  }
-  location(target) {
-    return `${this.path}#${target.location}`;
-  }
-  // The writer lock spans all commits; each stream still publishes separately.
-  async load() {
-    const resources = new DisposableStack();
-    let database;
-    try {
-      resources.use(lockWriter(this.path));
-      database = resources.use(new DatabaseSync11(this.path));
-      database.exec("BEGIN IMMEDIATE");
-    } catch (error62) {
-      resources.dispose();
-      throw error62;
-    }
-    const loadedAt = (/* @__PURE__ */ new Date()).toISOString();
-    return {
-      prepare: async (configuration, target, binding) => this.createWriter(configuration, target).prepare(database, binding, loadedAt),
-      [Symbol.asyncDispose]: async () => {
-        try {
-          if (database.isTransaction)
-            database.exec("ROLLBACK");
-        } finally {
-          resources.dispose();
-        }
-      }
-    };
-  }
-  table(name, configure) {
-    return new SQLiteTable(name, configure?.(new SQLiteColumns()));
-  }
-  createWriter(configuration, target) {
-    this.validateConfiguration(configuration, target);
-    if (!(target instanceof SQLiteTable))
-      throw new TypeError("SQLite requires SQLite table targets");
-    if (configuration.syncMode === "incremental" && this.path === ":memory:")
-      throw new TypeError("Incremental SQLite requires a persistent destination file");
-    const table2 = target.resolve(configuration.stream);
-    switch (configuration.destinationSyncMode) {
-      case "append_dedup":
-      case "overwrite_dedup":
-        return new SQLiteDeduplicatingWriter(configuration, this.path, table2);
-      case "append":
-        return new SQLiteAppendWriter(configuration, this.path, table2);
-      case "overwrite":
-        return new SQLiteOverwriteWriter(configuration, this.path, table2);
-      default:
-        throw new TypeError(`Destination does not support ${configuration.destinationSyncMode}`);
-    }
-  }
-};
-
-// packages/destinations/sqlite/dist/sqlite-sync-history.js
-import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
-
-// packages/destinations/sqlite/dist/sqlite-sync-history-schema.js
-var attempts = '"_elt_sync_attempts"';
-var coverage = '"_elt_extraction_coverage"';
-var now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
-var status = `"status" TEXT NOT NULL DEFAULT 'running' CHECK ("status" IN ('running', 'succeeded', 'partial', 'failed'))`;
-var syncHistoryTables = [
-  `CREATE TABLE IF NOT EXISTS ${attempts} (
-    "id" INTEGER PRIMARY KEY,
-    "connector" TEXT NOT NULL CHECK (trim("connector") <> ''), "source" TEXT NOT NULL,
-    "started_at" TEXT NOT NULL, "completed_at" TEXT, ${status}, "error" TEXT,
-    CHECK (("status" = 'running') = ("completed_at" IS NULL))
-  ) STRICT`,
-  `CREATE INDEX IF NOT EXISTS "_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
-  `CREATE TABLE IF NOT EXISTS ${coverage} (
-    "attempt_id" INTEGER NOT NULL REFERENCES ${attempts}("id"),
-    "stream" TEXT NOT NULL, "target_schema" TEXT NOT NULL, "target_table" TEXT NOT NULL,
-    "sync_mode" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL,
-    "description" TEXT NOT NULL CHECK (trim("description") <> ''),
-    "selection" TEXT NOT NULL CHECK (json_valid("selection")), ${status},
-    "written_count" INTEGER CHECK ("written_count" >= 0),
-    "deleted_count" INTEGER CHECK ("deleted_count" >= 0),
-    "failures" TEXT NOT NULL DEFAULT '[]' CHECK (json_valid("failures")),
-    PRIMARY KEY ("attempt_id", "stream")
-  ) STRICT`
-];
-var queries = {
-  sync_attempts: `SELECT "id" AS "attempt_id", "connector", "source", "started_at", "completed_at", "status", "error" FROM ${attempts}`,
-  extraction_coverage: `SELECT c."attempt_id", a."connector", a."source", a."started_at", a."completed_at",
-      c."stream", c."target_schema", c."target_table",
-      EXISTS (SELECT 1 FROM sqlite_schema t WHERE t."type" = 'table' AND lower(t."name") = lower(c."target_table")) AS "target_exists",
-      c."sync_mode", c."destination_sync_mode", c."description", c."selection",
-      c."status", c."written_count", c."deleted_count", c."failures"
-      FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"`,
-  sync_status: `WITH "success" AS (
-        SELECT "connector", "id", "completed_at", row_number() OVER (PARTITION BY "connector" ORDER BY "completed_at" DESC, "id" DESC) AS "rank"
-        FROM ${attempts} WHERE "status" = 'succeeded'
-      ), "latest" AS (
-        SELECT *, row_number() OVER (PARTITION BY "connector" ORDER BY "id" DESC) AS "rank" FROM ${attempts}
-      )
-      SELECT a."connector", a."id" AS "latest_attempt_id", a."started_at", a."completed_at", a."status", a."error",
-        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
-      FROM "latest" a LEFT JOIN "success" s ON s."connector" = a."connector" AND s."rank" = 1
-      WHERE a."rank" = 1 ORDER BY a."connector"`,
-  stream_status: `WITH "declared" AS (
-        SELECT a."connector", c."stream", c."target_schema", c."target_table", a."id", a."started_at", a."completed_at", c."status",
-          row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."id" DESC) AS "rank"
-        FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"
-      ), "success" AS (
-        SELECT a."connector", c."stream", a."id", a."completed_at",
-          row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."completed_at" DESC, a."id" DESC) AS "rank"
-        FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id" WHERE c."status" = 'succeeded'
-      )
-      SELECT d."connector", d."stream", d."target_schema", d."target_table",
-        d."id" AS "latest_attempt_id", d."started_at", d."completed_at", d."status",
-        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
-      FROM "declared" d LEFT JOIN "success" s ON s."connector" = d."connector" AND s."stream" = d."stream" AND s."rank" = 1
-      WHERE d."rank" = 1 ORDER BY d."connector", d."stream"`
-};
-var syncHistoryViews = Object.values(syncHistoryRelations).map((relation) => ({ ...relation, query: queries[relation.name] }));
-
-// packages/destinations/sqlite/dist/sqlite-sync-history.js
-var busyTimeout = 3e4;
-var SQLiteSyncHistory = class extends SyncHistory {
-  constructor() {
-    super();
-    Object.freeze(this);
-  }
-  validate(connection) {
-    this.#path(connection);
-  }
-  // Every selected stream is declared before reading, even if it produces no
-  // rows or the process dies: an unfinished attempt stays running, never success.
-  async begin(connection, copies) {
-    const path = this.#path(connection);
-    const id12 = write(path, (database) => {
-      const attempt2 = database.prepare(`INSERT INTO ${attempts} ("connector", "source", "started_at") VALUES (?, ?, ${now}) RETURNING "id"`).get(connection.name, connection.source.identity);
-      if (attempt2 === void 0)
-        throw new Error("Sync attempt was not recorded");
-      const id13 = Number(attempt2.id);
-      const declare = database.prepare(`INSERT INTO ${coverage} ("attempt_id", "stream", "target_schema", "target_table", "sync_mode", "destination_sync_mode", "description", "selection") VALUES (?, ?, 'main', ?, ?, ?, ?, ?)`);
-      for (const { copy, coverage: coverage3 } of copies)
-        declare.run(id13, copy.from.name, copy.to.name, copy.configuration.syncMode, copy.configuration.destinationSyncMode, coverage3.description, JSON.stringify(coverage3.selection));
-      return id13;
-    });
-    return {
-      finish: async (outcomes) => this.#finish(path, id12, outcomes),
-      fail: async (error62) => write(path, (database) => {
-        database.prepare(`UPDATE ${coverage} SET "status" = 'failed', "failures" = ? WHERE "attempt_id" = ?`).run(JSON.stringify([{ partition: null, error: message3(error62) }]), id12);
-        database.prepare(`UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ? WHERE "id" = ?`).run(message3(error62), id12);
-      })
-    };
-  }
-  // Creates the history's tables and publishes its views in each file; safe
-  // to repeat.
-  async install(destinations) {
-    for (const destination of destinations)
-      write(persistent(destination), (database) => {
-        for (const statement of syncHistoryTables)
-          database.exec(statement);
-        publishSQLiteViews(database, { views: syncHistoryViews });
-      });
-  }
-  #path({ name, destination }) {
-    if (!(destination instanceof SQLiteDestination))
-      throw new TypeError(`Connection ${name}: SQLite sync history records SQLite destinations only`);
-    return persistent(destination);
-  }
-  #finish(path, id12, outcomes) {
-    write(path, (database) => {
-      const record3 = database.prepare(`UPDATE ${coverage} SET "status" = ?, "written_count" = ?, "deleted_count" = ?, "failures" = ? WHERE "attempt_id" = ? AND "stream" = ?`);
-      for (const outcome of outcomes)
-        record3.run(copyStatus(outcome), outcome.count, outcome.deleted, JSON.stringify(outcome.failures.map(({ partition, error: error62 }) => ({
-          partition,
-          error: message3(error62)
-        }))), id12, outcome.copy.from.name);
-      database.prepare(`UPDATE ${attempts} SET "completed_at" = ${now}, "status" = ?, "error" = ? WHERE "id" = ?`).run(passStatus(outcomes), passError(outcomes), id12);
-    });
-  }
-};
-function persistent({ path }) {
-  if (path === ":memory:")
-    throw new TypeError("SQLite sync history requires a destination file");
-  return path;
-}
-function write(path, work) {
-  var _stack = [];
-  try {
-    const database = __using(_stack, new DatabaseSync12(path, { timeout: busyTimeout }));
-    database.exec("BEGIN IMMEDIATE");
-    try {
-      const result = work(database);
-      database.exec("COMMIT");
-      return result;
-    } catch (error62) {
-      if (database.isTransaction)
-        database.exec("ROLLBACK");
-      throw error62;
-    }
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
-}
-function message3(error62) {
-  return error62 instanceof Error ? error62.message : String(error62);
-}
-
-// apps/apple/src/plugin/settings.ts
-import { createHash as createHash8 } from "node:crypto";
-import { chmodSync as chmodSync2, mkdirSync, readdirSync as readdirSync2, rmSync } from "node:fs";
-import { join as join21 } from "node:path";
-import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
+// apps/apple/src/plugin/apple-plugin.ts
 var appSchema = external_exports.enum(appNames);
-var ids = external_exports.array(external_exports.string().min(1).max(1024)).min(1).max(1e3).refine(
-  (values) => new Set(values).size === values.length,
-  "Choose each item once"
-);
-var scopeSchema = external_exports.strictObject({
-  accountIds: ids.optional(),
-  collectionIds: ids.optional(),
-  startAt: external_exports.iso.datetime({ precision: 3 }).optional(),
-  endAt: external_exports.iso.datetime({ precision: 3 }).optional()
-}).refine(
-  (scope) => scope.startAt === void 0 || scope.endAt === void 0 || scope.startAt < scope.endAt,
-  "Start must precede end"
-);
+var ids = external_exports.array(external_exports.string().min(1).max(1024)).max(1e3);
 var configurationSchema = external_exports.strictObject({
   apps: external_exports.array(
     external_exports.strictObject({
       app: appSchema,
-      scope: scopeSchema.default({}),
+      scope: external_exports.strictObject({
+        accountIds: ids.optional(),
+        collectionIds: ids.optional(),
+        startAt: external_exports.iso.datetime({ precision: 3 }).optional(),
+        endAt: external_exports.iso.datetime({ precision: 3 }).optional()
+      }).default({}),
       includeAttachments: external_exports.boolean().default(true)
     })
   ).max(appNames.length)
-}).superRefine((configuration, context) => {
-  if (new Set(configuration.apps.map((item) => item.app)).size !== configuration.apps.length)
-    context.addIssue({ code: "custom", message: "Choose each app once" });
-  for (const { app, scope } of configuration.apps) {
-    if (!apps[app].accounts && scope.accountIds !== void 0)
-      context.addIssue({
-        code: "custom",
-        message: `${app}: choose collections instead of account IDs`
-      });
-    if (apps[app].choices.length === 0 && scope.collectionIds !== void 0)
-      context.addIssue({
-        code: "custom",
-        message: `${app}: imports everything; it has no collections to choose`
-      });
-    if (apps[app].datedBy === null && (scope.startAt !== void 0 || scope.endAt !== void 0))
-      context.addIssue({
-        code: "custom",
-        message: `${app}: date filtering is unavailable; choose collections`
-      });
-  }
 });
-var storeLayout = 2;
-var NewerStoreError = class extends Error {
-  constructor() {
-    super(
-      "Apple was updated on this Mac. Start a new chat to use the new version."
-    );
-  }
-};
-function importDirectory(directory, item) {
-  const key = createHash8("sha256").update(JSON.stringify([storeLayout, item.scope, item.includeAttachments])).digest("hex").slice(0, 16);
-  return join21(directory, item.app, key);
-}
-function removeStaleImports(directory, configuration) {
-  for (const app of appNames) {
-    const item = configuration.apps.find((selected2) => selected2.app === app);
-    const kept = item === void 0 ? null : importDirectory(directory, item);
-    const root = join21(directory, app);
-    let entries;
-    try {
-      entries = readdirSync2(root);
-    } catch {
-      continue;
-    }
-    for (const entry of entries)
-      if (join21(root, entry) !== kept)
-        rmSync(join21(root, entry), { recursive: true, force: true });
-  }
-}
-var selectedApps = {
-  name: "selected_apps",
-  description: "The Apple apps the user chose to import, in the order chosen. An app missing here is not imported. Each import is its own SQLite file: open database to read its records, catalog and sync_status.",
-  columns: {
-    app: "Apple app: mail, notes, messages, contacts, calendar, reminders or safari.",
-    scope: "JSON of the chosen accounts (accountIds), collections (collectionIds) and dates (startAt inclusive, endAt exclusive); an absent key means all.",
-    include_attachments: "1 when attachment bytes are copied beside the records, 0 for metadata only.",
-    database: "Path of the SQLite file the import loads. It may not exist yet while the first import starts.",
-    connection_error: "Why the import could not start, such as missing macOS access; NULL when it started. An app with an error is inaccessible, not empty.",
-    connection_failed_at: "When the import last failed to start, as an ISO 8601 UTC timestamp; NULL when it started.",
-    permissions: "What the user can do in macOS to give the plugin access to this app."
-  },
-  query: `SELECT s."app", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",
-      f."error" AS "connection_error", f."failed_at" AS "connection_failed_at", s."permissions"
-    FROM "selections" s LEFT JOIN "connection_failures" f ON f."directory" = s."directory"
-    ORDER BY s."position"`
-};
-var Settings = class {
-  constructor(directory) {
-    this.directory = directory;
-    mkdirSync(directory, { recursive: true, mode: 448 });
-    chmodSync2(directory, 448);
-    const path = join21(directory, "settings.sqlite");
-    this.database = new DatabaseSync13(path);
-    try {
-      chmodSync2(path, 384);
-      if (this.layout() !== storeLayout) this.rebuild();
-      this.database.exec(
-        "CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, app TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);"
-      );
-    } catch (error62) {
-      this.database.close();
-      throw error62;
-    }
-  }
-  directory;
-  database;
-  layout() {
-    return Number(
-      this.database.prepare("PRAGMA user_version").get()?.user_version
-    );
-  }
-  // Refuses a file a newer layout wrote, and empties one an older layout
-  // wrote: stored settings are disposable, so the user sets up again.
-  rebuild() {
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      const layout = this.layout();
-      if (layout > storeLayout) throw new NewerStoreError();
-      if (layout < storeLayout) {
-        for (const { type, name } of this.database.prepare(
-          "SELECT type, name FROM sqlite_schema WHERE type IN ('view', 'table') AND name NOT LIKE 'sqlite_%' ORDER BY type = 'table'"
-        ).all())
-          this.database.exec(
-            `DROP ${type === "view" ? "VIEW" : "TABLE"} IF EXISTS "${String(name).replaceAll('"', '""')}"`
-          );
-        this.database.exec(`PRAGMA user_version = ${storeLayout}`);
-      }
-      this.database.exec("COMMIT");
-    } catch (error62) {
-      this.database.exec("ROLLBACK");
-      throw error62;
-    }
-  }
-  configuration() {
-    return configurationSchema.parse({
-      apps: this.database.prepare(
-        "SELECT app, scope, include_attachments FROM selections ORDER BY position"
-      ).all().map((row) => ({
-        app: row.app,
-        scope: JSON.parse(String(row.scope)),
-        includeAttachments: row.include_attachments === 1
-      }))
-    });
-  }
-  connectionFailure(importPath) {
-    const row = this.database.prepare(
-      "SELECT error, failed_at FROM connection_failures WHERE directory=?"
-    ).get(importPath);
-    return row === void 0 ? void 0 : { error: String(row.error), failedAt: String(row.failed_at) };
-  }
-  saveConnectionFailure(importPath, error62) {
-    this.database.prepare(
-      "INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(directory) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at"
-    ).run(importPath, error62);
-  }
-  clearConnectionFailure(importPath) {
-    this.database.prepare("DELETE FROM connection_failures WHERE directory=?").run(importPath);
-  }
-  // Saves the selection, forgets the failures of every other import, and
-  // publishes what readers see.
-  saveConfiguration(configuration) {
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      this.database.exec("DELETE FROM selections");
-      const insert = this.database.prepare(
-        "INSERT INTO selections VALUES(?,?,?,?,?,?)"
-      );
-      for (const [position, item] of configuration.apps.entries())
-        insert.run(
-          position,
-          item.app,
-          JSON.stringify(item.scope),
-          item.includeAttachments ? 1 : 0,
-          importDirectory(this.directory, item),
-          apps[item.app].permissions
-        );
-      this.database.exec(
-        "DELETE FROM connection_failures WHERE directory NOT IN (SELECT directory FROM selections)"
-      );
-      this.database.exec("COMMIT");
-    } catch (error62) {
-      this.database.exec("ROLLBACK");
-      throw error62;
-    }
-    this.publish();
-  }
-  // Publishes selected_apps and the catalog that lists it; safe to repeat.
-  publish() {
-    publishSQLiteViews(this.database, { views: [selectedApps] });
-    installSQLiteCatalog({ path: join21(this.directory, "settings.sqlite") });
-  }
-  // Each running plugin server's version, seen within the last heartbeats;
-  // servers gone for an hour are forgotten.
-  heartbeat(id12, version3, now2) {
-    this.database.prepare(
-      "INSERT INTO servers VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version, seen_at=excluded.seen_at"
-    ).run(id12, version3, now2);
-    this.database.prepare("DELETE FROM servers WHERE seen_at < ?").run(now2 - 36e5);
-  }
-  runningVersions(since) {
-    return this.database.prepare("SELECT version FROM servers WHERE seen_at >= ?").all(since).map((row) => String(row.version));
-  }
-  forgetServer(id12) {
-    this.database.prepare("DELETE FROM servers WHERE id=?").run(id12);
-  }
-  [Symbol.dispose]() {
-    this.database.close();
-  }
-};
-
-// apps/apple/src/plugin/sync.ts
-import { mkdirSync as mkdirSync2 } from "node:fs";
-import { join as join22 } from "node:path";
-var snake = (name) => name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-async function appConnection(directory, item) {
-  const { app, scope, includeAttachments } = item;
-  const source = apps[app].source(scope);
-  const catalog9 = await source.discover();
-  const omitted = new Set(
-    Object.keys(scope).length > 0 ? apps[app].unscoped ?? [] : []
-  );
-  const streams4 = catalog9.streams.filter((stream) => !omitted.has(stream.name));
-  const withFiles = (stream) => includeAttachments && stream.supportsFileTransfer === true && !apps[app].storeCopies?.includes(stream.name);
-  const importPath = importDirectory(directory, item);
-  mkdirSync2(importPath, { recursive: true, mode: 448 });
-  const destination = new SQLiteDestination({
-    path: join22(importPath, "data.sqlite")
-  });
-  const files = new LocalFiles({ directory: join22(importPath, "files") });
-  const connection = new Connection({
-    name: app,
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join22(importPath, "checkpoints.sqlite")
-    }),
-    steps: streams4.map(
-      (stream) => new Copy(
-        stream,
-        destination.table(
-          `raw_${stream.name}`,
-          withFiles(stream) ? (columns3) => [
-            ...SQLiteColumns.fromSchema(stream.jsonSchema),
-            columns3.text("attachmentRef").from(stream.file.store(files))
-          ] : void 0
-        ).withReaderView(snake(stream.name)),
-        {
-          id: `${app}:${stream.name}`,
-          syncMode: "incremental",
-          destinationSyncMode: "append_dedup"
-        }
-      )
-    )
-  });
-  return { connection, destination };
-}
-
-// apps/apple/src/plugin/freshness.ts
-function lease(directory) {
-  let database;
+function openStore(directory) {
   try {
-    mkdirSync3(directory, { recursive: true, mode: 448 });
-    database = new DatabaseSync14(join23(directory, "watch.sqlite"));
-    database.exec("BEGIN IMMEDIATE");
-    return database;
-  } catch {
-    database?.close();
-    return null;
-  }
-}
-function leaderRunning(directory) {
-  const held = lease(directory);
-  held?.close();
-  return held === null;
-}
-function readConfiguration(directory) {
-  var _stack = [];
-  try {
-    const settings = __using(_stack, new Settings(directory));
-    return settings.configuration();
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
-}
-function publishSettings(directory) {
-  var _stack = [];
-  try {
-    const settings = __using(_stack, new Settings(directory));
-    settings.publish();
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
-}
-async function watchImports(directory, configuration, signal) {
-  const imports = [];
-  for (const item of configuration.apps) {
-    const importPath = importDirectory(directory, item);
-    try {
-      var _stack = [];
-      try {
-        imports.push(await appConnection(directory, item));
-        const settings = __using(_stack, new Settings(directory));
-        settings.clearConnectionFailure(importPath);
-      } catch (_) {
-        var _error = _, _hasError = true;
-      } finally {
-        __callDispose(_stack, _error, _hasError);
-      }
-    } catch (error62) {
-      var _stack2 = [];
-      try {
-        const settings = __using(_stack2, new Settings(directory));
-        settings.saveConnectionFailure(
-          importPath,
-          error62 instanceof Error ? error62.message : String(error62)
-        );
-      } catch (_2) {
-        var _error2 = _2, _hasError2 = true;
-      } finally {
-        __callDispose(_stack2, _error2, _hasError2);
-      }
-    }
-  }
-  if (imports.length === 0) return;
-  const history = new SQLiteSyncHistory();
-  const destinations = imports.map(({ destination }) => destination);
-  await history.install(destinations);
-  for (const destination of destinations) installSQLiteCatalog(destination);
-  const pipeline2 = new Pipeline({
-    connections: imports.map(({ connection }) => connection),
-    history
-  });
-  try {
-    for await (const _pass of pipeline2.watch({ signal })) ;
-  } catch {
-  }
-}
-function outdated(directory, id12, version3) {
-  const newer = (candidate) => {
-    const [left, right] = [candidate, version3].map(
-      (value) => value.split(".").map(Number)
-    );
-    for (let part = 0; part < 3; part++)
-      if (left?.[part] !== right?.[part])
-        return (left?.[part] ?? 0) > (right?.[part] ?? 0);
-    return false;
-  };
-  try {
-    var _stack = [];
-    try {
-      const settings = __using(_stack, new Settings(directory));
-      const now2 = Date.now();
-      settings.heartbeat(id12, version3, now2);
-      return settings.runningVersions(now2 - 1e4).some(newer);
-    } catch (_) {
-      var _error = _, _hasError = true;
-    } finally {
-      __callDispose(_stack, _error, _hasError);
-    }
+    return new ImportStore(directory);
   } catch (error62) {
-    return error62 instanceof NewerStoreError;
-  }
-}
-async function followSelection(directory, selection, id12, version3, changed, newer, signal) {
-  try {
-    for await (const _ of setInterval7(1e3, void 0, { signal }))
-      try {
-        if (outdated(directory, id12, version3)) newer.abort();
-        else if (JSON.stringify(readConfiguration(directory)) !== selection)
-          changed.abort();
-      } catch {
-      }
-  } catch {
-  }
-}
-async function acquire(directory, id12, version3, signal) {
-  for (; ; ) {
-    if (!outdated(directory, id12, version3)) {
-      const held = lease(directory);
-      if (held !== null) return held;
-    }
-    try {
-      await sleep2(2e3, void 0, { signal });
-    } catch {
-      return null;
-    }
-  }
-}
-async function lead(directory, id12, version3, signal) {
-  const newer = new AbortController();
-  const leading = AbortSignal.any([signal, newer.signal]);
-  while (!leading.aborted) {
-    const changed = new AbortController();
-    const watching = AbortSignal.any([leading, changed.signal]);
-    let following = Promise.resolve();
-    try {
-      const configuration = readConfiguration(directory);
-      following = followSelection(
-        directory,
-        JSON.stringify(configuration),
-        id12,
-        version3,
-        changed,
-        newer,
-        watching
+    if (error62 instanceof NewerLayoutError)
+      throw new Error(
+        "Apple was updated on this Mac. Start a new chat to use the new version.",
+        { cause: error62 }
       );
-      publishSettings(directory);
-      removeStaleImports(directory, configuration);
-      await watchImports(directory, configuration, watching);
-    } catch {
-    }
-    await sleep2(6e4, void 0, { signal: watching }).catch(() => {
-    });
-    changed.abort();
-    await following;
-  }
-}
-async function keepFresh(directory, signal, version3) {
-  const id12 = randomUUID2();
-  try {
-    while (!signal.aborted) {
-      var _stack = [];
-      try {
-        const leader = await acquire(directory, id12, version3, signal);
-        if (leader === null) return;
-        const _lease = __using(_stack, leader);
-        await lead(directory, id12, version3, signal);
-      } catch (_) {
-        var _error = _, _hasError = true;
-      } finally {
-        __callDispose(_stack, _error, _hasError);
-      }
-    }
-  } finally {
-    try {
-      var _stack2 = [];
-      try {
-        const settings = __using(_stack2, new Settings(directory));
-        settings.forgetServer(id12);
-      } catch (_2) {
-        var _error2 = _2, _hasError2 = true;
-      } finally {
-        __callDispose(_stack2, _error2, _hasError2);
-      }
-    } catch {
-    }
-  }
-}
-
-// apps/apple/src/plugin/apple-plugin.ts
-var passFields = {
-  started_at: external_exports.string(),
-  last_successful_sync_at: external_exports.string().nullable()
-};
-var pass = (row) => ({
-  state: row.status,
-  startedAt: row.started_at,
-  completedAt: row.completed_at,
-  lastSucceededAt: row.last_successful_sync_at,
-  error: row.error
-});
-var passSchema = external_exports.union([
-  external_exports.object({
-    ...passFields,
-    status: external_exports.literal("running"),
-    completed_at: external_exports.null(),
-    error: external_exports.null()
-  }).transform(pass),
-  external_exports.object({
-    ...passFields,
-    status: external_exports.literal("succeeded"),
-    completed_at: external_exports.string(),
-    error: external_exports.null()
-  }).transform(pass),
-  external_exports.object({
-    ...passFields,
-    status: external_exports.enum(["partial", "failed"]),
-    completed_at: external_exports.string(),
-    error: external_exports.string()
-  }).transform(pass)
-]);
-function latestPass(database) {
-  var _stack = [];
-  try {
-    if (!existsSync2(database)) return null;
-    const data = __using(_stack, new DatabaseSync15(database, { readOnly: true, timeout: 3e4 }));
-    const installed = data.prepare(
-      "SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'"
-    ).get();
-    if (installed === void 0) return null;
-    const row = data.prepare(
-      "SELECT status, started_at, completed_at, error, last_successful_sync_at FROM sync_status"
-    ).get();
-    return row === void 0 ? null : passSchema.parse(row);
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
+    throw error62;
   }
 }
 var ApplePlugin = class {
@@ -77214,15 +77006,16 @@ var ApplePlugin = class {
   status() {
     var _stack = [];
     try {
-      const settings = __using(_stack, new Settings(this.directory));
-      const configuration = settings.configuration();
-      const leading = leaderRunning(this.directory);
+      const store = __using(_stack, openStore(this.directory));
+      const configuration = configurationSchema.parse({
+        apps: store.selections()
+      });
+      const leading = leaseHeld(this.directory);
       return {
         apps: configuration.apps.map((item) => {
-          const importPath = importDirectory(this.directory, item);
-          const database = join24(importPath, "data.sqlite");
-          const pass2 = latestPass(database);
-          const failure3 = settings.connectionFailure(importPath);
+          const database = store.database(item);
+          const pass2 = store.latestPass(item);
+          const failure3 = store.connectionFailure(item);
           const sync = failure3 !== void 0 ? {
             state: "failed",
             startedAt: failure3.failedAt,
@@ -77232,7 +77025,7 @@ var ApplePlugin = class {
           } : pass2?.state === "running" && !leading ? { ...pass2, state: "interrupted" } : pass2;
           return {
             ...item,
-            database: existsSync2(database) ? database : null,
+            database: existsSync3(database) ? database : null,
             sync,
             permissions: apps[item.app].permissions
           };
@@ -77244,8 +77037,8 @@ var ApplePlugin = class {
       __callDispose(_stack, _error, _hasError);
     }
   }
-  // A changed scope is a new import: the leading server loads it and removes
-  // the previous one, and nothing reads an import that is not selected.
+  // A changed scope is a new import: the leading server loads it, and the
+  // previous one is removed, so nothing reads an import that is not selected.
   configure(input2) {
     const requested = configurationSchema.parse(input2);
     const configuration = configurationSchema.parse({
@@ -77257,15 +77050,17 @@ var ApplePlugin = class {
     {
       var _stack = [];
       try {
-        const settings = __using(_stack, new Settings(this.directory));
-        settings.saveConfiguration(configuration);
+        const store = __using(_stack, openStore(this.directory));
+        store.select(configuration.apps, {
+          facts: appFacts,
+          permissions: ({ app }) => apps[app].permissions
+        });
       } catch (_) {
         var _error = _, _hasError = true;
       } finally {
         __callDispose(_stack, _error, _hasError);
       }
     }
-    removeStaleImports(this.directory, configuration);
     return this.status();
   }
   async options(app) {
@@ -77302,6 +77097,266 @@ var ApplePlugin = class {
     };
   }
 };
+
+// apps/apple/src/plugin/freshness.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { setInterval as setInterval7, setTimeout as sleep2 } from "node:timers/promises";
+
+// apps/apple/src/plugin/leadership.ts
+import { mkdirSync as mkdirSync3 } from "node:fs";
+import { join as join25 } from "node:path";
+import { DatabaseSync as DatabaseSync15 } from "node:sqlite";
+function servers(root) {
+  mkdirSync3(root, { recursive: true, mode: 448 });
+  const database = new DatabaseSync15(join25(root, "servers.sqlite"));
+  database.exec(
+    "CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL)"
+  );
+  return database;
+}
+var newer = (candidate, version3) => {
+  const [left, right] = [candidate, version3].map(
+    (value) => value.split(".").map(Number)
+  );
+  for (let part = 0; part < 3; part++)
+    if (left?.[part] !== right?.[part])
+      return (left?.[part] ?? 0) > (right?.[part] ?? 0);
+  return false;
+};
+function outdated(root, id12, version3) {
+  try {
+    var _stack = [];
+    try {
+      const _store = __using(_stack, new ImportStore(root));
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  } catch (error62) {
+    if (error62 instanceof NewerLayoutError) return true;
+  }
+  try {
+    var _stack2 = [];
+    try {
+      const database = __using(_stack2, servers(root));
+      const now2 = Date.now();
+      database.prepare(
+        "INSERT INTO servers VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version, seen_at=excluded.seen_at"
+      ).run(id12, version3, now2);
+      database.prepare("DELETE FROM servers WHERE seen_at < ?").run(now2 - 36e5);
+      return database.prepare("SELECT version FROM servers WHERE seen_at >= ?").all(now2 - 1e4).some((row) => newer(String(row.version), version3));
+    } catch (_2) {
+      var _error2 = _2, _hasError2 = true;
+    } finally {
+      __callDispose(_stack2, _error2, _hasError2);
+    }
+  } catch {
+    return false;
+  }
+}
+function forgetServer(root, id12) {
+  var _stack = [];
+  try {
+    const database = __using(_stack, servers(root));
+    database.prepare("DELETE FROM servers WHERE id=?").run(id12);
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+
+// apps/apple/src/plugin/sync.ts
+import { mkdirSync as mkdirSync4 } from "node:fs";
+import { join as join26 } from "node:path";
+var snake = (name) => name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+async function appConnection(directory, item) {
+  const { app, scope, includeAttachments } = item;
+  const source = apps[app].source(scope);
+  const catalog9 = await source.discover();
+  const omitted = new Set(
+    Object.keys(scope).length > 0 ? apps[app].unscoped ?? [] : []
+  );
+  const streams4 = catalog9.streams.filter((stream) => !omitted.has(stream.name));
+  const withFiles = (stream) => includeAttachments && stream.supportsFileTransfer === true && !apps[app].storeCopies?.includes(stream.name);
+  const importPath = importDirectory(directory, item);
+  mkdirSync4(importPath, { recursive: true, mode: 448 });
+  const destination = new SQLiteDestination({
+    path: join26(importPath, "data.sqlite")
+  });
+  const files = new LocalFiles({ directory: join26(importPath, "files") });
+  const connection = new Connection({
+    name: app,
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join26(importPath, "checkpoints.sqlite")
+    }),
+    steps: streams4.map(
+      (stream) => new Copy(
+        stream,
+        destination.table(
+          `raw_${stream.name}`,
+          withFiles(stream) ? (columns3) => [
+            ...SQLiteColumns.fromSchema(stream.jsonSchema),
+            columns3.text("attachmentRef").from(stream.file.store(files))
+          ] : void 0
+        ).withReaderView(snake(stream.name)),
+        {
+          id: `${app}:${stream.name}`,
+          syncMode: "incremental",
+          destinationSyncMode: "append_dedup"
+        }
+      )
+    )
+  });
+  return { connection, destination };
+}
+
+// apps/apple/src/plugin/freshness.ts
+function readConfiguration(directory) {
+  var _stack = [];
+  try {
+    const store = __using(_stack, new ImportStore(directory));
+    return configurationSchema.parse({ apps: store.selections() });
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+function tidy(directory) {
+  var _stack = [];
+  try {
+    const store = __using(_stack, new ImportStore(directory));
+    store.publish();
+    store.removeStaleImports();
+    for (const selection of store.selections()) store.recover(selection);
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+async function watchImports(directory, configuration, signal) {
+  const imports = [];
+  for (const item of configuration.apps)
+    try {
+      var _stack = [];
+      try {
+        imports.push(await appConnection(directory, item));
+        const store = __using(_stack, new ImportStore(directory));
+        store.clearConnectionFailure(item);
+      } catch (_) {
+        var _error = _, _hasError = true;
+      } finally {
+        __callDispose(_stack, _error, _hasError);
+      }
+    } catch (error62) {
+      var _stack2 = [];
+      try {
+        const store = __using(_stack2, new ImportStore(directory));
+        store.saveConnectionFailure(
+          item,
+          error62 instanceof Error ? error62.message : String(error62)
+        );
+      } catch (_2) {
+        var _error2 = _2, _hasError2 = true;
+      } finally {
+        __callDispose(_stack2, _error2, _hasError2);
+      }
+    }
+  if (imports.length === 0) return;
+  const history = new SQLiteSyncHistory();
+  const destinations = imports.map(({ destination }) => destination);
+  await history.install(destinations);
+  for (const destination of destinations) installSQLiteCatalog(destination);
+  const pipeline2 = new Pipeline({
+    connections: imports.map(({ connection }) => connection),
+    history
+  });
+  try {
+    for await (const _pass of pipeline2.watch({ signal })) ;
+  } catch {
+  }
+}
+async function followSelection(directory, selection, id12, version3, changed, newer2, signal) {
+  try {
+    for await (const _ of setInterval7(1e3, void 0, { signal }))
+      try {
+        if (outdated(directory, id12, version3)) newer2.abort();
+        else if (JSON.stringify(readConfiguration(directory)) !== selection)
+          changed.abort();
+      } catch {
+      }
+  } catch {
+  }
+}
+async function acquire(directory, id12, version3, signal) {
+  for (; ; ) {
+    if (!outdated(directory, id12, version3)) {
+      const held = lease(directory);
+      if (held !== null) return held;
+    }
+    try {
+      await sleep2(2e3, void 0, { signal });
+    } catch {
+      return null;
+    }
+  }
+}
+async function lead(directory, id12, version3, signal) {
+  const newer2 = new AbortController();
+  const leading = AbortSignal.any([signal, newer2.signal]);
+  while (!leading.aborted) {
+    const changed = new AbortController();
+    const watching = AbortSignal.any([leading, changed.signal]);
+    let following = Promise.resolve();
+    try {
+      const configuration = readConfiguration(directory);
+      following = followSelection(
+        directory,
+        JSON.stringify(configuration),
+        id12,
+        version3,
+        changed,
+        newer2,
+        watching
+      );
+      tidy(directory);
+      await watchImports(directory, configuration, watching);
+    } catch {
+    }
+    await sleep2(6e4, void 0, { signal: watching }).catch(() => {
+    });
+    changed.abort();
+    await following;
+  }
+}
+async function keepFresh(directory, signal, version3) {
+  const id12 = randomUUID2();
+  try {
+    while (!signal.aborted) {
+      var _stack = [];
+      try {
+        const leader = await acquire(directory, id12, version3, signal);
+        if (leader === null) return;
+        const _lease = __using(_stack, leader);
+        await lead(directory, id12, version3, signal);
+      } catch (_) {
+        var _error = _, _hasError = true;
+      } finally {
+        __callDispose(_stack, _error, _hasError);
+      }
+    }
+  } finally {
+    try {
+      forgetServer(directory, id12);
+    } catch {
+    }
+  }
+}
 
 // apps/apple/src/plugin/native-settings.ts
 var relative3 = new Intl.RelativeTimeFormat("en", { numeric: "auto" });

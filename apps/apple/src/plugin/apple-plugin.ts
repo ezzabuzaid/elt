@@ -1,69 +1,55 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { CopyConfiguration, StreamStatus } from 'elt';
-import { z } from 'zod';
-import { type App, apps, type ChoiceRows } from './apps.ts';
-import { leaderRunning } from './freshness.ts';
 import {
-  configurationSchema,
-  importDirectory,
-  removeStaleImports,
-  Settings,
-} from './settings.ts';
+  ImportStore,
+  leaseHeld,
+  NewerLayoutError,
+  type Pass,
+} from 'import-store';
+import { z } from 'zod';
+import { type App, appFacts, appNames, apps, type ChoiceRows } from './apps.ts';
 
-// One row of the sync_status view the import's history keeps in data.sqlite:
-// only a running pass lacks completed_at, and only an incomplete one has an
-// error.
-const passFields = {
-  started_at: z.string(),
-  last_successful_sync_at: z.string().nullable(),
-};
-const pass = <
-  Row extends {
-    status: string;
-    started_at: string;
-    completed_at: string | null;
-    last_successful_sync_at: string | null;
-    error: string | null;
-  },
->(
-  row: Row,
-) => ({
-  state: row.status as Row['status'],
-  startedAt: row.started_at,
-  completedAt: row.completed_at as Row['completed_at'],
-  lastSucceededAt: row.last_successful_sync_at,
-  error: row.error as Row['error'],
+// The shape of a selection as tools receive it; ImportStore.select checks it
+// against what each app can be narrowed by.
+export const appSchema = z.enum(appNames);
+const ids = z.array(z.string().min(1).max(1024)).max(1000);
+export const configurationSchema = z.strictObject({
+  apps: z
+    .array(
+      z.strictObject({
+        app: appSchema,
+        scope: z
+          .strictObject({
+            accountIds: ids.optional(),
+            collectionIds: ids.optional(),
+            startAt: z.iso.datetime({ precision: 3 }).optional(),
+            endAt: z.iso.datetime({ precision: 3 }).optional(),
+          })
+          .default({}),
+        includeAttachments: z.boolean().default(true),
+      }),
+    )
+    .max(appNames.length),
 });
-const passSchema = z.union([
-  z
-    .object({
-      ...passFields,
-      status: z.literal('running'),
-      completed_at: z.null(),
-      error: z.null(),
-    })
-    .transform(pass),
-  z
-    .object({
-      ...passFields,
-      status: z.literal('succeeded'),
-      completed_at: z.string(),
-      error: z.null(),
-    })
-    .transform(pass),
-  z
-    .object({
-      ...passFields,
-      status: z.enum(['partial', 'failed']),
-      completed_at: z.string(),
-      error: z.string(),
-    })
-    .transform(pass),
-]);
-type Pass = z.infer<typeof passSchema>;
+export type Configuration = z.infer<typeof configurationSchema>;
+export type AppConfiguration = Configuration['apps'][number];
+
+// The plugin's store, refusing in the plugin's words when a newer plugin
+// version owns it.
+export function openStore(directory: string): ImportStore {
+  try {
+    return new ImportStore(directory);
+  } catch (error) {
+    if (error instanceof NewerLayoutError)
+      throw new Error(
+        'Apple was updated on this Mac. Start a new chat to use the new version.',
+        { cause: error },
+      );
+    throw error;
+  }
+}
 
 // An import's latest pass, as its status reports it. interrupted: running
 // when no server is left to finish it.
@@ -72,24 +58,6 @@ export type ImportSync =
   | (Omit<Extract<Pass, { state: 'running' }>, 'state'> & {
       state: 'interrupted';
     });
-
-// null until the import's history is installed and has begun a pass.
-function latestPass(database: string): Pass | null {
-  if (!existsSync(database)) return null;
-  using data = new DatabaseSync(database, { readOnly: true, timeout: 30_000 });
-  const installed = data
-    .prepare(
-      "SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'",
-    )
-    .get();
-  if (installed === undefined) return null;
-  const row = data
-    .prepare(
-      'SELECT status, started_at, completed_at, error, last_successful_sync_at FROM sync_status',
-    )
-    .get();
-  return row === undefined ? null : passSchema.parse(row);
-}
 
 // Setup and status for the Codex plugin. The leading server's keepFresh
 // writes each app's data.sqlite; agents read those files directly.
@@ -102,15 +70,16 @@ export class ApplePlugin {
   ) {}
 
   status() {
-    using settings = new Settings(this.directory);
-    const configuration = settings.configuration();
-    const leading = leaderRunning(this.directory);
+    using store = openStore(this.directory);
+    const configuration = configurationSchema.parse({
+      apps: store.selections(),
+    });
+    const leading = leaseHeld(this.directory);
     return {
       apps: configuration.apps.map((item) => {
-        const importPath = importDirectory(this.directory, item);
-        const database = join(importPath, 'data.sqlite');
-        const pass = latestPass(database);
-        const failure = settings.connectionFailure(importPath);
+        const database = store.database(item);
+        const pass = store.latestPass(item);
+        const failure = store.connectionFailure(item);
         const sync: ImportSync | null =
           failure !== undefined
             ? {
@@ -133,8 +102,8 @@ export class ApplePlugin {
     };
   }
 
-  // A changed scope is a new import: the leading server loads it and removes
-  // the previous one, and nothing reads an import that is not selected.
+  // A changed scope is a new import: the leading server loads it, and the
+  // previous one is removed, so nothing reads an import that is not selected.
   configure(input: unknown) {
     const requested = configurationSchema.parse(input);
     const configuration = configurationSchema.parse({
@@ -144,10 +113,12 @@ export class ApplePlugin {
       })),
     });
     {
-      using settings = new Settings(this.directory);
-      settings.saveConfiguration(configuration);
+      using store = openStore(this.directory);
+      store.select(configuration.apps, {
+        facts: appFacts,
+        permissions: ({ app }) => apps[app].permissions,
+      });
     }
-    removeStaleImports(this.directory, configuration);
     return this.status();
   }
 

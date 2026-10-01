@@ -2,9 +2,12 @@ import type {
   ElicitRequestFormParams,
   ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { ApplePlugin } from './apple-plugin.ts';
+import {
+  type AppConfiguration,
+  type ApplePlugin,
+  appSchema,
+} from './apple-plugin.ts';
 import { type App, appNames, apps } from './apps.ts';
-import { type AppConfiguration, appSchema } from './settings.ts';
 
 export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 
