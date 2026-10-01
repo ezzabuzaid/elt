@@ -1,10 +1,18 @@
 import type { Stream } from 'elt';
 import { SQLiteColumn } from './sqlite-column.ts';
 
-function scalarKind(name: string, type: unknown): SQLiteColumn['kind'] {
+function scalarKind(
+  name: string,
+  type: unknown,
+  format: unknown,
+): SQLiteColumn['kind'] {
   switch (type) {
     case 'string':
-      return 'text';
+      return format === 'date'
+        ? 'date'
+        : format === 'date-time'
+          ? 'timestamp'
+          : 'text';
     case 'integer':
       return 'integer';
     case 'number':
@@ -20,7 +28,8 @@ function scalarKind(name: string, type: unknown): SQLiteColumn['kind'] {
 
 // SQLite column declarations are independent of a source or connection.
 export class SQLiteColumns {
-  // Scalars, and arrays of scalars as JSON arrays in TEXT.
+  // Scalars, and arrays of scalars as JSON arrays in TEXT. The date and
+  // date-time string formats keep their kind, as in Postgres.
   static fromSchema(schema: Stream['jsonSchema']): readonly SQLiteColumn[] {
     const { properties, required } = schema;
     if (
@@ -72,6 +81,7 @@ export class SQLiteColumns {
         const kind = scalarKind(
           name,
           array ? Reflect.get(items, 'type') : valueTypes[0],
+          Reflect.get(items, 'format'),
         );
         return new SQLiteColumn(name, kind, {
           nullable: types.includes('null'),
@@ -101,6 +111,22 @@ export class SQLiteColumns {
 
   real(field: string): SQLiteColumn {
     return new SQLiteColumn(field, 'real', {
+      nullable: true,
+      optional: false,
+      primaryKey: false,
+    });
+  }
+
+  date(field: string): SQLiteColumn {
+    return new SQLiteColumn(field, 'date', {
+      nullable: true,
+      optional: false,
+      primaryKey: false,
+    });
+  }
+
+  timestamp(field: string): SQLiteColumn {
+    return new SQLiteColumn(field, 'timestamp', {
       nullable: true,
       optional: false,
       primaryKey: false,

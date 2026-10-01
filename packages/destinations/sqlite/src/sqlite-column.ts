@@ -1,14 +1,35 @@
 import type { SQLInputValue } from 'node:sqlite';
 import type { DocumentParser } from 'elt';
-import { FileRead, type FileReference } from 'elt';
+import { FileRead, type FileReference, isCalendarDate, isTimestamp } from 'elt';
 
+// STRICT tables accept only these types, so dates and timestamps are their
+// canonical ISO text, which sorts in time order.
 const storageTypes = {
   text: 'TEXT',
   integer: 'INTEGER',
   real: 'REAL',
   blob: 'BLOB',
   boolean: 'INTEGER',
+  date: 'TEXT',
+  timestamp: 'TEXT',
 } as const;
+
+// A CHECK that keeps a value of the kind in its canonical form.
+export function canonical(
+  kind: keyof typeof storageTypes,
+  name: string,
+): string {
+  switch (kind) {
+    case 'boolean':
+      return ` CHECK (${name} IN (0, 1))`;
+    case 'date':
+      return ` CHECK (date(${name}) IS ${name})`;
+    case 'timestamp':
+      return ` CHECK (strftime('%Y-%m-%dT%H:%M:%fZ', ${name}) IS ${name})`;
+    default:
+      return '';
+  }
+}
 
 export class SQLiteColumn {
   readonly name: string;
@@ -116,12 +137,16 @@ export class SQLiteColumn {
     return this.storesFile ? 'INTEGER' : storageTypes[this.kind];
   }
 
+  // The column's type as readers see it in the catalog.
+  get dataType(): string {
+    if (this.storesFile) return 'integer';
+    return this.array ? `${this.kind}[]` : this.kind;
+  }
+
   get definition(): string {
     const check = this.array
       ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')`
-      : this.kind === 'boolean'
-        ? ` CHECK (${this.quotedName} IN (0, 1))`
-        : '';
+      : canonical(this.kind, this.quotedName);
     return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? ' PRIMARY KEY' : ''}${this.required ? ' NOT NULL' : ''}${check}`;
   }
 
@@ -153,10 +178,18 @@ export class SQLiteColumn {
         break;
       case 'integer':
         if (
-          typeof value === 'bigint' ||
+          (typeof value === 'bigint' &&
+            value >= -(2n ** 63n) &&
+            value < 2n ** 63n) ||
           (typeof value === 'number' && Number.isSafeInteger(value))
         )
           return value;
+        break;
+      case 'date':
+        if (isCalendarDate(value)) return value;
+        break;
+      case 'timestamp':
+        if (isTimestamp(value)) return value;
         break;
       case 'real':
         if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -185,6 +218,10 @@ export class SQLiteColumn {
         return Number.isSafeInteger(value);
       case 'real':
         return typeof value === 'number' && Number.isFinite(value);
+      case 'date':
+        return isCalendarDate(value);
+      case 'timestamp':
+        return isTimestamp(value);
       default:
         return false;
     }

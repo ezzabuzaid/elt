@@ -88,13 +88,9 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
       case 'overwrite_dedup':
         return new SQLiteDeduplicatingWriter(configuration, this.path, table);
       case 'append':
-        return new SQLiteAppendWriter(configuration.stream, this.path, table);
+        return new SQLiteAppendWriter(configuration, this.path, table);
       case 'overwrite':
-        return new SQLiteOverwriteWriter(
-          configuration.stream,
-          this.path,
-          table,
-        );
+        return new SQLiteOverwriteWriter(configuration, this.path, table);
       default:
         throw new TypeError(
           `Destination does not support ${configuration.destinationSyncMode}`,

@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { CopyConfiguration, Deduplication, KeyValue } from 'elt';
 import type { SQLiteColumn } from './sqlite-column.ts';
+import { SQLiteColumns } from './sqlite-columns.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { op, SQLiteWriter, seq } from './sqlite-writer.ts';
 
@@ -10,25 +11,22 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   readonly cursor?: SQLiteColumn;
 
   constructor(
-    readonly configuration: CopyConfiguration,
+    configuration: CopyConfiguration,
     path: string,
     table: SQLiteTable,
   ) {
-    super(configuration.stream, path, table);
+    super(configuration, path, table);
     this.deduplication = configuration.deduplication();
+    const inferred = SQLiteColumns.fromSchema(configuration.stream.jsonSchema);
     const column = (field: string): SQLiteColumn => {
       const selected = table.columns.find((column) => column.name === field);
       if (selected === undefined)
         throw new TypeError(
           `Deduplication requires destination column ${field}`,
         );
-      const kinds = {
-        string: 'text',
-        number: 'real',
-        integer: 'integer',
-        boolean: 'boolean',
-      } as const;
-      if (selected.kind !== kinds[this.deduplication.type(field)])
+      if (
+        selected.kind !== inferred.find((column) => column.name === field)?.kind
+      )
         throw new TypeError(
           `Deduplication column ${field} must preserve the source scalar type`,
         );

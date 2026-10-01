@@ -1,11 +1,15 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { Stream } from 'elt';
+import type { CopyConfiguration } from 'elt';
 import type { SQLiteTable } from './sqlite-table.ts';
 import { SQLiteWriter } from './sqlite-writer.ts';
 
 export class SQLiteAppendWriter extends SQLiteWriter {
-  constructor(stream: Stream, path: string, table: SQLiteTable) {
-    super(stream, path, table);
+  constructor(
+    configuration: CopyConfiguration,
+    path: string,
+    table: SQLiteTable,
+  ) {
+    super(configuration, path, table);
     Object.freeze(this);
   }
 

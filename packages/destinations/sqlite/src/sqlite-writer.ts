@@ -1,15 +1,18 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import type { KeyValue, Stream } from 'elt';
+import type { CopyConfiguration, KeyValue, TargetDescription } from 'elt';
 import {
+  describeTarget,
   type FieldValues,
   FileContent,
   type Stage,
   TargetMissingError,
   TargetOwnedError,
+  undescribed,
   Writer,
 } from 'elt';
 import type { SQLiteColumn } from './sqlite-column.ts';
+import { describe } from './sqlite-descriptions.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
@@ -38,12 +41,26 @@ export const op = '"_mac_elt_op"';
 // them and a crash leaves nothing behind; commit merges them into the target
 // with the result of applying them one at a time.
 export abstract class SQLiteWriter extends Writer {
+  readonly #description: TargetDescription;
+
   constructor(
-    stream: Stream,
+    readonly configuration: CopyConfiguration,
     readonly path: string,
     readonly table: SQLiteTable,
   ) {
-    super(stream);
+    super(configuration.stream);
+    this.#description = describeTarget(
+      configuration,
+      table.columns,
+      (column) =>
+        `Integer reference to the source file's original bytes. Join ${quote(SQLiteFileStore.tableName(table, column))} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
+    );
+    if (table.readerView === undefined) return;
+    const missing = undescribed(this.#description);
+    if (missing.length > 0)
+      throw new TypeError(
+        `Reader view ${table.readerView} needs JSON Schema descriptions for ${missing.join(', ')} of stream ${this.stream.name}`,
+      );
   }
 
   // Checks and indexes the target needs before its first merge.
@@ -204,6 +221,51 @@ export abstract class SQLiteWriter extends Writer {
     }
   }
 
+  // What the table, its reader view and their columns say to readers,
+  // rewritten with every load so they follow the stream's schema.
+  private describe(database: DatabaseSync): void {
+    const dataTypes = new Map([
+      ...this.table.columns.map(
+        ({ name, dataType }) => [name, dataType] as const,
+      ),
+      ['loaded_at', 'timestamp'] as const,
+    ]);
+    const columns = Object.fromEntries(
+      Object.entries(this.#description.columns).map(([name, description]) => [
+        name,
+        { description, dataType: dataTypes.get(name) },
+      ]),
+    );
+    describe(database, this.table.name, this.#description.table, columns);
+    if (this.table.readerView !== undefined)
+      describe(
+        database,
+        this.table.readerView,
+        this.#description.table,
+        columns,
+      );
+  }
+
+  // Created only when absent and never replaced inside the load: replacing a
+  // view readers can see would lock them out until this load commits. A view
+  // of other columns or another table is refused rather than adopted.
+  private installReaderView(database: DatabaseSync, view: string): void {
+    const definition = `CREATE VIEW ${quote(view)} AS SELECT ${this.fields.join(', ')} FROM ${this.table.quotedName}`;
+    const existing = database
+      .prepare(
+        'SELECT "type", "sql" FROM sqlite_schema WHERE lower("name") = lower(?)',
+      )
+      .get(view);
+    if (existing === undefined) {
+      database.exec(definition);
+      return;
+    }
+    if (existing.type !== 'view' || existing.sql !== definition)
+      throw new TypeError(
+        `${quote(view)} is not a view of exactly ${this.table.quotedName}; drop it or delete the database`,
+      );
+  }
+
   // Refuses a target another writer owns, or a resumed one that was dropped,
   // and prepares it inside a savepoint, so a refused target leaves the shared
   // transaction as it was.
@@ -234,6 +296,9 @@ export abstract class SQLiteWriter extends Writer {
           `DELETE FROM ${quote(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`,
         );
       this.initialize(database);
+      if (this.table.readerView !== undefined)
+        this.installReaderView(database, this.table.readerView);
+      this.describe(database);
       database.exec(`DROP TABLE IF EXISTS ${stage}`);
       database.exec(
         `CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
