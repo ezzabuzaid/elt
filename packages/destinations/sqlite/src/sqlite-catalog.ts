@@ -5,6 +5,8 @@ import { publishSQLiteViews } from './sqlite-views.ts';
 
 // Lists what readers of one file can query: every described view and its
 // columns, from what loads and publications wrote there; safe to repeat.
+// Every column of a described view is described: loads refuse a reader view
+// with an undescribed column, and publications describe exactly their columns.
 export function installSQLiteCatalog({ path }: { path: string }): void {
   if (path === ':memory:')
     throw new TypeError('A SQLite catalog requires a database file');
@@ -20,10 +22,9 @@ export function installSQLiteCatalog({ path }: { path: string }): void {
             FROM sqlite_schema s JOIN ${descriptions} d ON d."relation" = s."name" AND d."column" = ''
             WHERE s."type" = 'view'
             UNION ALL
-            SELECT 'column', s."name" || '.' || p."name", coalesce(c."data_type", nullif(lower(p."type"), '')), c."description"
+            SELECT 'column', s."name" || '.' || c."column", c."data_type", c."description"
             FROM sqlite_schema s JOIN ${descriptions} d ON d."relation" = s."name" AND d."column" = ''
-            JOIN pragma_table_info(s."name") p
-            LEFT JOIN ${descriptions} c ON c."relation" = s."name" AND c."column" = p."name"
+            JOIN ${descriptions} c ON c."relation" = s."name" AND c."column" <> ''
             WHERE s."type" = 'view'
             ORDER BY 2`,
         },

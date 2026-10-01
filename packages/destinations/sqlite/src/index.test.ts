@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 import { rmSync } from 'node:fs';
@@ -36,7 +37,12 @@ import {
   type Target,
   TargetOwnedError,
 } from 'elt';
-import { SQLiteCheckpointStore, SQLiteDestination } from './index.ts';
+import {
+  installSQLiteCatalog,
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+  SQLiteSyncHistory,
+} from './index.ts';
 
 test('the public ELT API copies source records into SQLite', async () => {
   class TestSource extends Source {
@@ -91,6 +97,110 @@ test('the public ELT API copies source records into SQLite', async () => {
   const row = database.prepare('SELECT id, name FROM records').get();
   assert.ok(row);
   assert.deepEqual({ ...row }, { id: 'record-1', name: 'Test record' });
+});
+
+test('the macOS sqlite3 shell reads the catalog of a loaded file: every described view and column', async () => {
+  class DescribedSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'described';
+    readonly records = new Stream({
+      name: 'records',
+      jsonSchema: {
+        type: 'object',
+        description: 'Records a person kept.',
+        properties: {
+          id: { type: 'string', description: 'Record identifier.' },
+          name: { type: 'string', description: 'What the person called it.' },
+        },
+        required: ['id', 'name'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh'],
+    });
+
+    protected readonly catalog = new Catalog([this.records]);
+
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+
+    protected override async *extract(configuration: CopyConfiguration) {
+      yield {
+        stream: configuration.stream.name,
+        data: { id: 'record-1', name: 'Test record' },
+      };
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-test-'));
+  const source = new DescribedSource();
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'records.sqlite'),
+  });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  installSQLiteCatalog(destination);
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'described',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            source.records,
+            destination.table('raw_records').withReaderView('records'),
+          ),
+        ],
+      }),
+    ],
+    history,
+  }).run();
+
+  // The shell readers use; it refuses virtual tables inside a view.
+  const { stdout, stderr } = spawnSync(
+    '/usr/bin/sqlite3',
+    [
+      '-readonly',
+      '-json',
+      destination.path,
+      "SELECT kind, name, data_type, description FROM catalog WHERE name LIKE 'records%' OR name = 'stream_status.status' ORDER BY name",
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(stderr, '');
+  const rows = JSON.parse(stdout);
+  assert.deepEqual(
+    rows.map(({ kind, name }: { kind: string; name: string }) => [kind, name]),
+    [
+      ['view', 'records'],
+      ['column', 'records.id'],
+      ['column', 'records.loaded_at'],
+      ['column', 'records.name'],
+      ['column', 'stream_status.status'],
+    ],
+  );
+  const column = (name: string) =>
+    rows.find((row: { name: string }) => row.name === name);
+  assert.match(column('records').description, /Records a person kept\./);
+  assert.deepEqual(
+    { ...column('records.name') },
+    {
+      kind: 'column',
+      name: 'records.name',
+      data_type: 'text',
+      description: 'What the person called it.',
+    },
+  );
+  assert.equal(column('records.loaded_at').data_type, 'timestamp');
+  assert.ok(column('stream_status.status').description);
 });
 
 test('array fields load as JSON arrays that SQLite checks and reads element by element', async () => {
