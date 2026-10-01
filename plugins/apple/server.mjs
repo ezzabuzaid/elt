@@ -68008,7 +68008,7 @@ var AppleCalendarSource = class extends Source {
         calendarItemId: String(data.calendarItemId)
       };
       const scratch = __using(_stack, await mkdtempDisposable3(
-        join8(tmpdir3(), "mac-elt-calendar-attachment-")
+        join8(tmpdir3(), "context-compiler-calendar-attachment-")
       ), true);
       const extension = attachment2.filename === null ? "" : extname2(attachment2.filename);
       const path = join8(scratch.path, `content${extension}`);
@@ -75568,7 +75568,7 @@ import { setInterval as setInterval7, setTimeout as sleep2 } from "node:timers/p
 import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-descriptions.js
-var descriptions = '"_mac_elt_descriptions"';
+var descriptions = '"_elt_descriptions"';
 function createDescriptions(database) {
   database.exec(`CREATE TABLE IF NOT EXISTS ${descriptions} ("relation" TEXT NOT NULL COLLATE NOCASE, "column" TEXT NOT NULL COLLATE NOCASE, "data_type" TEXT, "description" TEXT NOT NULL, PRIMARY KEY ("relation", "column")) STRICT`);
 }
@@ -75597,8 +75597,8 @@ function publishSQLiteViews(database, { views }) {
   const names = /* @__PURE__ */ new Set();
   for (const view of views) {
     text15(view.name, "view name");
-    if (/^_mac_elt_/i.test(view.name))
-      throw new TypeError("View names starting with _mac_elt_ are reserved");
+    if (/^_elt_/i.test(view.name))
+      throw new TypeError("View names starting with _elt_ are reserved");
     if (names.has(view.name.toLowerCase()))
       throw new TypeError("Duplicate view names");
     names.add(view.name.toLowerCase());
@@ -76040,7 +76040,7 @@ var SQLiteFileStore = class _SQLiteFileStore {
     this.#insert = database.prepare(`INSERT INTO ${chunks} ("file", "n", "bytes") VALUES (?, ?, ?)`);
   }
   static tableName(table2, column) {
-    return `_mac_elt_files_${table2.location}_${column.name.toLowerCase()}`;
+    return `_elt_files_${table2.location}_${column.name.toLowerCase()}`;
   }
   // An empty file still stores one empty chunk, so its id stays reserved.
   async save(content) {
@@ -76066,8 +76066,8 @@ function lockWriter(path) {
   }
 }
 var quote3 = (name) => `"${name.replaceAll('"', '""')}"`;
-var seq = '"_mac_elt_seq"';
-var op = '"_mac_elt_op"';
+var seq = '"_elt_seq"';
+var op = '"_elt_op"';
 var SQLiteWriter = class extends Writer {
   configuration;
   path;
@@ -76101,7 +76101,7 @@ var SQLiteWriter = class extends Writer {
     return createHash7("sha256").update(this.table.location).digest("hex");
   }
   get dedupIndex() {
-    return quote3(`_mac_elt_dedup_${this.hash}`);
+    return quote3(`_elt_dedup_${this.hash}`);
   }
   get fields() {
     return [
@@ -76119,14 +76119,14 @@ var SQLiteWriter = class extends Writer {
   // The owner lives beside the table it guards and commits with the load. A
   // dropped table releases it, since nothing it held remains.
   writers(database) {
-    database.exec('CREATE TABLE IF NOT EXISTS "_mac_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT');
+    database.exec('CREATE TABLE IF NOT EXISTS "_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT');
   }
   own(database, writer) {
     this.writers(database);
-    database.exec(`DELETE FROM "_mac_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`);
-    const owner = database.prepare('SELECT "writer" FROM "_mac_elt_writers" WHERE "target" = ?').get(this.table.location)?.writer;
+    database.exec(`DELETE FROM "_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`);
+    const owner = database.prepare('SELECT "writer" FROM "_elt_writers" WHERE "target" = ?').get(this.table.location)?.writer;
     if (owner === void 0)
-      database.prepare('INSERT INTO "_mac_elt_writers" ("target", "writer") VALUES (?, ?)').run(this.table.location, writer);
+      database.prepare('INSERT INTO "_elt_writers" ("target", "writer") VALUES (?, ?)').run(this.table.location, writer);
     else if (owner !== writer)
       throw new TargetOwnedError(this.table.name, String(owner), writer);
   }
@@ -76153,7 +76153,7 @@ var SQLiteWriter = class extends Writer {
       database.exec("BEGIN IMMEDIATE");
       try {
         this.writers(database);
-        const owner = database.prepare('SELECT "writer" FROM "_mac_elt_writers" WHERE "target" = ?').get(this.table.location)?.writer;
+        const owner = database.prepare('SELECT "writer" FROM "_elt_writers" WHERE "target" = ?').get(this.table.location)?.writer;
         if (owner !== void 0 && owner !== writer)
           throw new TargetOwnedError(this.table.name, String(owner), writer);
         if (this.exists(database, this.table.location)) {
@@ -76164,7 +76164,7 @@ var SQLiteWriter = class extends Writer {
               database.exec(`DELETE FROM ${quote3(chunks)}`);
           }
         }
-        database.prepare('DELETE FROM "_mac_elt_writers" WHERE "target" = ?').run(this.table.location);
+        database.prepare('DELETE FROM "_elt_writers" WHERE "target" = ?').run(this.table.location);
         database.exec("COMMIT");
         database.exec("BEGIN IMMEDIATE");
         await committed?.(this.values(database));
@@ -76212,7 +76212,7 @@ var SQLiteWriter = class extends Writer {
   // and prepares it inside a savepoint, so a refused target leaves the shared
   // transaction as it was.
   prepare(database, { writer, resuming }, loadedAt) {
-    const name = quote3(`_mac_elt_stage_${this.hash}`);
+    const name = quote3(`_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
     const files = this.table.columns.filter((column) => column.storesFile);
     database.exec("SAVEPOINT prepare");
@@ -76368,7 +76368,7 @@ var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
     const guarded = this.configuration.dedupPolicy !== "replace" && cursor !== void 0;
     const order = guarded ? `"staged".${cursor.quotedName} COLLATE BINARY DESC, "staged".${seq}` : `"staged".${seq} DESC`;
     const columns3 = this.table.columns.map((column) => column.quotedName);
-    database.prepare(`WITH "deleted" AS (SELECT ${keys.join(", ")}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(", ")}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(", ")} ORDER BY ${order}) AS "_mac_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) INSERT INTO ${this.table.quotedName} AS "_mac_elt_target" (${this.fields.join(", ")}) SELECT ${columns3.join(", ")}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_mac_elt_rank" = 1) ORDER BY ${seq} ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(", ")}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(", ")}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_mac_elt_target".${cursor.quotedName}` : ""}`).run(loadedAt);
+    database.prepare(`WITH "deleted" AS (SELECT ${keys.join(", ")}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(", ")}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(", ")} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) INSERT INTO ${this.table.quotedName} AS "_elt_target" (${this.fields.join(", ")}) SELECT ${columns3.join(", ")}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1) ORDER BY ${seq} ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(", ")}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(", ")}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_elt_target".${cursor.quotedName}` : ""}`).run(loadedAt);
   }
   encode(record3) {
     this.deduplication.key(record3);
@@ -76407,13 +76407,13 @@ var SQLiteTable = class _SQLiteTable extends Target {
   constructor(name, columns3, readerView) {
     if (!name || name.includes("\0"))
       throw new TypeError("Invalid table name");
-    if (/^_mac_elt_/i.test(name))
-      throw new TypeError("Table names starting with _mac_elt_ are reserved");
+    if (/^_elt_/i.test(name))
+      throw new TypeError("Table names starting with _elt_ are reserved");
     if (readerView !== void 0) {
       if (!readerView || readerView.includes("\0"))
         throw new TypeError("Invalid view name");
-      if (/^_mac_elt_/i.test(readerView))
-        throw new TypeError("View names starting with _mac_elt_ are reserved");
+      if (/^_elt_/i.test(readerView))
+        throw new TypeError("View names starting with _elt_ are reserved");
       if (readerView.toLowerCase() === name.toLowerCase())
         throw new TypeError("A reader view needs a name of its own");
     }
@@ -76545,8 +76545,8 @@ var SQLiteDestination = class extends Destination {
 import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-sync-history-schema.js
-var attempts = '"_mac_elt_sync_attempts"';
-var coverage = '"_mac_elt_extraction_coverage"';
+var attempts = '"_elt_sync_attempts"';
+var coverage = '"_elt_extraction_coverage"';
 var now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 var status = `"status" TEXT NOT NULL DEFAULT 'running' CHECK ("status" IN ('running', 'succeeded', 'partial', 'failed'))`;
 var syncHistoryTables = [
@@ -76556,7 +76556,7 @@ var syncHistoryTables = [
     "started_at" TEXT NOT NULL, "completed_at" TEXT, ${status}, "error" TEXT,
     CHECK (("status" = 'running') = ("completed_at" IS NULL))
   ) STRICT`,
-  `CREATE INDEX IF NOT EXISTS "_mac_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
+  `CREATE INDEX IF NOT EXISTS "_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
   `CREATE TABLE IF NOT EXISTS ${coverage} (
     "attempt_id" INTEGER NOT NULL REFERENCES ${attempts}("id"),
     "stream" TEXT NOT NULL, "target_schema" TEXT NOT NULL, "target_table" TEXT NOT NULL,

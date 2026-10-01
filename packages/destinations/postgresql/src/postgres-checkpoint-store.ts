@@ -8,7 +8,7 @@ import {
   server,
 } from './postgres-session.ts';
 
-// Checkpoints kept beside the data they describe, in `_mac_elt_checkpoints`
+// Checkpoints kept beside the data they describe, in `_elt_checkpoints`
 // of one schema, so dropping the schema resets both. Each acknowledged
 // checkpoint is saved as soon as the load commits it; a crash in between
 // replays that unit, which deduplication absorbs.
@@ -25,7 +25,7 @@ export class PostgresCheckpointStore extends CheckpointStore {
   }
 
   get #table(): string {
-    return `${quote(this.schema)}."_mac_elt_checkpoints"`;
+    return `${quote(this.schema)}."_elt_checkpoints"`;
   }
 
   // Each replication's lock is a session lock on the run's own connection, so
@@ -40,7 +40,7 @@ export class PostgresCheckpointStore extends CheckpointStore {
     // Two-key locks never collide with the writers' one-key schema lock. A
     // replication already running fails the run fast; others run in parallel.
     // Taken in sorted order, so two runs never wait on each other.
-    const namespace = `mac-elt-checkpoints:${this.schema}`;
+    const namespace = `elt-checkpoints:${this.schema}`;
     const held: string[] = [];
     try {
       for (const id of ids) {

@@ -22,8 +22,8 @@ import type { PostgresReaderView, PostgresTable } from './postgres-table.ts';
 export type Transaction = postgres.Sql;
 
 const batchSize = 1000;
-export const seq = '"_mac_elt_seq"';
-export const op = '"_mac_elt_op"';
+export const seq = '"_elt_seq"';
+export const op = '"_elt_op"';
 
 // A run's one connection and write transaction for a schema, shared by every
 // stream's stage. The schema lock serializes everything elt writes there, as
@@ -193,7 +193,7 @@ export abstract class PostgresWriter extends Writer {
   // The existing library-owned dedup indexes on this table.
   protected async dedupIndexes(transaction: Transaction): Promise<string[]> {
     const rows = await transaction.unsafe(
-      String.raw`SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexname LIKE '\_mac\_elt\_dedup\_%'`,
+      String.raw`SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexname LIKE '\_elt\_dedup\_%'`,
       [this.schema, this.table.name],
     );
     return rows.map((row) => String(row.indexname));
@@ -202,7 +202,7 @@ export abstract class PostgresWriter extends Writer {
   // The owner lives beside the table it guards and commits with the load. A
   // dropped table releases it, since nothing it held remains.
   private async own(transaction: Transaction, writer: string): Promise<void> {
-    const writers = `${quote(this.schema)}."_mac_elt_writers"`;
+    const writers = `${quote(this.schema)}."_elt_writers"`;
     await transaction.unsafe(
       `CREATE TABLE IF NOT EXISTS ${writers} ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL)`,
     );
@@ -258,7 +258,7 @@ export abstract class PostgresWriter extends Writer {
         [quote(this.schema)],
       );
       if (schema?.exists !== true) return;
-      const writers = `${quote(this.schema)}."_mac_elt_writers"`;
+      const writers = `${quote(this.schema)}."_elt_writers"`;
       await transaction.unsafe(
         `CREATE TABLE IF NOT EXISTS ${writers} ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL)`,
       );
@@ -361,7 +361,7 @@ export abstract class PostgresWriter extends Writer {
   ): Promise<Stage> {
     const { sql } = load;
     const stage = quote(
-      `_mac_elt_stage_${createHash('sha256').update(this.qualifiedName).digest('hex').slice(0, 40)}`,
+      `_elt_stage_${createHash('sha256').update(this.qualifiedName).digest('hex').slice(0, 40)}`,
     );
     const stores = this.table.columns
       .filter((column) => column.storesFile)

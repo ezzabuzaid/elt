@@ -3,8 +3,8 @@ import { MarkdownDocument } from './markdown-document.ts';
 import type { MarkdownFile } from './markdown-file.ts';
 
 export class MarkdownFolder extends Target {
-  static readonly markerName = '.mac-elt-markdown';
-  static readonly marker = 'mac-elt MarkdownFolder v3\n';
+  static readonly markerName = '.elt-markdown';
+  static readonly marker = 'elt MarkdownFolder v3\n';
   readonly document: MarkdownDocument;
 
   constructor(

@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 
 // SQLite has no COMMENT ON. Relation and column meanings live here instead,
 // beside what they describe, and the catalog view shows them to readers.
-export const descriptions = '"_mac_elt_descriptions"';
+export const descriptions = '"_elt_descriptions"';
 
 export type ColumnDescription = {
   readonly description: string | null;

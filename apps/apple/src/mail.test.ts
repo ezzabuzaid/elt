@@ -365,7 +365,7 @@ function bytes(path: string, table: string, file: unknown) {
   return Buffer.concat(
     rows(
       path,
-      `SELECT bytes FROM "_mac_elt_files_${table}_bytes" WHERE file = ${Number(file)} ORDER BY n`,
+      `SELECT bytes FROM "_elt_files_${table}_bytes" WHERE file = ${Number(file)} ORDER BY n`,
     ).map((row) => row.bytes as Uint8Array),
   );
 }
@@ -847,7 +847,7 @@ test('Mail watches index commits and file-only downloads, cancels, and exports r
   const references = contents
     .flatMap((text) =>
       Array.from(
-        text.matchAll(/^<!-- mac-elt-record:([A-Za-z0-9+/=]+) -->$/gm),
+        text.matchAll(/^<!-- elt-record:([A-Za-z0-9+/=]+) -->$/gm),
         ([, encoded]) =>
           JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))
             .attachmentRef,

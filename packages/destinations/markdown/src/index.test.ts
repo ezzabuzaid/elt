@@ -117,7 +117,7 @@ test('Markdown file and folder targets honor the deduplication policy', async ()
     );
     return documents.flatMap((document) =>
       Array.from(
-        document.matchAll(/^<!-- mac-elt-record:([A-Za-z0-9+/=]+) -->$/gm),
+        document.matchAll(/^<!-- elt-record:([A-Za-z0-9+/=]+) -->$/gm),
         ([, encoded]) =>
           JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))
             .clicks,
@@ -208,7 +208,7 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
   const names = async () => {
     const decode = (document: string) =>
       Array.from(
-        document.matchAll(/^<!-- mac-elt-record:([A-Za-z0-9+/=]+) -->$/gm),
+        document.matchAll(/^<!-- elt-record:([A-Za-z0-9+/=]+) -->$/gm),
         ([, encoded]) =>
           JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))
             .name,
@@ -363,7 +363,7 @@ test('a target has one writer, even when another loads only its own partitions',
       new SQLiteCheckpointStore({ path: join(scratch.path, 'state.sqlite') }),
       async () =>
         (await readFile(join(scratch.path, 'records.md'), 'utf8')).match(
-          /mac-elt-record/g,
+          /elt-record/g,
         )?.length ?? 0,
     );
   }
@@ -464,7 +464,7 @@ test('Markdown publishes at each checkpoint and never publishes a failing partit
   await load(
     (destination) => destination.file('pages.md'),
     async (path) =>
-      (await readFile(join(path, 'pages.md'), 'utf8')).match(/mac-elt-record/g)
+      (await readFile(join(path, 'pages.md'), 'utf8')).match(/elt-record/g)
         ?.length ?? 0,
   );
   await load(
@@ -534,7 +534,7 @@ test('clearing a Markdown target drops it with its checkpoint, and a deleted one
   });
   const records = async () =>
     (await readFile(join(scratch.path, 'pages.md'), 'utf8')).match(
-      /mac-elt-record/g,
+      /elt-record/g,
     )?.length ?? 0;
   await pipeline.run();
 
@@ -645,7 +645,7 @@ test('one run loads a file and a folder together: a stream that fails keeps its 
   });
   const ids = (document: string) =>
     Array.from(
-      document.matchAll(/^<!-- mac-elt-record:([A-Za-z0-9+/=]+) -->$/gm),
+      document.matchAll(/^<!-- elt-record:([A-Za-z0-9+/=]+) -->$/gm),
       ([, encoded]) =>
         String(
           JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))

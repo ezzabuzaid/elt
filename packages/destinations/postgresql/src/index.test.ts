@@ -336,7 +336,7 @@ test('Postgres stores per-field attachment references and reconciles only the fi
     assert.equal(
       (
         await database.sql.unsafe(
-          "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'raw' AND table_name LIKE '_mac_elt_files_%'",
+          "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'raw' AND table_name LIKE '_elt_files_%'",
         )
       )[0]?.n,
       0,
@@ -702,7 +702,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
   assert.equal(await orphanCount(), 0);
   assert.equal(
     (
-      await database.sql`SELECT count(*)::int AS n FROM apple_notes._mac_elt_checkpoints`
+      await database.sql`SELECT count(*)::int AS n FROM apple_notes._elt_checkpoints`
     )[0]?.n,
     1,
   );
@@ -754,7 +754,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
   );
   assert.equal(
     (
-      await database.sql`SELECT count(*)::int AS n FROM apple_notes._mac_elt_checkpoints`
+      await database.sql`SELECT count(*)::int AS n FROM apple_notes._elt_checkpoints`
     )[0]?.n,
     0,
   );
@@ -1332,7 +1332,7 @@ test('an existing key column of another type is refused, and a changed key rebui
     }).run();
   const indexes = async () =>
     (
-      await database.sql`SELECT indexdef FROM pg_indexes WHERE schemaname = 'raw' AND tablename = 'items' AND indexname LIKE '\_mac\_elt\_dedup\_%'`
+      await database.sql`SELECT indexdef FROM pg_indexes WHERE schemaname = 'raw' AND tablename = 'items' AND indexname LIKE '\_elt\_dedup\_%'`
     ).map((row) => String(row.indexdef).replace(/^.* USING btree /, ''));
 
   await dedup(['id', 'kind']);
@@ -1356,7 +1356,7 @@ test('declarations are checked before any connection', () => {
     /reserved/,
   );
   const destination = new PostgresDestination({ url, schema: 'raw' });
-  assert.throws(() => destination.table('_MAC_ELT_writers'), /reserved/);
+  assert.throws(() => destination.table('_ELT_writers'), /reserved/);
   assert.throws(() => destination.table('x'.repeat(64)), /Invalid table name/);
   assert.throws(
     () => destination.table('items', (columns) => [columns.text('loaded_at')]),
@@ -1395,7 +1395,7 @@ test('a Postgres checkpoint store resumes from the last acknowledged state in th
   assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 3 }]);
   assert.deepEqual(
     [
-      ...(await database.sql`SELECT id, state::text FROM raw._mac_elt_checkpoints`),
+      ...(await database.sql`SELECT id, state::text FROM raw._elt_checkpoints`),
     ].map((row) => ({ ...row })),
     [{ id: 'copy', state: '{"page":3}' }],
   );
@@ -1467,7 +1467,7 @@ test('a checkpoint that cannot be saved after its rows commit is reported with t
   await pipeline.run();
   await database.sql.unsafe(`
     CREATE FUNCTION raw.refuse() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$;
-    CREATE TRIGGER refuse BEFORE INSERT OR UPDATE ON raw._mac_elt_checkpoints FOR EACH ROW EXECUTE FUNCTION raw.refuse();
+    CREATE TRIGGER refuse BEFORE INSERT OR UPDATE ON raw._elt_checkpoints FOR EACH ROW EXECUTE FUNCTION raw.refuse();
   `);
   source.messages = rows(stream, [{ id: 2 }, { id: 3 }]);
 
@@ -1547,7 +1547,7 @@ test('a copy commits at each checkpoint, its rows share one loaded_at, and no ch
   const midway = {
     rows: (await database.sql`SELECT id FROM raw.items`).map((row) => row.id),
     state: (
-      await database.sql`SELECT state::text FROM raw._mac_elt_checkpoints`
+      await database.sql`SELECT state::text FROM raw._elt_checkpoints`
     ).map((row) => row.state),
     checkpoints: (
       await database.sql`SELECT state FROM pg_stat_activity WHERE application_name = 'elt-checkpoints' AND datname = current_database()`
@@ -1678,12 +1678,12 @@ test('clear empties a table and keeps views on it, releasing its owner and check
     rows: (await database.sql`SELECT count(*)::int AS n FROM raw.items`).map(
       (row) => row.n,
     ),
-    owners: (await database.sql`SELECT target FROM raw._mac_elt_writers`).map(
+    owners: (await database.sql`SELECT target FROM raw._elt_writers`).map(
       (row) => row.target,
     ),
-    checkpoints: (
-      await database.sql`SELECT id FROM raw._mac_elt_checkpoints`
-    ).map((row) => row.id),
+    checkpoints: (await database.sql`SELECT id FROM raw._elt_checkpoints`).map(
+      (row) => row.id,
+    ),
   });
   await pipeline.run();
   await database.sql`CREATE VIEW raw.items_view AS SELECT id FROM raw.items`;
@@ -1819,7 +1819,7 @@ const loaded = async (database: { sql: postgres.Sql }, table: string) =>
 
 const savedStates = async (database: { sql: postgres.Sql }) =>
   (
-    await database.sql`SELECT id, state::text FROM raw._mac_elt_checkpoints ORDER BY id`
+    await database.sql`SELECT id, state::text FROM raw._elt_checkpoints ORDER BY id`
   ).map(({ id, state }) => `${id}=${state}`);
 
 test('a stream that fails publishes none of its staged rows while its sibling commits, and a failing overwrite keeps the old table', async () => {
@@ -2092,7 +2092,7 @@ test('a checkpoint lost between commit and save replays to the same rows', async
   ];
   await pipeline.run();
   const [first] =
-    await database.sql`SELECT state::text FROM raw._mac_elt_checkpoints`;
+    await database.sql`SELECT state::text FROM raw._elt_checkpoints`;
   source.rows = [
     { id: 'a', name: 'A' },
     { id: 'b', name: 'B2' },
@@ -2102,7 +2102,7 @@ test('a checkpoint lost between commit and save replays to the same rows', async
   const settled = { rows: await names(), states: await savedStates(database) };
 
   // The second run's rows committed but its checkpoint was never saved.
-  await database.sql`UPDATE raw._mac_elt_checkpoints SET state = ${first?.state}::text::json`;
+  await database.sql`UPDATE raw._elt_checkpoints SET state = ${first?.state}::text::json`;
   const [replay] = await pipeline.run();
 
   assert.deepEqual(settled.rows, ['a:A', 'b:B2', 'd:D']);

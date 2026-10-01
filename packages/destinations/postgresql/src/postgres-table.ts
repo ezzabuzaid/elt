@@ -26,8 +26,8 @@ export class PostgresTable extends Target {
       schemaName(readerView.schema);
       identifier(readerView.name, 'view name');
     }
-    if (/^_mac_elt_/i.test(name))
-      throw new TypeError('Table names starting with _mac_elt_ are reserved');
+    if (/^_elt_/i.test(name))
+      throw new TypeError('Table names starting with _elt_ are reserved');
     if (
       columns !== undefined &&
       (!Array.isArray(columns) ||

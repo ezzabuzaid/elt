@@ -112,9 +112,9 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     const columns = this.table.columns.map((column) => column.quotedName);
     database
       .prepare(
-        `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_mac_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) ` +
-          `INSERT INTO ${this.table.quotedName} AS "_mac_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_mac_elt_rank" = 1) ORDER BY ${seq} ` +
-          `ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_mac_elt_target".${cursor.quotedName}` : ''}`,
+        `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) ` +
+          `INSERT INTO ${this.table.quotedName} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1) ORDER BY ${seq} ` +
+          `ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_elt_target".${cursor.quotedName}` : ''}`,
       )
       .run(loadedAt);
   }

@@ -1,5 +1,5 @@
 {
-  "name": "mac-elt",
+  "name": "context-compiler",
   "private": true,
   "type": "module",
   "workspaces": [

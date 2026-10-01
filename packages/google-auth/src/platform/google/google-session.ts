@@ -18,7 +18,7 @@ const USER = 'local';
 export function grantDirectory(): string {
   return join(
     process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
-    'mac-elt',
+    'context-compiler',
   );
 }
 

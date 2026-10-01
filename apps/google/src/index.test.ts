@@ -175,7 +175,7 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
     ).map((row) => ({ ...row }));
   const saved = async () => {
     const [row] =
-      await sql`SELECT state FROM _mac_elt_checkpoints WHERE id = ${'search-analytics'}`;
+      await sql`SELECT state FROM _elt_checkpoints WHERE id = ${'search-analytics'}`;
     return row?.state;
   };
   // The 21st is still being collected, and its row says so.
@@ -1304,7 +1304,7 @@ test('a property without permission is reported by name while the others load an
       (row) => row.siteUrl,
     );
   const saved = async () =>
-    (await sql`SELECT state FROM _mac_elt_checkpoints`).flatMap(({ state }) =>
+    (await sql`SELECT state FROM _elt_checkpoints`).flatMap(({ state }) =>
       (
         state as { partitions: { partition: { siteUrl: string } }[] }
       ).partitions.map(({ partition }) => partition.siteUrl),
@@ -1981,7 +1981,7 @@ test('inspections run concurrently, a rejected URL becomes a row, and a server e
     /status code 500/,
   );
   assert.deepEqual(
-    [...(await broken.sql`SELECT id FROM _mac_elt_checkpoints`)],
+    [...(await broken.sql`SELECT id FROM _elt_checkpoints`)],
     [],
   );
 });

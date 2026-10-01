@@ -1,6 +1,6 @@
 ---
 name: add-elt-source
-description: Adds or extends a data source (connector) in mac-elt. Use when implementing a new source such as an Apple or Google app, adding streams or fields to an existing one, or changing how a source extracts, syncs, deletes, or watches for changes — even if the request only says "connector", "pull data from X", or "add X to the warehouse".
+description: Adds or extends a data source (connector) in context-compiler. Use when implementing a new source such as an Apple or Google app, adding streams or fields to an existing one, or changing how a source extracts, syncs, deletes, or watches for changes — even if the request only says "connector", "pull data from X", or "add X to the warehouse".
 ---
 
 # Add an ELT source

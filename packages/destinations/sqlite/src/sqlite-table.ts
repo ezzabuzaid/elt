@@ -16,13 +16,13 @@ export class SQLiteTable extends Target {
     readerView?: string,
   ) {
     if (!name || name.includes('\0')) throw new TypeError('Invalid table name');
-    if (/^_mac_elt_/i.test(name))
-      throw new TypeError('Table names starting with _mac_elt_ are reserved');
+    if (/^_elt_/i.test(name))
+      throw new TypeError('Table names starting with _elt_ are reserved');
     if (readerView !== undefined) {
       if (!readerView || readerView.includes('\0'))
         throw new TypeError('Invalid view name');
-      if (/^_mac_elt_/i.test(readerView))
-        throw new TypeError('View names starting with _mac_elt_ are reserved');
+      if (/^_elt_/i.test(readerView))
+        throw new TypeError('View names starting with _elt_ are reserved');
       if (readerView.toLowerCase() === name.toLowerCase())
         throw new TypeError('A reader view needs a name of its own');
     }

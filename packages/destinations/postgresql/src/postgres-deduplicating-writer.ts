@@ -50,7 +50,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   // Named after the table and its key, so a changed key builds a new index
   // and an unchanged one is never rebuilt under readers.
   get dedupIndex(): string {
-    return `_mac_elt_dedup_${createHash('sha256')
+    return `_elt_dedup_${createHash('sha256')
       .update(
         JSON.stringify([
           this.schema,
@@ -136,7 +136,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     const same = (left: string, right: string) =>
       keys.map((key) => `${left}.${key} = ${right}.${key}`).join(' AND ');
     await sql.unsafe(
-      `DELETE FROM ${this.qualifiedName} AS "_mac_elt_target" USING (SELECT DISTINCT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D') AS "deleted" WHERE ${same('"_mac_elt_target"', '"deleted"')}`,
+      `DELETE FROM ${this.qualifiedName} AS "_elt_target" USING (SELECT DISTINCT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D') AS "deleted" WHERE ${same('"_elt_target"', '"deleted"')}`,
     );
     const { cursor } = this;
     const guarded =
@@ -147,9 +147,9 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
       : `"staged".${seq} DESC`;
     const columns = this.table.columns.map((column) => column.quotedName);
     await sql.unsafe(
-      `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".*, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_mac_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) ` +
-        `INSERT INTO ${this.qualifiedName} AS "_mac_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, $1::text::timestamptz FROM "ranked" WHERE "_mac_elt_rank" = 1 ORDER BY ${seq} ` +
-        `ON CONFLICT (${keys.join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName}${collate} > "_mac_elt_target".${cursor.quotedName}${collate}` : ''}`,
+      `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".*, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) ` +
+        `INSERT INTO ${this.qualifiedName} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, $1::text::timestamptz FROM "ranked" WHERE "_elt_rank" = 1 ORDER BY ${seq} ` +
+        `ON CONFLICT (${keys.join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName}${collate} > "_elt_target".${cursor.quotedName}${collate}` : ''}`,
       [loadedAt],
     );
   }

@@ -460,7 +460,7 @@ function fileBytes(path: string, table: string, file: unknown): Buffer {
   return Buffer.concat(
     rows(
       path,
-      `SELECT bytes FROM "_mac_elt_files_${table}_bytes" WHERE file = ${Number(file)} ORDER BY n`,
+      `SELECT bytes FROM "_elt_files_${table}_bytes" WHERE file = ${Number(file)} ORDER BY n`,
     ).map(({ bytes }) => bytes as Uint8Array),
   );
 }

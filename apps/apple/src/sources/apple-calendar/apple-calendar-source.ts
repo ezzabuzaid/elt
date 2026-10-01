@@ -551,7 +551,7 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
       calendarItemId: String(data.calendarItemId),
     };
     await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'mac-elt-calendar-attachment-'),
+      join(tmpdir(), 'context-compiler-calendar-attachment-'),
     );
     const extension =
       attachment.filename === null ? '' : extname(attachment.filename);

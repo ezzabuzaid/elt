@@ -1543,7 +1543,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
       .map((row) => row.id),
     ['second'],
   );
-  assert.throws(() => destination.table('_MAC_ELT_writers'), /reserved/);
+  assert.throws(() => destination.table('_ELT_writers'), /reserved/);
 });
 
 test('a pipeline refuses two writers of one target before running any', async () => {
@@ -2130,7 +2130,7 @@ const storedFiles = (path: string) => {
   using database = new DatabaseSync(path, { readOnly: true });
   const chunks = database
     .prepare(
-      'SELECT f.id, c.bytes FROM files f JOIN "_mac_elt_files_files_bytes" c ON c.file = f.bytes ORDER BY f.id, c.n',
+      'SELECT f.id, c.bytes FROM files f JOIN "_elt_files_files_bytes" c ON c.file = f.bytes ORDER BY f.id, c.n',
     )
     .all()
     .map((row) => ({ id: String(row.id), bytes: row.bytes as Uint8Array }));
@@ -2145,7 +2145,7 @@ const storedFiles = (path: string) => {
   );
   const orphans = database
     .prepare(
-      'SELECT count(*) AS n FROM "_mac_elt_files_files_bytes" WHERE file NOT IN (SELECT bytes FROM files WHERE bytes IS NOT NULL)',
+      'SELECT count(*) AS n FROM "_elt_files_files_bytes" WHERE file NOT IN (SELECT bytes FROM files WHERE bytes IS NOT NULL)',
     )
     .get()?.n;
   return { files, orphans };
@@ -3081,7 +3081,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     using database = new DatabaseSync(destination.path, { readOnly: true });
     return database
       .prepare(
-        `SELECT t.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM "_mac_elt_files_${table}_bytes" c WHERE c.file = t.bytes) AS bytes FROM ${table} t ORDER BY t.id`,
+        `SELECT t.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM "_elt_files_${table}_bytes" c WHERE c.file = t.bytes) AS bytes FROM ${table} t ORDER BY t.id`,
       )
       .all()
       .map(({ id, bytes }) => `${id}=${bytes}`);
@@ -3090,7 +3090,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     using database = new DatabaseSync(destination.path, { readOnly: true });
     return database
       .prepare(
-        `SELECT count(*) AS n FROM "_mac_elt_files_${table}_bytes" WHERE file NOT IN (SELECT bytes FROM ${table} WHERE bytes IS NOT NULL)`,
+        `SELECT count(*) AS n FROM "_elt_files_${table}_bytes" WHERE file NOT IN (SELECT bytes FROM ${table} WHERE bytes IS NOT NULL)`,
       )
       .get()?.n;
   };
@@ -3247,13 +3247,13 @@ for (const { outcome, next, expected } of leftBehind)
       using database = new DatabaseSync(destination.path, { readOnly: true });
       const loaded = database
         .prepare(
-          `SELECT d.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM "_mac_elt_files_docs_bytes" c WHERE c.file = d.bytes) AS bytes FROM docs d ORDER BY d.id`,
+          `SELECT d.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM "_elt_files_docs_bytes" c WHERE c.file = d.bytes) AS bytes FROM docs d ORDER BY d.id`,
         )
         .all()
         .map(({ id, bytes }) => `${id}=${bytes}`);
       const orphans = database
         .prepare(
-          'SELECT count(*) AS n FROM "_mac_elt_files_docs_bytes" WHERE file NOT IN (SELECT bytes FROM docs WHERE bytes IS NOT NULL)',
+          'SELECT count(*) AS n FROM "_elt_files_docs_bytes" WHERE file NOT IN (SELECT bytes FROM docs WHERE bytes IS NOT NULL)',
         )
         .get()?.n;
       return { loaded, orphans };

@@ -106,7 +106,7 @@ A target has one writer, as in Airbyte, where one stream owns one table and ["mo
 
 A writer is the copy's `id`, or the source identity and stream name for a copy without one. Every destination records the writer of each target, stored with the target and committed with its first load. Before a copy extracts or changes anything, the target refuses any other writer with `TargetOwnedError`, which names both. A pipeline refuses two writers of one target among the copies of all its connections before running any. It compares each destination's `location(target)`, which is globally unique: `//host:port/database/"schema"."table"` for Postgres, `<path>#<table>` for SQLite, and `<directory>/<name>` for Markdown. The owning writer may change its own mode or key.
 
-To reset or reassign a target, clear it with its owning copy, as with Airbyte's Clear: `pipeline.clear()` (or `pipeline.clear([copy])`, which routes each copy to its connection, or `connection.clear()`) empties each target, releases its writer and removes the copy's checkpoint, so the next run reloads from scratch. A SQL table is emptied rather than dropped, so views built on it, such as the warehouse marts, keep working; a Markdown file or folder is removed. Clearing refuses a target another writer owns. A target dropped by hand also releases its writer, but a copy that still has a checkpoint for it fails with `TargetMissingError` before extracting, since resuming would load only what changed since the checkpoint; clear the copy to reload it. SQLite and Postgres keep writers in the reserved `_mac_elt_writers` table; Markdown keeps it in the file's header comment or the folder's marker file.
+To reset or reassign a target, clear it with its owning copy, as with Airbyte's Clear: `pipeline.clear()` (or `pipeline.clear([copy])`, which routes each copy to its connection, or `connection.clear()`) empties each target, releases its writer and removes the copy's checkpoint, so the next run reloads from scratch. A SQL table is emptied rather than dropped, so views built on it, such as the warehouse marts, keep working; a Markdown file or folder is removed. Clearing refuses a target another writer owns. A target dropped by hand also releases its writer, but a copy that still has a checkpoint for it fails with `TargetMissingError` before extracting, since resuming would load only what changed since the checkpoint; clear the copy to reload it. SQLite and Postgres keep writers in the reserved `_elt_writers` table; Markdown keeps it in the file's header comment or the folder's marker file.
 
 Several properties or accounts share tables through one [partitioned source](#partitioned-streams), which is one writer.
 
@@ -126,7 +126,7 @@ Stream properties are scalars or arrays of one scalar type. An array field decla
 
 SQLite inference maps flat JSON Schema fields: `string` → `TEXT`, `integer` → `INTEGER`, `number` → `REAL`, `boolean` → `INTEGER` with a 0/1 constraint, and an array → `TEXT` holding a JSON array, checked by `json_valid` and `json_type(...) = 'array'` and read with `json_each`. Nullable scalars and arrays are supported for ordinary fields. Missing optional fields become SQL `NULL`. Explicit columns support `text`, `integer`, `real`, `blob`, and `boolean`; they allow null unless marked `.notNull()` or `.primaryKey()`. Missing/undefined explicit fields fail. An explicit projection can omit unsupported nested fields.
 
-SQLite creates strict tables. Existing SQL constraints remain authoritative; there are no schema migrations. Table names starting with `_mac_elt_` are reserved. Deduplication additionally verifies stored key/cursor column types and rejects null keys/cursors. It uses native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html) and a reserved `_mac_elt_dedup_*` unique index. Changing to ordinary append/overwrite removes that mode-owned index while retaining explicit constraints. An existing append-history table with repeated keys must be replaced with `overwrite_dedup` before incremental deduplication can start.
+SQLite creates strict tables. Existing SQL constraints remain authoritative; there are no schema migrations. Table names starting with `_elt_` are reserved. Deduplication additionally verifies stored key/cursor column types and rejects null keys/cursors. It uses native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html) and a reserved `_elt_dedup_*` unique index. Changing to ordinary append/overwrite removes that mode-owned index while retaining explicit constraints. An existing append-history table with repeated keys must be replaced with `overwrite_dedup` before incremental deduplication can start.
 
 Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The `count` returned for a committed copy is the number of accepted input observations, including deduplication no-ops, and `deleted` is the number of accepted deletions, including keys that were already absent; neither is the final row count.
 
@@ -156,7 +156,7 @@ State belongs to the orchestration, not the destination, as in Airbyte, so any s
 | Store | Keeps state in | Concurrency |
 | --- | --- | --- |
 | `SQLiteCheckpointStore({ path })` from `elt-sqlite` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | The file's write lock, held for the pass and retaken in the same step as each save commits: passes sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Connections pass side by side, so give each connection, and each independent pipeline, its own file. |
-| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._mac_elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | A session advisory lock per copy `id` on its own connection, taken in sorted order: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the writers' schema lock. |
+| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | A session advisory lock per copy `id` on its own connection, taken in sorted order: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the writers' schema lock. |
 
 ### Snapshot streams
 
@@ -371,17 +371,17 @@ The columns declare what to extract. `Copy` collects those declarations; `Source
 
 Use `c.blob('bytes').from(notes.attachments.file)` when the database should own the original bytes instead. This is independent of `.store(files)` and remains available for both SQL destinations. The file and row then commit together in the database.
 
-SQLite stores an original file in chunks, because one BLOB is capped at 1,000,000,000 bytes (`SQLITE_MAX_LENGTH` in Node's build) and a whole-file value would sit in memory. The `bytes` column holds an INTEGER file id, and the table `_mac_elt_files_<table>_<column>` holds `(file, n, bytes)` rows of up to 4 MiB, `n` counting from 0. An empty file has one empty chunk. Triggers remove a row's chunks in the same transaction whenever the row is deleted, overwritten or replaced, and a record that a deduplication guard rejects stores none. Read a file back in order:
+SQLite stores an original file in chunks, because one BLOB is capped at 1,000,000,000 bytes (`SQLITE_MAX_LENGTH` in Node's build) and a whole-file value would sit in memory. The `bytes` column holds an INTEGER file id, and the table `_elt_files_<table>_<column>` holds `(file, n, bytes)` rows of up to 4 MiB, `n` counting from 0. An empty file has one empty chunk. Triggers remove a row's chunks in the same transaction whenever the row is deleted, overwritten or replaced, and a record that a deduplication guard rejects stores none. Read a file back in order:
 
 ```sql
-SELECT c.bytes FROM "_mac_elt_files_attachments_bytes" AS c
+SELECT c.bytes FROM "_elt_files_attachments_bytes" AS c
 WHERE c.file = (SELECT bytes FROM attachments WHERE id = ?)
 ORDER BY c.n;
 ```
 
 Verified on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a 1.5 GB file loaded as 358 chunks in 3.3 s with a peak RSS of 137 MiB, and the reassembled chunks matched the file's SHA-256.
 
-Postgres supports the same `text().from(file).parse(parser)` and `blob().from(file)` declarations. Parsed content is TEXT. An original file's column holds a UUID; its bytes live in a per-column `_mac_elt_files_<hash>` table in the destination schema, with `(file UUID, n BIGINT, bytes BYTEA)` chunks of up to 4 MiB. The hash is the first 40 hex characters of SHA-256 over `JSON.stringify([tableName, columnName])`. Join the file UUID and order by `n` to read the original. Empty files have one empty chunk; unavailable files have a null reference. The loader removes unreferenced chunks when a stage commits or is discarded, and when it reopens after a crash; clearing a copy removes its files too. A plain `blob()` column without `.from(file)` stores an inline BYTEA value.
+Postgres supports the same `text().from(file).parse(parser)` and `blob().from(file)` declarations. Parsed content is TEXT. An original file's column holds a UUID; its bytes live in a per-column `_elt_files_<hash>` table in the destination schema, with `(file UUID, n BIGINT, bytes BYTEA)` chunks of up to 4 MiB. The hash is the first 40 hex characters of SHA-256 over `JSON.stringify([tableName, columnName])`. Join the file UUID and order by `n` to read the original. Empty files have one empty chunk; unavailable files have a null reference. The loader removes unreferenced chunks when a stage commits or is discarded, and when it reopens after a crash; clearing a copy removes its files too. A plain `blob()` column without `.from(file)` stores an inline BYTEA value.
 
 ```ts
 // Text only, under a destination field name you choose.
@@ -427,7 +427,7 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 
 ## Connector applications
 
-`apps/apple/src/pipeline.ts` default-exports one `Pipeline` with a `PostgresSyncHistory` and six connections: `apple-mail`, `apple-notes`, `apple-messages`, `apple-contacts`, `apple-calendar` and `apple-reminders`. Building it signs in to Google for Calendar's Drive and Gmail attachments, so `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` must be set when the app starts; discovery returns each source's static catalog. Apple loads into the shared Postgres warehouse as the loader role, with `raw_<stream>` tables and `_mac_elt_checkpoints` in each connection's `apple_<name>` schema. Apple raw schemas are not granted to the reader.
+`apps/apple/src/pipeline.ts` default-exports one `Pipeline` with a `PostgresSyncHistory` and six connections: `apple-mail`, `apple-notes`, `apple-messages`, `apple-contacts`, `apple-calendar` and `apple-reminders`. Building it signs in to Google for Calendar's Drive and Gmail attachments, so `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` must be set when the app starts; discovery returns each source's static catalog. Apple loads into the shared Postgres warehouse as the loader role, with `raw_<stream>` tables and `_elt_checkpoints` in each connection's `apple_<name>` schema. Apple raw schemas are not granted to the reader.
 
 - `apps/apple/src/main.ts` (`npx nx run apple:start`), the app's one entry point, installs the sync history and watches the pipeline until `SIGINT` or `SIGTERM`. Every connection's first pass loads all its streams, side by side; after that each connection refreshes at its own source's pace, and every pass is recorded as it completes.
 
@@ -566,7 +566,7 @@ Inferred columns follow the stream schema, and unlike SQLite the string formats 
 
 Arrays keep their element order and load a JSON `null` as SQL `NULL`; readers use `= ANY(...)`, `unnest()` and `cardinality()`, and `marts.catalog` shows the element type. ISO dates count years astronomically and Postgres does not, so year `0000` loads as `0001 BC`, the same day; every other year is written as given.
 
-Explicit columns use `columns.text/integer/real/boolean/date/timestamp/blob(field)` with `.notNull()` and `.primaryKey()`. A plain `blob()` stores BYTEA; `blob().from(file)` streams originals into chunk tables, and `text().from(file).parse(parser)` stores parsed text. See [attachment storage](#attachment-files-and-document-parsing). Identifiers are case-sensitive and limited to 63 bytes, because Postgres would silently truncate a longer one; `_mac_elt_` names and a `loaded_at` column are reserved, and `pg_` schemas are refused.
+Explicit columns use `columns.text/integer/real/boolean/date/timestamp/blob(field)` with `.notNull()` and `.primaryKey()`. A plain `blob()` stores BYTEA; `blob().from(file)` streams originals into chunk tables, and `text().from(file).parse(parser)` stores parsed text. See [attachment storage](#attachment-files-and-document-parsing). Identifiers are case-sensitive and limited to 63 bytes, because Postgres would silently truncate a longer one; `_elt_` names and a `loaded_at` column are reserved, and `pg_` schemas are refused.
 
 Connectors describe their data with JSON Schema's `description`: at the root for the source record's meaning, and on each property for the field's meaning, nulls, units and source-local relationships. These annotations belong to the connector; they contain no destination table names. Notes describes all five of its streams and their fields this way.
 
@@ -579,8 +579,8 @@ A run holds one connection and one write transaction on the schema, under a per-
 - Operations reach the stage in batches of 1000, sent as one JSON parameter and cast per column. Every statement runs under a savepoint, because a failed statement aborts a Postgres transaction and would otherwise erase the other streams' stages.
 - A commit merges one stream's stage into its table with the result of applying its operations one at a time: staged `DELETE`s remove their keys, only records after a key's last `DELETE` count, `replace` keeps the last and `cursor_newer` the first with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`). Every row of a run shares one `loaded_at` (`TIMESTAMPTZ`).
 - Overwrite empties the table with `DELETE`, not `TRUNCATE`, at its stream's commit: `TRUNCATE`'s exclusive lock would block readers for the rest of the run. Until then readers see the previous load.
-- Deduplication upserts on a unique index named after the table and key (`_mac_elt_dedup_<hash>`). The index is created once and rebuilt only when the key changes; a replacing load builds it after emptying the table.
-- The writer of each table lives in `<schema>._mac_elt_writers` and follows the [target ownership](#target-ownership) rule.
+- Deduplication upserts on a unique index named after the table and key (`_elt_dedup_<hash>`). The index is created once and rebuilt only when the key changes; a replacing load builds it after emptying the table.
+- The writer of each table lives in `<schema>._elt_writers` and follows the [target ownership](#target-ownership) rule.
 
 Existing tables are not migrated: a deduplicating load checks that stored key and cursor columns keep their types and fails otherwise. Keep checkpoints in the same schema with `PostgresCheckpointStore` ([checkpoint stores](#checkpoint-stores)).
 
@@ -1261,7 +1261,7 @@ One-time setup in the Cloud Console (Google has no API for creating Desktop OAut
 - **New scopes.** When a later caller needs a scope the grant lacks, consent runs again for the union of old and new scopes, so no earlier permission is dropped.
 - **Revoked or expired grants.** When Google refuses the stored refresh token (revoked consent, an expired Testing-mode token, or a Workspace re-authentication demand), consent runs again.
 
-Grants are stored under `${XDG_CONFIG_HOME:-~/.config}/mac-elt/google/` as owner-only (`0600`) JSON files, written through a temporary file and a rename, so a crash leaves the previous grant intact. This is the same protection gcloud gives its own refresh token; the file is not encrypted. File and directory names are SHA-256 hashes, not account ids. To switch Google accounts, delete that directory; the next run asks for consent.
+Grants are stored under `${XDG_CONFIG_HOME:-~/.config}/context-compiler/google/` as owner-only (`0600`) JSON files, written through a temporary file and a rename, so a crash leaves the previous grant intact. This is the same protection gcloud gives its own refresh token; the file is not encrypted. File and directory names are SHA-256 hashes, not account ids. To switch Google accounts, delete that directory; the next run asks for consent.
 
 Because a user credential is billed to the project that issued its OAuth client, no quota-project header is needed. The previous gcloud-import path failed with `SERVICE_DISABLED` / `accessNotConfigured` naming `projects/764086051850`, gcloud's own client project, until a quota project was named.
 
@@ -1327,7 +1327,7 @@ The Apple and Google apps load into the PostgreSQL warehouse and install a share
 
 ```text
 warehouse database
-├── google_search_console   raw tables and _mac_elt_checkpoints, loaded by elt-postgresql; readers have no access
+├── google_search_console   raw tables and _elt_checkpoints, loaded by elt-postgresql; readers have no access
 ├── apple_<name>            private raw Apple tables and checkpoints
 ├── _warehouse              private sync attempts and coverage declarations
 ├── marts                   documented reader views, one prefix per source
@@ -1436,7 +1436,7 @@ Live verification on **2026-09-24** of the daily inspection quota on `sc-domain:
 
 Live verification on **2026-09-24** of partitions: one source listing `sc-domain:ezz.sh`, `sc-domain:january.sh` and `sc-domain:limerence.sh` loaded every table in one run, with one checkpoint per stream holding a `{ partitions: [...] }` entry per property.
 
-Live verification on **2026-09-25** of target ownership against `sc-domain:ezz.sh`: after the old `_mac_elt_writers` table was dropped, one run recreated it as `(target, writer)` with one row per table, each owned by its copy id (for example `sitemaps ← {"copy":"sitemaps"}`). A second copy from another source into `sitemaps` failed with `TargetOwnedError` naming both writers, extracted nothing, and left its row count unchanged.
+Live verification on **2026-09-25** of target ownership against `sc-domain:ezz.sh`: after the old `_elt_writers` table was dropped, one run recreated it as `(target, writer)` with one row per table, each owned by its copy id (for example `sitemaps ← {"copy":"sitemaps"}`). A second copy from another source into `sitemaps` failed with `TargetOwnedError` naming both writers, extracted nothing, and left its row count unchanged.
 
 Live verification on **2026-09-25** of failure isolation and clear, against `sc-domain:ezz.sh`:
 

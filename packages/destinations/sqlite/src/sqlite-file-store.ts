@@ -39,7 +39,7 @@ export class SQLiteFileStore {
   }
 
   static tableName(table: SQLiteTable, column: SQLiteColumn): string {
-    return `_mac_elt_files_${table.location}_${column.name.toLowerCase()}`;
+    return `_elt_files_${table.location}_${column.name.toLowerCase()}`;
   }
 
   // An empty file still stores one empty chunk, so its id stays reserved.

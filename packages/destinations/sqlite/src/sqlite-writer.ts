@@ -33,8 +33,8 @@ export function lockWriter(path: string): Disposable {
 }
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
-export const seq = '"_mac_elt_seq"';
-export const op = '"_mac_elt_op"';
+export const seq = '"_elt_seq"';
+export const op = '"_elt_op"';
 
 // One stream's load inside a run's shared transaction. Operations wait in a
 // connection-private TEMP stage, so another stream's commit never publishes
@@ -101,7 +101,7 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   protected get dedupIndex(): string {
-    return quote(`_mac_elt_dedup_${this.hash}`);
+    return quote(`_elt_dedup_${this.hash}`);
   }
 
   protected get fields(): string[] {
@@ -126,22 +126,22 @@ export abstract class SQLiteWriter extends Writer {
   // dropped table releases it, since nothing it held remains.
   private writers(database: DatabaseSync): void {
     database.exec(
-      'CREATE TABLE IF NOT EXISTS "_mac_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT',
+      'CREATE TABLE IF NOT EXISTS "_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT',
     );
   }
 
   private own(database: DatabaseSync, writer: string): void {
     this.writers(database);
     database.exec(
-      `DELETE FROM "_mac_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`,
+      `DELETE FROM "_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`,
     );
     const owner = database
-      .prepare('SELECT "writer" FROM "_mac_elt_writers" WHERE "target" = ?')
+      .prepare('SELECT "writer" FROM "_elt_writers" WHERE "target" = ?')
       .get(this.table.location)?.writer;
     if (owner === undefined)
       database
         .prepare(
-          'INSERT INTO "_mac_elt_writers" ("target", "writer") VALUES (?, ?)',
+          'INSERT INTO "_elt_writers" ("target", "writer") VALUES (?, ?)',
         )
         .run(this.table.location, writer);
     else if (owner !== writer)
@@ -192,7 +192,7 @@ export abstract class SQLiteWriter extends Writer {
     try {
       this.writers(database);
       const owner = database
-        .prepare('SELECT "writer" FROM "_mac_elt_writers" WHERE "target" = ?')
+        .prepare('SELECT "writer" FROM "_elt_writers" WHERE "target" = ?')
         .get(this.table.location)?.writer;
       if (owner !== undefined && owner !== writer)
         throw new TargetOwnedError(this.table.name, String(owner), writer);
@@ -209,7 +209,7 @@ export abstract class SQLiteWriter extends Writer {
         }
       }
       database
-        .prepare('DELETE FROM "_mac_elt_writers" WHERE "target" = ?')
+        .prepare('DELETE FROM "_elt_writers" WHERE "target" = ?')
         .run(this.table.location);
       database.exec('COMMIT');
       database.exec('BEGIN IMMEDIATE');
@@ -274,7 +274,7 @@ export abstract class SQLiteWriter extends Writer {
     { writer, resuming }: { writer: string; resuming: boolean },
     loadedAt: string,
   ): Stage {
-    const name = quote(`_mac_elt_stage_${this.hash}`);
+    const name = quote(`_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
     const files = this.table.columns.filter((column) => column.storesFile);
     database.exec('SAVEPOINT prepare');

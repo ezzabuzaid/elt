@@ -1,8 +1,8 @@
 import { syncHistoryRelations } from 'elt';
 import type { SQLiteView } from './sqlite-views.ts';
 
-export const attempts = '"_mac_elt_sync_attempts"';
-export const coverage = '"_mac_elt_extraction_coverage"';
+export const attempts = '"_elt_sync_attempts"';
+export const coverage = '"_elt_extraction_coverage"';
 export const now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 const status = `"status" TEXT NOT NULL DEFAULT 'running' CHECK ("status" IN ('running', 'succeeded', 'partial', 'failed'))`;
@@ -14,7 +14,7 @@ export const syncHistoryTables = [
     "started_at" TEXT NOT NULL, "completed_at" TEXT, ${status}, "error" TEXT,
     CHECK (("status" = 'running') = ("completed_at" IS NULL))
   ) STRICT`,
-  `CREATE INDEX IF NOT EXISTS "_mac_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
+  `CREATE INDEX IF NOT EXISTS "_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
   `CREATE TABLE IF NOT EXISTS ${coverage} (
     "attempt_id" INTEGER NOT NULL REFERENCES ${attempts}("id"),
     "stream" TEXT NOT NULL, "target_schema" TEXT NOT NULL, "target_table" TEXT NOT NULL,

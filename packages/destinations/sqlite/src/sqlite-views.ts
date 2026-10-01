@@ -28,8 +28,8 @@ export function publishSQLiteViews(
   const names = new Set<string>();
   for (const view of views) {
     text(view.name, 'view name');
-    if (/^_mac_elt_/i.test(view.name))
-      throw new TypeError('View names starting with _mac_elt_ are reserved');
+    if (/^_elt_/i.test(view.name))
+      throw new TypeError('View names starting with _elt_ are reserved');
     if (names.has(view.name.toLowerCase()))
       throw new TypeError('Duplicate view names');
     names.add(view.name.toLowerCase());

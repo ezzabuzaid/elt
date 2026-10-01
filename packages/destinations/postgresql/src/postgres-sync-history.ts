@@ -76,7 +76,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
   // Creates the history's tables and publishes its views; safe to repeat.
   async install(): Promise<void> {
     await this.#write(async (transaction) => {
-      await transaction`SELECT pg_advisory_xact_lock(hashtextextended('mac-elt:sync-history', 0))`;
+      await transaction`SELECT pg_advisory_xact_lock(hashtextextended('elt:sync-history', 0))`;
       for (const statement of syncHistoryTables)
         await transaction.unsafe(statement);
       await publishPostgresViews(transaction, {

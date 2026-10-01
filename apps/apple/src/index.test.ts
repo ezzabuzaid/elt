@@ -2778,7 +2778,7 @@ test('Calendar attachment files come from the fetcher, inline data, or stay null
   assert.deepEqual(
     database
       .prepare(
-        'SELECT filename, formatType, inline, (SELECT c.bytes FROM "_mac_elt_files_attachments_bytes" c WHERE c.file = a.bytes AND c.n = 0) AS bytes FROM attachments a ORDER BY a.rowid',
+        'SELECT filename, formatType, inline, (SELECT c.bytes FROM "_elt_files_attachments_bytes" c WHERE c.file = a.bytes AND c.n = 0) AS bytes FROM attachments a ORDER BY a.rowid',
       )
       .all()
       .map((row) => ({
@@ -3431,7 +3431,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   assert.deepEqual(
     messagesRows(
       out,
-      'SELECT a.guid, a.availableLocally, a.content, (SELECT c.bytes FROM "_mac_elt_files_attachments_bytes" c WHERE c.file = a.bytes) AS bytes FROM attachments a ORDER BY a.guid',
+      'SELECT a.guid, a.availableLocally, a.content, (SELECT c.bytes FROM "_elt_files_attachments_bytes" c WHERE c.file = a.bytes) AS bytes FROM attachments a ORDER BY a.guid',
     ),
     [
       {

@@ -20,7 +20,7 @@ export class PostgresFileStore {
       .update(JSON.stringify([table.name, column.name]))
       .digest('hex')
       .slice(0, 40);
-    this.qualifiedName = `${quote(schema)}.${quote(`_mac_elt_files_${key}`)}`;
+    this.qualifiedName = `${quote(schema)}.${quote(`_elt_files_${key}`)}`;
   }
 
   async initialize(sql: postgres.Sql): Promise<void> {
