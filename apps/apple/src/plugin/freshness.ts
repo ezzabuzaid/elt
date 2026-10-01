@@ -8,6 +8,7 @@ import { installSQLiteCatalog, SQLiteSyncHistory } from 'elt-sqlite';
 import {
   type Configuration,
   importDirectory,
+  NewerStoreError,
   removeStaleImports,
   Settings,
 } from './settings.ts';
@@ -89,8 +90,9 @@ async function watchImports(
 }
 
 // Whether a newer plugin server is running, after recording this server as
-// running. A server that stopped cleanly removed itself; one that crashed
-// stops counting once its heartbeat is ten seconds old.
+// running, or a newer layout owns the settings file. A server that stopped
+// cleanly removed itself; one that crashed stops counting once its heartbeat
+// is ten seconds old.
 function outdated(directory: string, id: string, version: string): boolean {
   const newer = (candidate: string) => {
     const [left, right] = [candidate, version].map((value) =>
@@ -106,8 +108,8 @@ function outdated(directory: string, id: string, version: string): boolean {
     const now = Date.now();
     settings.heartbeat(id, version, now);
     return settings.runningVersions(now - 10_000).some(newer);
-  } catch {
-    return false;
+  } catch (error) {
+    return error instanceof NewerStoreError;
   }
 }
 

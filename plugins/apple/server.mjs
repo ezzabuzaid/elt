@@ -74426,6 +74426,13 @@ var configurationSchema = external_exports.strictObject({
   }
 });
 var storeLayout = 2;
+var NewerStoreError = class extends Error {
+  constructor() {
+    super(
+      "Apple was updated on this Mac. Start a new chat to use the new version."
+    );
+  }
+};
 function importDirectory(directory, item) {
   const key = createHash8("sha256").update(JSON.stringify([storeLayout, item.scope, item.includeAttachments])).digest("hex").slice(0, 16);
   return join16(directory, item.app, key);
@@ -74472,6 +74479,7 @@ var Settings = class {
     this.database = new DatabaseSync12(path);
     try {
       chmodSync2(path, 384);
+      if (this.layout() !== storeLayout) this.rebuild();
       this.database.exec(
         "CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, app TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);"
       );
@@ -74482,6 +74490,33 @@ var Settings = class {
   }
   directory;
   database;
+  layout() {
+    return Number(
+      this.database.prepare("PRAGMA user_version").get()?.user_version
+    );
+  }
+  // Refuses a file a newer layout wrote, and empties one an older layout
+  // wrote: stored settings are disposable, so the user sets up again.
+  rebuild() {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const layout = this.layout();
+      if (layout > storeLayout) throw new NewerStoreError();
+      if (layout < storeLayout) {
+        for (const { type, name } of this.database.prepare(
+          "SELECT type, name FROM sqlite_schema WHERE type IN ('view', 'table') AND name NOT LIKE 'sqlite_%' ORDER BY type = 'table'"
+        ).all())
+          this.database.exec(
+            `DROP ${type === "view" ? "VIEW" : "TABLE"} IF EXISTS "${String(name).replaceAll('"', '""')}"`
+          );
+        this.database.exec(`PRAGMA user_version = ${storeLayout}`);
+      }
+      this.database.exec("COMMIT");
+    } catch (error62) {
+      this.database.exec("ROLLBACK");
+      throw error62;
+    }
+  }
   configuration() {
     return configurationSchema.parse({
       apps: this.database.prepare(
@@ -74712,8 +74747,8 @@ function outdated(directory, id12, version3) {
     } finally {
       __callDispose(_stack, _error, _hasError);
     }
-  } catch {
-    return false;
+  } catch (error62) {
+    return error62 instanceof NewerStoreError;
   }
 }
 async function followSelection(directory, selection, id12, version3, changed, newer, signal) {

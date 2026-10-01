@@ -66,10 +66,20 @@ export const configurationSchema = z
 export type Configuration = z.infer<typeof configurationSchema>;
 export type AppConfiguration = Configuration['apps'][number];
 
-// What an import directory holds; changing what is stored there, such as a
-// table name a checkpoint binds to, takes a new layout so every app imports
-// afresh.
+// What the settings file and each import directory hold. Changing what is
+// stored, such as a settings table or a table name a checkpoint binds to,
+// takes a new layout: every app imports afresh, the settings file is rebuilt,
+// and servers running older code stop writing.
 const storeLayout = 2;
+
+// Thrown by a server whose code predates the layout of the settings file.
+export class NewerStoreError extends Error {
+  constructor() {
+    super(
+      'Apple was updated on this Mac. Start a new chat to use the new version.',
+    );
+  }
+}
 
 // Where an app's import lives: one directory per selection and store layout,
 // so a pass still writing an earlier one never touches the current one.
@@ -146,11 +156,43 @@ export class Settings implements Disposable {
     this.database = new DatabaseSync(path);
     try {
       chmodSync(path, 0o600);
+      if (this.layout() !== storeLayout) this.rebuild();
       this.database.exec(
         'CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, app TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);',
       );
     } catch (error) {
       this.database.close();
+      throw error;
+    }
+  }
+
+  private layout(): number {
+    return Number(
+      this.database.prepare('PRAGMA user_version').get()?.user_version,
+    );
+  }
+
+  // Refuses a file a newer layout wrote, and empties one an older layout
+  // wrote: stored settings are disposable, so the user sets up again.
+  private rebuild() {
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const layout = this.layout();
+      if (layout > storeLayout) throw new NewerStoreError();
+      if (layout < storeLayout) {
+        for (const { type, name } of this.database
+          .prepare(
+            "SELECT type, name FROM sqlite_schema WHERE type IN ('view', 'table') AND name NOT LIKE 'sqlite_%' ORDER BY type = 'table'",
+          )
+          .all())
+          this.database.exec(
+            `DROP ${type === 'view' ? 'VIEW' : 'TABLE'} IF EXISTS "${String(name).replaceAll('"', '""')}"`,
+          );
+        this.database.exec(`PRAGMA user_version = ${storeLayout}`);
+      }
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
       throw error;
     }
   }

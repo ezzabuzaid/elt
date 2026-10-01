@@ -258,6 +258,64 @@ test('the Settings page switches apps on and off and describes each import as Op
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
 });
 
+test('a server whose code predates the settings file refuses to change apps and never leads', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = new ApplePlugin(scratch.path);
+  plugin.configure({ apps: [{ app: 'notes' }] });
+  // A newer plugin rewrote the settings file in a layout this code predates.
+  {
+    using database = new DatabaseSync(join(scratch.path, 'settings.sqlite'));
+    const layout = Number(
+      database.prepare('PRAGMA user_version').get()?.user_version,
+    );
+    database.exec(`PRAGMA user_version = ${layout + 1}`);
+  }
+  assert.throws(
+    () => plugin.configure({ apps: [{ app: 'mail' }] }),
+    /Start a new chat/,
+  );
+  assert.throws(
+    () => settingsUpdate(plugin, { mail: true }),
+    /Start a new chat/,
+  );
+  const stopping = new AbortController();
+  const running = keepFresh(scratch.path, stopping.signal, '99.0.0');
+  try {
+    await sleep(1_500);
+    assert.equal(leaderRunning(scratch.path), false);
+  } finally {
+    stopping.abort();
+  }
+  await running;
+});
+
+test('settings an older layout wrote are discarded, so the user sets up again', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  // Plugin 0.5.0 kept the selection as one JSON value and no layout stamp.
+  {
+    using database = new DatabaseSync(join(scratch.path, 'settings.sqlite'));
+    database.exec(
+      `CREATE TABLE configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); INSERT INTO configuration VALUES(1, '{"apps":[{"app":"notes","scope":{},"includeAttachments":true}]}');`,
+    );
+  }
+  const plugin = new ApplePlugin(scratch.path);
+  assert.deepEqual(plugin.status().apps, []);
+  using database = new DatabaseSync(join(scratch.path, 'settings.sqlite'), {
+    readOnly: true,
+  });
+  assert.equal(
+    database
+      .prepare("SELECT name FROM sqlite_schema WHERE name = 'configuration'")
+      .get(),
+    undefined,
+  );
+  assert.equal(plugin.configure({ apps: [{ app: 'notes' }] }).apps.length, 1);
+});
+
 test('a newer plugin server takes the lead from an older one, and the older one leads again once the newer one stops', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
