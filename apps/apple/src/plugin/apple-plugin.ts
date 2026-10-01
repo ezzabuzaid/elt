@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { CopyConfiguration, StreamStatus } from 'elt';
+import { z } from 'zod';
 import { type App, apps, type ChoiceRows } from './apps.ts';
 import { leaderRunning } from './freshness.ts';
 import {
@@ -11,6 +12,84 @@ import {
   removeStaleImports,
   Settings,
 } from './settings.ts';
+
+// One row of the sync_status view the import's history keeps in data.sqlite:
+// only a running pass lacks completed_at, and only an incomplete one has an
+// error.
+const passFields = {
+  started_at: z.string(),
+  last_successful_sync_at: z.string().nullable(),
+};
+const pass = <
+  Row extends {
+    status: string;
+    started_at: string;
+    completed_at: string | null;
+    last_successful_sync_at: string | null;
+    error: string | null;
+  },
+>(
+  row: Row,
+) => ({
+  state: row.status as Row['status'],
+  startedAt: row.started_at,
+  completedAt: row.completed_at as Row['completed_at'],
+  lastSucceededAt: row.last_successful_sync_at,
+  error: row.error as Row['error'],
+});
+const passSchema = z.union([
+  z
+    .object({
+      ...passFields,
+      status: z.literal('running'),
+      completed_at: z.null(),
+      error: z.null(),
+    })
+    .transform(pass),
+  z
+    .object({
+      ...passFields,
+      status: z.literal('succeeded'),
+      completed_at: z.string(),
+      error: z.null(),
+    })
+    .transform(pass),
+  z
+    .object({
+      ...passFields,
+      status: z.enum(['partial', 'failed']),
+      completed_at: z.string(),
+      error: z.string(),
+    })
+    .transform(pass),
+]);
+type Pass = z.infer<typeof passSchema>;
+
+// An import's latest pass, as its status reports it. interrupted: running
+// when no server is left to finish it.
+export type ImportSync =
+  | Pass
+  | (Omit<Extract<Pass, { state: 'running' }>, 'state'> & {
+      state: 'interrupted';
+    });
+
+// null until the import's history is installed and has begun a pass.
+function latestPass(database: string): Pass | null {
+  if (!existsSync(database)) return null;
+  using data = new DatabaseSync(database, { readOnly: true, timeout: 30_000 });
+  const installed = data
+    .prepare(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'",
+    )
+    .get();
+  if (installed === undefined) return null;
+  const row = data
+    .prepare(
+      'SELECT status, started_at, completed_at, error, last_successful_sync_at FROM sync_status',
+    )
+    .get();
+  return row === undefined ? null : passSchema.parse(row);
+}
 
 // Setup and status for the Codex plugin. The leading server's keepFresh
 // writes each app's data.sqlite; agents read those files directly.
@@ -31,14 +110,24 @@ export class ApplePlugin {
       apps: (configuration?.apps ?? []).map((item) => {
         const importPath = importDirectory(this.directory, item);
         const database = join(importPath, 'data.sqlite');
-        const sync = settings.syncResult(importPath) ?? null;
+        const pass = latestPass(database);
+        const failure = settings.connectionFailure(importPath);
+        const sync: ImportSync | null =
+          failure !== undefined
+            ? {
+                state: 'failed',
+                startedAt: failure.failedAt,
+                completedAt: failure.failedAt,
+                lastSucceededAt: pass?.lastSucceededAt ?? null,
+                error: failure.error,
+              }
+            : pass?.state === 'running' && !leading
+              ? { ...pass, state: 'interrupted' }
+              : pass;
         return {
           ...item,
           database: existsSync(database) ? database : null,
-          sync:
-            sync?.state === 'running' && !leading
-              ? { ...sync, state: 'interrupted' as const }
-              : sync,
+          sync,
           permissions: apps[item.app].permissions,
         };
       }),
@@ -100,31 +189,5 @@ export class ApplePlugin {
       defaultScope: definition.defaultScope?.(),
       note: definition.note,
     };
-  }
-
-  // Waits, up to four minutes, while an app's import has not finished its
-  // first pass or is running one, so an answer can use current data.
-  async sync(only?: readonly App[]) {
-    const configuration = this.status();
-    if (!configuration.configured)
-      throw new Error(
-        'Choose the Apple apps to connect with Set up Apple first.',
-      );
-    if (
-      only?.some((app) => !configuration.apps.some((item) => item.app === app))
-    )
-      throw new Error('Sync can only access apps selected during setup.');
-    const deadline = Date.now() + 240_000;
-    for (;;) {
-      const status = this.status();
-      const leading = leaderRunning(this.directory);
-      const waiting = status.apps.some(
-        ({ app, sync }) =>
-          (only === undefined || only.includes(app)) &&
-          (sync?.state === 'running' || (sync === null && leading)),
-      );
-      if (!waiting || Date.now() >= deadline) return status;
-      await sleep(1_000);
-    }
   }
 }

@@ -27,6 +27,14 @@ import { noteStoreFixture } from './fixtures/notes-store.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
 
+// The fields of an apple_status app this test reads.
+type AppStatus = {
+  database: string;
+  scope: object;
+  includeAttachments: boolean;
+  sync: { state: string; error: string | null } | null;
+};
+
 // The query-apple skill's read command: everything as arguments, since the
 // read-only sandbox refuses the temporary file a heredoc needs.
 function read(database: string, sql: string, ...commands: string[]) {
@@ -133,22 +141,34 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     assert.equal(block?.type, 'text');
     return JSON.parse(block.text);
   };
-  // Waits for the leading server to import a change without any tool call.
-  const imported = async (client: Client, title: string) => {
+  // Waits for the leading server, with no tool call but apple_status, until
+  // the selected apps reach the state done looks for.
+  const settled = async (
+    client: Client,
+    what: string,
+    done: (apps: AppStatus[]) => boolean,
+  ): Promise<AppStatus[]> => {
     for (let attempt = 0; attempt < 60; attempt++) {
-      const [notes] = (await invoke(client, 'apple_status')).apps;
-      if (
-        notes.sync?.state === 'succeeded' &&
+      const { apps } = await invoke(client, 'apple_status');
+      if (done(apps)) return apps;
+      await sleep(500);
+    }
+    assert.fail(`The import never ${what}`);
+  };
+  const imported = async (client: Client, title: string) => {
+    const [notes] = await settled(
+      client,
+      `showed ${title}`,
+      ([notes]) =>
+        notes?.sync?.state === 'succeeded' &&
         read(
           notes.database,
           'SELECT title FROM notes WHERE title = @title',
           `.parameter set @title "'${title}'"`,
-        ).rows.length === 1
-      )
-        return notes;
-      await sleep(500);
-    }
-    assert.fail(`The import never showed ${title}`);
+        ).rows.length === 1,
+    );
+    assert.ok(notes);
+    return notes;
   };
 
   const client = new Client(
@@ -175,7 +195,6 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
         'apple_settings_update',
         'apple_setup',
         'apple_status',
-        'apple_sync',
       ],
     );
     // The server names the installed version, which decides who leads.
@@ -188,12 +207,6 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       { readTool: 'apple_settings_read', updateTool: 'apple_settings_update' },
     );
     assert.equal((await invoke(client, 'apple_status')).configured, false);
-    assert.deepEqual((await call(client, 'apple_sync', {})).content, [
-      {
-        type: 'text',
-        text: 'Choose the Apple apps to connect with Set up Apple first.',
-      },
-    ]);
     assert.deepEqual((await call(other, 'apple_setup')).content, [
       { type: 'text', text: 'Client does not support form elicitation.' },
     ]);
@@ -208,14 +221,21 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       setUp.apps.map(({ app }: { app: string }) => app),
       ['notes'],
     );
-    const [synced] = (await invoke(client, 'apple_sync', {})).apps;
-    assert.equal(synced.sync.state, 'succeeded', JSON.stringify(synced.sync));
+    const synced = await imported(client, 'Groceries');
+    // The file the skill reads tells what it holds and how fresh it is.
     assert.deepEqual(
       read(
         synced.database,
-        "SELECT name FROM _apple_catalog WHERE name = 'notes';",
+        "SELECT name FROM catalog WHERE kind = 'view' AND name IN ('notes', 'stream_status') ORDER BY name",
       ).rows,
-      [{ name: 'notes' }],
+      [{ name: 'notes' }, { name: 'stream_status' }],
+    );
+    assert.deepEqual(
+      read(
+        synced.database,
+        "SELECT status FROM stream_status WHERE stream = 'notes' AND last_successful_sync_at IS NOT NULL",
+      ).rows,
+      [{ status: 'succeeded' }],
     );
     assert.deepEqual(
       read(
@@ -237,13 +257,15 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       String(notesSetting?.description),
       /^Synced (just now|\d+ seconds? ago) · everything\.$/,
     );
-    const write = read(synced.database, 'DELETE FROM notes;');
+    const write = read(synced.database, 'DELETE FROM raw_notes;');
     assert.match(write.stderr, /readonly/);
-    const [catalog] = read(
-      synced.database,
-      "SELECT schema_json FROM _apple_catalog WHERE name = 'attachments';",
-    ).rows;
-    assert.ok(JSON.parse(catalog.schema_json).properties.attachmentRef);
+    assert.equal(
+      read(
+        synced.database,
+        "SELECT name FROM catalog WHERE name = 'attachments.attachmentRef'",
+      ).rows.length,
+      1,
+    );
     const [attachment] = read(
       synced.database,
       'SELECT attachmentRef FROM attachments WHERE id = @id',
@@ -265,11 +287,16 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
         { app: 'messages' },
       ],
     });
-    const [kept, messages] = (await invoke(client, 'apple_sync', {})).apps;
+    const [kept, messages] = await settled(
+      client,
+      'reported Messages as failed',
+      ([notes, messages]) =>
+        notes?.sync?.state === 'succeeded' &&
+        messages?.sync?.state === 'failed',
+    );
+    assert.ok(kept && messages?.sync);
     assert.equal(kept.database, synced.database);
-    assert.equal(kept.sync.state, 'succeeded', JSON.stringify(kept.sync));
-    assert.equal(messages.sync.state, 'failed', JSON.stringify(messages.sync));
-    assert.match(messages.sync.error, /Full Disk Access/);
+    assert.match(String(messages.sync.error), /Full Disk Access/);
 
     // A change in Notes reaches the import while nobody calls a tool.
     retitle('Groceries (edited)');

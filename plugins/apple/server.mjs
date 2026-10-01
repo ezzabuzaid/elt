@@ -1415,12 +1415,12 @@ var require_errors = __commonJS({
       }
       return [E.schemaPath, schPath];
     }
-    function extraErrorProps(cxt, { params, message: message3 }, keyValues) {
+    function extraErrorProps(cxt, { params, message: message4 }, keyValues) {
       const { keyword, data, schemaValue, it } = cxt;
       const { opts, propertyName, topSchemaRef, schemaPath } = it;
       keyValues.push([E.keyword, keyword], [E.params, typeof params == "function" ? params(cxt) : params || (0, codegen_1._)`{}`]);
       if (opts.messages) {
-        keyValues.push([E.message, typeof message3 == "function" ? message3(cxt) : message3]);
+        keyValues.push([E.message, typeof message4 == "function" ? message4(cxt) : message4]);
       }
       if (opts.verbose) {
         keyValues.push([E.schema, schemaValue], [E.parentSchema, (0, codegen_1._)`${topSchemaRef}${schemaPath}`], [names_1.default.data, data]);
@@ -1814,8 +1814,8 @@ var require_code2 = __commonJS({
       return allSchemaProperties(schemaMap).filter((p) => !(0, util_1.alwaysValidSchema)(it, schemaMap[p]));
     }
     exports.schemaProperties = schemaProperties;
-    function callValidateCode({ schemaCode, data, it: { gen, topSchemaRef, schemaPath, errorPath }, it }, func, context, passSchema) {
-      const dataAndSchema = passSchema ? (0, codegen_1._)`${schemaCode}, ${data}, ${topSchemaRef}${schemaPath}` : data;
+    function callValidateCode({ schemaCode, data, it: { gen, topSchemaRef, schemaPath, errorPath }, it }, func, context, passSchema2) {
+      const dataAndSchema = passSchema2 ? (0, codegen_1._)`${schemaCode}, ${data}, ${topSchemaRef}${schemaPath}` : data;
       const valCxt = [
         [names_1.default.instancePath, (0, codegen_1.strConcat)(names_1.default.instancePath, errorPath)],
         [names_1.default.parentData, it.parentData],
@@ -1952,8 +1952,8 @@ var require_keyword = __commonJS({
       }
       function assignValid(_await = def.async ? (0, codegen_1._)`await ` : codegen_1.nil) {
         const passCxt = it.opts.passContext ? names_1.default.this : names_1.default.self;
-        const passSchema = !("compile" in def && !$data || def.schema === false);
-        gen.assign(valid, (0, codegen_1._)`${_await}${(0, code_1.callValidateCode)(cxt, validateRef, passCxt, passSchema)}`, def.modifying);
+        const passSchema2 = !("compile" in def && !$data || def.schema === false);
+        gen.assign(valid, (0, codegen_1._)`${_await}${(0, code_1.callValidateCode)(cxt, validateRef, passCxt, passSchema2)}`, def.modifying);
       }
       function reportErrs(errors) {
         var _a4;
@@ -4550,11 +4550,11 @@ var require_core = __commonJS({
         }
         const valid = this.validate($schema, schema);
         if (!valid && throwOrLogError) {
-          const message3 = "schema is invalid: " + this.errorsText();
+          const message4 = "schema is invalid: " + this.errorsText();
           if (this.opts.validateSchema === "log")
-            this.logger.error(message3);
+            this.logger.error(message4);
           else
-            throw new Error(message3);
+            throw new Error(message4);
         }
         return valid;
       }
@@ -4676,7 +4676,7 @@ var require_core = __commonJS({
       errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
         if (!errors || errors.length === 0)
           return "No errors";
-        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text13, msg) => text13 + separator + msg);
+        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text14, msg) => text14 + separator + msg);
       }
       $dataMetaSchema(metaSchema, keywordsJsonPointers) {
         const rules = this.RULES.all;
@@ -30695,7 +30695,7 @@ var require_libmime = __commonJS({
             return left + "__\0JOIN\0__";
           }
           return match;
-        }).replace(/(\?=)?__\x00JOIN\x00__(=\?([^?]+)\?[QqBb]\?)?/g, "").replace(/(=\?[^?]+\?[QqBb]\?[^?]*\?=)\s+(?==\?[^?]+\?[QqBb]\?[^?]*\?=)/g, "$1").replace(/=\?([\w_\-*]+)\?([QqBb])\?([^?]*)\?=/g, (m, charset, encoding, text13) => this.decodeWord(charset, encoding, text13));
+        }).replace(/(\?=)?__\x00JOIN\x00__(=\?([^?]+)\?[QqBb]\?)?/g, "").replace(/(=\?[^?]+\?[QqBb]\?[^?]*\?=)\s+(?==\?[^?]+\?[QqBb]\?[^?]*\?=)/g, "$1").replace(/=\?([\w_\-*]+)\?([QqBb])\?([^?]*)\?=/g, (m, charset, encoding, text14) => this.decodeWord(charset, encoding, text14));
       }
       getHex(c) {
         if (c >= 48 && c <= 57 || c >= 97 && c <= 102 || c >= 65 && c <= 70) {
@@ -30803,7 +30803,7 @@ var require_libmime = __commonJS({
         let value = "";
         let valueEnd = 0;
         let stage = STAGE_VALUE;
-        let quote3 = false;
+        let quote4 = false;
         let escaped = false;
         let chr;
         let commit2 = () => {
@@ -30848,11 +30848,11 @@ var require_libmime = __commonJS({
                 escaped = true;
                 continue;
               } else if (chr === '"') {
-                quote3 = !quote3;
-              } else if (!quote3 && chr === ";") {
+                quote4 = !quote4;
+              } else if (!quote4 && chr === ";") {
                 commit2();
                 stage = STAGE_KEY;
-              } else if (!quote3 && isWSP(chr)) {
+              } else if (!quote4 && isWSP(chr)) {
                 if (value.length) {
                   value += chr;
                 }
@@ -31851,10 +31851,10 @@ var require_message_splitter = __commonJS({
     var YIELD_BYTES = 16 * 1024;
     var HEAD = 1;
     var BODY = 2;
-    function maxLenError(message3) {
+    function maxLenError(message4) {
       let err = (
         /** @type {Error & {code: string}} */
-        new Error(message3)
+        new Error(message4)
       );
       err.code = "EMAXLEN";
       return err;
@@ -33096,104 +33096,104 @@ ZodError.create = (issues) => {
 
 // node_modules/zod/v3/locales/en.js
 var errorMap = (issue2, _ctx) => {
-  let message3;
+  let message4;
   switch (issue2.code) {
     case ZodIssueCode.invalid_type:
       if (issue2.received === ZodParsedType.undefined) {
-        message3 = "Required";
+        message4 = "Required";
       } else {
-        message3 = `Expected ${issue2.expected}, received ${issue2.received}`;
+        message4 = `Expected ${issue2.expected}, received ${issue2.received}`;
       }
       break;
     case ZodIssueCode.invalid_literal:
-      message3 = `Invalid literal value, expected ${JSON.stringify(issue2.expected, util.jsonStringifyReplacer)}`;
+      message4 = `Invalid literal value, expected ${JSON.stringify(issue2.expected, util.jsonStringifyReplacer)}`;
       break;
     case ZodIssueCode.unrecognized_keys:
-      message3 = `Unrecognized key(s) in object: ${util.joinValues(issue2.keys, ", ")}`;
+      message4 = `Unrecognized key(s) in object: ${util.joinValues(issue2.keys, ", ")}`;
       break;
     case ZodIssueCode.invalid_union:
-      message3 = `Invalid input`;
+      message4 = `Invalid input`;
       break;
     case ZodIssueCode.invalid_union_discriminator:
-      message3 = `Invalid discriminator value. Expected ${util.joinValues(issue2.options)}`;
+      message4 = `Invalid discriminator value. Expected ${util.joinValues(issue2.options)}`;
       break;
     case ZodIssueCode.invalid_enum_value:
-      message3 = `Invalid enum value. Expected ${util.joinValues(issue2.options)}, received '${issue2.received}'`;
+      message4 = `Invalid enum value. Expected ${util.joinValues(issue2.options)}, received '${issue2.received}'`;
       break;
     case ZodIssueCode.invalid_arguments:
-      message3 = `Invalid function arguments`;
+      message4 = `Invalid function arguments`;
       break;
     case ZodIssueCode.invalid_return_type:
-      message3 = `Invalid function return type`;
+      message4 = `Invalid function return type`;
       break;
     case ZodIssueCode.invalid_date:
-      message3 = `Invalid date`;
+      message4 = `Invalid date`;
       break;
     case ZodIssueCode.invalid_string:
       if (typeof issue2.validation === "object") {
         if ("includes" in issue2.validation) {
-          message3 = `Invalid input: must include "${issue2.validation.includes}"`;
+          message4 = `Invalid input: must include "${issue2.validation.includes}"`;
           if (typeof issue2.validation.position === "number") {
-            message3 = `${message3} at one or more positions greater than or equal to ${issue2.validation.position}`;
+            message4 = `${message4} at one or more positions greater than or equal to ${issue2.validation.position}`;
           }
         } else if ("startsWith" in issue2.validation) {
-          message3 = `Invalid input: must start with "${issue2.validation.startsWith}"`;
+          message4 = `Invalid input: must start with "${issue2.validation.startsWith}"`;
         } else if ("endsWith" in issue2.validation) {
-          message3 = `Invalid input: must end with "${issue2.validation.endsWith}"`;
+          message4 = `Invalid input: must end with "${issue2.validation.endsWith}"`;
         } else {
           util.assertNever(issue2.validation);
         }
       } else if (issue2.validation !== "regex") {
-        message3 = `Invalid ${issue2.validation}`;
+        message4 = `Invalid ${issue2.validation}`;
       } else {
-        message3 = "Invalid";
+        message4 = "Invalid";
       }
       break;
     case ZodIssueCode.too_small:
       if (issue2.type === "array")
-        message3 = `Array must contain ${issue2.exact ? "exactly" : issue2.inclusive ? `at least` : `more than`} ${issue2.minimum} element(s)`;
+        message4 = `Array must contain ${issue2.exact ? "exactly" : issue2.inclusive ? `at least` : `more than`} ${issue2.minimum} element(s)`;
       else if (issue2.type === "string")
-        message3 = `String must contain ${issue2.exact ? "exactly" : issue2.inclusive ? `at least` : `over`} ${issue2.minimum} character(s)`;
+        message4 = `String must contain ${issue2.exact ? "exactly" : issue2.inclusive ? `at least` : `over`} ${issue2.minimum} character(s)`;
       else if (issue2.type === "number")
-        message3 = `Number must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${issue2.minimum}`;
+        message4 = `Number must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${issue2.minimum}`;
       else if (issue2.type === "bigint")
-        message3 = `Number must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${issue2.minimum}`;
+        message4 = `Number must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${issue2.minimum}`;
       else if (issue2.type === "date")
-        message3 = `Date must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${new Date(Number(issue2.minimum))}`;
+        message4 = `Date must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${new Date(Number(issue2.minimum))}`;
       else
-        message3 = "Invalid input";
+        message4 = "Invalid input";
       break;
     case ZodIssueCode.too_big:
       if (issue2.type === "array")
-        message3 = `Array must contain ${issue2.exact ? `exactly` : issue2.inclusive ? `at most` : `less than`} ${issue2.maximum} element(s)`;
+        message4 = `Array must contain ${issue2.exact ? `exactly` : issue2.inclusive ? `at most` : `less than`} ${issue2.maximum} element(s)`;
       else if (issue2.type === "string")
-        message3 = `String must contain ${issue2.exact ? `exactly` : issue2.inclusive ? `at most` : `under`} ${issue2.maximum} character(s)`;
+        message4 = `String must contain ${issue2.exact ? `exactly` : issue2.inclusive ? `at most` : `under`} ${issue2.maximum} character(s)`;
       else if (issue2.type === "number")
-        message3 = `Number must be ${issue2.exact ? `exactly` : issue2.inclusive ? `less than or equal to` : `less than`} ${issue2.maximum}`;
+        message4 = `Number must be ${issue2.exact ? `exactly` : issue2.inclusive ? `less than or equal to` : `less than`} ${issue2.maximum}`;
       else if (issue2.type === "bigint")
-        message3 = `BigInt must be ${issue2.exact ? `exactly` : issue2.inclusive ? `less than or equal to` : `less than`} ${issue2.maximum}`;
+        message4 = `BigInt must be ${issue2.exact ? `exactly` : issue2.inclusive ? `less than or equal to` : `less than`} ${issue2.maximum}`;
       else if (issue2.type === "date")
-        message3 = `Date must be ${issue2.exact ? `exactly` : issue2.inclusive ? `smaller than or equal to` : `smaller than`} ${new Date(Number(issue2.maximum))}`;
+        message4 = `Date must be ${issue2.exact ? `exactly` : issue2.inclusive ? `smaller than or equal to` : `smaller than`} ${new Date(Number(issue2.maximum))}`;
       else
-        message3 = "Invalid input";
+        message4 = "Invalid input";
       break;
     case ZodIssueCode.custom:
-      message3 = `Invalid input`;
+      message4 = `Invalid input`;
       break;
     case ZodIssueCode.invalid_intersection_types:
-      message3 = `Intersection results could not be merged`;
+      message4 = `Intersection results could not be merged`;
       break;
     case ZodIssueCode.not_multiple_of:
-      message3 = `Number must be a multiple of ${issue2.multipleOf}`;
+      message4 = `Number must be a multiple of ${issue2.multipleOf}`;
       break;
     case ZodIssueCode.not_finite:
-      message3 = "Number must be finite";
+      message4 = "Number must be finite";
       break;
     default:
-      message3 = _ctx.defaultError;
+      message4 = _ctx.defaultError;
       util.assertNever(issue2);
   }
-  return { message: message3 };
+  return { message: message4 };
 };
 var en_default = errorMap;
 
@@ -33260,18 +33260,18 @@ var ParseStatus = class _ParseStatus {
     if (this.value !== "aborted")
       this.value = "aborted";
   }
-  static mergeArray(status, results) {
+  static mergeArray(status2, results) {
     const arrayValue = [];
     for (const s of results) {
       if (s.status === "aborted")
         return INVALID;
       if (s.status === "dirty")
-        status.dirty();
+        status2.dirty();
       arrayValue.push(s.value);
     }
-    return { status: status.value, value: arrayValue };
+    return { status: status2.value, value: arrayValue };
   }
-  static async mergeObjectAsync(status, pairs) {
+  static async mergeObjectAsync(status2, pairs) {
     const syncPairs = [];
     for (const pair of pairs) {
       const key = await pair.key;
@@ -33281,9 +33281,9 @@ var ParseStatus = class _ParseStatus {
         value
       });
     }
-    return _ParseStatus.mergeObjectSync(status, syncPairs);
+    return _ParseStatus.mergeObjectSync(status2, syncPairs);
   }
-  static mergeObjectSync(status, pairs) {
+  static mergeObjectSync(status2, pairs) {
     const finalObject = {};
     for (const pair of pairs) {
       const { key, value } = pair;
@@ -33292,14 +33292,14 @@ var ParseStatus = class _ParseStatus {
       if (value.status === "aborted")
         return INVALID;
       if (key.status === "dirty")
-        status.dirty();
+        status2.dirty();
       if (value.status === "dirty")
-        status.dirty();
+        status2.dirty();
       if (key.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
         finalObject[key.value] = value.value;
       }
     }
-    return { status: status.value, value: finalObject };
+    return { status: status2.value, value: finalObject };
   }
 };
 var INVALID = Object.freeze({
@@ -33315,8 +33315,8 @@ var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 // node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
-  errorUtil2.errToObj = (message3) => typeof message3 === "string" ? { message: message3 } : message3 || {};
-  errorUtil2.toString = (message3) => typeof message3 === "string" ? message3 : message3?.message;
+  errorUtil2.errToObj = (message4) => typeof message4 === "string" ? { message: message4 } : message4 || {};
+  errorUtil2.toString = (message4) => typeof message4 === "string" ? message4 : message4?.message;
 })(errorUtil || (errorUtil = {}));
 
 // node_modules/zod/v3/types.js
@@ -33368,16 +33368,16 @@ function processCreateParams(params) {
   if (errorMap2)
     return { errorMap: errorMap2, description };
   const customMap = (iss, ctx) => {
-    const { message: message3 } = params;
+    const { message: message4 } = params;
     if (iss.code === "invalid_enum_value") {
-      return { message: message3 ?? ctx.defaultError };
+      return { message: message4 ?? ctx.defaultError };
     }
     if (typeof ctx.data === "undefined") {
-      return { message: message3 ?? required_error ?? ctx.defaultError };
+      return { message: message4 ?? required_error ?? ctx.defaultError };
     }
     if (iss.code !== "invalid_type")
       return { message: ctx.defaultError };
-    return { message: message3 ?? invalid_type_error ?? ctx.defaultError };
+    return { message: message4 ?? invalid_type_error ?? ctx.defaultError };
   };
   return { errorMap: customMap, description };
 }
@@ -33503,14 +33503,14 @@ var ZodType = class {
     const result = await (isAsync(maybeAsyncResult) ? maybeAsyncResult : Promise.resolve(maybeAsyncResult));
     return handleResult(ctx, result);
   }
-  refine(check2, message3) {
+  refine(check2, message4) {
     const getIssueProperties = (val) => {
-      if (typeof message3 === "string" || typeof message3 === "undefined") {
-        return { message: message3 };
-      } else if (typeof message3 === "function") {
-        return message3(val);
+      if (typeof message4 === "string" || typeof message4 === "undefined") {
+        return { message: message4 };
+      } else if (typeof message4 === "function") {
+        return message4(val);
       } else {
-        return message3;
+        return message4;
       }
     };
     return this._refinement((val, ctx) => {
@@ -33759,7 +33759,7 @@ var ZodString = class _ZodString2 extends ZodType {
       });
       return INVALID;
     }
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     let ctx = void 0;
     for (const check2 of this._def.checks) {
       if (check2.kind === "min") {
@@ -33773,7 +33773,7 @@ var ZodString = class _ZodString2 extends ZodType {
             exact: false,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "max") {
         if (input2.data.length > check2.value) {
@@ -33786,7 +33786,7 @@ var ZodString = class _ZodString2 extends ZodType {
             exact: false,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "length") {
         const tooBig = input2.data.length > check2.value;
@@ -33812,7 +33812,7 @@ var ZodString = class _ZodString2 extends ZodType {
               message: check2.message
             });
           }
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "email") {
         if (!emailRegex.test(input2.data)) {
@@ -33822,7 +33822,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "emoji") {
         if (!emojiRegex) {
@@ -33835,7 +33835,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "uuid") {
         if (!uuidRegex.test(input2.data)) {
@@ -33845,7 +33845,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "nanoid") {
         if (!nanoidRegex.test(input2.data)) {
@@ -33855,7 +33855,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "cuid") {
         if (!cuidRegex.test(input2.data)) {
@@ -33865,7 +33865,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "cuid2") {
         if (!cuid2Regex.test(input2.data)) {
@@ -33875,7 +33875,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "ulid") {
         if (!ulidRegex.test(input2.data)) {
@@ -33885,7 +33885,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "url") {
         try {
@@ -33897,7 +33897,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "regex") {
         check2.regex.lastIndex = 0;
@@ -33909,7 +33909,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "trim") {
         input2.data = input2.data.trim();
@@ -33921,7 +33921,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: { includes: check2.value, position: check2.position },
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "toLowerCase") {
         input2.data = input2.data.toLowerCase();
@@ -33935,7 +33935,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: { startsWith: check2.value },
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "endsWith") {
         if (!input2.data.endsWith(check2.value)) {
@@ -33945,7 +33945,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: { endsWith: check2.value },
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "datetime") {
         const regex = datetimeRegex(check2);
@@ -33956,7 +33956,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: "datetime",
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "date") {
         const regex = dateRegex;
@@ -33967,7 +33967,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: "date",
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "time") {
         const regex = timeRegex(check2);
@@ -33978,7 +33978,7 @@ var ZodString = class _ZodString2 extends ZodType {
             validation: "time",
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "duration") {
         if (!durationRegex.test(input2.data)) {
@@ -33988,7 +33988,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "ip") {
         if (!isValidIP(input2.data, check2.version)) {
@@ -33998,7 +33998,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "jwt") {
         if (!isValidJWT(input2.data, check2.alg)) {
@@ -34008,7 +34008,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "cidr") {
         if (!isValidCidr(input2.data, check2.version)) {
@@ -34018,7 +34018,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "base64") {
         if (!base64Regex.test(input2.data)) {
@@ -34028,7 +34028,7 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "base64url") {
         if (!base64urlRegex.test(input2.data)) {
@@ -34038,19 +34038,19 @@ var ZodString = class _ZodString2 extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check2);
       }
     }
-    return { status: status.value, value: input2.data };
+    return { status: status2.value, value: input2.data };
   }
-  _regex(regex, validation, message3) {
+  _regex(regex, validation, message4) {
     return this.refinement((data) => regex.test(data), {
       validation,
       code: ZodIssueCode.invalid_string,
-      ...errorUtil.errToObj(message3)
+      ...errorUtil.errToObj(message4)
     });
   }
   _addCheck(check2) {
@@ -34059,37 +34059,37 @@ var ZodString = class _ZodString2 extends ZodType {
       checks: [...this._def.checks, check2]
     });
   }
-  email(message3) {
-    return this._addCheck({ kind: "email", ...errorUtil.errToObj(message3) });
+  email(message4) {
+    return this._addCheck({ kind: "email", ...errorUtil.errToObj(message4) });
   }
-  url(message3) {
-    return this._addCheck({ kind: "url", ...errorUtil.errToObj(message3) });
+  url(message4) {
+    return this._addCheck({ kind: "url", ...errorUtil.errToObj(message4) });
   }
-  emoji(message3) {
-    return this._addCheck({ kind: "emoji", ...errorUtil.errToObj(message3) });
+  emoji(message4) {
+    return this._addCheck({ kind: "emoji", ...errorUtil.errToObj(message4) });
   }
-  uuid(message3) {
-    return this._addCheck({ kind: "uuid", ...errorUtil.errToObj(message3) });
+  uuid(message4) {
+    return this._addCheck({ kind: "uuid", ...errorUtil.errToObj(message4) });
   }
-  nanoid(message3) {
-    return this._addCheck({ kind: "nanoid", ...errorUtil.errToObj(message3) });
+  nanoid(message4) {
+    return this._addCheck({ kind: "nanoid", ...errorUtil.errToObj(message4) });
   }
-  cuid(message3) {
-    return this._addCheck({ kind: "cuid", ...errorUtil.errToObj(message3) });
+  cuid(message4) {
+    return this._addCheck({ kind: "cuid", ...errorUtil.errToObj(message4) });
   }
-  cuid2(message3) {
-    return this._addCheck({ kind: "cuid2", ...errorUtil.errToObj(message3) });
+  cuid2(message4) {
+    return this._addCheck({ kind: "cuid2", ...errorUtil.errToObj(message4) });
   }
-  ulid(message3) {
-    return this._addCheck({ kind: "ulid", ...errorUtil.errToObj(message3) });
+  ulid(message4) {
+    return this._addCheck({ kind: "ulid", ...errorUtil.errToObj(message4) });
   }
-  base64(message3) {
-    return this._addCheck({ kind: "base64", ...errorUtil.errToObj(message3) });
+  base64(message4) {
+    return this._addCheck({ kind: "base64", ...errorUtil.errToObj(message4) });
   }
-  base64url(message3) {
+  base64url(message4) {
     return this._addCheck({
       kind: "base64url",
-      ...errorUtil.errToObj(message3)
+      ...errorUtil.errToObj(message4)
     });
   }
   jwt(options) {
@@ -34119,8 +34119,8 @@ var ZodString = class _ZodString2 extends ZodType {
       ...errorUtil.errToObj(options?.message)
     });
   }
-  date(message3) {
-    return this._addCheck({ kind: "date", message: message3 });
+  date(message4) {
+    return this._addCheck({ kind: "date", message: message4 });
   }
   time(options) {
     if (typeof options === "string") {
@@ -34136,14 +34136,14 @@ var ZodString = class _ZodString2 extends ZodType {
       ...errorUtil.errToObj(options?.message)
     });
   }
-  duration(message3) {
-    return this._addCheck({ kind: "duration", ...errorUtil.errToObj(message3) });
+  duration(message4) {
+    return this._addCheck({ kind: "duration", ...errorUtil.errToObj(message4) });
   }
-  regex(regex, message3) {
+  regex(regex, message4) {
     return this._addCheck({
       kind: "regex",
       regex,
-      ...errorUtil.errToObj(message3)
+      ...errorUtil.errToObj(message4)
     });
   }
   includes(value, options) {
@@ -34154,46 +34154,46 @@ var ZodString = class _ZodString2 extends ZodType {
       ...errorUtil.errToObj(options?.message)
     });
   }
-  startsWith(value, message3) {
+  startsWith(value, message4) {
     return this._addCheck({
       kind: "startsWith",
       value,
-      ...errorUtil.errToObj(message3)
+      ...errorUtil.errToObj(message4)
     });
   }
-  endsWith(value, message3) {
+  endsWith(value, message4) {
     return this._addCheck({
       kind: "endsWith",
       value,
-      ...errorUtil.errToObj(message3)
+      ...errorUtil.errToObj(message4)
     });
   }
-  min(minLength, message3) {
+  min(minLength, message4) {
     return this._addCheck({
       kind: "min",
       value: minLength,
-      ...errorUtil.errToObj(message3)
+      ...errorUtil.errToObj(message4)
     });
   }
-  max(maxLength, message3) {
+  max(maxLength, message4) {
     return this._addCheck({
       kind: "max",
       value: maxLength,
-      ...errorUtil.errToObj(message3)
+      ...errorUtil.errToObj(message4)
     });
   }
-  length(len, message3) {
+  length(len, message4) {
     return this._addCheck({
       kind: "length",
       value: len,
-      ...errorUtil.errToObj(message3)
+      ...errorUtil.errToObj(message4)
     });
   }
   /**
    * Equivalent to `.min(1)`
    */
-  nonempty(message3) {
-    return this.min(1, errorUtil.errToObj(message3));
+  nonempty(message4) {
+    return this.min(1, errorUtil.errToObj(message4));
   }
   trim() {
     return new _ZodString2({
@@ -34320,7 +34320,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
       return INVALID;
     }
     let ctx = void 0;
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     for (const check2 of this._def.checks) {
       if (check2.kind === "int") {
         if (!util.isInteger(input2.data)) {
@@ -34331,7 +34331,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             received: "float",
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "min") {
         const tooSmall = check2.inclusive ? input2.data < check2.value : input2.data <= check2.value;
@@ -34345,7 +34345,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             exact: false,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "max") {
         const tooBig = check2.inclusive ? input2.data > check2.value : input2.data >= check2.value;
@@ -34359,7 +34359,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             exact: false,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "multipleOf") {
         if (floatSafeRemainder(input2.data, check2.value) !== 0) {
@@ -34369,7 +34369,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             multipleOf: check2.value,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "finite") {
         if (!Number.isFinite(input2.data)) {
@@ -34378,27 +34378,27 @@ var ZodNumber = class _ZodNumber extends ZodType {
             code: ZodIssueCode.not_finite,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check2);
       }
     }
-    return { status: status.value, value: input2.data };
+    return { status: status2.value, value: input2.data };
   }
-  gte(value, message3) {
-    return this.setLimit("min", value, true, errorUtil.toString(message3));
+  gte(value, message4) {
+    return this.setLimit("min", value, true, errorUtil.toString(message4));
   }
-  gt(value, message3) {
-    return this.setLimit("min", value, false, errorUtil.toString(message3));
+  gt(value, message4) {
+    return this.setLimit("min", value, false, errorUtil.toString(message4));
   }
-  lte(value, message3) {
-    return this.setLimit("max", value, true, errorUtil.toString(message3));
+  lte(value, message4) {
+    return this.setLimit("max", value, true, errorUtil.toString(message4));
   }
-  lt(value, message3) {
-    return this.setLimit("max", value, false, errorUtil.toString(message3));
+  lt(value, message4) {
+    return this.setLimit("max", value, false, errorUtil.toString(message4));
   }
-  setLimit(kind, value, inclusive, message3) {
+  setLimit(kind, value, inclusive, message4) {
     return new _ZodNumber({
       ...this._def,
       checks: [
@@ -34407,7 +34407,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
           kind,
           value,
           inclusive,
-          message: errorUtil.toString(message3)
+          message: errorUtil.toString(message4)
         }
       ]
     });
@@ -34418,68 +34418,68 @@ var ZodNumber = class _ZodNumber extends ZodType {
       checks: [...this._def.checks, check2]
     });
   }
-  int(message3) {
+  int(message4) {
     return this._addCheck({
       kind: "int",
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  positive(message3) {
+  positive(message4) {
     return this._addCheck({
       kind: "min",
       value: 0,
       inclusive: false,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  negative(message3) {
+  negative(message4) {
     return this._addCheck({
       kind: "max",
       value: 0,
       inclusive: false,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  nonpositive(message3) {
+  nonpositive(message4) {
     return this._addCheck({
       kind: "max",
       value: 0,
       inclusive: true,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  nonnegative(message3) {
+  nonnegative(message4) {
     return this._addCheck({
       kind: "min",
       value: 0,
       inclusive: true,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  multipleOf(value, message3) {
+  multipleOf(value, message4) {
     return this._addCheck({
       kind: "multipleOf",
       value,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  finite(message3) {
+  finite(message4) {
     return this._addCheck({
       kind: "finite",
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  safe(message3) {
+  safe(message4) {
     return this._addCheck({
       kind: "min",
       inclusive: true,
       value: Number.MIN_SAFE_INTEGER,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     })._addCheck({
       kind: "max",
       inclusive: true,
       value: Number.MAX_SAFE_INTEGER,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
   get minValue() {
@@ -34549,7 +34549,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
       return this._getInvalidInput(input2);
     }
     let ctx = void 0;
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     for (const check2 of this._def.checks) {
       if (check2.kind === "min") {
         const tooSmall = check2.inclusive ? input2.data < check2.value : input2.data <= check2.value;
@@ -34562,7 +34562,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
             inclusive: check2.inclusive,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "max") {
         const tooBig = check2.inclusive ? input2.data > check2.value : input2.data >= check2.value;
@@ -34575,7 +34575,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
             inclusive: check2.inclusive,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "multipleOf") {
         if (input2.data % check2.value !== BigInt(0)) {
@@ -34585,13 +34585,13 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
             multipleOf: check2.value,
             message: check2.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check2);
       }
     }
-    return { status: status.value, value: input2.data };
+    return { status: status2.value, value: input2.data };
   }
   _getInvalidInput(input2) {
     const ctx = this._getOrReturnCtx(input2);
@@ -34602,19 +34602,19 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
     });
     return INVALID;
   }
-  gte(value, message3) {
-    return this.setLimit("min", value, true, errorUtil.toString(message3));
+  gte(value, message4) {
+    return this.setLimit("min", value, true, errorUtil.toString(message4));
   }
-  gt(value, message3) {
-    return this.setLimit("min", value, false, errorUtil.toString(message3));
+  gt(value, message4) {
+    return this.setLimit("min", value, false, errorUtil.toString(message4));
   }
-  lte(value, message3) {
-    return this.setLimit("max", value, true, errorUtil.toString(message3));
+  lte(value, message4) {
+    return this.setLimit("max", value, true, errorUtil.toString(message4));
   }
-  lt(value, message3) {
-    return this.setLimit("max", value, false, errorUtil.toString(message3));
+  lt(value, message4) {
+    return this.setLimit("max", value, false, errorUtil.toString(message4));
   }
-  setLimit(kind, value, inclusive, message3) {
+  setLimit(kind, value, inclusive, message4) {
     return new _ZodBigInt({
       ...this._def,
       checks: [
@@ -34623,7 +34623,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
           kind,
           value,
           inclusive,
-          message: errorUtil.toString(message3)
+          message: errorUtil.toString(message4)
         }
       ]
     });
@@ -34634,43 +34634,43 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
       checks: [...this._def.checks, check2]
     });
   }
-  positive(message3) {
+  positive(message4) {
     return this._addCheck({
       kind: "min",
       value: BigInt(0),
       inclusive: false,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  negative(message3) {
+  negative(message4) {
     return this._addCheck({
       kind: "max",
       value: BigInt(0),
       inclusive: false,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  nonpositive(message3) {
+  nonpositive(message4) {
     return this._addCheck({
       kind: "max",
       value: BigInt(0),
       inclusive: true,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  nonnegative(message3) {
+  nonnegative(message4) {
     return this._addCheck({
       kind: "min",
       value: BigInt(0),
       inclusive: true,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  multipleOf(value, message3) {
+  multipleOf(value, message4) {
     return this._addCheck({
       kind: "multipleOf",
       value,
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
   get minValue() {
@@ -34749,7 +34749,7 @@ var ZodDate = class _ZodDate extends ZodType {
       });
       return INVALID;
     }
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     let ctx = void 0;
     for (const check2 of this._def.checks) {
       if (check2.kind === "min") {
@@ -34763,7 +34763,7 @@ var ZodDate = class _ZodDate extends ZodType {
             minimum: check2.value,
             type: "date"
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check2.kind === "max") {
         if (input2.data.getTime() > check2.value) {
@@ -34776,14 +34776,14 @@ var ZodDate = class _ZodDate extends ZodType {
             maximum: check2.value,
             type: "date"
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check2);
       }
     }
     return {
-      status: status.value,
+      status: status2.value,
       value: new Date(input2.data.getTime())
     };
   }
@@ -34793,18 +34793,18 @@ var ZodDate = class _ZodDate extends ZodType {
       checks: [...this._def.checks, check2]
     });
   }
-  min(minDate, message3) {
+  min(minDate, message4) {
     return this._addCheck({
       kind: "min",
       value: minDate.getTime(),
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
-  max(maxDate, message3) {
+  max(maxDate, message4) {
     return this._addCheck({
       kind: "max",
       value: maxDate.getTime(),
-      message: errorUtil.toString(message3)
+      message: errorUtil.toString(message4)
     });
   }
   get minDate() {
@@ -34969,7 +34969,7 @@ ZodVoid.create = (params) => {
 };
 var ZodArray = class _ZodArray extends ZodType {
   _parse(input2) {
-    const { ctx, status } = this._processInputParams(input2);
+    const { ctx, status: status2 } = this._processInputParams(input2);
     const def = this._def;
     if (ctx.parsedType !== ZodParsedType.array) {
       addIssueToContext(ctx, {
@@ -34992,7 +34992,7 @@ var ZodArray = class _ZodArray extends ZodType {
           exact: true,
           message: def.exactLength.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (def.minLength !== null) {
@@ -35005,7 +35005,7 @@ var ZodArray = class _ZodArray extends ZodType {
           exact: false,
           message: def.minLength.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (def.maxLength !== null) {
@@ -35018,44 +35018,44 @@ var ZodArray = class _ZodArray extends ZodType {
           exact: false,
           message: def.maxLength.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (ctx.common.async) {
       return Promise.all([...ctx.data].map((item, i) => {
         return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
       })).then((result2) => {
-        return ParseStatus.mergeArray(status, result2);
+        return ParseStatus.mergeArray(status2, result2);
       });
     }
     const result = [...ctx.data].map((item, i) => {
       return def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, i));
     });
-    return ParseStatus.mergeArray(status, result);
+    return ParseStatus.mergeArray(status2, result);
   }
   get element() {
     return this._def.type;
   }
-  min(minLength, message3) {
+  min(minLength, message4) {
     return new _ZodArray({
       ...this._def,
-      minLength: { value: minLength, message: errorUtil.toString(message3) }
+      minLength: { value: minLength, message: errorUtil.toString(message4) }
     });
   }
-  max(maxLength, message3) {
+  max(maxLength, message4) {
     return new _ZodArray({
       ...this._def,
-      maxLength: { value: maxLength, message: errorUtil.toString(message3) }
+      maxLength: { value: maxLength, message: errorUtil.toString(message4) }
     });
   }
-  length(len, message3) {
+  length(len, message4) {
     return new _ZodArray({
       ...this._def,
-      exactLength: { value: len, message: errorUtil.toString(message3) }
+      exactLength: { value: len, message: errorUtil.toString(message4) }
     });
   }
-  nonempty(message3) {
-    return this.min(1, message3);
+  nonempty(message4) {
+    return this.min(1, message4);
   }
 };
 ZodArray.create = (schema, params) => {
@@ -35120,7 +35120,7 @@ var ZodObject = class _ZodObject extends ZodType {
       });
       return INVALID;
     }
-    const { status, ctx } = this._processInputParams(input2);
+    const { status: status2, ctx } = this._processInputParams(input2);
     const { shape, keys: shapeKeys } = this._getCached();
     const extraKeys = [];
     if (!(this._def.catchall instanceof ZodNever && this._def.unknownKeys === "strip")) {
@@ -35155,7 +35155,7 @@ var ZodObject = class _ZodObject extends ZodType {
             code: ZodIssueCode.unrecognized_keys,
             keys: extraKeys
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (unknownKeys === "strip") {
       } else {
@@ -35189,26 +35189,26 @@ var ZodObject = class _ZodObject extends ZodType {
         }
         return syncPairs;
       }).then((syncPairs) => {
-        return ParseStatus.mergeObjectSync(status, syncPairs);
+        return ParseStatus.mergeObjectSync(status2, syncPairs);
       });
     } else {
-      return ParseStatus.mergeObjectSync(status, pairs);
+      return ParseStatus.mergeObjectSync(status2, pairs);
     }
   }
   get shape() {
     return this._def.shape();
   }
-  strict(message3) {
+  strict(message4) {
     errorUtil.errToObj;
     return new _ZodObject({
       ...this._def,
       unknownKeys: "strict",
-      ...message3 !== void 0 ? {
+      ...message4 !== void 0 ? {
         errorMap: (issue2, ctx) => {
           const defaultError = this._def.errorMap?.(issue2, ctx).message ?? ctx.defaultError;
           if (issue2.code === "unrecognized_keys")
             return {
-              message: errorUtil.errToObj(message3).message ?? defaultError
+              message: errorUtil.errToObj(message4).message ?? defaultError
             };
           return {
             message: defaultError
@@ -35674,7 +35674,7 @@ function mergeValues(a, b) {
 }
 var ZodIntersection = class extends ZodType {
   _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
+    const { status: status2, ctx } = this._processInputParams(input2);
     const handleParsed = (parsedLeft, parsedRight) => {
       if (isAborted(parsedLeft) || isAborted(parsedRight)) {
         return INVALID;
@@ -35687,9 +35687,9 @@ var ZodIntersection = class extends ZodType {
         return INVALID;
       }
       if (isDirty(parsedLeft) || isDirty(parsedRight)) {
-        status.dirty();
+        status2.dirty();
       }
-      return { status: status.value, value: merged.data };
+      return { status: status2.value, value: merged.data };
     };
     if (ctx.common.async) {
       return Promise.all([
@@ -35727,7 +35727,7 @@ ZodIntersection.create = (left, right, params) => {
 };
 var ZodTuple = class _ZodTuple extends ZodType {
   _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
+    const { status: status2, ctx } = this._processInputParams(input2);
     if (ctx.parsedType !== ZodParsedType.array) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -35755,7 +35755,7 @@ var ZodTuple = class _ZodTuple extends ZodType {
         exact: false,
         type: "array"
       });
-      status.dirty();
+      status2.dirty();
     }
     const items = [...ctx.data].map((item, itemIndex) => {
       const schema = this._def.items[itemIndex] || this._def.rest;
@@ -35765,10 +35765,10 @@ var ZodTuple = class _ZodTuple extends ZodType {
     }).filter((x) => !!x);
     if (ctx.common.async) {
       return Promise.all(items).then((results) => {
-        return ParseStatus.mergeArray(status, results);
+        return ParseStatus.mergeArray(status2, results);
       });
     } else {
-      return ParseStatus.mergeArray(status, items);
+      return ParseStatus.mergeArray(status2, items);
     }
   }
   get items() {
@@ -35800,7 +35800,7 @@ var ZodRecord = class _ZodRecord extends ZodType {
     return this._def.valueType;
   }
   _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
+    const { status: status2, ctx } = this._processInputParams(input2);
     if (ctx.parsedType !== ZodParsedType.object) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -35820,9 +35820,9 @@ var ZodRecord = class _ZodRecord extends ZodType {
       });
     }
     if (ctx.common.async) {
-      return ParseStatus.mergeObjectAsync(status, pairs);
+      return ParseStatus.mergeObjectAsync(status2, pairs);
     } else {
-      return ParseStatus.mergeObjectSync(status, pairs);
+      return ParseStatus.mergeObjectSync(status2, pairs);
     }
   }
   get element() {
@@ -35853,7 +35853,7 @@ var ZodMap = class extends ZodType {
     return this._def.valueType;
   }
   _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
+    const { status: status2, ctx } = this._processInputParams(input2);
     if (ctx.parsedType !== ZodParsedType.map) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -35880,11 +35880,11 @@ var ZodMap = class extends ZodType {
             return INVALID;
           }
           if (key.status === "dirty" || value.status === "dirty") {
-            status.dirty();
+            status2.dirty();
           }
           finalMap.set(key.value, value.value);
         }
-        return { status: status.value, value: finalMap };
+        return { status: status2.value, value: finalMap };
       });
     } else {
       const finalMap = /* @__PURE__ */ new Map();
@@ -35895,11 +35895,11 @@ var ZodMap = class extends ZodType {
           return INVALID;
         }
         if (key.status === "dirty" || value.status === "dirty") {
-          status.dirty();
+          status2.dirty();
         }
         finalMap.set(key.value, value.value);
       }
-      return { status: status.value, value: finalMap };
+      return { status: status2.value, value: finalMap };
     }
   }
 };
@@ -35913,7 +35913,7 @@ ZodMap.create = (keyType, valueType, params) => {
 };
 var ZodSet = class _ZodSet extends ZodType {
   _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
+    const { status: status2, ctx } = this._processInputParams(input2);
     if (ctx.parsedType !== ZodParsedType.set) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -35933,7 +35933,7 @@ var ZodSet = class _ZodSet extends ZodType {
           exact: false,
           message: def.minSize.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (def.maxSize !== null) {
@@ -35946,7 +35946,7 @@ var ZodSet = class _ZodSet extends ZodType {
           exact: false,
           message: def.maxSize.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     const valueType = this._def.valueType;
@@ -35956,10 +35956,10 @@ var ZodSet = class _ZodSet extends ZodType {
         if (element.status === "aborted")
           return INVALID;
         if (element.status === "dirty")
-          status.dirty();
+          status2.dirty();
         parsedSet.add(element.value);
       }
-      return { status: status.value, value: parsedSet };
+      return { status: status2.value, value: parsedSet };
     }
     const elements = [...ctx.data.values()].map((item, i) => valueType._parse(new ParseInputLazyPath(ctx, item, ctx.path, i)));
     if (ctx.common.async) {
@@ -35968,23 +35968,23 @@ var ZodSet = class _ZodSet extends ZodType {
       return finalizeSet(elements);
     }
   }
-  min(minSize, message3) {
+  min(minSize, message4) {
     return new _ZodSet({
       ...this._def,
-      minSize: { value: minSize, message: errorUtil.toString(message3) }
+      minSize: { value: minSize, message: errorUtil.toString(message4) }
     });
   }
-  max(maxSize, message3) {
+  max(maxSize, message4) {
     return new _ZodSet({
       ...this._def,
-      maxSize: { value: maxSize, message: errorUtil.toString(message3) }
+      maxSize: { value: maxSize, message: errorUtil.toString(message4) }
     });
   }
-  size(size, message3) {
-    return this.min(size, message3).max(size, message3);
+  size(size, message4) {
+    return this.min(size, message4).max(size, message4);
   }
-  nonempty(message3) {
-    return this.min(1, message3);
+  nonempty(message4) {
+    return this.min(1, message4);
   }
 };
 ZodSet.create = (valueType, params) => {
@@ -36290,15 +36290,15 @@ var ZodEffects = class extends ZodType {
     return this._def.schema._def.typeName === ZodFirstPartyTypeKind.ZodEffects ? this._def.schema.sourceType() : this._def.schema;
   }
   _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
+    const { status: status2, ctx } = this._processInputParams(input2);
     const effect = this._def.effect || null;
     const checkCtx = {
       addIssue: (arg) => {
         addIssueToContext(ctx, arg);
         if (arg.fatal) {
-          status.abort();
+          status2.abort();
         } else {
-          status.dirty();
+          status2.dirty();
         }
       },
       get path() {
@@ -36310,7 +36310,7 @@ var ZodEffects = class extends ZodType {
       const processed = effect.transform(ctx.data, checkCtx);
       if (ctx.common.async) {
         return Promise.resolve(processed).then(async (processed2) => {
-          if (status.value === "aborted")
+          if (status2.value === "aborted")
             return INVALID;
           const result = await this._def.schema._parseAsync({
             data: processed2,
@@ -36321,12 +36321,12 @@ var ZodEffects = class extends ZodType {
             return INVALID;
           if (result.status === "dirty")
             return DIRTY(result.value);
-          if (status.value === "dirty")
+          if (status2.value === "dirty")
             return DIRTY(result.value);
           return result;
         });
       } else {
-        if (status.value === "aborted")
+        if (status2.value === "aborted")
           return INVALID;
         const result = this._def.schema._parseSync({
           data: processed,
@@ -36337,7 +36337,7 @@ var ZodEffects = class extends ZodType {
           return INVALID;
         if (result.status === "dirty")
           return DIRTY(result.value);
-        if (status.value === "dirty")
+        if (status2.value === "dirty")
           return DIRTY(result.value);
         return result;
       }
@@ -36362,17 +36362,17 @@ var ZodEffects = class extends ZodType {
         if (inner.status === "aborted")
           return INVALID;
         if (inner.status === "dirty")
-          status.dirty();
+          status2.dirty();
         executeRefinement(inner.value);
-        return { status: status.value, value: inner.value };
+        return { status: status2.value, value: inner.value };
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((inner) => {
           if (inner.status === "aborted")
             return INVALID;
           if (inner.status === "dirty")
-            status.dirty();
+            status2.dirty();
           return executeRefinement(inner.value).then(() => {
-            return { status: status.value, value: inner.value };
+            return { status: status2.value, value: inner.value };
           });
         });
       }
@@ -36390,13 +36390,13 @@ var ZodEffects = class extends ZodType {
         if (result instanceof Promise) {
           throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
         }
-        return { status: status.value, value: result };
+        return { status: status2.value, value: result };
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
           if (!isValid(base))
             return INVALID;
           return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
-            status: status.value,
+            status: status2.value,
             value: result
           }));
         });
@@ -36574,7 +36574,7 @@ var ZodBranded = class extends ZodType {
 };
 var ZodPipeline = class _ZodPipeline extends ZodType {
   _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
+    const { status: status2, ctx } = this._processInputParams(input2);
     if (ctx.common.async) {
       const handleAsync = async () => {
         const inResult = await this._def.in._parseAsync({
@@ -36585,7 +36585,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
         if (inResult.status === "aborted")
           return INVALID;
         if (inResult.status === "dirty") {
-          status.dirty();
+          status2.dirty();
           return DIRTY(inResult.value);
         } else {
           return this._def.out._parseAsync({
@@ -36605,7 +36605,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
       if (inResult.status === "aborted")
         return INVALID;
       if (inResult.status === "dirty") {
-        status.dirty();
+        status2.dirty();
         return {
           status: "dirty",
           value: inResult.value
@@ -37630,8 +37630,8 @@ function prefixIssues(path, issues) {
     return iss;
   });
 }
-function unwrapMessage(message3) {
-  return typeof message3 === "string" ? message3 : message3?.message;
+function unwrapMessage(message4) {
+  return typeof message4 === "string" ? message4 : message4?.message;
 }
 function attachSchema(issues, start, inst) {
   var _a3;
@@ -37649,7 +37649,7 @@ function finalizeIssue(iss, ctx, config2) {
       iss.schema = iss.inst;
   }
   const schemaError = iss.schema !== iss.inst ? iss.schema?._zod.def?.error : void 0;
-  const message3 = iss.message ? iss.message : unwrapMessage(iss.inst?._zod.def?.error?.(iss)) ?? unwrapMessage(schemaError?.(iss)) ?? unwrapMessage(ctx?.error?.(iss)) ?? unwrapMessage(config2.customError?.(iss)) ?? unwrapMessage(config2.localeError?.(iss)) ?? "Invalid input";
+  const message4 = iss.message ? iss.message : unwrapMessage(iss.inst?._zod.def?.error?.(iss)) ?? unwrapMessage(schemaError?.(iss)) ?? unwrapMessage(ctx?.error?.(iss)) ?? unwrapMessage(config2.customError?.(iss)) ?? unwrapMessage(config2.localeError?.(iss)) ?? "Invalid input";
   const full = {};
   for (const k of Object.keys(iss)) {
     if (k === "inst" || k === "schema" || k === "continue" || k === "input" || k === "__proto__")
@@ -37657,7 +37657,7 @@ function finalizeIssue(iss, ctx, config2) {
     full[k] = iss[k];
   }
   full.path ?? (full.path = []);
-  full.message = message3;
+  full.message = message4;
   if (ctx?.reportInput) {
     full.input = iss.input;
   }
@@ -45772,8 +45772,8 @@ function ko_default() {
 }
 
 // node_modules/zod/v4/locales/lt.js
-var capitalizeFirstCharacter = (text13) => {
-  return text13.charAt(0).toUpperCase() + text13.slice(1);
+var capitalizeFirstCharacter = (text14) => {
+  return text14.charAt(0).toUpperCase() + text14.slice(1);
 };
 function getUnitTypeFromNumber(number7) {
   const abs = Math.abs(number7);
@@ -49368,8 +49368,8 @@ var globalRegistry = globalThis.__zod_globalRegistry;
 var INVALID2 = /* @__PURE__ */ Symbol.for("zod.compile.invalid");
 var FALLBACK_FLAG = /* @__PURE__ */ Symbol.for("zod.compile.fallback");
 var ZodCompileAsyncError = class extends Error {
-  constructor(message3 = "z.compile does not support async refinements, transforms, or checks") {
-    super(message3);
+  constructor(message4 = "z.compile does not support async refinements, transforms, or checks") {
+    super(message4);
     this.name = "ZodCompileAsyncError";
   }
 };
@@ -52061,12 +52061,12 @@ function initializeContext(params) {
     external: params?.external ?? void 0
   };
 }
-function handleUnrepresentable(schema, ctx, json3, params, message3) {
-  const result = typeof ctx.unrepresentable === "function" ? ctx.unrepresentable({ zodSchema: schema, path: params.path, message: message3 }) : ctx.unrepresentable;
+function handleUnrepresentable(schema, ctx, json3, params, message4) {
+  const result = typeof ctx.unrepresentable === "function" ? ctx.unrepresentable({ zodSchema: schema, path: params.path, message: message4 }) : ctx.unrepresentable;
   if (result === "any")
     return false;
   if (result === void 0 || result === "throw")
-    throw new Error(message3);
+    throw new Error(message4);
   Object.assign(json3, result);
   return true;
 }
@@ -58121,8 +58121,8 @@ var ServerResultSchema = union([
   CreateTaskResultSchema
 ]);
 var McpError = class _McpError extends Error {
-  constructor(code, message3, data) {
-    super(`MCP error ${code}: ${message3}`);
+  constructor(code, message4, data) {
+    super(`MCP error ${code}: ${message4}`);
     this.code = code;
     this.data = data;
     this.name = "McpError";
@@ -58130,19 +58130,19 @@ var McpError = class _McpError extends Error {
   /**
    * Factory method to create the appropriate error type based on the error code and data
    */
-  static fromError(code, message3, data) {
+  static fromError(code, message4, data) {
     if (code === ErrorCode.UrlElicitationRequired && data) {
       const errorData = data;
       if (errorData.elicitations) {
-        return new UrlElicitationRequiredError(errorData.elicitations, message3);
+        return new UrlElicitationRequiredError(errorData.elicitations, message4);
       }
     }
-    return new _McpError(code, message3, data);
+    return new _McpError(code, message4, data);
   }
 };
 var UrlElicitationRequiredError = class extends McpError {
-  constructor(elicitations, message3 = `URL elicitation${elicitations.length > 1 ? "s" : ""} required`) {
-    super(ErrorCode.UrlElicitationRequired, message3, {
+  constructor(elicitations, message4 = `URL elicitation${elicitations.length > 1 ? "s" : ""} required`) {
+    super(ErrorCode.UrlElicitationRequired, message4, {
       elicitations
     });
   }
@@ -58152,8 +58152,8 @@ var UrlElicitationRequiredError = class extends McpError {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
-function isTerminal(status) {
-  return status === "completed" || status === "failed" || status === "cancelled";
+function isTerminal(status2) {
+  return status2 === "completed" || status2 === "failed" || status2 === "cancelled";
 }
 
 // node_modules/zod-to-json-schema/dist/esm/Options.js
@@ -58675,7 +58675,7 @@ function escapeNonAlphaNumeric(source) {
   }
   return result;
 }
-function addFormat(schema, value, message3, refs) {
+function addFormat(schema, value, message4, refs) {
   if (schema.format || schema.anyOf?.some((x) => x.format)) {
     if (!schema.anyOf) {
       schema.anyOf = [];
@@ -58697,13 +58697,13 @@ function addFormat(schema, value, message3, refs) {
     }
     schema.anyOf.push({
       format: value,
-      ...message3 && refs.errorMessages && { errorMessage: { format: message3 } }
+      ...message4 && refs.errorMessages && { errorMessage: { format: message4 } }
     });
   } else {
-    setResponseValueAndErrors(schema, "format", value, message3, refs);
+    setResponseValueAndErrors(schema, "format", value, message4, refs);
   }
 }
-function addPattern2(schema, regex, message3, refs) {
+function addPattern2(schema, regex, message4, refs) {
   if (schema.pattern || schema.allOf?.some((x) => x.pattern)) {
     if (!schema.allOf) {
       schema.allOf = [];
@@ -58725,10 +58725,10 @@ function addPattern2(schema, regex, message3, refs) {
     }
     schema.allOf.push({
       pattern: stringifyRegExpWithFlags(regex, refs),
-      ...message3 && refs.errorMessages && { errorMessage: { pattern: message3 } }
+      ...message4 && refs.errorMessages && { errorMessage: { pattern: message4 } }
     });
   } else {
-    setResponseValueAndErrors(schema, "pattern", stringifyRegExpWithFlags(regex, refs), message3, refs);
+    setResponseValueAndErrors(schema, "pattern", stringifyRegExpWithFlags(regex, refs), message4, refs);
   }
 }
 function stringifyRegExpWithFlags(regex, refs) {
@@ -59527,15 +59527,15 @@ var Protocol = class {
             let queuedMessage;
             while (queuedMessage = await this._taskMessageQueue.dequeue(taskId, extra.sessionId)) {
               if (queuedMessage.type === "response" || queuedMessage.type === "error") {
-                const message3 = queuedMessage.message;
-                const requestId = message3.id;
+                const message4 = queuedMessage.message;
+                const requestId = message4.id;
                 const resolver = this._requestResolvers.get(requestId);
                 if (resolver) {
                   this._requestResolvers.delete(requestId);
                   if (queuedMessage.type === "response") {
-                    resolver(message3);
+                    resolver(message4);
                   } else {
-                    const errorMessage = message3;
+                    const errorMessage = message4;
                     const error62 = new McpError(errorMessage.error.code, errorMessage.error.message, errorMessage.error.data);
                     resolver(error62);
                   }
@@ -59674,16 +59674,16 @@ var Protocol = class {
       this._onerror(error62);
     };
     const _onmessage = this._transport?.onmessage;
-    this._transport.onmessage = (message3, extra) => {
-      _onmessage?.(message3, extra);
-      if (isJSONRPCResultResponse(message3) || isJSONRPCErrorResponse(message3)) {
-        this._onresponse(message3);
-      } else if (isJSONRPCRequest(message3)) {
-        this._onrequest(message3, extra);
-      } else if (isJSONRPCNotification(message3)) {
-        this._onnotification(message3);
+    this._transport.onmessage = (message4, extra) => {
+      _onmessage?.(message4, extra);
+      if (isJSONRPCResultResponse(message4) || isJSONRPCErrorResponse(message4)) {
+        this._onresponse(message4);
+      } else if (isJSONRPCRequest(message4)) {
+        this._onrequest(message4, extra);
+      } else if (isJSONRPCNotification(message4)) {
+        this._onnotification(message4);
       } else {
-        this._onerror(new Error(`Unknown message type: ${JSON.stringify(message3)}`));
+        this._onerror(new Error(`Unknown message type: ${JSON.stringify(message4)}`));
       }
     };
     await this._transport.start();
@@ -60293,12 +60293,12 @@ var Protocol = class {
    * the error appropriately (e.g., by failing the task, logging, etc.). The Protocol layer
    * simply propagates the error.
    */
-  async _enqueueTaskMessage(taskId, message3, sessionId) {
+  async _enqueueTaskMessage(taskId, message4, sessionId) {
     if (!this._taskStore || !this._taskMessageQueue) {
       throw new Error("Cannot enqueue task message: taskStore and taskMessageQueue are not configured");
     }
     const maxQueueSize = this._options?.maxTaskQueueSize;
-    await this._taskMessageQueue.enqueue(taskId, message3, sessionId, maxQueueSize);
+    await this._taskMessageQueue.enqueue(taskId, message4, sessionId, maxQueueSize);
   }
   /**
    * Clears the message queue for a task and rejects any pending request resolvers.
@@ -60308,9 +60308,9 @@ var Protocol = class {
   async _clearTaskQueue(taskId, sessionId) {
     if (this._taskMessageQueue) {
       const messages = await this._taskMessageQueue.dequeueAll(taskId, sessionId);
-      for (const message3 of messages) {
-        if (message3.type === "request" && isJSONRPCRequest(message3.message)) {
-          const requestId = message3.message.id;
+      for (const message4 of messages) {
+        if (message4.type === "request" && isJSONRPCRequest(message4.message)) {
+          const requestId = message4.message.id;
           const resolver = this._requestResolvers.get(requestId);
           if (resolver) {
             resolver(new McpError(ErrorCode.InternalError, "Task cancelled or completed"));
@@ -60372,8 +60372,8 @@ var Protocol = class {
         }
         return task;
       },
-      storeTaskResult: async (taskId, status, result) => {
-        await taskStore.storeTaskResult(taskId, status, result, sessionId);
+      storeTaskResult: async (taskId, status2, result) => {
+        await taskStore.storeTaskResult(taskId, status2, result, sessionId);
         const task = await taskStore.getTask(taskId, sessionId);
         if (task) {
           const notification = TaskStatusNotificationSchema.parse({
@@ -60389,15 +60389,15 @@ var Protocol = class {
       getTaskResult: (taskId) => {
         return taskStore.getTaskResult(taskId, sessionId);
       },
-      updateTaskStatus: async (taskId, status, statusMessage) => {
+      updateTaskStatus: async (taskId, status2, statusMessage) => {
         const task = await taskStore.getTask(taskId, sessionId);
         if (!task) {
           throw new McpError(ErrorCode.InvalidParams, `Task "${taskId}" not found - it may have been cleaned up`);
         }
         if (isTerminal(task.status)) {
-          throw new McpError(ErrorCode.InvalidParams, `Cannot update task "${taskId}" from terminal status "${task.status}" to "${status}". Terminal states (completed, failed, cancelled) cannot transition to other states.`);
+          throw new McpError(ErrorCode.InvalidParams, `Cannot update task "${taskId}" from terminal status "${task.status}" to "${status2}". Terminal states (completed, failed, cancelled) cannot transition to other states.`);
         }
-        await taskStore.updateTaskStatus(taskId, status, statusMessage, sessionId);
+        await taskStore.updateTaskStatus(taskId, status2, statusMessage, sessionId);
         const updatedTask = await taskStore.getTask(taskId, sessionId);
         if (updatedTask) {
           const notification = TaskStatusNotificationSchema.parse({
@@ -62038,8 +62038,8 @@ var ReadBuffer = class {
 function deserializeMessage(line) {
   return JSONRPCMessageSchema.parse(JSON.parse(line));
 }
-function serializeMessage(message3) {
-  return JSON.stringify(message3) + "\n";
+function serializeMessage(message4) {
+  return JSON.stringify(message4) + "\n";
 }
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
@@ -62077,11 +62077,11 @@ var StdioServerTransport = class {
   processReadBuffer() {
     while (true) {
       try {
-        const message3 = this._readBuffer.readMessage();
-        if (message3 === null) {
+        const message4 = this._readBuffer.readMessage();
+        if (message4 === null) {
           break;
         }
-        this.onmessage?.(message3);
+        this.onmessage?.(message4);
       } catch (error62) {
         this.onerror?.(error62);
       }
@@ -62097,9 +62097,9 @@ var StdioServerTransport = class {
     this._readBuffer.clear();
     this.onclose?.();
   }
-  send(message3) {
+  send(message4) {
     return new Promise((resolve4) => {
-      const json3 = serializeMessage(message3);
+      const json3 = serializeMessage(message4);
       if (this._stdout.write(json3)) {
         resolve4();
       } else {
@@ -62113,7 +62113,7 @@ var StdioServerTransport = class {
 import { existsSync as existsSync2 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
 import { join as join19 } from "node:path";
-import { setTimeout as sleep3 } from "node:timers/promises";
+import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
 
 // packages/elt/dist/core/deduplication.js
 var Deduplication = class {
@@ -62706,9 +62706,9 @@ var StreamStatus = class {
   status;
   partition;
   error;
-  constructor(stream, status, partition = null, error62 = void 0) {
+  constructor(stream, status2, partition = null, error62 = void 0) {
     this.stream = stream;
-    this.status = status;
+    this.status = status2;
     this.partition = partition;
     this.error = error62;
     Object.freeze(this);
@@ -62778,9 +62778,9 @@ var Source = class {
     else {
       const incremental = configuration.syncMode === "incremental";
       try {
-        for await (const message3 of this.resolved(configuration, this.extract(configuration, state, null, context)))
-          if (incremental || !("type" in message3) || message3.type !== "STATE")
-            yield message3;
+        for await (const message4 of this.resolved(configuration, this.extract(configuration, state, null, context)))
+          if (incremental || !("type" in message4) || message4.type !== "STATE")
+            yield message4;
       } catch (error62) {
         yield new StreamStatus(name, "FAILED", null, error62);
       }
@@ -62790,18 +62790,18 @@ var Source = class {
   // Keeps each message to the stream whose extract emitted it, and replaces
   // each record's staging path with the file reads it asked for.
   async *resolved(configuration, messages) {
-    for await (const message3 of messages) {
-      if (message3 instanceof StreamStatus)
+    for await (const message4 of messages) {
+      if (message4 instanceof StreamStatus)
         throw new TypeError("Only Source.read reports stream status; extract signals failure by throwing");
-      if (message3.stream !== configuration.stream.name)
-        throw new TypeError(`Extract for ${configuration.stream.name} emitted ${message3.stream}`);
-      if ("type" in message3 || configuration.fileReads.length === 0) {
-        yield message3;
+      if (message4.stream !== configuration.stream.name)
+        throw new TypeError(`Extract for ${configuration.stream.name} emitted ${message4.stream}`);
+      if ("type" in message4 || configuration.fileReads.length === 0) {
+        yield message4;
         continue;
       }
-      if (message3.file !== null && typeof message3.file !== "string")
+      if (message4.file !== null && typeof message4.file !== "string")
         throw new TypeError("File extraction must supply a staging path or explicit null");
-      const data = message3.data;
+      const data = message4.data;
       if (data === null || typeof data !== "object" || Array.isArray(data))
         throw new TypeError("File metadata must be an object");
       const output2 = { ...data };
@@ -62810,10 +62810,10 @@ var Source = class {
         if (Object.keys(data).some((name) => name.toLowerCase() === read.name.toLowerCase()))
           throw new TypeError("File field collides with source metadata");
         let value = null;
-        if (message3.file !== null) {
+        if (message4.file !== null) {
           let pending = values.get(read.parser);
           if (pending === void 0) {
-            pending = read.parser === void 0 ? new FileContent(message3.file) : read.parser.parse(message3.file);
+            pending = read.parser === void 0 ? new FileContent(message4.file) : read.parser.parse(message4.file);
             values.set(read.parser, pending);
           }
           value = await pending;
@@ -62822,7 +62822,7 @@ var Source = class {
         }
         Object.defineProperty(output2, read.name, { value, enumerable: true });
       }
-      yield { stream: message3.stream, data: output2 };
+      yield { stream: message4.stream, data: output2 };
     }
   }
   // Reads each partition with its own saved state: null for a partition not
@@ -62839,11 +62839,11 @@ var Source = class {
     const latest2 = new Map(saved);
     for (const { key, partition } of listed) {
       try {
-        for await (const message3 of this.resolved(configuration, this.extract(configuration, saved.get(key)?.state ?? null, partition, context))) {
-          if ("type" in message3 && message3.type === "STATE") {
+        for await (const message4 of this.resolved(configuration, this.extract(configuration, saved.get(key)?.state ?? null, partition, context))) {
+          if ("type" in message4 && message4.type === "STATE") {
             if (!incremental)
               continue;
-            latest2.set(key, { partition, state: message3.state });
+            latest2.set(key, { partition, state: message4.state });
             yield {
               type: "STATE",
               stream: stream.name,
@@ -62853,8 +62853,8 @@ var Source = class {
             };
             continue;
           }
-          assertInPartition(stream, partition, "type" in message3 ? message3.key : message3.data);
-          yield message3;
+          assertInPartition(stream, partition, "type" in message4 ? message4.key : message4.data);
+          yield message4;
         }
       } catch (error62) {
         yield new StreamStatus(stream.name, "FAILED", partition, error62);
@@ -62964,19 +62964,19 @@ async function transfer(source, destination, run, replications) {
     if (prepared.length === 0)
       return;
     try {
-      for await (const message3 of source.read(prepared.map(({ copy }) => copy.configuration), states)) {
-        const replication = byStream.get(validStream(message3));
+      for await (const message4 of source.read(prepared.map(({ copy }) => copy.configuration), states)) {
+        const replication = byStream.get(validStream(message4));
         if (replication === void 0 || !prepared.includes(replication))
-          throw new TypeError(`Source emitted an unselected stream: ${message3.stream}`);
+          throw new TypeError(`Source emitted an unselected stream: ${message4.stream}`);
         if (replication.ended)
-          throw new TypeError(`Source emitted ${message3.stream} after it ended`);
+          throw new TypeError(`Source emitted ${message4.stream} after it ended`);
         try {
-          if (message3 instanceof StreamStatus) {
-            if (message3.status === "STARTED") {
+          if (message4 instanceof StreamStatus) {
+            if (message4.status === "STARTED") {
               if (replication.started)
-                throw new TypeError(`Source started ${message3.stream} twice`);
+                throw new TypeError(`Source started ${message4.stream} twice`);
               replication.started = true;
-            } else if (message3.status === "FAILED") {
+            } else if (message4.status === "FAILED") {
               if (replication.broken)
                 continue;
               await started(replication).discard();
@@ -62984,8 +62984,8 @@ async function transfer(source, destination, run, replications) {
               replication.pending.deleted = 0;
               replication.failed = true;
               replication.failures.push({
-                partition: message3.partition,
-                error: message3.error
+                partition: message4.partition,
+                error: message4.error
               });
               await replication.files.reconcile(started(replication).values);
             } else {
@@ -63002,10 +63002,10 @@ async function transfer(source, destination, run, replications) {
           }
           if (replication.broken)
             continue;
-          const operation = validOperation(replication.stream, message3);
+          const operation = validOperation(replication.stream, message4);
           if (operation.type === "STATE") {
             if (!incremental(replication))
-              throw new TypeError(`Full refresh stream ${message3.stream} emitted a checkpoint`);
+              throw new TypeError(`Full refresh stream ${message4.stream} emitted a checkpoint`);
             await commit(replication);
             const { run: run2, id: id12 } = checkpoint(replication);
             await run2.save(id12, operation.state);
@@ -63070,26 +63070,26 @@ async function breakStage(replication, error62) {
     replication.failures.push({ partition: null, error: cause });
   }
 }
-function validStream(message3) {
-  if (message3 === null || typeof message3 !== "object" || typeof message3.stream !== "string")
+function validStream(message4) {
+  if (message4 === null || typeof message4 !== "object" || typeof message4.stream !== "string")
     throw new TypeError("Source must emit records with stream and data, DELETE or STATE messages");
-  return message3.stream;
+  return message4.stream;
 }
-function validOperation(stream, message3) {
-  if ("type" in message3 && message3.type === "STATE" && Object.hasOwn(message3, "state") && !Object.hasOwn(message3, "data")) {
-    const state = JSON.parse(JSON.stringify(message3.state));
-    if (!isDeepStrictEqual2(state, message3.state))
+function validOperation(stream, message4) {
+  if ("type" in message4 && message4.type === "STATE" && Object.hasOwn(message4, "state") && !Object.hasOwn(message4, "data")) {
+    const state = JSON.parse(JSON.stringify(message4.state));
+    if (!isDeepStrictEqual2(state, message4.state))
       throw new TypeError("Checkpoint state must be losslessly JSON serializable");
     wellFormed(state, "Checkpoint state");
     return { type: "STATE", state };
   }
-  if ("type" in message3 && message3.type === "DELETE" && Object.hasOwn(message3, "key") && !Object.hasOwn(message3, "data"))
-    return { type: "DELETE", key: deletionKey(stream, message3.key) };
-  if (!("type" in message3) && "data" in message3 && Object.hasOwn(message3, "data")) {
-    if (Object.hasOwn(message3, "file"))
+  if ("type" in message4 && message4.type === "DELETE" && Object.hasOwn(message4, "key") && !Object.hasOwn(message4, "data"))
+    return { type: "DELETE", key: deletionKey(stream, message4.key) };
+  if (!("type" in message4) && "data" in message4 && Object.hasOwn(message4, "data")) {
+    if (Object.hasOwn(message4, "file"))
       throw new TypeError("Destinations cannot receive source staging paths");
-    wellFormed(message3.data, "Record");
-    return { type: "RECORD", data: message3.data };
+    wellFormed(message4.data, "Record");
+    return { type: "RECORD", data: message4.data };
   }
   throw new TypeError("Source must emit records with stream and data, DELETE or STATE messages");
 }
@@ -63188,8 +63188,8 @@ var Pipeline = class {
   async run() {
     await this.#declare();
     const passes = await Promise.all(this.connections.map((connection) => this.#pass(connection, connection.steps).then(({ outcomes }) => outcomes, (error62) => connectionError(connection, error62))));
-    const unrun = passes.filter((pass) => pass instanceof Error);
-    const results = passes.filter((pass) => !(pass instanceof Error)).flat();
+    const unrun = passes.filter((pass2) => pass2 instanceof Error);
+    const results = passes.filter((pass2) => !(pass2 instanceof Error)).flat();
     if (unrun.length > 0 || results.some(({ failures }) => failures.length > 0))
       throw new PipelineError(results, unrun);
     return results.map(({ failures: _, ...result }) => result);
@@ -63224,7 +63224,7 @@ var Pipeline = class {
     let wake = Promise.withResolvers();
     let finished = false;
     let failed = false;
-    let failure4;
+    let failure3;
     const receive = (async () => {
       let initial = true;
       try {
@@ -63248,7 +63248,7 @@ var Pipeline = class {
       } catch (error62) {
         if (!(watching.aborted && error62 instanceof Error && error62.name === "AbortError")) {
           failed = true;
-          failure4 = error62;
+          failure3 = error62;
         }
       } finally {
         finished = true;
@@ -63258,7 +63258,7 @@ var Pipeline = class {
     try {
       while (!watching.aborted) {
         if (failed)
-          throw failure4;
+          throw failure3;
         if (pending.size === 0) {
           if (finished)
             return;
@@ -63271,7 +63271,7 @@ var Pipeline = class {
         yield await this.#pass(connection, steps);
       }
       if (failed)
-        throw failure4;
+        throw failure3;
     } catch (error62) {
       stopped.push(connectionError(connection, error62));
       await this.#recordFailure(connection, error62).catch((cause) => stopped.push(connectionError(connection, cause)));
@@ -63352,6 +63352,18 @@ function connectionError(connection, cause) {
 function message(error62) {
   return error62 instanceof Error ? error62.message : String(error62);
 }
+
+// packages/elt/dist/core/reader-relation.js
+var readerCatalog = Object.freeze({
+  name: "catalog",
+  description: "One row per readable view, table and column, explaining meaning and use. Discover sync_status and extraction_coverage before judging freshness or completeness. Raw tables are not listed.",
+  columns: Object.freeze({
+    kind: "view, table or column.",
+    name: "Relation name, or relation.column.",
+    data_type: "Column type; NULL for relations.",
+    description: "Meaning, limitations and usage guidance; does not authorize refresh or other writes."
+  })
+});
 
 // packages/elt/dist/core/record-validation.js
 var itemTypes = /* @__PURE__ */ new Set(["string", "integer", "number", "boolean"]);
@@ -63508,6 +63520,62 @@ function isPlainObject3(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 }
 
+// packages/elt/dist/core/target-description.js
+function annotation(value) {
+  if (value === void 0)
+    return null;
+  if (typeof value !== "string" || value.includes("\0") || !value.isWellFormed())
+    throw new TypeError("JSON Schema description must be well-formed text without NUL");
+  return value;
+}
+var loading = {
+  append: "Every accepted observation is appended; source keys may repeat.",
+  overwrite: "Each full refresh replaces the table with its accepted records.",
+  append_dedup: "Accepted observations reconcile rows by the copy key.",
+  overwrite_dedup: "Each full refresh replaces the table with deduplicated records."
+};
+function describeTarget(configuration, columns2, storedFile) {
+  const { stream } = configuration;
+  const meaning = annotation(stream.jsonSchema.description);
+  const lines = [`Source stream: ${stream.name}.`];
+  if (meaning !== null)
+    lines.push(`Source record meaning: ${meaning}`);
+  lines.push(`Extraction: ${configuration.syncMode}. Loading: ${configuration.destinationSyncMode}. ${loading[configuration.destinationSyncMode]}`);
+  if (configuration.dedupPolicy !== void 0) {
+    const { primaryKey, cursorField } = configuration.deduplication();
+    lines.push(`Copy key: ${primaryKey.join(", ")}.`);
+    lines.push(configuration.dedupPolicy === "replace" ? "For a repeated key, the newest extracted record wins." : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare by byte order.`);
+  }
+  const properties29 = stream.jsonSchema.properties;
+  const described2 = Object.fromEntries(columns2.map((column) => {
+    if (column.storesFile)
+      return [column.name, storedFile(column)];
+    if (column.fileRead?.parser !== void 0)
+      return [
+        column.name,
+        `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`
+      ];
+    if (column.fileRead?.file.storage !== void 0)
+      return [
+        column.name,
+        `${column.fileRead.file.storage.reference} NULL when the source file is unavailable.`
+      ];
+    return [column.name, annotation(properties29?.[column.name]?.description)];
+  }));
+  described2.loaded_at = "Start time of the load that last wrote this row, not the source modification time or the most recent successful sync.";
+  return Object.freeze({
+    meaning,
+    table: lines.join("\n"),
+    columns: Object.freeze(described2)
+  });
+}
+function undescribed({ meaning, columns: columns2 }) {
+  const missing = Object.entries(columns2).flatMap(([column, text14]) => text14 === null ? [column] : []);
+  if (meaning === null)
+    missing.unshift("the stream");
+  return missing;
+}
+
 // packages/elt/dist/state/checkpoint-store.js
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
 var CheckpointStore = class {
@@ -63586,6 +63654,77 @@ function passError(outcomes) {
     return null;
   return `The following copies did not load completely: ${incomplete.map(describeFailures).join("; ")}`;
 }
+
+// packages/elt/dist/state/sync-history-relations.js
+var attempt = {
+  attempt_id: "Pass identifier. Join to extraction_coverage.attempt_id for the exact declarations and copy outcomes of this pass.",
+  connector: "Connection name declared by the application. Each attempt is one pass: one read of the streams the connection selected.",
+  source: "Source identity, not credentials or a record identifier.",
+  started_at: "Database time when the attempt and its declared coverage were recorded, before the pass read anything. Not a source record modification or row load time.",
+  completed_at: "Database time when the pass outcomes were recorded. NULL means no completion was recorded; this is not evidence that a process is alive.",
+  status: "running: no completion recorded; succeeded: all selected copies completed, including empty or unchanged reads; partial: failures with some successful copies or committed writes/deletes; failed: failures without that progress. No watcher health is implied.",
+  error: "Pipeline error message, or NULL after success or before completion. Per-copy failures and partitions are in extraction_coverage."
+};
+var syncHistoryRelations = {
+  sync_attempts: {
+    name: "sync_attempts",
+    description: "One row per pass of a connection. A run passes every stream the connection selected; a watch pass reads only the streams its source reported changed, so an attempt vouches only for its own extraction_coverage rows. History is retained, including failures and unfinished attempts. A successful pass may write zero rows. A connection whose watcher stopped records a failed attempt without outcomes. Setup/authentication before the pipeline is constructed is not observed. This records extraction/load outcomes, not subsequent mart publication.",
+    columns: attempt
+  },
+  extraction_coverage: {
+    name: "extraction_coverage",
+    description: "One row per selected stream per attempt, declared before extraction even when there are no records. Description and selection describe the requested export scope, not observed record dates or proof of upstream completeness. Only succeeded confirms that this copy completed that declared pass; partial/failed/running never establish complete coverage. Earlier successful declarations remain available. Raw target names identify storage, not reader grants; discover readable content in catalog.",
+    columns: {
+      attempt_id: attempt.attempt_id,
+      connector: attempt.connector,
+      source: attempt.source,
+      started_at: attempt.started_at,
+      completed_at: "Time the whole attempt was recorded as complete; NULL while unfinished. The copy may have finished earlier. Not record modification time or loaded_at.",
+      stream: "Source stream name, unique within one attempt.",
+      target_schema: "Schema of the raw destination table (main in SQLite); this metadata does not grant access to it.",
+      target_table: "Raw destination table name within target_schema.",
+      target_exists: "Whether the raw relation exists now, independent of this historical attempt. Existence does not prove successful extraction, current contents, or reader access.",
+      sync_mode: "Requested source mode: incremental or full_refresh. Incremental copies can resume saved state; the selection describes their configured scope, not every request made on this pass.",
+      destination_sync_mode: "Requested load mode, such as append_dedup. Partial passes can leave previously committed changes in the destination.",
+      description: "Connector-owned explanation of the scope, date boundaries, selection keys and source limitations for this stream.",
+      selection: "Structured configured selection, interpreted using description. Not computed from rows. Empty object means no additional configured selection, not unlimited upstream history.",
+      status: "running: no outcome recorded; succeeded: copy completed with no failures, even with zero changes; partial: failures after committed writes/deletes; failed: failures without committed row changes, or an error without outcomes. Consult failures for affected partitions.",
+      written_count: "Accepted record operations committed by this copy during this pass, including deduplication no-ops. Not changed-row or total-record counts. Zero is valid after success. NULL means no counts were reported.",
+      deleted_count: "Accepted deletion operations committed by this copy during this pass, including already-absent keys. Not a count of rows actually removed. NULL means no counts were reported.",
+      failures: "Array of {partition, error} from pass outcomes. A null partition denotes a whole-stream or non-partition-specific failure. Empty array means none recorded; check status before assuming success."
+    }
+  },
+  sync_status: {
+    name: "sync_status",
+    description: "One row per connector with its latest started attempt and independently its most recently completed successful pass. A watch pass covers only the streams that changed; see stream_status for each stream. A later failed, partial or unfinished pass does not erase prior success. Join extraction_coverage using the appropriate attempt ID: requested scope can change. NULL success means none recorded. These timestamps measure sync completion, not service liveness or source completeness.",
+    columns: {
+      connector: attempt.connector,
+      latest_attempt_id: "Most recently started attempt for this connector; join sync_attempts or extraction_coverage by attempt_id.",
+      started_at: attempt.started_at,
+      completed_at: attempt.completed_at,
+      status: attempt.status,
+      error: attempt.error,
+      last_successful_attempt_id: "Most recently completed all-copies-successful attempt; NULL if none. Its coverage may differ from the latest attempt.",
+      last_successful_sync_at: "Completion time of that successful pass, advanced even if no rows changed. NULL if no successful pass was recorded. Never inferred from loaded_at or record modification dates."
+    }
+  },
+  stream_status: {
+    name: "stream_status",
+    description: "One row per connector and stream: the latest attempt that declared the stream, and independently the last attempt in which its copy succeeded. A watch pass reads only the streams its source reported changed, so a connector can succeed in sync_status while one of its streams last failed; judge a stream here. NULL success means that stream never completed.",
+    columns: {
+      connector: attempt.connector,
+      stream: "Source stream name.",
+      target_schema: "Schema of the raw destination table in the latest declaration (main in SQLite); this metadata does not grant access to it.",
+      target_table: "Raw destination table name within target_schema.",
+      latest_attempt_id: "Most recently started attempt that declared this stream; join extraction_coverage by attempt_id and stream.",
+      started_at: attempt.started_at,
+      completed_at: attempt.completed_at,
+      status: "This stream's copy status in the latest attempt: running, succeeded, partial or failed. Other streams of the same attempt may differ.",
+      last_successful_attempt_id: "Most recent completed attempt in which this stream's copy succeeded; NULL if none.",
+      last_successful_sync_at: "Completion time of that attempt, advanced even if no rows changed. NULL if this stream never succeeded. Never inferred from loaded_at or record modification dates."
+    }
+  }
+};
 
 // packages/elt/dist/storage/local-files.js
 import { createHash as createHash2, randomUUID } from "node:crypto";
@@ -63805,10 +63944,10 @@ function parseBinaryPlist(bytes) {
       }
       case 6: {
         const [length, start] = lengthAt(at);
-        let text13 = "";
+        let text14 = "";
         for (let index = 0; index < length; index++)
-          text13 += String.fromCharCode(view.getUint16(start + index * 2));
-        return text13;
+          text14 += String.fromCharCode(view.getUint16(start + index * 2));
+        return text14;
       }
       case 8:
         return new PlistUid(unsigned(at + 1, nibble + 1));
@@ -64133,9 +64272,9 @@ var NativeProcess = class {
     try {
       if (signal.aborted) return;
       const child = spawn(file2, args, { stdio: ["ignore", "pipe", "pipe"] });
-      let failure4;
+      let failure3;
       child.on("error", (error62) => {
-        failure4 = error62;
+        failure3 = error62;
       });
       const closed = new Promise(
         (resolve4) => child.once("close", () => resolve4())
@@ -64151,7 +64290,7 @@ var NativeProcess = class {
       try {
         for await (const line of lines) yield line;
         await closed;
-        if (failure4) throw failure4;
+        if (failure3) throw failure3;
         if (!signal.aborted && child.exitCode !== 0)
           throw Object.assign(new Error(`${file2} exited: ${stderr.trim()}`), {
             stderr,
@@ -64192,9 +64331,9 @@ var RemindersUnavailableError = class extends Error {
 };
 var EventKitChangingError = class extends Error {
   name = "EventKitChangingError";
-  constructor(entity2, attempts) {
+  constructor(entity2, attempts2) {
     super(
-      `EventKit ${entity2} changed during each of ${attempts} consistent reads; run the export again when edits settle.`
+      `EventKit ${entity2} changed during each of ${attempts2} consistent reads; run the export again when edits settle.`
     );
   }
 };
@@ -64235,28 +64374,28 @@ var EventKit = class {
   // EventKit has no read transaction. Reads run while a watcher counts
   // EKEventStoreChangedNotification and repeat when a change arrived during
   // them or within settleMs after, the notification's delivery delay.
-  async consistently(read, { settleMs = 250, attempts = 5 } = {}) {
+  async consistently(read, { settleMs = 250, attempts: attempts2 = 5 } = {}) {
     const controller = new AbortController();
     const changes = this.watch(controller.signal)[Symbol.asyncIterator]();
     let count = 0;
-    let failure4;
+    let failure3;
     await changes.next();
     const counting = (async () => {
       try {
         while (!(await changes.next()).done) count++;
       } catch (error62) {
-        if (!controller.signal.aborted) failure4 = { error: error62 };
+        if (!controller.signal.aborted) failure3 = { error: error62 };
       }
     })();
     try {
-      for (let attempt = 1; attempt <= attempts; attempt++) {
+      for (let attempt2 = 1; attempt2 <= attempts2; attempt2++) {
         const before = count;
         const value = await read();
         await sleep(settleMs);
-        if (failure4 !== void 0) throw failure4.error;
+        if (failure3 !== void 0) throw failure3.error;
         if (count === before) return value;
       }
-      throw new EventKitChangingError(this.entity, attempts);
+      throw new EventKitChangingError(this.entity, attempts2);
     } finally {
       controller.abort();
       await counting;
@@ -64264,12 +64403,12 @@ var EventKit = class {
   }
   async *watch(signal) {
     try {
-      for await (const message3 of native_process_default.lines(
+      for await (const message4 of native_process_default.lines(
         helper,
         ["watch", this.entity],
         signal
       )) {
-        if (message3 !== "changed")
+        if (message4 !== "changed")
           throw new TypeError(
             "EventKit watcher returned an invalid notification"
           );
@@ -64729,13 +64868,13 @@ function relatedRows(item, itemId, ownerKey) {
 // apps/apple/src/sources/apple-calendar/icalendar.ts
 var namePattern = /^[A-Za-z0-9-]+/;
 function parseICalendar(bytes) {
-  let text13;
+  let text14;
   try {
-    text13 = new TextDecoder("utf-8", { fatal: true }).decode(unfold(bytes));
+    text14 = new TextDecoder("utf-8", { fatal: true }).decode(unfold(bytes));
   } catch (cause) {
     throw new TypeError("iCalendar data is not valid UTF-8", { cause });
   }
-  const lines = text13.split(/\r?\n/);
+  const lines = text14.split(/\r?\n/);
   if (lines.at(-1) === "") lines.pop();
   const stack = [];
   let root;
@@ -65436,9 +65575,9 @@ var AppleCalendarSource = class extends Source {
     const { stream, syncMode } = configuration;
     const records = snapshot.of(stream.name);
     if (syncMode === "incremental") {
-      for await (const message3 of diffSnapshot(stream, records, state))
-        if ("type" in message3) yield message3;
-        else yield* this.withFile(configuration, message3.data);
+      for await (const message4 of diffSnapshot(stream, records, state))
+        if ("type" in message4) yield message4;
+        else yield* this.withFile(configuration, message4.data);
       return;
     }
     for (const data of records) yield* this.withFile(configuration, data);
@@ -66408,23 +66547,23 @@ var AppleContactsSource = class extends Source {
         join5(tmpdir3(), "elt-contacts-")
       ), true);
       let staged = 0;
-      for await (const message3 of messages) {
-        if ("type" in message3) {
-          yield message3;
+      for await (const message4 of messages) {
+        if ("type" in message4) {
+          yield message4;
           continue;
         }
         const data = files.get(
-          imageKey(message3.data.contactId, message3.data.kind)
+          imageKey(message4.data.contactId, message4.data.kind)
         );
         if (data === void 0)
           throw new TypeError("Contacts image record lost its stored data");
         if (data.storage === "external") {
-          yield { ...message3, file: data.path };
+          yield { ...message4, file: data.path };
           continue;
         }
         const path = join5(staging.path, String(staged++));
         await writeFile2(path, data.bytes);
-        yield { ...message3, file: path };
+        yield { ...message4, file: path };
         await rm2(path);
       }
     } catch (_) {
@@ -66670,10 +66809,10 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
   }
 }
 async function mailPartText(path, decoder2) {
-  let text13 = "";
+  let text14 = "";
   for await (const bytes of createReadStream3(path))
-    text13 += decoder2.decode(bytes, { stream: true });
-  return text13 + decoder2.decode();
+    text14 += decoder2.decode(bytes, { stream: true });
+  return text14 + decoder2.decode();
 }
 
 // apps/apple/src/platform/macos/osa.ts
@@ -67272,8 +67411,8 @@ var fileFields = {
   size: nullableNumber2,
   sha256: nullableText4
 };
-function described(fields, descriptions) {
-  const meaning = descriptions;
+function described(fields, descriptions2) {
+  const meaning = descriptions2;
   return Object.fromEntries(
     Object.entries(fields).map(([name, field]) => [
       name,
@@ -67653,10 +67792,10 @@ var MailScan = class {
         "SELECT CAST(message AS TEXT) AS message, attachment_id, name FROM attachments ORDER BY ROWID"
       ).all()) {
         if (!this.accepts("indexedAttachments", row)) continue;
-        const message3 = row.message;
-        indexed.set(message3, [
-          ...indexed.get(message3) ?? [],
-          { ...row, message: message3 }
+        const message4 = row.message;
+        indexed.set(message4, [
+          ...indexed.get(message4) ?? [],
+          { ...row, message: message4 }
         ]);
       }
       return { detached, indexed };
@@ -68041,8 +68180,8 @@ var AppleMailSource = class extends Source {
       for await (const data of records(scan.read(name)))
         yield { stream: stream.name, data };
     })() : isMessageStream(name) ? diffGroupedSnapshot(stream, groups(name), state) : diffSnapshot(stream, records(scan.read(name)), state);
-    for await (const message3 of messages)
-      yield "type" in message3 || configuration.fileReads.length === 0 ? message3 : { ...message3, file: file2 };
+    for await (const message4 of messages)
+      yield "type" in message4 || configuration.fileReads.length === 0 ? message4 : { ...message4, file: file2 };
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
@@ -68061,19 +68200,19 @@ var AppleMailSource = class extends Source {
       const version3 = database.prepare("PRAGMA data_version");
       let seen = version3.get()?.data_version;
       let changed = false;
-      let failure4 = null;
+      let failure3 = null;
       const resources = __using(_stack, new DisposableStack());
       const watcher = watch(this.path, { recursive: true, signal }, () => {
         changed = true;
       });
       resources.defer(() => watcher.close());
       watcher.on("error", (error62) => {
-        failure4 = error62;
+        failure3 = error62;
       });
       yield selected2;
       try {
         for await (const _2 of setInterval2(1e3, void 0, { signal })) {
-          if (failure4 !== null) throw failure4;
+          if (failure3 !== null) throw failure3;
           const current = version3.get()?.data_version;
           if (!changed && current === seen) continue;
           changed = false;
@@ -68784,14 +68923,14 @@ var AppleMessagesSource = class extends Source {
       "Messages"
     );
     const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state) : records.map((data) => ({ stream: stream.name, data }));
-    for await (const message3 of messages) {
-      if ("type" in message3 || configuration.fileReads.length === 0) {
-        yield message3;
+    for await (const message4 of messages) {
+      if ("type" in message4 || configuration.fileReads.length === 0) {
+        yield message4;
         continue;
       }
-      const { filename, availableLocally } = message3.data;
+      const { filename, availableLocally } = message4.data;
       yield {
-        ...message3,
+        ...message4,
         file: availableLocally === true && typeof filename === "string" ? attachmentPath(filename) : null
       };
     }
@@ -69170,13 +69309,13 @@ var attachmentCharacter = "\uFFFC";
 var NoteDocument = class _NoteDocument {
   text;
   paragraphs;
-  constructor(text13, paragraphs) {
-    this.text = text13;
+  constructor(text14, paragraphs) {
+    this.text = text14;
     this.paragraphs = paragraphs;
   }
   static decode(bytes) {
     const note = versionData(bytes);
-    const text13 = note.string(2) ?? "";
+    const text14 = note.string(2) ?? "";
     const paragraphs = [];
     let current = [];
     let style;
@@ -69199,7 +69338,7 @@ var NoteDocument = class _NoteDocument {
     };
     for (const run of note.messages(5)) {
       const length = run.uint(1) ?? 0;
-      const segment = text13.slice(offset, offset + length);
+      const segment = text14.slice(offset, offset + length);
       offset += length;
       const hints = run.uint(5) ?? 0;
       const attachment2 = run.message(12);
@@ -69220,9 +69359,9 @@ var NoteDocument = class _NoteDocument {
         if (index < lines.length - 1) close();
       });
     }
-    if (offset < text13.length)
+    if (offset < text14.length)
       current.push({
-        text: text13.slice(offset),
+        text: text14.slice(offset),
         bold: false,
         italic: false,
         strikethrough: false,
@@ -69230,7 +69369,7 @@ var NoteDocument = class _NoteDocument {
         attachment: null
       });
     if (current.length > 0) close();
-    return new _NoteDocument(text13, paragraphs);
+    return new _NoteDocument(text14, paragraphs);
   }
   // The visible text, with each attachment character replaced as the caller
   // renders it: an inline tag by its text, a file by nothing.
@@ -69273,10 +69412,10 @@ var NoteDocument = class _NoteDocument {
         continue;
       }
       const indent = "  ".repeat(paragraph.indent);
-      const quote3 = "> ".repeat(paragraph.blockQuote);
+      const quote4 = "> ".repeat(paragraph.blockQuote);
       const prefix = paragraph.style === paragraphStyles.title ? "# " : paragraph.style === paragraphStyles.heading ? "## " : paragraph.style === paragraphStyles.subheading ? "### " : paragraph.style === paragraphStyles.bullet || paragraph.style === paragraphStyles.dash ? `${indent}- ` : numbered ? `${indent}${numbers[paragraph.indent]}. ` : paragraph.style === paragraphStyles.checklist ? `${indent}- [${paragraph.todo?.done ? "x" : " "}] ` : "";
       lines.push(
-        `${quote3}${prefix}${prefix === "" ? escapeLineStart(content) : content}`
+        `${quote4}${prefix}${prefix === "" ? escapeLineStart(content) : content}`
       );
     }
     if (monospaced) lines.push("```");
@@ -69294,16 +69433,16 @@ var merge2 = (runs) => runs.reduce((merged, run) => {
   else merged.push(run);
   return merged;
 }, []);
-var escapeInline = (text13) => text13.replace(/[\\`*_[\]~<]/g, "\\$&");
+var escapeInline = (text14) => text14.replace(/[\\`*_[\]~<]/g, "\\$&");
 var escapeLineStart = (line) => line.replace(/^(\s*)([#>+-]|\d+[.)])(?=\s|$)/, "$1\\$2");
 var inline = (run, attachment2) => {
   if (run.attachment !== null)
     return run.text.split("").map(
       (character) => character === attachmentCharacter ? attachment2(run.attachment) : escapeInline(character)
     ).join("");
-  const text13 = run.text.trim();
-  if (text13 === "") return run.text;
-  let body = escapeInline(text13);
+  const text14 = run.text.trim();
+  if (text14 === "") return run.text;
+  let body = escapeInline(text14);
   if (run.strikethrough) body = `~~${body}~~`;
   if (run.bold && run.italic) body = `***${body}***`;
   else if (run.bold) body = `**${body}**`;
@@ -69395,8 +69534,8 @@ function decodeTable(bytes) {
       const y = rows.order.get(identity(reference(cell.message(1), "row")));
       if (x === void 0 || y === void 0)
         throw new TypeError("Notes table cell has no row or column position");
-      const text13 = reference(cell.message(2), "cell").message(10)?.string(2);
-      grid[y][x] = (text13 ?? "").replaceAll(
+      const text14 = reference(cell.message(2), "cell").message(10)?.string(2);
+      grid[y][x] = (text14 ?? "").replaceAll(
         attachmentCharacter,
         ""
       );
@@ -69406,7 +69545,7 @@ function decodeTable(bytes) {
 }
 function markdownTable(grid) {
   if (grid.length === 0) return "";
-  const cell = (text13) => escapeInline(text13).replaceAll("|", "\\|").replaceAll("\n", "<br>");
+  const cell = (text14) => escapeInline(text14).replaceAll("|", "\\|").replaceAll("\n", "<br>");
   const row = (cells) => `| ${cells.map(cell).join(" | ")} |`;
   const [header = [], ...body] = grid;
   return [
@@ -69603,9 +69742,9 @@ var NotesScan = class {
     return document.markdown(({ id: id12, type }) => {
       const token = this.inline.get(id12);
       if (token !== void 0) {
-        const text13 = String(token.ZALTTEXT ?? "");
+        const text14 = String(token.ZALTTEXT ?? "");
         const target = string4(token.ZTOKENCONTENTIDENTIFIER);
-        return token.ZTYPEUTI1 === noteLinkType && target !== null ? `[${text13}](<${target}>)` : text13;
+        return token.ZTYPEUTI1 === noteLinkType && target !== null ? `[${text14}](<${target}>)` : text14;
       }
       const row = this.attachments.get(id12);
       if (row === void 0) return "";
@@ -70049,13 +70188,13 @@ var AppleNotesSource = class extends Source {
     const reader = readers[stream.name];
     const records = await reader.read(scan);
     const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state) : records.map((data) => ({ stream: stream.name, data }));
-    for await (const message3 of messages) {
-      if ("type" in message3 || configuration.fileReads.length === 0)
-        yield message3;
+    for await (const message4 of messages) {
+      if ("type" in message4 || configuration.fileReads.length === 0)
+        yield message4;
       else
         yield {
-          ...message3,
-          file: reader.file(message3.data, scan)
+          ...message4,
+          file: reader.file(message4.data, scan)
         };
     }
   }
@@ -72923,10 +73062,10 @@ var AppleSafariSource = class extends Source {
     const reader = readerOf(stream);
     const records = await reader.read(scan);
     const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state) : records.map((data) => ({ stream: stream.name, data }));
-    for await (const message3 of messages) {
-      if ("type" in message3 || configuration.fileReads.length === 0)
-        yield message3;
-      else yield { ...message3, file: reader.file(message3.data, scan) };
+    for await (const message4 of messages) {
+      if ("type" in message4 || configuration.fileReads.length === 0)
+        yield message4;
+      else yield { ...message4, file: reader.file(message4.data, scan) };
     }
   }
 };
@@ -72968,10 +73107,10 @@ var appNames = [
   "reminders",
   "safari"
 ];
-function calendarDefaults(now = /* @__PURE__ */ new Date()) {
-  const start = new Date(now);
+function calendarDefaults(now2 = /* @__PURE__ */ new Date()) {
+  const start = new Date(now2);
   start.setUTCFullYear(start.getUTCFullYear() - 1);
-  const end = new Date(now);
+  const end = new Date(now2);
   end.setUTCFullYear(end.getUTCFullYear() + 1);
   return { startAt: start.toISOString(), endAt: end.toISOString() };
 }
@@ -73112,145 +73251,121 @@ var apps = {
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { mkdirSync as mkdirSync3 } from "node:fs";
 import { join as join18 } from "node:path";
-import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
 import { setInterval as setInterval6, setTimeout as sleep2 } from "node:timers/promises";
 
-// apps/apple/src/plugin/settings.ts
-import { createHash as createHash7 } from "node:crypto";
-import { chmodSync, mkdirSync, readdirSync as readdirSync2, rmSync } from "node:fs";
-import { join as join16 } from "node:path";
+// packages/destinations/sqlite/dist/sqlite-catalog.js
 import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
-var appSchema = external_exports.enum(appNames);
-var ids = external_exports.array(external_exports.string().min(1).max(1024)).min(1).max(1e3).refine(
-  (values) => new Set(values).size === values.length,
-  "Choose each item once"
-);
-var scopeSchema = external_exports.strictObject({
-  accountIds: ids.optional(),
-  collectionIds: ids.optional(),
-  startAt: external_exports.iso.datetime({ precision: 3 }).optional(),
-  endAt: external_exports.iso.datetime({ precision: 3 }).optional()
-}).refine(
-  (scope) => scope.startAt === void 0 || scope.endAt === void 0 || scope.startAt < scope.endAt,
-  "Start must precede end"
-);
-var configurationSchema = external_exports.strictObject({
-  apps: external_exports.array(
-    external_exports.strictObject({
-      app: appSchema,
-      scope: scopeSchema.default({}),
-      includeAttachments: external_exports.boolean().default(true)
-    })
-  ).max(appNames.length)
-}).superRefine((configuration, context) => {
-  if (new Set(configuration.apps.map((item) => item.app)).size !== configuration.apps.length)
-    context.addIssue({ code: "custom", message: "Choose each app once" });
-  for (const { app, scope } of configuration.apps) {
-    if (!apps[app].accounts && scope.accountIds !== void 0)
-      context.addIssue({
-        code: "custom",
-        message: `${app}: choose collections instead of account IDs`
-      });
-    if (apps[app].datedBy === null && (scope.startAt !== void 0 || scope.endAt !== void 0))
-      context.addIssue({
-        code: "custom",
-        message: `${app}: date filtering is unavailable; choose collections`
-      });
-  }
-});
-function importDirectory(directory, item) {
-  const key = createHash7("sha256").update(JSON.stringify([item.scope, item.includeAttachments])).digest("hex").slice(0, 16);
-  return join16(directory, item.app, key);
-}
-function removeStaleImports(directory, configuration) {
-  for (const app of appNames) {
-    const item = configuration?.apps.find((selected2) => selected2.app === app);
-    const kept = item === void 0 ? null : importDirectory(directory, item);
-    const root = join16(directory, app);
-    let entries;
-    try {
-      entries = readdirSync2(root);
-    } catch {
-      continue;
-    }
-    for (const entry of entries)
-      if (join16(root, entry) !== kept)
-        rmSync(join16(root, entry), { recursive: true, force: true });
-  }
-}
-var Settings = class {
-  database;
-  constructor(directory) {
-    mkdirSync(directory, { recursive: true, mode: 448 });
-    chmodSync(directory, 448);
-    const path = join16(directory, "settings.sqlite");
-    this.database = new DatabaseSync7(path);
-    try {
-      chmodSync(path, 384);
-      this.database.exec(
-        "CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS import_status (import TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);"
-      );
-    } catch (error62) {
-      this.database.close();
-      throw error62;
-    }
-  }
-  configuration() {
-    const row = this.database.prepare("SELECT value FROM configuration WHERE id=1").get();
-    return row === void 0 ? null : configurationSchema.parse(JSON.parse(String(row.value)));
-  }
-  // The last pass of the import in one import directory.
-  syncResult(importPath) {
-    const row = this.database.prepare("SELECT value FROM import_status WHERE import=?").get(importPath);
-    return row === void 0 ? void 0 : JSON.parse(String(row.value));
-  }
-  saveSyncResult(importPath, result) {
-    this.database.prepare(
-      "INSERT INTO import_status VALUES(?,?) ON CONFLICT(import) DO UPDATE SET value=excluded.value"
-    ).run(importPath, JSON.stringify(result));
-  }
-  // Saves the selection and forgets the status of every other import.
-  saveConfiguration(configuration, imports) {
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      this.database.prepare(
-        "DELETE FROM import_status WHERE import NOT IN (SELECT value FROM json_each(?))"
-      ).run(JSON.stringify(imports));
-      this.database.prepare(
-        "INSERT INTO configuration VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value"
-      ).run(JSON.stringify(configuration));
-      this.database.exec("COMMIT");
-    } catch (error62) {
-      this.database.exec("ROLLBACK");
-      throw error62;
-    }
-  }
-  // Each running plugin server's version, seen within the last heartbeats;
-  // servers gone for an hour are forgotten.
-  heartbeat(id12, version3, now) {
-    this.database.prepare(
-      "INSERT INTO servers VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version, seen_at=excluded.seen_at"
-    ).run(id12, version3, now);
-    this.database.prepare("DELETE FROM servers WHERE seen_at < ?").run(now - 36e5);
-  }
-  runningVersions(since) {
-    return this.database.prepare("SELECT version FROM servers WHERE seen_at >= ?").all(since).map((row) => String(row.version));
-  }
-  forgetServer(id12) {
-    this.database.prepare("DELETE FROM servers WHERE id=?").run(id12);
-  }
-  [Symbol.dispose]() {
-    this.database.close();
-  }
-};
 
-// apps/apple/src/plugin/sync.ts
-import { mkdirSync as mkdirSync2 } from "node:fs";
-import { join as join17 } from "node:path";
-import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
+// packages/destinations/sqlite/dist/sqlite-descriptions.js
+var descriptions = '"_mac_elt_descriptions"';
+function createDescriptions(database) {
+  database.exec(`CREATE TABLE IF NOT EXISTS ${descriptions} ("relation" TEXT NOT NULL COLLATE NOCASE, "column" TEXT NOT NULL COLLATE NOCASE, "data_type" TEXT, "description" TEXT NOT NULL, PRIMARY KEY ("relation", "column")) STRICT`);
+}
+function describe3(database, relation, description, columns2) {
+  createDescriptions(database);
+  database.exec(`DELETE FROM ${descriptions} WHERE "relation" NOT IN (SELECT "name" FROM sqlite_schema)`);
+  database.prepare(`DELETE FROM ${descriptions} WHERE "relation" = ?`).run(relation);
+  const declared = new Map(database.prepare('SELECT "name", "type" FROM pragma_table_info(?)').all(relation).map(({ name, type }) => [
+    String(name).toLowerCase(),
+    String(type).toLowerCase() || null
+  ]));
+  const insert = database.prepare(`INSERT INTO ${descriptions} ("relation", "column", "data_type", "description") VALUES (?, ?, ?, ?)`);
+  insert.run(relation, "", null, description);
+  for (const [column, { description: description2, dataType }] of Object.entries(columns2))
+    if (description2 !== null)
+      insert.run(relation, column, dataType ?? declared.get(column.toLowerCase()) ?? null, description2);
+}
+
+// packages/destinations/sqlite/dist/sqlite-views.js
+var quote = (name) => `"${name.replaceAll('"', '""')}"`;
+function text13(value, what) {
+  if (typeof value !== "string" || !value.trim() || value.includes("\0") || !value.isWellFormed())
+    throw new TypeError(`Invalid ${what}`);
+}
+function publishSQLiteViews(database, { views }) {
+  const names = /* @__PURE__ */ new Set();
+  for (const view of views) {
+    text13(view.name, "view name");
+    if (/^_mac_elt_/i.test(view.name))
+      throw new TypeError("View names starting with _mac_elt_ are reserved");
+    if (names.has(view.name.toLowerCase()))
+      throw new TypeError("Duplicate view names");
+    names.add(view.name.toLowerCase());
+    text13(view.query, "view query");
+    text13(view.description, "view description");
+    for (const [column, description] of Object.entries(view.columns)) {
+      text13(column, "column name");
+      text13(description, "column description");
+    }
+  }
+  if (views.length === 0)
+    return;
+  database.exec("SAVEPOINT publish");
+  try {
+    for (const view of views.toReversed())
+      database.exec(`DROP VIEW IF EXISTS ${quote(view.name)}`);
+    for (const view of views) {
+      database.prepare(`CREATE VIEW ${quote(view.name)} AS ${view.query}`).run();
+      const columns2 = database.prepare('SELECT "name" FROM pragma_table_info(?)').all(view.name).map(({ name }) => String(name));
+      if (columns2.length !== Object.keys(view.columns).length || columns2.some((name) => !Object.hasOwn(view.columns, name)))
+        throw new TypeError(`View ${quote(view.name)} must describe exactly its output columns: ${columns2.join(", ")}`);
+      describe3(database, view.name, view.description, Object.fromEntries(Object.entries(view.columns).map(([column, description]) => [
+        column,
+        { description }
+      ])));
+    }
+    database.exec("RELEASE publish");
+  } catch (error62) {
+    if (database.isTransaction) {
+      database.exec("ROLLBACK TO publish");
+      database.exec("RELEASE publish");
+    }
+    throw error62;
+  }
+}
+
+// packages/destinations/sqlite/dist/sqlite-catalog.js
+function installSQLiteCatalog({ path }) {
+  var _stack = [];
+  try {
+    if (path === ":memory:")
+      throw new TypeError("A SQLite catalog requires a database file");
+    const database = __using(_stack, new DatabaseSync7(path, { timeout: 3e4 }));
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      createDescriptions(database);
+      publishSQLiteViews(database, {
+        views: [
+          {
+            ...readerCatalog,
+            query: `SELECT 'view' AS "kind", s."name" AS "name", NULL AS "data_type", d."description" AS "description"
+            FROM sqlite_schema s JOIN ${descriptions} d ON d."relation" = s."name" AND d."column" = ''
+            WHERE s."type" = 'view'
+            UNION ALL
+            SELECT 'column', s."name" || '.' || c."column", c."data_type", c."description"
+            FROM sqlite_schema s JOIN ${descriptions} d ON d."relation" = s."name" AND d."column" = ''
+            JOIN ${descriptions} c ON c."relation" = s."name" AND c."column" <> ''
+            WHERE s."type" = 'view'
+            ORDER BY 2`
+          }
+        ]
+      });
+      database.exec("COMMIT");
+    } catch (error62) {
+      if (database.isTransaction)
+        database.exec("ROLLBACK");
+      throw error62;
+    }
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
 
 // packages/destinations/sqlite/dist/sqlite-checkpoint-store.js
-import { chmodSync as chmodSync2 } from "node:fs";
+import { chmodSync } from "node:fs";
 import { resolve as resolve2 } from "node:path";
 import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 var SQLiteCheckpointStore = class extends CheckpointStore {
@@ -73297,7 +73412,7 @@ var SQLiteCheckpointStore = class extends CheckpointStore {
   open() {
     const database = new DatabaseSync8(this.path);
     try {
-      chmodSync2(this.path, 384);
+      chmodSync(this.path, 384);
       database.exec("CREATE TABLE IF NOT EXISTS checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL) STRICT");
       return database;
     } catch (error62) {
@@ -73313,8 +73428,22 @@ var storageTypes = {
   integer: "INTEGER",
   real: "REAL",
   blob: "BLOB",
-  boolean: "INTEGER"
+  boolean: "INTEGER",
+  date: "TEXT",
+  timestamp: "TEXT"
 };
+function canonical2(kind, name) {
+  switch (kind) {
+    case "boolean":
+      return ` CHECK (${name} IN (0, 1))`;
+    case "date":
+      return ` CHECK (date(${name}) IS ${name})`;
+    case "timestamp":
+      return ` CHECK (strftime('%Y-%m-%dT%H:%M:%fZ', ${name}) IS ${name})`;
+    default:
+      return "";
+  }
+}
 var SQLiteColumn = class _SQLiteColumn {
   name;
   kind;
@@ -73396,8 +73525,14 @@ var SQLiteColumn = class _SQLiteColumn {
       return "TEXT";
     return this.storesFile ? "INTEGER" : storageTypes[this.kind];
   }
+  // The column's type as readers see it in the catalog.
+  get dataType() {
+    if (this.storesFile)
+      return "integer";
+    return this.array ? `${this.kind}[]` : this.kind;
+  }
   get definition() {
-    const check2 = this.array ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')` : this.kind === "boolean" ? ` CHECK (${this.quotedName} IN (0, 1))` : "";
+    const check2 = this.array ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')` : canonical2(this.kind, this.quotedName);
     return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? " PRIMARY KEY" : ""}${this.required ? " NOT NULL" : ""}${check2}`;
   }
   encode(record3) {
@@ -73426,7 +73561,15 @@ var SQLiteColumn = class _SQLiteColumn {
           return Number(value);
         break;
       case "integer":
-        if (typeof value === "bigint" || typeof value === "number" && Number.isSafeInteger(value))
+        if (typeof value === "bigint" && value >= -(2n ** 63n) && value < 2n ** 63n || typeof value === "number" && Number.isSafeInteger(value))
+          return value;
+        break;
+      case "date":
+        if (isCalendarDate(value))
+          return value;
+        break;
+      case "timestamp":
+        if (isTimestamp(value))
           return value;
         break;
       case "real":
@@ -73450,6 +73593,10 @@ var SQLiteColumn = class _SQLiteColumn {
         return Number.isSafeInteger(value);
       case "real":
         return typeof value === "number" && Number.isFinite(value);
+      case "date":
+        return isCalendarDate(value);
+      case "timestamp":
+        return isTimestamp(value);
       default:
         return false;
     }
@@ -73457,10 +73604,10 @@ var SQLiteColumn = class _SQLiteColumn {
 };
 
 // packages/destinations/sqlite/dist/sqlite-columns.js
-function scalarKind(name, type) {
+function scalarKind(name, type, format) {
   switch (type) {
     case "string":
-      return "text";
+      return format === "date" ? "date" : format === "date-time" ? "timestamp" : "text";
     case "integer":
       return "integer";
     case "number":
@@ -73472,7 +73619,8 @@ function scalarKind(name, type) {
   }
 }
 var SQLiteColumns = class {
-  // Scalars, and arrays of scalars as JSON arrays in TEXT.
+  // Scalars, and arrays of scalars as JSON arrays in TEXT. The date and
+  // date-time string formats keep their kind, as in Postgres.
   static fromSchema(schema) {
     const { properties: properties29, required: required3 } = schema;
     if (schema.type !== "object" || properties29 === null || typeof properties29 !== "object" || Array.isArray(properties29))
@@ -73497,7 +73645,7 @@ var SQLiteColumns = class {
       const items = array2 ? Reflect.get(field, "items") : field;
       if (items === null || typeof items !== "object" || Array.isArray(items))
         throw new TypeError(`Unsupported JSON Schema items for field ${name}`);
-      const kind = scalarKind(name, array2 ? Reflect.get(items, "type") : valueTypes[0]);
+      const kind = scalarKind(name, array2 ? Reflect.get(items, "type") : valueTypes[0], Reflect.get(items, "format"));
       return new SQLiteColumn(name, kind, {
         nullable: types.includes("null"),
         optional: !requiredFields.has(name),
@@ -73527,6 +73675,20 @@ var SQLiteColumns = class {
       primaryKey: false
     });
   }
+  date(field) {
+    return new SQLiteColumn(field, "date", {
+      nullable: true,
+      optional: false,
+      primaryKey: false
+    });
+  }
+  timestamp(field) {
+    return new SQLiteColumn(field, "timestamp", {
+      nullable: true,
+      optional: false,
+      primaryKey: false
+    });
+  }
   blob(field) {
     return new SQLiteColumn(field, "blob", {
       nullable: true,
@@ -73548,11 +73710,11 @@ import { resolve as resolve3 } from "node:path";
 import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-writer.js
-import { createHash as createHash8 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-file-store.js
-var quote = (name) => `"${name.replaceAll('"', '""')}"`;
+var quote2 = (name) => `"${name.replaceAll('"', '""')}"`;
 var SQLiteFileStore = class _SQLiteFileStore {
   static chunkSize = 4 * 1024 * 1024;
   name;
@@ -73560,10 +73722,10 @@ var SQLiteFileStore = class _SQLiteFileStore {
   #insert;
   constructor(database, table2, column) {
     this.name = _SQLiteFileStore.tableName(table2, column);
-    const chunks = quote(this.name);
+    const chunks = quote2(this.name);
     database.exec(`CREATE TABLE IF NOT EXISTS ${chunks} ("file" INTEGER NOT NULL, "n" INTEGER NOT NULL, "bytes" BLOB NOT NULL, PRIMARY KEY ("file", "n")) STRICT`);
-    database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote(`${this.name}_delete`)} AFTER DELETE ON ${table2.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
-    database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote(`${this.name}_update`)} AFTER UPDATE OF ${column.quotedName} ON ${table2.quotedName} WHEN old.${column.quotedName} IS NOT new.${column.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
+    database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_delete`)} AFTER DELETE ON ${table2.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
+    database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_update`)} AFTER UPDATE OF ${column.quotedName} ON ${table2.quotedName} WHEN old.${column.quotedName} IS NOT new.${column.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
     this.#next = database.prepare(`SELECT coalesce(max("file"), 0) + 1 AS "file" FROM ${chunks}`);
     this.#insert = database.prepare(`INSERT INTO ${chunks} ("file", "n", "bytes") VALUES (?, ?, ?)`);
   }
@@ -73593,16 +73755,25 @@ function lockWriter(path) {
     throw error62;
   }
 }
-var quote2 = (name) => `"${name.replaceAll('"', '""')}"`;
+var quote3 = (name) => `"${name.replaceAll('"', '""')}"`;
 var seq = '"_mac_elt_seq"';
 var op = '"_mac_elt_op"';
 var SQLiteWriter = class extends Writer {
+  configuration;
   path;
   table;
-  constructor(stream, path, table2) {
-    super(stream);
+  #description;
+  constructor(configuration, path, table2) {
+    super(configuration.stream);
+    this.configuration = configuration;
     this.path = path;
     this.table = table2;
+    this.#description = describeTarget(configuration, table2.columns, (column) => `Integer reference to the source file's original bytes. Join ${quote3(SQLiteFileStore.tableName(table2, column))} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`);
+    if (table2.readerView === void 0)
+      return;
+    const missing = undescribed(this.#description);
+    if (missing.length > 0)
+      throw new TypeError(`Reader view ${table2.readerView} needs JSON Schema descriptions for ${missing.join(", ")} of stream ${this.stream.name}`);
   }
   // Inserts each staged record, in order.
   append(database, stage, loadedAt) {
@@ -73617,10 +73788,10 @@ var SQLiteWriter = class extends Writer {
     database.exec(`DELETE FROM ${this.table.quotedName}`);
   }
   get hash() {
-    return createHash8("sha256").update(this.table.location).digest("hex");
+    return createHash7("sha256").update(this.table.location).digest("hex");
   }
   get dedupIndex() {
-    return quote2(`_mac_elt_dedup_${this.hash}`);
+    return quote3(`_mac_elt_dedup_${this.hash}`);
   }
   get fields() {
     return [
@@ -73680,7 +73851,7 @@ var SQLiteWriter = class extends Writer {
           for (const column of this.table.columns) {
             const chunks = SQLiteFileStore.tableName(this.table, column);
             if (column.storesFile && this.exists(database, chunks))
-              database.exec(`DELETE FROM ${quote2(chunks)}`);
+              database.exec(`DELETE FROM ${quote3(chunks)}`);
           }
         }
         database.prepare('DELETE FROM "_mac_elt_writers" WHERE "target" = ?').run(this.table.location);
@@ -73699,11 +73870,39 @@ var SQLiteWriter = class extends Writer {
       __callDispose(_stack, _error, _hasError);
     }
   }
+  // What the table, its reader view and their columns say to readers,
+  // rewritten with every load so they follow the stream's schema.
+  describe(database) {
+    const dataTypes = new Map([
+      ...this.table.columns.map(({ name, dataType }) => [name, dataType]),
+      ["loaded_at", "timestamp"]
+    ]);
+    const columns2 = Object.fromEntries(Object.entries(this.#description.columns).map(([name, description]) => [
+      name,
+      { description, dataType: dataTypes.get(name) }
+    ]));
+    describe3(database, this.table.name, this.#description.table, columns2);
+    if (this.table.readerView !== void 0)
+      describe3(database, this.table.readerView, this.#description.table, columns2);
+  }
+  // Created only when absent and never replaced inside the load: replacing a
+  // view readers can see would lock them out until this load commits. A view
+  // of other columns or another table is refused rather than adopted.
+  installReaderView(database, view) {
+    const definition3 = `CREATE VIEW ${quote3(view)} AS SELECT ${this.fields.join(", ")} FROM ${this.table.quotedName}`;
+    const existing = database.prepare('SELECT "type", "sql" FROM sqlite_schema WHERE lower("name") = lower(?)').get(view);
+    if (existing === void 0) {
+      database.exec(definition3);
+      return;
+    }
+    if (existing.type !== "view" || existing.sql !== definition3)
+      throw new TypeError(`${quote3(view)} is not a view of exactly ${this.table.quotedName}; drop it or delete the database`);
+  }
   // Refuses a target another writer owns, or a resumed one that was dropped,
   // and prepares it inside a savepoint, so a refused target leaves the shared
   // transaction as it was.
   prepare(database, { writer, resuming }, loadedAt) {
-    const name = quote2(`_mac_elt_stage_${this.hash}`);
+    const name = quote3(`_mac_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
     const files = this.table.columns.filter((column) => column.storesFile);
     database.exec("SAVEPOINT prepare");
@@ -73719,8 +73918,11 @@ var SQLiteWriter = class extends Writer {
         store: new SQLiteFileStore(database, this.table, column)
       }));
       for (const { column, store } of stores)
-        database.exec(`DELETE FROM ${quote2(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
+        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
       this.initialize(database);
+      if (this.table.readerView !== void 0)
+        this.installReaderView(database, this.table.readerView);
+      this.describe(database);
       database.exec(`DROP TABLE IF EXISTS ${stage}`);
       database.exec(`CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(", ")})`);
       database.exec("RELEASE prepare");
@@ -73734,7 +73936,7 @@ var SQLiteWriter = class extends Writer {
     const staged = (column) => `SELECT ${column.quotedName} FROM ${stage} WHERE ${column.quotedName} IS NOT NULL`;
     const drop = () => {
       for (const { column, store } of stores)
-        database.exec(`DELETE FROM ${quote2(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
+        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
       database.exec(`DELETE FROM ${stage}`);
     };
     let replaced = false;
@@ -73787,8 +73989,8 @@ var SQLiteWriter = class extends Writer {
 
 // packages/destinations/sqlite/dist/sqlite-append-writer.js
 var SQLiteAppendWriter = class extends SQLiteWriter {
-  constructor(stream, path, table2) {
-    super(stream, path, table2);
+  constructor(configuration, path, table2) {
+    super(configuration, path, table2);
     Object.freeze(this);
   }
   initialize() {
@@ -73800,25 +74002,18 @@ var SQLiteAppendWriter = class extends SQLiteWriter {
 
 // packages/destinations/sqlite/dist/sqlite-deduplicating-writer.js
 var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
-  configuration;
   deduplication;
   keys;
   cursor;
   constructor(configuration, path, table2) {
-    super(configuration.stream, path, table2);
-    this.configuration = configuration;
+    super(configuration, path, table2);
     this.deduplication = configuration.deduplication();
+    const inferred = SQLiteColumns.fromSchema(configuration.stream.jsonSchema);
     const column = (field) => {
       const selected2 = table2.columns.find((column2) => column2.name === field);
       if (selected2 === void 0)
         throw new TypeError(`Deduplication requires destination column ${field}`);
-      const kinds4 = {
-        string: "text",
-        number: "real",
-        integer: "integer",
-        boolean: "boolean"
-      };
-      if (selected2.kind !== kinds4[this.deduplication.type(field)])
+      if (selected2.kind !== inferred.find((column2) => column2.name === field)?.kind)
         throw new TypeError(`Deduplication column ${field} must preserve the source scalar type`);
       return selected2;
     };
@@ -73879,8 +74074,8 @@ var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
 
 // packages/destinations/sqlite/dist/sqlite-overwrite-writer.js
 var SQLiteOverwriteWriter = class extends SQLiteWriter {
-  constructor(stream, path, table2) {
-    super(stream, path, table2);
+  constructor(configuration, path, table2) {
+    super(configuration, path, table2);
     Object.freeze(this);
   }
   get replaces() {
@@ -73897,11 +74092,21 @@ var SQLiteOverwriteWriter = class extends SQLiteWriter {
 var SQLiteTable = class _SQLiteTable extends Target {
   name;
   columns;
-  constructor(name, columns2) {
+  // The name readers query: a documented view of exactly this table.
+  readerView;
+  constructor(name, columns2, readerView) {
     if (!name || name.includes("\0"))
       throw new TypeError("Invalid table name");
     if (/^_mac_elt_/i.test(name))
       throw new TypeError("Table names starting with _mac_elt_ are reserved");
+    if (readerView !== void 0) {
+      if (!readerView || readerView.includes("\0"))
+        throw new TypeError("Invalid view name");
+      if (/^_mac_elt_/i.test(readerView))
+        throw new TypeError("View names starting with _mac_elt_ are reserved");
+      if (readerView.toLowerCase() === name.toLowerCase())
+        throw new TypeError("A reader view needs a name of its own");
+    }
     if (columns2 !== void 0 && (!Array.isArray(columns2) || columns2.length === 0 || !columns2.every((column) => column instanceof SQLiteColumn)))
       throw new TypeError("A table requires at least one SQLite column");
     const names = (columns2 ?? []).map((column) => column.name.toLowerCase());
@@ -73921,11 +74126,17 @@ var SQLiteTable = class _SQLiteTable extends Target {
     super(fileReads);
     this.name = name;
     this.columns = Object.freeze([...columns2 ?? []]);
+    this.readerView = readerView;
     Object.freeze(this);
+  }
+  // Loads also keep a view of this table under another name, created with the
+  // table and described by the same descriptions, which every column then needs.
+  withReaderView(name) {
+    return new _SQLiteTable(this.name, this.columns.length === 0 ? void 0 : this.columns, name);
   }
   resolve(stream) {
     if (this.columns.length === 0)
-      return new _SQLiteTable(this.name, SQLiteColumns.fromSchema(stream.jsonSchema));
+      return new _SQLiteTable(this.name, SQLiteColumns.fromSchema(stream.jsonSchema), this.readerView);
     const properties29 = stream.jsonSchema.properties;
     if (properties29 !== null && typeof properties29 === "object" && !Array.isArray(properties29)) {
       for (const column of this.columns) {
@@ -73945,7 +74156,7 @@ var SQLiteTable = class _SQLiteTable extends Target {
   get createTableSQL() {
     if (this.columns.length === 0)
       throw new TypeError("Resolve inferred columns before creating a table");
-    return `CREATE TABLE IF NOT EXISTS ${this.quotedName} (${this.columns.map((column) => column.definition).join(", ")}, "loaded_at" TEXT NOT NULL) STRICT`;
+    return `CREATE TABLE IF NOT EXISTS ${this.quotedName} (${this.columns.map((column) => column.definition).join(", ")}, "loaded_at" TEXT NOT NULL${canonical2("timestamp", '"loaded_at"')}) STRICT`;
   }
 };
 
@@ -74011,20 +74222,304 @@ var SQLiteDestination = class extends Destination {
       case "overwrite_dedup":
         return new SQLiteDeduplicatingWriter(configuration, this.path, table2);
       case "append":
-        return new SQLiteAppendWriter(configuration.stream, this.path, table2);
+        return new SQLiteAppendWriter(configuration, this.path, table2);
       case "overwrite":
-        return new SQLiteOverwriteWriter(configuration.stream, this.path, table2);
+        return new SQLiteOverwriteWriter(configuration, this.path, table2);
       default:
         throw new TypeError(`Destination does not support ${configuration.destinationSyncMode}`);
     }
   }
 };
 
-// apps/apple/src/plugin/sync.ts
-var attachmentRef = {
-  type: ["string", "null"],
-  description: "Managed local copy when bytes are available"
+// packages/destinations/sqlite/dist/sqlite-sync-history.js
+import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
+
+// packages/destinations/sqlite/dist/sqlite-sync-history-schema.js
+var attempts = '"_mac_elt_sync_attempts"';
+var coverage = '"_mac_elt_extraction_coverage"';
+var now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+var status = `"status" TEXT NOT NULL DEFAULT 'running' CHECK ("status" IN ('running', 'succeeded', 'partial', 'failed'))`;
+var syncHistoryTables = [
+  `CREATE TABLE IF NOT EXISTS ${attempts} (
+    "id" INTEGER PRIMARY KEY,
+    "connector" TEXT NOT NULL CHECK (trim("connector") <> ''), "source" TEXT NOT NULL,
+    "started_at" TEXT NOT NULL, "completed_at" TEXT, ${status}, "error" TEXT,
+    CHECK (("status" = 'running') = ("completed_at" IS NULL))
+  ) STRICT`,
+  `CREATE INDEX IF NOT EXISTS "_mac_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
+  `CREATE TABLE IF NOT EXISTS ${coverage} (
+    "attempt_id" INTEGER NOT NULL REFERENCES ${attempts}("id"),
+    "stream" TEXT NOT NULL, "target_schema" TEXT NOT NULL, "target_table" TEXT NOT NULL,
+    "sync_mode" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL,
+    "description" TEXT NOT NULL CHECK (trim("description") <> ''),
+    "selection" TEXT NOT NULL CHECK (json_valid("selection")), ${status},
+    "written_count" INTEGER CHECK ("written_count" >= 0),
+    "deleted_count" INTEGER CHECK ("deleted_count" >= 0),
+    "failures" TEXT NOT NULL DEFAULT '[]' CHECK (json_valid("failures")),
+    PRIMARY KEY ("attempt_id", "stream")
+  ) STRICT`
+];
+var queries = {
+  sync_attempts: `SELECT "id" AS "attempt_id", "connector", "source", "started_at", "completed_at", "status", "error" FROM ${attempts}`,
+  extraction_coverage: `SELECT c."attempt_id", a."connector", a."source", a."started_at", a."completed_at",
+      c."stream", c."target_schema", c."target_table",
+      EXISTS (SELECT 1 FROM sqlite_schema t WHERE t."type" = 'table' AND lower(t."name") = lower(c."target_table")) AS "target_exists",
+      c."sync_mode", c."destination_sync_mode", c."description", c."selection",
+      c."status", c."written_count", c."deleted_count", c."failures"
+      FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"`,
+  sync_status: `WITH "success" AS (
+        SELECT "connector", "id", "completed_at", row_number() OVER (PARTITION BY "connector" ORDER BY "completed_at" DESC, "id" DESC) AS "rank"
+        FROM ${attempts} WHERE "status" = 'succeeded'
+      ), "latest" AS (
+        SELECT *, row_number() OVER (PARTITION BY "connector" ORDER BY "id" DESC) AS "rank" FROM ${attempts}
+      )
+      SELECT a."connector", a."id" AS "latest_attempt_id", a."started_at", a."completed_at", a."status", a."error",
+        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
+      FROM "latest" a LEFT JOIN "success" s ON s."connector" = a."connector" AND s."rank" = 1
+      WHERE a."rank" = 1 ORDER BY a."connector"`,
+  stream_status: `WITH "declared" AS (
+        SELECT a."connector", c."stream", c."target_schema", c."target_table", a."id", a."started_at", a."completed_at", c."status",
+          row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."id" DESC) AS "rank"
+        FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"
+      ), "success" AS (
+        SELECT a."connector", c."stream", a."id", a."completed_at",
+          row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."completed_at" DESC, a."id" DESC) AS "rank"
+        FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id" WHERE c."status" = 'succeeded'
+      )
+      SELECT d."connector", d."stream", d."target_schema", d."target_table",
+        d."id" AS "latest_attempt_id", d."started_at", d."completed_at", d."status",
+        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
+      FROM "declared" d LEFT JOIN "success" s ON s."connector" = d."connector" AND s."stream" = d."stream" AND s."rank" = 1
+      WHERE d."rank" = 1 ORDER BY d."connector", d."stream"`
 };
+var syncHistoryViews = Object.values(syncHistoryRelations).map((relation) => ({ ...relation, query: queries[relation.name] }));
+
+// packages/destinations/sqlite/dist/sqlite-sync-history.js
+var busyTimeout = 3e4;
+var SQLiteSyncHistory = class extends SyncHistory {
+  constructor() {
+    super();
+    Object.freeze(this);
+  }
+  validate(connection) {
+    this.#path(connection);
+  }
+  // Every selected stream is declared before reading, even if it produces no
+  // rows or the process dies: an unfinished attempt stays running, never success.
+  async begin(connection, copies) {
+    const path = this.#path(connection);
+    const id12 = write(path, (database) => {
+      const attempt2 = database.prepare(`INSERT INTO ${attempts} ("connector", "source", "started_at") VALUES (?, ?, ${now}) RETURNING "id"`).get(connection.name, connection.source.identity);
+      if (attempt2 === void 0)
+        throw new Error("Sync attempt was not recorded");
+      const id13 = Number(attempt2.id);
+      const declare = database.prepare(`INSERT INTO ${coverage} ("attempt_id", "stream", "target_schema", "target_table", "sync_mode", "destination_sync_mode", "description", "selection") VALUES (?, ?, 'main', ?, ?, ?, ?, ?)`);
+      for (const { copy, coverage: coverage3 } of copies)
+        declare.run(id13, copy.from.name, copy.to.name, copy.configuration.syncMode, copy.configuration.destinationSyncMode, coverage3.description, JSON.stringify(coverage3.selection));
+      return id13;
+    });
+    return {
+      finish: async (outcomes) => this.#finish(path, id12, outcomes),
+      fail: async (error62) => write(path, (database) => {
+        database.prepare(`UPDATE ${coverage} SET "status" = 'failed', "failures" = ? WHERE "attempt_id" = ?`).run(JSON.stringify([{ partition: null, error: message3(error62) }]), id12);
+        database.prepare(`UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ? WHERE "id" = ?`).run(message3(error62), id12);
+      })
+    };
+  }
+  // Creates the history's tables and publishes its views in each file; safe
+  // to repeat.
+  async install(destinations) {
+    for (const destination of destinations)
+      write(persistent(destination), (database) => {
+        for (const statement of syncHistoryTables)
+          database.exec(statement);
+        publishSQLiteViews(database, { views: syncHistoryViews });
+      });
+  }
+  #path({ name, destination }) {
+    if (!(destination instanceof SQLiteDestination))
+      throw new TypeError(`Connection ${name}: SQLite sync history records SQLite destinations only`);
+    return persistent(destination);
+  }
+  #finish(path, id12, outcomes) {
+    write(path, (database) => {
+      const record3 = database.prepare(`UPDATE ${coverage} SET "status" = ?, "written_count" = ?, "deleted_count" = ?, "failures" = ? WHERE "attempt_id" = ? AND "stream" = ?`);
+      for (const outcome of outcomes)
+        record3.run(copyStatus(outcome), outcome.count, outcome.deleted, JSON.stringify(outcome.failures.map(({ partition, error: error62 }) => ({
+          partition,
+          error: message3(error62)
+        }))), id12, outcome.copy.from.name);
+      database.prepare(`UPDATE ${attempts} SET "completed_at" = ${now}, "status" = ?, "error" = ? WHERE "id" = ?`).run(passStatus(outcomes), passError(outcomes), id12);
+    });
+  }
+};
+function persistent({ path }) {
+  if (path === ":memory:")
+    throw new TypeError("SQLite sync history requires a destination file");
+  return path;
+}
+function write(path, work) {
+  var _stack = [];
+  try {
+    const database = __using(_stack, new DatabaseSync11(path, { timeout: busyTimeout }));
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = work(database);
+      database.exec("COMMIT");
+      return result;
+    } catch (error62) {
+      if (database.isTransaction)
+        database.exec("ROLLBACK");
+      throw error62;
+    }
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+function message3(error62) {
+  return error62 instanceof Error ? error62.message : String(error62);
+}
+
+// apps/apple/src/plugin/settings.ts
+import { createHash as createHash8 } from "node:crypto";
+import { chmodSync as chmodSync2, mkdirSync, readdirSync as readdirSync2, rmSync } from "node:fs";
+import { join as join16 } from "node:path";
+import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
+var appSchema = external_exports.enum(appNames);
+var ids = external_exports.array(external_exports.string().min(1).max(1024)).min(1).max(1e3).refine(
+  (values) => new Set(values).size === values.length,
+  "Choose each item once"
+);
+var scopeSchema = external_exports.strictObject({
+  accountIds: ids.optional(),
+  collectionIds: ids.optional(),
+  startAt: external_exports.iso.datetime({ precision: 3 }).optional(),
+  endAt: external_exports.iso.datetime({ precision: 3 }).optional()
+}).refine(
+  (scope) => scope.startAt === void 0 || scope.endAt === void 0 || scope.startAt < scope.endAt,
+  "Start must precede end"
+);
+var configurationSchema = external_exports.strictObject({
+  apps: external_exports.array(
+    external_exports.strictObject({
+      app: appSchema,
+      scope: scopeSchema.default({}),
+      includeAttachments: external_exports.boolean().default(true)
+    })
+  ).max(appNames.length)
+}).superRefine((configuration, context) => {
+  if (new Set(configuration.apps.map((item) => item.app)).size !== configuration.apps.length)
+    context.addIssue({ code: "custom", message: "Choose each app once" });
+  for (const { app, scope } of configuration.apps) {
+    if (!apps[app].accounts && scope.accountIds !== void 0)
+      context.addIssue({
+        code: "custom",
+        message: `${app}: choose collections instead of account IDs`
+      });
+    if (apps[app].datedBy === null && (scope.startAt !== void 0 || scope.endAt !== void 0))
+      context.addIssue({
+        code: "custom",
+        message: `${app}: date filtering is unavailable; choose collections`
+      });
+  }
+});
+var storeLayout = 2;
+function importDirectory(directory, item) {
+  const key = createHash8("sha256").update(JSON.stringify([storeLayout, item.scope, item.includeAttachments])).digest("hex").slice(0, 16);
+  return join16(directory, item.app, key);
+}
+function removeStaleImports(directory, configuration) {
+  for (const app of appNames) {
+    const item = configuration?.apps.find((selected2) => selected2.app === app);
+    const kept = item === void 0 ? null : importDirectory(directory, item);
+    const root = join16(directory, app);
+    let entries;
+    try {
+      entries = readdirSync2(root);
+    } catch {
+      continue;
+    }
+    for (const entry of entries)
+      if (join16(root, entry) !== kept)
+        rmSync(join16(root, entry), { recursive: true, force: true });
+  }
+}
+var Settings = class {
+  database;
+  constructor(directory) {
+    mkdirSync(directory, { recursive: true, mode: 448 });
+    chmodSync2(directory, 448);
+    const path = join16(directory, "settings.sqlite");
+    this.database = new DatabaseSync12(path);
+    try {
+      chmodSync2(path, 384);
+      this.database.exec(
+        "CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (import TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);"
+      );
+    } catch (error62) {
+      this.database.close();
+      throw error62;
+    }
+  }
+  configuration() {
+    const row = this.database.prepare("SELECT value FROM configuration WHERE id=1").get();
+    return row === void 0 ? null : configurationSchema.parse(JSON.parse(String(row.value)));
+  }
+  connectionFailure(importPath) {
+    const row = this.database.prepare(
+      "SELECT error, failed_at FROM connection_failures WHERE import=?"
+    ).get(importPath);
+    return row === void 0 ? void 0 : { error: String(row.error), failedAt: String(row.failed_at) };
+  }
+  saveConnectionFailure(importPath, error62) {
+    this.database.prepare(
+      "INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(import) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at"
+    ).run(importPath, error62);
+  }
+  clearConnectionFailure(importPath) {
+    this.database.prepare("DELETE FROM connection_failures WHERE import=?").run(importPath);
+  }
+  // Saves the selection and forgets the failures of every other import.
+  saveConfiguration(configuration, imports) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(
+        "DELETE FROM connection_failures WHERE import NOT IN (SELECT value FROM json_each(?))"
+      ).run(JSON.stringify(imports));
+      this.database.prepare(
+        "INSERT INTO configuration VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value"
+      ).run(JSON.stringify(configuration));
+      this.database.exec("COMMIT");
+    } catch (error62) {
+      this.database.exec("ROLLBACK");
+      throw error62;
+    }
+  }
+  // Each running plugin server's version, seen within the last heartbeats;
+  // servers gone for an hour are forgotten.
+  heartbeat(id12, version3, now2) {
+    this.database.prepare(
+      "INSERT INTO servers VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version, seen_at=excluded.seen_at"
+    ).run(id12, version3, now2);
+    this.database.prepare("DELETE FROM servers WHERE seen_at < ?").run(now2 - 36e5);
+  }
+  runningVersions(since) {
+    return this.database.prepare("SELECT version FROM servers WHERE seen_at >= ?").all(since).map((row) => String(row.version));
+  }
+  forgetServer(id12) {
+    this.database.prepare("DELETE FROM servers WHERE id=?").run(id12);
+  }
+  [Symbol.dispose]() {
+    this.database.close();
+  }
+};
+
+// apps/apple/src/plugin/sync.ts
+import { mkdirSync as mkdirSync2 } from "node:fs";
+import { join as join17 } from "node:path";
+var snake = (name) => name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 async function appConnection(directory, item) {
   const { app, scope, includeAttachments } = item;
   const source = apps[app].source(scope);
@@ -74040,37 +74535,7 @@ async function appConnection(directory, item) {
     path: join17(importPath, "data.sqlite")
   });
   const files = new LocalFiles({ directory: join17(importPath, "files") });
-  {
-    var _stack = [];
-    try {
-      const data = __using(_stack, new DatabaseSync11(destination.path));
-      data.exec(
-        "CREATE TABLE IF NOT EXISTS _apple_catalog (name TEXT PRIMARY KEY, schema_json TEXT NOT NULL, coverage_json TEXT NOT NULL);"
-      );
-      const publish = data.prepare(
-        "INSERT INTO _apple_catalog VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET schema_json=excluded.schema_json, coverage_json=excluded.coverage_json"
-      );
-      for (const stream of streams4)
-        publish.run(
-          stream.name,
-          JSON.stringify(
-            withFiles(stream) ? {
-              ...stream.jsonSchema,
-              properties: {
-                ...stream.jsonSchema.properties,
-                attachmentRef
-              }
-            } : stream.jsonSchema
-          ),
-          JSON.stringify(source.coverage(stream))
-        );
-    } catch (_) {
-      var _error = _, _hasError = true;
-    } finally {
-      __callDispose(_stack, _error, _hasError);
-    }
-  }
-  return new Connection({
+  const connection = new Connection({
     name: app,
     source,
     destination,
@@ -74080,10 +74545,13 @@ async function appConnection(directory, item) {
     steps: streams4.map(
       (stream) => new Copy(
         stream,
-        withFiles(stream) ? destination.table(stream.name, (columns2) => [
-          ...SQLiteColumns.fromSchema(stream.jsonSchema),
-          columns2.text("attachmentRef").from(stream.file.store(files))
-        ]) : destination.table(stream.name),
+        destination.table(
+          `raw_${stream.name}`,
+          withFiles(stream) ? (columns2) => [
+            ...SQLiteColumns.fromSchema(stream.jsonSchema),
+            columns2.text("attachmentRef").from(stream.file.store(files))
+          ] : void 0
+        ).withReaderView(snake(stream.name)),
         {
           id: `${app}:${stream.name}`,
           syncMode: "incremental",
@@ -74092,6 +74560,7 @@ async function appConnection(directory, item) {
       )
     )
   });
+  return { connection, destination };
 }
 
 // apps/apple/src/plugin/freshness.ts
@@ -74099,7 +74568,7 @@ function lease(directory) {
   let database;
   try {
     mkdirSync3(directory, { recursive: true, mode: 448 });
-    database = new DatabaseSync12(join18(directory, "watch.sqlite"));
+    database = new DatabaseSync13(join18(directory, "watch.sqlite"));
     database.exec("BEGIN IMMEDIATE");
     return database;
   } catch {
@@ -74112,84 +74581,6 @@ function leaderRunning(directory) {
   held?.close();
   return held === null;
 }
-var failure2 = (app, error62) => `${error62 instanceof Error ? error62.message : String(error62)} ${apps[app].permissions}`;
-function save(directory, importPath, result) {
-  var _stack = [];
-  try {
-    const settings = __using(_stack, new Settings(directory));
-    settings.saveSyncResult(importPath, result);
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
-}
-function lastSuccess(directory, importPath) {
-  var _stack = [];
-  try {
-    const settings = __using(_stack, new Settings(directory));
-    return settings.syncResult(importPath)?.lastSucceededAt;
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
-}
-var ImportHistory = class extends SyncHistory {
-  constructor(directory, configuration) {
-    super();
-    this.directory = directory;
-    this.configuration = configuration;
-  }
-  directory;
-  configuration;
-  async begin(connection) {
-    const item = this.configuration.apps.find(
-      ({ app }) => app === connection.name
-    );
-    if (item === void 0)
-      throw new TypeError(`No selected app for connection ${connection.name}`);
-    const importPath = importDirectory(this.directory, item);
-    const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-    const lastSucceededAt = lastSuccess(this.directory, importPath);
-    save(this.directory, importPath, {
-      state: "running",
-      startedAt,
-      lastSucceededAt
-    });
-    return {
-      finish: async (outcomes) => {
-        const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-        const state = passStatus(outcomes);
-        const error62 = passError(outcomes);
-        save(this.directory, importPath, {
-          state,
-          startedAt,
-          finishedAt,
-          lastSucceededAt: state === "succeeded" ? finishedAt : lastSucceededAt,
-          ...error62 !== null && { error: failure2(item.app, error62) },
-          streams: outcomes.map(({ copy, count, deleted, failures }) => ({
-            name: copy.from.name,
-            count,
-            deleted,
-            ...failures.length > 0 && {
-              errors: failures.map(({ error: error63 }) => String(error63))
-            }
-          }))
-        });
-      },
-      fail: async (error62) => {
-        save(this.directory, importPath, {
-          state: "failed",
-          startedAt,
-          finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
-          lastSucceededAt,
-          error: failure2(item.app, error62)
-        });
-      }
-    };
-  }
-};
 function readConfiguration(directory) {
   var _stack = [];
   try {
@@ -74202,23 +74593,43 @@ function readConfiguration(directory) {
   }
 }
 async function watchImports(directory, configuration, signal) {
-  const connections = [];
-  for (const item of configuration.apps)
+  const imports = [];
+  for (const item of configuration.apps) {
+    const importPath = importDirectory(directory, item);
     try {
-      connections.push(await appConnection(directory, item));
+      var _stack = [];
+      try {
+        imports.push(await appConnection(directory, item));
+        const settings = __using(_stack, new Settings(directory));
+        settings.clearConnectionFailure(importPath);
+      } catch (_) {
+        var _error = _, _hasError = true;
+      } finally {
+        __callDispose(_stack, _error, _hasError);
+      }
     } catch (error62) {
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      save(directory, importDirectory(directory, item), {
-        state: "failed",
-        startedAt: now,
-        finishedAt: now,
-        error: failure2(item.app, error62)
-      });
+      var _stack2 = [];
+      try {
+        const settings = __using(_stack2, new Settings(directory));
+        settings.saveConnectionFailure(
+          importPath,
+          error62 instanceof Error ? error62.message : String(error62)
+        );
+      } catch (_2) {
+        var _error2 = _2, _hasError2 = true;
+      } finally {
+        __callDispose(_stack2, _error2, _hasError2);
+      }
     }
-  if (connections.length === 0) return;
+  }
+  if (imports.length === 0) return;
+  const history = new SQLiteSyncHistory();
+  const destinations = imports.map(({ destination }) => destination);
+  await history.install(destinations);
+  for (const destination of destinations) installSQLiteCatalog(destination);
   const pipeline2 = new Pipeline({
-    connections,
-    history: new ImportHistory(directory, configuration)
+    connections: imports.map(({ connection }) => connection),
+    history
   });
   try {
     for await (const _pass of pipeline2.watch({ signal })) ;
@@ -74239,9 +74650,9 @@ function outdated(directory, id12, version3) {
     var _stack = [];
     try {
       const settings = __using(_stack, new Settings(directory));
-      const now = Date.now();
-      settings.heartbeat(id12, version3, now);
-      return settings.runningVersions(now - 1e4).some(newer);
+      const now2 = Date.now();
+      settings.heartbeat(id12, version3, now2);
+      return settings.runningVersions(now2 - 1e4).some(newer);
     } catch (_) {
       var _error = _, _hasError = true;
     } finally {
@@ -74338,6 +74749,56 @@ async function keepFresh(directory, signal, version3) {
 }
 
 // apps/apple/src/plugin/apple-plugin.ts
+var passFields = {
+  started_at: external_exports.string(),
+  last_successful_sync_at: external_exports.string().nullable()
+};
+var pass = (row) => ({
+  state: row.status,
+  startedAt: row.started_at,
+  completedAt: row.completed_at,
+  lastSucceededAt: row.last_successful_sync_at,
+  error: row.error
+});
+var passSchema = external_exports.union([
+  external_exports.object({
+    ...passFields,
+    status: external_exports.literal("running"),
+    completed_at: external_exports.null(),
+    error: external_exports.null()
+  }).transform(pass),
+  external_exports.object({
+    ...passFields,
+    status: external_exports.literal("succeeded"),
+    completed_at: external_exports.string(),
+    error: external_exports.null()
+  }).transform(pass),
+  external_exports.object({
+    ...passFields,
+    status: external_exports.enum(["partial", "failed"]),
+    completed_at: external_exports.string(),
+    error: external_exports.string()
+  }).transform(pass)
+]);
+function latestPass(database) {
+  var _stack = [];
+  try {
+    if (!existsSync2(database)) return null;
+    const data = __using(_stack, new DatabaseSync14(database, { readOnly: true, timeout: 3e4 }));
+    const installed = data.prepare(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'"
+    ).get();
+    if (installed === void 0) return null;
+    const row = data.prepare(
+      "SELECT status, started_at, completed_at, error, last_successful_sync_at FROM sync_status"
+    ).get();
+    return row === void 0 ? null : passSchema.parse(row);
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
 var ApplePlugin = class {
   constructor(directory = join19(
     homedir7(),
@@ -74357,11 +74818,19 @@ var ApplePlugin = class {
         apps: (configuration?.apps ?? []).map((item) => {
           const importPath = importDirectory(this.directory, item);
           const database = join19(importPath, "data.sqlite");
-          const sync = settings.syncResult(importPath) ?? null;
+          const pass2 = latestPass(database);
+          const failure3 = settings.connectionFailure(importPath);
+          const sync = failure3 !== void 0 ? {
+            state: "failed",
+            startedAt: failure3.failedAt,
+            completedAt: failure3.failedAt,
+            lastSucceededAt: pass2?.lastSucceededAt ?? null,
+            error: failure3.error
+          } : pass2?.state === "running" && !leading ? { ...pass2, state: "interrupted" } : pass2;
           return {
             ...item,
             database: existsSync2(database) ? database : null,
-            sync: sync?.state === "running" && !leading ? { ...sync, state: "interrupted" } : sync,
+            sync,
             permissions: apps[item.app].permissions
           };
         })
@@ -74404,7 +74873,7 @@ var ApplePlugin = class {
     const source = definition3.source(definition3.defaultScope?.() ?? {});
     const catalog8 = await source.discover();
     const choices = {};
-    for await (const message3 of source.read(
+    for await (const message4 of source.read(
       definition3.choices.map(
         (choice) => new CopyConfiguration(catalog8.get(choice.stream), {
           syncMode: "full_refresh",
@@ -74413,14 +74882,14 @@ var ApplePlugin = class {
       ),
       /* @__PURE__ */ new Map()
     )) {
-      if (message3 instanceof StreamStatus) {
-        if (message3.status === "FAILED") throw message3.error;
+      if (message4 instanceof StreamStatus) {
+        if (message4.status === "FAILED") throw message4.error;
         continue;
       }
-      if (!("type" in message3))
-        choices[message3.stream] = [
-          ...choices[message3.stream] ?? [],
-          message3.data
+      if (!("type" in message4))
+        choices[message4.stream] = [
+          ...choices[message4.stream] ?? [],
+          message4.data
         ];
     }
     return {
@@ -74432,33 +74901,12 @@ var ApplePlugin = class {
       note: definition3.note
     };
   }
-  // Waits, up to four minutes, while an app's import has not finished its
-  // first pass or is running one, so an answer can use current data.
-  async sync(only) {
-    const configuration = this.status();
-    if (!configuration.configured)
-      throw new Error(
-        "Choose the Apple apps to connect with Set up Apple first."
-      );
-    if (only?.some((app) => !configuration.apps.some((item) => item.app === app)))
-      throw new Error("Sync can only access apps selected during setup.");
-    const deadline = Date.now() + 24e4;
-    for (; ; ) {
-      const status = this.status();
-      const leading = leaderRunning(this.directory);
-      const waiting = status.apps.some(
-        ({ app, sync }) => (only === void 0 || only.includes(app)) && (sync?.state === "running" || sync === null && leading)
-      );
-      if (!waiting || Date.now() >= deadline) return status;
-      await sleep3(1e3);
-    }
-  }
 };
 
 // apps/apple/src/plugin/native-settings.ts
 var relative3 = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-function ago(instant2, now) {
-  const seconds = Math.round((Date.parse(instant2) - now.getTime()) / 1e3);
+function ago(instant2, now2) {
+  const seconds = Math.round((Date.parse(instant2) - now2.getTime()) / 1e3);
   for (const [unit, size] of [
     ["day", 86400],
     ["hour", 3600],
@@ -74468,7 +74916,7 @@ function ago(instant2, now) {
       return relative3.format(Math.round(seconds / size), unit);
   return "just now";
 }
-function coverage({ app, scope }) {
+function coverage2({ app, scope }) {
   const parts = [];
   if (scope.accountIds !== void 0)
     parts.push(
@@ -74489,12 +74937,8 @@ function coverage({ app, scope }) {
     );
   return parts.length === 0 ? "everything" : parts.join(", ");
 }
-function failure3(app, error62) {
-  const { permissions } = apps[app];
-  const cause = (error62 ?? "unknown error").replace(permissions, "").trim();
-  return `${cause} ${permissions}`;
-}
-function describe3(item, now) {
+var failure2 = (app, error62) => `${error62} ${apps[app].permissions}`;
+function describe4(item, now2) {
   const { sync } = item;
   if (sync === null) return "Waiting to import.";
   switch (sync.state) {
@@ -74503,14 +74947,14 @@ function describe3(item, now) {
     case "interrupted":
       return "Paused: resumes the next time Codex runs the Apple plugin.";
     case "succeeded":
-      return `Synced ${ago(sync.finishedAt ?? sync.startedAt, now)} \xB7 ${coverage(item)}.`;
+      return `Synced ${ago(sync.completedAt, now2)} \xB7 ${coverage2(item)}.`;
     case "partial":
-      return `Partly synced ${ago(sync.finishedAt ?? sync.startedAt, now)}: ${failure3(item.app, sync.error)}`;
+      return `Partly synced ${ago(sync.completedAt, now2)}: ${failure2(item.app, sync.error)}`;
     case "failed":
-      return `Last sync failed: ${failure3(item.app, sync.error)}`;
+      return `Last sync failed: ${failure2(item.app, sync.error)}`;
   }
 }
-function settingsRead(plugin2, now = /* @__PURE__ */ new Date()) {
+function settingsRead(plugin2, now2 = /* @__PURE__ */ new Date()) {
   const connected = new Map(
     plugin2.status().apps.map((item) => [item.app, item])
   );
@@ -74525,7 +74969,7 @@ function settingsRead(plugin2, now = /* @__PURE__ */ new Date()) {
             {
               type: "boolean",
               title: apps[app].title,
-              description: item === void 0 ? "Not connected." : describe3(item, now)
+              description: item === void 0 ? "Not connected." : describe4(item, now2)
             }
           ];
         })
@@ -74646,7 +75090,7 @@ server.registerTool(
 server.registerTool(
   "apple_setup",
   {
-    description: "Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, so call apple_sync to wait for it. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.",
+    description: "Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, and apple_status reports each app\u2019s progress. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -74689,22 +75133,6 @@ server.registerTool(
     }
   },
   (input2) => json2(plugin.configure(input2))
-);
-server.registerTool(
-  "apple_sync",
-  {
-    description: "Wait until the imports of the selected apps are current, up to four minutes, then return their status. Imports run in the background while Codex is open and follow changes in each app; this only waits for a first import or a running pass. Omit apps to wait for all selected apps.",
-    inputSchema: {
-      apps: external_exports.array(appSchema).min(1).max(appNames.length).optional()
-    },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false
-    }
-  },
-  async ({ apps: apps2 }) => json2(await plugin.sync(apps2))
 );
 var switches = external_exports.strictObject(
   Object.fromEntries(appNames.map((app) => [app, external_exports.boolean()]))

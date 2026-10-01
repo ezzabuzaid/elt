@@ -3,23 +3,13 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setInterval, setTimeout as sleep } from 'node:timers/promises';
-import {
-  type Connection,
-  type CopyOutcome,
-  Pipeline,
-  passError,
-  passStatus,
-  type RecordedPass,
-  SyncHistory,
-  type Target,
-} from 'elt';
-import { type App, apps } from './apps.ts';
+import { Pipeline } from 'elt';
+import { installSQLiteCatalog, SQLiteSyncHistory } from 'elt-sqlite';
 import {
   type Configuration,
   importDirectory,
   removeStaleImports,
   Settings,
-  type SyncResult,
 } from './settings.ts';
 import { appConnection } from './sync.ts';
 
@@ -45,105 +35,44 @@ export function leaderRunning(directory: string): boolean {
   return held === null;
 }
 
-const failure = (app: App, error: unknown) =>
-  `${error instanceof Error ? error.message : String(error)} ${apps[app].permissions}`;
-
-function save(directory: string, importPath: string, result: SyncResult) {
-  using settings = new Settings(directory);
-  settings.saveSyncResult(importPath, result);
-}
-
-function lastSuccess(directory: string, importPath: string) {
-  using settings = new Settings(directory);
-  return settings.syncResult(importPath)?.lastSucceededAt;
-}
-
-// Each pass of an app, recorded as its import's status for apple_status.
-class ImportHistory<T extends Target> extends SyncHistory<T> {
-  constructor(
-    readonly directory: string,
-    readonly configuration: Configuration,
-  ) {
-    super();
-  }
-
-  override async begin(connection: Connection<T>): Promise<RecordedPass<T>> {
-    const item = this.configuration.apps.find(
-      ({ app }) => app === connection.name,
-    );
-    if (item === undefined)
-      throw new TypeError(`No selected app for connection ${connection.name}`);
-    const importPath = importDirectory(this.directory, item);
-    const startedAt = new Date().toISOString();
-    const lastSucceededAt = lastSuccess(this.directory, importPath);
-    save(this.directory, importPath, {
-      state: 'running',
-      startedAt,
-      lastSucceededAt,
-    });
-    return {
-      finish: async (outcomes: readonly CopyOutcome<T>[]) => {
-        const finishedAt = new Date().toISOString();
-        const state = passStatus(outcomes);
-        const error = passError(outcomes);
-        save(this.directory, importPath, {
-          state,
-          startedAt,
-          finishedAt,
-          lastSucceededAt: state === 'succeeded' ? finishedAt : lastSucceededAt,
-          ...(error !== null && { error: failure(item.app, error) }),
-          streams: outcomes.map(({ copy, count, deleted, failures }) => ({
-            name: copy.from.name,
-            count,
-            deleted,
-            ...(failures.length > 0 && {
-              errors: failures.map(({ error }) => String(error)),
-            }),
-          })),
-        });
-      },
-      fail: async (error: unknown) => {
-        save(this.directory, importPath, {
-          state: 'failed',
-          startedAt,
-          finishedAt: new Date().toISOString(),
-          lastSucceededAt,
-          error: failure(item.app, error),
-        });
-      },
-    };
-  }
-}
-
 function readConfiguration(directory: string): Configuration | null {
   using settings = new Settings(directory);
   return settings.configuration();
 }
 
 // Watches the selected apps until the signal aborts: every app's first pass
-// loads it, then each source's own watcher decides when to sync again.
+// loads it, then each source's own watcher decides when to sync again. Each
+// pass is recorded in its app's data.sqlite, beside the catalog readers query;
+// an app whose connection cannot be built has no pipeline to record it, so its
+// failure is kept in the settings until it builds.
 async function watchImports(
   directory: string,
   configuration: Configuration,
   signal: AbortSignal,
 ) {
-  const connections = [];
-  for (const item of configuration.apps)
+  const imports = [];
+  for (const item of configuration.apps) {
+    const importPath = importDirectory(directory, item);
     try {
-      connections.push(await appConnection(directory, item));
+      imports.push(await appConnection(directory, item));
+      using settings = new Settings(directory);
+      settings.clearConnectionFailure(importPath);
     } catch (error) {
-      const now = new Date().toISOString();
-      save(directory, importDirectory(directory, item), {
-        state: 'failed',
-        startedAt: now,
-        finishedAt: now,
-        error: failure(item.app, error),
-      });
+      using settings = new Settings(directory);
+      settings.saveConnectionFailure(
+        importPath,
+        error instanceof Error ? error.message : String(error),
+      );
     }
-  if (connections.length === 0) return;
+  }
+  if (imports.length === 0) return;
+  const history = new SQLiteSyncHistory();
+  const destinations = imports.map(({ destination }) => destination);
+  await history.install(destinations);
+  for (const destination of destinations) installSQLiteCatalog(destination);
   const pipeline = new Pipeline({
-    connections,
-    history: new ImportHistory(directory, configuration),
+    connections: imports.map(({ connection }) => connection),
+    history,
   });
   try {
     for await (const _pass of pipeline.watch({ signal }));

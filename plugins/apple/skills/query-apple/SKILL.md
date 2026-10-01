@@ -5,17 +5,17 @@ description: Answer questions about Apple app content imported by the Apple plug
 
 # Query Apple apps
 
-The Apple plugin imports each selected app into its own SQLite file and keeps it current in the background while Codex is open. `apple_status` lists the selected apps, the path of each `database`, its scope and its last sync. Every file has an `_apple_catalog` table: one row per table, with its JSON schema (`schema_json`) and what the import covers (`coverage_json`). Read these files with `/usr/bin/sqlite3 -readonly`; the plugin's tools only set up and sync.
+The Apple plugin imports each selected app into its own SQLite file and keeps it current in the background while Codex is open. `apple_status` lists the selected apps, the path of each `database`, its scope and its latest pass. Each file describes itself through views: `catalog` has one row per view and per view column, with its type and meaning; `stream_status` has each stream's latest pass and last successful sync; `extraction_coverage` has what each pass covered. Query the views; `raw_*` tables are their storage. Read these files with `/usr/bin/sqlite3 -readonly`; the plugin's tools only set up and report status.
 
 ## Answer a question
 
 1. Call `apple_status`. If setup is missing or a needed app is not selected, use `$setup-apple` with the user's choice. Use only selected apps.
-2. For each app the question needs, check its `sync`. If it is `null` (not imported yet) or its `state` is `running`, call `apple_sync` with those apps: it waits for the import, up to four minutes, and returns the same status. Otherwise read right away; do not call `apple_sync` before every answer.
+2. For each app the question needs, check its `sync`. If it is `null`, or its `lastSucceededAt` is `null`, the app has not finished its first import: say it is still importing, or that it failed with its `error` and `permissions` guidance, and answer from the other apps. Otherwise read right away, even while a pass is `running`.
 3. Read the catalog of each app you need:
 
    ```sh
    /usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' -cmd 'PRAGMA temp_store = MEMORY' \
-     '<database>' 'SELECT name, schema_json, coverage_json FROM _apple_catalog ORDER BY name'
+     '<database>' 'SELECT kind, name, data_type, description FROM catalog ORDER BY name'
    ```
 
    Pass everything as arguments: dot-commands and pragmas with `-cmd`, the SQL last. A heredoc needs a temporary file, which the read-only sandbox refuses. `.timeout` waits while a sync commits instead of failing with `database is locked`. `temp_store = MEMORY` keeps large sorts and groupings off disk, where the sandbox would fail them with `disk I/O error`.
@@ -31,7 +31,7 @@ The Apple plugin imports each selected app into its own SQLite file and keeps it
 
    Tables of the opened file need no prefix. `ATTACH` another app's file to join across apps; attached files are read-only too.
 
-5. Answer plainly with the app, the record's title, name or date, and useful source links when present. Mention the last sync when freshness matters.
+5. Answer plainly with the app, the record's title, name or date, and useful source links when present. Mention the last sync when freshness matters: `SELECT stream, status, last_successful_sync_at FROM stream_status`.
 
 ## Gotchas
 

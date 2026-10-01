@@ -48,7 +48,7 @@ server.registerTool(
   'apple_setup',
   {
     description:
-      'Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, so call apple_sync to wait for it. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.',
+      'Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, and apple_status reports each app’s progress. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -94,24 +94,6 @@ server.registerTool(
   },
   (input) => json(plugin.configure(input)),
 );
-server.registerTool(
-  'apple_sync',
-  {
-    description:
-      'Wait until the imports of the selected apps are current, up to four minutes, then return their status. Imports run in the background while Codex is open and follow changes in each app; this only waits for a first import or a running pass. Omit apps to wait for all selected apps.',
-    inputSchema: {
-      apps: z.array(appSchema).min(1).max(appNames.length).optional(),
-    },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
-  },
-  async ({ apps }) => json(await plugin.sync(apps)),
-);
-
 // The plugin page's Settings section: a switch per app, described by its
 // import status (the openai/settings extension; ChatGPT calls both tools).
 const switches = z.strictObject(

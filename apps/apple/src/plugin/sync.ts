@@ -1,6 +1,5 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { Connection, Copy, LocalFiles, type Stream } from 'elt';
 import {
   SQLiteCheckpointStore,
@@ -10,14 +9,13 @@ import {
 import { apps } from './apps.ts';
 import { type AppConfiguration, importDirectory } from './settings.ts';
 
-const attachmentRef = {
-  type: ['string', 'null'],
-  description: 'Managed local copy when bytes are available',
-};
+const snake = (name: string) =>
+  name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
-// One app's import in its import directory: data.sqlite for records and the
-// _apple_catalog table, checkpoints.sqlite, and files/ for attachment copies.
-// Publishing the catalog first lets readers see the tables before a pass ends.
+// One app's import in its import directory: data.sqlite, where each stream
+// loads into raw_<stream> and is read through its <snake_stream> view,
+// checkpoints.sqlite, and files/ for attachment copies. Returns the destination
+// too, typed, for the history and catalog installed in its file.
 export async function appConnection(directory: string, item: AppConfiguration) {
   const { app, scope, includeAttachments } = item;
   const source = apps[app].source(scope);
@@ -36,32 +34,7 @@ export async function appConnection(directory: string, item: AppConfiguration) {
     path: join(importPath, 'data.sqlite'),
   });
   const files = new LocalFiles({ directory: join(importPath, 'files') });
-  {
-    using data = new DatabaseSync(destination.path);
-    data.exec(
-      'CREATE TABLE IF NOT EXISTS _apple_catalog (name TEXT PRIMARY KEY, schema_json TEXT NOT NULL, coverage_json TEXT NOT NULL);',
-    );
-    const publish = data.prepare(
-      'INSERT INTO _apple_catalog VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET schema_json=excluded.schema_json, coverage_json=excluded.coverage_json',
-    );
-    for (const stream of streams)
-      publish.run(
-        stream.name,
-        JSON.stringify(
-          withFiles(stream)
-            ? {
-                ...stream.jsonSchema,
-                properties: {
-                  ...(stream.jsonSchema.properties as object | undefined),
-                  attachmentRef,
-                },
-              }
-            : stream.jsonSchema,
-        ),
-        JSON.stringify(source.coverage(stream)),
-      );
-  }
-  return new Connection({
+  const connection = new Connection({
     name: app,
     source,
     destination,
@@ -72,12 +45,19 @@ export async function appConnection(directory: string, item: AppConfiguration) {
       (stream) =>
         new Copy(
           stream,
-          withFiles(stream)
-            ? destination.table(stream.name, (columns) => [
-                ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                columns.text('attachmentRef').from(stream.file.store(files)),
-              ])
-            : destination.table(stream.name),
+          destination
+            .table(
+              `raw_${stream.name}`,
+              withFiles(stream)
+                ? (columns) => [
+                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                    columns
+                      .text('attachmentRef')
+                      .from(stream.file.store(files)),
+                  ]
+                : undefined,
+            )
+            .withReaderView(snake(stream.name)),
           {
             id: `${app}:${stream.name}`,
             syncMode: 'incremental',
@@ -86,4 +66,5 @@ export async function appConnection(directory: string, item: AppConfiguration) {
         ),
     ),
   });
+  return { connection, destination };
 }

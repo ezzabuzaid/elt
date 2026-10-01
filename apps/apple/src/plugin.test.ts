@@ -10,11 +10,13 @@ import {
   OpenAISettingsReadResultSchema,
   OpenAISettingsUpdateResultSchema,
 } from '@openai/mcp-extensions/server';
+import { Connection } from 'elt';
+import { SQLiteDestination, SQLiteSyncHistory } from 'elt-sqlite';
 import { ApplePlugin } from './plugin/apple-plugin.ts';
 import { apps } from './plugin/apps.ts';
 import { keepFresh, leaderRunning } from './plugin/freshness.ts';
 import { settingsRead, settingsUpdate } from './plugin/native-settings.ts';
-import { importDirectory, Settings } from './plugin/settings.ts';
+import { importDirectory } from './plugin/settings.ts';
 
 // Stands in for the leading server's import of one app selection.
 function imported(
@@ -26,6 +28,28 @@ function imported(
   using database = new DatabaseSync(join(path, 'data.sqlite'));
   database.exec("CREATE TABLE notes(id TEXT); INSERT INTO notes VALUES('n1');");
   return join(path, 'data.sqlite');
+}
+
+// Begins passes of one app selection's import, recorded in its data.sqlite as
+// the leading server's history records them.
+async function passes(
+  directory: string,
+  item: Parameters<typeof importDirectory>[1],
+) {
+  const path = importDirectory(directory, item);
+  mkdirSync(path, { recursive: true });
+  const destination = new SQLiteDestination({
+    path: join(path, 'data.sqlite'),
+  });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const connection = new Connection({
+    name: item.app,
+    source: apps[item.app].source(item.scope),
+    destination,
+    steps: [],
+  });
+  return () => history.begin(connection, []);
 }
 
 test('Apple setup rejects invalid choices and fills the Calendar default range', async () => {
@@ -71,16 +95,10 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   plugin.configure({ apps: [notes] });
   assert.equal(existsSync(database), true);
 
-  // A pass left running by a server that exited is not waited for.
-  {
-    using settings = new Settings(scratch.path);
-    settings.saveSyncResult(importDirectory(scratch.path, notes), {
-      state: 'running',
-      startedAt: new Date().toISOString(),
-    });
-  }
+  // A pass left running by a server that exited is reported as interrupted.
+  const begin = await passes(scratch.path, notes);
+  await begin();
   assert.equal(plugin.status().apps[0]?.sync?.state, 'interrupted');
-  assert.equal((await plugin.sync())?.apps[0]?.sync?.state, 'interrupted');
   {
     using lease = new DatabaseSync(join(scratch.path, 'watch.sqlite'));
     lease.exec('BEGIN IMMEDIATE');
@@ -96,7 +114,6 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   imported(scratch.path, changed);
   plugin.configure({ apps: [] });
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
-  await assert.rejects(plugin.sync(['notes']), /selected during setup/);
 });
 
 test('the leading server keeps leading when its settings cannot be read, and lets go once stopped', async () => {
@@ -141,29 +158,16 @@ test('the Settings page switches apps on and off and describes each import as Op
   };
   plugin.configure({ apps: [notes] });
   assert.equal(described().notes, 'Waiting to import.');
-  const importPath = importDirectory(scratch.path, notes);
-  const record = (result: Parameters<Settings['saveSyncResult']>[1]) => {
-    using settings = new Settings(scratch.path);
-    settings.saveSyncResult(importPath, result);
-  };
-  record({
-    state: 'succeeded',
-    startedAt: new Date(Date.now() - 180_000).toISOString(),
-    finishedAt: new Date(Date.now() - 120_000).toISOString(),
-  });
-  assert.equal(described().notes, 'Synced 2 minutes ago · 1 folder.');
-  // The recorded error ends with the app's permissions guidance; the page
-  // shows it once.
-  record({
-    state: 'failed',
-    startedAt: new Date().toISOString(),
-    error: `Notes could not be opened. ${apps.notes.permissions}`,
-  });
+  const begin = await passes(scratch.path, notes);
+  await (await begin()).finish([]);
+  assert.equal(described().notes, 'Synced just now · 1 folder.');
+  // The page adds the app's permissions guidance to the error once.
+  await (await begin()).fail(new Error('Notes could not be opened.'));
   assert.equal(
     described().notes,
     `Last sync failed: Notes could not be opened. ${apps.notes.permissions}`,
   );
-  record({ state: 'running', startedAt: new Date().toISOString() });
+  await begin();
   assert.equal(
     described().notes,
     'Paused: resumes the next time Codex runs the Apple plugin.',

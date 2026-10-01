@@ -65,11 +65,16 @@ export const configurationSchema = z
 export type Configuration = z.infer<typeof configurationSchema>;
 export type AppConfiguration = Configuration['apps'][number];
 
-// Where an app's import lives: one directory per selection, so a pass still
-// writing an earlier selection never touches the current one.
+// What an import directory holds; changing what is stored there, such as a
+// table name a checkpoint binds to, takes a new layout so every app imports
+// afresh.
+const storeLayout = 2;
+
+// Where an app's import lives: one directory per selection and store layout,
+// so a pass still writing an earlier one never touches the current one.
 export function importDirectory(directory: string, item: AppConfiguration) {
   const key = createHash('sha256')
-    .update(JSON.stringify([item.scope, item.includeAttachments]))
+    .update(JSON.stringify([storeLayout, item.scope, item.includeAttachments]))
     .digest('hex')
     .slice(0, 16);
   return join(directory, item.app, key);
@@ -97,17 +102,12 @@ export function removeStaleImports(
   }
 }
 
-export type SyncResult = {
-  // interrupted: running when no server was left to finish it.
-  state: 'running' | 'succeeded' | 'partial' | 'failed' | 'interrupted';
-  startedAt: string;
-  finishedAt?: string;
-  lastSucceededAt?: string;
-  error?: string;
-  streams?: unknown[];
-};
+// Why an app's import could not start: its pipeline never existed, so its sync
+// history in data.sqlite cannot say.
+export type ConnectionFailure = { error: string; failedAt: string };
 
-// The user's selection and each app's last sync, in a private settings file.
+// The user's selection and each import's connection failure, in a private
+// settings file.
 export class Settings implements Disposable {
   private readonly database: DatabaseSync;
 
@@ -119,7 +119,7 @@ export class Settings implements Disposable {
     try {
       chmodSync(path, 0o600);
       this.database.exec(
-        'CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS import_status (import TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);',
+        'CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (import TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);',
       );
     } catch (error) {
       this.database.close();
@@ -136,31 +136,38 @@ export class Settings implements Disposable {
       : configurationSchema.parse(JSON.parse(String(row.value)));
   }
 
-  // The last pass of the import in one import directory.
-  syncResult(importPath: string): SyncResult | undefined {
+  connectionFailure(importPath: string): ConnectionFailure | undefined {
     const row = this.database
-      .prepare('SELECT value FROM import_status WHERE import=?')
+      .prepare(
+        'SELECT error, failed_at FROM connection_failures WHERE import=?',
+      )
       .get(importPath);
     return row === undefined
       ? undefined
-      : (JSON.parse(String(row.value)) as SyncResult);
+      : { error: String(row.error), failedAt: String(row.failed_at) };
   }
 
-  saveSyncResult(importPath: string, result: SyncResult) {
+  saveConnectionFailure(importPath: string, error: string) {
     this.database
       .prepare(
-        'INSERT INTO import_status VALUES(?,?) ON CONFLICT(import) DO UPDATE SET value=excluded.value',
+        "INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(import) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at",
       )
-      .run(importPath, JSON.stringify(result));
+      .run(importPath, error);
   }
 
-  // Saves the selection and forgets the status of every other import.
+  clearConnectionFailure(importPath: string) {
+    this.database
+      .prepare('DELETE FROM connection_failures WHERE import=?')
+      .run(importPath);
+  }
+
+  // Saves the selection and forgets the failures of every other import.
   saveConfiguration(configuration: Configuration, imports: readonly string[]) {
     this.database.exec('BEGIN IMMEDIATE');
     try {
       this.database
         .prepare(
-          'DELETE FROM import_status WHERE import NOT IN (SELECT value FROM json_each(?))',
+          'DELETE FROM connection_failures WHERE import NOT IN (SELECT value FROM json_each(?))',
         )
         .run(JSON.stringify(imports));
       this.database

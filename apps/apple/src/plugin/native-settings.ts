@@ -1,6 +1,6 @@
-import type { ApplePlugin } from './apple-plugin.ts';
+import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
 import { type App, appNames, apps } from './apps.ts';
-import type { AppConfiguration, SyncResult } from './settings.ts';
+import type { AppConfiguration } from './settings.ts';
 
 // The plugin page's native Settings section (the openai/settings MCP
 // extension): one switch per app, described by that app's import status.
@@ -45,16 +45,11 @@ function coverage({ app, scope }: AppConfiguration): string {
   return parts.length === 0 ? 'everything' : parts.join(', ');
 }
 
-// A failure without the permissions guidance appended to it, then the
-// guidance once, so the line stays readable.
-function failure(app: App, error: string | undefined): string {
-  const { permissions } = apps[app];
-  const cause = (error ?? 'unknown error').replace(permissions, '').trim();
-  return `${cause} ${permissions}`;
-}
+const failure = (app: App, error: string) =>
+  `${error} ${apps[app].permissions}`;
 
 function describe(
-  item: AppConfiguration & { sync: SyncResult | null },
+  item: AppConfiguration & { sync: ImportSync | null },
   now: Date,
 ): string {
   const { sync } = item;
@@ -65,9 +60,9 @@ function describe(
     case 'interrupted':
       return 'Paused: resumes the next time Codex runs the Apple plugin.';
     case 'succeeded':
-      return `Synced ${ago(sync.finishedAt ?? sync.startedAt, now)} · ${coverage(item)}.`;
+      return `Synced ${ago(sync.completedAt, now)} · ${coverage(item)}.`;
     case 'partial':
-      return `Partly synced ${ago(sync.finishedAt ?? sync.startedAt, now)}: ${failure(item.app, sync.error)}`;
+      return `Partly synced ${ago(sync.completedAt, now)}: ${failure(item.app, sync.error)}`;
     case 'failed':
       return `Last sync failed: ${failure(item.app, sync.error)}`;
   }
