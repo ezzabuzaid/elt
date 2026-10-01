@@ -1,5 +1,6 @@
 import { Connection, Pipeline, PipelineError } from 'elt';
 import {
+  installPostgresCatalog,
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
@@ -40,6 +41,7 @@ export default [
       });
       const history = new PostgresSyncHistory({ url: warehouseUrl });
       await history.install();
+      await installPostgresCatalog({ url: warehouseUrl, schema: 'marts' });
       const pipeline = new Pipeline({
         history,
         connections: [

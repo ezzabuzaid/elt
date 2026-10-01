@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
 import {
   type CopyConfiguration,
+  describeTarget,
   type FieldValues,
   FileContent,
   type KeyValue,
   type Stage,
   TargetMissingError,
   TargetOwnedError,
+  undescribed,
   Writer,
 } from 'elt';
 import type postgres from 'postgres';
@@ -22,20 +24,6 @@ export type Transaction = postgres.Sql;
 const batchSize = 1000;
 export const seq = '"_mac_elt_seq"';
 export const op = '"_mac_elt_op"';
-
-// JSON Schema annotations are optional; when absent, remove any old SQL comment.
-function description(value: unknown): string | null {
-  if (value === undefined) return null;
-  if (
-    typeof value !== 'string' ||
-    value.includes('\0') ||
-    !value.isWellFormed()
-  )
-    throw new TypeError(
-      'JSON Schema description must be well-formed text without NUL',
-    );
-  return value;
-}
 
 // A run's one connection and write transaction for a schema, shared by every
 // stream's stage. The schema lock serializes everything elt writes there, as
@@ -123,7 +111,7 @@ export class PostgresLoad implements AsyncDisposable {
 
 export abstract class PostgresWriter extends Writer {
   readonly #tableComment: string;
-  readonly #columnComments: Record<string, string | null>;
+  readonly #columnComments: Readonly<Record<string, string | null>>;
 
   constructor(
     readonly configuration: CopyConfiguration,
@@ -132,68 +120,19 @@ export abstract class PostgresWriter extends Writer {
     readonly table: PostgresTable,
   ) {
     super(configuration.stream);
-    const meaning = description(this.stream.jsonSchema.description);
-    const loading = {
-      append: 'Every accepted observation is appended; source keys may repeat.',
-      overwrite:
-        'Each full refresh replaces the table with its accepted records.',
-      append_dedup: 'Accepted observations reconcile rows by the copy key.',
-      overwrite_dedup:
-        'Each full refresh replaces the table with deduplicated records.',
-    }[configuration.destinationSyncMode];
-    const lines = [`Source stream: ${this.stream.name}.`];
-    if (meaning !== null) lines.push(`Source record meaning: ${meaning}`);
-    lines.push(
-      `Extraction: ${configuration.syncMode}. Loading: ${configuration.destinationSyncMode}. ${loading}`,
+    const description = describeTarget(
+      configuration,
+      table.columns,
+      (column) =>
+        `UUID reference to the source file's original bytes. Join ${new PostgresFileStore(schema, table, column).qualifiedName} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
     );
-    if (configuration.dedupPolicy !== undefined) {
-      const { primaryKey, cursorField } = configuration.deduplication();
-      lines.push(`Copy key: ${primaryKey.join(', ')}.`);
-      lines.push(
-        configuration.dedupPolicy === 'replace'
-          ? 'For a repeated key, the newest extracted record wins.'
-          : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare by byte order.`,
-      );
-    }
-    this.#tableComment = lines.join('\n');
-    const properties = this.stream.jsonSchema.properties as
-      | Readonly<Record<string, Readonly<Record<string, unknown>>>>
-      | undefined;
-    this.#columnComments = Object.fromEntries(
-      table.columns.map((column) => {
-        if (column.storesFile) {
-          const store = new PostgresFileStore(schema, table, column);
-          return [
-            column.name,
-            `UUID reference to the source file's original bytes. Join ${store.qualifiedName} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
-          ];
-        }
-        if (column.fileRead?.parser !== undefined)
-          return [
-            column.name,
-            `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`,
-          ];
-        if (column.fileRead?.file.storage !== undefined)
-          return [
-            column.name,
-            `${column.fileRead.file.storage.reference} NULL when the source file is unavailable.`,
-          ];
-        return [
-          column.name,
-          description(properties?.[column.name]?.description),
-        ];
-      }),
-    );
-    this.#columnComments.loaded_at =
-      'Start time of the load that last wrote this row, not the source modification time or the most recent successful sync.';
+    this.#tableComment = description.table;
+    this.#columnComments = description.columns;
     if (table.readerView === undefined) return;
-    const undescribed = Object.entries(this.#columnComments).flatMap(
-      ([column, comment]) => (comment === null ? [column] : []),
-    );
-    if (meaning === null) undescribed.unshift('the stream');
-    if (undescribed.length > 0)
+    const missing = undescribed(description);
+    if (missing.length > 0)
       throw new TypeError(
-        `Reader view ${table.readerView.schema}.${table.readerView.name} needs JSON Schema descriptions for ${undescribed.join(', ')} of stream ${this.stream.name}`,
+        `Reader view ${table.readerView.schema}.${table.readerView.name} needs JSON Schema descriptions for ${missing.join(', ')} of stream ${this.stream.name}`,
       );
   }
 

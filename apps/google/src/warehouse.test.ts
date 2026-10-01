@@ -4,6 +4,7 @@ import { test } from 'node:test';
 
 import { Connection, Pipeline } from 'elt';
 import {
+  installPostgresCatalog,
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
@@ -44,6 +45,7 @@ type Google = {
 async function warehouse(siteUrls: string[], google: Google) {
   const base = await scratchWarehouse(await readFile(contract, 'utf8'));
   const loaderUrl = base.url;
+  await installPostgresCatalog({ url: loaderUrl, schema: 'marts' });
   const loader = postgres(loaderUrl, { max: 1, onnotice: () => {} });
   const { agent } = base;
   const destination = new PostgresDestination({ url: loaderUrl, schema: RAW });

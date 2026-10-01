@@ -18,6 +18,7 @@ export { FileStorage } from './core/file-storage.ts';
 export { isCalendarDate, isTimestamp } from './core/formats.ts';
 export type { Partition, PartitionState } from './core/partition.ts';
 export { type Pass, Pipeline, PipelineError } from './core/pipeline.ts';
+export { type ReaderRelation, readerCatalog } from './core/reader-relation.ts';
 export {
   type FieldSchema,
   type SchemaRecord,
@@ -46,6 +47,12 @@ export {
 export { Stream, type SyncMode } from './core/stream.ts';
 export { Target } from './core/target.ts';
 export {
+  type DescribedColumn,
+  describeTarget,
+  type TargetDescription,
+  undescribed,
+} from './core/target-description.ts';
+export {
   type FieldValues,
   type LoadFailure,
   type Stage,
@@ -70,4 +77,5 @@ export {
   SyncHistory,
   type SyncStatus,
 } from './state/sync-history.ts';
+export { syncHistoryRelations } from './state/sync-history-relations.ts';
 export { LocalFiles } from './storage/local-files.ts';

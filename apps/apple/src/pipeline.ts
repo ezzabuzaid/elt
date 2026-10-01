@@ -18,7 +18,8 @@ import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-
 import { AppleSafariSource } from './sources/apple-safari/apple-safari-source.ts';
 import { warehouseConnection } from './warehouse-connection.ts';
 
-const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
+export const warehouseUrl =
+  'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
 const apple = (name: string, source: Source) =>
   warehouseConnection(name, source, {
     url: warehouseUrl,

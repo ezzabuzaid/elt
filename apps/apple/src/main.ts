@@ -1,6 +1,8 @@
-import pipeline, { history } from './pipeline.ts';
+import { installPostgresCatalog } from 'elt-postgresql';
+import pipeline, { history, warehouseUrl } from './pipeline.ts';
 
 await history.install();
+await installPostgresCatalog({ url: warehouseUrl, schema: 'marts' });
 
 const stopping = new AbortController();
 process.once('SIGINT', () => stopping.abort());

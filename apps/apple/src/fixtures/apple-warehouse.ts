@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { Pipeline, type Source } from 'elt';
-import { PostgresSyncHistory } from 'elt-postgresql';
+import { installPostgresCatalog, PostgresSyncHistory } from 'elt-postgresql';
 import { scratchWarehouse } from 'elt-postgresql/testing';
 import { warehouseConnection } from '../warehouse-connection.ts';
 
@@ -19,6 +19,7 @@ export async function appleWarehouse(
   const warehouse = await scratchWarehouse(await readFile(contract, 'utf8'));
   const history = new PostgresSyncHistory({ url: warehouse.url });
   await history.install();
+  await installPostgresCatalog({ url: warehouse.url, schema: 'marts' });
   const load = async () =>
     new Pipeline({
       history,

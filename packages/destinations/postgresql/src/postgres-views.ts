@@ -1,13 +1,9 @@
+import type { ReaderRelation } from 'elt';
 import type postgres from 'postgres';
 import { identifier, quote } from './identifier.ts';
 import { schemaLock, schemaName } from './postgres-session.ts';
 
-export type PostgresView = {
-  readonly name: string;
-  readonly query: string;
-  readonly description: string;
-  readonly columns: Readonly<Record<string, string>>;
-};
+export type PostgresView = ReaderRelation & { readonly query: string };
 
 function text(value: string, what: string): void {
   if (
