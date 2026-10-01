@@ -93,7 +93,7 @@ Test the source the way a user runs it, as a black box. Do not write unit tests.
 
 ## Writing docs
 
-- Apps are executables, not libraries: use direct imports in their entry points, tests, and examples; do not add app export barrels. Keep reusable package exports in `packages/` and `elt` exports generic. A default-exported connector registration list is app configuration, not a public module barrel.
+- Apps are executables, not libraries: use direct imports in their entry points, tests, and examples; do not add app export barrels. The one library under `apps/` is `apps/apple/connectors` (project `apple`), which the Apple plugin and CLI import module by module through its `./*` exports map (`apple/sources/...`); add no index barrel to it. Keep other reusable package exports in `packages/` and `elt` exports generic. A default-exported connector registration list is app configuration, not a public module barrel.
 - `README.md`: a minimal example and limitations.
 - `docs/reference.md`: details, the live checks from probing, and the deletion, snapshot and scan-cost limitations.
 - Commit only synthetic fixtures.
