@@ -5,7 +5,7 @@ description: Adds or extends a data source (connector) in context-compiler. Use 
 
 # Add an ELT source
 
-Paths are relative to the repository root. The *upstream* is the system the data comes from (Messages, the Search Console API); the *app* is the Nx project that owns the source (`apps/apple`, `apps/google`).
+Paths are relative to the repository root. The *upstream* is the system the data comes from (Messages, the Search Console API); the *app* is the Nx project that owns the source (`apps/apple/connectors`, project `apple`; `apps/google`).
 
 Copy this checklist into your response and tick it off as you go:
 
@@ -24,8 +24,8 @@ Copy this checklist into your response and tick it off as you go:
 - `packages/elt` is platform-independent: contracts, pipeline, the checkpoint protocol, validation and diff helpers. Import it as `elt`, never through internal paths.
 - Each destination and its checkpoint store live in `packages/destinations/<name>` (`elt-sqlite`, `elt-markdown`, `elt-postgresql`).
 - Sources live in their owning app: `apps/<app>/src/sources/<source>/<source>-source.ts`. A provider's authorization is shared by every source for that provider, so it has its own package (`packages/google-auth`).
-- Register an Apple source as one `apple('<name>', source)` connection in `apps/apple/src/pipeline.ts` (schema `apple_<name>`, views `marts.<name>_<stream>`) and as an entry in the plugin's `apps/apple/src/plugin/apps.ts`; `main.ts` watches the whole pipeline. Register a Google connector as a `{ name, run }` entry in `apps/google/src/connectors.ts`, keeping credentials, pipeline setup/execution and post-load work inside `run()`; its `main.ts` runs the list in a plain loop that sets exit status 1 on failure and continues without console output. Do not add a shared runner package, result protocol, or lifecycle hooks.
-- Native clients (`apps/apple/src/platform/macos/eventkit.ts`, which spawns the Swift `eventkit` helper for EventKit, and `osa.ts` for scripting) must not depend on `Source`, `Stream`, catalogs, schemas, or destinations. Compose them into the source.
+- Register an Apple source in both hosts: an `AppleApp` subclass in `apps/apple/cli/src/apps/<name>.ts`, listed in the CLI's `main.ts`, and an entry in the plugin's `apps/apple/plugin/src/apps.ts`. Each import loads `raw_<stream>` tables into its own `data.sqlite`, read through `<snake_stream>` views. Register a Google connector as a `{ name, run }` entry in `apps/google/src/connectors.ts`, keeping credentials, pipeline setup/execution and post-load work inside `run()`; its `main.ts` runs the list in a plain loop that sets exit status 1 on failure and continues without console output. Do not add a shared runner package, result protocol, or lifecycle hooks.
+- Native clients (`apps/apple/connectors/src/platform/macos/eventkit.ts`, which spawns the Swift `eventkit` helper for EventKit, and `osa.ts` for scripting) must not depend on `Source`, `Stream`, catalogs, schemas, or destinations. Compose them into the source.
 - The contracts: `packages/elt/src/core/source.ts`, `stream.ts`, `record-validation.ts`, `snapshot.ts`.
 - Pick the closest existing source by its traits:
   - **Apple Reminders**: EventKit through a native helper, one read for every selected stream, snapshot incremental.
@@ -88,7 +88,7 @@ Test the source the way a user runs it, as a black box. Do not write unit tests.
 
 - Import source classes directly from their defining modules and load them through a real `Pipeline` into a real destination in temporary storage. Assert on what a consumer reads: rows or files, checkpoints, and what a second run writes.
 - Control only the upstream, at its outermost seam: a synthetic copy of the upstream's database, the HTTP requester, `nativeProcess.lines`, which yields the `eventkit` helper's stdout lines, or `osa`, which crosses into `osascript`. Never import or mock the source's own modules (scripts, parsers, decoders); they are covered through the streams that use them, by feeding bad input at the seam.
-- Models: the Messages tests in `apps/apple/src/index.test.ts` (a synthetic `chat.db`, no mocks) and `apps/google/src/warehouse.test.ts` (a fake requester, scratch Postgres, read back through the agent role).
+- Models: the Messages tests in `apps/apple/connectors/src/index.test.ts` (a synthetic `chat.db`, no mocks) and `apps/google/src/warehouse.test.ts` (a fake requester, scratch Postgres, read back through the agent role).
 - Use controlled inputs, never personal data, except one live read-only test per native store that asserts shapes and counts, persists nothing outside a temporary directory, and skips without access (the Calendar and Reminders helper test). Put tests in the app's top-level `src/*.test.ts`; the `test` target runs nothing in subfolders.
 
 ## Writing docs

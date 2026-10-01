@@ -32828,7 +32828,7 @@ var require_mailsplit = __commonJS({
   }
 });
 
-// apps/apple/src/plugin/main.ts
+// apps/apple/plugin/src/main.ts
 import { readFileSync } from "node:fs";
 
 // node_modules/zod/v3/helpers/util.js
@@ -62109,7 +62109,7 @@ var StdioServerTransport = class {
   }
 };
 
-// apps/apple/src/plugin/apple-plugin.ts
+// apps/apple/plugin/src/apple-plugin.ts
 import { existsSync as existsSync3 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
 import { join as join24 } from "node:path";
@@ -65297,7 +65297,7 @@ function leaseHeld(root) {
   return held === null;
 }
 
-// apps/apple/src/platform/macos/mail-store.ts
+// apps/apple/connectors/dist/platform/macos/mail-store.js
 import { execFile } from "node:child_process";
 import { createHash as createHash5 } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -65307,19 +65307,20 @@ import { basename, join as join5, relative, sep } from "node:path";
 import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 import { promisify } from "node:util";
 
-// apps/apple/src/platform/macos/plist.ts
+// apps/apple/connectors/dist/platform/macos/plist.js
 var PlistUid = class {
+  value;
   constructor(value) {
     this.value = value;
   }
-  value;
 };
 var appleEpoch = Date.UTC(2001, 0, 1);
 function isBinaryPlist(bytes) {
   return bytes.length >= 40 && new TextDecoder("latin1").decode(bytes.subarray(0, 8)) === "bplist00";
 }
 function parseBinaryPlist(bytes) {
-  if (!isBinaryPlist(bytes)) throw new TypeError("Not a binary property list");
+  if (!isBinaryPlist(bytes))
+    throw new TypeError("Not a binary property list");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const trailer = bytes.length - 32;
   const offsetSize = view.getUint8(trailer + 6);
@@ -65340,7 +65341,8 @@ function parseBinaryPlist(bytes) {
   };
   const lengthAt = (at) => {
     const nibble = view.getUint8(at) & 15;
-    if (nibble !== 15) return [nibble, at + 1];
+    if (nibble !== 15)
+      return [nibble, at + 1];
     const size = 1 << (view.getUint8(at + 1) & 15);
     return [unsigned(at + 2, size), at + 2 + size];
   };
@@ -65361,9 +65363,12 @@ function parseBinaryPlist(bytes) {
     const nibble = marker & 15;
     switch (kind) {
       case 0:
-        if (marker === 0) return null;
-        if (marker === 8) return false;
-        if (marker === 9) return true;
+        if (marker === 0)
+          return null;
+        if (marker === 8)
+          return false;
+        if (marker === 9)
+          return true;
         break;
       case 1: {
         const size = 1 << nibble;
@@ -65371,7 +65376,8 @@ function parseBinaryPlist(bytes) {
           const value = view.getBigInt64(at + 1);
           return Number.isSafeInteger(Number(value)) ? Number(value) : value;
         }
-        if (size === 16) return view.getBigInt64(at + 9);
+        if (size === 16)
+          return view.getBigInt64(at + 9);
         return unsigned(at + 1, size);
       }
       case 2:
@@ -65384,9 +65390,7 @@ function parseBinaryPlist(bytes) {
       }
       case 5: {
         const [length, start] = lengthAt(at);
-        return new TextDecoder("latin1").decode(
-          bytes.subarray(start, start + length)
-        );
+        return new TextDecoder("latin1").decode(bytes.subarray(start, start + length));
       }
       case 6: {
         const [length, start] = lengthAt(at);
@@ -65400,30 +65404,21 @@ function parseBinaryPlist(bytes) {
       case 10:
       case 12: {
         const [length, start] = lengthAt(at);
-        return Array.from(
-          { length },
-          (_, index) => object3(unsigned(start + index * referenceSize, referenceSize))
-        );
+        return Array.from({ length }, (_, index) => object3(unsigned(start + index * referenceSize, referenceSize)));
       }
       case 13: {
         const [length, start] = lengthAt(at);
         const entries = {};
         for (let index = 0; index < length; index++) {
-          const key = object3(
-            unsigned(start + index * referenceSize, referenceSize)
-          );
+          const key = object3(unsigned(start + index * referenceSize, referenceSize));
           if (typeof key !== "string")
             throw new TypeError("Property list dictionary key is not a string");
-          entries[key] = object3(
-            unsigned(start + (length + index) * referenceSize, referenceSize)
-          );
+          entries[key] = object3(unsigned(start + (length + index) * referenceSize, referenceSize));
         }
         return entries;
       }
     }
-    throw new TypeError(
-      `Unsupported property list marker 0x${marker.toString(16)}`
-    );
+    throw new TypeError(`Unsupported property list marker 0x${marker.toString(16)}`);
   };
   return object3(top);
 }
@@ -65434,7 +65429,8 @@ function unarchive(archive) {
   const resolving = /* @__PURE__ */ new Set();
   const resolve4 = (value) => {
     if (value instanceof PlistUid) {
-      if (resolving.has(value.value)) return { $ref: value.value };
+      if (resolving.has(value.value))
+        return { $ref: value.value };
       resolving.add(value.value);
       try {
         const target = objects[value.value];
@@ -65443,13 +65439,13 @@ function unarchive(archive) {
         resolving.delete(value.value);
       }
     }
-    if (Array.isArray(value)) return value.map(resolve4);
-    if (!isRecord(value)) return value;
+    if (Array.isArray(value))
+      return value.map(resolve4);
+    if (!isRecord(value))
+      return value;
     const className = isUid(value.$class) ? classNameOf(objects[value.$class.value]) : void 0;
     if (className === void 0)
-      return Object.fromEntries(
-        Object.entries(value).map(([key, field]) => [key, resolve4(field)])
-      );
+      return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, resolve4(field)]));
     return decodeClass(className, value, resolve4);
   };
   const top = archive.$top;
@@ -65462,9 +65458,7 @@ function decodeClass(className, value, resolve4) {
     case "NSMutableDictionary": {
       const keys = asArray(value["NS.keys"]).map(resolve4);
       const values = asArray(value["NS.objects"]).map(resolve4);
-      return Object.fromEntries(
-        keys.map((key, index) => [String(key), values[index] ?? null])
-      );
+      return Object.fromEntries(keys.map((key, index) => [String(key), values[index] ?? null]));
     }
     case "NSArray":
     case "NSMutableArray":
@@ -65487,22 +65481,18 @@ function decodeClass(className, value, resolve4) {
       return typeof base === "string" ? new URL(relative4, base).href : relative4;
     }
     case "NSUUID": {
-      const hex3 = Buffer.from(value["NS.uuidbytes"]).toString(
-        "hex"
-      );
+      const hex3 = Buffer.from(value["NS.uuidbytes"]).toString("hex");
       return `${hex3.slice(0, 8)}-${hex3.slice(8, 12)}-${hex3.slice(12, 16)}-${hex3.slice(16, 20)}-${hex3.slice(20)}`.toUpperCase();
     }
   }
   const fields2 = { $class: className };
   for (const [key, field] of Object.entries(value))
-    if (key !== "$class") fields2[key] = resolve4(field);
+    if (key !== "$class")
+      fields2[key] = resolve4(field);
   return fields2;
 }
 function plistJSON(value) {
-  return JSON.stringify(
-    value,
-    (_, field) => field instanceof Uint8Array ? Buffer.from(field).toString("base64") : typeof field === "bigint" ? field.toString() : field instanceof PlistUid ? { $uid: field.value } : field
-  );
+  return JSON.stringify(value, (_, field) => field instanceof Uint8Array ? Buffer.from(field).toString("base64") : typeof field === "bigint" ? field.toString() : field instanceof PlistUid ? { $uid: field.value } : field);
 }
 function decodeArchive(bytes) {
   const value = parseBinaryPlist(bytes);
@@ -65521,16 +65511,13 @@ function classNameOf(value) {
   return isRecord(value) && typeof value.$classname === "string" ? value.$classname : void 0;
 }
 
-// apps/apple/src/platform/macos/mail-store.ts
+// apps/apple/connectors/dist/platform/macos/mail-store.js
 var execute = promisify(execFile);
 var mailDirectory = join5(homedir(), "Library/Mail");
 var MailUnavailableError = class extends Error {
   name = "MailUnavailableError";
   constructor(path, cause) {
-    super(
-      `Mail's store at ${path} cannot be read. Grant the exporting process Full Disk Access in System Settings > Privacy & Security.`,
-      { cause }
-    );
+    super(`Mail's store at ${path} cannot be read. Grant the exporting process Full Disk Access in System Settings > Privacy & Security.`, { cause });
   }
 };
 var MailSchemaError = class extends Error {
@@ -65540,18 +65527,11 @@ var MailChangingError = class extends Error {
   name = "MailChangingError";
 };
 async function readMailPlist(path) {
-  const { stdout } = await execute(
-    "/usr/bin/plutil",
-    ["-convert", "binary1", "-o", "-", path],
-    { encoding: "buffer" }
-  );
+  const { stdout } = await execute("/usr/bin/plutil", ["-convert", "binary1", "-o", "-", path], { encoding: "buffer" });
   return parseBinaryPlist(stdout);
 }
 function plistJSON2(value) {
-  return JSON.stringify(
-    value,
-    (_, item) => typeof item === "bigint" ? item.toString() : item instanceof Uint8Array ? Buffer.from(item).toString("base64") : item
-  );
+  return JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item instanceof Uint8Array ? Buffer.from(item).toString("base64") : item);
 }
 function plistObject(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value) || value instanceof Date || value instanceof Uint8Array)
@@ -65559,9 +65539,7 @@ function plistObject(value) {
   return value;
 }
 async function mailVersionDirectory(root) {
-  const info = plistObject(
-    await readMailPlist(join5(root, "PersistenceInfo.plist"))
-  );
+  const info = plistObject(await readMailPlist(join5(root, "PersistenceInfo.plist")));
   const version3 = info.LastUsedVersionDirectoryName;
   if (typeof version3 !== "string" || !/^V\d+$/.test(version3))
     throw new MailSchemaError("Mail has no valid current version directory");
@@ -65579,30 +65557,20 @@ async function inspectMailFile(path) {
 }
 async function assertMailFile(file2) {
   const current = await inspectMailFile(file2.path).catch((cause) => {
-    throw new MailChangingError(
-      `Mail removed a file during extraction: ${file2.path}`,
-      { cause }
-    );
+    throw new MailChangingError(`Mail removed a file during extraction: ${file2.path}`, { cause });
   });
   if (current.version !== file2.version)
-    throw new MailChangingError(
-      `Mail changed a file during extraction: ${file2.path}`
-    );
+    throw new MailChangingError(`Mail changed a file during extraction: ${file2.path}`);
 }
 async function hashMailFile(file2) {
   await assertMailFile(file2);
   const hash2 = createHash5("sha256");
-  for await (const chunk of createReadStream(file2.path)) hash2.update(chunk);
+  for await (const chunk of createReadStream(file2.path))
+    hash2.update(chunk);
   await assertMailFile(file2);
   return hash2.digest("hex");
 }
 var MailStore = class _MailStore {
-  constructor(path, database, scratch, resources) {
-    this.path = path;
-    this.database = database;
-    this.scratch = scratch;
-    this.resources = resources;
-  }
   path;
   database;
   scratch;
@@ -65611,6 +65579,12 @@ var MailStore = class _MailStore {
   attachments = /* @__PURE__ */ new Map();
   plists = /* @__PURE__ */ new Map();
   signatures = [];
+  constructor(path, database, scratch, resources) {
+    this.path = path;
+    this.database = database;
+    this.scratch = scratch;
+    this.resources = resources;
+  }
   static async open(root, required3) {
     let path;
     let database;
@@ -65620,7 +65594,8 @@ var MailStore = class _MailStore {
         readOnly: true
       });
     } catch (cause) {
-      if (cause instanceof MailSchemaError) throw cause;
+      if (cause instanceof MailSchemaError)
+        throw cause;
       throw new MailUnavailableError(root, cause);
     }
     const resources = new AsyncDisposableStack();
@@ -65628,46 +65603,38 @@ var MailStore = class _MailStore {
     try {
       database.exec("BEGIN");
       const missing = Object.entries(required3).flatMap(([table2, columns3]) => {
-        const present = new Set(
-          database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((row) => row.name)
-        );
+        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((row) => row.name));
         return columns3.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
       });
       if (missing.length)
-        throw new MailSchemaError(
-          `Unsupported Mail index schema: missing ${missing.join(", ")}`
-        );
-      const scratch = resources.use(
-        await mkdtempDisposable(join5(tmpdir(), "apple-mail-"))
-      );
+        throw new MailSchemaError(`Unsupported Mail index schema: missing ${missing.join(", ")}`);
+      const scratch = resources.use(await mkdtempDisposable(join5(tmpdir(), "apple-mail-")));
       const store = new _MailStore(path, database, scratch, resources);
       const entries = await readdir2(path, {
         recursive: true,
         withFileTypes: true
       });
       for (const entry of entries) {
-        if (!entry.isFile()) continue;
+        if (!entry.isFile())
+          continue;
         const filePath = join5(entry.parentPath, entry.name);
         const segments = relative(path, filePath).split(sep);
         const attachment2 = segments.indexOf("Attachments");
         if (/^\d+(\.partial)?\.emlx$/.test(entry.name)) {
           const id12 = entry.name.split(".")[0];
           if (store.messages.has(id12))
-            throw new MailSchemaError(
-              `Mail has more than one file for indexed message ${id12}`
-            );
+            throw new MailSchemaError(`Mail has more than one file for indexed message ${id12}`);
           store.messages.set(id12, await inspectMailFile(filePath));
         } else if (attachment2 !== -1 && segments.length >= attachment2 + 4) {
           const key = `${segments[attachment2 + 1]}:${segments[attachment2 + 2]}`;
           const files = store.attachments.get(key);
           const file2 = await inspectMailFile(filePath);
-          if (files === void 0) store.attachments.set(key, [file2]);
-          else files.push(file2);
+          if (files === void 0)
+            store.attachments.set(key, [file2]);
+          else
+            files.push(file2);
         } else if (entry.name.endsWith(".plist")) {
-          store.plists.set(
-            relative(path, filePath),
-            await inspectMailFile(filePath)
-          );
+          store.plists.set(relative(path, filePath), await inspectMailFile(filePath));
         } else if (entry.name.endsWith(".mailsignature")) {
           store.signatures.push(await inspectMailFile(filePath));
         }
@@ -65680,7 +65647,8 @@ var MailStore = class _MailStore {
   }
   async plist(name) {
     const file2 = this.plists.get(name);
-    if (file2 === void 0) return null;
+    if (file2 === void 0)
+      return null;
     await assertMailFile(file2);
     const value = await readMailPlist(file2.path);
     await assertMailFile(file2);
@@ -65697,42 +65665,29 @@ var MailStore = class _MailStore {
   }
 };
 
-// apps/apple/src/sources/apple-books/apple-books-source.ts
+// apps/apple/connectors/dist/sources/apple-books/apple-books-source.js
 import { mkdtempDisposable as mkdtempDisposable2, rm as rm2, stat as stat2 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join10 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
-// apps/apple/src/platform/macos/books-store.ts
+// apps/apple/connectors/dist/platform/macos/books-store.js
 import { readFile as readFile2 } from "node:fs/promises";
 import { homedir as homedir2 } from "node:os";
 import { join as join6 } from "node:path";
-import {
-  DatabaseSync as DatabaseSync9
-} from "node:sqlite";
-var booksContainer = join6(
-  homedir2(),
-  "Library/Containers/com.apple.iBooksX/Data"
-);
-var booksGroupContainer = join6(
-  homedir2(),
-  "Library/Group Containers/group.com.apple.iBooks"
-);
+import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
+var booksContainer = join6(homedir2(), "Library/Containers/com.apple.iBooksX/Data");
+var booksGroupContainer = join6(homedir2(), "Library/Group Containers/group.com.apple.iBooks");
 var BooksUnavailableError = class extends Error {
   name = "BooksUnavailableError";
   constructor(path, cause) {
-    super(
-      `Books data at ${path} cannot be read. Open Books once so it creates its stores; if they exist, allow the process that runs the export Full Disk Access in System Settings > Privacy & Security. Books does not need to be open.`,
-      { cause }
-    );
+    super(`Books data at ${path} cannot be read. Open Books once so it creates its stores; if they exist, allow the process that runs the export Full Disk Access in System Settings > Privacy & Security. Books does not need to be open.`, { cause });
   }
 };
 var BooksSchemaError = class extends Error {
   name = "BooksSchemaError";
   constructor(path, missing) {
-    super(
-      `The Books store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`
-    );
+    super(`The Books store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
   }
 };
 var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
@@ -65771,12 +65726,11 @@ var BooksDatabase = class _BooksDatabase {
     try {
       database.exec("BEGIN");
       const missing = Object.entries(required3).flatMap(([table2, columns3]) => {
-        const present = new Set(
-          database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((column) => column.name)
-        );
+        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((column) => column.name));
         return columns3.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
       });
-      if (missing.length > 0) throw new BooksSchemaError(path, missing);
+      if (missing.length > 0)
+        throw new BooksSchemaError(path, missing);
       return new _BooksDatabase(path, database);
     } catch (cause) {
       database.close();
@@ -65787,7 +65741,8 @@ var BooksDatabase = class _BooksDatabase {
     return this.#database.prepare(sql).all();
   }
   async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction) this.#database.exec("COMMIT");
+    if (this.#database.isTransaction)
+      this.#database.exec("COMMIT");
     this.#database.close();
   }
 };
@@ -65803,16 +65758,16 @@ async function readBooksPlist(path) {
   return parseBinaryPlist(bytes);
 }
 
-// apps/apple/src/sources/local-apple-store-coverage.ts
+// apps/apple/connectors/dist/sources/local-apple-store-coverage.js
 var localAppleStoreCoverage = Object.freeze({
   description: "All records this stream can export from the accessible local Apple store, with no configured date filter. Local availability, permissions and source omissions still limit the export; it does not promise all cloud history. Attachment metadata may exist without retrievable file bytes.",
   selection: Object.freeze({})
 });
 
-// apps/apple/src/sources/apple-books/books-scan.ts
+// apps/apple/connectors/dist/sources/apple-books/books-scan.js
 import { join as join7 } from "node:path";
 
-// apps/apple/src/platform/macos/protobuf.ts
+// apps/apple/connectors/dist/platform/macos/protobuf.js
 var ProtobufMessage = class _ProtobufMessage {
   #fields = [];
   constructor(bytes) {
@@ -65825,15 +65780,18 @@ var ProtobufMessage = class _ProtobufMessage {
           throw new TypeError("Truncated protobuf varint");
         const byte = bytes[offset++];
         value |= BigInt(byte & 127) << shift;
-        if ((byte & 128) === 0) return value;
+        if ((byte & 128) === 0)
+          return value;
       }
     };
     while (offset < bytes.length) {
       const key = Number(varint());
       const number8 = key >>> 3;
       const wire = key & 7;
-      if (number8 === 0) throw new TypeError("Invalid protobuf field number 0");
-      if (wire === 0) this.#fields.push({ number: number8, wire, value: varint() });
+      if (number8 === 0)
+        throw new TypeError("Invalid protobuf field number 0");
+      if (wire === 0)
+        this.#fields.push({ number: number8, wire, value: varint() });
       else if (wire === 1 || wire === 5) {
         const size = wire === 1 ? 8 : 4;
         if (offset + size > bytes.length)
@@ -65851,7 +65809,8 @@ var ProtobufMessage = class _ProtobufMessage {
           value: bytes.subarray(offset, offset + length)
         });
         offset += length;
-      } else throw new TypeError(`Unsupported protobuf wire type ${wire}`);
+      } else
+        throw new TypeError(`Unsupported protobuf wire type ${wire}`);
     }
   }
   #all(number8) {
@@ -65866,7 +65825,8 @@ var ProtobufMessage = class _ProtobufMessage {
   }
   uint(number8) {
     const field = this.#last(number8);
-    if (field === void 0) return void 0;
+    if (field === void 0)
+      return void 0;
     if (field.wire !== 0)
       throw new TypeError(`Protobuf field ${number8} is not a varint`);
     if (field.value > BigInt(Number.MAX_SAFE_INTEGER))
@@ -65876,7 +65836,8 @@ var ProtobufMessage = class _ProtobufMessage {
   // An int64 field: negative values arrive as ten-byte two's complement.
   int(number8) {
     const field = this.#last(number8);
-    if (field === void 0) return void 0;
+    if (field === void 0)
+      return void 0;
     if (field.wire !== 0)
       throw new TypeError(`Protobuf field ${number8} is not a varint`);
     const value = BigInt.asIntN(64, field.value);
@@ -65886,7 +65847,8 @@ var ProtobufMessage = class _ProtobufMessage {
   }
   float(number8) {
     const field = this.#last(number8);
-    if (field === void 0) return void 0;
+    if (field === void 0)
+      return void 0;
     if (field.wire !== 5)
       throw new TypeError(`Protobuf field ${number8} is not a float`);
     const view = new DataView(new ArrayBuffer(4));
@@ -65912,9 +65874,7 @@ var ProtobufMessage = class _ProtobufMessage {
     return this.bytesList(number8).map((bytes) => new _ProtobufMessage(bytes));
   }
   strings(number8) {
-    return this.bytesList(number8).map(
-      (bytes) => new TextDecoder("utf-8", { fatal: true }).decode(bytes)
-    );
+    return this.bytesList(number8).map((bytes) => new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   }
   #delimited(field, number8) {
     if (field.wire !== 2)
@@ -65923,7 +65883,7 @@ var ProtobufMessage = class _ProtobufMessage {
   }
 };
 
-// apps/apple/src/sources/apple-books/reading-history.ts
+// apps/apple/connectors/dist/sources/apple-books/reading-history.js
 var magic = "crdt";
 var supportedVersion = 4;
 var Layout = class {
@@ -65940,24 +65900,14 @@ var Layout = class {
 };
 function fields(crdt, layout) {
   const struct = layout.need(crdt.message(4), "struct");
-  return new Map(
-    struct.messages(1).map((field) => [
-      layout.need(field.string(1), "struct field name"),
-      layout.need(field.message(2), "struct field value")
-    ])
-  );
+  return new Map(struct.messages(1).map((field) => [
+    layout.need(field.string(1), "struct field name"),
+    layout.need(field.message(2), "struct field value")
+  ]));
 }
-var registerValue = (crdt, layout) => layout.need(
-  layout.need(crdt.message(1), "register").message(3),
-  "register value"
-);
+var registerValue = (crdt, layout) => layout.need(layout.need(crdt.message(1), "register").message(3), "register value");
 var integer2 = (value, layout) => layout.need(value.int(1), "integer value");
-var reference = (value, layout) => Buffer.from(
-  layout.need(
-    layout.need(value.message(6), "reference").bytes(1),
-    "reference id"
-  )
-).toString("hex");
+var reference = (value, layout) => Buffer.from(layout.need(layout.need(value.message(6), "reference").bytes(1), "reference id")).toString("hex");
 function dictionary(crdt, layout) {
   const map2 = layout.need(crdt.message(3), "dictionary");
   return map2.messages(3).map((entry) => [
@@ -65971,7 +65921,8 @@ function counter(crdt, layout) {
   for (const replicas of value.messages(2))
     for (const replica of replicas.messages(1)) {
       const parts = varints(layout.need(replica.bytes(2), "counter value"));
-      if (parts.length !== 2) layout.fail("counter value");
+      if (parts.length !== 2)
+        layout.fail("counter value");
       const [decrements, increments] = parts;
       total += increments - decrements;
     }
@@ -65987,7 +65938,8 @@ function varints(bytes) {
       values.push(Number(value));
       value = 0n;
       shift = 0n;
-    } else shift += 7n;
+    } else
+      shift += 7n;
   }
   return values;
 }
@@ -65996,32 +65948,26 @@ function readingHistory(bytes, source) {
   if (bytes.length < 8 || Buffer.from(bytes.subarray(0, 4)).toString("latin1") !== magic)
     layout.fail("signature");
   const version3 = Buffer.from(bytes.subarray(4, 8)).readUInt32LE(0);
-  if (version3 !== supportedVersion) layout.fail(`format version ${version3}`);
+  if (version3 !== supportedVersion)
+    layout.fail(`format version ${version3}`);
   const document = new ProtobufMessage(bytes.subarray(8));
-  const objects = new Map(
-    document.messages(2).map((object4) => [
-      Buffer.from(layout.need(object4.bytes(1), "object id")).toString("hex"),
-      layout.need(object4.message(3), "object value")
-    ])
-  );
+  const objects = new Map(document.messages(2).map((object4) => [
+    Buffer.from(layout.need(object4.bytes(1), "object id")).toString("hex"),
+    layout.need(object4.message(3), "object value")
+  ]));
   const object3 = (id12) => layout.need(objects.get(id12), "object");
   const root = fields(layout.need(document.message(1), "root"), layout);
   const months = [];
   const days = [];
-  for (const [key, value] of dictionary(
-    layout.need(root.get("months"), "months"),
-    layout
-  )) {
+  for (const [key, value] of dictionary(layout.need(root.get("months"), "months"), layout)) {
     const year = Math.trunc(key / 100);
     const month = key % 100;
-    if (month < 1 || month > 12) layout.fail(`month key ${key}`);
+    if (month < 1 || month > 12)
+      layout.fail(`month key ${key}`);
     const monthFields = fields(object3(reference(value, layout)), layout);
     const total = monthFields.get("totalTime");
     const streak = monthFields.get("lastDayStreakOrdinal");
-    const monthDays = dictionary(
-      layout.need(monthFields.get("days"), "month days"),
-      layout
-    );
+    const monthDays = dictionary(layout.need(monthFields.get("days"), "month days"), layout);
     months.push({
       year,
       month,
@@ -66036,57 +65982,31 @@ function readingHistory(bytes, source) {
         year,
         month,
         day,
-        readingTime: counter(
-          layout.need(dayFields.get("readingTime"), "readingTime"),
-          layout
-        ),
+        readingTime: counter(layout.need(dayFields.get("readingTime"), "readingTime"), layout),
         readingGoal: goal === void 0 ? null : integer2(registerValue(goal, layout), layout)
       });
     }
   }
-  const streaks = dictionary(
-    layout.need(root.get("streakRecords"), "streakRecords"),
-    layout
-  ).map(([days2, value]) => ({
+  const streaks = dictionary(layout.need(root.get("streakRecords"), "streakRecords"), layout).map(([days2, value]) => ({
     days: days2,
-    reachedAt: new Date(
-      layout.need(
-        layout.need(value.message(5), "date").int(1),
-        "date seconds"
-      ) * 1e3
-    )
+    reachedAt: new Date(layout.need(layout.need(value.message(5), "date").int(1), "date seconds") * 1e3)
   }));
   return { months, days, streaks };
 }
 
-// apps/apple/src/sources/apple-books/books-scan.ts
+// apps/apple/connectors/dist/sources/apple-books/books-scan.js
 var defaultBooksLocation = Object.freeze({
   container: booksContainer,
   groupContainer: booksGroupContainer
 });
 var bookData = (group2) => join7(group2, "Documents/BCCloudData-BookDataStoreService");
 var storeFiles = ({ container: container2, groupContainer }) => ({
-  library: join7(
-    container2,
-    "Documents/BKLibrary/BKLibrary-1-091020131601.sqlite"
-  ),
-  annotations: join7(
-    container2,
-    "Documents/AEAnnotation/AEAnnotation_v10312011_1727_local.sqlite"
-  ),
+  library: join7(container2, "Documents/BKLibrary/BKLibrary-1-091020131601.sqlite"),
+  annotations: join7(container2, "Documents/AEAnnotation/AEAnnotation_v10312011_1727_local.sqlite"),
   assetData: join7(bookData(groupContainer), "BCAssetData/BCAssetData"),
-  readingHistory: join7(
-    bookData(groupContainer),
-    "CRDTModelSync-ReadingHistoryModel/CRDTModelSync-ReadingHistoryModel"
-  ),
-  purchases: join7(
-    groupContainer,
-    "Documents/BKJaliscoServerSource/BKJaliscoServerSource-v09182016.sqlite"
-  ),
-  themes: join7(
-    container2,
-    "Library/Application Support/Books/BookTheme.sqlite"
-  ),
+  readingHistory: join7(bookData(groupContainer), "CRDTModelSync-ReadingHistoryModel/CRDTModelSync-ReadingHistoryModel"),
+  purchases: join7(groupContainer, "Documents/BKJaliscoServerSource/BKJaliscoServerSource-v09182016.sqlite"),
+  themes: join7(container2, "Library/Application Support/Books/BookTheme.sqlite"),
   preferences: join7(container2, "Library/Preferences/com.apple.iBooksX.plist")
 });
 var sharedPreferences = ({ groupContainer }) => join7(groupContainer, "Library/Preferences/group.com.apple.iBooks.plist");
@@ -66325,7 +66245,8 @@ var BooksScan = class _BooksScan {
       const resources = __using(_stack, new AsyncDisposableStack(), true);
       const database = async (store) => resources.use(await BooksDatabase.open(files[store], columns[store]));
       const open11 = async (store, value) => {
-        if (!stores.has(store)) return void 0;
+        if (!stores.has(store))
+          return void 0;
         try {
           return { value: await value() };
         } catch (error62) {
@@ -66340,13 +66261,8 @@ var BooksScan = class _BooksScan {
         readingHistory: await open11("readingHistory", async () => {
           var _stack2 = [];
           try {
-            const store = __using(_stack2, await BooksDatabase.open(
-              files.readingHistory,
-              columns.readingHistory
-            ), true);
-            const rows = store.all(
-              "SELECT ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel' AND coalesce(ZDELETEDFLAG, 0) = 0"
-            );
+            const store = __using(_stack2, await BooksDatabase.open(files.readingHistory, columns.readingHistory), true);
+            const rows = store.all("SELECT ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel' AND coalesce(ZDELETEDFLAG, 0) = 0");
             const bytes = rows[0]?.ZPROTODATA;
             if (rows.length !== 1 || !(bytes instanceof Uint8Array))
               return { months: [], days: [], streaks: [] };
@@ -66398,7 +66314,8 @@ var BooksScan = class _BooksScan {
     const opened = this.#stores[store];
     if (opened === void 0)
       throw new Error(`Books ${store} was not opened for this run`);
-    if ("error" in opened) throw opened.error;
+    if ("error" in opened)
+      throw opened.error;
     return opened.value;
   }
   [Symbol.asyncDispose]() {
@@ -66406,7 +66323,7 @@ var BooksScan = class _BooksScan {
   }
 };
 
-// apps/apple/src/sources/apple-books/books-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/books-stream.js
 var text2 = { type: "string" };
 var nullableText = { type: ["string", "null"] };
 var integer3 = { type: "integer" };
@@ -66445,11 +66362,7 @@ var BooksStream = class {
   }
   async read(scan) {
     const rows = await this.rows(scan);
-    return validateRecords(
-      this.describe(),
-      rows.map((row) => this.record(row, scan)),
-      "Books"
-    );
+    return validateRecords(this.describe(), rows.map((row) => this.record(row, scan)), "Books");
   }
   // The file a record carries, for streams that support file reads, staged
   // under staging when it has to be built.
@@ -66458,7 +66371,7 @@ var BooksStream = class {
   }
 };
 
-// apps/apple/src/sources/apple-books/books-values.ts
+// apps/apple/connectors/dist/sources/apple-books/books-values.js
 var appleEpochSeconds = 978307200;
 var distantPast = -63114076800;
 var distantFuture = 63113904e3;
@@ -66471,7 +66384,7 @@ var flag = (value) => value === 1 || value === true;
 var nullableFlag = (value) => value === null || value === void 0 ? null : value === 1;
 var base643 = (value) => value instanceof Uint8Array && value.length > 0 ? Buffer.from(value).toString("base64") : null;
 
-// apps/apple/src/sources/apple-books/streams/annotations-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/annotations-stream.js
 var { boolean: boolean4, nullableInteger: nullableInteger2, nullableText: nullableText2, nullableTimestamp } = booksFields;
 var kinds = {
   2: "highlight",
@@ -66558,9 +66471,7 @@ var AnnotationsStream = class extends BooksStream {
     required: Object.keys(properties)
   };
   rows(scan) {
-    return scan.annotations.all(
-      "SELECT * FROM ZAEANNOTATION WHERE ZANNOTATIONUUID IS NOT NULL ORDER BY Z_PK"
-    );
+    return scan.annotations.all("SELECT * FROM ZAEANNOTATION WHERE ZANNOTATIONUUID IS NOT NULL ORDER BY Z_PK");
   }
   record(row) {
     const kindCode = integer4(row.ZANNOTATIONTYPE);
@@ -66588,15 +66499,8 @@ var AnnotationsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/asset-details-stream.ts
-var {
-  boolean: boolean5,
-  nullableBoolean,
-  nullableInteger: nullableInteger3,
-  nullableNumber,
-  nullableText: nullableText3,
-  nullableTimestamp: nullableTimestamp2
-} = booksFields;
+// apps/apple/connectors/dist/sources/apple-books/streams/asset-details-stream.js
+var { boolean: boolean5, nullableBoolean, nullableInteger: nullableInteger3, nullableNumber, nullableText: nullableText3, nullableTimestamp: nullableTimestamp2 } = booksFields;
 var properties2 = {
   assetId: {
     ...booksFields.assetId,
@@ -66705,9 +66609,7 @@ var AssetDetailsStream = class extends BooksStream {
     required: Object.keys(properties2)
   };
   rows(scan) {
-    return scan.assetData.all(
-      "SELECT * FROM ZBCASSETDETAIL WHERE ZASSETID IS NOT NULL ORDER BY Z_PK"
-    );
+    return scan.assetData.all("SELECT * FROM ZBCASSETDETAIL WHERE ZASSETID IS NOT NULL ORDER BY Z_PK");
   }
   record(row) {
     return {
@@ -66731,9 +66633,7 @@ var AssetDetailsStream = class extends BooksStream {
       position: text3(row.ZREADINGPOSITIONCFISTRING),
       positionRangeStart: integer4(row.ZREADINGPOSITIONLOCATIONRANGESTART),
       positionRangeEnd: integer4(row.ZREADINGPOSITIONLOCATIONRANGEEND),
-      positionPhysicalLocation: integer4(
-        row.ZREADINGPOSITIONABSOLUTEPHYSICALLOCATION
-      ),
+      positionPhysicalLocation: integer4(row.ZREADINGPOSITIONABSOLUTEPHYSICALLOCATION),
       positionStorageId: text3(row.ZREADINGPOSITIONSTORAGEUUID),
       positionAssetVersion: text3(row.ZREADINGPOSITIONASSETVERSION),
       positionAnnotationVersion: text3(row.ZREADINGPOSITIONANNOTATIONVERSION),
@@ -66742,10 +66642,10 @@ var AssetDetailsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/book-files-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/book-files-stream.js
 import { join as join9 } from "node:path";
 
-// apps/apple/src/platform/macos/icloud-files.ts
+// apps/apple/connectors/dist/platform/macos/icloud-files.js
 import { execFile as execFile2 } from "node:child_process";
 import { lstat as lstat2, readdir as readdir3 } from "node:fs/promises";
 import { join as join8 } from "node:path";
@@ -66759,36 +66659,35 @@ async function flags(paths) {
     const { stdout } = await run("/usr/bin/stat", ["-f", "%Xf %N", ...batch], {
       maxBuffer: 16 * 1024 * 1024
     }).catch((error62) => {
-      if (typeof error62.stdout === "string") return { stdout: error62.stdout };
+      if (typeof error62.stdout === "string")
+        return { stdout: error62.stdout };
       throw error62;
     });
     for (const line of stdout.split("\n")) {
       const space = line.indexOf(" ");
       if (space > 0)
-        found.set(
-          line.slice(space + 1),
-          Number.parseInt(line.slice(0, space), 16)
-        );
+        found.set(line.slice(space + 1), Number.parseInt(line.slice(0, space), 16));
     }
   }
   return found;
 }
 async function localPaths(paths) {
   const found = await flags(paths);
-  return new Set(
-    paths.filter((path) => {
-      const value = found.get(path);
-      return value !== void 0 && (value & dataless) === 0;
-    })
-  );
+  return new Set(paths.filter((path) => {
+    const value = found.get(path);
+    return value !== void 0 && (value & dataless) === 0;
+  }));
 }
 function compareByName(a, b) {
-  if (a.name < b.name) return -1;
-  if (a.name > b.name) return 1;
+  if (a.name < b.name)
+    return -1;
+  if (a.name > b.name)
+    return 1;
   return 0;
 }
 async function localFiles(item) {
-  if (!(await localPaths([item])).has(item)) return null;
+  if (!(await localPaths([item])).has(item))
+    return null;
   const info = await lstat2(item);
   if (info.isFile())
     return [
@@ -66799,7 +66698,8 @@ async function localFiles(item) {
         modifiedMs: info.mtimeMs
       }
     ];
-  if (!info.isDirectory()) return null;
+  if (!info.isDirectory())
+    return null;
   const files = [];
   const pending = [""];
   while (pending.length > 0) {
@@ -66811,9 +66711,11 @@ async function localFiles(item) {
     const local = await localPaths(paths);
     for (const [index, entry] of entries.entries()) {
       const path = paths[index];
-      if (!local.has(path)) return null;
+      if (!local.has(path))
+        return null;
       const name = relative4 === "" ? entry.name : `${relative4}/${entry.name}`;
-      if (entry.isDirectory()) pending.push(name);
+      if (entry.isDirectory())
+        pending.push(name);
       else if (entry.isFile()) {
         const { size, mtimeMs } = await lstat2(path);
         files.push({ name, path, size, modifiedMs: mtimeMs });
@@ -66823,7 +66725,7 @@ async function localFiles(item) {
   return files.sort(compareByName);
 }
 
-// apps/apple/src/sources/apple-books/epub-package.ts
+// apps/apple/connectors/dist/sources/apple-books/epub-package.js
 import { open as open5 } from "node:fs/promises";
 import { crc32 } from "node:zlib";
 var chunkSize = 4 * 1024 * 1024;
@@ -66838,7 +66740,8 @@ async function checksum(path) {
     const buffer = Buffer.allocUnsafe(chunkSize);
     for (; ; ) {
       const { bytesRead } = await file2.read(buffer, 0, chunkSize, null);
-      if (bytesRead === 0) return value;
+      if (bytesRead === 0)
+        return value;
       value = crc32(buffer.subarray(0, bytesRead), value);
     }
   } catch (_) {
@@ -66914,12 +66817,7 @@ async function writeEpub(files, target) {
         const input2 = __using(_stack, await open5(entry.file.path), true);
         let remaining = entry.file.size;
         while (remaining > 0) {
-          const { bytesRead } = await input2.read(
-            buffer,
-            0,
-            Math.min(chunkSize, remaining),
-            null
-          );
+          const { bytesRead } = await input2.read(buffer, 0, Math.min(chunkSize, remaining), null);
           if (bytesRead === 0)
             throw new Error(`${entry.file.path} shrank while it was packaged`);
           await write2(buffer.subarray(0, bytesRead));
@@ -66953,7 +66851,7 @@ async function writeEpub(files, target) {
   }
 }
 
-// apps/apple/src/sources/apple-books/streams/book-files-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/book-files-stream.js
 var { boolean: boolean6, nullableInteger: nullableInteger4, nullableTimestamp: nullableTimestamp3 } = booksFields;
 var properties3 = {
   assetId: booksFields.assetId,
@@ -66985,7 +66883,8 @@ var properties3 = {
 };
 var single = (files) => files.length === 1 && files[0]?.name === "";
 function exportable(path, files) {
-  if (files === null || single(files)) return files;
+  if (files === null || single(files))
+    return files;
   return path.toLowerCase().endsWith(".epub") ? files : null;
 }
 var BookFilesStream = class extends BooksStream {
@@ -67001,16 +66900,13 @@ var BookFilesStream = class extends BooksStream {
   };
   async rows(scan) {
     const rows = [];
-    for (const row of scan.library.all(
-      "SELECT ZASSETID, ZPATH FROM ZBKLIBRARYASSET WHERE ZASSETID IS NOT NULL AND ZPATH IS NOT NULL ORDER BY Z_PK"
-    )) {
+    for (const row of scan.library.all("SELECT ZASSETID, ZPATH FROM ZBKLIBRARYASSET WHERE ZASSETID IS NOT NULL AND ZPATH IS NOT NULL ORDER BY Z_PK")) {
       const path = row.ZPATH;
-      const files = await localFiles(path).catch(
-        (error62) => {
-          if (error62.code === "ENOENT") return null;
-          throw error62;
-        }
-      );
+      const files = await localFiles(path).catch((error62) => {
+        if (error62.code === "ENOENT")
+          return null;
+        throw error62;
+      });
       rows.push({
         assetId: row.ZASSETID,
         path,
@@ -67020,12 +66916,7 @@ var BookFilesStream = class extends BooksStream {
     }
     return rows;
   }
-  record({
-    assetId,
-    path,
-    format,
-    files
-  }) {
+  record({ assetId, path, format, files }) {
     return {
       assetId,
       path,
@@ -67033,26 +66924,27 @@ var BookFilesStream = class extends BooksStream {
       availableLocally: files !== null,
       fileCount: files?.length ?? null,
       sizeBytes: files?.reduce((sum, file2) => sum + file2.size, 0) ?? null,
-      modifiedAt: files === null || files.length === 0 ? null : new Date(
-        Math.max(...files.map((file2) => file2.modifiedMs))
-      ).toISOString()
+      modifiedAt: files === null || files.length === 0 ? null : new Date(Math.max(...files.map((file2) => file2.modifiedMs))).toISOString()
     };
   }
   // A single file is exported as it is; a package is written as one .epub
   // under staging. Rechecked here, so a file that became a placeholder since
   // the scan is not opened.
   async file(record3, _scan, staging) {
-    if (!record3.availableLocally) return null;
+    if (!record3.availableLocally)
+      return null;
     const files = exportable(record3.path, await localFiles(record3.path));
-    if (files === null) return null;
-    if (single(files)) return files[0]?.path ?? null;
+    if (files === null)
+      return null;
+    if (single(files))
+      return files[0]?.path ?? null;
     const target = join9(staging, `${record3.assetId}.epub`);
     await writeEpub(files, target);
     return target;
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/collection-members-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/collection-members-stream.js
 var properties4 = {
   collectionId: {
     ...booksFields.id,
@@ -67100,7 +66992,7 @@ var CollectionMembersStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/collections-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/collections-stream.js
 var { boolean: boolean7, nullableInteger: nullableInteger5, nullableText: nullableText4, nullableTimestamp: nullableTimestamp4 } = booksFields;
 var properties5 = {
   collectionId: {
@@ -67147,9 +67039,7 @@ var CollectionsStream = class extends BooksStream {
     required: Object.keys(properties5)
   };
   rows(scan) {
-    return scan.library.all(
-      "SELECT * FROM ZBKCOLLECTION WHERE ZCOLLECTIONID IS NOT NULL ORDER BY Z_PK"
-    );
+    return scan.library.all("SELECT * FROM ZBKCOLLECTION WHERE ZCOLLECTIONID IS NOT NULL ORDER BY Z_PK");
   }
   record(row) {
     return {
@@ -67168,15 +67058,8 @@ var CollectionsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/library-assets-stream.ts
-var {
-  boolean: boolean8,
-  nullableBoolean: nullableBoolean2,
-  nullableInteger: nullableInteger6,
-  nullableNumber: nullableNumber2,
-  nullableText: nullableText5,
-  nullableTimestamp: nullableTimestamp5
-} = booksFields;
+// apps/apple/connectors/dist/sources/apple-books/streams/library-assets-stream.js
+var { boolean: boolean8, nullableBoolean: nullableBoolean2, nullableInteger: nullableInteger6, nullableNumber: nullableNumber2, nullableText: nullableText5, nullableTimestamp: nullableTimestamp5 } = booksFields;
 var contentTypes = {
   1: "epub",
   3: "pdf"
@@ -67525,9 +67408,7 @@ var LibraryAssetsStream = class extends BooksStream {
       isEphemeral: nullableFlag(row.ZISEPHEMERAL),
       isStoreAudiobook: nullableFlag(row.ZISSTOREAUDIOBOOK),
       isSupplementalContent: nullableFlag(row.ZISSUPPLEMENTALCONTENT),
-      supplementalContentParentAssetId: text3(
-        row.supplementalContentParentAssetId
-      ),
+      supplementalContentParentAssetId: text3(row.supplementalContentParentAssetId),
       isTrackedAsRecent: nullableFlag(row.ZISTRACKEDASRECENT),
       canRedownload: nullableFlag(row.ZCANREDOWNLOAD),
       hasReadAloudSupport: nullableFlag(row.ZHASRACSUPPORT),
@@ -67547,7 +67428,7 @@ var LibraryAssetsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/purchases-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/purchases-stream.js
 var { nullableBoolean: nullableBoolean3, nullableInteger: nullableInteger7, nullableText: nullableText6, nullableTimestamp: nullableTimestamp6 } = booksFields;
 var properties7 = {
   storeId: {
@@ -67609,9 +67490,7 @@ var PurchasesStream = class extends BooksStream {
     required: Object.keys(properties7)
   };
   rows(scan) {
-    return scan.purchases.all(
-      "SELECT * FROM ZBLJALISCOSERVERITEM WHERE ZSTOREID IS NOT NULL ORDER BY Z_PK"
-    );
+    return scan.purchases.all("SELECT * FROM ZBLJALISCOSERVERITEM WHERE ZSTOREID IS NOT NULL ORDER BY Z_PK");
   }
   record(row) {
     return {
@@ -67639,7 +67518,7 @@ var PurchasesStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/reading-goal-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/reading-goal-stream.js
 var { nullableBoolean: nullableBoolean4, nullableInteger: nullableInteger8, nullableTimestamp: nullableTimestamp7 } = booksFields;
 var properties8 = {
   id: {
@@ -67680,10 +67559,7 @@ var ReadingGoalStream = class extends BooksStream {
   rows(scan) {
     return [scan.preferences];
   }
-  record({
-    app,
-    shared
-  }) {
+  record({ app, shared }) {
     const appValues = dictionary2(app);
     const sharedValues = dictionary2(shared);
     const goal = dictionary2(sharedValues.streakDatUserDefaultsKey);
@@ -67699,7 +67575,7 @@ var ReadingGoalStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/reading-history-streams.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/reading-history-streams.js
 var { nullableInteger: nullableInteger9 } = booksFields;
 var pad = (value) => String(value).padStart(2, "0");
 var monthProperties = {
@@ -67816,7 +67692,7 @@ var StreakRecordsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/reviews-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/reviews-stream.js
 var { nullableInteger: nullableInteger10, nullableText: nullableText7, nullableTimestamp: nullableTimestamp8 } = booksFields;
 var properties9 = {
   id: { ...booksFields.id, description: "Review identifier." },
@@ -67847,9 +67723,7 @@ var ReviewsStream = class extends BooksStream {
     required: Object.keys(properties9)
   };
   rows(scan) {
-    return scan.assetData.all(
-      "SELECT * FROM ZBCASSETREVIEW WHERE ZASSETREVIEWID IS NOT NULL ORDER BY Z_PK"
-    );
+    return scan.assetData.all("SELECT * FROM ZBCASSETREVIEW WHERE ZASSETREVIEWID IS NOT NULL ORDER BY Z_PK");
   }
   record(row) {
     return {
@@ -67864,7 +67738,7 @@ var ReviewsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/streams/themes-stream.ts
+// apps/apple/connectors/dist/sources/apple-books/streams/themes-stream.js
 var { nullableBoolean: nullableBoolean5, nullableNumber: nullableNumber3 } = booksFields;
 var properties10 = {
   id: { ...booksFields.id, description: "Theme identifier." },
@@ -67897,9 +67771,7 @@ var ThemesStream = class extends BooksStream {
     required: Object.keys(properties10)
   };
   rows(scan) {
-    return scan.themes.all(
-      "SELECT * FROM ZBOOKTHEME WHERE ZIDENTIFIER IS NOT NULL ORDER BY Z_PK"
-    );
+    return scan.themes.all("SELECT * FROM ZBOOKTHEME WHERE ZIDENTIFIER IS NOT NULL ORDER BY Z_PK");
   }
   record(row) {
     return {
@@ -67916,7 +67788,7 @@ var ThemesStream = class extends BooksStream {
   }
 };
 
-// apps/apple/src/sources/apple-books/apple-books-source.ts
+// apps/apple/connectors/dist/sources/apple-books/apple-books-source.js
 var readers = {
   libraryAssets: new LibraryAssetsStream(),
   collections: new CollectionsStream(),
@@ -67932,10 +67804,9 @@ var readers = {
   purchases: new PurchasesStream(),
   themes: new ThemesStream()
 };
-var catalog = new Catalog(
-  Object.values(readers).map((reader) => reader.describe())
-);
+var catalog = new Catalog(Object.values(readers).map((reader) => reader.describe()));
 var readerOf = (stream) => readers[stream.name];
+var pollIntervalMs = 1e3;
 var AppleBooksSource = class extends Source {
   identity;
   catalog = catalog;
@@ -67953,24 +67824,14 @@ var AppleBooksSource = class extends Source {
   purchases = readers.purchases.describe();
   themes = readers.themes.describe();
   location;
-  pollIntervalMs;
-  constructor({
-    container: container2 = defaultBooksLocation.container,
-    groupContainer = defaultBooksLocation.groupContainer,
-    // How often a watch checks the stores for changes.
-    pollIntervalMs = 1e3
-  } = {}) {
+  constructor({ container: container2 = defaultBooksLocation.container, groupContainer = defaultBooksLocation.groupContainer } = {}) {
     super();
     this.location = Object.freeze({ container: container2, groupContainer });
-    this.pollIntervalMs = pollIntervalMs;
     this.identity = `apple-books:${container2}:${groupContainer}`;
     Object.freeze(this);
   }
   open(streams4) {
-    return BooksScan.open(
-      this.location,
-      new Set(streams4.map((stream) => readerOf(stream).store))
-    );
+    return BooksScan.open(this.location, new Set(streams4.map((stream) => readerOf(stream).store)));
   }
   coverage(_stream) {
     return localAppleStoreCoverage;
@@ -67978,40 +67839,38 @@ var AppleBooksSource = class extends Source {
   // Databases report commits through data_version; preference files are
   // rewritten whole, so a changed stat marks a new one. A book downloaded from
   // iCloud without a library change is picked up by the next change or run.
-  async *observe({
-    streams: streams4,
-    signal
-  }) {
+  async *observe({ streams: streams4, signal }) {
     var _stack = [];
     try {
-      if (signal.aborted) return;
+      if (signal.aborted)
+        return;
       const files = storeFiles(this.location);
       const stores = [
         ...new Set(streams4.map((stream) => readerOf(stream).store))
       ];
       const versions = __using(_stack, new DisposableStack());
-      const probes = new Map(
-        stores.map((store) => {
-          if (!databaseStores.has(store))
-            return [
-              store,
-              async () => `${await fingerprint(files.preferences)}|${await fingerprint(sharedPreferences(this.location))}`
-            ];
-          const version3 = versions.use(new BooksDatabaseVersion(files[store]));
-          return [store, async () => String(version3.current)];
-        })
-      );
+      const probes = new Map(stores.map((store) => {
+        if (!databaseStores.has(store))
+          return [
+            store,
+            async () => `${await fingerprint(files.preferences)}|${await fingerprint(sharedPreferences(this.location))}`
+          ];
+        const version3 = versions.use(new BooksDatabaseVersion(files[store]));
+        return [store, async () => String(version3.current)];
+      }));
       const seen = /* @__PURE__ */ new Map();
-      for (const [store, probe] of probes) seen.set(store, await probe());
+      for (const [store, probe] of probes)
+        seen.set(store, await probe());
       yield streams4;
       try {
-        for await (const _2 of setInterval(this.pollIntervalMs, void 0, {
+        for await (const _2 of setInterval(pollIntervalMs, void 0, {
           signal
         })) {
           const changed = /* @__PURE__ */ new Set();
           for (const [store, probe] of probes) {
             const current = await probe();
-            if (current === seen.get(store)) continue;
+            if (current === seen.get(store))
+              continue;
             seen.set(store, current);
             changed.add(store);
           }
@@ -68019,7 +67878,8 @@ var AppleBooksSource = class extends Source {
             yield streams4.filter((stream) => changed.has(readerOf(stream).store));
         }
       } catch (error62) {
-        if (!(error62 instanceof Error && error62.name === "AbortError")) throw error62;
+        if (!(error62 instanceof Error && error62.name === "AbortError"))
+          throw error62;
       }
     } catch (_) {
       var _error = _, _hasError = true;
@@ -68046,7 +67906,8 @@ var AppleBooksSource = class extends Source {
         }
         const file2 = await reader.file(message4.data, scan, staging.path);
         yield { ...message4, file: file2 };
-        if (file2?.startsWith(staging.path)) await rm2(file2, { force: true });
+        if (file2?.startsWith(staging.path))
+          await rm2(file2, { force: true });
       }
     } catch (_) {
       var _error = _, _hasError = true;
@@ -68067,16 +67928,16 @@ async function fingerprint(path) {
   }
 }
 
-// apps/apple/src/sources/apple-calendar/apple-calendar-source.ts
+// apps/apple/connectors/dist/sources/apple-calendar/apple-calendar-source.js
 import { lstat as lstat3, mkdtempDisposable as mkdtempDisposable3, writeFile } from "node:fs/promises";
 import { tmpdir as tmpdir3 } from "node:os";
 import { extname as extname2, join as join11 } from "node:path";
 
-// apps/apple/src/platform/macos/eventkit.ts
+// apps/apple/connectors/dist/platform/macos/eventkit.js
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-// apps/apple/src/platform/macos/native-process.ts
+// apps/apple/connectors/dist/platform/macos/native-process.js
 import { spawn } from "node:child_process";
 import { addAbortListener } from "node:events";
 import { createInterface } from "node:readline";
@@ -68086,15 +67947,14 @@ var NativeProcess = class {
   async *lines(file2, args, signal = new AbortController().signal) {
     var _stack = [];
     try {
-      if (signal.aborted) return;
+      if (signal.aborted)
+        return;
       const child = spawn(file2, args, { stdio: ["ignore", "pipe", "pipe"] });
       let failure3;
       child.on("error", (error62) => {
         failure3 = error62;
       });
-      const closed = new Promise(
-        (resolve4) => child.once("close", () => resolve4())
-      );
+      const closed = new Promise((resolve4) => child.once("close", () => resolve4()));
       let stderr = "";
       child.stderr.setEncoding("utf8").on("data", (chunk) => {
         stderr += chunk;
@@ -68104,9 +67964,11 @@ var NativeProcess = class {
       }));
       const lines = __using(_stack, createInterface({ input: child.stdout }));
       try {
-        for await (const line of lines) yield line;
+        for await (const line of lines)
+          yield line;
         await closed;
-        if (failure3) throw failure3;
+        if (failure3)
+          throw failure3;
         if (!signal.aborted && child.exitCode !== 0)
           throw Object.assign(new Error(`${file2} exited: ${stderr.trim()}`), {
             stderr,
@@ -68126,38 +67988,30 @@ var NativeProcess = class {
 };
 var native_process_default = new NativeProcess();
 
-// apps/apple/src/platform/macos/eventkit.ts
+// apps/apple/connectors/dist/platform/macos/eventkit.js
 var CalendarUnavailableError = class extends Error {
   name = "CalendarUnavailableError";
   constructor(cause) {
-    super(
-      "Calendar requires full Calendar access for the process running the export. Allow access in System Settings > Privacy & Security > Calendars. A sandbox can prevent access even when permission is granted.",
-      { cause }
-    );
+    super("Calendar requires full Calendar access for the process running the export. Allow access in System Settings > Privacy & Security > Calendars. A sandbox can prevent access even when permission is granted.", { cause });
   }
 };
 var RemindersUnavailableError = class extends Error {
   name = "RemindersUnavailableError";
   constructor(cause) {
-    super(
-      "Reminders requires full Reminders access for the process running the export. Allow access in System Settings > Privacy & Security > Reminders. A sandbox can prevent access even when permission is granted.",
-      { cause }
-    );
+    super("Reminders requires full Reminders access for the process running the export. Allow access in System Settings > Privacy & Security > Reminders. A sandbox can prevent access even when permission is granted.", { cause });
   }
 };
 var EventKitChangingError = class extends Error {
   name = "EventKitChangingError";
   constructor(entity2, attempts2) {
-    super(
-      `EventKit ${entity2} changed during each of ${attempts2} consistent reads; run the export again when edits settle.`
-    );
+    super(`EventKit ${entity2} changed during each of ${attempts2} consistent reads; run the export again when edits settle.`);
   }
 };
 var EventKitSnapshot = class {
+  records;
   constructor(records) {
     this.records = records;
   }
-  records;
   of(stream) {
     const records = this.records.get(stream);
     if (records === void 0)
@@ -68169,10 +68023,10 @@ var EventKitSnapshot = class {
 };
 var helper = fileURLToPath(new URL("./eventkit", import.meta.url));
 var EventKit = class {
+  entity;
   constructor(entity2) {
     this.entity = entity2;
   }
-  entity;
   // One read of the whole store, in one helper process.
   async read(request) {
     const documents = [];
@@ -68198,9 +68052,11 @@ var EventKit = class {
     await changes.next();
     const counting = (async () => {
       try {
-        while (!(await changes.next()).done) count++;
+        while (!(await changes.next()).done)
+          count++;
       } catch (error62) {
-        if (!controller.signal.aborted) failure3 = { error: error62 };
+        if (!controller.signal.aborted)
+          failure3 = { error: error62 };
       }
     })();
     try {
@@ -68208,8 +68064,10 @@ var EventKit = class {
         const before = count;
         const value = await read();
         await sleep(settleMs);
-        if (failure3 !== void 0) throw failure3.error;
-        if (count === before) return value;
+        if (failure3 !== void 0)
+          throw failure3.error;
+        if (count === before)
+          return value;
       }
       throw new EventKitChangingError(this.entity, attempts2);
     } finally {
@@ -68219,15 +68077,9 @@ var EventKit = class {
   }
   async *watch(signal) {
     try {
-      for await (const message4 of native_process_default.lines(
-        helper,
-        ["watch", this.entity],
-        signal
-      )) {
+      for await (const message4 of native_process_default.lines(helper, ["watch", this.entity], signal)) {
         if (message4 !== "changed")
-          throw new TypeError(
-            "EventKit watcher returned an invalid notification"
-          );
+          throw new TypeError("EventKit watcher returned an invalid notification");
         yield;
       }
       if (!signal.aborted)
@@ -68248,7 +68100,7 @@ var EventKit = class {
   }
 };
 
-// apps/apple/src/sources/eventkit-schema.ts
+// apps/apple/connectors/dist/sources/eventkit-schema.js
 var text4 = { type: "string" };
 var id = { ...text4, minLength: 1 };
 var nullableText8 = { type: ["string", "null"] };
@@ -68513,33 +68365,26 @@ function eventKitRelatedFields(ownerKey) {
     }
   };
 }
-function eventKitCatalog(streams4, {
-  snapshot = false,
-  fileTransfer = []
-} = {}) {
-  return new Catalog(
-    Object.entries(streams4).map(
-      ([name, { description, properties: properties39 }]) => new Stream({
-        name,
-        jsonSchema: {
-          type: "object",
-          description,
-          properties: properties39,
-          required: Object.keys(properties39)
-        },
-        primaryKey: ["id"],
-        supportedSyncModes: snapshot ? ["full_refresh", "incremental"] : ["full_refresh"],
-        ...snapshot && {
-          sourceDefinedCursor: true,
-          emitsDeletes: true
-        },
-        ...fileTransfer.includes(name) && { supportsFileTransfer: true }
-      })
-    )
-  );
+function eventKitCatalog(streams4, { snapshot = false, fileTransfer = [] } = {}) {
+  return new Catalog(Object.entries(streams4).map(([name, { description, properties: properties39 }]) => new Stream({
+    name,
+    jsonSchema: {
+      type: "object",
+      description,
+      properties: properties39,
+      required: Object.keys(properties39)
+    },
+    primaryKey: ["id"],
+    supportedSyncModes: snapshot ? ["full_refresh", "incremental"] : ["full_refresh"],
+    ...snapshot && {
+      sourceDefinedCursor: true,
+      emitsDeletes: true
+    },
+    ...fileTransfer.includes(name) && { supportsFileTransfer: true }
+  })));
 }
 
-// apps/apple/src/sources/eventkit-rows.ts
+// apps/apple/connectors/dist/sources/eventkit-rows.js
 function timestamp2(ms) {
   return ms === void 0 ? null : new Date(ms).toISOString();
 }
@@ -68556,9 +68401,7 @@ function scopedCollections(scope, accounts2, calendars) {
     return { accounts: accounts2, calendars };
   const selected2 = calendars.filter((calendar) => calendar.selected);
   return {
-    accounts: accounts2.filter(
-      (account) => (scope.accountIds?.includes(account.id) ?? true) && (scope.collectionIds === void 0 || selected2.some((calendar) => calendar.accountId === account.id))
-    ),
+    accounts: accounts2.filter((account) => (scope.accountIds?.includes(account.id) ?? true) && (scope.collectionIds === void 0 || selected2.some((calendar) => calendar.accountId === account.id))),
     calendars: selected2
   };
 }
@@ -68618,9 +68461,7 @@ function alarmValues(alarm) {
 function relatedRows(item, itemId, ownerKey) {
   const attendees = [];
   if (item.organizer !== void 0)
-    attendees.push(
-      participantRow(itemId, ownerKey, item.organizer, "organizer", 0)
-    );
+    attendees.push(participantRow(itemId, ownerKey, item.organizer, "organizer", 0));
   const ordered = inContentOrder(item.attendees, (attendee) => [
     attendee.url,
     attendee.name ?? null,
@@ -68628,13 +68469,8 @@ function relatedRows(item, itemId, ownerKey) {
     attendee.participantType
   ]);
   for (const [position, attendee] of ordered.entries())
-    attendees.push(
-      participantRow(itemId, ownerKey, attendee, "attendee", position)
-    );
-  const alarms = inContentOrder(
-    item.alarms.map(alarmValues),
-    (alarm) => Object.values(alarm)
-  ).map((alarm, position) => ({
+    attendees.push(participantRow(itemId, ownerKey, attendee, "attendee", position));
+  const alarms = inContentOrder(item.alarms.map(alarmValues), (alarm) => Object.values(alarm)).map((alarm, position) => ({
     id: JSON.stringify([itemId, position]),
     [ownerKey]: itemId,
     position,
@@ -68665,9 +68501,7 @@ function relatedRows(item, itemId, ownerKey) {
       weekNumber
     });
     for (const [index, day] of rule.daysOfTheWeek.entries())
-      recurrenceRuleValues.push(
-        value("daysOfTheWeek", index, day.day, day.weekNumber)
-      );
+      recurrenceRuleValues.push(value("daysOfTheWeek", index, day.day, day.weekNumber));
     for (const component2 of [
       "daysOfTheMonth",
       "daysOfTheYear",
@@ -68681,7 +68515,7 @@ function relatedRows(item, itemId, ownerKey) {
   return { attendees, alarms, recurrenceRules, recurrenceRuleValues };
 }
 
-// apps/apple/src/sources/apple-calendar/icalendar.ts
+// apps/apple/connectors/dist/sources/apple-calendar/icalendar.js
 var namePattern = /^[A-Za-z0-9-]+/;
 function parseICalendar(bytes) {
   let text16;
@@ -68691,7 +68525,8 @@ function parseICalendar(bytes) {
     throw new TypeError("iCalendar data is not valid UTF-8", { cause });
   }
   const lines = text16.split(/\r?\n/);
-  if (lines.at(-1) === "") lines.pop();
+  if (lines.at(-1) === "")
+    lines.pop();
   const stack = [];
   let root;
   for (const [index, line] of lines.entries()) {
@@ -68712,26 +68547,24 @@ function parseICalendar(bytes) {
         if (component2.name !== "VCALENDAR")
           throw fail2("content must start with BEGIN:VCALENDAR");
         root = component2;
-      } else parent.components.push(component2);
+      } else
+        parent.components.push(component2);
       stack.push(component2);
     } else if (property.name === "END") {
       const open11 = stack.pop();
       if (open11 === void 0 || open11.name !== property.value.toUpperCase())
-        throw fail2(
-          `END:${property.value} does not close ${open11?.name ?? "anything"}`
-        );
+        throw fail2(`END:${property.value} does not close ${open11?.name ?? "anything"}`);
     } else {
       const open11 = stack.at(-1);
-      if (open11 === void 0) throw fail2("property outside a component");
+      if (open11 === void 0)
+        throw fail2("property outside a component");
       open11.properties.push(property);
     }
   }
   if (root === void 0)
     throw new TypeError("iCalendar data has no VCALENDAR");
   if (stack.length > 0)
-    throw new TypeError(
-      `iCalendar component ${stack.at(-1)?.name} is not closed`
-    );
+    throw new TypeError(`iCalendar component ${stack.at(-1)?.name} is not closed`);
   return freeze(root);
 }
 function unfold(bytes) {
@@ -68751,7 +68584,8 @@ function unfold(bytes) {
 }
 function parseLine(line, fail2) {
   const name = namePattern.exec(line)?.[0];
-  if (name === void 0) throw fail2("missing property name");
+  if (name === void 0)
+    throw fail2("missing property name");
   let position = name.length;
   const parameters = [];
   while (line[position] === ";") {
@@ -68764,23 +68598,27 @@ function parseLine(line, fail2) {
       let value;
       if (line[position] === '"') {
         const end = line.indexOf('"', position + 1);
-        if (end === -1) throw fail2(`unterminated quoted parameter in ${name}`);
+        if (end === -1)
+          throw fail2(`unterminated quoted parameter in ${name}`);
         value = line.slice(position + 1, end);
         position = end + 1;
       } else {
         const end = line.slice(position).search(/[";:,]/);
         const stop = end === -1 ? line.length : position + end;
-        if (line[stop] === '"') throw fail2(`misplaced quote in ${name}`);
+        if (line[stop] === '"')
+          throw fail2(`misplaced quote in ${name}`);
         value = line.slice(position, stop);
         position = stop;
       }
       values.push(decodeCaret(value));
-      if (line[position] !== ",") break;
+      if (line[position] !== ",")
+        break;
       position++;
     }
     parameters.push({ name: parameterName.toUpperCase(), values });
   }
-  if (line[position] !== ":") throw fail2(`missing colon after ${name}`);
+  if (line[position] !== ":")
+    throw fail2(`missing colon after ${name}`);
   return {
     name: name.toUpperCase(),
     parameters,
@@ -68788,34 +68626,23 @@ function parseLine(line, fail2) {
   };
 }
 function decodeCaret(value) {
-  return value.replaceAll(
-    /\^([n'^])/g,
-    (_, code) => code === "n" ? "\n" : code === "'" ? '"' : "^"
-  );
+  return value.replaceAll(/\^([n'^])/g, (_, code) => code === "n" ? "\n" : code === "'" ? '"' : "^");
 }
 function freeze(component2) {
   return Object.freeze({
     name: component2.name,
-    properties: Object.freeze(
-      component2.properties.map(
-        (property) => Object.freeze({
-          ...property,
-          parameters: Object.freeze(
-            property.parameters.map(
-              (parameter) => Object.freeze({
-                ...parameter,
-                values: Object.freeze(parameter.values)
-              })
-            )
-          )
-        })
-      )
-    ),
+    properties: Object.freeze(component2.properties.map((property) => Object.freeze({
+      ...property,
+      parameters: Object.freeze(property.parameters.map((parameter) => Object.freeze({
+        ...parameter,
+        values: Object.freeze(parameter.values)
+      })))
+    }))),
     components: Object.freeze(component2.components.map(freeze))
   });
 }
 
-// apps/apple/src/sources/apple-calendar/ics-records.ts
+// apps/apple/connectors/dist/sources/apple-calendar/ics-records.js
 var icsStreams = [
   "icsComponents",
   "icsProperties",
@@ -68826,9 +68653,7 @@ function isIcsStream(name) {
   return icsStreams.includes(name);
 }
 function validateIcsExports(items) {
-  if (!Array.isArray(items) || !items.every(
-    (item) => item !== null && typeof item === "object" && typeof item.calendarId === "string" && typeof item.calendarItemId === "string" && typeof item.recurring === "boolean" && typeof item.ics === "string"
-  ))
+  if (!Array.isArray(items) || !items.every((item) => item !== null && typeof item === "object" && typeof item.calendarId === "string" && typeof item.calendarItemId === "string" && typeof item.recurring === "boolean" && typeof item.ics === "string"))
     throw new TypeError("EventKit returned an invalid ICS export page");
   return items;
 }
@@ -68836,9 +68661,7 @@ function icsRecords(stream, item) {
   const { calendarId, calendarItemId } = item;
   const calendar = parseICalendar(Buffer.from(item.ics, "base64"));
   if (!calendar.components.some((component2) => component2.name === "VEVENT"))
-    throw new TypeError(
-      `EventKit ICS export returned no VEVENT for saved item ${calendarItemId}`
-    );
+    throw new TypeError(`EventKit ICS export returned no VEVENT for saved item ${calendarItemId}`);
   const rows = {
     icsComponents: [],
     icsProperties: [],
@@ -68861,9 +68684,7 @@ function icsRecords(stream, item) {
       recurrenceIdTimeZone: recurrence?.parameters.find((parameter) => parameter.name === "TZID")?.values[0] ?? null,
       eventId: component2.name === "VEVENT" && !item.recurring && !recurrence ? JSON.stringify([calendarId, calendarItemId, null]) : null
     });
-    const properties39 = component2.properties.filter(
-      (property2) => property2.name !== "DTSTAMP"
-    );
+    const properties39 = component2.properties.filter((property2) => property2.name !== "DTSTAMP");
     for (const [index, { name, value, parameters }] of properties39.entries()) {
       const propertyKey = [calendarId, calendarItemId, path, index];
       const propertyId = JSON.stringify(propertyKey);
@@ -68916,7 +68737,7 @@ function inContentOrder2(component2) {
   return { ...component2, components };
 }
 
-// apps/apple/src/sources/apple-calendar/calendar-rows.ts
+// apps/apple/connectors/dist/sources/apple-calendar/calendar-rows.js
 function calendarRows(documents, scope) {
   const accounts2 = [];
   const calendars = [];
@@ -68924,12 +68745,16 @@ function calendarRows(documents, scope) {
   const related3 = [];
   const exports = [];
   for (const document of documents) {
-    if (document.type === "account") accounts2.push(document);
-    else if (document.type === "calendar") calendars.push(document);
-    else if (document.type === "ics") exports.push(document);
+    if (document.type === "account")
+      accounts2.push(document);
+    else if (document.type === "calendar")
+      calendars.push(document);
+    else if (document.type === "ics")
+      exports.push(document);
     else if (document.type === "occurrence") {
       const event = eventRow(document);
-      if (events.has(event.eventId)) continue;
+      if (events.has(event.eventId))
+        continue;
       events.set(event.eventId, event);
       related3.push(relatedRows(document, event.eventId, "eventId"));
     }
@@ -68962,9 +68787,7 @@ function calendarRows(documents, scope) {
 function eventRow(occurrence) {
   const recurring = occurrence.recurrenceRules.length > 0 || occurrence.detached;
   if (recurring && occurrence.occurrenceMs === void 0)
-    throw new TypeError(
-      "EventKit returned a recurring event without an occurrence date"
-    );
+    throw new TypeError("EventKit returned a recurring event without an occurrence date");
   const occurrenceKey = !recurring ? null : occurrence.allDay ? occurrence.occurrenceDay ?? null : timestamp2(occurrence.occurrenceMs);
   const eventId = JSON.stringify([
     occurrence.calendarId,
@@ -69002,18 +68825,8 @@ function eventRow(occurrence) {
   };
 }
 
-// apps/apple/src/sources/apple-calendar/apple-calendar-source.ts
-var {
-  id: id2,
-  text: text5,
-  nullableText: nullableText9,
-  timestamp: timestamp3,
-  nullableTimestamp: nullableTimestamp10,
-  nullableDate: nullableDate2,
-  boolean: boolean10,
-  ordinal: ordinal2,
-  integer: integer6
-} = eventKitFields;
+// apps/apple/connectors/dist/sources/apple-calendar/apple-calendar-source.js
+var { id: id2, text: text5, nullableText: nullableText9, timestamp: timestamp3, nullableTimestamp: nullableTimestamp10, nullableDate: nullableDate2, boolean: boolean10, ordinal: ordinal2, integer: integer6 } = eventKitFields;
 var related = eventKitRelatedFields("eventId");
 var perOccurrence = "Rows belong to an occurrence, not a series: each selected occurrence of a recurring series repeats them, so counts across a series multiply.";
 var icsItem = {
@@ -69026,273 +68839,267 @@ var icsItem = {
     description: "EventKit EKCalendarItem.calendarItemIdentifier of the exported item. With calendarId it matches events of every occurrence of that item."
   }
 };
-var catalog2 = eventKitCatalog(
-  {
-    accounts: {
-      description: "One source record per EventKit account (EKSource) in this Mac's event store, including accounts without event calendars. No date filter: the event window does not restrict it. An import scope keeps the selected accounts; a calendar scope also drops accounts owning no selected calendar. Relationships name source streams, not destination tables.",
-      properties: eventKitAccountFields
-    },
-    calendars: {
-      description: "One source record per event calendar visible through EventKit on this Mac. No date filter: the event window does not restrict it. An import scope keeps only the selected calendars. accountId refers to accounts.id; events and ICS rows refer to id through calendarId. Relationships name source streams, not destination tables.",
-      properties: {
-        ...eventKitCalendarFields,
-        description: {
-          ...text5,
-          description: "Calendar.app's calendar description, read from EKCalendar's private notes property; empty when the calendar has none."
-        }
+var catalog2 = eventKitCatalog({
+  accounts: {
+    description: "One source record per EventKit account (EKSource) in this Mac's event store, including accounts without event calendars. No date filter: the event window does not restrict it. An import scope keeps the selected accounts; a calendar scope also drops accounts owning no selected calendar. Relationships name source streams, not destination tables.",
+    properties: eventKitAccountFields
+  },
+  calendars: {
+    description: "One source record per event calendar visible through EventKit on this Mac. No date filter: the event window does not restrict it. An import scope keeps only the selected calendars. accountId refers to accounts.id; events and ICS rows refer to id through calendarId. Relationships name source streams, not destination tables.",
+    properties: {
+      ...eventKitCalendarFields,
+      description: {
+        ...text5,
+        description: "Calendar.app's calendar description, read from EKCalendar's private notes property; empty when the calendar has none."
       }
-    },
-    events: {
-      description: "One source record per event occurrence, not per series: a recurring event yields one record for each occurrence overlapping the configured UTC interval [startAt, endAt); a zero-duration event must start inside it. Key id equals eventId, JSON [calendarId, calendarItemId, occurrenceKey]; never substitute nativeEventId or startAt for it. attendees, alarms, recurrenceRules and recurrenceRuleValues join on eventId. ICS rows describe the whole native item at (calendarId, calendarItemId) and can cover occurrences outside the interval; only a nonrecurring VEVENT carries eventId. startAt and endAt are UTC instants; startDate and endDate are local calendar dates, set for all-day events only. Only calendars visible on this Mac within the import scope are read. Relationships name source streams, not destination tables.",
-      properties: {
-        id: { ...id2, description: "Same value as eventId; the record key." },
-        eventId: {
-          ...id2,
-          description: "Occurrence identity: JSON [calendarId, calendarItemId, occurrenceKey]. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here."
-        },
-        calendarId: {
-          ...id2,
-          description: "EventKit EKCalendarItem.calendar.calendarIdentifier; refers to calendars.id within this source."
-        },
-        calendarItemId: {
-          ...id2,
-          description: "EventKit EKCalendarItem.calendarItemIdentifier of the native item; every occurrence of a recurring series shares it. ICS rows relate on (calendarId, calendarItemId). Apple documents that a full sync can replace it."
-        },
-        externalId: {
-          ...nullableText9,
-          description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier shared by every occurrence of a series; NULL when EventKit has none. Apple documents duplicates across calendars (imports, shared or delegated calendars), so it is not unique."
-        },
-        nativeEventId: {
-          ...nullableText9,
-          description: "EventKit EKEvent.eventIdentifier; NULL when EventKit has none. Apple documents that it can change when the event moves calendar or syncs; it is not the occurrence identity."
-        },
-        name: { ...text5, description: "EventKit EKCalendarItem.title." },
-        body: {
-          ...nullableText9,
-          description: "EventKit EKCalendarItem.notes; NULL when unset."
-        },
-        location: {
-          ...nullableText9,
-          description: "EventKit EKCalendarItem.location; NULL when unset."
-        },
-        url: {
-          ...nullableText9,
-          description: "EventKit EKCalendarItem.URL as a string; NULL when unset."
-        },
-        startAt: {
-          ...timestamp3,
-          description: "EventKit EKEvent.startDate as a UTC timestamp. Apple returns a floating event, such as an all-day event, in the default time zone of the process that read it; use startDate for all-day days."
-        },
-        endAt: {
-          ...timestamp3,
-          description: "EventKit EKEvent.endDate as a UTC timestamp; never before startAt. Floating events use the reading process time zone, as startAt does."
-        },
-        allDay: { ...boolean10, description: "EventKit EKEvent.isAllDay." },
-        startDate: {
-          ...nullableDate2,
-          description: "For an all-day event, the local calendar date of EventKit EKEvent.startDate in the default time zone of the process that read it, as Calendar shows it; NULL for a timed event."
-        },
-        endDate: {
-          ...nullableDate2,
-          description: "For an all-day event, the local calendar date of EventKit EKEvent.endDate in the default time zone of the process that read it, not adjusted to an inclusive or exclusive end; NULL for a timed event."
-        },
-        timeZone: {
-          ...nullableText9,
-          description: "EventKit EKCalendarItem.timeZone identifier; NULL for a floating event, which Apple documents as occurring at the same wall-clock time in every time zone."
-        },
-        createdAt: {
-          ...nullableTimestamp10,
-          description: "EventKit EKCalendarItem.creationDate as a UTC timestamp; NULL when EventKit has none."
-        },
-        modifiedAt: {
-          ...nullableTimestamp10,
-          description: "EventKit EKCalendarItem.lastModifiedDate as a UTC timestamp; NULL when EventKit has none."
-        },
-        occurrenceAt: {
-          ...nullableTimestamp10,
-          description: "EventKit EKEvent.occurrenceDate as a UTC timestamp: when this occurrence was originally scheduled, unchanged when it is detached and moved. NULL for a nonrecurring event."
-        },
-        occurrenceDate: {
-          ...nullableDate2,
-          description: "Local calendar date of EventKit EKEvent.occurrenceDate in the default time zone of the process that read it, set only for a recurring all-day event; NULL otherwise."
-        },
-        detached: {
-          ...boolean10,
-          description: "EventKit EKEvent.isDetached: an occurrence of a recurring series changed from what the series generates."
-        },
-        status: {
-          ...ordinal2,
-          description: "EventKit EKEvent.status raw value (EKEventStatus): 0 none, 1 confirmed, 2 tentative, 3 canceled. Apple documents only canceled as reliable. Unknown codes are kept as numbers."
-        },
-        availability: {
-          ...integer6,
-          description: "EventKit EKEvent.availability raw value (EKEventAvailability): -1 not supported by the calendar, 0 busy, 1 free, 2 tentative, 3 unavailable. Unknown codes are kept as numbers."
-        },
-        birthdayContactId: {
-          ...nullableText9,
-          description: "EventKit EKEvent.birthdayContactIdentifier, a Contacts framework contact identifier set only for events of the Birthdays calendar; NULL otherwise. Not verified to match identifiers of the Apple Contacts source."
-        },
-        ...eventKitLocationFields("EKEvent.structuredLocation")
-      }
-    },
-    icsComponents: {
-      description: "One source record per iCalendar component in the private EventKit ICS export of each native item with an occurrence in the event window: the VCALENDAR root, the VEVENT master, exception VEVENTs carrying RECURRENCE-ID, their alarms and any other exported component. Each item is exported once and whole, so a recurring series can describe occurrences outside the window. Grain is the native item (calendarId, calendarItemId), not an occurrence: eventId is set only for a nonrecurring VEVENT. Joining recurring components to events on (calendarId, calendarItemId) repeats them once per occurrence, so aggregate occurrences before joining. The ICS streams are read only when one is selected; on a macOS without the private export the read fails instead of loading no rows. Relationships name source streams, not destination tables.",
-      properties: {
-        id: {
-          ...id2,
-          description: 'JSON [calendarId, calendarItemId, path], where path lists child positions from the root VCALENDAR ("0", "0.1", \u2026).'
-        },
-        ...icsItem,
-        parentId: {
-          ...nullableText9,
-          description: "Enclosing component; refers to icsComponents.id within this source. NULL for the root VCALENDAR."
-        },
-        position: {
-          ...ordinal2,
-          description: "Order among sibling components, numbered in content order: EventKit's export order changes between reads."
-        },
-        name: {
-          ...text5,
-          description: "Component name as exported, uppercased, such as VCALENDAR, VEVENT or VALARM."
-        },
-        uid: {
-          ...nullableText9,
-          description: "Raw value of the component's UID property; NULL when it has none."
-        },
-        recurrenceId: {
-          ...nullableText9,
-          description: "Raw, unparsed value of the component's RECURRENCE-ID property, which marks a component overriding one occurrence of a series; NULL when absent."
-        },
-        recurrenceIdTimeZone: {
-          ...nullableText9,
-          description: "First TZID parameter value of RECURRENCE-ID; NULL when RECURRENCE-ID is absent or has no TZID."
-        },
-        eventId: {
-          ...nullableText9,
-          description: "events.eventId of the nonrecurring event this VEVENT exactly describes: set only for a VEVENT without RECURRENCE-ID of an item that has no recurrence rules and is not detached. NULL for every other component, including all components of a recurring item, which relate at (calendarId, calendarItemId)."
-        }
-      }
-    },
-    icsProperties: {
-      description: "One source record per property line of an icsComponents component, in export order, except DTSTAMP: EventKit sets it to the export time, so it is omitted. Values are raw iCalendar text; vendor X- properties are kept. ATTACH properties also appear in icsAttachments. Relationships name source streams, not destination tables.",
-      properties: {
-        id: {
-          ...id2,
-          description: "JSON [calendarId, calendarItemId, path, position], extending the component path; icsParameters.propertyId and icsAttachments.propertyId refer to it."
-        },
-        componentId: {
-          ...id2,
-          description: "Owning component; refers to icsComponents.id within this source."
-        },
-        ...icsItem,
-        position: {
-          ...ordinal2,
-          description: "Index among the component's properties in export order, counted after DTSTAMP is removed."
-        },
-        name: {
-          ...text5,
-          description: "Property name as exported, uppercased, including vendor X- names."
-        },
-        value: {
-          ...text5,
-          description: "Raw property value as exported after line unfolding: no TEXT unescaping, date parsing or decoding. An inline ATTACH value is a whole base64 file."
-        }
-      }
-    },
-    icsAttachments: {
-      description: "One source record per ATTACH property in the ICS export; the same property also remains in icsProperties with its parameters in icsParameters. File bytes can be inline (base64 in uri), remote (retrieved only by the attachment fetcher the app supplies) or unavailable: an attachment record exists even when no bytes are exported. Relationships name source streams, not destination tables.",
-      properties: {
-        id: {
-          ...id2,
-          description: "Same value as propertyId; the record key."
-        },
-        propertyId: {
-          ...id2,
-          description: "The ATTACH property; refers to icsProperties.id within this source."
-        },
-        componentId: {
-          ...id2,
-          description: "Component holding the ATTACH property; refers to icsComponents.id within this source."
-        },
-        ...icsItem,
-        uri: {
-          ...text5,
-          description: "Raw ATTACH value: the base64 file content when inline is true, otherwise the attachment URI."
-        },
-        filename: {
-          ...nullableText9,
-          description: "First value of the ATTACH X-APPLE-FILENAME parameter, else of FILENAME; NULL when neither is present."
-        },
-        formatType: {
-          ...nullableText9,
-          description: "First value of the ATTACH FMTTYPE parameter, a media type; NULL when absent."
-        },
-        inline: {
-          ...boolean10,
-          description: "Whether ATTACH carries VALUE=BINARY or ENCODING=BASE64, so uri holds the file content itself rather than a location."
-        }
-      }
-    },
-    icsParameters: {
-      description: "One source record per value of each iCalendar property parameter: a comma-separated multi-value parameter yields one record per value. Relationships name source streams, not destination tables.",
-      properties: {
-        id: {
-          ...id2,
-          description: "JSON [calendarId, calendarItemId, path, propertyPosition, position, valuePosition], extending the property id."
-        },
-        propertyId: {
-          ...id2,
-          description: "Owning property; refers to icsProperties.id within this source."
-        },
-        componentId: {
-          ...id2,
-          description: "Component of the owning property; refers to icsComponents.id within this source."
-        },
-        ...icsItem,
-        position: {
-          ...ordinal2,
-          description: "Index of the parameter within its property, in export order."
-        },
-        valuePosition: {
-          ...ordinal2,
-          description: "Index of this value within the parameter."
-        },
-        name: {
-          ...text5,
-          description: "Parameter name as exported, uppercased."
-        },
-        value: {
-          ...text5,
-          description: "One parameter value, with surrounding double quotes removed and RFC 6868 caret escapes (^n, ^', ^^) decoded; otherwise as exported."
-        }
-      }
-    },
-    attendees: {
-      description: `One source record per participant of an event occurrence: its organizer and each attendee. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
-      properties: related.attendees
-    },
-    alarms: {
-      description: `One source record per EventKit alarm of an event occurrence. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
-      properties: related.alarms
-    },
-    recurrenceRules: {
-      description: `One source record per EventKit recurrence rule of a recurring event occurrence. ${perOccurrence} eventId refers to events.eventId; recurrenceRuleValues holds each rule's list values. Relationships name source streams, not destination tables.`,
-      properties: related.recurrenceRules
-    },
-    recurrenceRuleValues: {
-      description: `One source record per entry of a recurrence rule's day, week, month or set-position lists. ${perOccurrence} ruleId refers to recurrenceRules.id and eventId to events.eventId. Relationships name source streams, not destination tables.`,
-      properties: related.recurrenceRuleValues
     }
   },
-  { snapshot: true, fileTransfer: ["icsAttachments"] }
-);
+  events: {
+    description: "One source record per event occurrence, not per series: a recurring event yields one record for each occurrence overlapping the configured UTC interval [startAt, endAt); a zero-duration event must start inside it. Key id equals eventId, JSON [calendarId, calendarItemId, occurrenceKey]; never substitute nativeEventId or startAt for it. attendees, alarms, recurrenceRules and recurrenceRuleValues join on eventId. ICS rows describe the whole native item at (calendarId, calendarItemId) and can cover occurrences outside the interval; only a nonrecurring VEVENT carries eventId. startAt and endAt are UTC instants; startDate and endDate are local calendar dates, set for all-day events only. Only calendars visible on this Mac within the import scope are read. Relationships name source streams, not destination tables.",
+    properties: {
+      id: { ...id2, description: "Same value as eventId; the record key." },
+      eventId: {
+        ...id2,
+        description: "Occurrence identity: JSON [calendarId, calendarItemId, occurrenceKey]. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here."
+      },
+      calendarId: {
+        ...id2,
+        description: "EventKit EKCalendarItem.calendar.calendarIdentifier; refers to calendars.id within this source."
+      },
+      calendarItemId: {
+        ...id2,
+        description: "EventKit EKCalendarItem.calendarItemIdentifier of the native item; every occurrence of a recurring series shares it. ICS rows relate on (calendarId, calendarItemId). Apple documents that a full sync can replace it."
+      },
+      externalId: {
+        ...nullableText9,
+        description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier shared by every occurrence of a series; NULL when EventKit has none. Apple documents duplicates across calendars (imports, shared or delegated calendars), so it is not unique."
+      },
+      nativeEventId: {
+        ...nullableText9,
+        description: "EventKit EKEvent.eventIdentifier; NULL when EventKit has none. Apple documents that it can change when the event moves calendar or syncs; it is not the occurrence identity."
+      },
+      name: { ...text5, description: "EventKit EKCalendarItem.title." },
+      body: {
+        ...nullableText9,
+        description: "EventKit EKCalendarItem.notes; NULL when unset."
+      },
+      location: {
+        ...nullableText9,
+        description: "EventKit EKCalendarItem.location; NULL when unset."
+      },
+      url: {
+        ...nullableText9,
+        description: "EventKit EKCalendarItem.URL as a string; NULL when unset."
+      },
+      startAt: {
+        ...timestamp3,
+        description: "EventKit EKEvent.startDate as a UTC timestamp. Apple returns a floating event, such as an all-day event, in the default time zone of the process that read it; use startDate for all-day days."
+      },
+      endAt: {
+        ...timestamp3,
+        description: "EventKit EKEvent.endDate as a UTC timestamp; never before startAt. Floating events use the reading process time zone, as startAt does."
+      },
+      allDay: { ...boolean10, description: "EventKit EKEvent.isAllDay." },
+      startDate: {
+        ...nullableDate2,
+        description: "For an all-day event, the local calendar date of EventKit EKEvent.startDate in the default time zone of the process that read it, as Calendar shows it; NULL for a timed event."
+      },
+      endDate: {
+        ...nullableDate2,
+        description: "For an all-day event, the local calendar date of EventKit EKEvent.endDate in the default time zone of the process that read it, not adjusted to an inclusive or exclusive end; NULL for a timed event."
+      },
+      timeZone: {
+        ...nullableText9,
+        description: "EventKit EKCalendarItem.timeZone identifier; NULL for a floating event, which Apple documents as occurring at the same wall-clock time in every time zone."
+      },
+      createdAt: {
+        ...nullableTimestamp10,
+        description: "EventKit EKCalendarItem.creationDate as a UTC timestamp; NULL when EventKit has none."
+      },
+      modifiedAt: {
+        ...nullableTimestamp10,
+        description: "EventKit EKCalendarItem.lastModifiedDate as a UTC timestamp; NULL when EventKit has none."
+      },
+      occurrenceAt: {
+        ...nullableTimestamp10,
+        description: "EventKit EKEvent.occurrenceDate as a UTC timestamp: when this occurrence was originally scheduled, unchanged when it is detached and moved. NULL for a nonrecurring event."
+      },
+      occurrenceDate: {
+        ...nullableDate2,
+        description: "Local calendar date of EventKit EKEvent.occurrenceDate in the default time zone of the process that read it, set only for a recurring all-day event; NULL otherwise."
+      },
+      detached: {
+        ...boolean10,
+        description: "EventKit EKEvent.isDetached: an occurrence of a recurring series changed from what the series generates."
+      },
+      status: {
+        ...ordinal2,
+        description: "EventKit EKEvent.status raw value (EKEventStatus): 0 none, 1 confirmed, 2 tentative, 3 canceled. Apple documents only canceled as reliable. Unknown codes are kept as numbers."
+      },
+      availability: {
+        ...integer6,
+        description: "EventKit EKEvent.availability raw value (EKEventAvailability): -1 not supported by the calendar, 0 busy, 1 free, 2 tentative, 3 unavailable. Unknown codes are kept as numbers."
+      },
+      birthdayContactId: {
+        ...nullableText9,
+        description: "EventKit EKEvent.birthdayContactIdentifier, a Contacts framework contact identifier set only for events of the Birthdays calendar; NULL otherwise. Not verified to match identifiers of the Apple Contacts source."
+      },
+      ...eventKitLocationFields("EKEvent.structuredLocation")
+    }
+  },
+  icsComponents: {
+    description: "One source record per iCalendar component in the private EventKit ICS export of each native item with an occurrence in the event window: the VCALENDAR root, the VEVENT master, exception VEVENTs carrying RECURRENCE-ID, their alarms and any other exported component. Each item is exported once and whole, so a recurring series can describe occurrences outside the window. Grain is the native item (calendarId, calendarItemId), not an occurrence: eventId is set only for a nonrecurring VEVENT. Joining recurring components to events on (calendarId, calendarItemId) repeats them once per occurrence, so aggregate occurrences before joining. The ICS streams are read only when one is selected; on a macOS without the private export the read fails instead of loading no rows. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id2,
+        description: 'JSON [calendarId, calendarItemId, path], where path lists child positions from the root VCALENDAR ("0", "0.1", \u2026).'
+      },
+      ...icsItem,
+      parentId: {
+        ...nullableText9,
+        description: "Enclosing component; refers to icsComponents.id within this source. NULL for the root VCALENDAR."
+      },
+      position: {
+        ...ordinal2,
+        description: "Order among sibling components, numbered in content order: EventKit's export order changes between reads."
+      },
+      name: {
+        ...text5,
+        description: "Component name as exported, uppercased, such as VCALENDAR, VEVENT or VALARM."
+      },
+      uid: {
+        ...nullableText9,
+        description: "Raw value of the component's UID property; NULL when it has none."
+      },
+      recurrenceId: {
+        ...nullableText9,
+        description: "Raw, unparsed value of the component's RECURRENCE-ID property, which marks a component overriding one occurrence of a series; NULL when absent."
+      },
+      recurrenceIdTimeZone: {
+        ...nullableText9,
+        description: "First TZID parameter value of RECURRENCE-ID; NULL when RECURRENCE-ID is absent or has no TZID."
+      },
+      eventId: {
+        ...nullableText9,
+        description: "events.eventId of the nonrecurring event this VEVENT exactly describes: set only for a VEVENT without RECURRENCE-ID of an item that has no recurrence rules and is not detached. NULL for every other component, including all components of a recurring item, which relate at (calendarId, calendarItemId)."
+      }
+    }
+  },
+  icsProperties: {
+    description: "One source record per property line of an icsComponents component, in export order, except DTSTAMP: EventKit sets it to the export time, so it is omitted. Values are raw iCalendar text; vendor X- properties are kept. ATTACH properties also appear in icsAttachments. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id2,
+        description: "JSON [calendarId, calendarItemId, path, position], extending the component path; icsParameters.propertyId and icsAttachments.propertyId refer to it."
+      },
+      componentId: {
+        ...id2,
+        description: "Owning component; refers to icsComponents.id within this source."
+      },
+      ...icsItem,
+      position: {
+        ...ordinal2,
+        description: "Index among the component's properties in export order, counted after DTSTAMP is removed."
+      },
+      name: {
+        ...text5,
+        description: "Property name as exported, uppercased, including vendor X- names."
+      },
+      value: {
+        ...text5,
+        description: "Raw property value as exported after line unfolding: no TEXT unescaping, date parsing or decoding. An inline ATTACH value is a whole base64 file."
+      }
+    }
+  },
+  icsAttachments: {
+    description: "One source record per ATTACH property in the ICS export; the same property also remains in icsProperties with its parameters in icsParameters. File bytes can be inline (base64 in uri), remote (retrieved only by the attachment fetcher the app supplies) or unavailable: an attachment record exists even when no bytes are exported. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id2,
+        description: "Same value as propertyId; the record key."
+      },
+      propertyId: {
+        ...id2,
+        description: "The ATTACH property; refers to icsProperties.id within this source."
+      },
+      componentId: {
+        ...id2,
+        description: "Component holding the ATTACH property; refers to icsComponents.id within this source."
+      },
+      ...icsItem,
+      uri: {
+        ...text5,
+        description: "Raw ATTACH value: the base64 file content when inline is true, otherwise the attachment URI."
+      },
+      filename: {
+        ...nullableText9,
+        description: "First value of the ATTACH X-APPLE-FILENAME parameter, else of FILENAME; NULL when neither is present."
+      },
+      formatType: {
+        ...nullableText9,
+        description: "First value of the ATTACH FMTTYPE parameter, a media type; NULL when absent."
+      },
+      inline: {
+        ...boolean10,
+        description: "Whether ATTACH carries VALUE=BINARY or ENCODING=BASE64, so uri holds the file content itself rather than a location."
+      }
+    }
+  },
+  icsParameters: {
+    description: "One source record per value of each iCalendar property parameter: a comma-separated multi-value parameter yields one record per value. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id2,
+        description: "JSON [calendarId, calendarItemId, path, propertyPosition, position, valuePosition], extending the property id."
+      },
+      propertyId: {
+        ...id2,
+        description: "Owning property; refers to icsProperties.id within this source."
+      },
+      componentId: {
+        ...id2,
+        description: "Component of the owning property; refers to icsComponents.id within this source."
+      },
+      ...icsItem,
+      position: {
+        ...ordinal2,
+        description: "Index of the parameter within its property, in export order."
+      },
+      valuePosition: {
+        ...ordinal2,
+        description: "Index of this value within the parameter."
+      },
+      name: {
+        ...text5,
+        description: "Parameter name as exported, uppercased."
+      },
+      value: {
+        ...text5,
+        description: "One parameter value, with surrounding double quotes removed and RFC 6868 caret escapes (^n, ^', ^^) decoded; otherwise as exported."
+      }
+    }
+  },
+  attendees: {
+    description: `One source record per participant of an event occurrence: its organizer and each attendee. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
+    properties: related.attendees
+  },
+  alarms: {
+    description: `One source record per EventKit alarm of an event occurrence. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
+    properties: related.alarms
+  },
+  recurrenceRules: {
+    description: `One source record per EventKit recurrence rule of a recurring event occurrence. ${perOccurrence} eventId refers to events.eventId; recurrenceRuleValues holds each rule's list values. Relationships name source streams, not destination tables.`,
+    properties: related.recurrenceRules
+  },
+  recurrenceRuleValues: {
+    description: `One source record per entry of a recurrence rule's day, week, month or set-position lists. ${perOccurrence} ruleId refers to recurrenceRules.id and eventId to events.eventId. Relationships name source streams, not destination tables.`,
+    properties: related.recurrenceRuleValues
+  }
+}, { snapshot: true, fileTransfer: ["icsAttachments"] });
 var CalendarIcsUnavailableError = class extends Error {
   name = "CalendarIcsUnavailableError";
   constructor(cause) {
-    super(
-      "This macOS version does not provide the private EventKit ICS export that the Calendar ICS streams read. Select the other Calendar streams, which use public EventKit.",
-      { cause }
-    );
+    super("This macOS version does not provide the private EventKit ICS export that the Calendar ICS streams read. Select the other Calendar streams, which use public EventKit.", { cause });
   }
 };
 var AppleCalendarSource = class extends Source {
@@ -69316,18 +69123,11 @@ var AppleCalendarSource = class extends Source {
   icsParameters = catalog2.get("icsParameters");
   icsAttachments = catalog2.get("icsAttachments");
   #attachments;
-  constructor({
-    startAt,
-    endAt,
-    attachments,
-    scope = {}
-  }) {
+  constructor({ startAt, endAt, attachments, scope = {} }) {
     super();
     this.#attachments = attachments;
     if (!isTimestamp(startAt) || !isTimestamp(endAt) || startAt >= endAt)
-      throw new TypeError(
-        "Calendar requires canonical UTC startAt < endAt timestamps"
-      );
+      throw new TypeError("Calendar requires canonical UTC startAt < endAt timestamps");
     this.startAt = startAt;
     this.endAt = endAt;
     this.scope = scope;
@@ -69344,11 +69144,9 @@ var AppleCalendarSource = class extends Source {
       selection: { ...this.scope, startAt: this.startAt, endAt: this.endAt }
     };
   }
-  async *observe({
-    streams: streams4,
-    signal
-  }) {
-    for await (const _ of this.#eventKit.watch(signal)) yield streams4;
+  async *observe({ streams: streams4, signal }) {
+    for await (const _ of this.#eventKit.watch(signal))
+      yield streams4;
   }
   // Every selected stream from one change-free read, so occurrences match
   // their calendars and ICS rows their items.
@@ -69361,22 +69159,15 @@ var AppleCalendarSource = class extends Source {
       accountIds,
       collectionIds
     };
-    return new EventKitSnapshot(
-      await this.#eventKit.consistently(async () => {
-        const rows = calendarRows(await this.#read(request), this.scope);
-        return new Map(
-          streams4.map((stream) => {
-            const records = validateRecords(
-              stream,
-              rows.get(stream.name),
-              "EventKit"
-            );
-            if (stream.name === "events") records.forEach(checkEventDates);
-            return [stream.name, records];
-          })
-        );
-      })
-    );
+    return new EventKitSnapshot(await this.#eventKit.consistently(async () => {
+      const rows = calendarRows(await this.#read(request), this.scope);
+      return new Map(streams4.map((stream) => {
+        const records = validateRecords(stream, rows.get(stream.name), "EventKit");
+        if (stream.name === "events")
+          records.forEach(checkEventDates);
+        return [stream.name, records];
+      }));
+    }));
   }
   async #read(request) {
     try {
@@ -69392,11 +69183,14 @@ var AppleCalendarSource = class extends Source {
     const records = snapshot.of(stream.name);
     if (syncMode === "incremental") {
       for await (const message4 of diffSnapshot(stream, records, state))
-        if ("type" in message4) yield message4;
-        else yield* this.withFile(configuration, message4.data);
+        if ("type" in message4)
+          yield message4;
+        else
+          yield* this.withFile(configuration, message4.data);
       return;
     }
-    for (const data of records) yield* this.withFile(configuration, data);
+    for (const data of records)
+      yield* this.withFile(configuration, data);
   }
   // Stages an attachment's bytes when the copy reads them, like Notes attachments.
   async *withFile(configuration, data) {
@@ -69415,9 +69209,7 @@ var AppleCalendarSource = class extends Source {
         calendarId: String(data.calendarId),
         calendarItemId: String(data.calendarItemId)
       };
-      const scratch = __using(_stack, await mkdtempDisposable3(
-        join11(tmpdir3(), "context-compiler-calendar-attachment-")
-      ), true);
+      const scratch = __using(_stack, await mkdtempDisposable3(join11(tmpdir3(), "context-compiler-calendar-attachment-")), true);
       const extension = attachment2.filename === null ? "" : extname2(attachment2.filename);
       const path = join11(scratch.path, `content${extension}`);
       let saved;
@@ -69426,15 +69218,11 @@ var AppleCalendarSource = class extends Source {
         saved = true;
       } else {
         if (this.#attachments === void 0)
-          throw new TypeError(
-            "Reading Calendar attachment files requires an attachments fetcher: new AppleCalendarSource({ ..., attachments })"
-          );
+          throw new TypeError("Reading Calendar attachment files requires an attachments fetcher: new AppleCalendarSource({ ..., attachments })");
         saved = await this.#attachments(attachment2, path);
       }
       if (saved && !(await lstat3(path)).isFile())
-        throw new TypeError(
-          "The attachment fetcher did not write a regular file"
-        );
+        throw new TypeError("The attachment fetcher did not write a regular file");
       yield { stream, data, file: saved ? path : null };
     } catch (_) {
       var _error = _, _hasError = true;
@@ -69449,7 +69237,7 @@ function checkEventDates(event) {
     throw new TypeError("Calendar returned inconsistent event dates");
 }
 
-// apps/apple/src/sources/apple-contacts/apple-contacts-source.ts
+// apps/apple/connectors/dist/sources/apple-contacts/apple-contacts-source.js
 import { createHash as createHash6 } from "node:crypto";
 import { createReadStream as createReadStream2 } from "node:fs";
 import { mkdtempDisposable as mkdtempDisposable4, rm as rm3, stat as stat3, writeFile as writeFile2 } from "node:fs/promises";
@@ -69457,33 +69245,23 @@ import { tmpdir as tmpdir4 } from "node:os";
 import { join as join13 } from "node:path";
 import { setInterval as setInterval2 } from "node:timers/promises";
 
-// apps/apple/src/platform/macos/address-book.ts
+// apps/apple/connectors/dist/platform/macos/address-book.js
 import { readdirSync as readdirSync2 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { join as join12 } from "node:path";
-import {
-  DatabaseSync as DatabaseSync10
-} from "node:sqlite";
-var addressBookDirectory = join12(
-  homedir3(),
-  "Library/Application Support/AddressBook"
-);
+import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
+var addressBookDirectory = join12(homedir3(), "Library/Application Support/AddressBook");
 var storeFile = "AddressBook-v22.abcddb";
 var ContactsUnavailableError = class extends Error {
   name = "ContactsUnavailableError";
   constructor(path, cause) {
-    super(
-      `The Contacts store at ${path} cannot be read. Allow the process that runs the export Contacts access or Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Contacts.app does not need to be open.`,
-      { cause }
-    );
+    super(`The Contacts store at ${path} cannot be read. Allow the process that runs the export Contacts access or Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Contacts.app does not need to be open.`, { cause });
   }
 };
 var ContactsSchemaError = class extends Error {
   name = "ContactsSchemaError";
   constructor(path, missing) {
-    super(
-      `The Contacts store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`
-    );
+    super(`The Contacts store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
   }
 };
 var unavailableCodes2 = /* @__PURE__ */ new Set([14, 23]);
@@ -69510,14 +69288,14 @@ function storeDirectories(directory) {
   ];
 }
 var AddressBookStore = class {
+  source;
+  directory;
+  #database;
   constructor(source, directory, database) {
     this.source = source;
     this.directory = directory;
     this.#database = database;
   }
-  source;
-  directory;
-  #database;
   get path() {
     return join12(this.directory, storeFile);
   }
@@ -69525,121 +69303,109 @@ var AddressBookStore = class {
     return this.#database.prepare(sql).all();
   }
   storedData(value) {
-    if (value[0] === 1) return { storage: "inline", bytes: value.subarray(1) };
+    if (value[0] === 1)
+      return { storage: "inline", bytes: value.subarray(1) };
     if (value[0] === 2) {
       const end = value.indexOf(0, 1);
-      const id12 = Buffer.from(
-        value.subarray(1, end === -1 ? value.length : end)
-      ).toString("ascii");
+      const id12 = Buffer.from(value.subarray(1, end === -1 ? value.length : end)).toString("ascii");
       return {
         storage: "external",
         id: id12,
-        path: join12(
-          this.directory,
-          ".AddressBook-v22_SUPPORT/_EXTERNAL_DATA",
-          id12
-        )
+        path: join12(this.directory, ".AddressBook-v22_SUPPORT/_EXTERNAL_DATA", id12)
       };
     }
-    throw new TypeError(
-      `Contacts store ${this.path} holds data in an unknown encoding (first byte ${value[0]})`
-    );
+    throw new TypeError(`Contacts store ${this.path} holds data in an unknown encoding (first byte ${value[0]})`);
   }
   close() {
     if (this.#database.isOpen) {
-      if (this.#database.isTransaction) this.#database.exec("COMMIT");
+      if (this.#database.isTransaction)
+        this.#database.exec("COMMIT");
       this.#database.close();
     }
   }
 };
 var AddressBook = class _AddressBook {
+  stores;
   constructor(stores) {
     this.stores = stores;
   }
-  stores;
   static async open(directory, required3) {
     const stores = [];
     try {
       for (const store of storeDirectories(directory)) {
         const path = join12(store.directory, storeFile);
         const database = open6(path);
-        stores.push(
-          new AddressBookStore(store.source, store.directory, database)
-        );
+        stores.push(new AddressBookStore(store.source, store.directory, database));
         database.exec("BEGIN");
-        const missing = Object.entries(required3.columns).flatMap(
-          ([table2, columns3]) => {
-            const present = new Set(
-              database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((column) => column.name)
-            );
-            return columns3.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
-          }
-        );
+        const missing = Object.entries(required3.columns).flatMap(([table2, columns3]) => {
+          const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((column) => column.name));
+          return columns3.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
+        });
         if (missing.length === 0) {
-          const entities2 = new Set(
-            database.prepare("SELECT Z_NAME FROM Z_PRIMARYKEY").all().map((entity2) => entity2.Z_NAME)
-          );
+          const entities2 = new Set(database.prepare("SELECT Z_NAME FROM Z_PRIMARYKEY").all().map((entity2) => entity2.Z_NAME));
           for (const entity2 of required3.entities)
-            if (!entities2.has(entity2)) missing.push(`entity ${entity2}`);
+            if (!entities2.has(entity2))
+              missing.push(`entity ${entity2}`);
         }
-        if (missing.length > 0) throw new ContactsSchemaError(path, missing);
+        if (missing.length > 0)
+          throw new ContactsSchemaError(path, missing);
       }
       return new _AddressBook(stores);
     } catch (cause) {
-      for (const store of stores) store.close();
+      for (const store of stores)
+        store.close();
       throw cause;
     }
   }
   async [Symbol.asyncDispose]() {
-    for (const store of this.stores) store.close();
+    for (const store of this.stores)
+      store.close();
   }
 };
 var AddressBookVersion = class {
+  directory;
+  #stores = /* @__PURE__ */ new Map();
   constructor(directory) {
     this.directory = directory;
   }
-  directory;
-  #stores = /* @__PURE__ */ new Map();
   get current() {
-    const paths = storeDirectories(this.directory).map(
-      ({ directory }) => join12(directory, storeFile)
-    );
+    const paths = storeDirectories(this.directory).map(({ directory }) => join12(directory, storeFile));
     for (const [path, { database }] of this.#stores)
       if (!paths.includes(path)) {
         database.close();
         this.#stores.delete(path);
       }
-    return JSON.stringify(
-      paths.map((path) => {
-        let store = this.#stores.get(path);
-        if (store === void 0) {
-          const database = open6(path);
-          store = {
-            database,
-            version: database.prepare("PRAGMA data_version")
-          };
-          this.#stores.set(path, store);
-        }
-        return [path, Number(store.version.get()?.data_version)];
-      })
-    );
+    return JSON.stringify(paths.map((path) => {
+      let store = this.#stores.get(path);
+      if (store === void 0) {
+        const database = open6(path);
+        store = {
+          database,
+          version: database.prepare("PRAGMA data_version")
+        };
+        this.#stores.set(path, store);
+      }
+      return [path, Number(store.version.get()?.data_version)];
+    }));
   }
   [Symbol.dispose]() {
-    for (const { database } of this.#stores.values()) database.close();
+    for (const { database } of this.#stores.values())
+      database.close();
     this.#stores.clear();
   }
 };
 
-// apps/apple/src/sources/import-scope.ts
+// apps/apple/connectors/dist/sources/import-scope.js
 function selected(ids2, id12) {
   return ids2 === void 0 || typeof id12 === "string" && ids2.includes(id12);
 }
 function withinDates(scope, value) {
-  if (scope.startAt === void 0 && scope.endAt === void 0) return true;
+  if (scope.startAt === void 0 && scope.endAt === void 0)
+    return true;
   return typeof value === "string" && (scope.startAt === void 0 || value >= scope.startAt) && (scope.endAt === void 0 || value < scope.endAt);
 }
 
-// apps/apple/src/sources/apple-contacts/contacts-streams.ts
+// apps/apple/connectors/dist/sources/apple-contacts/contacts-streams.js
 var { text: text6, id: id3, nullableText: nullableText10, nullableTimestamp: nullableTimestamp11 } = eventKitFields;
 var nullableInteger11 = { type: ["integer", "null"] };
 var nullableNumber4 = { type: ["number", "null"] };
@@ -69688,7 +69454,8 @@ var requiredEntities = /* @__PURE__ */ new Set();
 function requires(table2, columns3) {
   const present = required2.get(table2) ?? /* @__PURE__ */ new Set();
   required2.set(table2, present);
-  for (const column of words(columns3)) present.add(column);
+  for (const column of words(columns3))
+    present.add(column);
 }
 function attributes(table2, alias, list3) {
   const fields2 = {};
@@ -69742,7 +69509,8 @@ var record2 = (alias) => attributes("ZABCDRECORD", alias, {
 function entities(alias, names) {
   requires("ZABCDRECORD", "Z_PK Z_ENT ZUNIQUEID");
   requires("Z_PRIMARYKEY", "Z_ENT Z_NAME");
-  for (const name of Object.keys(names)) requiredEntities.add(name);
+  for (const name of Object.keys(names))
+    requiredEntities.add(name);
   const list3 = Object.keys(names).map((name) => `'${name}'`).join(", ");
   const meanings = Object.entries(names).map(([name, kind]) => `${kind} for ${name}`).join(", ");
   return {
@@ -69769,32 +69537,27 @@ var group = entities("g", {
 var container = entities("r", { CNCDContainer: "container" });
 function labeled(table2, alias, list3) {
   requires(table2, "ZUNIQUEID");
-  return explained(
-    {
-      id: [id3, `${alias}.ZUNIQUEID`],
-      ...attributes(table2, alias, {
-        record: "contactId:ZOWNER",
-        text: "label",
-        boolean: "isPrimary isPrivate",
-        integer: "orderingIndex iOSLegacyIdentifier"
-      }),
-      ...attributes(table2, alias, list3)
-    },
-    {
-      id: `Identifier of this labeled value, AddressBook ${table2}.ZUNIQUEID; the primary key.`,
-      contactId: `Owning contact: ${table2}.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id within this source; a contact can have many of these values. NULL when unset or no record matches.`,
-      label: `Label from AddressBook ${table2}.ZLABEL, as stored and not localized: a built-in label is a token such as _$!<Mobile>!$_, a custom label is its own text. NULL when the store holds no value; it can also be empty text.`
-    }
-  );
+  return explained({
+    id: [id3, `${alias}.ZUNIQUEID`],
+    ...attributes(table2, alias, {
+      record: "contactId:ZOWNER",
+      text: "label",
+      boolean: "isPrimary isPrivate",
+      integer: "orderingIndex iOSLegacyIdentifier"
+    }),
+    ...attributes(table2, alias, list3)
+  }, {
+    id: `Identifier of this labeled value, AddressBook ${table2}.ZUNIQUEID; the primary key.`,
+    contactId: `Owning contact: ${table2}.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id within this source; a contact can have many of these values. NULL when unset or no record matches.`,
+    label: `Label from AddressBook ${table2}.ZLABEL, as stored and not localized: a built-in label is a token such as _$!<Mobile>!$_, a custom label is its own text. NULL when the store holds no value; it can also be empty text.`
+  });
 }
 var labeledValue = "Primary key id; contactId refers to contacts.id, and a contact can have several. label is the stored, unlocalized label. isPrimary, isPrivate and orderingIndex pass through as stored; whether orderingIndex orders a contact's values densely or uniquely is not verified.";
 var localStores = "Read from this Mac's Contacts stores, On My Mac and one per account under AddressBook/Sources, so it holds what has synced to this Mac rather than a complete cloud account; a configured container selection limits it further. Relationships name source streams, not destination tables, and identifiers name native records, not people merged across stores.";
 function definition(description, fields2, from, primaryKey, { distinct = false } = {}) {
   return {
     description,
-    properties: Object.fromEntries(
-      Object.entries(fields2).map(([name, [schema]]) => [name, schema])
-    ),
+    properties: Object.fromEntries(Object.entries(fields2).map(([name, [schema]]) => [name, schema])),
     primaryKey,
     sql: `SELECT ${distinct ? "DISTINCT " : ""}${Object.entries(fields2).map(([name, [, sql]]) => `${sql} AS "${name}"`).join(", ")} FROM ${from}`
   };
@@ -69809,10 +69572,7 @@ requires("ZABCDCUSTOMPROPERTY", "Z_PK");
 requires("ZABCDCUSTOMPROPERTYVALUE", "ZUNIQUEID ZCUSTOMPROPERTY");
 requires("ZABCDREMOTELOCATION", "ZUNIQUEID");
 requires("ZABCDUNKNOWNPROPERTY", "ZOWNER");
-requires(
-  "ZABCDDISTRIBUTIONLISTCONFIG",
-  "ZGROUP ZCONTACT ZEMAIL ZPHONE ZADDRESS"
-);
+requires("ZABCDDISTRIBUTIONLISTCONFIG", "ZGROUP ZCONTACT ZEMAIL ZPHONE ZADDRESS");
 requires("ZABCDEMAILADDRESS", "Z_PK");
 requires("ZABCDPHONENUMBER", "Z_PK");
 requires("ZABCDPOSTALADDRESS", "Z_PK");
@@ -69821,359 +69581,204 @@ var uniqueIdOf = (table2, column) => [
   `(SELECT x.ZUNIQUEID FROM ${table2} x WHERE x.Z_PK = ${column})`
 ];
 var definitions = {
-  containers: definition(
-    "One row per Contacts container, a CNCDContainer record in a store. Primary key id. contacts.containerId, contacts.meOfContainerId and groups.containerId refer to id.",
-    explained(
-      {
-        id: [id3, "r.ZUNIQUEID"],
-        // Filled per store.
-        source: [nullableText10, "NULL"],
-        ...attributes("ZABCDRECORD", "r", {
-          text: "name:ZNAME1 externalIdentifier providerIdentifier remoteLocation serialNumber",
-          integer: "type guardianFlags",
-          boolean: "isAll",
-          timestamp: "lastSyncDate",
-          record: "meContactId:ZME"
-        }),
-        ...record2("r")
-      },
-      {
-        id: "Container identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key.",
-        source: "Directory name under AddressBook/Sources of the account store this container was read from; NULL for the On My Mac store at the AddressBook root.",
-        meContactId: "AddressBook ZABCDRECORD.ZME resolved to that record's ZUNIQUEID. Join to contacts.id within this source. NULL when unset or no record matches."
-      }
-    ),
-    `ZABCDRECORD r ${container.join}`,
-    ["id"]
-  ),
-  groups: definition(
-    "One row per group record: an ABCDGroup, ABCDSubscribedGroup or ABCDSmartGroup, told apart by kind. Primary key id; containerId refers to containers.id. Stored members are in groupMembers, stored nesting in groupSubgroups and per-member address choices in distributionListConfigs.",
-    explained(
-      {
-        id: [id3, "g.ZUNIQUEID"],
-        kind: group.kind,
-        ...attributes("ZABCDRECORD", "g", {
-          record: "containerId:ZCONTAINER",
-          text: "name tmpRemoteLocation",
-          integer: "externalGroupBehavior",
-          data: "modifiedUniqueIdsData searchElementData"
-        }),
-        ...record2("g")
-      },
-      {
-        id: "Group identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key. groupMembers.groupId, groupSubgroups.parentGroupId, groupSubgroups.childGroupId and distributionListConfigs.groupId refer to it.",
-        containerId: "Owning container: AddressBook ZABCDRECORD.ZCONTAINER resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches."
-      }
-    ),
-    `ZABCDRECORD g ${group.join}`,
-    ["id"]
-  ),
-  groupMembers: definition(
-    "One row per group membership stored in the AddressBook table Z_22PARENTGROUPS. Primary key (groupId, contactId). Only stored memberships appear; the connector does not evaluate smart group criteria.",
-    explained(
-      { groupId: [id3, "g.ZUNIQUEID"], contactId: [id3, "c.ZUNIQUEID"] },
-      {
-        groupId: "Group identifier (ZABCDRECORD.ZUNIQUEID of Z_22PARENTGROUPS.Z_19PARENTGROUPS1); refers to groups.id within this source.",
-        contactId: "Member contact identifier (ZABCDRECORD.ZUNIQUEID of Z_22PARENTGROUPS.Z_22CONTACTS); refers to contacts.id within this source. A contact can belong to many groups."
-      }
-    ),
-    "Z_22PARENTGROUPS j JOIN ZABCDRECORD g ON g.Z_PK = j.Z_19PARENTGROUPS1 JOIN ZABCDRECORD c ON c.Z_PK = j.Z_22CONTACTS",
-    ["groupId", "contactId"]
-  ),
-  groupSubgroups: definition(
-    "One row per direct parent-child link between groups stored in the AddressBook table Z_18PARENTGROUPS. Primary key (parentGroupId, childGroupId), both groups.id within this source. Deeper nesting is a chain of rows; a child can have several parents.",
-    explained(
-      { parentGroupId: [id3, "p.ZUNIQUEID"], childGroupId: [id3, "g.ZUNIQUEID"] },
-      {
-        parentGroupId: "Parent group identifier (ZABCDRECORD.ZUNIQUEID of Z_18PARENTGROUPS.Z_19PARENTGROUPS); refers to groups.id within this source.",
-        childGroupId: "Child group identifier (ZABCDRECORD.ZUNIQUEID of Z_18PARENTGROUPS.Z_18CHILDGROUPS); refers to groups.id within this source."
-      }
-    ),
-    "Z_18PARENTGROUPS j JOIN ZABCDRECORD p ON p.Z_PK = j.Z_19PARENTGROUPS JOIN ZABCDRECORD g ON g.Z_PK = j.Z_18CHILDGROUPS",
-    ["parentGroupId", "childGroupId"]
-  ),
-  contacts: definition(
-    "One row per contact record: an ABCDContact or ABCDSubscribedContact, told apart by kind. Primary key id; containerId refers to containers.id. Multi-valued details are separate streams keyed by their own id with contactId: phoneNumbers, emailAddresses, postalAddresses, urlAddresses, socialProfiles, messagingAddresses, relatedNames, contactDates, calendarUris, addressingGrammars and likenesses; alertTones, notes, alternateBirthdays and images also carry contactId, and groupMembers lists stored group membership. The same person in two stores is two rows; this source does not merge them.",
-    explained(
-      {
-        id: [id3, "c.ZUNIQUEID"],
-        kind: contact.kind,
-        ...attributes("ZABCDRECORD", "c", {
-          record: "containerId:ZCONTAINER1 meOfContainerId:ZCONTAINERWHERECONTACTISME",
-          text: "title firstName middleName lastName suffix nickname maidenName phoneticFirstName phoneticMiddleName phoneticLastName phoneticOrganization phonemeData organization department jobTitle linkId identityUniqueId preferredApplePersonaIdentifier preferredLikenessSource imageType imageReference cropRect cropRectID wallpaperURI downtimeWhitelist tmpHomePage",
-          integer: "privacyFlags",
-          boolean: "preferredForLinkName preferredForLinkPhoto",
-          timestamp: "imageSyncFailedTime wallpaperSyncFailedTime",
-          data: "imageHash cropRectHash avatarRecipeData memojiMetadata sensitiveContentConfiguration wallpaper"
-        }),
-        ...calendarDate("ZABCDRECORD", "c", "birthday", [
-          "birthdayYear",
-          "birthdayMonth",
-          "birthdayDay"
-        ]),
-        ...record2("c")
-      },
-      {
-        id: "Contact identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key. contactId fields in other streams of this source refer to it.",
-        containerId: "Owning container: AddressBook ZABCDRECORD.ZCONTAINER1 resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches.",
-        meOfContainerId: "AddressBook ZABCDRECORD.ZCONTAINERWHERECONTACTISME resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches."
-      }
-    ),
-    `ZABCDRECORD c ${contact.join}`,
-    ["id"]
-  ),
-  notes: definition(
-    "One row per contact that has a note record in the AddressBook table ZABCDNOTE. Primary key contactId, which refers to contacts.id; one note per contact is assumed, since the store does not enforce it.",
-    explained(
-      {
-        contactId: [id3, "c.ZUNIQUEID"],
-        ...attributes("ZABCDNOTE", "n", { text: "text", data: "richTextData" })
-      },
-      {
-        contactId: "Owning contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDNOTE.ZCONTACT); the primary key. Refers to contacts.id within this source."
-      }
-    ),
-    "ZABCDNOTE n JOIN ZABCDRECORD c ON c.Z_PK = n.ZCONTACT",
-    ["contactId"]
-  ),
+  containers: definition("One row per Contacts container, a CNCDContainer record in a store. Primary key id. contacts.containerId, contacts.meOfContainerId and groups.containerId refer to id.", explained({
+    id: [id3, "r.ZUNIQUEID"],
+    // Filled per store.
+    source: [nullableText10, "NULL"],
+    ...attributes("ZABCDRECORD", "r", {
+      text: "name:ZNAME1 externalIdentifier providerIdentifier remoteLocation serialNumber",
+      integer: "type guardianFlags",
+      boolean: "isAll",
+      timestamp: "lastSyncDate",
+      record: "meContactId:ZME"
+    }),
+    ...record2("r")
+  }, {
+    id: "Container identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key.",
+    source: "Directory name under AddressBook/Sources of the account store this container was read from; NULL for the On My Mac store at the AddressBook root.",
+    meContactId: "AddressBook ZABCDRECORD.ZME resolved to that record's ZUNIQUEID. Join to contacts.id within this source. NULL when unset or no record matches."
+  }), `ZABCDRECORD r ${container.join}`, ["id"]),
+  groups: definition("One row per group record: an ABCDGroup, ABCDSubscribedGroup or ABCDSmartGroup, told apart by kind. Primary key id; containerId refers to containers.id. Stored members are in groupMembers, stored nesting in groupSubgroups and per-member address choices in distributionListConfigs.", explained({
+    id: [id3, "g.ZUNIQUEID"],
+    kind: group.kind,
+    ...attributes("ZABCDRECORD", "g", {
+      record: "containerId:ZCONTAINER",
+      text: "name tmpRemoteLocation",
+      integer: "externalGroupBehavior",
+      data: "modifiedUniqueIdsData searchElementData"
+    }),
+    ...record2("g")
+  }, {
+    id: "Group identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key. groupMembers.groupId, groupSubgroups.parentGroupId, groupSubgroups.childGroupId and distributionListConfigs.groupId refer to it.",
+    containerId: "Owning container: AddressBook ZABCDRECORD.ZCONTAINER resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches."
+  }), `ZABCDRECORD g ${group.join}`, ["id"]),
+  groupMembers: definition("One row per group membership stored in the AddressBook table Z_22PARENTGROUPS. Primary key (groupId, contactId). Only stored memberships appear; the connector does not evaluate smart group criteria.", explained({ groupId: [id3, "g.ZUNIQUEID"], contactId: [id3, "c.ZUNIQUEID"] }, {
+    groupId: "Group identifier (ZABCDRECORD.ZUNIQUEID of Z_22PARENTGROUPS.Z_19PARENTGROUPS1); refers to groups.id within this source.",
+    contactId: "Member contact identifier (ZABCDRECORD.ZUNIQUEID of Z_22PARENTGROUPS.Z_22CONTACTS); refers to contacts.id within this source. A contact can belong to many groups."
+  }), "Z_22PARENTGROUPS j JOIN ZABCDRECORD g ON g.Z_PK = j.Z_19PARENTGROUPS1 JOIN ZABCDRECORD c ON c.Z_PK = j.Z_22CONTACTS", ["groupId", "contactId"]),
+  groupSubgroups: definition("One row per direct parent-child link between groups stored in the AddressBook table Z_18PARENTGROUPS. Primary key (parentGroupId, childGroupId), both groups.id within this source. Deeper nesting is a chain of rows; a child can have several parents.", explained({ parentGroupId: [id3, "p.ZUNIQUEID"], childGroupId: [id3, "g.ZUNIQUEID"] }, {
+    parentGroupId: "Parent group identifier (ZABCDRECORD.ZUNIQUEID of Z_18PARENTGROUPS.Z_19PARENTGROUPS); refers to groups.id within this source.",
+    childGroupId: "Child group identifier (ZABCDRECORD.ZUNIQUEID of Z_18PARENTGROUPS.Z_18CHILDGROUPS); refers to groups.id within this source."
+  }), "Z_18PARENTGROUPS j JOIN ZABCDRECORD p ON p.Z_PK = j.Z_19PARENTGROUPS JOIN ZABCDRECORD g ON g.Z_PK = j.Z_18CHILDGROUPS", ["parentGroupId", "childGroupId"]),
+  contacts: definition("One row per contact record: an ABCDContact or ABCDSubscribedContact, told apart by kind. Primary key id; containerId refers to containers.id. Multi-valued details are separate streams keyed by their own id with contactId: phoneNumbers, emailAddresses, postalAddresses, urlAddresses, socialProfiles, messagingAddresses, relatedNames, contactDates, calendarUris, addressingGrammars and likenesses; alertTones, notes, alternateBirthdays and images also carry contactId, and groupMembers lists stored group membership. The same person in two stores is two rows; this source does not merge them.", explained({
+    id: [id3, "c.ZUNIQUEID"],
+    kind: contact.kind,
+    ...attributes("ZABCDRECORD", "c", {
+      record: "containerId:ZCONTAINER1 meOfContainerId:ZCONTAINERWHERECONTACTISME",
+      text: "title firstName middleName lastName suffix nickname maidenName phoneticFirstName phoneticMiddleName phoneticLastName phoneticOrganization phonemeData organization department jobTitle linkId identityUniqueId preferredApplePersonaIdentifier preferredLikenessSource imageType imageReference cropRect cropRectID wallpaperURI downtimeWhitelist tmpHomePage",
+      integer: "privacyFlags",
+      boolean: "preferredForLinkName preferredForLinkPhoto",
+      timestamp: "imageSyncFailedTime wallpaperSyncFailedTime",
+      data: "imageHash cropRectHash avatarRecipeData memojiMetadata sensitiveContentConfiguration wallpaper"
+    }),
+    ...calendarDate("ZABCDRECORD", "c", "birthday", [
+      "birthdayYear",
+      "birthdayMonth",
+      "birthdayDay"
+    ]),
+    ...record2("c")
+  }, {
+    id: "Contact identifier, AddressBook ZABCDRECORD.ZUNIQUEID; the primary key. contactId fields in other streams of this source refer to it.",
+    containerId: "Owning container: AddressBook ZABCDRECORD.ZCONTAINER1 resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches.",
+    meOfContainerId: "AddressBook ZABCDRECORD.ZCONTAINERWHERECONTACTISME resolved to that record's ZUNIQUEID. Join to containers.id within this source. NULL when unset or no record matches."
+  }), `ZABCDRECORD c ${contact.join}`, ["id"]),
+  notes: definition("One row per contact that has a note record in the AddressBook table ZABCDNOTE. Primary key contactId, which refers to contacts.id; one note per contact is assumed, since the store does not enforce it.", explained({
+    contactId: [id3, "c.ZUNIQUEID"],
+    ...attributes("ZABCDNOTE", "n", { text: "text", data: "richTextData" })
+  }, {
+    contactId: "Owning contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDNOTE.ZCONTACT); the primary key. Refers to contacts.id within this source."
+  }), "ZABCDNOTE n JOIN ZABCDRECORD c ON c.Z_PK = n.ZCONTACT", ["contactId"]),
   // The non-Gregorian birthday (CNContact.nonGregorianBirthday).
-  alternateBirthdays: definition(
-    "One row per contact with a non-Gregorian birthday (CNContact.nonGregorianBirthday, which a live store saves here), as date components in the AddressBook table ZABCDDATECOMPONENTS. Primary key contactId, which refers to contacts.id; one record per contact is assumed, since the store does not enforce it. Components stay in the calendar named by calendarIdentifier and are not converted, so they do not compare with the contact's Gregorian birthdayYear, birthdayMonth and birthdayDay.",
-    explained(
-      {
-        contactId: [id3, "c.ZUNIQUEID"],
-        ...attributes("ZABCDDATECOMPONENTS", "d", {
-          text: "uniqueId calendarIdentifier",
-          integer: "era year month day iOSLegacyIdentifier",
-          boolean: "isLeapMonth"
-        })
-      },
-      {
-        contactId: "Owning contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDATECOMPONENTS.ZCONTACT); the primary key. Refers to contacts.id within this source.",
-        uniqueId: "Native identifier of this date-components record, AddressBook ZABCDDATECOMPONENTS.ZUNIQUEID, as stored; no other stream refers to it.",
-        calendarIdentifier: "Calendar identifier as stored in AddressBook ZABCDDATECOMPONENTS.ZCALENDARIDENTIFIER; names the calendar that era, year, month and day are counted in.",
-        era: "Era component as stored in AddressBook ZABCDDATECOMPONENTS.ZERA, in the calendar named by calendarIdentifier; NULL when the store holds no value.",
-        year: "Year component as stored in AddressBook ZABCDDATECOMPONENTS.ZYEAR, in the calendar named by calendarIdentifier and not converted; not comparable with contacts.birthdayYear. NULL when the store holds no value.",
-        month: "Month component as stored in AddressBook ZABCDDATECOMPONENTS.ZMONTH, in the calendar named by calendarIdentifier; NULL when the store holds no value.",
-        day: "Day component as stored in AddressBook ZABCDDATECOMPONENTS.ZDAY, in the calendar named by calendarIdentifier; NULL when the store holds no value."
-      }
-    ),
-    "ZABCDDATECOMPONENTS d JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT",
-    ["contactId"]
-  ),
-  phoneNumbers: definition(
-    `One row per phone number of a contact, a labeled value in the AddressBook table ZABCDPHONENUMBER. ${labeledValue} distributionListConfigs.phoneId refers to id.`,
-    labeled("ZABCDPHONENUMBER", "p", {
-      text: "fullNumber countryCode areaCode localNumber extension"
-    }),
-    "ZABCDPHONENUMBER p",
-    ["id"]
-  ),
-  emailAddresses: definition(
-    `One row per email address of a contact, a labeled value in the AddressBook table ZABCDEMAILADDRESS. ${labeledValue} distributionListConfigs.emailId refers to id.`,
-    labeled("ZABCDEMAILADDRESS", "e", { text: "address" }),
-    "ZABCDEMAILADDRESS e",
-    ["id"]
-  ),
-  postalAddresses: definition(
-    `One row per postal address of a contact, a labeled value in the AddressBook table ZABCDPOSTALADDRESS. ${labeledValue} distributionListConfigs.addressId refers to id.`,
-    labeled("ZABCDPOSTALADDRESS", "a", {
-      text: "street subLocality city state region zipCode countryName countryCode sama",
-      data: "customValuesDictionary"
-    }),
-    "ZABCDPOSTALADDRESS a",
-    ["id"]
-  ),
-  urlAddresses: definition(
-    `One row per URL of a contact, a labeled value in the AddressBook table ZABCDURLADDRESS. ${labeledValue}`,
-    labeled("ZABCDURLADDRESS", "u", { text: "url" }),
-    "ZABCDURLADDRESS u",
-    ["id"]
-  ),
-  socialProfiles: definition(
-    `One row per social profile of a contact, a labeled value in the AddressBook table ZABCDSOCIALPROFILE. ${labeledValue}`,
-    labeled("ZABCDSOCIALPROFILE", "s", {
-      text: "serviceName username userIdentifier urlString displayname bundleIdentifiersString teamIdentifier",
-      data: "customValuesData"
-    }),
-    "ZABCDSOCIALPROFILE s",
-    ["id"]
-  ),
+  alternateBirthdays: definition("One row per contact with a non-Gregorian birthday (CNContact.nonGregorianBirthday, which a live store saves here), as date components in the AddressBook table ZABCDDATECOMPONENTS. Primary key contactId, which refers to contacts.id; one record per contact is assumed, since the store does not enforce it. Components stay in the calendar named by calendarIdentifier and are not converted, so they do not compare with the contact's Gregorian birthdayYear, birthdayMonth and birthdayDay.", explained({
+    contactId: [id3, "c.ZUNIQUEID"],
+    ...attributes("ZABCDDATECOMPONENTS", "d", {
+      text: "uniqueId calendarIdentifier",
+      integer: "era year month day iOSLegacyIdentifier",
+      boolean: "isLeapMonth"
+    })
+  }, {
+    contactId: "Owning contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDATECOMPONENTS.ZCONTACT); the primary key. Refers to contacts.id within this source.",
+    uniqueId: "Native identifier of this date-components record, AddressBook ZABCDDATECOMPONENTS.ZUNIQUEID, as stored; no other stream refers to it.",
+    calendarIdentifier: "Calendar identifier as stored in AddressBook ZABCDDATECOMPONENTS.ZCALENDARIDENTIFIER; names the calendar that era, year, month and day are counted in.",
+    era: "Era component as stored in AddressBook ZABCDDATECOMPONENTS.ZERA, in the calendar named by calendarIdentifier; NULL when the store holds no value.",
+    year: "Year component as stored in AddressBook ZABCDDATECOMPONENTS.ZYEAR, in the calendar named by calendarIdentifier and not converted; not comparable with contacts.birthdayYear. NULL when the store holds no value.",
+    month: "Month component as stored in AddressBook ZABCDDATECOMPONENTS.ZMONTH, in the calendar named by calendarIdentifier; NULL when the store holds no value.",
+    day: "Day component as stored in AddressBook ZABCDDATECOMPONENTS.ZDAY, in the calendar named by calendarIdentifier; NULL when the store holds no value."
+  }), "ZABCDDATECOMPONENTS d JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT", ["contactId"]),
+  phoneNumbers: definition(`One row per phone number of a contact, a labeled value in the AddressBook table ZABCDPHONENUMBER. ${labeledValue} distributionListConfigs.phoneId refers to id.`, labeled("ZABCDPHONENUMBER", "p", {
+    text: "fullNumber countryCode areaCode localNumber extension"
+  }), "ZABCDPHONENUMBER p", ["id"]),
+  emailAddresses: definition(`One row per email address of a contact, a labeled value in the AddressBook table ZABCDEMAILADDRESS. ${labeledValue} distributionListConfigs.emailId refers to id.`, labeled("ZABCDEMAILADDRESS", "e", { text: "address" }), "ZABCDEMAILADDRESS e", ["id"]),
+  postalAddresses: definition(`One row per postal address of a contact, a labeled value in the AddressBook table ZABCDPOSTALADDRESS. ${labeledValue} distributionListConfigs.addressId refers to id.`, labeled("ZABCDPOSTALADDRESS", "a", {
+    text: "street subLocality city state region zipCode countryName countryCode sama",
+    data: "customValuesDictionary"
+  }), "ZABCDPOSTALADDRESS a", ["id"]),
+  urlAddresses: definition(`One row per URL of a contact, a labeled value in the AddressBook table ZABCDURLADDRESS. ${labeledValue}`, labeled("ZABCDURLADDRESS", "u", { text: "url" }), "ZABCDURLADDRESS u", ["id"]),
+  socialProfiles: definition(`One row per social profile of a contact, a labeled value in the AddressBook table ZABCDSOCIALPROFILE. ${labeledValue}`, labeled("ZABCDSOCIALPROFILE", "s", {
+    text: "serviceName username userIdentifier urlString displayname bundleIdentifiersString teamIdentifier",
+    data: "customValuesData"
+  }), "ZABCDSOCIALPROFILE s", ["id"]),
   // Instant message addresses; service is ABCDService's name, such as SkypeInstant.
-  messagingAddresses: definition(
-    `One row per instant messaging address of a contact, a labeled value in the AddressBook table ZABCDMESSAGINGADDRESS. ${labeledValue}`,
-    explained(
-      {
-        ...labeled("ZABCDMESSAGINGADDRESS", "m", {
-          text: "address userIdentifier bundleIdentifiersString teamIdentifier"
-        }),
-        service: [
-          nullableText10,
-          "(SELECT s.ZSERVICENAME FROM ZABCDSERVICE s WHERE s.Z_PK = m.ZSERVICE)"
-        ]
-      },
-      {
-        service: "Service name as stored: AddressBook ZABCDSERVICE.ZSERVICENAME of the service record ZABCDMESSAGINGADDRESS.ZSERVICE references, such as SkypeInstant; NULL when unset or no service record matches."
-      }
-    ),
-    "ZABCDMESSAGINGADDRESS m",
-    ["id"]
-  ),
-  relatedNames: definition(
-    `One row per related name of a contact, a labeled value in the AddressBook table ZABCDRELATEDNAME. ${labeledValue}`,
-    labeled("ZABCDRELATEDNAME", "n", { text: "name" }),
-    "ZABCDRELATEDNAME n",
-    ["id"]
-  ),
-  contactDates: definition(
-    `One row per labeled date of a contact in the AddressBook table ZABCDCONTACTDATE, split into Gregorian year, month and day; year is NULL for a date stored without a year. ${labeledValue}`,
-    {
-      ...labeled("ZABCDCONTACTDATE", "d", {}),
-      ...calendarDate("ZABCDCONTACTDATE", "d", "date", [
-        "year",
-        "month",
-        "day"
-      ])
-    },
-    "ZABCDCONTACTDATE d",
-    ["id"]
-  ),
-  calendarUris: definition(
-    `One row per calendar URI of a contact, a labeled value in the AddressBook table ZABCDCALENDARURI. ${labeledValue}`,
-    labeled("ZABCDCALENDARURI", "u", { text: "url" }),
-    "ZABCDCALENDARURI u",
-    ["id"]
-  ),
-  addressingGrammars: definition(
-    `One row per addressing grammar value of a contact, a labeled value in the AddressBook table ZABCDADDRESSINGGRAMMAR; the value is exported as stored and its format is not documented by Apple. ${labeledValue}`,
-    labeled("ZABCDADDRESSINGGRAMMAR", "g", { text: "addressingGrammar" }),
-    "ZABCDADDRESSINGGRAMMAR g",
-    ["id"]
-  ),
-  likenesses: definition(
-    `One row per likeness value of a contact, a labeled value in the AddressBook table ZABCDLIKENESS; kind, version and data are exported as stored and their meaning is not documented by Apple. ${labeledValue}`,
-    labeled("ZABCDLIKENESS", "l", {
-      integer: "kind",
-      text: "version",
-      data: "data"
+  messagingAddresses: definition(`One row per instant messaging address of a contact, a labeled value in the AddressBook table ZABCDMESSAGINGADDRESS. ${labeledValue}`, explained({
+    ...labeled("ZABCDMESSAGINGADDRESS", "m", {
+      text: "address userIdentifier bundleIdentifiersString teamIdentifier"
     }),
-    "ZABCDLIKENESS l",
-    ["id"]
-  ),
-  alertTones: definition(
-    "One row per alert tone record of a contact in the AddressBook table ZABCDALERTTONE. Primary key id; contactId refers to contacts.id, and a contact can have several. type and toneData are exported as stored and their values are not documented by Apple.",
-    explained(
-      {
-        id: [id3, "t.ZUNIQUEID"],
-        ...attributes("ZABCDALERTTONE", "t", {
-          record: "contactId:ZOWNER",
-          text: "type toneData",
-          integer: "iOSLegacyIdentifier"
-        })
-      },
-      {
-        id: "Alert tone identifier, AddressBook ZABCDALERTTONE.ZUNIQUEID; the primary key.",
-        contactId: "Owning contact: ZABCDALERTTONE.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id within this source. NULL when unset or no record matches."
-      }
-    ),
-    "ZABCDALERTTONE t",
-    ["id"]
-  ),
+    service: [
+      nullableText10,
+      "(SELECT s.ZSERVICENAME FROM ZABCDSERVICE s WHERE s.Z_PK = m.ZSERVICE)"
+    ]
+  }, {
+    service: "Service name as stored: AddressBook ZABCDSERVICE.ZSERVICENAME of the service record ZABCDMESSAGINGADDRESS.ZSERVICE references, such as SkypeInstant; NULL when unset or no service record matches."
+  }), "ZABCDMESSAGINGADDRESS m", ["id"]),
+  relatedNames: definition(`One row per related name of a contact, a labeled value in the AddressBook table ZABCDRELATEDNAME. ${labeledValue}`, labeled("ZABCDRELATEDNAME", "n", { text: "name" }), "ZABCDRELATEDNAME n", ["id"]),
+  contactDates: definition(`One row per labeled date of a contact in the AddressBook table ZABCDCONTACTDATE, split into Gregorian year, month and day; year is NULL for a date stored without a year. ${labeledValue}`, {
+    ...labeled("ZABCDCONTACTDATE", "d", {}),
+    ...calendarDate("ZABCDCONTACTDATE", "d", "date", [
+      "year",
+      "month",
+      "day"
+    ])
+  }, "ZABCDCONTACTDATE d", ["id"]),
+  calendarUris: definition(`One row per calendar URI of a contact, a labeled value in the AddressBook table ZABCDCALENDARURI. ${labeledValue}`, labeled("ZABCDCALENDARURI", "u", { text: "url" }), "ZABCDCALENDARURI u", ["id"]),
+  addressingGrammars: definition(`One row per addressing grammar value of a contact, a labeled value in the AddressBook table ZABCDADDRESSINGGRAMMAR; the value is exported as stored and its format is not documented by Apple. ${labeledValue}`, labeled("ZABCDADDRESSINGGRAMMAR", "g", { text: "addressingGrammar" }), "ZABCDADDRESSINGGRAMMAR g", ["id"]),
+  likenesses: definition(`One row per likeness value of a contact, a labeled value in the AddressBook table ZABCDLIKENESS; kind, version and data are exported as stored and their meaning is not documented by Apple. ${labeledValue}`, labeled("ZABCDLIKENESS", "l", {
+    integer: "kind",
+    text: "version",
+    data: "data"
+  }), "ZABCDLIKENESS l", ["id"]),
+  alertTones: definition("One row per alert tone record of a contact in the AddressBook table ZABCDALERTTONE. Primary key id; contactId refers to contacts.id, and a contact can have several. type and toneData are exported as stored and their values are not documented by Apple.", explained({
+    id: [id3, "t.ZUNIQUEID"],
+    ...attributes("ZABCDALERTTONE", "t", {
+      record: "contactId:ZOWNER",
+      text: "type toneData",
+      integer: "iOSLegacyIdentifier"
+    })
+  }, {
+    id: "Alert tone identifier, AddressBook ZABCDALERTTONE.ZUNIQUEID; the primary key.",
+    contactId: "Owning contact: ZABCDALERTTONE.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id within this source. NULL when unset or no record matches."
+  }), "ZABCDALERTTONE t", ["id"]),
   // Values of custom properties, on any record, with their property's definition.
-  customPropertyValues: definition(
-    "One row per custom property value in the AddressBook table ZABCDCUSTOMPROPERTYVALUE, on any record, with its property definition from ZABCDCUSTOMPROPERTY. Primary key id. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export. propertyName, recordType and valueType are NULL when the value has no definition record. Which of stringValue, numberValue, dateValue and dataValue holds the value is not verified against valueType.",
-    explained(
-      {
-        id: [id3, "v.ZUNIQUEID"],
-        ...attributes("ZABCDCUSTOMPROPERTY", "p", {
-          text: "propertyName recordType",
-          integer: "valueType"
-        }),
-        ...attributes("ZABCDCUSTOMPROPERTYVALUE", "v", {
-          record: "recordId:ZOWNER",
-          text: "label stringValue",
-          boolean: "isPrimary isPrivate",
-          integer: "orderingIndex iOSLegacyIdentifier dateValueYear",
-          number: "numberValue",
-          timestamp: "dateValue",
-          data: "dataValue"
-        })
-      },
-      {
-        id: "Custom property value identifier, AddressBook ZABCDCUSTOMPROPERTYVALUE.ZUNIQUEID; the primary key.",
-        propertyName: `Property name as stored in AddressBook ZABCDCUSTOMPROPERTY.ZPROPERTYNAME, the definition ZABCDCUSTOMPROPERTYVALUE.ZCUSTOMPROPERTY references; NULL when the store holds no value or no definition record matches. ${unverified}`,
-        recordType: `AddressBook ZABCDCUSTOMPROPERTY.ZRECORDTYPE of the referenced definition, as stored; NULL when the store holds no value or no definition record matches. ${unverified}`,
-        valueType: `AddressBook ZABCDCUSTOMPROPERTY.ZVALUETYPE of the referenced definition, as stored; NULL when the store holds no value or no definition record matches. ${unverified}`,
-        recordId: "Owning record: ZABCDCUSTOMPROPERTYVALUE.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export. NULL when unset or no record matches."
-      }
-    ),
-    "ZABCDCUSTOMPROPERTYVALUE v LEFT JOIN ZABCDCUSTOMPROPERTY p ON p.Z_PK = v.ZCUSTOMPROPERTY",
-    ["id"]
-  ),
-  remoteLocations: definition(
-    "One row per remote location record in the AddressBook table ZABCDREMOTELOCATION, on any record. Primary key id. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export.",
-    explained(
-      {
-        id: [id3, "l.ZUNIQUEID"],
-        ...attributes("ZABCDREMOTELOCATION", "l", {
-          record: "recordId:ZOWNER",
-          text: "label url",
-          boolean: "isPrimary isPrivate",
-          integer: "orderingIndex"
-        })
-      },
-      {
-        id: "Remote location identifier, AddressBook ZABCDREMOTELOCATION.ZUNIQUEID; the primary key.",
-        recordId: "Owning record: ZABCDREMOTELOCATION.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export. NULL when unset or no record matches."
-      }
-    ),
-    "ZABCDREMOTELOCATION l",
-    ["id"]
-  ),
+  customPropertyValues: definition("One row per custom property value in the AddressBook table ZABCDCUSTOMPROPERTYVALUE, on any record, with its property definition from ZABCDCUSTOMPROPERTY. Primary key id. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export. propertyName, recordType and valueType are NULL when the value has no definition record. Which of stringValue, numberValue, dateValue and dataValue holds the value is not verified against valueType.", explained({
+    id: [id3, "v.ZUNIQUEID"],
+    ...attributes("ZABCDCUSTOMPROPERTY", "p", {
+      text: "propertyName recordType",
+      integer: "valueType"
+    }),
+    ...attributes("ZABCDCUSTOMPROPERTYVALUE", "v", {
+      record: "recordId:ZOWNER",
+      text: "label stringValue",
+      boolean: "isPrimary isPrivate",
+      integer: "orderingIndex iOSLegacyIdentifier dateValueYear",
+      number: "numberValue",
+      timestamp: "dateValue",
+      data: "dataValue"
+    })
+  }, {
+    id: "Custom property value identifier, AddressBook ZABCDCUSTOMPROPERTYVALUE.ZUNIQUEID; the primary key.",
+    propertyName: `Property name as stored in AddressBook ZABCDCUSTOMPROPERTY.ZPROPERTYNAME, the definition ZABCDCUSTOMPROPERTYVALUE.ZCUSTOMPROPERTY references; NULL when the store holds no value or no definition record matches. ${unverified}`,
+    recordType: `AddressBook ZABCDCUSTOMPROPERTY.ZRECORDTYPE of the referenced definition, as stored; NULL when the store holds no value or no definition record matches. ${unverified}`,
+    valueType: `AddressBook ZABCDCUSTOMPROPERTY.ZVALUETYPE of the referenced definition, as stored; NULL when the store holds no value or no definition record matches. ${unverified}`,
+    recordId: "Owning record: ZABCDCUSTOMPROPERTYVALUE.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export. NULL when unset or no record matches."
+  }), "ZABCDCUSTOMPROPERTYVALUE v LEFT JOIN ZABCDCUSTOMPROPERTY p ON p.Z_PK = v.ZCUSTOMPROPERTY", ["id"]),
+  remoteLocations: definition("One row per remote location record in the AddressBook table ZABCDREMOTELOCATION, on any record. Primary key id. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export.", explained({
+    id: [id3, "l.ZUNIQUEID"],
+    ...attributes("ZABCDREMOTELOCATION", "l", {
+      record: "recordId:ZOWNER",
+      text: "label url",
+      boolean: "isPrimary isPrivate",
+      integer: "orderingIndex"
+    })
+  }, {
+    id: "Remote location identifier, AddressBook ZABCDREMOTELOCATION.ZUNIQUEID; the primary key.",
+    recordId: "Owning record: ZABCDREMOTELOCATION.ZOWNER resolved to that record's ZUNIQUEID. Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export. NULL when unset or no record matches."
+  }), "ZABCDREMOTELOCATION l", ["id"]),
   // vCard lines Contacts kept without understanding them. They have no
   // identifier, so the line itself is part of the key.
-  unknownProperties: definition(
-    "One row per distinct vCard line that Contacts kept without interpreting it, from the AddressBook table ZABCDUNKNOWNPROPERTY. The native rows have no identifier, so the primary key is (recordId, propertyName, originalLine); the same line stored twice on one record is one row. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export.",
-    explained(
-      {
-        recordId: [id3, "r.ZUNIQUEID"],
-        propertyName: [text6, "u.ZPROPERTYNAME"],
-        originalLine: [text6, "u.ZORIGINALLINE"]
-      },
-      {
-        recordId: "Owning record identifier (ZABCDRECORD.ZUNIQUEID of ZABCDUNKNOWNPROPERTY.ZOWNER). Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export.",
-        propertyName: "vCard property name as stored in AddressBook ZABCDUNKNOWNPROPERTY.ZPROPERTYNAME.",
-        originalLine: "The original vCard line from AddressBook ZABCDUNKNOWNPROPERTY.ZORIGINALLINE, which stores bytes: exported as Base64 of those bytes, so decoding it recovers the exact line, unless those bytes form a binary property list, which loads as JSON instead. Text the store holds as text passes through unchanged."
-      }
-    ),
-    "ZABCDUNKNOWNPROPERTY u JOIN ZABCDRECORD r ON r.Z_PK = u.ZOWNER",
-    ["recordId", "propertyName", "originalLine"],
-    { distinct: true }
-  ),
+  unknownProperties: definition("One row per distinct vCard line that Contacts kept without interpreting it, from the AddressBook table ZABCDUNKNOWNPROPERTY. The native rows have no identifier, so the primary key is (recordId, propertyName, originalLine); the same line stored twice on one record is one row. recordId refers to contacts.id, groups.id or containers.id within this source, or to a record kind this source does not export.", explained({
+    recordId: [id3, "r.ZUNIQUEID"],
+    propertyName: [text6, "u.ZPROPERTYNAME"],
+    originalLine: [text6, "u.ZORIGINALLINE"]
+  }, {
+    recordId: "Owning record identifier (ZABCDRECORD.ZUNIQUEID of ZABCDUNKNOWNPROPERTY.ZOWNER). Join to contacts.id, groups.id or containers.id within this source; it can name a record kind this source does not export.",
+    propertyName: "vCard property name as stored in AddressBook ZABCDUNKNOWNPROPERTY.ZPROPERTYNAME.",
+    originalLine: "The original vCard line from AddressBook ZABCDUNKNOWNPROPERTY.ZORIGINALLINE, which stores bytes: exported as Base64 of those bytes, so decoding it recovers the exact line, unless those bytes form a binary property list, which loads as JSON instead. Text the store holds as text passes through unchanged."
+  }), "ZABCDUNKNOWNPROPERTY u JOIN ZABCDRECORD r ON r.Z_PK = u.ZOWNER", ["recordId", "propertyName", "originalLine"], { distinct: true }),
   // The address a distribution list (group) uses for each member.
-  distributionListConfigs: definition(
-    "One row per distribution-list choice in the AddressBook table ZABCDDISTRIBUTIONLISTCONFIG: which of member contactId's email addresses, phone numbers or postal addresses group groupId uses for that member, as set by Contacts' Edit Distribution List (ABGroup setDistributionIdentifier:forProperty:person:, which a live store saves here). A member without a row uses its default value. Primary key (groupId, contactId, propertyName), assumed unique since the store does not enforce it. emailId, phoneId and addressId refer to emailAddresses.id, phoneNumbers.id and postalAddresses.id within this source.",
-    explained(
-      {
-        groupId: [id3, "g.ZUNIQUEID"],
-        contactId: [id3, "c.ZUNIQUEID"],
-        propertyName: [text6, "d.ZPROPERTYNAME"],
-        emailId: uniqueIdOf("ZABCDEMAILADDRESS", "d.ZEMAIL"),
-        phoneId: uniqueIdOf("ZABCDPHONENUMBER", "d.ZPHONE"),
-        addressId: uniqueIdOf("ZABCDPOSTALADDRESS", "d.ZADDRESS")
-      },
-      {
-        groupId: "Group identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDISTRIBUTIONLISTCONFIG.ZGROUP); refers to groups.id within this source.",
-        contactId: "Member contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDISTRIBUTIONLISTCONFIG.ZCONTACT); refers to contacts.id within this source.",
-        propertyName: "The contact property the choice is for, as stored in AddressBook ZABCDDISTRIBUTIONLISTCONFIG.ZPROPERTYNAME (Email for an email address choice, as a live store shows); part of the key. Other values are not verified.",
-        emailId: "Chosen email address: the record ZABCDDISTRIBUTIONLISTCONFIG.ZEMAIL references, resolved to that ZABCDEMAILADDRESS record's ZUNIQUEID. Join to emailAddresses.id within this source. NULL when unset or no record matches.",
-        phoneId: "Chosen phone number: the record ZABCDDISTRIBUTIONLISTCONFIG.ZPHONE references, resolved to that ZABCDPHONENUMBER record's ZUNIQUEID. Join to phoneNumbers.id within this source. NULL when unset or no record matches.",
-        addressId: "Chosen postal address: the record ZABCDDISTRIBUTIONLISTCONFIG.ZADDRESS references, resolved to that ZABCDPOSTALADDRESS record's ZUNIQUEID. Join to postalAddresses.id within this source. NULL when unset or no record matches."
-      }
-    ),
-    "ZABCDDISTRIBUTIONLISTCONFIG d JOIN ZABCDRECORD g ON g.Z_PK = d.ZGROUP JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT",
-    ["groupId", "contactId", "propertyName"]
-  ),
+  distributionListConfigs: definition("One row per distribution-list choice in the AddressBook table ZABCDDISTRIBUTIONLISTCONFIG: which of member contactId's email addresses, phone numbers or postal addresses group groupId uses for that member, as set by Contacts' Edit Distribution List (ABGroup setDistributionIdentifier:forProperty:person:, which a live store saves here). A member without a row uses its default value. Primary key (groupId, contactId, propertyName), assumed unique since the store does not enforce it. emailId, phoneId and addressId refer to emailAddresses.id, phoneNumbers.id and postalAddresses.id within this source.", explained({
+    groupId: [id3, "g.ZUNIQUEID"],
+    contactId: [id3, "c.ZUNIQUEID"],
+    propertyName: [text6, "d.ZPROPERTYNAME"],
+    emailId: uniqueIdOf("ZABCDEMAILADDRESS", "d.ZEMAIL"),
+    phoneId: uniqueIdOf("ZABCDPHONENUMBER", "d.ZPHONE"),
+    addressId: uniqueIdOf("ZABCDPOSTALADDRESS", "d.ZADDRESS")
+  }, {
+    groupId: "Group identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDISTRIBUTIONLISTCONFIG.ZGROUP); refers to groups.id within this source.",
+    contactId: "Member contact identifier (ZABCDRECORD.ZUNIQUEID of ZABCDDISTRIBUTIONLISTCONFIG.ZCONTACT); refers to contacts.id within this source.",
+    propertyName: "The contact property the choice is for, as stored in AddressBook ZABCDDISTRIBUTIONLISTCONFIG.ZPROPERTYNAME (Email for an email address choice, as a live store shows); part of the key. Other values are not verified.",
+    emailId: "Chosen email address: the record ZABCDDISTRIBUTIONLISTCONFIG.ZEMAIL references, resolved to that ZABCDEMAILADDRESS record's ZUNIQUEID. Join to emailAddresses.id within this source. NULL when unset or no record matches.",
+    phoneId: "Chosen phone number: the record ZABCDDISTRIBUTIONLISTCONFIG.ZPHONE references, resolved to that ZABCDPHONENUMBER record's ZUNIQUEID. Join to phoneNumbers.id within this source. NULL when unset or no record matches.",
+    addressId: "Chosen postal address: the record ZABCDDISTRIBUTIONLISTCONFIG.ZADDRESS references, resolved to that ZABCDPOSTALADDRESS record's ZUNIQUEID. Join to postalAddresses.id within this source. NULL when unset or no record matches."
+  }), "ZABCDDISTRIBUTIONLISTCONFIG d JOIN ZABCDRECORD g ON g.Z_PK = d.ZGROUP JOIN ZABCDRECORD c ON c.Z_PK = d.ZCONTACT", ["groupId", "contactId", "propertyName"]),
   // A contact's photo and thumbnail, each inline or in _EXTERNAL_DATA.
   images: {
     description: "One row per stored contact image, from AddressBook ZABCDRECORD.ZIMAGEDATA (kind image) and ZTHUMBNAILIMAGEDATA (kind thumbnail): at most two rows per contact. Primary key (contactId, kind); contactId refers to contacts.id. byteLength and sha256 are computed from the bytes when extracted; a stored external file that cannot be read fails the extraction instead of producing a row.",
@@ -70215,30 +69820,26 @@ requires("ZABCDRECORD", "ZIMAGEDATA ZTHUMBNAILIMAGEDATA");
 requires("ZABCDUNKNOWNPROPERTY", "ZPROPERTYNAME ZORIGINALLINE");
 requires("ZABCDDISTRIBUTIONLISTCONFIG", "ZPROPERTYNAME");
 var requiredSchema = {
-  columns: Object.fromEntries(
-    [...required2].map(([table2, columns3]) => [table2, [...columns3]])
-  ),
+  columns: Object.fromEntries([...required2].map(([table2, columns3]) => [table2, [...columns3]])),
   entities: [...requiredEntities]
 };
-var streams = Object.fromEntries(
-  Object.entries(definitions).map(([name, definition3]) => [
+var streams = Object.fromEntries(Object.entries(definitions).map(([name, definition3]) => [
+  name,
+  new Stream({
     name,
-    new Stream({
-      name,
-      jsonSchema: {
-        type: "object",
-        description: `${definition3.description} ${localStores}`,
-        properties: definition3.properties,
-        required: Object.keys(definition3.properties)
-      },
-      primaryKey: [...definition3.primaryKey],
-      supportedSyncModes: ["full_refresh", "incremental"],
-      sourceDefinedCursor: true,
-      emitsDeletes: true,
-      ..."files" in definition3 && { supportsFileTransfer: true }
-    })
-  ])
-);
+    jsonSchema: {
+      type: "object",
+      description: `${definition3.description} ${localStores}`,
+      properties: definition3.properties,
+      required: Object.keys(definition3.properties)
+    },
+    primaryKey: [...definition3.primaryKey],
+    supportedSyncModes: ["full_refresh", "incremental"],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+    ..."files" in definition3 && { supportsFileTransfer: true }
+  })
+]));
 function recordFrom(name, row) {
   const record3 = {};
   for (const [field, schema] of Object.entries(definitions[name].properties)) {
@@ -70248,27 +69849,21 @@ function recordFrom(name, row) {
   return record3;
 }
 
-// apps/apple/src/sources/apple-contacts/apple-contacts-source.ts
+// apps/apple/connectors/dist/sources/apple-contacts/apple-contacts-source.js
 var catalog3 = new Catalog(Object.values(streams));
 var imageKey = (contactId, kind) => JSON.stringify([contactId, kind]);
 async function sha256(data) {
   const hash2 = createHash6("sha256");
-  if (data.storage === "inline") hash2.update(data.bytes);
+  if (data.storage === "inline")
+    hash2.update(data.bytes);
   else
-    for await (const chunk of createReadStream2(data.path)) hash2.update(chunk);
+    for await (const chunk of createReadStream2(data.path))
+      hash2.update(chunk);
   return hash2.digest("hex");
 }
+var pollIntervalMs2 = 1e3;
 var AppleContactsSource = class extends Source {
-  constructor(directory = addressBookDirectory, pollIntervalMs = 1e3, scope = {}) {
-    super();
-    this.directory = directory;
-    this.pollIntervalMs = pollIntervalMs;
-    this.scope = scope;
-    this.identity = `apple-contacts:${directory}`;
-    Object.freeze(this);
-  }
   directory;
-  pollIntervalMs;
   scope;
   identity;
   catalog = catalog3;
@@ -70296,33 +69891,40 @@ var AppleContactsSource = class extends Source {
   unknownProperties = streams.unknownProperties;
   distributionListConfigs = streams.distributionListConfigs;
   images = streams.images;
+  constructor(directory = addressBookDirectory, scope = {}) {
+    super();
+    this.directory = directory;
+    this.scope = scope;
+    this.identity = `apple-contacts:${directory}`;
+    Object.freeze(this);
+  }
   open() {
     return AddressBook.open(this.directory, requiredSchema);
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
-  async *observe({
-    streams: streams4,
-    signal
-  }) {
+  async *observe({ streams: streams4, signal }) {
     var _stack = [];
     try {
-      if (signal.aborted) return;
+      if (signal.aborted)
+        return;
       const version3 = __using(_stack, new AddressBookVersion(this.directory));
       let seen = version3.current;
       yield streams4;
       try {
-        for await (const _2 of setInterval2(this.pollIntervalMs, void 0, {
+        for await (const _2 of setInterval2(pollIntervalMs2, void 0, {
           signal
         })) {
           const current = version3.current;
-          if (current === seen) continue;
+          if (current === seen)
+            continue;
           seen = current;
           yield streams4;
         }
       } catch (error62) {
-        if (!(error62 instanceof Error && error62.name === "AbortError")) throw error62;
+        if (!(error62 instanceof Error && error62.name === "AbortError"))
+          throw error62;
       }
     } catch (_) {
       var _error = _, _hasError = true;
@@ -70339,13 +69941,12 @@ var AppleContactsSource = class extends Source {
       const rows = [];
       for (const store of book.stores) {
         const accepts = contactSelection(store, this.scope);
-        rows.push(
-          ...name === "images" ? await this.#images(store, files, accepts) : store.all(definitions[name].sql).filter((row) => accepts(name, row)).map((row) => {
-            const record3 = recordFrom(name, row);
-            if (name === "containers") record3.source = store.source;
-            return record3;
-          })
-        );
+        rows.push(...name === "images" ? await this.#images(store, files, accepts) : store.all(definitions[name].sql).filter((row) => accepts(name, row)).map((row) => {
+          const record3 = recordFrom(name, row);
+          if (name === "containers")
+            record3.source = store.source;
+          return record3;
+        }));
       }
       const records = validateRecords(stream, rows, "Contacts");
       const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state) : records.map((data) => ({ stream: stream.name, data }));
@@ -70353,18 +69954,14 @@ var AppleContactsSource = class extends Source {
         yield* messages;
         return;
       }
-      const staging = __using(_stack, await mkdtempDisposable4(
-        join13(tmpdir4(), "elt-contacts-")
-      ), true);
+      const staging = __using(_stack, await mkdtempDisposable4(join13(tmpdir4(), "elt-contacts-")), true);
       let staged = 0;
       for await (const message4 of messages) {
         if ("type" in message4) {
           yield message4;
           continue;
         }
-        const data = files.get(
-          imageKey(message4.data.contactId, message4.data.kind)
-        );
+        const data = files.get(imageKey(message4.data.contactId, message4.data.kind));
         if (data === void 0)
           throw new TypeError("Contacts image record lost its stored data");
         if (data.storage === "external") {
@@ -70388,7 +69985,8 @@ var AppleContactsSource = class extends Source {
     for (const row of store.all(definitions.images.sql).filter((row2) => accepts("images", row2)))
       for (const kind of ["image", "thumbnail"]) {
         const value = row[kind];
-        if (!(value instanceof Uint8Array)) continue;
+        if (!(value instanceof Uint8Array))
+          continue;
         const data = store.storedData(value);
         files.set(imageKey(row.contactId, kind), data);
         records.push({
@@ -70404,26 +70002,24 @@ var AppleContactsSource = class extends Source {
   }
 };
 function contactSelection(store, scope) {
-  if (scope.collectionIds === void 0) return () => true;
-  const containers = new Set(
-    store.all(definitions.containers.sql).filter((row) => selected(scope.collectionIds, row.id)).map((row) => row.id)
-  );
-  const contacts = new Set(
-    store.all(definitions.contacts.sql).filter((row) => containers.has(row.containerId)).map((row) => row.id)
-  );
-  const groups = new Set(
-    store.all(definitions.groups.sql).filter((row) => containers.has(row.containerId)).map((row) => row.id)
-  );
+  if (scope.collectionIds === void 0)
+    return () => true;
+  const containers = new Set(store.all(definitions.containers.sql).filter((row) => selected(scope.collectionIds, row.id)).map((row) => row.id));
+  const contacts = new Set(store.all(definitions.contacts.sql).filter((row) => containers.has(row.containerId)).map((row) => row.id));
+  const groups = new Set(store.all(definitions.groups.sql).filter((row) => containers.has(row.containerId)).map((row) => row.id));
   const records = /* @__PURE__ */ new Set([...containers, ...contacts, ...groups]);
   return (name, row) => {
-    if (name === "containers") return containers.has(row.id);
-    if (name === "contacts") return contacts.has(row.id);
-    if (name === "groups") return groups.has(row.id);
+    if (name === "containers")
+      return containers.has(row.id);
+    if (name === "contacts")
+      return contacts.has(row.id);
+    if (name === "groups")
+      return groups.has(row.id);
     return (!("contactId" in row) || contacts.has(row.contactId)) && (!("groupId" in row) || groups.has(row.groupId)) && (!("parentGroupId" in row) || groups.has(row.parentGroupId)) && (!("childGroupId" in row) || groups.has(row.childGroupId)) && (!("recordId" in row) || records.has(row.recordId));
   };
 }
 
-// apps/apple/src/sources/apple-mail/apple-mail-source.ts
+// apps/apple/connectors/dist/sources/apple-mail/apple-mail-source.js
 import { createHash as createHash8 } from "node:crypto";
 import { watch } from "node:fs";
 import { copyFile as copyFile2, rm as rm5 } from "node:fs/promises";
@@ -70431,7 +70027,7 @@ import { extname as extname4, join as join15, relative as relative2 } from "node
 import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 import { setInterval as setInterval3 } from "node:timers/promises";
 
-// apps/apple/src/platform/macos/mail-mime.ts
+// apps/apple/connectors/dist/platform/macos/mail-mime.js
 var import_mailsplit = __toESM(require_mailsplit(), 1);
 var import_libmime = __toESM(require_libmime(), 1);
 import { createHash as createHash7 } from "node:crypto";
@@ -70454,13 +70050,9 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
     const handle2 = __using(_stack, await open7(file2.path, "r"), true);
     const prefix = Buffer.alloc(64);
     const { bytesRead } = await handle2.read(prefix, 0, prefix.length, 0);
-    const line = /^(\d+)[ \t]*\r?\n/.exec(
-      prefix.subarray(0, bytesRead).toString("ascii")
-    );
+    const line = /^(\d+)[ \t]*\r?\n/.exec(prefix.subarray(0, bytesRead).toString("ascii"));
     if (line === null)
-      throw new MailSchemaError(
-        `Invalid EMLX byte count for message ${messageId}`
-      );
+      throw new MailSchemaError(`Invalid EMLX byte count for message ${messageId}`);
     const length = Number(line[1]);
     const start = Buffer.byteLength(line[0]);
     if (!Number.isSafeInteger(length) || length < 1 || start + length > file2.size)
@@ -70468,24 +70060,23 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
     const headers = [];
     const parts = [];
     const splitter = new import_mailsplit.Splitter({ ignoreEmbedded: true });
-    const input2 = pipeline(
-      handle2.createReadStream({
-        start,
-        end: start + length - 1,
-        autoClose: false
-      }),
-      splitter
-    );
+    const input2 = pipeline(handle2.createReadStream({
+      start,
+      end: start + length - 1,
+      autoClose: false
+    }), splitter);
     input2.catch(() => {
     });
     let active = null;
     const finish = async () => {
-      if (active === null) return;
+      if (active === null)
+        return;
       const { decoder: decoder2, finished, part, hash: hash2, textDecoder } = active;
       active = null;
       decoder2.end();
       await finished;
-      if (textDecoder !== null) part.text += textDecoder.decode();
+      if (textDecoder !== null)
+        part.text += textDecoder.decode();
       const record3 = part.record;
       if (record3.decodedBytes === 0 && record3.declaredBytes !== null && record3.declaredBytes > 0) {
         const diskId = record3.partId;
@@ -70493,21 +70084,19 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
         if (candidates === void 0) {
           record3.availableLocally = false;
           record3.decodedBytes = null;
-          if (part.path !== null) await rm4(part.path);
+          if (part.path !== null)
+            await rm4(part.path);
           part.path = null;
           part.text = null;
           return;
         }
-        const matches = candidates.length === 1 ? candidates : candidates.filter(
-          (candidate) => basename2(candidate.path) === record3.filename
-        );
+        const matches = candidates.length === 1 ? candidates : candidates.filter((candidate) => basename2(candidate.path) === record3.filename);
         if (matches.length !== 1)
-          throw new MailSchemaError(
-            `Ambiguous detached Mail attachment ${messageId}:${diskId}`
-          );
+          throw new MailSchemaError(`Ambiguous detached Mail attachment ${messageId}:${diskId}`);
         const original = matches[0];
         await assertMailFile(original);
-        if (part.path !== null) await copyFile(original.path, part.path);
+        if (part.path !== null)
+          await copyFile(original.path, part.path);
         if (textDecoder !== null)
           part.text = await mailPartText(original.path, textDecoder);
         await assertMailFile(original);
@@ -70527,26 +70116,21 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
           const id12 = partId(node2);
           if (readHeaders)
             for (const [position, header] of node2.headers.getList().entries()) {
-              const decoded = import_libmime.default.decodeHeader(
-                Buffer.from(header.line, "latin1").toString("utf8")
-              );
+              const decoded = import_libmime.default.decodeHeader(Buffer.from(header.line, "latin1").toString("utf8"));
               headers.push({
                 messageId,
                 partId: id12,
                 position,
                 name: header.key,
                 value: import_libmime.default.decodeWords(decoded.value),
-                rawLineBase64: Buffer.from(header.line, "latin1").toString(
-                  "base64"
-                )
+                rawLineBase64: Buffer.from(header.line, "latin1").toString("base64")
               });
             }
-          if (readHeaders) continue;
+          if (readHeaders)
+            continue;
           const appleLength = node2.headers.getFirst("X-Apple-Content-Length");
           if (appleLength !== "" && (!/^\d+$/.test(appleLength) || !Number.isSafeInteger(Number(appleLength))))
-            throw new MailSchemaError(
-              `Invalid detached MIME size in message ${messageId}`
-            );
+            throw new MailSchemaError(`Invalid detached MIME size in message ${messageId}`);
           const contentId = node2.headers.getFirst("Content-ID");
           const record3 = {
             messageId,
@@ -70567,19 +70151,16 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
           };
           const part = { record: record3, path: null, text: null };
           parts.push(part);
-          if (node2.multipart !== false || !decode3(record3)) continue;
+          if (node2.multipart !== false || !decode3(record3))
+            continue;
           const extension = node2.filename === false ? node2.contentType === "text/html" ? ".html" : node2.contentType !== false && node2.contentType.startsWith("text/") ? ".txt" : "" : extname3(node2.filename);
           if (stageFiles)
-            part.path = join14(
-              store.scratch.path,
-              `${messageId}-${id12}${extension}`
-            );
+            part.path = join14(store.scratch.path, `${messageId}-${id12}${extension}`);
           const decoder2 = node2.getDecoder();
           const hash2 = createHash7("sha256");
-          const textDecoder = !stageFiles && record3.contentType !== null && record3.contentType.startsWith("text/") ? new TextDecoder(
-            record3.charset === null ? void 0 : record3.charset
-          ) : null;
-          if (textDecoder !== null) part.text = "";
+          const textDecoder = !stageFiles && record3.contentType !== null && record3.contentType.startsWith("text/") ? new TextDecoder(record3.charset === null ? void 0 : record3.charset) : null;
+          if (textDecoder !== null)
+            part.text = "";
           record3.decodedBytes = 0;
           decoder2.on("data", (bytes) => {
             hash2.update(bytes);
@@ -70601,14 +70182,14 @@ async function readMailMime(store, messageId, file2, readHeaders, stageFiles, de
       return { headers, parts };
     } catch (error62) {
       splitter.destroy(error62);
-      if (active !== null) active.decoder.destroy(error62);
+      if (active !== null)
+        active.decoder.destroy(error62);
       await input2.catch(() => {
       });
-      if (active !== null) await active.finished.catch(() => {
-      });
-      await Promise.allSettled(
-        parts.flatMap((part) => part.path === null ? [] : [rm4(part.path)])
-      );
+      if (active !== null)
+        await active.finished.catch(() => {
+        });
+      await Promise.allSettled(parts.flatMap((part) => part.path === null ? [] : [rm4(part.path)]));
       throw error62;
     }
   } catch (_) {
@@ -70625,23 +70206,19 @@ async function mailPartText(path, decoder2) {
   return text16 + decoder2.decode();
 }
 
-// apps/apple/src/platform/macos/osa.ts
+// apps/apple/connectors/dist/platform/macos/osa.js
 import { execFile as execFile3 } from "node:child_process";
 import { promisify as promisify3 } from "node:util";
 var execute2 = promisify3(execFile3);
 var OSA = class {
   async execute(script) {
-    const { stdout } = await execute2(
-      "/usr/bin/osascript",
-      ["-l", "JavaScript", "-e", script],
-      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 12e4 }
-    );
+    const { stdout } = await execute2("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 12e4 });
     return stdout;
   }
 };
 var osa_default = new OSA();
 
-// apps/apple/src/sources/apple-mail/mail-tables.ts
+// apps/apple/connectors/dist/sources/apple-mail/mail-tables.js
 var rawDates = /* @__PURE__ */ new Set([
   "due_by",
   "end_date",
@@ -70654,10 +70231,7 @@ var rawDates = /* @__PURE__ */ new Set([
   "start_date"
 ]);
 var rawDate = (column, kind) => kind === "number" && rawDates.has(column);
-var fieldName = (column, kind) => (column === "ROWID" ? "id" : column.replace(
-  /_([a-z])/g,
-  (_, letter) => letter.toUpperCase()
-)) + (kind === "base64" ? "Base64" : rawDate(column, kind) ? "Raw" : "");
+var fieldName = (column, kind) => (column === "ROWID" ? "id" : column.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())) + (kind === "base64" ? "Base64" : rawDate(column, kind) ? "Raw" : "");
 var undocumented = "Meaning not documented by Apple.";
 function provenance2(name, column, kind, key) {
   const value = column === "ROWID" ? "the local row identifier, loaded as decimal text" : {
@@ -70685,7 +70259,8 @@ function table(name, description, keys, columns3, meanings) {
     };
     const expression = kind === "id" ? `CAST("${column}" AS TEXT)` : kind === "time" ? `strftime('%Y-%m-%dT%H:%M:%fZ', "${column}", 'unixepoch')` : `"${column}"`;
     select4.push(`${expression} AS "${field}"`);
-    if (kind === "base64") blobs.push(field);
+    if (kind === "base64")
+      blobs.push(field);
   }
   return {
     name,
@@ -70698,453 +70273,279 @@ function table(name, description, keys, columns3, meanings) {
   };
 }
 var mailTables = {
-  messages: table(
-    "messages",
-    "One record per message row in the local Mail index, across all accounts. Primary key id. Mailbox membership is its own grain: messageMailboxes holds message and mailbox pairs beside messages.mailbox and messages.remoteMailbox. subject, summary and sender hold identifiers that need explicit joins to subjects.id, summaries.id and addresses.id, and recipients are rows of recipients. The index declares no foreign keys for these references; they follow how this source reads the index, and a live store resolved every one. Bodies and headers are in messageParts and messageHeaders; whether the message file is on this Mac is in messageFiles.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      message_id: "id",
-      global_message_id: "id",
-      remote_id: "id",
-      document_id: "base64",
-      sender: "id",
-      subject_prefix: "text",
-      subject: "id",
-      summary: "id",
-      date_sent: "time",
-      date_received: "time",
-      mailbox: "id",
-      remote_mailbox: "id",
-      flags: "number",
-      read: "number",
-      flagged: "number",
-      deleted: "number",
-      size: "number",
-      conversation_id: "id",
-      date_last_viewed: "time",
-      list_id_hash: "id",
-      unsubscribe_type: "number",
-      searchable_message: "id",
-      brand_indicator: "id",
-      display_date: "time",
-      flag_color: "number",
-      color: "text",
-      type: "number",
-      fuzzy_ancestor: "id",
-      automated_conversation: "number",
-      root_status: "number",
-      is_urgent: "number"
-    },
-    {
-      ROWID: "Local message identifier. messageMailboxes.messageId, recipients.message, indexedAttachments.message, serverMessages.message, messageReferences.message, events.messageId, messageFiles.messageId, messageHeaders.messageId, messageParts.messageId and attachments.messageId refer to it within this source.",
-      message_id: "Hash Mail stores for the message's Message-ID, not this stream's id. conversationMessages.messageId and messageGlobalData.messageId hold the same hash within this source. It is not unique in the captured index schema, so a join on it can match several messages rows.",
-      global_message_id: "Refers to messageGlobalData.id within this source; the captured index schema does not make it unique.",
-      sender: "Refers to addresses.id within this source, which holds the address text.",
-      subject: "Refers to subjects.id within this source, which holds the subject text.",
-      summary: "Refers to summaries.id within this source, which holds the summary text.",
-      mailbox: "Refers to mailboxes.id within this source. A message can belong to further mailboxes through messageMailboxes.",
-      remote_mailbox: "Refers to mailboxes.id within this source.",
-      conversation_id: `${undocumented} This source relates messages to conversations through conversationMessages, not this column.`,
-      brand_indicator: "Refers to brandIndicators.id within this source."
-    }
-  ),
-  mailboxes: table(
-    "mailboxes",
-    "One record per mailbox row in the local Mail index, identified by its URL. Primary key id. Messages relate through messageMailboxes (many to many), messages.mailbox and messages.remoteMailbox; server messages through serverMessages.mailbox and serverMessageMailboxes.label. Count columns are passed through as stored, not recomputed from messages.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      url: "text",
-      total_count: "number",
-      unread_count: "number",
-      deleted_count: "number",
-      unseen_count: "number",
-      unread_count_adjusted_for_duplicates: "number",
-      change_identifier: "text",
-      source: "number",
-      alleged_change_identifier: "text"
-    },
-    {
-      ROWID: "Local mailbox identifier. messageMailboxes.mailboxId, messages.mailbox, messages.remoteMailbox, serverMessages.mailbox and serverMessageMailboxes.label refer to it within this source.",
-      url: "Mailbox URL, unique in the captured index schema. Its host matches accounts.id within this source; accounts adds an On My Mac row for each local:// host that Mail scripting does not list."
-    }
-  ),
-  addresses: table(
-    "addresses",
-    "One record per distinct address and comment pair in the local Mail index; the captured index schema keeps each pair once. Primary key id. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to id; addressMetadata matches on the address text instead.",
-    ["ROWID"],
-    { ROWID: "id", address: "text", comment: "text" },
-    {
-      ROWID: "Local address identifier. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to it within this source.",
-      address: "Address text; the captured index schema compares it case-insensitively. addressMetadata.address holds the same text within this source."
-    }
-  ),
-  recipients: table(
-    "recipients",
-    "One record per address in one recipient position of one message. Primary key id. message refers to messages.id and address to addresses.id; the captured index schema keeps (message, type, position) unique and does not enforce message, so rows whose message is gone are kept. A message has many recipients: count messages at message grain (distinct message) after joining.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      message: "id",
-      address: "id",
-      type: "number",
-      position: "number"
-    },
-    {
-      ROWID: "Local recipient row identifier.",
-      message: "Refers to messages.id within this source; not enforced by the index, so it can match no message.",
-      address: "Refers to addresses.id within this source."
-    }
-  ),
-  indexedAttachments: table(
-    "attachments",
-    "One record per attachment Mail records in its index for a message, which can exist before the message file or the attachment file is downloaded. Primary key id. message refers to messages.id; (message, attachmentId) matches (messageId, partId) in attachments and, once the message file is local, in messageParts. This stream carries no bytes or availability; the attachments stream does.",
-    ["ROWID"],
-    { ROWID: "id", message: "id", attachment_id: "text", name: "text" },
-    {
-      ROWID: "Local index attachment row identifier.",
-      message: "Refers to messages.id within this source.",
-      attachment_id: "MIME part number of the attachment, such as 2 or 1.2; equals partId in attachments and messageParts within this source.",
-      name: "Attachment name recorded by the index; attachments.filename uses it when the MIME part is not available locally."
-    }
-  ),
-  messageMailboxes: table(
-    "labels",
-    "One record per message and mailbox membership; a message can belong to several mailboxes. Primary key (messageId, mailboxId). messageId refers to messages.id and mailboxId to mailboxes.id. Joining messages through this stream repeats a message once per mailbox: count at message grain.",
-    ["message_id", "mailbox_id"],
-    { message_id: "id", mailbox_id: "id" },
-    {
-      message_id: "Refers to messages.id within this source (the local id, not the hash in messages.messageId).",
-      mailbox_id: "Refers to mailboxes.id within this source."
-    }
-  ),
-  serverMessages: table(
-    "server_messages",
-    "One record per server message row, kept in a table separate from messages. Primary key id. message refers to messages.id and mailbox to mailboxes.id; (mailbox, remoteId) is unique in the captured index schema. Further mailbox memberships are in serverMessageMailboxes.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      message: "id",
-      mailbox: "id",
-      sequence_identifier: "number",
-      read: "number",
-      deleted: "number",
-      replied: "number",
-      flagged: "number",
-      draft: "number",
-      forwarded: "number",
-      redirected: "number",
-      junk_level_set_by_user: "number",
-      junk_level: "number",
-      flag_color: "number",
-      remote_id: "id"
-    },
-    {
-      ROWID: "Local server message identifier; serverMessageMailboxes.serverMessage refers to it within this source.",
-      message: "Refers to messages.id within this source; the index sets it to NULL when that message row is deleted.",
-      mailbox: "Refers to mailboxes.id within this source.",
-      remote_id: `${undocumented} Unique together with mailbox in the captured index schema.`
-    }
-  ),
-  serverMessageMailboxes: table(
-    "server_labels",
-    "One record per server message and mailbox membership. Primary key (serverMessage, label). serverMessage refers to serverMessages.id and label to mailboxes.id. Joining through this stream repeats a server message once per mailbox: count at server message grain.",
-    ["server_message", "label"],
-    { server_message: "id", label: "id" },
-    {
-      server_message: "Refers to serverMessages.id within this source.",
-      label: "Refers to mailboxes.id within this source."
-    }
-  ),
-  conversations: table(
-    "conversations",
-    "One record per conversation row in the local Mail index. Primary key conversationId. Messages belong to conversations through conversationMessages.",
-    ["conversation_id"],
-    { conversation_id: "id", flags: "number", sync_key: "text" },
-    {
-      conversation_id: "Local conversation identifier; conversationMessages.conversationId refers to it within this source."
-    }
-  ),
-  conversationMessages: table(
-    "conversation_id_message_id",
-    "One record per conversation and message membership. Primary key (conversationId, messageId). conversationId refers to conversations.conversationId; messageId is the Message-ID hash in messages.messageId, not messages.id. That hash is not unique in messages, so a join can match several messages rows: count at message grain.",
-    ["conversation_id", "message_id"],
-    { conversation_id: "id", message_id: "id", date_sent: "time" },
-    {
-      conversation_id: "Refers to conversations.conversationId within this source.",
-      message_id: "Message-ID hash; matches messages.messageId within this source, not messages.id."
-    }
-  ),
-  messageReferences: table(
-    "message_references",
-    "One record per reference a message row carries. Primary key id. message refers to messages.id; reference is a Message-ID hash in the same space as messages.messageId and can match no messages row.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      message: "id",
-      reference: "id",
-      is_originator: "number"
-    },
-    {
-      ROWID: "Local message reference row identifier.",
-      message: "Refers to messages.id within this source.",
-      reference: "Message-ID hash in the same space as messages.messageId within this source; not enforced by the index, so it can match no messages row."
-    }
-  ),
-  messageGlobalData: table(
-    "message_global_data",
-    "One record per message global data row in the local Mail index. Primary key id. messages.globalMessageId and messageRichLinks.globalMessageId refer to id; messageId holds the Message-ID hash of messages.messageId; generatedSummary refers to generatedSummaries.id. Raw-suffixed numbers keep their stored values because their date epoch is unverified.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      message_id: "id",
-      follow_up_start_date: "number",
-      follow_up_end_date: "number",
-      follow_up_jsonstringformodelevaluationforsuggestions: "text",
-      due_by: "number",
-      read_later_date: "number",
-      send_later_date: "number",
-      validation_state: "number",
-      model_category: "number",
-      model_subcategory: "number",
-      category_model_version: "number",
-      category_is_temporary: "number",
-      model_analytics: "text",
-      model_high_impact: "number",
-      generated_summary: "id",
-      urgent: "number",
-      message_id_header: "text"
-    },
-    {
-      ROWID: "Local identifier; messages.globalMessageId and messageRichLinks.globalMessageId refer to it within this source.",
-      message_id: "Message-ID hash, the same value as messages.messageId within this source; unique in the captured index schema.",
-      generated_summary: "Refers to generatedSummaries.id within this source."
-    }
-  ),
-  subjects: table(
-    "subjects",
-    "One record per distinct subject text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.subject refers to id: join from messages to read a message's subject.",
-    ["ROWID"],
-    { ROWID: "id", subject: "text" },
-    {
-      ROWID: "Local subject identifier; messages.subject refers to it within this source.",
-      subject: "Subject text Mail stores for its messages, passed through as collected."
-    }
-  ),
-  summaries: table(
-    "summaries",
-    "One record per distinct summary text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.summary refers to id: join from messages to read a message's summary.",
-    ["ROWID"],
-    { ROWID: "id", summary: "text" },
-    {
-      ROWID: "Local summary identifier; messages.summary refers to it within this source.",
-      summary: "Summary text Mail already stores, passed through as collected; this connector generates no summaries."
-    }
-  ),
-  generatedSummaries: table(
-    "generated_summaries",
-    "One record per generated summary row in the local Mail index. Primary key id. messageGlobalData.generatedSummary refers to id. The summary is a binary payload exported as Base64 without decoding.",
-    ["ROWID"],
-    { ROWID: "id", summary: "base64", status: "number" },
-    {
-      ROWID: "Local generated summary identifier; messageGlobalData.generatedSummary refers to it within this source.",
-      summary: `${undocumented} Mail's stored payload; this connector does not decode it.`
-    }
-  ),
-  messageMetadata: table(
-    "message_metadata",
-    "One record per message metadata row in the local Mail index. Primary key messageId. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream. jsonValues is native JSON text passed through as data.",
-    ["message_id"],
-    { message_id: "id", timestamp: "number", json_values: "text" },
-    {
-      message_id: `${undocumented} Not proven to refer to messages.id or messages.messageId, so no join is stated.`,
-      json_values: `${undocumented} Native JSON text passed through without interpretation.`
-    }
-  ),
-  dataDetectionResults: table(
-    "data_detection_results",
-    "One record per detection result row in the local Mail index: a category and value. Primary key id. (globalMessageId, category, value) is unique in the captured index schema. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      global_message_id: "id",
-      category: "text",
-      value: "text"
-    },
-    {
-      ROWID: "Local detection result row identifier.",
-      global_message_id: `${undocumented} Not proven to refer to messageGlobalData.id, so no join is stated.`
-    }
-  ),
-  richLinks: table(
-    "rich_links",
-    "One record per rich link row in the local Mail index. Primary key id. messageRichLinks.richLink refers to id; hash is unique in the captured index schema.",
-    ["ROWID"],
-    { ROWID: "id", title: "text", url: "text", hash: "text" },
-    {
-      ROWID: "Local rich link identifier; messageRichLinks.richLink refers to it within this source.",
-      hash: `${undocumented} Unique in the captured index schema.`
-    }
-  ),
-  messageRichLinks: table(
-    "message_rich_links",
-    "One record per message global data row and rich link pair. Primary key (globalMessageId, richLink). globalMessageId refers to messageGlobalData.id, reached from messages through messages.globalMessageId; richLink refers to richLinks.id. A message can have several links: count at message grain.",
-    ["global_message_id", "rich_link"],
-    { global_message_id: "id", rich_link: "id" },
-    {
-      global_message_id: "Refers to messageGlobalData.id within this source.",
-      rich_link: "Refers to richLinks.id within this source."
-    }
-  ),
-  protectedMessageData: table(
-    "protected_message_data",
-    "One record per protected message data row in the local Mail index. Primary key id. data is an opaque native payload passed through as text. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.",
-    ["ROWID"],
-    { ROWID: "id", data: "text" },
-    {
-      ROWID: `${undocumented} Not proven to refer to any other stream, so no join is stated.`,
-      data: `${undocumented} Opaque native payload passed through without interpretation.`
-    }
-  ),
-  brandIndicators: table(
-    "brand_indicators",
-    "One record per brand indicator row in the local Mail index. Primary key id. messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to id; url is unique in the captured index schema. indicator is binary, exported as Base64 without decoding.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      url: "text",
-      indicator: "base64",
-      indicator_hash: "text",
-      hash_algorithm: "text"
-    },
-    {
-      ROWID: "Local brand indicator identifier; messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to it within this source.",
-      url: `${undocumented} Unique in the captured index schema.`
-    }
-  ),
-  brandIndicatorEvidence: table(
-    "brand_indicator_evidence",
-    "One record per brand indicator evidence row in the local Mail index. Primary key id. brandIndicator refers to brandIndicators.id; (brandIndicator, url) is unique in the captured index schema. evidence is binary, exported as Base64 without decoding.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      brand_indicator: "id",
-      url: "text",
-      evidence: "base64",
-      unverified_messages: "text"
-    },
-    {
-      ROWID: "Local brand indicator evidence row identifier.",
-      brand_indicator: "Refers to brandIndicators.id within this source."
-    }
-  ),
-  addressMetadata: table(
-    "address_metadata",
-    "One record per address metadata row in the local Mail index. Primary key id. address holds address text, unique in the captured index schema, and matches addresses.address, not addresses.id.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      address: "text",
-      smime_capabilities: "text",
-      smime_capabilities_date: "number"
-    },
-    {
-      ROWID: "Local address metadata row identifier.",
-      address: "Address text matching addresses.address within this source; the captured index schema compares both case-insensitively."
-    }
-  ),
-  businesses: table(
-    "businesses",
-    "One record per business row in the local Mail index. Primary key id. businessAddresses.business and businessCategories.business refer to id. The captured index schema requires each row to hold either addressComment and domain, or brandId and localizedBrandName, and leaves the other pair NULL.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      address_comment: "text",
-      domain: "text",
-      brand_id: "id",
-      localized_brand_name: "text"
-    },
-    {
-      ROWID: "Local business identifier; businessAddresses.business and businessCategories.business refer to it within this source."
-    }
-  ),
-  businessAddresses: table(
-    "business_addresses",
-    "One record per address assigned to a business. Primary key id. address refers to addresses.id, unique in the captured index schema, and business refers to businesses.id.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      address: "id",
-      business: "id",
-      category: "number",
-      last_modified: "number",
-      last_bcs_sync: "time"
-    },
-    {
-      ROWID: "Local business address row identifier.",
-      address: "Refers to addresses.id within this source; unique in the captured index schema.",
-      business: "Refers to businesses.id within this source."
-    }
-  ),
-  businessCategories: table(
-    "business_categories",
-    "One record per business category row in the local Mail index. Primary key id. business refers to businesses.id and is unique in the captured index schema.",
-    ["ROWID"],
-    { ROWID: "id", business: "id", category: "number" },
-    {
-      ROWID: "Local business category row identifier.",
-      business: "Refers to businesses.id within this source; unique in the captured index schema."
-    }
-  ),
-  senders: table(
-    "senders",
-    "One record per sender row in the local Mail index. Primary key id. senderAddresses.sender refers to id; contactIdentifier is unique in the captured index schema.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      contact_identifier: "text",
-      bucket: "number",
-      user_initiated: "number"
-    },
-    {
-      ROWID: "Local sender identifier; senderAddresses.sender refers to it within this source.",
-      contact_identifier: `${undocumented} Unique in the captured index schema.`
-    }
-  ),
-  senderAddresses: table(
-    "sender_addresses",
-    "One record per address assigned to a sender. Primary key address. address refers to addresses.id and sender to senders.id; each address has at most one sender.",
-    ["address"],
-    { address: "id", sender: "id" },
-    {
-      address: "Refers to addresses.id within this source.",
-      sender: "Refers to senders.id within this source."
-    }
-  ),
-  events: table(
-    "events",
-    "One record per event row the local Mail index stores for a message. Primary key id. messageId refers to messages.id, the local id, not the Message-ID hash. startDateRaw and endDateRaw keep stored numbers because their date epoch is unverified.",
-    ["ROWID"],
-    {
-      ROWID: "id",
-      message_id: "id",
-      start_date: "number",
-      end_date: "number",
-      location: "text",
-      out_of_date: "number",
-      processed: "number",
-      is_all_day: "number",
-      associated_id_string: "text",
-      original_receiving_account: "text",
-      ical_uid: "text",
-      is_response_requested: "number"
-    },
-    {
-      ROWID: "Local event row identifier.",
-      message_id: "Refers to messages.id within this source (the local id, not messages.messageId)."
-    }
-  )
+  messages: table("messages", "One record per message row in the local Mail index, across all accounts. Primary key id. Mailbox membership is its own grain: messageMailboxes holds message and mailbox pairs beside messages.mailbox and messages.remoteMailbox. subject, summary and sender hold identifiers that need explicit joins to subjects.id, summaries.id and addresses.id, and recipients are rows of recipients. The index declares no foreign keys for these references; they follow how this source reads the index, and a live store resolved every one. Bodies and headers are in messageParts and messageHeaders; whether the message file is on this Mac is in messageFiles.", ["ROWID"], {
+    ROWID: "id",
+    message_id: "id",
+    global_message_id: "id",
+    remote_id: "id",
+    document_id: "base64",
+    sender: "id",
+    subject_prefix: "text",
+    subject: "id",
+    summary: "id",
+    date_sent: "time",
+    date_received: "time",
+    mailbox: "id",
+    remote_mailbox: "id",
+    flags: "number",
+    read: "number",
+    flagged: "number",
+    deleted: "number",
+    size: "number",
+    conversation_id: "id",
+    date_last_viewed: "time",
+    list_id_hash: "id",
+    unsubscribe_type: "number",
+    searchable_message: "id",
+    brand_indicator: "id",
+    display_date: "time",
+    flag_color: "number",
+    color: "text",
+    type: "number",
+    fuzzy_ancestor: "id",
+    automated_conversation: "number",
+    root_status: "number",
+    is_urgent: "number"
+  }, {
+    ROWID: "Local message identifier. messageMailboxes.messageId, recipients.message, indexedAttachments.message, serverMessages.message, messageReferences.message, events.messageId, messageFiles.messageId, messageHeaders.messageId, messageParts.messageId and attachments.messageId refer to it within this source.",
+    message_id: "Hash Mail stores for the message's Message-ID, not this stream's id. conversationMessages.messageId and messageGlobalData.messageId hold the same hash within this source. It is not unique in the captured index schema, so a join on it can match several messages rows.",
+    global_message_id: "Refers to messageGlobalData.id within this source; the captured index schema does not make it unique.",
+    sender: "Refers to addresses.id within this source, which holds the address text.",
+    subject: "Refers to subjects.id within this source, which holds the subject text.",
+    summary: "Refers to summaries.id within this source, which holds the summary text.",
+    mailbox: "Refers to mailboxes.id within this source. A message can belong to further mailboxes through messageMailboxes.",
+    remote_mailbox: "Refers to mailboxes.id within this source.",
+    conversation_id: `${undocumented} This source relates messages to conversations through conversationMessages, not this column.`,
+    brand_indicator: "Refers to brandIndicators.id within this source."
+  }),
+  mailboxes: table("mailboxes", "One record per mailbox row in the local Mail index, identified by its URL. Primary key id. Messages relate through messageMailboxes (many to many), messages.mailbox and messages.remoteMailbox; server messages through serverMessages.mailbox and serverMessageMailboxes.label. Count columns are passed through as stored, not recomputed from messages.", ["ROWID"], {
+    ROWID: "id",
+    url: "text",
+    total_count: "number",
+    unread_count: "number",
+    deleted_count: "number",
+    unseen_count: "number",
+    unread_count_adjusted_for_duplicates: "number",
+    change_identifier: "text",
+    source: "number",
+    alleged_change_identifier: "text"
+  }, {
+    ROWID: "Local mailbox identifier. messageMailboxes.mailboxId, messages.mailbox, messages.remoteMailbox, serverMessages.mailbox and serverMessageMailboxes.label refer to it within this source.",
+    url: "Mailbox URL, unique in the captured index schema. Its host matches accounts.id within this source; accounts adds an On My Mac row for each local:// host that Mail scripting does not list."
+  }),
+  addresses: table("addresses", "One record per distinct address and comment pair in the local Mail index; the captured index schema keeps each pair once. Primary key id. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to id; addressMetadata matches on the address text instead.", ["ROWID"], { ROWID: "id", address: "text", comment: "text" }, {
+    ROWID: "Local address identifier. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to it within this source.",
+    address: "Address text; the captured index schema compares it case-insensitively. addressMetadata.address holds the same text within this source."
+  }),
+  recipients: table("recipients", "One record per address in one recipient position of one message. Primary key id. message refers to messages.id and address to addresses.id; the captured index schema keeps (message, type, position) unique and does not enforce message, so rows whose message is gone are kept. A message has many recipients: count messages at message grain (distinct message) after joining.", ["ROWID"], {
+    ROWID: "id",
+    message: "id",
+    address: "id",
+    type: "number",
+    position: "number"
+  }, {
+    ROWID: "Local recipient row identifier.",
+    message: "Refers to messages.id within this source; not enforced by the index, so it can match no message.",
+    address: "Refers to addresses.id within this source."
+  }),
+  indexedAttachments: table("attachments", "One record per attachment Mail records in its index for a message, which can exist before the message file or the attachment file is downloaded. Primary key id. message refers to messages.id; (message, attachmentId) matches (messageId, partId) in attachments and, once the message file is local, in messageParts. This stream carries no bytes or availability; the attachments stream does.", ["ROWID"], { ROWID: "id", message: "id", attachment_id: "text", name: "text" }, {
+    ROWID: "Local index attachment row identifier.",
+    message: "Refers to messages.id within this source.",
+    attachment_id: "MIME part number of the attachment, such as 2 or 1.2; equals partId in attachments and messageParts within this source.",
+    name: "Attachment name recorded by the index; attachments.filename uses it when the MIME part is not available locally."
+  }),
+  messageMailboxes: table("labels", "One record per message and mailbox membership; a message can belong to several mailboxes. Primary key (messageId, mailboxId). messageId refers to messages.id and mailboxId to mailboxes.id. Joining messages through this stream repeats a message once per mailbox: count at message grain.", ["message_id", "mailbox_id"], { message_id: "id", mailbox_id: "id" }, {
+    message_id: "Refers to messages.id within this source (the local id, not the hash in messages.messageId).",
+    mailbox_id: "Refers to mailboxes.id within this source."
+  }),
+  serverMessages: table("server_messages", "One record per server message row, kept in a table separate from messages. Primary key id. message refers to messages.id and mailbox to mailboxes.id; (mailbox, remoteId) is unique in the captured index schema. Further mailbox memberships are in serverMessageMailboxes.", ["ROWID"], {
+    ROWID: "id",
+    message: "id",
+    mailbox: "id",
+    sequence_identifier: "number",
+    read: "number",
+    deleted: "number",
+    replied: "number",
+    flagged: "number",
+    draft: "number",
+    forwarded: "number",
+    redirected: "number",
+    junk_level_set_by_user: "number",
+    junk_level: "number",
+    flag_color: "number",
+    remote_id: "id"
+  }, {
+    ROWID: "Local server message identifier; serverMessageMailboxes.serverMessage refers to it within this source.",
+    message: "Refers to messages.id within this source; the index sets it to NULL when that message row is deleted.",
+    mailbox: "Refers to mailboxes.id within this source.",
+    remote_id: `${undocumented} Unique together with mailbox in the captured index schema.`
+  }),
+  serverMessageMailboxes: table("server_labels", "One record per server message and mailbox membership. Primary key (serverMessage, label). serverMessage refers to serverMessages.id and label to mailboxes.id. Joining through this stream repeats a server message once per mailbox: count at server message grain.", ["server_message", "label"], { server_message: "id", label: "id" }, {
+    server_message: "Refers to serverMessages.id within this source.",
+    label: "Refers to mailboxes.id within this source."
+  }),
+  conversations: table("conversations", "One record per conversation row in the local Mail index. Primary key conversationId. Messages belong to conversations through conversationMessages.", ["conversation_id"], { conversation_id: "id", flags: "number", sync_key: "text" }, {
+    conversation_id: "Local conversation identifier; conversationMessages.conversationId refers to it within this source."
+  }),
+  conversationMessages: table("conversation_id_message_id", "One record per conversation and message membership. Primary key (conversationId, messageId). conversationId refers to conversations.conversationId; messageId is the Message-ID hash in messages.messageId, not messages.id. That hash is not unique in messages, so a join can match several messages rows: count at message grain.", ["conversation_id", "message_id"], { conversation_id: "id", message_id: "id", date_sent: "time" }, {
+    conversation_id: "Refers to conversations.conversationId within this source.",
+    message_id: "Message-ID hash; matches messages.messageId within this source, not messages.id."
+  }),
+  messageReferences: table("message_references", "One record per reference a message row carries. Primary key id. message refers to messages.id; reference is a Message-ID hash in the same space as messages.messageId and can match no messages row.", ["ROWID"], {
+    ROWID: "id",
+    message: "id",
+    reference: "id",
+    is_originator: "number"
+  }, {
+    ROWID: "Local message reference row identifier.",
+    message: "Refers to messages.id within this source.",
+    reference: "Message-ID hash in the same space as messages.messageId within this source; not enforced by the index, so it can match no messages row."
+  }),
+  messageGlobalData: table("message_global_data", "One record per message global data row in the local Mail index. Primary key id. messages.globalMessageId and messageRichLinks.globalMessageId refer to id; messageId holds the Message-ID hash of messages.messageId; generatedSummary refers to generatedSummaries.id. Raw-suffixed numbers keep their stored values because their date epoch is unverified.", ["ROWID"], {
+    ROWID: "id",
+    message_id: "id",
+    follow_up_start_date: "number",
+    follow_up_end_date: "number",
+    follow_up_jsonstringformodelevaluationforsuggestions: "text",
+    due_by: "number",
+    read_later_date: "number",
+    send_later_date: "number",
+    validation_state: "number",
+    model_category: "number",
+    model_subcategory: "number",
+    category_model_version: "number",
+    category_is_temporary: "number",
+    model_analytics: "text",
+    model_high_impact: "number",
+    generated_summary: "id",
+    urgent: "number",
+    message_id_header: "text"
+  }, {
+    ROWID: "Local identifier; messages.globalMessageId and messageRichLinks.globalMessageId refer to it within this source.",
+    message_id: "Message-ID hash, the same value as messages.messageId within this source; unique in the captured index schema.",
+    generated_summary: "Refers to generatedSummaries.id within this source."
+  }),
+  subjects: table("subjects", "One record per distinct subject text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.subject refers to id: join from messages to read a message's subject.", ["ROWID"], { ROWID: "id", subject: "text" }, {
+    ROWID: "Local subject identifier; messages.subject refers to it within this source.",
+    subject: "Subject text Mail stores for its messages, passed through as collected."
+  }),
+  summaries: table("summaries", "One record per distinct summary text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.summary refers to id: join from messages to read a message's summary.", ["ROWID"], { ROWID: "id", summary: "text" }, {
+    ROWID: "Local summary identifier; messages.summary refers to it within this source.",
+    summary: "Summary text Mail already stores, passed through as collected; this connector generates no summaries."
+  }),
+  generatedSummaries: table("generated_summaries", "One record per generated summary row in the local Mail index. Primary key id. messageGlobalData.generatedSummary refers to id. The summary is a binary payload exported as Base64 without decoding.", ["ROWID"], { ROWID: "id", summary: "base64", status: "number" }, {
+    ROWID: "Local generated summary identifier; messageGlobalData.generatedSummary refers to it within this source.",
+    summary: `${undocumented} Mail's stored payload; this connector does not decode it.`
+  }),
+  messageMetadata: table("message_metadata", "One record per message metadata row in the local Mail index. Primary key messageId. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream. jsonValues is native JSON text passed through as data.", ["message_id"], { message_id: "id", timestamp: "number", json_values: "text" }, {
+    message_id: `${undocumented} Not proven to refer to messages.id or messages.messageId, so no join is stated.`,
+    json_values: `${undocumented} Native JSON text passed through without interpretation.`
+  }),
+  dataDetectionResults: table("data_detection_results", "One record per detection result row in the local Mail index: a category and value. Primary key id. (globalMessageId, category, value) is unique in the captured index schema. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.", ["ROWID"], {
+    ROWID: "id",
+    global_message_id: "id",
+    category: "text",
+    value: "text"
+  }, {
+    ROWID: "Local detection result row identifier.",
+    global_message_id: `${undocumented} Not proven to refer to messageGlobalData.id, so no join is stated.`
+  }),
+  richLinks: table("rich_links", "One record per rich link row in the local Mail index. Primary key id. messageRichLinks.richLink refers to id; hash is unique in the captured index schema.", ["ROWID"], { ROWID: "id", title: "text", url: "text", hash: "text" }, {
+    ROWID: "Local rich link identifier; messageRichLinks.richLink refers to it within this source.",
+    hash: `${undocumented} Unique in the captured index schema.`
+  }),
+  messageRichLinks: table("message_rich_links", "One record per message global data row and rich link pair. Primary key (globalMessageId, richLink). globalMessageId refers to messageGlobalData.id, reached from messages through messages.globalMessageId; richLink refers to richLinks.id. A message can have several links: count at message grain.", ["global_message_id", "rich_link"], { global_message_id: "id", rich_link: "id" }, {
+    global_message_id: "Refers to messageGlobalData.id within this source.",
+    rich_link: "Refers to richLinks.id within this source."
+  }),
+  protectedMessageData: table("protected_message_data", "One record per protected message data row in the local Mail index. Primary key id. data is an opaque native payload passed through as text. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.", ["ROWID"], { ROWID: "id", data: "text" }, {
+    ROWID: `${undocumented} Not proven to refer to any other stream, so no join is stated.`,
+    data: `${undocumented} Opaque native payload passed through without interpretation.`
+  }),
+  brandIndicators: table("brand_indicators", "One record per brand indicator row in the local Mail index. Primary key id. messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to id; url is unique in the captured index schema. indicator is binary, exported as Base64 without decoding.", ["ROWID"], {
+    ROWID: "id",
+    url: "text",
+    indicator: "base64",
+    indicator_hash: "text",
+    hash_algorithm: "text"
+  }, {
+    ROWID: "Local brand indicator identifier; messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to it within this source.",
+    url: `${undocumented} Unique in the captured index schema.`
+  }),
+  brandIndicatorEvidence: table("brand_indicator_evidence", "One record per brand indicator evidence row in the local Mail index. Primary key id. brandIndicator refers to brandIndicators.id; (brandIndicator, url) is unique in the captured index schema. evidence is binary, exported as Base64 without decoding.", ["ROWID"], {
+    ROWID: "id",
+    brand_indicator: "id",
+    url: "text",
+    evidence: "base64",
+    unverified_messages: "text"
+  }, {
+    ROWID: "Local brand indicator evidence row identifier.",
+    brand_indicator: "Refers to brandIndicators.id within this source."
+  }),
+  addressMetadata: table("address_metadata", "One record per address metadata row in the local Mail index. Primary key id. address holds address text, unique in the captured index schema, and matches addresses.address, not addresses.id.", ["ROWID"], {
+    ROWID: "id",
+    address: "text",
+    smime_capabilities: "text",
+    smime_capabilities_date: "number"
+  }, {
+    ROWID: "Local address metadata row identifier.",
+    address: "Address text matching addresses.address within this source; the captured index schema compares both case-insensitively."
+  }),
+  businesses: table("businesses", "One record per business row in the local Mail index. Primary key id. businessAddresses.business and businessCategories.business refer to id. The captured index schema requires each row to hold either addressComment and domain, or brandId and localizedBrandName, and leaves the other pair NULL.", ["ROWID"], {
+    ROWID: "id",
+    address_comment: "text",
+    domain: "text",
+    brand_id: "id",
+    localized_brand_name: "text"
+  }, {
+    ROWID: "Local business identifier; businessAddresses.business and businessCategories.business refer to it within this source."
+  }),
+  businessAddresses: table("business_addresses", "One record per address assigned to a business. Primary key id. address refers to addresses.id, unique in the captured index schema, and business refers to businesses.id.", ["ROWID"], {
+    ROWID: "id",
+    address: "id",
+    business: "id",
+    category: "number",
+    last_modified: "number",
+    last_bcs_sync: "time"
+  }, {
+    ROWID: "Local business address row identifier.",
+    address: "Refers to addresses.id within this source; unique in the captured index schema.",
+    business: "Refers to businesses.id within this source."
+  }),
+  businessCategories: table("business_categories", "One record per business category row in the local Mail index. Primary key id. business refers to businesses.id and is unique in the captured index schema.", ["ROWID"], { ROWID: "id", business: "id", category: "number" }, {
+    ROWID: "Local business category row identifier.",
+    business: "Refers to businesses.id within this source; unique in the captured index schema."
+  }),
+  senders: table("senders", "One record per sender row in the local Mail index. Primary key id. senderAddresses.sender refers to id; contactIdentifier is unique in the captured index schema.", ["ROWID"], {
+    ROWID: "id",
+    contact_identifier: "text",
+    bucket: "number",
+    user_initiated: "number"
+  }, {
+    ROWID: "Local sender identifier; senderAddresses.sender refers to it within this source.",
+    contact_identifier: `${undocumented} Unique in the captured index schema.`
+  }),
+  senderAddresses: table("sender_addresses", "One record per address assigned to a sender. Primary key address. address refers to addresses.id and sender to senders.id; each address has at most one sender.", ["address"], { address: "id", sender: "id" }, {
+    address: "Refers to addresses.id within this source.",
+    sender: "Refers to senders.id within this source."
+  }),
+  events: table("events", "One record per event row the local Mail index stores for a message. Primary key id. messageId refers to messages.id, the local id, not the Message-ID hash. startDateRaw and endDateRaw keep stored numbers because their date epoch is unverified.", ["ROWID"], {
+    ROWID: "id",
+    message_id: "id",
+    start_date: "number",
+    end_date: "number",
+    location: "text",
+    out_of_date: "number",
+    processed: "number",
+    is_all_day: "number",
+    associated_id_string: "text",
+    original_receiving_account: "text",
+    ical_uid: "text",
+    is_response_requested: "number"
+  }, {
+    ROWID: "Local event row identifier.",
+    message_id: "Refers to messages.id within this source (the local id, not messages.messageId)."
+  })
 };
 function mailStream(name, description, properties39, primaryKey, files) {
   return new Stream({
@@ -71162,20 +70563,12 @@ function mailStream(name, description, properties39, primaryKey, files) {
     ...files ? { supportsFileTransfer: true } : {}
   });
 }
-var tableStreams = Object.fromEntries(
-  Object.entries(mailTables).map(([name, definition3]) => [
-    name,
-    mailStream(
-      name,
-      definition3.description,
-      definition3.properties,
-      definition3.primaryKey,
-      false
-    )
-  ])
-);
+var tableStreams = Object.fromEntries(Object.entries(mailTables).map(([name, definition3]) => [
+  name,
+  mailStream(name, definition3.description, definition3.properties, definition3.primaryKey, false)
+]));
 
-// apps/apple/src/sources/apple-mail/apple-mail-source.ts
+// apps/apple/connectors/dist/sources/apple-mail/apple-mail-source.js
 var text7 = { type: "string" };
 var nullableText11 = { type: ["string", "null"] };
 var nullableNumber5 = { type: ["number", "null"] };
@@ -71223,209 +70616,111 @@ var fileFields = {
 };
 function described(fields2, descriptions2) {
   const meaning = descriptions2;
-  return Object.fromEntries(
-    Object.entries(fields2).map(([name, field]) => [
-      name,
-      { ...field, description: meaning[name] }
-    ])
-  );
+  return Object.fromEntries(Object.entries(fields2).map(([name, field]) => [
+    name,
+    { ...field, description: meaning[name] }
+  ]));
 }
 var plistProperties = "The property list converted to JSON: data values become Base64 strings, dates ISO 8601 strings and integers beyond 2^53 decimal strings. Kept as data; this source does not interpret its keys.";
 var localMessageId = "Refers to messages.id within this source (the local id, not the Message-ID hash in messages.messageId).";
 var partId2 = "Dotted MIME part number, such as 1 or 1.2. The root of a multipart message is TEXT; a single-part message is 1, as in the index. Equals indexedAttachments.attachmentId for attachments Mail indexes.";
 var sha2562 = "SHA-256 of the bytes as lowercase hexadecimal";
 var streams2 = {
-  accounts: mailStream(
-    "accounts",
-    "One record per Mail account reported by Mail scripting, plus one On My Mac record for each local:// mailbox host that scripting does not list. Primary key id. The host of mailboxes.url matches id. properties is JSON data; no password or authentication property is read.",
-    described(metadata, {
-      id: "Account id returned by Mail scripting, or the host of a local:// mailbox URL for an added On My Mac account. The host of mailboxes.url matches it within this source.",
-      properties: "JSON object of the account properties read through Mail scripting: id, name, type, enabled, emailAddresses, fullName, userName, serverName, port, usesSsl and directory. An added On My Mac account has only type local and name On My Mac. Kept as data without interpretation."
-    }),
-    ["id"],
-    false
-  ),
-  smtpServers: mailStream(
-    "smtpServers",
-    "One record per SMTP server reported by Mail scripting. Primary key id, the server name. No link to accounts is proven, so no join is stated and scoped imports omit this stream.",
-    described(metadata, {
-      id: "Server name returned by Mail scripting.",
-      properties: "JSON object of the server properties read through Mail scripting: name, userName, serverName, port, usesSsl and enabled. No password is read. Kept as data without interpretation."
-    }),
-    ["id"],
-    false
-  ),
+  accounts: mailStream("accounts", "One record per Mail account reported by Mail scripting, plus one On My Mac record for each local:// mailbox host that scripting does not list. Primary key id. The host of mailboxes.url matches id. properties is JSON data; no password or authentication property is read.", described(metadata, {
+    id: "Account id returned by Mail scripting, or the host of a local:// mailbox URL for an added On My Mac account. The host of mailboxes.url matches it within this source.",
+    properties: "JSON object of the account properties read through Mail scripting: id, name, type, enabled, emailAddresses, fullName, userName, serverName, port, usesSsl and directory. An added On My Mac account has only type local and name On My Mac. Kept as data without interpretation."
+  }), ["id"], false),
+  smtpServers: mailStream("smtpServers", "One record per SMTP server reported by Mail scripting. Primary key id, the server name. No link to accounts is proven, so no join is stated and scoped imports omit this stream.", described(metadata, {
+    id: "Server name returned by Mail scripting.",
+    properties: "JSON object of the server properties read through Mail scripting: name, userName, serverName, port, usesSsl and enabled. No password is read. Kept as data without interpretation."
+  }), ["id"], false),
   ...tableStreams,
-  mailboxProperties: mailStream(
-    "mailboxProperties",
-    "One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.",
-    described(
-      { relativePath: text7, properties: text7 },
-      {
-        relativePath: "Path of the Info.plist file relative to the current Mail version directory.",
-        properties: plistProperties
-      }
-    ),
-    ["relativePath"],
-    false
-  ),
-  rules: mailStream(
-    "rules",
-    "One record per Mail rule in MailData/SyncedRules.plist (scope Synced) or MailData/UnsyncedRules.plist (scope Unsynced). Primary key (scope, id). Conditions are ruleConditions rows, joined by (scope, ownerId) to (scope, id). Scoped imports omit this stream.",
-    described(
-      { ...scopedMetadata, enabled: { type: ["boolean", "null"] } },
-      {
-        scope: "Synced for a rule read from MailData/SyncedRules.plist, Unsynced for one read from MailData/UnsyncedRules.plist.",
-        id: "RuleId value of the rule; with scope, the primary key.",
-        properties: `The whole rule dictionary, including its Criteria. ${plistProperties}`,
-        enabled: "Value stored for this RuleId in MailData/RulesActiveState.plist; NULL when that file is absent or has no entry for the rule."
-      }
-    ),
-    ["scope", "id"],
-    false
-  ),
-  ruleConditions: mailStream(
-    "ruleConditions",
-    "One record per entry of a rule's Criteria list, in stored order. Primary key (scope, ownerId, position). Join (scope, ownerId) to rules (scope, id) within this source. A rule without Criteria has no rows. Scoped imports omit this stream.",
-    described(conditionFields, {
-      scope: "Scope of the owning rule, Synced or Unsynced; joins to rules.scope together with ownerId.",
-      ownerId: "RuleId of the owning rule; join (scope, ownerId) to rules (scope, id) within this source.",
-      position: "Zero-based position of the condition in the rule's Criteria list.",
-      properties: `The condition dictionary. ${plistProperties}`
-    }),
-    ["scope", "ownerId", "position"],
-    false
-  ),
-  smartMailboxes: mailStream(
-    "smartMailboxes",
-    "One record per smart mailbox dictionary in MailData/SyncedSmartMailboxes.plist, including those nested under MailboxChildren. Primary key id. parentId refers to the containing smart mailbox. Conditions are smartMailboxConditions rows whose ownerId is id. Scoped imports omit this stream.",
-    described(
-      { ...metadata, parentId: nullableText11 },
-      {
-        id: "MailboxID value of the smart mailbox.",
-        properties: `The whole smart mailbox dictionary, including its MailboxCriteria and nested MailboxChildren. ${plistProperties}`,
-        parentId: "Refers to smartMailboxes.id of the smart mailbox whose MailboxChildren contains this one; NULL at the top level."
-      }
-    ),
-    ["id"],
-    false
-  ),
-  smartMailboxConditions: mailStream(
-    "smartMailboxConditions",
-    "One record per entry of a smart mailbox's MailboxCriteria list, in stored order. Primary key (scope, ownerId, position). ownerId refers to smartMailboxes.id within this source; these conditions do not join to rules. Scoped imports omit this stream.",
-    described(conditionFields, {
-      scope: "Always Synced: only MailData/SyncedSmartMailboxes.plist is read. smartMailboxes has no scope field, so join on ownerId alone.",
-      ownerId: "MailboxID of the owning smart mailbox; refers to smartMailboxes.id within this source.",
-      position: "Zero-based position of the condition in the smart mailbox's MailboxCriteria list.",
-      properties: `The condition dictionary. ${plistProperties}`
-    }),
-    ["scope", "ownerId", "position"],
-    false
-  ),
-  signatures: mailStream(
-    "signatures",
-    "One record per .mailsignature file in the current Mail store. Primary key id. No link to accounts is stated; scoped imports omit this stream.",
-    described(
-      { id: text7, content: text7 },
-      {
-        id: "File name of the .mailsignature file without its extension.",
-        content: "The whole file read as UTF-8 text, including its MIME headers; not parsed."
-      }
-    ),
-    ["id"],
-    false
-  ),
-  configuration: mailStream(
-    "configuration",
-    "One record per property list file under a MailData or Signatures directory of the current Mail store, except files under RemoteContentURLCache or BiomeStream. Primary key relativePath. It includes the rule and smart mailbox files that rules and smartMailboxes also read. Scoped imports omit this stream.",
-    described(
-      { relativePath: text7, properties: text7 },
-      {
-        relativePath: "Path of the property list file relative to the current Mail version directory.",
-        properties: plistProperties
-      }
-    ),
-    ["relativePath"],
-    false
-  ),
-  messageFiles: mailStream(
-    "messageFiles",
-    "One record per messages row, describing its EMLX message file on this Mac. Primary key messageId. The row exists even when no file is present: availableLocally is false and the file fields are NULL. EMLX files that no messages row names are not included. The transferred file is the original EMLX bytes, including Mail's leading byte count line and trailing property list.",
-    described(fileFields, {
-      messageId: localMessageId,
-      relativePath: "Path of <id>.emlx or <id>.partial.emlx relative to the current Mail version directory; NULL when no file is present.",
-      availableLocally: "Whether an EMLX file for this message was present when the run read the store. False does not mean the message was deleted.",
-      partial: "True when the file is named <id>.partial.emlx, false when <id>.emlx; NULL when no file is present. This source does not interpret the name further; detached attachment bytes are resolved in messageParts and attachments.",
-      size: "Size of the EMLX file in bytes; NULL when no file is present.",
-      sha256: `${sha2562} of the whole EMLX file; NULL when no file is present.`
-    }),
-    ["messageId"],
-    true
-  ),
-  messageHeaders: mailStream(
-    "messageHeaders",
-    "One record per header line of each MIME part of a locally available message file, in stored order; repeated header names stay separate rows. Primary key (messageId, partId, position). (messageId, partId) joins to messageParts (messageId, partId). Messages without a local file have no rows. An attached message/rfc822 is one part; its inner headers are not split out.",
-    described(headersFields, {
-      messageId: localMessageId,
-      partId: `${partId2} Joins to messageParts.partId with messageId.`,
-      position: "Zero-based position of the header within its part's header block, preserving the stored order.",
-      name: "Header name as keyed by the MIME parser, in lowercase.",
-      value: "Header value with folded lines joined and encoded words decoded to text; the original line is in rawLineBase64.",
-      rawLineBase64: "Bytes of the whole header line as the MIME parser keeps it, including folded continuation lines joined with CRLF, as Base64."
-    }),
-    ["messageId", "partId", "position"],
-    false
-  ),
-  messageParts: mailStream(
-    "messageParts",
-    "One record per MIME part, including multipart containers, of each locally available message file. Primary key (messageId, partId). parentPartId links a part to its container: join (messageId, parentPartId) to messageParts (messageId, partId). Messages without a local file have no rows (see messageFiles). A detached part whose separate file is missing stays as a row with availableLocally false. An attached message/rfc822 is one part; its inner parts are not expanded.",
-    described(
-      { ...partFields, text: nullableText11 },
-      {
-        messageId: localMessageId,
-        partId: partId2,
-        parentPartId: "partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for the root part.",
-        contentType: "Media type as parsed from Content-Type by the MIME parser, which supplies its own default when the header is absent; NULL when the parser reports none.",
-        charset: "Charset parameter of Content-Type; NULL when absent.",
-        transferEncoding: "Content-Transfer-Encoding value; NULL when absent or empty.",
-        disposition: "Content-Disposition type, such as attachment or inline; NULL when absent.",
-        filename: "Filename as parsed from the part's headers by the MIME parser; NULL when absent.",
-        contentId: "Content-ID header value; NULL when absent.",
-        isMultipart: "Whether the part is a multipart container; containers carry no decoded bytes.",
-        isAttachment: "True when indexedAttachments lists this part, or when a non-multipart part has a filename, an attachment disposition, is an attached message or has a media type other than text/*.",
-        declaredBytes: "Byte count from the part's X-Apple-Content-Length header; NULL when absent. A part with this count and an empty body is read from its separate file under the message's Attachments directory.",
-        decodedBytes: "Bytes after transfer decoding, or the size of the separate file for a detached part; NULL for multipart containers and for detached parts whose file is missing.",
-        availableLocally: "False only for a detached part whose separate file is missing on this Mac; true otherwise, including multipart containers.",
-        sha256: `${sha2562} after transfer decoding, or of the separate file for a detached part; NULL for multipart containers and missing detached parts.`,
-        text: "Text of a text/* part decoded with its charset (UTF-8 when none is declared), including a detached part read from its separate file; NULL for other media types, multipart containers and missing detached parts. Decoded from the message itself; no document parser is applied."
-      }
-    ),
-    ["messageId", "partId"],
-    false
-  ),
-  attachments: mailStream(
-    "attachments",
-    "One record per attachment: each MIME part with isAttachment true in a locally available message file, plus each indexedAttachments row whose part was not found in one (index-only rows). Index attachment metadata can exist before the message or attachment file is downloaded. Primary key (messageId, partId), the same key as messageParts and as (message, attachmentId) in indexedAttachments. Index-only rows have NULL MIME fields. availableLocally tells whether the bytes are on this Mac; the transferred file is the decoded attachment, and an attached message stays one complete file.",
-    described(partFields, {
-      messageId: localMessageId,
-      partId: partId2,
-      parentPartId: "partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for a root part and for index-only rows.",
-      contentType: "Media type as parsed from Content-Type by the MIME parser; NULL for index-only rows or when the parser reports none.",
-      charset: "Charset parameter of Content-Type; NULL when absent or for index-only rows.",
-      transferEncoding: "Content-Transfer-Encoding value; NULL when absent, empty or for index-only rows.",
-      disposition: "Content-Disposition type, such as attachment or inline; NULL when absent or for index-only rows.",
-      filename: "Filename as parsed from the part's headers by the MIME parser; for index-only rows, the name in indexedAttachments.name. NULL when neither exists.",
-      contentId: "Content-ID header value; NULL when absent or for index-only rows.",
-      isMultipart: "Whether the part is a multipart container; false for index-only rows.",
-      isAttachment: "Always true in this stream.",
-      declaredBytes: "Byte count from the part's X-Apple-Content-Length header; NULL when absent or for index-only rows.",
-      decodedBytes: "Bytes after transfer decoding, or the size of the separate file under the message's Attachments directory; NULL when the bytes are not on this Mac.",
-      availableLocally: "Whether the attachment bytes are on this Mac. False for a detached or index-only attachment whose file has not been downloaded; a later run updates the row once the file appears.",
-      sha256: `${sha2562} of the attachment; NULL when the bytes are not on this Mac.`
-    }),
-    ["messageId", "partId"],
-    true
-  )
+  mailboxProperties: mailStream("mailboxProperties", "One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.", described({ relativePath: text7, properties: text7 }, {
+    relativePath: "Path of the Info.plist file relative to the current Mail version directory.",
+    properties: plistProperties
+  }), ["relativePath"], false),
+  rules: mailStream("rules", "One record per Mail rule in MailData/SyncedRules.plist (scope Synced) or MailData/UnsyncedRules.plist (scope Unsynced). Primary key (scope, id). Conditions are ruleConditions rows, joined by (scope, ownerId) to (scope, id). Scoped imports omit this stream.", described({ ...scopedMetadata, enabled: { type: ["boolean", "null"] } }, {
+    scope: "Synced for a rule read from MailData/SyncedRules.plist, Unsynced for one read from MailData/UnsyncedRules.plist.",
+    id: "RuleId value of the rule; with scope, the primary key.",
+    properties: `The whole rule dictionary, including its Criteria. ${plistProperties}`,
+    enabled: "Value stored for this RuleId in MailData/RulesActiveState.plist; NULL when that file is absent or has no entry for the rule."
+  }), ["scope", "id"], false),
+  ruleConditions: mailStream("ruleConditions", "One record per entry of a rule's Criteria list, in stored order. Primary key (scope, ownerId, position). Join (scope, ownerId) to rules (scope, id) within this source. A rule without Criteria has no rows. Scoped imports omit this stream.", described(conditionFields, {
+    scope: "Scope of the owning rule, Synced or Unsynced; joins to rules.scope together with ownerId.",
+    ownerId: "RuleId of the owning rule; join (scope, ownerId) to rules (scope, id) within this source.",
+    position: "Zero-based position of the condition in the rule's Criteria list.",
+    properties: `The condition dictionary. ${plistProperties}`
+  }), ["scope", "ownerId", "position"], false),
+  smartMailboxes: mailStream("smartMailboxes", "One record per smart mailbox dictionary in MailData/SyncedSmartMailboxes.plist, including those nested under MailboxChildren. Primary key id. parentId refers to the containing smart mailbox. Conditions are smartMailboxConditions rows whose ownerId is id. Scoped imports omit this stream.", described({ ...metadata, parentId: nullableText11 }, {
+    id: "MailboxID value of the smart mailbox.",
+    properties: `The whole smart mailbox dictionary, including its MailboxCriteria and nested MailboxChildren. ${plistProperties}`,
+    parentId: "Refers to smartMailboxes.id of the smart mailbox whose MailboxChildren contains this one; NULL at the top level."
+  }), ["id"], false),
+  smartMailboxConditions: mailStream("smartMailboxConditions", "One record per entry of a smart mailbox's MailboxCriteria list, in stored order. Primary key (scope, ownerId, position). ownerId refers to smartMailboxes.id within this source; these conditions do not join to rules. Scoped imports omit this stream.", described(conditionFields, {
+    scope: "Always Synced: only MailData/SyncedSmartMailboxes.plist is read. smartMailboxes has no scope field, so join on ownerId alone.",
+    ownerId: "MailboxID of the owning smart mailbox; refers to smartMailboxes.id within this source.",
+    position: "Zero-based position of the condition in the smart mailbox's MailboxCriteria list.",
+    properties: `The condition dictionary. ${plistProperties}`
+  }), ["scope", "ownerId", "position"], false),
+  signatures: mailStream("signatures", "One record per .mailsignature file in the current Mail store. Primary key id. No link to accounts is stated; scoped imports omit this stream.", described({ id: text7, content: text7 }, {
+    id: "File name of the .mailsignature file without its extension.",
+    content: "The whole file read as UTF-8 text, including its MIME headers; not parsed."
+  }), ["id"], false),
+  configuration: mailStream("configuration", "One record per property list file under a MailData or Signatures directory of the current Mail store, except files under RemoteContentURLCache or BiomeStream. Primary key relativePath. It includes the rule and smart mailbox files that rules and smartMailboxes also read. Scoped imports omit this stream.", described({ relativePath: text7, properties: text7 }, {
+    relativePath: "Path of the property list file relative to the current Mail version directory.",
+    properties: plistProperties
+  }), ["relativePath"], false),
+  messageFiles: mailStream("messageFiles", "One record per messages row, describing its EMLX message file on this Mac. Primary key messageId. The row exists even when no file is present: availableLocally is false and the file fields are NULL. EMLX files that no messages row names are not included. The transferred file is the original EMLX bytes, including Mail's leading byte count line and trailing property list.", described(fileFields, {
+    messageId: localMessageId,
+    relativePath: "Path of <id>.emlx or <id>.partial.emlx relative to the current Mail version directory; NULL when no file is present.",
+    availableLocally: "Whether an EMLX file for this message was present when the run read the store. False does not mean the message was deleted.",
+    partial: "True when the file is named <id>.partial.emlx, false when <id>.emlx; NULL when no file is present. This source does not interpret the name further; detached attachment bytes are resolved in messageParts and attachments.",
+    size: "Size of the EMLX file in bytes; NULL when no file is present.",
+    sha256: `${sha2562} of the whole EMLX file; NULL when no file is present.`
+  }), ["messageId"], true),
+  messageHeaders: mailStream("messageHeaders", "One record per header line of each MIME part of a locally available message file, in stored order; repeated header names stay separate rows. Primary key (messageId, partId, position). (messageId, partId) joins to messageParts (messageId, partId). Messages without a local file have no rows. An attached message/rfc822 is one part; its inner headers are not split out.", described(headersFields, {
+    messageId: localMessageId,
+    partId: `${partId2} Joins to messageParts.partId with messageId.`,
+    position: "Zero-based position of the header within its part's header block, preserving the stored order.",
+    name: "Header name as keyed by the MIME parser, in lowercase.",
+    value: "Header value with folded lines joined and encoded words decoded to text; the original line is in rawLineBase64.",
+    rawLineBase64: "Bytes of the whole header line as the MIME parser keeps it, including folded continuation lines joined with CRLF, as Base64."
+  }), ["messageId", "partId", "position"], false),
+  messageParts: mailStream("messageParts", "One record per MIME part, including multipart containers, of each locally available message file. Primary key (messageId, partId). parentPartId links a part to its container: join (messageId, parentPartId) to messageParts (messageId, partId). Messages without a local file have no rows (see messageFiles). A detached part whose separate file is missing stays as a row with availableLocally false. An attached message/rfc822 is one part; its inner parts are not expanded.", described({ ...partFields, text: nullableText11 }, {
+    messageId: localMessageId,
+    partId: partId2,
+    parentPartId: "partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for the root part.",
+    contentType: "Media type as parsed from Content-Type by the MIME parser, which supplies its own default when the header is absent; NULL when the parser reports none.",
+    charset: "Charset parameter of Content-Type; NULL when absent.",
+    transferEncoding: "Content-Transfer-Encoding value; NULL when absent or empty.",
+    disposition: "Content-Disposition type, such as attachment or inline; NULL when absent.",
+    filename: "Filename as parsed from the part's headers by the MIME parser; NULL when absent.",
+    contentId: "Content-ID header value; NULL when absent.",
+    isMultipart: "Whether the part is a multipart container; containers carry no decoded bytes.",
+    isAttachment: "True when indexedAttachments lists this part, or when a non-multipart part has a filename, an attachment disposition, is an attached message or has a media type other than text/*.",
+    declaredBytes: "Byte count from the part's X-Apple-Content-Length header; NULL when absent. A part with this count and an empty body is read from its separate file under the message's Attachments directory.",
+    decodedBytes: "Bytes after transfer decoding, or the size of the separate file for a detached part; NULL for multipart containers and for detached parts whose file is missing.",
+    availableLocally: "False only for a detached part whose separate file is missing on this Mac; true otherwise, including multipart containers.",
+    sha256: `${sha2562} after transfer decoding, or of the separate file for a detached part; NULL for multipart containers and missing detached parts.`,
+    text: "Text of a text/* part decoded with its charset (UTF-8 when none is declared), including a detached part read from its separate file; NULL for other media types, multipart containers and missing detached parts. Decoded from the message itself; no document parser is applied."
+  }), ["messageId", "partId"], false),
+  attachments: mailStream("attachments", "One record per attachment: each MIME part with isAttachment true in a locally available message file, plus each indexedAttachments row whose part was not found in one (index-only rows). Index attachment metadata can exist before the message or attachment file is downloaded. Primary key (messageId, partId), the same key as messageParts and as (message, attachmentId) in indexedAttachments. Index-only rows have NULL MIME fields. availableLocally tells whether the bytes are on this Mac; the transferred file is the decoded attachment, and an attached message stays one complete file.", described(partFields, {
+    messageId: localMessageId,
+    partId: partId2,
+    parentPartId: "partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for a root part and for index-only rows.",
+    contentType: "Media type as parsed from Content-Type by the MIME parser; NULL for index-only rows or when the parser reports none.",
+    charset: "Charset parameter of Content-Type; NULL when absent or for index-only rows.",
+    transferEncoding: "Content-Transfer-Encoding value; NULL when absent, empty or for index-only rows.",
+    disposition: "Content-Disposition type, such as attachment or inline; NULL when absent or for index-only rows.",
+    filename: "Filename as parsed from the part's headers by the MIME parser; for index-only rows, the name in indexedAttachments.name. NULL when neither exists.",
+    contentId: "Content-ID header value; NULL when absent or for index-only rows.",
+    isMultipart: "Whether the part is a multipart container; false for index-only rows.",
+    isAttachment: "Always true in this stream.",
+    declaredBytes: "Byte count from the part's X-Apple-Content-Length header; NULL when absent or for index-only rows.",
+    decodedBytes: "Bytes after transfer decoding, or the size of the separate file under the message's Attachments directory; NULL when the bytes are not on this Mac.",
+    availableLocally: "Whether the attachment bytes are on this Mac. False for a detached or index-only attachment whose file has not been downloaded; a later run updates the row once the file appears.",
+    sha256: `${sha2562} of the attachment; NULL when the bytes are not on this Mac.`
+  }), ["messageId", "partId"], true)
 };
 var catalog4 = new Catalog(Object.values(streams2));
 var messageStreams = [
@@ -71468,20 +70763,15 @@ var restrictedMailStreams = [
   "signatures"
 ];
 function mailSelection(store, scope) {
-  if (Object.keys(scope).length === 0) return () => true;
+  if (Object.keys(scope).length === 0)
+    return () => true;
   const rows = (name) => store.database.prepare(mailTables[name].sql).all();
-  const mailboxes = new Set(
-    rows("mailboxes").filter((row) => {
-      const account = typeof row.url === "string" ? URL.parse(row.url)?.hostname : void 0;
-      return selected(scope.accountIds, account) && selected(scope.collectionIds, row.id);
-    }).map((row) => row.id)
-  );
-  const labelled = new Set(
-    rows("messageMailboxes").filter((row) => mailboxes.has(row.mailboxId)).map((row) => row.messageId)
-  );
-  const messages = rows("messages").filter(
-    (row) => (mailboxes.has(row.mailbox) || mailboxes.has(row.remoteMailbox) || labelled.has(row.id)) && withinDates(scope, row.dateReceived ?? row.dateSent)
-  );
+  const mailboxes = new Set(rows("mailboxes").filter((row) => {
+    const account = typeof row.url === "string" ? URL.parse(row.url)?.hostname : void 0;
+    return selected(scope.accountIds, account) && selected(scope.collectionIds, row.id);
+  }).map((row) => row.id));
+  const labelled = new Set(rows("messageMailboxes").filter((row) => mailboxes.has(row.mailboxId)).map((row) => row.messageId));
+  const messages = rows("messages").filter((row) => (mailboxes.has(row.mailbox) || mailboxes.has(row.remoteMailbox) || labelled.has(row.id)) && withinDates(scope, row.dateReceived ?? row.dateSent));
   const ids2 = new Set(messages.map((row) => row.id));
   const hashes = new Set(messages.map((row) => row.messageId));
   const globals = new Set(messages.map((row) => row.globalMessageId));
@@ -71490,28 +70780,14 @@ function mailSelection(store, scope) {
     ...messages.map((row) => row.sender),
     ...recipients.map((row) => row.address)
   ]);
-  const addressText = new Set(
-    rows("addresses").filter((row) => addresses.has(row.id)).map((row) => row.address)
-  );
-  const servers2 = new Set(
-    rows("serverMessages").filter((row) => ids2.has(row.message) && mailboxes.has(row.mailbox)).map((row) => row.id)
-  );
-  const conversations = new Set(
-    rows("conversationMessages").filter((row) => hashes.has(row.messageId)).map((row) => row.conversationId)
-  );
-  const links = new Set(
-    rows("messageRichLinks").filter((row) => globals.has(row.globalMessageId)).map((row) => row.richLink)
-  );
-  const summaries = new Set(
-    rows("messageGlobalData").filter((row) => globals.has(row.id)).map((row) => row.generatedSummary)
-  );
+  const addressText = new Set(rows("addresses").filter((row) => addresses.has(row.id)).map((row) => row.address));
+  const servers2 = new Set(rows("serverMessages").filter((row) => ids2.has(row.message) && mailboxes.has(row.mailbox)).map((row) => row.id));
+  const conversations = new Set(rows("conversationMessages").filter((row) => hashes.has(row.messageId)).map((row) => row.conversationId));
+  const links = new Set(rows("messageRichLinks").filter((row) => globals.has(row.globalMessageId)).map((row) => row.richLink));
+  const summaries = new Set(rows("messageGlobalData").filter((row) => globals.has(row.id)).map((row) => row.generatedSummary));
   const brands = new Set(messages.map((row) => row.brandIndicator));
-  const businesses = new Set(
-    rows("businessAddresses").filter((row) => addresses.has(row.address)).map((row) => row.business)
-  );
-  const senders = new Set(
-    rows("senderAddresses").filter((row) => addresses.has(row.address)).map((row) => row.sender)
-  );
+  const businesses = new Set(rows("businessAddresses").filter((row) => addresses.has(row.address)).map((row) => row.business));
+  const senders = new Set(rows("senderAddresses").filter((row) => addresses.has(row.address)).map((row) => row.sender));
   const subjects = new Set(messages.map((row) => row.subject));
   const texts = new Set(messages.map((row) => row.summary));
   return (name, row) => {
@@ -71578,30 +70854,27 @@ function mailSelection(store, scope) {
   };
 }
 var MailScan = class {
-  constructor(store, scope = {}) {
-    this.store = store;
-    this.accepts = mailSelection(store, scope);
-  }
   store;
   accepts;
   #accounts = null;
   #inputs = null;
+  constructor(store, scope = {}) {
+    this.store = store;
+    this.accepts = mailSelection(store, scope);
+  }
   // Each message's inputs besides its .emlx, gathered once per scan: detached
   // files by part, and the attachment rows the index knows for it.
   #messageInputs() {
     this.#inputs ??= (() => {
       const detached = /* @__PURE__ */ new Map();
-      for (const [key, files] of [...this.store.attachments].sort(
-        ([a], [b]) => a < b ? -1 : a > b ? 1 : 0
-      )) {
+      for (const [key, files] of [...this.store.attachments].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
         const id12 = key.slice(0, key.indexOf(":"));
         detached.set(id12, [...detached.get(id12) ?? [], [key, files]]);
       }
       const indexed = /* @__PURE__ */ new Map();
-      for (const row of this.store.database.prepare(
-        "SELECT CAST(message AS TEXT) AS message, attachment_id, name FROM attachments ORDER BY ROWID"
-      ).all()) {
-        if (!this.accepts("indexedAttachments", row)) continue;
+      for (const row of this.store.database.prepare("SELECT CAST(message AS TEXT) AS message, attachment_id, name FROM attachments ORDER BY ROWID").all()) {
+        if (!this.accepts("indexedAttachments", row))
+          continue;
         const message4 = row.message;
         indexed.set(message4, [
           ...indexed.get(message4) ?? [],
@@ -71623,17 +70896,15 @@ var MailScan = class {
       relative2(this.store.path, path),
       version3
     ];
-    return createHash8("sha256").update(
-      JSON.stringify([
-        messageParserVersion,
-        file2 === void 0 ? null : identity(file2),
-        (detached.get(id12) ?? []).map(([key, files]) => [
-          key,
-          files.map(identity)
-        ]),
-        (indexed.get(id12) ?? []).map((row) => [row.attachment_id, row.name])
-      ])
-    ).digest("base64url");
+    return createHash8("sha256").update(JSON.stringify([
+      messageParserVersion,
+      file2 === void 0 ? null : identity(file2),
+      (detached.get(id12) ?? []).map(([key, files]) => [
+        key,
+        files.map(identity)
+      ]),
+      (indexed.get(id12) ?? []).map((row) => [row.attachment_id, row.name])
+    ])).digest("base64url");
   }
   // One group per selected message, in index order. Selection runs on every
   // scan; only reading a message whose inputs are unchanged is skipped.
@@ -71641,7 +70912,8 @@ var MailScan = class {
     const { indexed } = this.#messageInputs();
     const listed = /* @__PURE__ */ new Set();
     for (const row of this.store.database.prepare("SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID").iterate()) {
-      if (!this.accepts("messages", row)) continue;
+      if (!this.accepts("messages", row))
+        continue;
       const id12 = row.id;
       listed.add(id12);
       const file2 = this.store.messages.get(id12);
@@ -71653,7 +70925,8 @@ var MailScan = class {
         records: () => this.#messageEntries(name, id12, file2)
       };
     }
-    if (name !== "attachments") return;
+    if (name !== "attachments")
+      return;
     for (const [id12, rows] of indexed)
       if (!listed.has(id12))
         yield {
@@ -71673,24 +70946,16 @@ var MailScan = class {
         sha256: file2 === void 0 ? null : await hashMailFile(file2)
       };
       yield { data, file: file2 === void 0 ? null : file2.path };
-      if (file2 !== void 0) await assertMailFile(file2);
+      if (file2 !== void 0)
+        await assertMailFile(file2);
       return;
     }
-    const unclaimed = new Map(
-      (this.#messageInputs().indexed.get(id12) ?? []).map((row) => [
-        String(row.attachment_id),
-        row
-      ])
-    );
+    const unclaimed = new Map((this.#messageInputs().indexed.get(id12) ?? []).map((row) => [
+      String(row.attachment_id),
+      row
+    ]));
     if (file2 !== void 0) {
-      const { headers, parts } = await readMailMime(
-        this.store,
-        id12,
-        file2,
-        name === "messageHeaders",
-        name === "attachments",
-        (part) => name === "messageParts" || part.isAttachment || unclaimed.has(part.partId)
-      );
+      const { headers, parts } = await readMailMime(this.store, id12, file2, name === "messageHeaders", name === "attachments", (part) => name === "messageParts" || part.isAttachment || unclaimed.has(part.partId));
       try {
         if (name === "messageHeaders")
           for (const header of headers)
@@ -71705,19 +70970,20 @@ var MailScan = class {
               yield { data: { ...part.record }, file: part.path };
           }
       } finally {
-        for (const part of parts) if (part.path !== null) await rm5(part.path);
+        for (const part of parts)
+          if (part.path !== null)
+            await rm5(part.path);
       }
     }
-    if (name === "attachments") yield* this.#indexedEntries(unclaimed.values());
+    if (name === "attachments")
+      yield* this.#indexedEntries(unclaimed.values());
   }
   // Attachments the index knows before their message or MIME file arrives.
   async *#indexedEntries(rows) {
     for (const row of rows) {
       const key = `${row.message}:${row.attachment_id}`;
       if (typeof row.attachment_id !== "string" || !/^\d+(?:\.\d+)*$/.test(row.attachment_id))
-        throw new MailSchemaError(
-          `Invalid indexed Mail attachment part ${key}`
-        );
+        throw new MailSchemaError(`Invalid indexed Mail attachment part ${key}`);
       const candidates = this.store.attachments.get(key);
       if (candidates !== void 0 && candidates.length !== 1)
         throw new MailSchemaError(`Ambiguous indexed Mail attachment ${key}`);
@@ -71741,10 +71007,7 @@ var MailScan = class {
       };
       let path = null;
       if (file2 !== void 0) {
-        path = join15(
-          this.store.scratch.path,
-          `indexed-${row.message}-${row.attachment_id}${extname4(file2.path)}`
-        );
+        path = join15(this.store.scratch.path, `indexed-${row.message}-${row.attachment_id}${extname4(file2.path)}`);
         await assertMailFile(file2);
         await copyFile2(file2.path, path);
         await assertMailFile(file2);
@@ -71752,7 +71015,8 @@ var MailScan = class {
       try {
         yield { data: record3, file: path };
       } finally {
-        if (path !== null) await rm5(path);
+        if (path !== null)
+          await rm5(path);
       }
     }
   }
@@ -71761,20 +71025,13 @@ var MailScan = class {
     try {
       value = JSON.parse(await osa_default.execute(accountsScript));
     } catch (cause) {
-      throw new Error(
-        "Mail account metadata requires Automation access to Mail for the exporting process.",
-        { cause }
-      );
+      throw new Error("Mail account metadata requires Automation access to Mail for the exporting process.", { cause });
     }
     if (value === null || typeof value !== "object" || !("accounts" in value) || !("smtpServers" in value) || !Array.isArray(value.accounts) || !Array.isArray(value.smtpServers))
-      throw new MailSchemaError(
-        "Mail scripting returned invalid account metadata"
-      );
+      throw new MailSchemaError("Mail scripting returned invalid account metadata");
     const accounts2 = value.accounts.map((account) => {
       if (account === null || typeof account !== "object" || !("id" in account) || typeof account.id !== "string")
-        throw new MailSchemaError(
-          "Mail scripting returned an account without an ID"
-        );
+        throw new MailSchemaError("Mail scripting returned an account without an ID");
       return { id: account.id, properties: JSON.stringify(account) };
     });
     for (const row of this.store.database.prepare("SELECT url FROM mailboxes ORDER BY ROWID").iterate()) {
@@ -71787,9 +71044,7 @@ var MailScan = class {
     }
     const smtpServers = value.smtpServers.map((server) => {
       if (server === null || typeof server !== "object" || !("name" in server) || typeof server.name !== "string")
-        throw new MailSchemaError(
-          "Mail scripting returned an SMTP server without a name"
-        );
+        throw new MailSchemaError("Mail scripting returned an SMTP server without a name");
       return { id: server.name, properties: JSON.stringify(server) };
     });
     return { accounts: accounts2, smtpServers };
@@ -71798,7 +71053,8 @@ var MailScan = class {
     if (name in mailTables) {
       const definition3 = mailTables[name];
       for (const row of this.store.database.prepare(definition3.sql).iterate()) {
-        if (!this.accepts(name, row)) continue;
+        if (!this.accepts(name, row))
+          continue;
         for (const column of definition3.blobs)
           if (row[column] instanceof Uint8Array)
             row[column] = Buffer.from(row[column]).toString("base64");
@@ -71809,11 +71065,13 @@ var MailScan = class {
     if (name === "accounts" || name === "smtpServers") {
       this.#accounts ??= this.#accountMetadata();
       for (const data of (await this.#accounts)[name])
-        if (this.accepts(name, data)) yield { data, file: null };
+        if (this.accepts(name, data))
+          yield { data, file: null };
       return;
     }
     if (isMessageStream(name)) {
-      for await (const group2 of this.groups(name)) yield* group2.records();
+      for await (const group2 of this.groups(name))
+        yield* group2.records();
       return;
     }
     if (name === "mailboxProperties" || name === "configuration") {
@@ -71838,13 +71096,12 @@ var MailScan = class {
       return;
     }
     if (name === "rules" || name === "ruleConditions") {
-      const activeValue = await this.store.plist(
-        "MailData/RulesActiveState.plist"
-      );
+      const activeValue = await this.store.plist("MailData/RulesActiveState.plist");
       const active = activeValue === null ? null : plistObject(activeValue);
       for (const scope of ["Synced", "Unsynced"]) {
         const value2 = await this.store.plist(`MailData/${scope}Rules.plist`);
-        if (value2 === null) continue;
+        if (value2 === null)
+          continue;
         for (const entry of list(value2)) {
           const rule = plistObject(entry);
           const id12 = requiredString(rule, "RuleId");
@@ -71875,7 +71132,8 @@ var MailScan = class {
       return;
     }
     const value = await this.store.plist("MailData/SyncedSmartMailboxes.plist");
-    if (value === null) return;
+    if (value === null)
+      return;
     function* smart(entries, parentId) {
       for (const entry of entries) {
         const mailbox = plistObject(entry);
@@ -71883,9 +71141,7 @@ var MailScan = class {
         if (name === "smartMailboxes")
           yield { id: id12, parentId, properties: plistJSON2(mailbox) };
         else if (mailbox.MailboxCriteria !== void 0)
-          for (const [position, criterion] of list(
-            mailbox.MailboxCriteria
-          ).entries())
+          for (const [position, criterion] of list(mailbox.MailboxCriteria).entries())
             yield {
               scope: "Synced",
               ownerId: id12,
@@ -71896,20 +71152,14 @@ var MailScan = class {
           yield* smart(list(mailbox.MailboxChildren), id12);
       }
     }
-    for (const data of smart(list(value), null)) yield { data, file: null };
+    for (const data of smart(list(value), null))
+      yield { data, file: null };
   }
   async [Symbol.asyncDispose]() {
     await this.store[Symbol.asyncDispose]();
   }
 };
 var AppleMailSource = class extends Source {
-  constructor(path, scope = {}) {
-    super();
-    this.path = path;
-    this.scope = scope;
-    this.identity = `apple-mail:${path}`;
-    Object.freeze(this);
-  }
   path;
   scope;
   indexedAttachments = streams2.indexedAttachments;
@@ -71956,16 +71206,15 @@ var AppleMailSource = class extends Source {
   ruleConditions = streams2.ruleConditions;
   smartMailboxes = streams2.smartMailboxes;
   signatures = streams2.signatures;
+  constructor(path, scope = {}) {
+    super();
+    this.path = path;
+    this.scope = scope;
+    this.identity = `apple-mail:${path}`;
+    Object.freeze(this);
+  }
   async open() {
-    return new MailScan(
-      await MailStore.open(
-        this.path,
-        Object.fromEntries(
-          Object.values(mailTables).map((table2) => [table2.name, table2.columns])
-        )
-      ),
-      this.scope
-    );
+    return new MailScan(await MailStore.open(this.path, Object.fromEntries(Object.values(mailTables).map((table2) => [table2.name, table2.columns]))), this.scope);
   }
   async *extract(configuration, state, _partition, scan) {
     const { stream } = configuration;
@@ -71973,7 +71222,8 @@ var AppleMailSource = class extends Source {
     let file2 = null;
     async function* records(entries) {
       for await (const entry of entries) {
-        if (!scan.accepts(name, entry.data)) continue;
+        if (!scan.accepts(name, entry.data))
+          continue;
         file2 = entry.file;
         yield* validateRecords(stream, [entry.data], "Mail");
       }
@@ -71996,13 +71246,11 @@ var AppleMailSource = class extends Source {
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
-  async *observe({
-    streams: selected2,
-    signal
-  }) {
+  async *observe({ streams: selected2, signal }) {
     var _stack = [];
     try {
-      if (signal.aborted) return;
+      if (signal.aborted)
+        return;
       const path = await mailVersionDirectory(this.path);
       const database = __using(_stack, new DatabaseSync11(join15(path, "MailData/Envelope Index"), {
         readOnly: true
@@ -72022,9 +71270,11 @@ var AppleMailSource = class extends Source {
       yield selected2;
       try {
         for await (const _2 of setInterval3(1e3, void 0, { signal })) {
-          if (failure3 !== null) throw failure3;
+          if (failure3 !== null)
+            throw failure3;
           const current = version3.get()?.data_version;
-          if (!changed && current === seen) continue;
+          if (!changed && current === seen)
+            continue;
           changed = false;
           seen = current;
           yield selected2;
@@ -72041,26 +71291,21 @@ var AppleMailSource = class extends Source {
   }
 };
 
-// apps/apple/src/sources/apple-messages/apple-messages-source.ts
+// apps/apple/connectors/dist/sources/apple-messages/apple-messages-source.js
 import { access } from "node:fs/promises";
 import { homedir as homedir5 } from "node:os";
 import { join as join17 } from "node:path";
 import { setInterval as setInterval4 } from "node:timers/promises";
 
-// apps/apple/src/platform/macos/chat-database.ts
+// apps/apple/connectors/dist/platform/macos/chat-database.js
 import { homedir as homedir4 } from "node:os";
 import { join as join16 } from "node:path";
-import {
-  DatabaseSync as DatabaseSync12
-} from "node:sqlite";
+import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 var messagesDirectory = join16(homedir4(), "Library/Messages");
 var MessagesUnavailableError = class extends Error {
   name = "MessagesUnavailableError";
   constructor(path, cause) {
-    super(
-      `Messages history at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Messages.app does not need to be open.`,
-      { cause }
-    );
+    super(`Messages history at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Messages.app does not need to be open.`, { cause });
   }
 };
 var unavailableCodes3 = /* @__PURE__ */ new Set([14, 23]);
@@ -72107,12 +71352,13 @@ var ChatDatabase = class _ChatDatabase {
     return this.#database.prepare(sql).all();
   }
   async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction) this.#database.exec("COMMIT");
+    if (this.#database.isTransaction)
+      this.#database.exec("COMMIT");
     this.#database.close();
   }
 };
 
-// apps/apple/src/sources/apple-messages/typedstream.ts
+// apps/apple/connectors/dist/sources/apple-messages/typedstream.js
 var decoder = new TextDecoder("utf-8", { fatal: true });
 var stringClass = new TextEncoder().encode("NSString");
 var cString = 43;
@@ -72120,7 +71366,8 @@ var int16 = 129;
 var int322 = 130;
 function attributedText(body) {
   const name = indexOf(body, stringClass);
-  if (name === -1) return null;
+  if (name === -1)
+    return null;
   const type = body.indexOf(cString, name + stringClass.length);
   if (type === -1 || type > name + stringClass.length + 8)
     throw new TypeError("attributedBody has no string after NSString");
@@ -72147,7 +71394,7 @@ function indexOf(haystack, needle) {
   return -1;
 }
 
-// apps/apple/src/sources/apple-messages/messages-streams.ts
+// apps/apple/connectors/dist/sources/apple-messages/messages-streams.js
 var { text: text8, id: id4, nullableText: nullableText12, boolean: boolean11, nullableTimestamp: nullableTimestamp12 } = eventKitFields;
 var nullableInteger12 = { type: ["integer", "null"] };
 var appleMilliseconds = (column) => `CASE WHEN ${column} IS NULL OR ${column} = 0 THEN NULL WHEN abs(${column}) > 100000000000 THEN ${column} / 1000000 ELSE ${column} * 1000 END`;
@@ -72195,13 +71442,9 @@ function native(table2, column, kind) {
 }
 function columns2(table2, list3, meanings) {
   const listed = Object.values(list3).flatMap(words2);
-  const unknown2 = Object.keys(meanings).filter(
-    (column) => !listed.includes(column)
-  );
+  const unknown2 = Object.keys(meanings).filter((column) => !listed.includes(column));
   if (unknown2.length > 0)
-    throw new TypeError(
-      `Meanings for columns ${table2.name} does not list: ${unknown2.join(", ")}`
-    );
+    throw new TypeError(`Meanings for columns ${table2.name} does not list: ${unknown2.join(", ")}`);
   const properties39 = {};
   const select4 = [];
   for (const kind of Object.keys(kinds3))
@@ -72216,9 +71459,7 @@ function columns2(table2, list3, meanings) {
 function definition2(keys, from, table2 = { properties: {}, select: [] }, extra = {}) {
   return {
     properties: {
-      ...Object.fromEntries(
-        Object.entries(keys).map(([name, [schema]]) => [name, schema])
-      ),
+      ...Object.fromEntries(Object.entries(keys).map(([name, [schema]]) => [name, schema])),
       ...table2.properties,
       ...extra
     },
@@ -72239,61 +71480,45 @@ var tables = {
   chatRecoverable: { name: "chat_recoverable_message_join", alias: "j" },
   recoverablePart: { name: "recoverable_message_part", alias: "p" }
 };
-var message3 = columns2(
-  tables.message,
-  {
-    nullableText: "text subject service_center country service account account_guid cache_roomnames group_title associated_message_guid balloon_bundle_id expressive_send_style_id ck_record_id ck_record_change_tag destination_caller_id reply_to_guid thread_originator_guid thread_originator_part syndication_ranges synced_syndication_ranges bia_reference_id fallback_hash associated_message_emoji ck_chat_id",
-    integer: "replace version type error item_type group_action_type share_status share_direction expire_state message_action_type message_source associated_message_type associated_message_range_location associated_message_range_length ck_sync_state sort_id part_count schedule_type schedule_state index_state",
-    boolean: "is_delivered is_finished is_emote is_from_me is_empty is_delayed is_auto_reply is_prepared is_read is_system_message is_sent has_dd_results is_service_message is_forward was_downgraded is_archive cache_has_attachments was_data_detected was_deduplicated is_audio_message is_played is_expirable is_corrupt is_spam has_unseen_mention was_delivered_quietly did_notify_recipient was_detonated is_stewie is_sos is_critical is_kt_verified is_pending_satellite_send needs_relay sent_or_received_off_grid is_time_sensitive",
-    timestamp: "date date_read date_delivered date_played time_expressive_send_played date_retracted date_edited date_recovered",
-    base64: "attributedBody payload_data message_summary_info"
-  },
-  {
-    text: "Message body: chat.db message.text, or, when that is NULL, the plain text of the NSAttributedString archived in message.attributedBody, which is its first NSString. NULL when neither holds text. attributedBody keeps the archive itself.",
-    date: `${provenance3(tables.message, "date", "timestamp")} An import date scope selects messages by this time; which moment Messages records is not documented by Apple.`,
-    attributedBody: `${provenance3(tables.message, "attributedBody", "base64")} Messages archives the message body here as an NSAttributedString in NeXT typedstream form, which is not a property list and so loads as Base64; text is decoded from it when message.text is NULL. Its other attributes are not decoded.`,
-    payload_data: `${provenance3(tables.message, "payload_data", "base64")} A richLinkMetadata object in it is decoded into the linkPreviews stream; the meaning of its other contents is not documented by Apple.`,
-    message_summary_info: `${provenance3(tables.message, "message_summary_info", "base64")} Its "ec" entry is decoded into the messageEdits stream; the meaning of its other keys is not documented by Apple.`
-  }
-);
-var chat = columns2(
-  tables.chat,
-  {
-    nullableText: "chat_identifier service_name room_name account_id account_login last_addressed_handle display_name group_id engram_id server_change_token original_group_id cloudkit_record_id last_addressed_sim_id",
-    integer: "style state successful_query ck_sync_state syndication_type",
-    boolean: "is_archived is_filtered is_blackholed is_recovered is_deleting_incoming_messages is_pending_review",
-    timestamp: "last_read_message_timestamp syndication_date",
-    base64: "properties"
-  },
-  {
-    account_id: `${provenance3(tables.chat, "account_id", "nullableText")} An import scope's account selection matches chats by this value. ${unverified2}`
-  }
-);
-var handle = columns2(
-  tables.handle,
-  {
-    text: "id service",
-    nullableText: "country uncanonicalized_id person_centric_id"
-  },
-  {
-    id: `${provenance3(tables.handle, "id", "text")} Unique only together with service: the same id can recur under another service. messages.handle, messages.otherHandle and chatHandles.handleId refer to it within this source, each together with its service field. ${unverified2}`,
-    service: `${provenance3(tables.handle, "service", "text")} The second half of this stream's composite key (id, service). messages.handleService, messages.otherHandleService and chatHandles.handleService refer to it within this source. ${unverified2}`
-  }
-);
-var attachment = columns2(
-  tables.attachment,
-  {
-    text: "original_guid",
-    nullableText: "filename uti mime_type transfer_name ck_record_id emoji_image_content_identifier emoji_image_short_description",
-    integer: "transfer_state total_bytes ck_sync_state preview_generation_state",
-    boolean: "is_outgoing is_sticker hide_attachment is_commsafety_sensitive",
-    timestamp: "created_date start_date",
-    base64: "user_info sticker_user_info attribution_info ck_server_change_token_blob"
-  },
-  {
-    filename: `${provenance3(tables.attachment, "filename", "nullableText")} The path Messages stores for the attachment's file, absolute or home-relative as ~/\u2026; the file is exported from this path. A path does not prove the file exists: see availableLocally.`
-  }
-);
+var message3 = columns2(tables.message, {
+  nullableText: "text subject service_center country service account account_guid cache_roomnames group_title associated_message_guid balloon_bundle_id expressive_send_style_id ck_record_id ck_record_change_tag destination_caller_id reply_to_guid thread_originator_guid thread_originator_part syndication_ranges synced_syndication_ranges bia_reference_id fallback_hash associated_message_emoji ck_chat_id",
+  integer: "replace version type error item_type group_action_type share_status share_direction expire_state message_action_type message_source associated_message_type associated_message_range_location associated_message_range_length ck_sync_state sort_id part_count schedule_type schedule_state index_state",
+  boolean: "is_delivered is_finished is_emote is_from_me is_empty is_delayed is_auto_reply is_prepared is_read is_system_message is_sent has_dd_results is_service_message is_forward was_downgraded is_archive cache_has_attachments was_data_detected was_deduplicated is_audio_message is_played is_expirable is_corrupt is_spam has_unseen_mention was_delivered_quietly did_notify_recipient was_detonated is_stewie is_sos is_critical is_kt_verified is_pending_satellite_send needs_relay sent_or_received_off_grid is_time_sensitive",
+  timestamp: "date date_read date_delivered date_played time_expressive_send_played date_retracted date_edited date_recovered",
+  base64: "attributedBody payload_data message_summary_info"
+}, {
+  text: "Message body: chat.db message.text, or, when that is NULL, the plain text of the NSAttributedString archived in message.attributedBody, which is its first NSString. NULL when neither holds text. attributedBody keeps the archive itself.",
+  date: `${provenance3(tables.message, "date", "timestamp")} An import date scope selects messages by this time; which moment Messages records is not documented by Apple.`,
+  attributedBody: `${provenance3(tables.message, "attributedBody", "base64")} Messages archives the message body here as an NSAttributedString in NeXT typedstream form, which is not a property list and so loads as Base64; text is decoded from it when message.text is NULL. Its other attributes are not decoded.`,
+  payload_data: `${provenance3(tables.message, "payload_data", "base64")} A richLinkMetadata object in it is decoded into the linkPreviews stream; the meaning of its other contents is not documented by Apple.`,
+  message_summary_info: `${provenance3(tables.message, "message_summary_info", "base64")} Its "ec" entry is decoded into the messageEdits stream; the meaning of its other keys is not documented by Apple.`
+});
+var chat = columns2(tables.chat, {
+  nullableText: "chat_identifier service_name room_name account_id account_login last_addressed_handle display_name group_id engram_id server_change_token original_group_id cloudkit_record_id last_addressed_sim_id",
+  integer: "style state successful_query ck_sync_state syndication_type",
+  boolean: "is_archived is_filtered is_blackholed is_recovered is_deleting_incoming_messages is_pending_review",
+  timestamp: "last_read_message_timestamp syndication_date",
+  base64: "properties"
+}, {
+  account_id: `${provenance3(tables.chat, "account_id", "nullableText")} An import scope's account selection matches chats by this value. ${unverified2}`
+});
+var handle = columns2(tables.handle, {
+  text: "id service",
+  nullableText: "country uncanonicalized_id person_centric_id"
+}, {
+  id: `${provenance3(tables.handle, "id", "text")} Unique only together with service: the same id can recur under another service. messages.handle, messages.otherHandle and chatHandles.handleId refer to it within this source, each together with its service field. ${unverified2}`,
+  service: `${provenance3(tables.handle, "service", "text")} The second half of this stream's composite key (id, service). messages.handleService, messages.otherHandleService and chatHandles.handleService refer to it within this source. ${unverified2}`
+});
+var attachment = columns2(tables.attachment, {
+  text: "original_guid",
+  nullableText: "filename uti mime_type transfer_name ck_record_id emoji_image_content_identifier emoji_image_short_description",
+  integer: "transfer_state total_bytes ck_sync_state preview_generation_state",
+  boolean: "is_outgoing is_sticker hide_attachment is_commsafety_sensitive",
+  timestamp: "created_date start_date",
+  base64: "user_info sticker_user_info attribution_info ck_server_change_token_blob"
+}, {
+  filename: `${provenance3(tables.attachment, "filename", "nullableText")} The path Messages stores for the attachment's file, absolute or home-relative as ~/\u2026; the file is exported from this path. A path does not prove the file exists: see availableLocally.`
+});
 var chatGuid = [
   {
     ...id4,
@@ -72312,19 +71537,15 @@ var countAtMessageGrain = "Many-to-many: joining messages through this stream re
 var definitions2 = {
   chats: {
     description: `One record per chat in chat.db's chat table, keyed by guid. Its handles are in chatHandles, its messages in chatMessages, or in recoverableMessages while recoverable after deletion, its lookup identifiers in chatLookups and its services in chatServices, each by chatGuid. ${localStore}`,
-    ...definition2(
-      {
-        guid: [
-          {
-            ...id4,
-            description: "chat.db chat.guid; this stream's primary key. chatGuid in chatLookups, chatServices, chatHandles, chatMessages, recoverableMessages and recoverableMessageParts refers to it within this source."
-          },
-          "c.guid"
-        ]
-      },
-      "chat c",
-      chat
-    ),
+    ...definition2({
+      guid: [
+        {
+          ...id4,
+          description: "chat.db chat.guid; this stream's primary key. chatGuid in chatLookups, chatServices, chatHandles, chatMessages, recoverableMessages and recoverableMessageParts refers to it within this source."
+        },
+        "c.guid"
+      ]
+    }, "chat c", chat),
     primaryKey: ["guid"]
   },
   handles: {
@@ -72335,105 +71556,89 @@ var definitions2 = {
   // chat.db's chat_lookup rows, unique per identifier and domain.
   chatLookups: {
     description: `One record per row of chat.db chat_lookup, keyed by (identifier, domain), which chat.db keeps unique; what a lookup means is not documented by Apple. chatGuid refers to chats.guid. ${localStore}`,
-    ...definition2(
-      {
-        identifier: native(tables.chatLookup, "identifier", "text"),
-        domain: native(tables.chatLookup, "domain", "text"),
-        chatGuid,
-        priority: native(tables.chatLookup, "priority", "integer")
-      },
-      "chat_lookup l JOIN chat c ON c.ROWID = l.chat"
-    ),
+    ...definition2({
+      identifier: native(tables.chatLookup, "identifier", "text"),
+      domain: native(tables.chatLookup, "domain", "text"),
+      chatGuid,
+      priority: native(tables.chatLookup, "priority", "integer")
+    }, "chat_lookup l JOIN chat c ON c.ROWID = l.chat"),
     primaryKey: ["identifier", "domain"]
   },
   chatServices: {
     description: `One record per chat and service pair in chat.db chat_service, keyed by (chatGuid, service). chatGuid refers to chats.guid. ${localStore}`,
-    ...definition2(
-      { chatGuid, service: native(tables.chatService, "service", "text") },
-      "chat_service s JOIN chat c ON c.ROWID = s.chat"
-    ),
+    ...definition2({ chatGuid, service: native(tables.chatService, "service", "text") }, "chat_service s JOIN chat c ON c.ROWID = s.chat"),
     primaryKey: ["chatGuid", "service"]
   },
   chatHandles: {
     description: `One record per handle linked to a chat in chat.db chat_handle_join, keyed by (chatGuid, handleId, handleService). chatGuid refers to chats.guid; handleId and handleService together join handles.id and handles.service. A chat can link many handles and a handle many chats. ${localStore}`,
-    ...definition2(
-      {
-        chatGuid,
-        handleId: [
-          {
-            ...text8,
-            description: "chat.db handle.id of the linked handle; together with handleService refers to handles (id, service) within this source."
-          },
-          "h.id"
-        ],
-        handleService: [
-          {
-            ...text8,
-            description: "chat.db handle.service of the linked handle; together with handleId refers to handles (id, service) within this source."
-          },
-          "h.service"
-        ]
-      },
-      "chat_handle_join j JOIN chat c ON c.ROWID = j.chat_id JOIN handle h ON h.ROWID = j.handle_id"
-    ),
+    ...definition2({
+      chatGuid,
+      handleId: [
+        {
+          ...text8,
+          description: "chat.db handle.id of the linked handle; together with handleService refers to handles (id, service) within this source."
+        },
+        "h.id"
+      ],
+      handleService: [
+        {
+          ...text8,
+          description: "chat.db handle.service of the linked handle; together with handleId refers to handles (id, service) within this source."
+        },
+        "h.service"
+      ]
+    }, "chat_handle_join j JOIN chat c ON c.ROWID = j.chat_id JOIN handle h ON h.ROWID = j.handle_id"),
     primaryKey: ["chatGuid", "handleId", "handleService"]
   },
   messages: {
     description: `One record per message in chat.db's message table, keyed by guid. A message recoverable after deletion keeps its record, and its chat link is in recoverableMessages instead of chatMessages (observed on a live store; Apple does not document this table). handle and handleService join handles.id and handles.service, likewise otherHandle and otherHandleService. Chats link through chatMessages and attachments through messageAttachments; both are many-to-many, so joining through them repeats a message: count messages in this stream, or as distinct guid after such a join. Edit versions decoded from messageSummaryInfo are in messageEdits and rich links decoded from payloadData in linkPreviews. chat.db's iCloud deletion bookkeeping (deleted_messages, sync_deleted_*) is not exported. ${localStore}`,
-    ...definition2(
-      {
-        guid: [
-          {
-            ...id4,
-            description: "chat.db message.guid; this stream's primary key. messageGuid in chatMessages, messageAttachments, messageEdits, linkPreviews, recoverableMessages and recoverableMessageParts refers to it within this source."
-          },
-          "m.guid"
-        ],
-        handle: [
-          {
-            ...nullableText12,
-            description: "chat.db handle.id of the handle message.handle_id points to; together with handleService refers to handles (id, service) within this source. NULL when message.handle_id matches no handle. Which participant it names is not documented by Apple."
-          },
-          "h.id"
-        ],
-        handleService: [
-          {
-            ...nullableText12,
-            description: "chat.db handle.service of the handle message.handle_id points to; together with handle refers to handles (id, service) within this source. NULL when message.handle_id matches no handle."
-          },
-          "h.service"
-        ],
-        otherHandle: [
-          {
-            ...nullableText12,
-            description: "chat.db handle.id of the handle message.other_handle points to; together with otherHandleService refers to handles (id, service) within this source. NULL when message.other_handle matches no handle. Which participant it names is not documented by Apple."
-          },
-          "o.id"
-        ],
-        otherHandleService: [
-          {
-            ...nullableText12,
-            description: "chat.db handle.service of the handle message.other_handle points to; together with otherHandle refers to handles (id, service) within this source. NULL when message.other_handle matches no handle."
-          },
-          "o.service"
-        ]
-      },
-      "message m LEFT JOIN handle h ON h.ROWID = m.handle_id LEFT JOIN handle o ON o.ROWID = m.other_handle",
-      message3
-    ),
+    ...definition2({
+      guid: [
+        {
+          ...id4,
+          description: "chat.db message.guid; this stream's primary key. messageGuid in chatMessages, messageAttachments, messageEdits, linkPreviews, recoverableMessages and recoverableMessageParts refers to it within this source."
+        },
+        "m.guid"
+      ],
+      handle: [
+        {
+          ...nullableText12,
+          description: "chat.db handle.id of the handle message.handle_id points to; together with handleService refers to handles (id, service) within this source. NULL when message.handle_id matches no handle. Which participant it names is not documented by Apple."
+        },
+        "h.id"
+      ],
+      handleService: [
+        {
+          ...nullableText12,
+          description: "chat.db handle.service of the handle message.handle_id points to; together with handle refers to handles (id, service) within this source. NULL when message.handle_id matches no handle."
+        },
+        "h.service"
+      ],
+      otherHandle: [
+        {
+          ...nullableText12,
+          description: "chat.db handle.id of the handle message.other_handle points to; together with otherHandleService refers to handles (id, service) within this source. NULL when message.other_handle matches no handle. Which participant it names is not documented by Apple."
+        },
+        "o.id"
+      ],
+      otherHandleService: [
+        {
+          ...nullableText12,
+          description: "chat.db handle.service of the handle message.other_handle points to; together with otherHandle refers to handles (id, service) within this source. NULL when message.other_handle matches no handle."
+        },
+        "o.service"
+      ]
+    }, "message m LEFT JOIN handle h ON h.ROWID = m.handle_id LEFT JOIN handle o ON o.ROWID = m.other_handle", message3),
     primaryKey: ["guid"]
   },
   chatMessages: {
     description: `One record per chat and message link in chat.db chat_message_join, keyed by (chatGuid, messageGuid). chatGuid refers to chats.guid and messageGuid to messages.guid. ${countAtMessageGrain} A message recoverable after deletion is linked through recoverableMessages instead (observed on a live store; Apple does not document this table). ${localStore}`,
-    ...definition2(
-      {
-        chatGuid,
-        messageGuid,
-        messageDate: native(tables.chatMessage, "message_date", "timestamp"),
-        indexState: native(tables.chatMessage, "index_state", "integer")
-      },
-      "chat_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id"
-    ),
+    ...definition2({
+      chatGuid,
+      messageGuid,
+      messageDate: native(tables.chatMessage, "message_date", "timestamp"),
+      indexState: native(tables.chatMessage, "index_state", "integer")
+    }, "chat_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id"),
     primaryKey: ["chatGuid", "messageGuid"]
   },
   // The rich link a URL message shows, decoded from its payload_data archive.
@@ -72512,107 +71717,92 @@ var definitions2 = {
   // A recoverable message keeps its message row but is linked to its chat here.
   recoverableMessages: {
     description: `One record per chat and message link in chat.db chat_recoverable_message_join, keyed by (chatGuid, messageGuid): a message recoverable after deletion keeps its messages record and is linked to its chat here instead of in chatMessages (observed on a live store; Apple does not document this table). chatGuid refers to chats.guid and messageGuid to messages.guid; the message's parts are in recoverableMessageParts. ${countAtMessageGrain} ${localStore}`,
-    ...definition2(
-      {
-        chatGuid,
-        messageGuid,
-        deleteDate: native(tables.chatRecoverable, "delete_date", "timestamp"),
-        ckSyncState: native(tables.chatRecoverable, "ck_sync_state", "integer")
-      },
-      "chat_recoverable_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id"
-    ),
+    ...definition2({
+      chatGuid,
+      messageGuid,
+      deleteDate: native(tables.chatRecoverable, "delete_date", "timestamp"),
+      ckSyncState: native(tables.chatRecoverable, "ck_sync_state", "integer")
+    }, "chat_recoverable_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id"),
     primaryKey: ["chatGuid", "messageGuid"]
   },
   recoverableMessageParts: {
     description: `One record per message part in chat.db recoverable_message_part, for messages recoverable after deletion, keyed by (chatGuid, messageGuid, partIndex). chatGuid refers to chats.guid and messageGuid to messages.guid; (chatGuid, messageGuid) joins recoverableMessages. ${localStore}`,
-    ...definition2(
-      {
-        chatGuid,
-        messageGuid,
-        partIndex: [
-          {
-            ...eventKitFields.integer,
-            description: `chat.db recoverable_message_part.part_index: integer passed through unchanged. ${unverified2}`
-          },
-          "p.part_index"
-        ],
-        deleteDate: native(tables.recoverablePart, "delete_date", "timestamp"),
-        partText: native(tables.recoverablePart, "part_text", "base64"),
-        ckSyncState: native(tables.recoverablePart, "ck_sync_state", "integer")
-      },
-      "recoverable_message_part p JOIN chat c ON c.ROWID = p.chat_id JOIN message m ON m.ROWID = p.message_id"
-    ),
+    ...definition2({
+      chatGuid,
+      messageGuid,
+      partIndex: [
+        {
+          ...eventKitFields.integer,
+          description: `chat.db recoverable_message_part.part_index: integer passed through unchanged. ${unverified2}`
+        },
+        "p.part_index"
+      ],
+      deleteDate: native(tables.recoverablePart, "delete_date", "timestamp"),
+      partText: native(tables.recoverablePart, "part_text", "base64"),
+      ckSyncState: native(tables.recoverablePart, "ck_sync_state", "integer")
+    }, "recoverable_message_part p JOIN chat c ON c.ROWID = p.chat_id JOIN message m ON m.ROWID = p.message_id"),
     primaryKey: ["chatGuid", "messageGuid", "partIndex"]
   },
   attachments: {
     description: `One record per attachment in chat.db's attachment table, keyed by guid; messageAttachments links attachments to messages, many-to-many. A record can exist without a readable file: availableLocally reports whether the stored filename was reachable when read, which changes, for example when an offloaded file downloads, independently of message and attachment dates. ${localStore}`,
-    ...definition2(
-      {
-        guid: [
-          {
-            ...id4,
-            description: "chat.db attachment.guid; this stream's primary key. messageAttachments.attachmentGuid refers to it within this source."
-          },
-          "a.guid"
-        ]
-      },
-      "attachment a",
-      attachment,
-      {
-        // Changes when an offloaded file downloads, so the diff reloads its bytes.
-        availableLocally: {
-          ...boolean11,
-          description: "Whether the file at filename, with ~/ expanded to the home directory, was accessible to the export when this record was read; false when filename is NULL or the path is not accessible, such as a file not downloaded to this Mac. File bytes are exported only when true."
-        }
+    ...definition2({
+      guid: [
+        {
+          ...id4,
+          description: "chat.db attachment.guid; this stream's primary key. messageAttachments.attachmentGuid refers to it within this source."
+        },
+        "a.guid"
+      ]
+    }, "attachment a", attachment, {
+      // Changes when an offloaded file downloads, so the diff reloads its bytes.
+      availableLocally: {
+        ...boolean11,
+        description: "Whether the file at filename, with ~/ expanded to the home directory, was accessible to the export when this record was read; false when filename is NULL or the path is not accessible, such as a file not downloaded to this Mac. File bytes are exported only when true."
       }
-    ),
+    }),
     primaryKey: ["guid"],
     files: true
   },
   messageAttachments: {
     description: `One record per message and attachment link in chat.db message_attachment_join, keyed by (messageGuid, attachmentGuid). messageGuid refers to messages.guid and attachmentGuid to attachments.guid. ${countAtMessageGrain} ${localStore}`,
-    ...definition2(
-      {
-        messageGuid,
-        attachmentGuid: [
-          {
-            ...id4,
-            description: "chat.db attachment.guid of the linked attachment; refers to attachments.guid within this source."
-          },
-          "a.guid"
-        ]
-      },
-      "message_attachment_join j JOIN message m ON m.ROWID = j.message_id JOIN attachment a ON a.ROWID = j.attachment_id"
-    ),
+    ...definition2({
+      messageGuid,
+      attachmentGuid: [
+        {
+          ...id4,
+          description: "chat.db attachment.guid of the linked attachment; refers to attachments.guid within this source."
+        },
+        "a.guid"
+      ]
+    }, "message_attachment_join j JOIN message m ON m.ROWID = j.message_id JOIN attachment a ON a.ROWID = j.attachment_id"),
     primaryKey: ["messageGuid", "attachmentGuid"]
   }
 };
-var streams3 = Object.fromEntries(
-  Object.entries(definitions2).map(([name, definition3]) => [
+var streams3 = Object.fromEntries(Object.entries(definitions2).map(([name, definition3]) => [
+  name,
+  new Stream({
     name,
-    new Stream({
-      name,
-      jsonSchema: {
-        type: "object",
-        description: definition3.description,
-        properties: definition3.properties,
-        required: Object.keys(definition3.properties)
-      },
-      primaryKey: [...definition3.primaryKey],
-      supportedSyncModes: ["full_refresh", "incremental"],
-      sourceDefinedCursor: true,
-      emitsDeletes: true,
-      ..."files" in definition3 && { supportsFileTransfer: true }
-    })
-  ])
-);
+    jsonSchema: {
+      type: "object",
+      description: definition3.description,
+      properties: definition3.properties,
+      required: Object.keys(definition3.properties)
+    },
+    primaryKey: [...definition3.primaryKey],
+    supportedSyncModes: ["full_refresh", "incremental"],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+    ..."files" in definition3 && { supportsFileTransfer: true }
+  })
+]));
 var appleEpoch3 = Date.UTC(2001, 0, 1);
 var isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Uint8Array) && !(value instanceof Date);
 var textOf = (value) => typeof value === "string" ? value : null;
 function linkPreviews(row) {
   const root = decodeArchive(row.payload);
   const metadata2 = isObject2(root) ? root.richLinkMetadata : void 0;
-  if (!isObject2(metadata2)) return [];
+  if (!isObject2(metadata2))
+    return [];
   return [
     {
       messageGuid: row.messageGuid,
@@ -72628,28 +71818,29 @@ function linkPreviews(row) {
   ];
 }
 function appleTime(value) {
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value !== "number" && typeof value !== "bigint") return null;
+  if (value instanceof Date)
+    return value.toISOString();
+  if (typeof value !== "number" && typeof value !== "bigint")
+    return null;
   const milliseconds = typeof value === "bigint" ? Number(value / 1000000n) : Math.abs(value) > 1e11 ? value / 1e6 : value * 1e3;
   return new Date(appleEpoch3 + Math.trunc(milliseconds)).toISOString();
 }
 function messageEdits(row) {
   const summary = decodeArchive(row.summary);
   const edited = isObject2(summary) ? summary.ec : void 0;
-  if (!isObject2(edited)) return [];
-  return Object.entries(edited).flatMap(
-    ([part, versions]) => (Array.isArray(versions) ? versions : []).map((entry, version3) => {
-      const body = isObject2(entry) ? entry.t : void 0;
-      return {
-        messageGuid: row.messageGuid,
-        partIndex: Number(part),
-        version: version3,
-        editedAt: isObject2(entry) ? appleTime(entry.d) : null,
-        text: body instanceof Uint8Array ? attributedText(body) : null,
-        entry: plistJSON(entry)
-      };
-    })
-  );
+  if (!isObject2(edited))
+    return [];
+  return Object.entries(edited).flatMap(([part, versions]) => (Array.isArray(versions) ? versions : []).map((entry, version3) => {
+    const body = isObject2(entry) ? entry.t : void 0;
+    return {
+      messageGuid: row.messageGuid,
+      partIndex: Number(part),
+      version: version3,
+      editedAt: isObject2(entry) ? appleTime(entry.d) : null,
+      text: body instanceof Uint8Array ? attributedText(body) : null,
+      entry: plistJSON(entry)
+    };
+  }));
 }
 function recordFrom2(name, row) {
   const record3 = {};
@@ -72660,20 +71851,12 @@ function recordFrom2(name, row) {
   return record3;
 }
 
-// apps/apple/src/sources/apple-messages/apple-messages-source.ts
+// apps/apple/connectors/dist/sources/apple-messages/apple-messages-source.js
 var catalog5 = new Catalog(Object.values(streams3));
+var pollIntervalMs3 = 1e3;
 var attachmentPath = (filename) => filename.startsWith("~/") ? join17(homedir5(), filename.slice(2)) : filename;
 var AppleMessagesSource = class extends Source {
-  constructor(path = join17(messagesDirectory, "chat.db"), pollIntervalMs = 1e3, scope = {}) {
-    super();
-    this.path = path;
-    this.pollIntervalMs = pollIntervalMs;
-    this.scope = scope;
-    this.identity = `apple-messages:${path}`;
-    Object.freeze(this);
-  }
   path;
-  pollIntervalMs;
   scope;
   identity;
   catalog = catalog5;
@@ -72691,33 +71874,40 @@ var AppleMessagesSource = class extends Source {
   attachments = streams3.attachments;
   messageAttachments = streams3.messageAttachments;
   #scopes = /* @__PURE__ */ new WeakMap();
+  constructor(path = join17(messagesDirectory, "chat.db"), scope = {}) {
+    super();
+    this.path = path;
+    this.scope = scope;
+    this.identity = `apple-messages:${path}`;
+    Object.freeze(this);
+  }
   open() {
     return ChatDatabase.open(this.path);
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
-  async *observe({
-    streams: streams4,
-    signal
-  }) {
+  async *observe({ streams: streams4, signal }) {
     var _stack = [];
     try {
-      if (signal.aborted) return;
+      if (signal.aborted)
+        return;
       const version3 = __using(_stack, new ChatDatabaseVersion(this.path));
       let seen = version3.current;
       yield streams4;
       try {
-        for await (const _2 of setInterval4(this.pollIntervalMs, void 0, {
+        for await (const _2 of setInterval4(pollIntervalMs3, void 0, {
           signal
         })) {
           const current = version3.current;
-          if (current === seen) continue;
+          if (current === seen)
+            continue;
           seen = current;
           yield streams4;
         }
       } catch (error62) {
-        if (!(error62 instanceof Error && error62.name === "AbortError")) throw error62;
+        if (!(error62 instanceof Error && error62.name === "AbortError"))
+          throw error62;
       }
     } catch (_) {
       var _error = _, _hasError = true;
@@ -72727,11 +71917,7 @@ var AppleMessagesSource = class extends Source {
   }
   async *extract(configuration, state, _partition, database) {
     const { stream } = configuration;
-    const records = validateRecords(
-      stream,
-      await this.#scan(stream.name, database),
-      "Messages"
-    );
+    const records = validateRecords(stream, await this.#scan(stream.name, database), "Messages");
     const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state) : records.map((data) => ({ stream: stream.name, data }));
     for await (const message4 of messages) {
       if ("type" in message4 || configuration.fileReads.length === 0) {
@@ -72753,94 +71939,69 @@ var AppleMessagesSource = class extends Source {
       this.#scopes.set(database, accepts);
     }
     const rows = database.all(definitions2[name].sql).filter((row) => accepts(name, row));
-    if (definition3.expand !== void 0) return rows.flatMap(definition3.expand);
-    return Promise.all(
-      rows.map(async (row) => {
-        const record3 = recordFrom2(name, row);
-        if (name === "messages" && record3.text === null)
-          record3.text = row.attributedBody instanceof Uint8Array ? attributedText(row.attributedBody) : null;
-        if (name === "attachments")
-          record3.availableLocally = typeof row.filename === "string" && await access(attachmentPath(row.filename)).then(
-            () => true,
-            () => false
-          );
-        return record3;
-      })
-    );
+    if (definition3.expand !== void 0)
+      return rows.flatMap(definition3.expand);
+    return Promise.all(rows.map(async (row) => {
+      const record3 = recordFrom2(name, row);
+      if (name === "messages" && record3.text === null)
+        record3.text = row.attributedBody instanceof Uint8Array ? attributedText(row.attributedBody) : null;
+      if (name === "attachments")
+        record3.availableLocally = typeof row.filename === "string" && await access(attachmentPath(row.filename)).then(() => true, () => false);
+      return record3;
+    }));
   }
 };
 function messageSelection(database, scope) {
-  if (Object.keys(scope).length === 0) return () => true;
-  const chats = new Set(
-    database.all(definitions2.chats.sql).filter(
-      (row) => selected(scope.collectionIds, row.guid) && selected(scope.accountIds, row.accountId)
-    ).map((row) => row.guid)
-  );
+  if (Object.keys(scope).length === 0)
+    return () => true;
+  const chats = new Set(database.all(definitions2.chats.sql).filter((row) => selected(scope.collectionIds, row.guid) && selected(scope.accountIds, row.accountId)).map((row) => row.guid));
   const memberships = [
     ...database.all(definitions2.chatMessages.sql),
     ...database.all(definitions2.recoverableMessages.sql)
   ];
-  const linked = new Set(
-    memberships.filter((row) => chats.has(row.chatGuid)).map((row) => row.messageGuid)
-  );
-  const messages = database.all(definitions2.messages.sql).filter(
-    (row) => (scope.collectionIds === void 0 && scope.accountIds === void 0 || linked.has(row.guid)) && withinDates(
-      scope,
-      typeof row.date === "number" ? new Date(Date.UTC(2001, 0, 1) + row.date).toISOString() : null
-    )
-  );
+  const linked = new Set(memberships.filter((row) => chats.has(row.chatGuid)).map((row) => row.messageGuid));
+  const messages = database.all(definitions2.messages.sql).filter((row) => (scope.collectionIds === void 0 && scope.accountIds === void 0 || linked.has(row.guid)) && withinDates(scope, typeof row.date === "number" ? new Date(Date.UTC(2001, 0, 1) + row.date).toISOString() : null));
   const messageIds = new Set(messages.map((row) => row.guid));
-  const attachmentIds = new Set(
-    database.all(definitions2.messageAttachments.sql).filter((row) => messageIds.has(row.messageGuid)).map((row) => row.attachmentGuid)
-  );
-  const handles = new Set(
-    messages.flatMap((row) => [
-      JSON.stringify([row.handle, row.handleService]),
-      JSON.stringify([row.otherHandle, row.otherHandleService])
-    ])
-  );
+  const attachmentIds = new Set(database.all(definitions2.messageAttachments.sql).filter((row) => messageIds.has(row.messageGuid)).map((row) => row.attachmentGuid));
+  const handles = new Set(messages.flatMap((row) => [
+    JSON.stringify([row.handle, row.handleService]),
+    JSON.stringify([row.otherHandle, row.otherHandleService])
+  ]));
   for (const row of database.all(definitions2.chatHandles.sql))
     if (chats.has(row.chatGuid))
       handles.add(JSON.stringify([row.handleId, row.handleService]));
   return (name, row) => {
-    if (name === "chats") return chats.has(row.guid);
-    if (name === "messages") return messageIds.has(row.guid);
-    if (name === "attachments") return attachmentIds.has(row.guid);
+    if (name === "chats")
+      return chats.has(row.guid);
+    if (name === "messages")
+      return messageIds.has(row.guid);
+    if (name === "attachments")
+      return attachmentIds.has(row.guid);
     if (name === "handles")
       return handles.has(JSON.stringify([row.id, row.service]));
     return (!("chatGuid" in row) || chats.has(row.chatGuid)) && (!("messageGuid" in row) || messageIds.has(row.messageGuid));
   };
 }
 
-// apps/apple/src/sources/apple-notes/apple-notes-source.ts
+// apps/apple/connectors/dist/sources/apple-notes/apple-notes-source.js
 import { join as join20 } from "node:path";
 import { setInterval as setInterval5 } from "node:timers/promises";
 
-// apps/apple/src/platform/macos/note-store.ts
+// apps/apple/connectors/dist/platform/macos/note-store.js
 import { homedir as homedir6 } from "node:os";
 import { join as join18 } from "node:path";
-import {
-  DatabaseSync as DatabaseSync13
-} from "node:sqlite";
-var notesContainer = join18(
-  homedir6(),
-  "Library/Group Containers/group.com.apple.notes"
-);
+import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
+var notesContainer = join18(homedir6(), "Library/Group Containers/group.com.apple.notes");
 var NotesUnavailableError = class extends Error {
   name = "NotesUnavailableError";
   constructor(path, cause) {
-    super(
-      `The Notes store at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Notes.app does not need to be open.`,
-      { cause }
-    );
+    super(`The Notes store at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Notes.app does not need to be open.`, { cause });
   }
 };
 var NotesSchemaError = class extends Error {
   name = "NotesSchemaError";
   constructor(path, missing) {
-    super(
-      `The Notes store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`
-    );
+    super(`The Notes store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
   }
 };
 var unavailableCodes4 = /* @__PURE__ */ new Set([14, 23]);
@@ -72868,23 +72029,22 @@ var NoteStoreVersion = class {
   }
 };
 var NoteStore = class _NoteStore {
+  path;
+  #database;
   constructor(path, database) {
     this.path = path;
     this.#database = database;
   }
-  path;
-  #database;
   static async open(path, required3) {
     const database = open9(path);
     try {
       database.exec("BEGIN");
       const missing = Object.entries(required3).flatMap(([table2, columns3]) => {
-        const present = new Set(
-          database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((column) => column.name)
-        );
+        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((column) => column.name));
         return columns3.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
       });
-      if (missing.length > 0) throw new NotesSchemaError(path, missing);
+      if (missing.length > 0)
+        throw new NotesSchemaError(path, missing);
       return new _NoteStore(path, database);
     } catch (cause) {
       database.close();
@@ -72895,12 +72055,13 @@ var NoteStore = class _NoteStore {
     return this.#database.prepare(sql).all(...parameters);
   }
   async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction) this.#database.exec("COMMIT");
+    if (this.#database.isTransaction)
+      this.#database.exec("COMMIT");
     this.#database.close();
   }
 };
 
-// apps/apple/src/platform/macos/notes-app.ts
+// apps/apple/connectors/dist/platform/macos/notes-app.js
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify as promisify4 } from "node:util";
 var execFile4 = promisify4(execFileCallback);
@@ -72913,12 +72074,13 @@ async function launchNotesHidden() {
     "-app",
     bundle
   ]);
-  if (/"pid"=\d+/.test(stdout)) return false;
+  if (/\bpid"?\s*=\s*\d+/.test(stdout))
+    return false;
   await execFile4("/usr/bin/open", ["-g", "-j", "-b", bundle]);
   return true;
 }
 
-// apps/apple/src/sources/apple-notes/apple-notes-stream.ts
+// apps/apple/connectors/dist/sources/apple-notes/apple-notes-stream.js
 var notesFields = {
   ...eventKitFields,
   nullableId: { type: ["string", "null"], minLength: 1 },
@@ -72939,14 +72101,8 @@ var AppleNotesStream = class {
     return this.#stream;
   }
   async read(scan) {
-    const records = await Promise.all(
-      this.rows(scan).map((row) => this.record(row, scan))
-    );
-    return validateRecords(
-      this.describe(),
-      records,
-      "Notes"
-    );
+    const records = await Promise.all(this.rows(scan).map((row) => this.record(row, scan)));
+    return validateRecords(this.describe(), records, "Notes");
   }
   // The file a record carries, for streams that support file reads.
   file(_record2, _scan) {
@@ -72954,7 +72110,7 @@ var AppleNotesStream = class {
   }
 };
 
-// apps/apple/src/sources/apple-notes/accounts-stream.ts
+// apps/apple/connectors/dist/sources/apple-notes/accounts-stream.js
 var { id: id5, text: text9, ordinal: ordinal3 } = notesFields;
 var properties11 = {
   id: {
@@ -72987,13 +72143,13 @@ var AccountsStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/src/sources/apple-notes/attachments-stream.ts
+// apps/apple/connectors/dist/sources/apple-notes/attachments-stream.js
 import { access as access2 } from "node:fs/promises";
 
-// apps/apple/src/sources/apple-notes/notes-scan.ts
+// apps/apple/connectors/dist/sources/apple-notes/notes-scan.js
 import { dirname as dirname2, join as join19 } from "node:path";
 
-// apps/apple/src/platform/macos/note-document.ts
+// apps/apple/connectors/dist/platform/macos/note-document.js
 import { gunzipSync, inflateSync } from "node:zlib";
 var decompress = (bytes) => bytes[0] === 31 && bytes[1] === 139 ? gunzipSync(bytes) : inflateSync(bytes);
 var versionData = (bytes) => {
@@ -73062,9 +72218,11 @@ var NoteDocument = class _NoteDocument {
       };
       const lines = segment.split("\n");
       lines.forEach((line, index) => {
-        if (line !== "") current.push({ ...base, text: line });
+        if (line !== "")
+          current.push({ ...base, text: line });
         style = run2.message(2);
-        if (index < lines.length - 1) close();
+        if (index < lines.length - 1)
+          close();
       });
     }
     if (offset < text16.length)
@@ -73076,20 +72234,14 @@ var NoteDocument = class _NoteDocument {
         link: null,
         attachment: null
       });
-    if (current.length > 0) close();
+    if (current.length > 0)
+      close();
     return new _NoteDocument(text16, paragraphs);
   }
   // The visible text, with each attachment character replaced as the caller
   // renders it: an inline tag by its text, a file by nothing.
   plain(attachment2) {
-    return this.paragraphs.map(
-      (paragraph) => paragraph.runs.map(
-        (run2) => run2.attachment === null ? run2.text : run2.text.replaceAll(
-          attachmentCharacter,
-          () => attachment2(run2.attachment)
-        )
-      ).join("")
-    ).join("\n");
+    return this.paragraphs.map((paragraph) => paragraph.runs.map((run2) => run2.attachment === null ? run2.text : run2.text.replaceAll(attachmentCharacter, () => attachment2(run2.attachment))).join("")).join("\n");
   }
   // Attachments render through the caller: a table becomes its cells, an
   // inline tag its text, a file a link to the attachment row.
@@ -73112,9 +72264,7 @@ var NoteDocument = class _NoteDocument {
       if (numbered)
         numbers[paragraph.indent] = paragraph.startNumber ?? (numbers[paragraph.indent] ?? 0) + 1;
       const heading = paragraph.style === paragraphStyles.title || paragraph.style === paragraphStyles.heading || paragraph.style === paragraphStyles.subheading;
-      const content = merge2(
-        heading ? paragraph.runs.map((run2) => ({ ...run2, bold: false })) : paragraph.runs
-      ).map((run2) => inline(run2, attachment2)).join("");
+      const content = merge2(heading ? paragraph.runs.map((run2) => ({ ...run2, bold: false })) : paragraph.runs).map((run2) => inline(run2, attachment2)).join("");
       if (content === "") {
         lines.push("");
         continue;
@@ -73122,11 +72272,10 @@ var NoteDocument = class _NoteDocument {
       const indent = "  ".repeat(paragraph.indent);
       const quote4 = "> ".repeat(paragraph.blockQuote);
       const prefix = paragraph.style === paragraphStyles.title ? "# " : paragraph.style === paragraphStyles.heading ? "## " : paragraph.style === paragraphStyles.subheading ? "### " : paragraph.style === paragraphStyles.bullet || paragraph.style === paragraphStyles.dash ? `${indent}- ` : numbered ? `${indent}${numbers[paragraph.indent]}. ` : paragraph.style === paragraphStyles.checklist ? `${indent}- [${paragraph.todo?.done ? "x" : " "}] ` : "";
-      lines.push(
-        `${quote4}${prefix}${prefix === "" ? escapeLineStart(content) : content}`
-      );
+      lines.push(`${quote4}${prefix}${prefix === "" ? escapeLineStart(content) : content}`);
     }
-    if (monospaced) lines.push("```");
+    if (monospaced)
+      lines.push("```");
     return lines.join("\n");
   }
 };
@@ -73138,28 +72287,30 @@ var merge2 = (runs) => runs.reduce((merged, run2) => {
       ...previous,
       text: previous.text + run2.text
     };
-  else merged.push(run2);
+  else
+    merged.push(run2);
   return merged;
 }, []);
 var escapeInline = (text16) => text16.replace(/[\\`*_[\]~<]/g, "\\$&");
 var escapeLineStart = (line) => line.replace(/^(\s*)([#>+-]|\d+[.)])(?=\s|$)/, "$1\\$2");
 var inline = (run2, attachment2) => {
   if (run2.attachment !== null)
-    return run2.text.split("").map(
-      (character) => character === attachmentCharacter ? attachment2(run2.attachment) : escapeInline(character)
-    ).join("");
+    return run2.text.split("").map((character) => character === attachmentCharacter ? attachment2(run2.attachment) : escapeInline(character)).join("");
   const text16 = run2.text.trim();
-  if (text16 === "") return run2.text;
+  if (text16 === "")
+    return run2.text;
   let body = escapeInline(text16);
-  if (run2.strikethrough) body = `~~${body}~~`;
-  if (run2.bold && run2.italic) body = `***${body}***`;
-  else if (run2.bold) body = `**${body}**`;
-  else if (run2.italic) body = `*${body}*`;
-  if (run2.link !== null) body = `[${body}](<${run2.link}>)`;
-  const leading = run2.text.slice(
-    0,
-    run2.text.length - run2.text.trimStart().length
-  );
+  if (run2.strikethrough)
+    body = `~~${body}~~`;
+  if (run2.bold && run2.italic)
+    body = `***${body}***`;
+  else if (run2.bold)
+    body = `**${body}**`;
+  else if (run2.italic)
+    body = `*${body}*`;
+  if (run2.link !== null)
+    body = `[${body}](<${run2.link}>)`;
+  const leading = run2.text.slice(0, run2.text.length - run2.text.trimStart().length);
   const trailing = run2.text.slice(run2.text.trimEnd().length);
   return `${leading}${body}${trailing}`;
 };
@@ -73178,9 +72329,7 @@ function decodeTable(bytes) {
     const custom2 = object3.message(13);
     if (custom2 === void 0)
       throw new TypeError(`Notes table ${label} is not a keyed object`);
-    return new Map(
-      custom2.messages(3).map((entry) => [keys[entry.uint(1) ?? -1], entry.message(2)])
-    );
+    return new Map(custom2.messages(3).map((entry) => [keys[entry.uint(1) ?? -1], entry.message(2)]));
   };
   const table2 = entries(objects[0] ?? reference2(void 0, "root"), "root");
   const identity = (object3) => {
@@ -73197,22 +72346,15 @@ function decodeTable(bytes) {
     const order = /* @__PURE__ */ new Map();
     (array2.message(1)?.messages(2) ?? []).forEach((entry, position) => {
       const id12 = entry.bytes(2);
-      const index = uuidItems.findIndex(
-        (item) => id12 !== void 0 && Buffer.from(item).equals(id12)
-      );
+      const index = uuidItems.findIndex((item) => id12 !== void 0 && Buffer.from(item).equals(id12));
       if (index === -1)
         throw new TypeError(`Notes table ${key} names an unknown identity`);
       order.set(index, position);
     });
     for (const element of array2.message(2)?.messages(1) ?? []) {
-      const position = order.get(
-        identity(reference2(element.message(1), `${key} redirect`))
-      );
+      const position = order.get(identity(reference2(element.message(1), `${key} redirect`)));
       if (position !== void 0)
-        order.set(
-          identity(reference2(element.message(2), `${key} redirect`)),
-          position
-        );
+        order.set(identity(reference2(element.message(2), `${key} redirect`)), position);
     }
     return {
       order,
@@ -73228,31 +72370,24 @@ function decodeTable(bytes) {
       return [];
     }
   }).map((value) => value?.string(4)).find((value) => value?.startsWith("CRTableColumnDirection"));
-  const grid = Array.from(
-    { length: rows.count },
-    () => Array(columns3.count).fill("")
-  );
+  const grid = Array.from({ length: rows.count }, () => Array(columns3.count).fill(""));
   const cellColumns = reference2(table2.get("cellColumns"), "cellColumns");
   for (const column of cellColumns.message(6)?.messages(1) ?? []) {
-    const x = columns3.order.get(
-      identity(reference2(column.message(1), "column"))
-    );
+    const x = columns3.order.get(identity(reference2(column.message(1), "column")));
     const cells = reference2(column.message(2), "column rows").message(6);
     for (const cell of cells?.messages(1) ?? []) {
       const y = rows.order.get(identity(reference2(cell.message(1), "row")));
       if (x === void 0 || y === void 0)
         throw new TypeError("Notes table cell has no row or column position");
       const text16 = reference2(cell.message(2), "cell").message(10)?.string(2);
-      grid[y][x] = (text16 ?? "").replaceAll(
-        attachmentCharacter,
-        ""
-      );
+      grid[y][x] = (text16 ?? "").replaceAll(attachmentCharacter, "");
     }
   }
   return direction === "CRTableColumnDirectionRightToLeft" ? grid.map((row) => row.toReversed()) : grid;
 }
 function markdownTable(grid) {
-  if (grid.length === 0) return "";
+  if (grid.length === 0)
+    return "";
   const cell = (text16) => escapeInline(text16).replaceAll("|", "\\|").replaceAll("\n", "<br>");
   const row = (cells) => `| ${cells.map(cell).join(" | ")} |`;
   const [header = [], ...body] = grid;
@@ -73263,7 +72398,7 @@ function markdownTable(grid) {
   ].join("\n");
 }
 
-// apps/apple/src/sources/apple-notes/notes-scan.ts
+// apps/apple/connectors/dist/sources/apple-notes/notes-scan.js
 var requiredColumns = {
   Z_PRIMARYKEY: ["Z_ENT", "Z_NAME"],
   ZICNOTEDATA: ["Z_PK", "ZDATA"],
@@ -73362,10 +72497,6 @@ var string4 = (value) => typeof value === "string" && value.trim() !== "" ? valu
 var number6 = (value) => typeof value === "number" ? value : null;
 var flag3 = (value) => value === 1;
 var NotesScan = class {
-  constructor(store, scope = {}) {
-    this.store = store;
-    this.scope = scope;
-  }
   store;
   scope;
   #accounts;
@@ -73374,25 +72505,23 @@ var NotesScan = class {
   #attachments;
   #inline;
   #tables = /* @__PURE__ */ new Map();
+  constructor(store, scope = {}) {
+    this.store = store;
+    this.scope = scope;
+  }
   [Symbol.asyncDispose]() {
     return this.store[Symbol.asyncDispose]();
   }
   get accounts() {
-    this.#accounts ??= this.store.all(accountsSql).filter(
-      (row) => selected(this.scope.accountIds, row.ZIDENTIFIER) && (this.scope.collectionIds === void 0 || this.folders.some((folder2) => folder2.account === row.ZIDENTIFIER))
-    );
+    this.#accounts ??= this.store.all(accountsSql).filter((row) => selected(this.scope.accountIds, row.ZIDENTIFIER) && (this.scope.collectionIds === void 0 || this.folders.some((folder2) => folder2.account === row.ZIDENTIFIER)));
     return this.#accounts;
   }
   get folders() {
-    this.#folders ??= this.store.all(foldersSql).filter(
-      (row) => selected(this.scope.accountIds, row.account) && selected(this.scope.collectionIds, row.ZIDENTIFIER)
-    );
+    this.#folders ??= this.store.all(foldersSql).filter((row) => selected(this.scope.accountIds, row.account) && selected(this.scope.collectionIds, row.ZIDENTIFIER));
     return this.#folders;
   }
   get notes() {
-    this.#notes ??= this.store.all(notesSql).filter(
-      (row) => selected(this.scope.accountIds, row.account) && selected(this.scope.collectionIds, row.folder) && withinDates(this.scope, time3(row.ZMODIFICATIONDATE1))
-    ).map((row) => ({
+    this.#notes ??= this.store.all(notesSql).filter((row) => selected(this.scope.accountIds, row.account) && selected(this.scope.collectionIds, row.folder) && withinDates(this.scope, time3(row.ZMODIFICATIONDATE1))).map((row) => ({
       row,
       document: row.ZISPASSWORDPROTECTED === 1 || !(row.ZDATA instanceof Uint8Array) ? null : NoteDocument.decode(row.ZDATA)
     }));
@@ -73400,19 +72529,17 @@ var NotesScan = class {
   }
   // Attachments and inline attachments by identifier, in store order.
   get attachments() {
-    if (this.#attachments !== void 0) return this.#attachments;
+    if (this.#attachments !== void 0)
+      return this.#attachments;
     const notes = new Set(this.notes.map((note) => note.row.ZIDENTIFIER));
-    this.#attachments ??= new Map(
-      this.store.all(attachmentsSql).filter((row) => notes.has(row.note)).map((row) => [row.ZIDENTIFIER, row])
-    );
+    this.#attachments ??= new Map(this.store.all(attachmentsSql).filter((row) => notes.has(row.note)).map((row) => [row.ZIDENTIFIER, row]));
     return this.#attachments;
   }
   get inline() {
-    if (this.#inline !== void 0) return this.#inline;
+    if (this.#inline !== void 0)
+      return this.#inline;
     const notes = new Set(this.notes.map((note) => note.row.ZIDENTIFIER));
-    this.#inline ??= new Map(
-      this.store.all(inlineSql).filter((row) => notes.has(row.note)).map((row) => [row.ZIDENTIFIER, row])
-    );
+    this.#inline ??= new Map(this.store.all(inlineSql).filter((row) => notes.has(row.note)).map((row) => [row.ZIDENTIFIER, row]));
     return this.#inline;
   }
   table(row) {
@@ -73430,21 +72557,11 @@ var NotesScan = class {
   file(row) {
     if (row.locked === 1 || typeof row.account !== "string" || typeof row.media !== "string" || typeof row.ZFILENAME !== "string")
       return null;
-    return join19(
-      dirname2(this.store.path),
-      "Accounts",
-      row.account,
-      "Media",
-      row.media,
-      ...typeof row.ZGENERATION1 === "string" ? [row.ZGENERATION1] : [],
-      row.ZFILENAME
-    );
+    return join19(dirname2(this.store.path), "Accounts", row.account, "Media", row.media, ...typeof row.ZGENERATION1 === "string" ? [row.ZGENERATION1] : [], row.ZFILENAME);
   }
   // Plain text keeps what reads as text: inline tags and mentions.
   text(document) {
-    return document.plain(
-      ({ id: id12 }) => string4(this.inline.get(id12)?.ZALTTEXT) ?? ""
-    );
+    return document.plain(({ id: id12 }) => string4(this.inline.get(id12)?.ZALTTEXT) ?? "");
   }
   markdown(document) {
     return document.markdown(({ id: id12, type }) => {
@@ -73455,9 +72572,11 @@ var NotesScan = class {
         return token.ZTYPEUTI1 === noteLinkType && target !== null ? `[${text16}](<${target}>)` : text16;
       }
       const row = this.attachments.get(id12);
-      if (row === void 0) return "";
+      if (row === void 0)
+        return "";
       const grid = this.table(row);
-      if (grid !== null) return `
+      if (grid !== null)
+        return `
 ${markdownTable(grid)}
 `;
       const label = string4(row.title) ?? string4(row.ZFILENAME) ?? type ?? id12;
@@ -73467,17 +72586,8 @@ ${markdownTable(grid)}
   }
 };
 
-// apps/apple/src/sources/apple-notes/attachments-stream.ts
-var {
-  id: id6,
-  nullableId,
-  text: text10,
-  nullableText: nullableText13,
-  ordinal: ordinal4,
-  nullableNumber: nullableNumber6,
-  nullableTimestamp: nullableTimestamp13,
-  boolean: boolean12
-} = notesFields;
+// apps/apple/connectors/dist/sources/apple-notes/attachments-stream.js
+var { id: id6, nullableId, text: text10, nullableText: nullableText13, ordinal: ordinal4, nullableNumber: nullableNumber6, nullableTimestamp: nullableTimestamp13, boolean: boolean12 } = notesFields;
 var properties12 = {
   id: {
     ...id6,
@@ -73604,10 +72714,7 @@ var AttachmentsStream = class extends AppleNotesStream {
       longitude: number6(row.ZLONGITUDE),
       createdAt: time3(row.ZCREATIONDATE),
       modifiedAt: time3(row.ZMODIFICATIONDATE),
-      availableLocally: file2 !== null && await access2(file2).then(
-        () => true,
-        () => false
-      )
+      availableLocally: file2 !== null && await access2(file2).then(() => true, () => false)
     };
   }
   // The original file, not a staged copy: readers only read it.
@@ -73617,7 +72724,7 @@ var AttachmentsStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/src/sources/apple-notes/folders-stream.ts
+// apps/apple/connectors/dist/sources/apple-notes/folders-stream.js
 var { id: id7, nullableId: nullableId2, text: text11, ordinal: ordinal5, nullableText: nullableText14, boolean: boolean13 } = notesFields;
 var properties13 = {
   id: {
@@ -73670,7 +72777,7 @@ var FoldersStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/src/sources/apple-notes/inline-attachments-stream.ts
+// apps/apple/connectors/dist/sources/apple-notes/inline-attachments-stream.js
 var { id: id8, text: text12, nullableText: nullableText15, nullableTimestamp: nullableTimestamp14 } = notesFields;
 var properties14 = {
   id: { ...id8, description: "Notes identifier of this inline attachment." },
@@ -73718,7 +72825,7 @@ var InlineAttachmentsStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/src/sources/apple-notes/notes-stream.ts
+// apps/apple/connectors/dist/sources/apple-notes/notes-stream.js
 var { id: id9, nullableText: nullableText16, nullableTimestamp: nullableTimestamp15, boolean: boolean14 } = notesFields;
 var properties15 = {
   id: {
@@ -73805,7 +72912,7 @@ var NotesStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/src/sources/apple-notes/apple-notes-source.ts
+// apps/apple/connectors/dist/sources/apple-notes/apple-notes-source.js
 var readers2 = {
   accounts: new AccountsStream(),
   folders: new FoldersStream(),
@@ -73813,9 +72920,9 @@ var readers2 = {
   inlineAttachments: new InlineAttachmentsStream(),
   attachments: new AttachmentsStream()
 };
-var catalog6 = new Catalog(
-  Object.values(readers2).map((reader) => reader.describe())
-);
+var catalog6 = new Catalog(Object.values(readers2).map((reader) => reader.describe()));
+var pollIntervalMs4 = 1e3;
+var launchIntervalMs = 3e4;
 var AppleNotesSource = class extends Source {
   identity;
   catalog = catalog6;
@@ -73825,65 +72932,47 @@ var AppleNotesSource = class extends Source {
   inlineAttachments = readers2.inlineAttachments.describe();
   attachments = readers2.attachments.describe();
   path;
-  pollIntervalMs;
-  launchIntervalMs;
-  launch;
   scope;
-  constructor({
-    path = join20(notesContainer, "NoteStore.sqlite"),
-    // How often a watch checks the store for commits.
-    pollIntervalMs = 1e3,
-    // How often a watch makes sure Notes runs: macOS closes a hidden Notes
-    // when it frees disk space, and only Notes syncs iCloud notes.
-    launchIntervalMs = 3e4,
-    launch = launchNotesHidden,
-    scope = {}
-  } = {}) {
+  constructor({ path = join20(notesContainer, "NoteStore.sqlite"), scope = {} } = {}) {
     super();
     this.path = path;
-    this.pollIntervalMs = pollIntervalMs;
-    this.launchIntervalMs = launchIntervalMs;
-    this.launch = launch;
     this.scope = scope;
     this.identity = `apple-notes:${path}`;
     Object.freeze(this);
   }
   async open() {
-    return new NotesScan(
-      await NoteStore.open(this.path, requiredColumns),
-      this.scope
-    );
+    return new NotesScan(await NoteStore.open(this.path, requiredColumns), this.scope);
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
-  async *observe({
-    streams: streams4,
-    signal
-  }) {
+  async *observe({ streams: streams4, signal }) {
     var _stack = [];
     try {
-      if (signal.aborted) return;
+      if (signal.aborted)
+        return;
       const version3 = __using(_stack, new NoteStoreVersion(this.path));
       let seen = version3.current;
-      await this.launch();
-      let nextLaunch = Date.now() + this.launchIntervalMs;
+      await launchNotesHidden();
+      let nextLaunch = Date.now() + launchIntervalMs;
       yield streams4;
       try {
-        for await (const _2 of setInterval5(this.pollIntervalMs, void 0, {
+        for await (const _2 of setInterval5(pollIntervalMs4, void 0, {
           signal
         })) {
           if (Date.now() >= nextLaunch) {
-            await this.launch();
-            nextLaunch = Date.now() + this.launchIntervalMs;
+            await launchNotesHidden();
+            nextLaunch = Date.now() + launchIntervalMs;
           }
           const current = version3.current;
-          if (current === seen) continue;
+          if (current === seen)
+            continue;
           seen = current;
           yield streams4;
         }
       } catch (error62) {
-        if (!(error62 instanceof Error && error62.name === "AbortError")) throw error62;
+        if (!(error62 instanceof Error && error62.name === "AbortError"))
+          throw error62;
       }
     } catch (_) {
       var _error = _, _hasError = true;
@@ -73908,7 +72997,7 @@ var AppleNotesSource = class extends Source {
   }
 };
 
-// apps/apple/src/sources/apple-reminders/reminder-rows.ts
+// apps/apple/connectors/dist/sources/apple-reminders/reminder-rows.js
 var dateComponentNames = [
   "era",
   "year",
@@ -73931,26 +73020,25 @@ function reminderRows(documents, scope) {
   const lists = [];
   const reminders = [];
   for (const document of documents) {
-    if (document.type === "account") accounts2.push(document);
-    else if (document.type === "calendar") lists.push(document);
-    else if (document.type === "reminder") reminders.push(document);
+    if (document.type === "account")
+      accounts2.push(document);
+    else if (document.type === "calendar")
+      lists.push(document);
+    else if (document.type === "reminder")
+      reminders.push(document);
   }
   const collections2 = scopedCollections(scope, accounts2, lists);
-  const related3 = reminders.map(
-    (reminder) => relatedRows(reminder, reminder.id, "reminderId")
-  );
+  const related3 = reminders.map((reminder) => relatedRows(reminder, reminder.id, "reminderId"));
   return /* @__PURE__ */ new Map([
     ["accounts", collections2.accounts.map(accountRow)],
     ["lists", collections2.calendars.map(calendarRow)],
     ["reminders", reminders.map(reminderRow)],
     [
       "dateComponents",
-      reminders.flatMap(
-        (reminder) => ["start", "due"].flatMap((kind) => {
-          const components = reminder[kind];
-          return components === void 0 ? [] : [dateComponentsRow(reminder.id, kind, components)];
-        })
-      )
+      reminders.flatMap((reminder) => ["start", "due"].flatMap((kind) => {
+        const components = reminder[kind];
+        return components === void 0 ? [] : [dateComponentsRow(reminder.id, kind, components)];
+      }))
     ],
     ["attendees", related3.flatMap((rows) => rows.attendees)],
     ["alarms", related3.flatMap((rows) => rows.alarms)],
@@ -73985,151 +73073,139 @@ function dateComponentsRow(reminderId, kind, components) {
     kind,
     calendarIdentifier: components.calendarIdentifier ?? null,
     timeZone: components.timeZone ?? null,
-    ...Object.fromEntries(
-      dateComponentNames.map((name) => [name, components[name] ?? null])
-    ),
+    ...Object.fromEntries(dateComponentNames.map((name) => [name, components[name] ?? null])),
     leapMonth: components.leapMonth,
     repeatedDay: components.repeatedDay
   };
 }
 
-// apps/apple/src/sources/apple-reminders/apple-reminders-source.ts
+// apps/apple/connectors/dist/sources/apple-reminders/apple-reminders-source.js
 var { id: id10, text: text13, nullableText: nullableText17, nullableTimestamp: nullableTimestamp16, integer: integer8, boolean: boolean15 } = eventKitFields;
 var related2 = eventKitRelatedFields("reminderId");
-var catalog7 = eventKitCatalog(
-  {
-    accounts: {
-      description: "One source record per EventKit account (EKSource) in this Mac's store, including accounts without reminder lists. An import scope keeps the selected accounts; a list scope also drops accounts owning no selected list. Relationships name source streams, not destination tables.",
-      properties: eventKitAccountFields
-    },
-    lists: {
-      description: "One source record per reminder list (an EventKit calendar for reminders) visible on this Mac. An import scope keeps only the selected lists. accountId refers to accounts.id; reminders.listId refers to id. Relationships name source streams, not destination tables.",
-      properties: eventKitCalendarFields
-    },
-    reminders: {
-      description: "One source record per reminder visible through EventKit on this Mac, completed reminders included, limited to the selected lists when an import scope is set. No date filter. Start and due dates live in dateComponents as native component sets; no UTC due timestamp is derived. dateComponents, attendees, alarms, recurrenceRules and recurrenceRuleValues refer to id through reminderId; listId refers to lists.id. Relationships name source streams, not destination tables.",
-      properties: {
-        id: {
-          ...id10,
-          description: "EventKit EKCalendarItem.calendarItemIdentifier; related streams refer to it through reminderId. Apple documents that a full sync can replace it."
-        },
-        listId: {
-          ...id10,
-          description: "EventKit EKCalendarItem.calendar.calendarIdentifier: the owning list; refers to lists.id within this source."
-        },
-        externalId: {
-          ...nullableText17,
-          description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier; NULL when EventKit has none. Apple documents duplicates across calendars and, for Exchange reminders, different values between devices, so it is not unique."
-        },
-        name: { ...text13, description: "EventKit EKCalendarItem.title." },
-        body: {
-          ...nullableText17,
-          description: "EventKit EKCalendarItem.notes; NULL when unset."
-        },
-        location: {
-          ...nullableText17,
-          description: "EventKit EKCalendarItem.location; NULL when unset."
-        },
-        url: {
-          ...nullableText17,
-          description: "EventKit EKCalendarItem.URL as a string; NULL when unset."
-        },
-        timeZone: {
-          ...nullableText17,
-          description: "EventKit EKCalendarItem.timeZone identifier; NULL when EventKit has none, which Apple documents as floating. The start and due component sets carry their own time zones in dateComponents."
-        },
-        createdAt: {
-          ...nullableTimestamp16,
-          description: "EventKit EKCalendarItem.creationDate as a UTC timestamp; NULL when EventKit has none."
-        },
-        modifiedAt: {
-          ...nullableTimestamp16,
-          description: "EventKit EKCalendarItem.lastModifiedDate as a UTC timestamp; NULL when EventKit has none."
-        },
-        completed: {
-          ...boolean15,
-          description: "EventKit EKReminder.isCompleted."
-        },
-        completedAt: {
-          ...nullableTimestamp16,
-          description: "EventKit EKReminder.completionDate as a UTC timestamp; NULL when EventKit has none."
-        },
-        priority: {
-          ...integer8,
-          minimum: 0,
-          maximum: 9,
-          description: "EventKit EKReminder.priority: 0 no priority, 1 highest through 9 lowest. Apple follows RFC 5545 (1 to 4 high, 5 medium, 6 to 9 low); its EKReminderPriority constants are 1 high, 5 medium and 9 low."
-        }
+var catalog7 = eventKitCatalog({
+  accounts: {
+    description: "One source record per EventKit account (EKSource) in this Mac's store, including accounts without reminder lists. An import scope keeps the selected accounts; a list scope also drops accounts owning no selected list. Relationships name source streams, not destination tables.",
+    properties: eventKitAccountFields
+  },
+  lists: {
+    description: "One source record per reminder list (an EventKit calendar for reminders) visible on this Mac. An import scope keeps only the selected lists. accountId refers to accounts.id; reminders.listId refers to id. Relationships name source streams, not destination tables.",
+    properties: eventKitCalendarFields
+  },
+  reminders: {
+    description: "One source record per reminder visible through EventKit on this Mac, completed reminders included, limited to the selected lists when an import scope is set. No date filter. Start and due dates live in dateComponents as native component sets; no UTC due timestamp is derived. dateComponents, attendees, alarms, recurrenceRules and recurrenceRuleValues refer to id through reminderId; listId refers to lists.id. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id10,
+        description: "EventKit EKCalendarItem.calendarItemIdentifier; related streams refer to it through reminderId. Apple documents that a full sync can replace it."
+      },
+      listId: {
+        ...id10,
+        description: "EventKit EKCalendarItem.calendar.calendarIdentifier: the owning list; refers to lists.id within this source."
+      },
+      externalId: {
+        ...nullableText17,
+        description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier; NULL when EventKit has none. Apple documents duplicates across calendars and, for Exchange reminders, different values between devices, so it is not unique."
+      },
+      name: { ...text13, description: "EventKit EKCalendarItem.title." },
+      body: {
+        ...nullableText17,
+        description: "EventKit EKCalendarItem.notes; NULL when unset."
+      },
+      location: {
+        ...nullableText17,
+        description: "EventKit EKCalendarItem.location; NULL when unset."
+      },
+      url: {
+        ...nullableText17,
+        description: "EventKit EKCalendarItem.URL as a string; NULL when unset."
+      },
+      timeZone: {
+        ...nullableText17,
+        description: "EventKit EKCalendarItem.timeZone identifier; NULL when EventKit has none, which Apple documents as floating. The start and due component sets carry their own time zones in dateComponents."
+      },
+      createdAt: {
+        ...nullableTimestamp16,
+        description: "EventKit EKCalendarItem.creationDate as a UTC timestamp; NULL when EventKit has none."
+      },
+      modifiedAt: {
+        ...nullableTimestamp16,
+        description: "EventKit EKCalendarItem.lastModifiedDate as a UTC timestamp; NULL when EventKit has none."
+      },
+      completed: {
+        ...boolean15,
+        description: "EventKit EKReminder.isCompleted."
+      },
+      completedAt: {
+        ...nullableTimestamp16,
+        description: "EventKit EKReminder.completionDate as a UTC timestamp; NULL when EventKit has none."
+      },
+      priority: {
+        ...integer8,
+        minimum: 0,
+        maximum: 9,
+        description: "EventKit EKReminder.priority: 0 no priority, 1 highest through 9 lowest. Apple follows RFC 5545 (1 to 4 high, 5 medium, 6 to 9 low); its EKReminderPriority constants are 1 high, 5 medium and 9 low."
       }
-    },
-    dateComponents: {
-      description: "One source record per start or due date a reminder sets; a reminder without that date has no record. Each record keeps EventKit's NSDateComponents set whole: calendar, time zone, leap month and every component, with a missing component NULL and no manufactured UTC timestamp. A date without a time has NULL hour, minute and second. reminderId refers to reminders.id. Relationships name source streams, not destination tables.",
-      properties: {
-        id: {
-          ...id10,
-          description: "JSON [reminderId, kind]; unique within this stream."
-        },
-        reminderId: {
-          ...id10,
-          description: "Owning reminder; refers to reminders.id within this source."
-        },
-        kind: {
-          ...text13,
-          enum: ["start", "due"],
-          description: "start for EventKit EKReminder.startDateComponents, due for EKReminder.dueDateComponents."
-        },
-        calendarIdentifier: {
-          ...nullableText17,
-          description: "Identifier of the NSDateComponents calendar, the calendar system the components count in; NULL when the set has no calendar."
-        },
-        timeZone: {
-          ...nullableText17,
-          description: "NSDateComponents.timeZone identifier; NULL for a floating date, which Apple documents as a nil time zone."
-        },
-        ...Object.fromEntries(
-          dateComponentNames.map((name) => [
-            name,
-            {
-              type: ["integer", "null"],
-              description: `NSDateComponents.${name}; NULL when the set leaves it undefined or this macOS does not provide it.`
-            }
-          ])
-        ),
-        leapMonth: {
-          ...boolean15,
-          description: "NSDateComponents.isLeapMonth: whether month is a leap month in the set's calendar."
-        },
-        repeatedDay: {
-          ...boolean15,
-          description: "NSDateComponents.isRepeatedDay: whether day is a repeated day in the set's calendar."
-        }
-      }
-    },
-    attendees: {
-      description: "One source record per attendee EventKit lists for a reminder. reminderId refers to reminders.id. Relationships name source streams, not destination tables.",
-      properties: related2.attendees
-    },
-    alarms: {
-      description: "One source record per EventKit alarm of a reminder, whether it fires at a time or at a location. reminderId refers to reminders.id. Relationships name source streams, not destination tables.",
-      properties: related2.alarms
-    },
-    recurrenceRules: {
-      description: "One source record per EventKit recurrence rule of a reminder. reminderId refers to reminders.id; recurrenceRuleValues holds each rule's list values. Relationships name source streams, not destination tables.",
-      properties: related2.recurrenceRules
-    },
-    recurrenceRuleValues: {
-      description: "One source record per entry of a recurrence rule's day, week, month or set-position lists. ruleId refers to recurrenceRules.id and reminderId to reminders.id. Relationships name source streams, not destination tables.",
-      properties: related2.recurrenceRuleValues
     }
   },
-  { snapshot: true }
-);
-var AppleRemindersSource = class extends Source {
-  constructor(scope = {}) {
-    super();
-    this.scope = scope;
-    Object.freeze(this);
+  dateComponents: {
+    description: "One source record per start or due date a reminder sets; a reminder without that date has no record. Each record keeps EventKit's NSDateComponents set whole: calendar, time zone, leap month and every component, with a missing component NULL and no manufactured UTC timestamp. A date without a time has NULL hour, minute and second. reminderId refers to reminders.id. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id10,
+        description: "JSON [reminderId, kind]; unique within this stream."
+      },
+      reminderId: {
+        ...id10,
+        description: "Owning reminder; refers to reminders.id within this source."
+      },
+      kind: {
+        ...text13,
+        enum: ["start", "due"],
+        description: "start for EventKit EKReminder.startDateComponents, due for EKReminder.dueDateComponents."
+      },
+      calendarIdentifier: {
+        ...nullableText17,
+        description: "Identifier of the NSDateComponents calendar, the calendar system the components count in; NULL when the set has no calendar."
+      },
+      timeZone: {
+        ...nullableText17,
+        description: "NSDateComponents.timeZone identifier; NULL for a floating date, which Apple documents as a nil time zone."
+      },
+      ...Object.fromEntries(dateComponentNames.map((name) => [
+        name,
+        {
+          type: ["integer", "null"],
+          description: `NSDateComponents.${name}; NULL when the set leaves it undefined or this macOS does not provide it.`
+        }
+      ])),
+      leapMonth: {
+        ...boolean15,
+        description: "NSDateComponents.isLeapMonth: whether month is a leap month in the set's calendar."
+      },
+      repeatedDay: {
+        ...boolean15,
+        description: "NSDateComponents.isRepeatedDay: whether day is a repeated day in the set's calendar."
+      }
+    }
+  },
+  attendees: {
+    description: "One source record per attendee EventKit lists for a reminder. reminderId refers to reminders.id. Relationships name source streams, not destination tables.",
+    properties: related2.attendees
+  },
+  alarms: {
+    description: "One source record per EventKit alarm of a reminder, whether it fires at a time or at a location. reminderId refers to reminders.id. Relationships name source streams, not destination tables.",
+    properties: related2.alarms
+  },
+  recurrenceRules: {
+    description: "One source record per EventKit recurrence rule of a reminder. reminderId refers to reminders.id; recurrenceRuleValues holds each rule's list values. Relationships name source streams, not destination tables.",
+    properties: related2.recurrenceRules
+  },
+  recurrenceRuleValues: {
+    description: "One source record per entry of a recurrence rule's day, week, month or set-position lists. ruleId refers to recurrenceRules.id and reminderId to reminders.id. Relationships name source streams, not destination tables.",
+    properties: related2.recurrenceRuleValues
   }
+}, { snapshot: true });
+var AppleRemindersSource = class extends Source {
   scope;
   #eventKit = new EventKit("reminders");
   identity = "apple-reminders:eventkit";
@@ -74142,73 +73218,62 @@ var AppleRemindersSource = class extends Source {
   alarms = catalog7.get("alarms");
   recurrenceRules = catalog7.get("recurrenceRules");
   recurrenceRuleValues = catalog7.get("recurrenceRuleValues");
+  constructor(scope = {}) {
+    super();
+    this.scope = scope;
+    Object.freeze(this);
+  }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
-  async *observe({
-    streams: streams4,
-    signal
-  }) {
-    for await (const _ of this.#eventKit.watch(signal)) yield streams4;
+  async *observe({ streams: streams4, signal }) {
+    for await (const _ of this.#eventKit.watch(signal))
+      yield streams4;
   }
   // Every selected stream from one change-free read, so reminders match
   // their lists and alarms their reminders.
   async open(streams4) {
     const { accountIds, collectionIds } = this.scope;
-    return new EventKitSnapshot(
-      await this.#eventKit.consistently(async () => {
-        const rows = reminderRows(
-          await this.#eventKit.read({ accountIds, collectionIds }),
-          this.scope
-        );
-        return new Map(
-          streams4.map((stream) => [
-            stream.name,
-            validateRecords(stream, rows.get(stream.name), "EventKit")
-          ])
-        );
-      })
-    );
+    return new EventKitSnapshot(await this.#eventKit.consistently(async () => {
+      const rows = reminderRows(await this.#eventKit.read({ accountIds, collectionIds }), this.scope);
+      return new Map(streams4.map((stream) => [
+        stream.name,
+        validateRecords(stream, rows.get(stream.name), "EventKit")
+      ]));
+    }));
   }
   async *extract({ stream, syncMode }, state, _partition, snapshot) {
     const records = snapshot.of(stream.name);
-    if (syncMode === "incremental") yield* diffSnapshot(stream, records, state);
-    else for (const data of records) yield { stream: stream.name, data };
+    if (syncMode === "incremental")
+      yield* diffSnapshot(stream, records, state);
+    else
+      for (const data of records)
+        yield { stream: stream.name, data };
   }
 };
 
-// apps/apple/src/sources/apple-safari/apple-safari-source.ts
+// apps/apple/connectors/dist/sources/apple-safari/apple-safari-source.js
 import { readdir as readdir4, stat as stat4 } from "node:fs/promises";
 import { join as join23 } from "node:path";
 import { setInterval as setInterval6 } from "node:timers/promises";
 
-// apps/apple/src/platform/macos/safari-store.ts
+// apps/apple/connectors/dist/platform/macos/safari-store.js
 import { readFile as readFile3 } from "node:fs/promises";
 import { homedir as homedir7 } from "node:os";
 import { join as join21 } from "node:path";
-import {
-  DatabaseSync as DatabaseSync14
-} from "node:sqlite";
+import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
 var safariDirectory = join21(homedir7(), "Library/Safari");
-var safariContainer = join21(
-  homedir7(),
-  "Library/Containers/com.apple.Safari/Data/Library/Safari"
-);
+var safariContainer = join21(homedir7(), "Library/Containers/com.apple.Safari/Data/Library/Safari");
 var SafariUnavailableError = class extends Error {
   name = "SafariUnavailableError";
   constructor(path, cause) {
-    super(
-      `Safari data at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Safari does not need to be open.`,
-      { cause }
-    );
+    super(`Safari data at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Safari does not need to be open.`, { cause });
   }
 };
 var SafariSchemaError = class extends Error {
   name = "SafariSchemaError";
   constructor(path, missing) {
-    super(
-      `The Safari store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`
-    );
+    super(`The Safari store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
   }
 };
 var unavailableCodes5 = /* @__PURE__ */ new Set([14, 23]);
@@ -74236,23 +73301,22 @@ var SafariDatabaseVersion = class {
   }
 };
 var SafariDatabase = class _SafariDatabase {
+  path;
+  #database;
   constructor(path, database) {
     this.path = path;
     this.#database = database;
   }
-  path;
-  #database;
   static async open(path, required3) {
     const database = open10(path);
     try {
       database.exec("BEGIN");
       const missing = Object.entries(required3).flatMap(([table2, columns3]) => {
-        const present = new Set(
-          database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((column) => column.name)
-        );
+        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((column) => column.name));
         return columns3.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
       });
-      if (missing.length > 0) throw new SafariSchemaError(path, missing);
+      if (missing.length > 0)
+        throw new SafariSchemaError(path, missing);
       return new _SafariDatabase(path, database);
     } catch (cause) {
       database.close();
@@ -74263,7 +73327,8 @@ var SafariDatabase = class _SafariDatabase {
     return this.#database.prepare(sql).all();
   }
   async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction) this.#database.exec("COMMIT");
+    if (this.#database.isTransaction)
+      this.#database.exec("COMMIT");
     this.#database.close();
   }
 };
@@ -74277,10 +73342,10 @@ async function readSafariPlist(path) {
   return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readMailPlist(path);
 }
 
-// apps/apple/src/sources/apple-safari/safari-scan.ts
+// apps/apple/connectors/dist/sources/apple-safari/safari-scan.js
 import { join as join22 } from "node:path";
 
-// apps/apple/src/sources/apple-safari/safari-values.ts
+// apps/apple/connectors/dist/sources/apple-safari/safari-values.js
 var defaultProfile = "DefaultProfile";
 var appleEpochSeconds3 = 978307200;
 var distantPast2 = -63114076800;
@@ -74298,17 +73363,15 @@ function dictionary3(value) {
 var list2 = (value) => Array.isArray(value) ? value : [];
 var strings = (value) => list2(value).filter((item) => typeof item === "string");
 function counts(value) {
-  if (!(value instanceof Uint8Array)) return null;
+  if (!(value instanceof Uint8Array))
+    return null;
   if (value.byteLength % 4 !== 0)
     throw new TypeError("Safari visit counts are not 32-bit integers");
   const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
-  return Array.from(
-    { length: value.byteLength / 4 },
-    (_, index) => view.getInt32(index * 4, true)
-  );
+  return Array.from({ length: value.byteLength / 4 }, (_, index) => view.getInt32(index * 4, true));
 }
 
-// apps/apple/src/sources/apple-safari/bookmarks-reader.ts
+// apps/apple/connectors/dist/sources/apple-safari/bookmarks-reader.js
 var readingListTitle = "com.apple.ReadingList";
 var BookmarksReader = class {
   bookmarks = [];
@@ -74331,7 +73394,7 @@ var BookmarksReader = class {
   }
 };
 
-// apps/apple/src/sources/apple-safari/closed-tabs-reader.ts
+// apps/apple/connectors/dist/sources/apple-safari/closed-tabs-reader.js
 var windowType = 1;
 var ClosedTabsReader = class {
   #windows = /* @__PURE__ */ new Map();
@@ -74343,7 +73406,8 @@ var ClosedTabsReader = class {
     entries.forEach((value, position) => {
       const entry = dictionary3(value);
       const state = dictionary3(entry.PersistentState);
-      if (!selected(scope.collectionIds, state.ProfileUUID)) return;
+      if (!selected(scope.collectionIds, state.ProfileUUID))
+        return;
       if (entry.PersistentStateType !== windowType) {
         latest(this.#tabs, state.TabUUID, {
           state,
@@ -74375,7 +73439,7 @@ function latest(entries, id12, entry) {
     entries.set(id12, entry);
 }
 
-// apps/apple/src/sources/apple-safari/cloud-tabs-reader.ts
+// apps/apple/connectors/dist/sources/apple-safari/cloud-tabs-reader.js
 import { inflateSync as inflateSync2 } from "node:zlib";
 var cloudTabsColumns = {
   cloud_tab_devices: [
@@ -74408,11 +73472,11 @@ var cloudTabsColumns = {
 };
 var select = (table2, order) => `SELECT ${cloudTabsColumns[table2].join(", ")} FROM ${table2} ORDER BY ${order}`;
 var CloudTabsReader = class {
+  database;
+  #tabs;
   constructor(database) {
     this.database = database;
   }
-  database;
-  #tabs;
   get devices() {
     return this.database.all(select("cloud_tab_devices", "device_uuid"));
   }
@@ -74421,37 +73485,31 @@ var CloudTabsReader = class {
     return this.#tabs;
   }
   get closeRequests() {
-    return this.database.all(
-      select("cloud_tab_close_requests", "close_request_uuid")
-    );
+    return this.database.all(select("cloud_tab_close_requests", "close_request_uuid"));
   }
   // A tab's position is zlib-compressed JSON: {"sortValues": [...]}.
   positions() {
     return this.tabs.flatMap((tab) => {
       if (!(tab.position instanceof Uint8Array))
         throw new TypeError("A Safari iCloud tab has no position");
-      const { sortValues } = JSON.parse(
-        inflateSync2(tab.position).toString("utf8")
-      );
+      const { sortValues } = JSON.parse(inflateSync2(tab.position).toString("utf8"));
       return sortValues.map((entry, index) => ({ tab, entry, index }));
     });
   }
 };
 
-// apps/apple/src/sources/apple-safari/downloads-reader.ts
+// apps/apple/connectors/dist/sources/apple-safari/downloads-reader.js
 var DownloadsReader = class {
   downloads;
   constructor(plist2, scope) {
     const history = dictionary3(plist2).DownloadHistory;
     if (!Array.isArray(history))
       throw new TypeError("Downloads.plist lists no download history");
-    this.downloads = list2(history).map(dictionary3).filter(
-      (entry) => selected(scope.collectionIds, entry.DownloadEntryProfileUUIDStringKey)
-    );
+    this.downloads = list2(history).map(dictionary3).filter((entry) => selected(scope.collectionIds, entry.DownloadEntryProfileUUIDStringKey));
   }
 };
 
-// apps/apple/src/sources/apple-safari/history-reader.ts
+// apps/apple/connectors/dist/sources/apple-safari/history-reader.js
 var historyColumns = {
   history_items: [
     "id",
@@ -74502,11 +73560,6 @@ var historyColumns = {
 };
 var select2 = (table2, order) => `SELECT ${historyColumns[table2].join(", ")} FROM ${table2} ORDER BY ${order}`;
 var HistoryReader = class {
-  constructor(database, profileId5, scope) {
-    this.database = database;
-    this.profileId = profileId5;
-    this.scope = scope;
-  }
   database;
   profileId;
   scope;
@@ -74514,6 +73567,11 @@ var HistoryReader = class {
   #items;
   #itemTags;
   #tags;
+  constructor(database, profileId5, scope) {
+    this.database = database;
+    this.profileId = profileId5;
+    this.scope = scope;
+  }
   get #included() {
     return selected(this.scope.collectionIds, this.profileId);
   }
@@ -74524,33 +73582,28 @@ var HistoryReader = class {
     return this.scope.startAt !== void 0 || this.scope.endAt !== void 0;
   }
   get visits() {
-    this.#visits ??= this.#included ? this.#all(select2("history_visits", "id")).filter(
-      (row) => withinDates(this.scope, appleTime2(row.visit_time))
-    ) : [];
+    this.#visits ??= this.#included ? this.#all(select2("history_visits", "id")).filter((row) => withinDates(this.scope, appleTime2(row.visit_time))) : [];
     return this.#visits;
   }
   get items() {
-    if (this.#items !== void 0) return this.#items;
+    if (this.#items !== void 0)
+      return this.#items;
     const visited = new Set(this.visits.map((visit2) => visit2.history_item));
-    this.#items = this.#included ? this.#all(select2("history_items", "id")).filter(
-      (row) => !this.#dated || visited.has(row.id)
-    ) : [];
+    this.#items = this.#included ? this.#all(select2("history_items", "id")).filter((row) => !this.#dated || visited.has(row.id)) : [];
     return this.#items;
   }
   get itemTags() {
-    if (this.#itemTags !== void 0) return this.#itemTags;
+    if (this.#itemTags !== void 0)
+      return this.#itemTags;
     const items = new Set(this.items.map((item) => item.id));
-    this.#itemTags = this.#included ? this.#all(
-      select2("history_items_to_tags", "history_item, tag_id")
-    ).filter((row) => items.has(row.history_item)) : [];
+    this.#itemTags = this.#included ? this.#all(select2("history_items_to_tags", "history_item, tag_id")).filter((row) => items.has(row.history_item)) : [];
     return this.#itemTags;
   }
   get tags() {
-    if (this.#tags !== void 0) return this.#tags;
+    if (this.#tags !== void 0)
+      return this.#tags;
     const linked = new Set(this.itemTags.map((link2) => link2.tag_id));
-    this.#tags = this.#included ? this.#all(select2("history_tags", "id")).filter(
-      (row) => !this.#dated || linked.has(row.id)
-    ) : [];
+    this.#tags = this.#included ? this.#all(select2("history_tags", "id")).filter((row) => !this.#dated || linked.has(row.id)) : [];
     return this.#tags;
   }
   // Tombstones record deletions to sync to other devices, whatever their date.
@@ -74560,7 +73613,7 @@ var HistoryReader = class {
 };
 var triggers = (value) => value instanceof Uint8Array ? parseBinaryPlist(value) : null;
 
-// apps/apple/src/sources/apple-safari/tabs-reader.ts
+// apps/apple/connectors/dist/sources/apple-safari/tabs-reader.js
 var tabsColumns = {
   bookmarks: [
     "id",
@@ -74618,6 +73671,12 @@ var tabGroupKinds = [
   "special"
 ];
 var TabsReader = class {
+  database;
+  scope;
+  #rows;
+  #byId;
+  #windows;
+  #attributes = /* @__PURE__ */ new Map();
   constructor(database, scope) {
     this.database = database;
     this.scope = scope;
@@ -74625,40 +73684,24 @@ var TabsReader = class {
     this.#byId = new Map(this.#rows.map((row) => [row.id, row]));
     this.#windows = database.all(select3("windows", "id"));
   }
-  database;
-  scope;
-  #rows;
-  #byId;
-  #windows;
-  #attributes = /* @__PURE__ */ new Map();
   // Every profile, and where its History.db lives: the default profile's is
   // ~/Library/Safari, another's the Profiles folder named by its server_id.
   get allProfiles() {
-    return this.#rows.filter(
-      (row) => row.type === folder && row.subtype === profileSubtype
-    );
+    return this.#rows.filter((row) => row.type === folder && row.subtype === profileSubtype);
   }
   get profiles() {
-    return this.allProfiles.filter(
-      (row) => selected(this.scope.collectionIds, row.external_uuid)
-    );
+    return this.allProfiles.filter((row) => selected(this.scope.collectionIds, row.external_uuid));
   }
   get windows() {
-    return this.#windows.filter(
-      (window) => selected(this.scope.collectionIds, this.uuid(window.active_profile_id))
-    );
+    return this.#windows.filter((window) => selected(this.scope.collectionIds, this.uuid(window.active_profile_id)));
   }
   // Folders of no profile, such as pinned tabs, are shared by every profile,
   // so any profile's scope keeps them.
   get tabGroups() {
-    return this.#rows.filter(
-      (row) => row.type === folder && row.id !== rootId && row.subtype !== profileSubtype && (this.profileOf(row) === null || this.#included(row))
-    );
+    return this.#rows.filter((row) => row.type === folder && row.id !== rootId && row.subtype !== profileSubtype && (this.profileOf(row) === null || this.#included(row)));
   }
   get tabs() {
-    return this.#rows.filter(
-      (row) => row.type !== folder && this.#included(row)
-    );
+    return this.#rows.filter((row) => row.type !== folder && this.#included(row));
   }
   get windowTabGroups() {
     const windows = new Set(this.windows.map((window) => window.id));
@@ -74666,7 +73709,8 @@ var TabsReader = class {
     const active = this.database.all(select3("windows_tab_groups", "window_id, tab_group_id")).filter((row) => windows.has(row.window_id));
     const key = (row) => `${row.window_id}:${row.tab_group_id}`;
     const pairs = /* @__PURE__ */ new Map();
-    for (const row of active) pairs.set(key(row), { ...row, unnamed: 0 });
+    for (const row of active)
+      pairs.set(key(row), { ...row, unnamed: 0 });
     for (const row of unnamed)
       pairs.set(key(row), {
         active_tab_id: null,
@@ -74708,10 +73752,14 @@ var TabsReader = class {
   }
   kind(row) {
     const uuid5 = row.external_uuid;
-    if (namedSpecials.has(uuid5)) return uuid5;
-    if (Number(row.special_id) > 0) return "special";
-    if (row.subtype === favoritesSubtype) return "favorites";
-    if (row.subtype === deviceSubtype) return "device";
+    if (namedSpecials.has(uuid5))
+      return uuid5;
+    if (Number(row.special_id) > 0)
+      return "special";
+    if (row.subtype === favoritesSubtype)
+      return "favorites";
+    if (row.subtype === deviceSubtype)
+      return "device";
     if (this.#windows.some((window) => window.private_tab_group_id === row.id))
       return "private";
     if (this.#windows.some((window) => window.local_tab_group_id === row.id))
@@ -74725,26 +73773,26 @@ var TabsReader = class {
     if (row.type !== folder) {
       const context = dictionary3(this.attributes(row)[1].TabPageContextIDKey);
       const named3 = text14(context.profileIdentifier);
-      if (named3 !== null) return named3;
+      if (named3 !== null)
+        return named3;
     }
     for (let current = row; current !== void 0; current = this.#byId.get(current.parent)) {
       if (current.type === folder && current.subtype === profileSubtype)
         return current.external_uuid;
-      if (current.parent === rootId) return defaultProfile;
-      const window = this.#windows.find(
-        (window2) => window2.local_tab_group_id === current?.id || window2.private_tab_group_id === current?.id || window2.active_tab_group_id === current?.id
-      );
-      if (window !== void 0) return this.uuid(window.active_profile_id);
+      if (current.parent === rootId)
+        return defaultProfile;
+      const window = this.#windows.find((window2) => window2.local_tab_group_id === current?.id || window2.private_tab_group_id === current?.id || window2.active_tab_group_id === current?.id);
+      if (window !== void 0)
+        return this.uuid(window.active_profile_id);
     }
     return null;
   }
   historyEntries() {
     return this.tabs.flatMap((tab) => {
       const state = this.attributes(tab)[1].SessionState;
-      if (!(state instanceof Uint8Array)) return [];
-      const session = dictionary3(
-        dictionary3(parseBinaryPlist(state.subarray(4))).SessionHistory
-      );
+      if (!(state instanceof Uint8Array))
+        return [];
+      const session = dictionary3(dictionary3(parseBinaryPlist(state.subarray(4))).SessionHistory);
       const current = session.SessionHistoryCurrentIndex;
       return list2(session.SessionHistoryEntries).map((entry, position) => ({
         tab,
@@ -74760,7 +73808,7 @@ var TabsReader = class {
 };
 var plist = (value) => value instanceof Uint8Array ? dictionary3(parseBinaryPlist(value)) : {};
 
-// apps/apple/src/sources/apple-safari/safari-scan.ts
+// apps/apple/connectors/dist/sources/apple-safari/safari-scan.js
 var storeFiles2 = ({ directory, container: container2 }) => ({
   history: join22(directory, "History.db"),
   tabs: join22(container2, "SafariTabs.db"),
@@ -74789,7 +73837,8 @@ var SafariScan = class _SafariScan {
       const resources = __using(_stack, new AsyncDisposableStack(), true);
       const database = async (path, columns3) => resources.use(await SafariDatabase.open(path, columns3));
       const open11 = async (store, reader) => {
-        if (!stores.has(store)) return void 0;
+        if (!stores.has(store))
+          return void 0;
         try {
           return { reader: await reader() };
         } catch (error62) {
@@ -74799,46 +73848,17 @@ var SafariScan = class _SafariScan {
       const opened = {
         // Each profile's History.db, pinned on its own; SafariTabs.db lists them.
         history: await open11("history", async () => {
-          const profiles = new TabsReader(
-            await database(files.tabs, tabsColumns),
-            {}
-          ).allProfiles;
+          const profiles = new TabsReader(await database(files.tabs, tabsColumns), {}).allProfiles;
           const readers4 = [];
           for (const profile of profiles)
-            readers4.push(
-              new HistoryReader(
-                await database(
-                  profileHistory(location3, profile.server_id),
-                  historyColumns
-                ),
-                profile.external_uuid,
-                scope
-              )
-            );
+            readers4.push(new HistoryReader(await database(profileHistory(location3, profile.server_id), historyColumns), profile.external_uuid, scope));
           return readers4;
         }),
-        tabs: await open11(
-          "tabs",
-          async () => new TabsReader(await database(files.tabs, tabsColumns), scope)
-        ),
-        cloudTabs: await open11(
-          "cloudTabs",
-          async () => new CloudTabsReader(
-            await database(files.cloudTabs, cloudTabsColumns)
-          )
-        ),
-        bookmarks: await open11(
-          "bookmarks",
-          async () => new BookmarksReader(await readSafariPlist(files.bookmarks))
-        ),
-        closedTabs: await open11(
-          "closedTabs",
-          async () => new ClosedTabsReader(await readSafariPlist(files.closedTabs), scope)
-        ),
-        downloads: await open11(
-          "downloads",
-          async () => new DownloadsReader(await readSafariPlist(files.downloads), scope)
-        )
+        tabs: await open11("tabs", async () => new TabsReader(await database(files.tabs, tabsColumns), scope)),
+        cloudTabs: await open11("cloudTabs", async () => new CloudTabsReader(await database(files.cloudTabs, cloudTabsColumns))),
+        bookmarks: await open11("bookmarks", async () => new BookmarksReader(await readSafariPlist(files.bookmarks))),
+        closedTabs: await open11("closedTabs", async () => new ClosedTabsReader(await readSafariPlist(files.closedTabs), scope)),
+        downloads: await open11("downloads", async () => new DownloadsReader(await readSafariPlist(files.downloads), scope))
       };
       return new _SafariScan(resources.move(), opened);
     } catch (_) {
@@ -74870,7 +73890,8 @@ var SafariScan = class _SafariScan {
     const opened = this.#stores[store];
     if (opened === void 0)
       throw new Error(`Safari ${store} was not opened for this run`);
-    if ("error" in opened) throw opened.error;
+    if ("error" in opened)
+      throw opened.error;
     return opened.reader;
   }
   [Symbol.asyncDispose]() {
@@ -74878,7 +73899,7 @@ var SafariScan = class _SafariScan {
   }
 };
 
-// apps/apple/src/sources/apple-safari/safari-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/safari-stream.js
 var text15 = { type: "string" };
 var nullableText18 = { type: ["string", "null"] };
 var integer10 = { type: "integer" };
@@ -74915,11 +73936,7 @@ var SafariStream = class {
     return this.#stream;
   }
   async read(scan) {
-    return validateRecords(
-      this.describe(),
-      this.rows(scan).map((row) => this.record(row, scan)),
-      "Safari"
-    );
+    return validateRecords(this.describe(), this.rows(scan).map((row) => this.record(row, scan)), "Safari");
   }
   // The file a record carries, for streams that support file reads.
   file(_record2, _scan) {
@@ -74927,7 +73944,7 @@ var SafariStream = class {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/bookmarks-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/bookmarks-stream.js
 var { nullableText: nullableText19 } = safariFields;
 var kinds4 = {
   WebBookmarkTypeList: "folder",
@@ -75006,11 +74023,7 @@ var BookmarksStream = class extends SafariStream {
   rows(scan) {
     return scan.bookmarks.bookmarks;
   }
-  record({
-    node: node2,
-    parentId,
-    position
-  }) {
+  record({ node: node2, parentId, position }) {
     return {
       id: node2.WebBookmarkUUID,
       parentId,
@@ -75024,15 +74037,13 @@ var BookmarksStream = class extends SafariStream {
       description: text14(node2.previewText),
       descriptionUserDefined: flag4(node2.previewTextIsUserDefined),
       featureText: text14(node2.featureText),
-      metadataFetchFailures: integer9(
-        dictionary3(node2.ReadingListNonSync).BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey
-      ),
+      metadataFetchFailures: integer9(dictionary3(node2.ReadingListNonSync).BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey),
       serverId: text14(dictionary3(node2.Sync).ServerID)
     };
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/closed-tabs-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/closed-tabs-stream.js
 var { boolean: boolean16, nullableText: nullableText20, nullableTimestamp: nullableTimestamp17 } = safariFields;
 var properties17 = {
   id: { ...safariFields.id, description: "Closed tab UUID." },
@@ -75099,11 +74110,7 @@ var ClosedTabsStream = class extends SafariStream {
   rows(scan) {
     return scan.closedTabs.tabs;
   }
-  record({
-    state,
-    closedWindowId,
-    position
-  }) {
+  record({ state, closedWindowId, position }) {
     return {
       id: state.TabUUID,
       closedWindowId,
@@ -75125,7 +74132,7 @@ var ClosedTabsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/closed-window-active-tabs-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/closed-window-active-tabs-stream.js
 var properties18 = {
   windowId: {
     ...safariFields.id,
@@ -75151,22 +74158,18 @@ var ClosedWindowActiveTabsStream = class extends SafariStream {
     required: Object.keys(properties18)
   };
   rows(scan) {
-    return scan.closedTabs.windows.flatMap(
-      ({ state }) => Object.entries(dictionary3(state.TabGroupsToActiveTabs)).map(
-        ([tabGroupId, tabId]) => ({
-          windowId: state.WindowUUID,
-          tabGroupId,
-          tabId
-        })
-      )
-    );
+    return scan.closedTabs.windows.flatMap(({ state }) => Object.entries(dictionary3(state.TabGroupsToActiveTabs)).map(([tabGroupId, tabId]) => ({
+      windowId: state.WindowUUID,
+      tabGroupId,
+      tabId
+    })));
   }
   record(entry) {
     return entry;
   }
 };
 
-// apps/apple/src/sources/apple-safari/window-state.ts
+// apps/apple/connectors/dist/sources/apple-safari/window-state.js
 var { boolean: boolean17, nullableText: nullableText21, nullableInteger: nullableInteger14 } = safariFields;
 var windowStateFields = {
   closedAt: {
@@ -75230,7 +74233,7 @@ var windowState = (state) => ({
   addressFieldText: text14(state.CustomUnifiedFieldText)
 });
 
-// apps/apple/src/sources/apple-safari/streams/closed-windows-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/closed-windows-stream.js
 var properties19 = {
   id: {
     ...safariFields.id,
@@ -75260,10 +74263,7 @@ var ClosedWindowsStream = class extends SafariStream {
   rows(scan) {
     return scan.closedTabs.windows;
   }
-  record({
-    state,
-    position
-  }) {
+  record({ state, position }) {
     return {
       id: state.WindowUUID,
       position,
@@ -75274,7 +74274,7 @@ var ClosedWindowsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/cloud-tab-close-requests-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/cloud-tab-close-requests-stream.js
 var properties20 = {
   id: {
     ...safariFields.id,
@@ -75313,7 +74313,7 @@ var CloudTabCloseRequestsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/cloud-tab-devices-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/cloud-tab-devices-stream.js
 var { boolean: boolean18, nullableText: nullableText22 } = safariFields;
 var properties21 = {
   id: {
@@ -75366,7 +74366,7 @@ var CloudTabDevicesStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/cloud-tab-positions-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/cloud-tab-positions-stream.js
 var properties22 = {
   tabId: {
     ...safariFields.id,
@@ -75402,11 +74402,7 @@ var CloudTabPositionsStream = class extends SafariStream {
   rows(scan) {
     return scan.cloudTabs.positions();
   }
-  record({
-    tab,
-    entry,
-    index
-  }) {
+  record({ tab, entry, index }) {
     return {
       tabId: tab.tab_uuid,
       position: index,
@@ -75417,7 +74413,7 @@ var CloudTabPositionsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/cloud-tabs-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/cloud-tabs-stream.js
 var { boolean: boolean19, nullableText: nullableText23 } = safariFields;
 var properties23 = {
   id: {
@@ -75484,7 +74480,7 @@ var CloudTabsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/downloads-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/downloads-stream.js
 import { existsSync as existsSync2 } from "node:fs";
 var { boolean: boolean20, nullableText: nullableText24, nullableTimestamp: nullableTimestamp18, nullableInteger: nullableInteger15 } = safariFields;
 var properties24 = {
@@ -75564,7 +74560,7 @@ var DownloadsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/history-item-tags-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/history-item-tags-stream.js
 var properties25 = {
   profileId: safariFields.profileId,
   itemId: {
@@ -75603,7 +74599,7 @@ var HistoryItemTagsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/history-items-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/history-items-stream.js
 var { profileId, id: id11, nullableText: nullableText25, ordinal: ordinal6, boolean: boolean21 } = safariFields;
 var countList = { type: "integer", minimum: 0 };
 var properties26 = {
@@ -75679,7 +74675,7 @@ var HistoryItemsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/history-tags-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/history-tags-stream.js
 var { profileId: profileId2 } = safariFields;
 var properties27 = {
   profileId: profileId2,
@@ -75736,7 +74732,7 @@ var HistoryTagsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/history-tombstones-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/history-tombstones-stream.js
 var { profileId: profileId3, nullableText: nullableText26, nullableTimestamp: nullableTimestamp19 } = safariFields;
 var properties28 = {
   profileId: profileId3,
@@ -75801,7 +74797,7 @@ var HistoryTombstonesStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/history-visits-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/history-visits-stream.js
 var { profileId: profileId4, boolean: boolean22, nullableText: nullableText27, nullableInteger: nullableInteger16 } = safariFields;
 var properties29 = {
   profileId: profileId4,
@@ -75891,7 +74887,7 @@ var HistoryVisitsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/profile-start-page-sections-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/profile-start-page-sections-stream.js
 var properties30 = {
   profileId: safariFields.profileId,
   position: {
@@ -75920,7 +74916,8 @@ var ProfileStartPageSectionsStream = class extends SafariStream {
   rows(scan) {
     return scan.tabs.profiles.flatMap((profile) => {
       const data = scan.tabs.attributes(profile)[0].StartPageSectionsData;
-      if (!(data instanceof Uint8Array)) return [];
+      if (!(data instanceof Uint8Array))
+        return [];
       const { Sections } = JSON.parse(Buffer.from(data).toString("utf8"));
       return Sections.map((section, position) => ({
         profile,
@@ -75929,11 +74926,7 @@ var ProfileStartPageSectionsStream = class extends SafariStream {
       }));
     });
   }
-  record({
-    profile,
-    position,
-    section
-  }) {
+  record({ profile, position, section }) {
     return {
       profileId: profile.external_uuid,
       position,
@@ -75943,7 +74936,7 @@ var ProfileStartPageSectionsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/profiles-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/profiles-stream.js
 var { nullableText: nullableText28, nullableNumber: nullableNumber7 } = safariFields;
 var component = { ...nullableNumber7, minimum: 0, maximum: 1 };
 var properties31 = {
@@ -76028,7 +75021,7 @@ var ProfilesStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/reading-list-items-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/reading-list-items-stream.js
 var { nullableText: nullableText29, nullableTimestamp: nullableTimestamp20, nullableInteger: nullableInteger17 } = safariFields;
 var properties32 = {
   id: {
@@ -76102,10 +75095,7 @@ var ReadingListItemsStream = class extends SafariStream {
   rows(scan) {
     return scan.bookmarks.readingList;
   }
-  record({
-    node: node2,
-    position
-  }) {
+  record({ node: node2, position }) {
     const saved = dictionary3(node2.ReadingList);
     const fetched = dictionary3(node2.ReadingListNonSync);
     return {
@@ -76120,19 +75110,15 @@ var ReadingListItemsStream = class extends SafariStream {
       fetchedTitle: text14(fetched.Title),
       fetchedAt: plistTime2(fetched.DateLastFetched),
       fetchResult: integer9(fetched.FetchResult),
-      failedLoads: integer9(
-        fetched.NumberOfFailedLoadsWithUnknownOrNonRecoverableError
-      ),
+      failedLoads: integer9(fetched.NumberOfFailedLoadsWithUnknownOrNonRecoverableError),
       addedLocally: flag4(fetched.AddedLocally),
-      metadataFetchFailures: integer9(
-        fetched.BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey
-      ),
+      metadataFetchFailures: integer9(fetched.BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey),
       featureText: text14(node2.featureText)
     };
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/tab-groups-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/tab-groups-stream.js
 var { nullableId: nullableId3, nullableText: nullableText30 } = safariFields;
 var properties33 = {
   id: {
@@ -76223,7 +75209,7 @@ var TabGroupsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/tab-history-entries-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/tab-history-entries-stream.js
 var { nullableText: nullableText31 } = safariFields;
 var properties34 = {
   tabId: { ...safariFields.id, description: "The tab; refers to tabs.id." },
@@ -76263,12 +75249,7 @@ var TabHistoryEntriesStream = class extends SafariStream {
   rows(scan) {
     return scan.tabs.historyEntries();
   }
-  record({
-    tab,
-    entry,
-    position,
-    current
-  }) {
+  record({ tab, entry, position, current }) {
     return {
       tabId: tab.external_uuid,
       position,
@@ -76276,17 +75257,13 @@ var TabHistoryEntriesStream = class extends SafariStream {
       url: text14(entry.SessionHistoryEntryURL),
       originalUrl: text14(entry.SessionHistoryEntryOriginalURL),
       title: text14(entry.SessionHistoryEntryTitle),
-      scriptCreated: flag4(
-        entry.SessionHistoryEntryWasCreatedByJSWithoutUserInteraction
-      ),
-      externalUrlPolicy: text14(
-        entry.SessionHistoryEntryShouldOpenExternalURLsPolicyKey
-      )
+      scriptCreated: flag4(entry.SessionHistoryEntryWasCreatedByJSWithoutUserInteraction),
+      externalUrlPolicy: text14(entry.SessionHistoryEntryShouldOpenExternalURLsPolicyKey)
     };
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/tabs-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/tabs-stream.js
 var { boolean: boolean23, nullableId: nullableId4, nullableText: nullableText32, nullableTimestamp: nullableTimestamp21 } = safariFields;
 var properties35 = {
   id: {
@@ -76477,7 +75454,7 @@ var TabsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/window-profiles-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/window-profiles-stream.js
 var properties36 = {
   windowId: {
     ...safariFields.id,
@@ -76515,7 +75492,7 @@ var WindowProfilesStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/window-tab-groups-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/window-tab-groups-stream.js
 var properties37 = {
   windowId: {
     ...safariFields.id,
@@ -76558,7 +75535,7 @@ var WindowTabGroupsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/streams/windows-stream.ts
+// apps/apple/connectors/dist/sources/apple-safari/streams/windows-stream.js
 var { nullableId: nullableId5, nullableText: nullableText33 } = safariFields;
 var properties38 = {
   id: {
@@ -76621,7 +75598,7 @@ var WindowsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/src/sources/apple-safari/apple-safari-source.ts
+// apps/apple/connectors/dist/sources/apple-safari/apple-safari-source.js
 var readers3 = {
   historyItems: new HistoryItemsStream(),
   historyVisits: new HistoryVisitsStream(),
@@ -76647,10 +75624,9 @@ var readers3 = {
   closedTabs: new ClosedTabsStream(),
   downloads: new DownloadsStream()
 };
-var catalog8 = new Catalog(
-  Object.values(readers3).map((reader) => reader.describe())
-);
+var catalog8 = new Catalog(Object.values(readers3).map((reader) => reader.describe()));
 var readerOf2 = (stream) => readers3[stream.name];
+var pollIntervalMs5 = 1e3;
 var AppleSafariSource = class extends Source {
   identity;
   catalog = catalog8;
@@ -76678,41 +75654,27 @@ var AppleSafariSource = class extends Source {
   closedTabs = readers3.closedTabs.describe();
   downloads = readers3.downloads.describe();
   location;
-  pollIntervalMs;
   scope;
-  constructor({
-    directory = safariDirectory,
-    container: container2 = safariContainer,
-    // How often a watch checks the stores for changes.
-    pollIntervalMs = 1e3,
-    scope = {}
-  } = {}) {
+  constructor({ directory = safariDirectory, container: container2 = safariContainer, scope = {} } = {}) {
     super();
     this.location = Object.freeze({ directory, container: container2 });
-    this.pollIntervalMs = pollIntervalMs;
     this.scope = scope;
     this.identity = `apple-safari:${directory}:${container2}`;
     Object.freeze(this);
   }
   open(streams4) {
-    return SafariScan.open(
-      this.location,
-      new Set(streams4.map((stream) => readerOf2(stream).store)),
-      this.scope
-    );
+    return SafariScan.open(this.location, new Set(streams4.map((stream) => readerOf2(stream).store)), this.scope);
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
   // Databases report commits through data_version; Safari rewrites each
   // property list whole, so a changed stat marks a new one.
-  async *observe({
-    streams: streams4,
-    signal
-  }) {
+  async *observe({ streams: streams4, signal }) {
     var _stack = [];
     try {
-      if (signal.aborted) return;
+      if (signal.aborted)
+        return;
       const files = storeFiles2(this.location);
       const stores = [
         ...new Set(streams4.map((stream) => readerOf2(stream).store))
@@ -76727,29 +75689,29 @@ var AppleSafariSource = class extends Source {
         }
         return found.current;
       };
-      const probes = new Map(
-        stores.map((store) => {
-          if (store === "history")
-            return [
-              store,
-              async () => (await historyFiles(this.location)).map(version3).join(",")
-            ];
-          if (!databaseStores2.has(store))
-            return [store, () => fingerprint2(files[store])];
-          return [store, async () => String(version3(files[store]))];
-        })
-      );
+      const probes = new Map(stores.map((store) => {
+        if (store === "history")
+          return [
+            store,
+            async () => (await historyFiles(this.location)).map(version3).join(",")
+          ];
+        if (!databaseStores2.has(store))
+          return [store, () => fingerprint2(files[store])];
+        return [store, async () => String(version3(files[store]))];
+      }));
       const seen = /* @__PURE__ */ new Map();
-      for (const [store, probe] of probes) seen.set(store, await probe());
+      for (const [store, probe] of probes)
+        seen.set(store, await probe());
       yield streams4;
       try {
-        for await (const _2 of setInterval6(this.pollIntervalMs, void 0, {
+        for await (const _2 of setInterval6(pollIntervalMs5, void 0, {
           signal
         })) {
           const changed = /* @__PURE__ */ new Set();
           for (const [store, probe] of probes) {
             const current = await probe();
-            if (current === seen.get(store)) continue;
+            if (current === seen.get(store))
+              continue;
             seen.set(store, current);
             changed.add(store);
           }
@@ -76757,7 +75719,8 @@ var AppleSafariSource = class extends Source {
             yield streams4.filter((stream) => changed.has(readerOf2(stream).store));
         }
       } catch (error62) {
-        if (!(error62 instanceof Error && error62.name === "AbortError")) throw error62;
+        if (!(error62 instanceof Error && error62.name === "AbortError"))
+          throw error62;
       }
     } catch (_) {
       var _error = _, _hasError = true;
@@ -76773,25 +75736,22 @@ var AppleSafariSource = class extends Source {
     for await (const message4 of messages) {
       if ("type" in message4 || configuration.fileReads.length === 0)
         yield message4;
-      else yield { ...message4, file: reader.file(message4.data, scan) };
+      else
+        yield { ...message4, file: reader.file(message4.data, scan) };
     }
   }
 };
 async function historyFiles(location3) {
   const profiles = join23(location3.container, "Profiles");
-  const found = await readdir4(profiles, { withFileTypes: true }).catch(
-    (error62) => {
-      if (error62 instanceof Error && "code" in error62 && error62.code === "ENOENT")
-        return [];
-      throw error62;
-    }
-  );
-  const others = await Promise.all(
-    found.filter((entry) => entry.isDirectory()).map(async (entry) => {
-      const path = join23(profiles, entry.name, "History.db");
-      return await fingerprint2(path) === "missing" ? [] : [path];
-    })
-  );
+  const found = await readdir4(profiles, { withFileTypes: true }).catch((error62) => {
+    if (error62 instanceof Error && "code" in error62 && error62.code === "ENOENT")
+      return [];
+    throw error62;
+  });
+  const others = await Promise.all(found.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    const path = join23(profiles, entry.name, "History.db");
+    return await fingerprint2(path) === "missing" ? [] : [path];
+  }));
   return [storeFiles2(location3).history, ...others.flat()];
 }
 async function fingerprint2(path) {
@@ -76805,7 +75765,7 @@ async function fingerprint2(path) {
   }
 }
 
-// apps/apple/src/plugin/apps.ts
+// apps/apple/plugin/src/apps.ts
 var appNames = [
   "mail",
   "notes",
@@ -76816,12 +75776,10 @@ var appNames = [
   "safari",
   "books"
 ];
-function calendarDefaults(now2 = /* @__PURE__ */ new Date()) {
-  const start = new Date(now2);
-  start.setUTCFullYear(start.getUTCFullYear() - 1);
-  const end = new Date(now2);
+function calendarDefaults() {
+  const end = /* @__PURE__ */ new Date();
   end.setUTCFullYear(end.getUTCFullYear() + 1);
-  return { startAt: start.toISOString(), endAt: end.toISOString() };
+  return { startAt: "2000-01-01T00:00:00.000Z", endAt: end.toISOString() };
 }
 var byId = (row) => String(row.id);
 var named2 = (row) => String(row.name);
@@ -76893,14 +75851,14 @@ var apps = {
     ],
     datedBy: "message date",
     permissions: `${fullDiskAccess} Only messages synced to this Mac can be imported.`,
-    source: (scope) => new AppleMessagesSource(void 0, void 0, scope)
+    source: (scope) => new AppleMessagesSource(void 0, scope)
   },
   contacts: {
     title: "Contacts",
     choices: [{ ...accounts, stream: "containers", scope: "collectionIds" }],
     datedBy: null,
     permissions: "Allow ChatGPT when macOS asks for Contacts access, or turn it on in System Settings > Privacy & Security > Contacts. Full Disk Access for ChatGPT also works.",
-    source: (scope) => new AppleContactsSource(void 0, void 0, scope)
+    source: (scope) => new AppleContactsSource(void 0, scope)
   },
   calendar: {
     title: "Calendar",
@@ -76966,7 +75924,7 @@ function appFacts(app) {
   };
 }
 
-// apps/apple/src/plugin/apple-plugin.ts
+// apps/apple/plugin/src/apple-plugin.ts
 var appSchema = external_exports.enum(appNames);
 var ids = external_exports.array(external_exports.string().min(1).max(1024)).max(1e3);
 var configurationSchema = external_exports.strictObject({
@@ -77098,11 +76056,11 @@ var ApplePlugin = class {
   }
 };
 
-// apps/apple/src/plugin/freshness.ts
+// apps/apple/plugin/src/freshness.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { setInterval as setInterval7, setTimeout as sleep2 } from "node:timers/promises";
 
-// apps/apple/src/plugin/leadership.ts
+// apps/apple/plugin/src/leadership.ts
 import { mkdirSync as mkdirSync3 } from "node:fs";
 import { join as join25 } from "node:path";
 import { DatabaseSync as DatabaseSync15 } from "node:sqlite";
@@ -77167,7 +76125,7 @@ function forgetServer(root, id12) {
   }
 }
 
-// apps/apple/src/plugin/sync.ts
+// apps/apple/plugin/src/sync.ts
 import { mkdirSync as mkdirSync4 } from "node:fs";
 import { join as join26 } from "node:path";
 var snake = (name) => name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -77214,7 +76172,7 @@ async function appConnection(directory, item) {
   return { connection, destination };
 }
 
-// apps/apple/src/plugin/freshness.ts
+// apps/apple/plugin/src/freshness.ts
 function readConfiguration(directory) {
   var _stack = [];
   try {
@@ -77358,7 +76316,7 @@ async function keepFresh(directory, signal, version3) {
   }
 }
 
-// apps/apple/src/plugin/native-settings.ts
+// apps/apple/plugin/src/native-settings.ts
 var relative3 = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 function ago(instant2, now2) {
   const seconds = Math.round((Date.parse(instant2) - now2.getTime()) / 1e3);
@@ -77459,7 +76417,7 @@ function settingsUpdate(plugin2, set2) {
   return { values: settingsRead(plugin2).values };
 }
 
-// apps/apple/src/plugin/setup-forms.ts
+// apps/apple/plugin/src/setup-forms.ts
 async function setUpWithForms(plugin2, ask) {
   const previous = new Map(
     plugin2.status().apps.map(({ app, scope, includeAttachments }) => [
@@ -77514,7 +76472,7 @@ async function setUpWithForms(plugin2, ask) {
   };
 }
 
-// apps/apple/src/plugin/main.ts
+// apps/apple/plugin/src/main.ts
 if (process.platform !== "darwin")
   throw new Error("Apple requires Codex on a Mac.");
 var plugin = new ApplePlugin();

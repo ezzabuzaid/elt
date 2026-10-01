@@ -42,13 +42,13 @@ The [Apple plugin](plugins/apple/.codex-plugin/plugin.json) is a Codex plugin wi
 
 Setup shows forms: first the apps, then each app's accounts, folders or other collections, dates and attachments. Mail, Notes and Messages need Full Disk Access for ChatGPT, which macOS does not prompt for; setup names the step when it is missing. Users do not install Node, Docker or a repository: the launcher runs the server on the Node runtime bundled with the desktop app. The terminal equivalent of steps 1–2 is `codex plugin marketplace add ezzabuzaid/elt`. The post-install setup prompt requires Codex 0.156 or later.
 
-`plugins/apple` is the installable package, committed as Codex runs it; [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) lists it. Its server is one bundled file, `plugins/apple/server.mjs`, built from `apps/apple/src/plugin` by `npx nx run apple:plugin`. `apple:test` rebuilds it, so commit the bundle with the source change that produced it.
+`plugins/apple` is the installable package, committed as Codex runs it; [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) lists it. Its server is one bundled file, `plugins/apple/server.mjs`, built from `apps/apple/plugin` by `npx nx run apple-plugin:bundle`. `apple-plugin:test` rebuilds it, so commit the bundle with the source change that produced it.
 
-The MCP tools only set up; the settings file's `selected_apps` view lists each selected app and where its import lives. Each selection imports into `~/Library/Application Support/Context Compiler/Apple/<app>/<selection>`: `data.sqlite`, where each stream loads into a `raw_<stream>` table read through a described view, beside the `catalog`, `sync_status`, `stream_status` and `extraction_coverage` views elt-sqlite publishes, plus checkpoints and managed attachment copies. The query skill reads each `data.sqlite` directly with `sqlite3 -readonly`; the Codex sandbox also denies writes there. While Codex is open, one plugin server per Mac keeps every selected app's import current: the first pass loads each app, then each app's own change watcher triggers the next, and a pass reads only what changed (Mail skips messages whose files are unchanged). Setup returns once the answers are saved; an app that has not finished its first import is reported as importing. Every pass is recorded in the app's own file, so a reader judges freshness from the file it queries. A changed scope is a new import; the previous copy is removed. After install, the plugin's page in ChatGPT (Plugins › Apple) has a native Settings section, served through the `openai/settings` MCP extension: a switch per app with its sync status. The setup skill can be run again to change or disconnect apps. It accesses content already available on the Mac; Calendar keeps remote attachment links without requiring Google sign-in. Scoped Mail omits global settings and native metadata streams whose ownership cannot be established. This desktop workflow is separate from the Postgres exporter described below.
+The MCP tools only set up; the settings file's `selected_apps` view lists each selected app and where its import lives. Each selection imports into `~/Library/Application Support/Context Compiler/Apple/<app>/<selection>`: `data.sqlite`, where each stream loads into a `raw_<stream>` table read through a described view, beside the `catalog`, `sync_status`, `stream_status` and `extraction_coverage` views elt-sqlite publishes, plus checkpoints and managed attachment copies. The query skill reads each `data.sqlite` directly with `sqlite3 -readonly`; the Codex sandbox also denies writes there. While Codex is open, one plugin server per Mac keeps every selected app's import current: the first pass loads each app, then each app's own change watcher triggers the next, and a pass reads only what changed (Mail skips messages whose files are unchanged). Setup returns once the answers are saved; an app that has not finished its first import is reported as importing. Every pass is recorded in the app's own file, so a reader judges freshness from the file it queries. A changed scope is a new import; the previous copy is removed. After install, the plugin's page in ChatGPT (Plugins › Apple) has a native Settings section, served through the `openai/settings` MCP extension: a switch per app with its sync status. The setup skill can be run again to change or disconnect apps. It accesses content already available on the Mac; Calendar keeps remote attachment links without requiring Google sign-in. Scoped Mail omits global settings and native metadata streams whose ownership cannot be established.
 
 ### Apple CLI
 
-[`apps/cli`](apps/cli/src/main.ts) reads the same Apple connectors from a terminal, into its own store under `outputs/cli`, separate from the plugin's. Run it with `npx nx run cli:start -- <command>`:
+[`apps/apple/cli`](apps/apple/cli/src/main.ts) reads the same Apple connectors from a terminal, into its own store under `outputs/cli`, separate from the plugin's. Run it with `npx nx run apple-cli:start -- <command>`:
 
 - `setup` asks which apps to import and, optionally, which accounts, collections and dates to narrow each one to; `setup --app notes --collection <id> --since 2025-01-01 --app mail` does the same without prompts, each narrowing flag applying to the `--app` before it, and `options <app>` lists the IDs. Changing an app's selection removes its import, so the next sync loads it again.
 - `sync` loads every selected app once, showing each stream's progress, and `sync --watch` keeps them current until stopped. A second sync of the same store is refused while one runs. Ctrl-C stops a sync, watching or not, at once with exit status 130; what it committed stays, `status` shows the pass as interrupted, and the next sync resumes it.
@@ -57,7 +57,9 @@ The MCP tools only set up; the settings file's `selected_apps` view lists each s
 
 Each app's `outputs/cli/<app>/data.sqlite` holds `raw_<stream>` tables read through described views named after their streams (`inline_attachments` for `inlineAttachments`), with the sync history and `catalog` views elt-sqlite publishes. macOS grants access to the terminal app that runs the CLI, so it needs its own Full Disk Access, Contacts, Calendar and Reminders grants; a denied app fails alone and names the grant. Without a terminal, or with `--json`, output is JSON (one line per pass for `sync`) and nothing prompts.
 
-### Library and exporter
+Calendar reads occurrences from 2000-01-01 to a year ahead unless the selection narrows the dates, and its import downloads attachments stored in Google Drive and Gmail. That needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first Calendar sync opens a browser for consent. Contacts account names (iCloud, Google) are not in its stores and do not load.
+
+### Library
 
 Use **Node.js 26** and npm. The Apple connectors require macOS; Calendar and Reminders require **macOS 27**, the release the EventKit helper is built for.
 
@@ -71,11 +73,11 @@ npm ci
 
 The Notes connector reads Notes' own store, `NoteStore.sqlite`, so Notes does not need to be open. macOS protects that store: allow the terminal app you run Nx from **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access**.
 
-Every command runs through Nx. Its targets build their dependencies first and load the workspace `.env`. Start the warehouse and the Apple app:
+Every command runs through Nx. Its targets build their dependencies first and load the workspace `.env`. Choose the Apple apps to import, then keep them current:
 
 ```sh
-npx nx run infra:up
-npx nx run apple:start
+npx nx run apple-cli:start -- setup
+npx nx run apple-cli:start -- sync --watch
 ```
 
 A pipeline declares connections of copies; the smallest one copies Notes into SQLite:
@@ -111,15 +113,9 @@ A copy like this replaces the `notes` table's contents with the current snapshot
 
 `Copy` defaults to `full_refresh` extraction and `overwrite` loading. A `Connection` is one source's copies into one destination, with the checkpoints that resume them; its `name` is what sync history records. Creating a pipeline performs no extraction; `run()` executes it once and returns `{ copy, count, deleted }` results after loading. `count` is accepted input records, including deduplication no-ops, and `deleted` is accepted deletions, including keys that were already absent; neither is the number of changed rows.
 
-The repository also includes an [Apple exporter](apps/apple/src/main.ts) that loads every stream of every Apple connector incrementally: Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari and Books. Start the shared Postgres warehouse with `npx nx run infra:up`, then run `npx nx run apple:start`: it loads everything, then keeps the warehouse current until stopped. Each connector writes `raw_<stream>` tables in its own `apple_<name>` schema (for example `apple_notes.raw_notes`) and keeps checkpoints in that schema's `_elt_checkpoints` table; a second run with no changes writes nothing. Streams with files load an absolute local file path as `attachmentRef`; the exporter does not parse file text. Original files live under `outputs/apple-<name>-files`, configured in [pipeline.ts](apps/apple/src/pipeline.ts). Apple raw schemas remain private; each stream is read through a documented view such as `marts.notes_inline_attachments`, created with its table. Every pass publishes documented sync outcomes and declared extraction coverage in `marts`, readable directly through PostgreSQL as `agent_reader`; Calendar's configured window remains queryable even with no matching events. See [warehouse metadata](docs/reference.md#warehouse-marts).
-
-Each connector reads the app's own store at its default location, and each needs its own grant for the process running the export: Mail, Notes, Messages, Safari and Books need Full Disk Access; Mail account settings also need Automation access to Mail; Contacts needs Contacts access or Full Disk Access; Calendar and Reminders need full Calendar and Reminders access. A connector the process cannot read causes exit status 1 while the others still load; a failed stream keeps its checkpoint and resumes from it next run. The apps produce no console output. Calendar loads occurrences from 2000-01-01 to a year after the process started and downloads attachments stored in Google Drive and Gmail, so it needs `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (the same Desktop client as `google:start`, with the Drive and Gmail APIs enabled); the first such download opens a browser for consent. See [Messages streams](docs/reference.md#apple-messages) and [Contacts streams](docs/reference.md#apple-contacts); Contacts account names (iCloud, Google) are not in its stores and do not load.
-
 ### Connector registration
 
-[Apple's pipeline.ts](apps/apple/src/pipeline.ts) default-exports one hardcoded `Pipeline` with seven connections, `apple-mail`, `apple-notes`, `apple-messages`, `apple-contacts`, `apple-calendar`, `apple-reminders` and `apple-safari`, each loading into its own `apple_<name>` schema with its checkpoints beside the data, and a `PostgresSyncHistory` that records every pass. It signs in to Google when the app starts, for Calendar's Drive and Gmail attachments, so `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` must be set. Add or remove connections there; no command-line arguments are needed.
-
-- [main.ts](apps/apple/src/main.ts) (`npx nx run apple:start`), the app's one entry point, installs the sync history and watches the pipeline until `SIGINT` or `SIGTERM`. Every connection's first pass loads all its streams, side by side; after that each connection refreshes at its own source's pace, and every pass is recorded in the sync history as it completes. Stopping it after the first passes is a one-off load.
+The Apple connectors live in [`apps/apple/connectors`](apps/apple/connectors/src/sources) (project `apple`), and each Apple host registers them itself: the [CLI](apps/apple/cli/src/main.ts) lists one `AppleApp` subclass per app from `apps/apple/cli/src/apps/`, and the [plugin](apps/apple/plugin/src/apps.ts) keeps one entry per app. Both load each selected app into its own SQLite import.
 
 [Google connectors](apps/google/src/connectors.ts) default-exports a list of `{ name, run }` entries that `main.ts` calls in a plain loop. Each `run()` configures its own source, credentials, pipeline and post-load work: Search Console's builds a `Pipeline` with one `google-search-console` connection and a `PostgresSyncHistory`, then publishes its marts after a complete or partial load, once every raw table exists.
 
@@ -386,9 +382,10 @@ packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-s
 packages/destinations/markdown/   Markdown destination (elt-markdown)
 packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
-apps/apple/            Apple connectors, native bridges, document parser, and example app
+apps/apple/connectors/ Apple connectors, native bridges, and document parser (project apple)
+apps/apple/plugin/     Codex plugin server, bundled into plugins/apple/server.mjs (apple-plugin)
+apps/apple/cli/        Terminal CLI over the Apple connectors: setup, sync, status, query (apple-cli)
 apps/google/           Google connectors and example app
-apps/cli/              Terminal CLI over the Apple connectors (setup, sync, status, query)
 docs/                  Detailed behavior and native API research
 infra/                 Local Postgres warehouse and optional MCP server
 ```

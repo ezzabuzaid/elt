@@ -1,0 +1,14 @@
+{
+  "name": "apple-cli",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@clack/prompts": "1.8.1",
+    "apple": "0.0.1",
+    "commander": "15.0.0",
+    "elt": "0.0.1",
+    "elt-sqlite": "0.0.1",
+    "google-auth": "0.0.1",
+    "import-store": "0.0.1"
+  }
+}

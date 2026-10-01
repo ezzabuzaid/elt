@@ -1,0 +1,48 @@
+{
+  "name": "apple-plugin",
+  "sourceRoot": "apps/apple/plugin/src",
+  "projectType": "application",
+  "targets": {
+    "lint": {},
+    "bundle": {
+      "executor": "@nx/esbuild:esbuild",
+      "dependsOn": ["^build"],
+      "outputs": [
+        "{workspaceRoot}/plugins/apple/server.mjs",
+        "{workspaceRoot}/plugins/apple/eventkit"
+      ],
+      "options": {
+        "main": "apps/apple/plugin/src/main.ts",
+        "tsConfig": "apps/apple/plugin/tsconfig.json",
+        "outputPath": "plugins/apple",
+        "outputFileName": "server.mjs",
+        "deleteOutputPath": false,
+        "format": ["esm"],
+        "platform": "node",
+        "target": "node24.19",
+        "thirdParty": true,
+        "declaration": false,
+        "skipTypeCheck": true,
+        "assets": [
+          {
+            "input": "apps/apple/connectors/dist/platform/macos",
+            "glob": "eventkit",
+            "output": "."
+          }
+        ],
+        "includeIgnoredAssetFiles": true,
+        "esbuildOptions": {
+          "logLevel": "warning",
+          "outExtension": { ".js": ".mjs" },
+          "banner": {
+            "js": "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+          }
+        }
+      }
+    },
+    "test": {
+      "dependsOn": ["build", "bundle"],
+      "command": "node --test \"apps/apple/plugin/dist/*.test.js\""
+    }
+  }
+}

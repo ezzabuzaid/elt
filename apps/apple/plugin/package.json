@@ -1,0 +1,16 @@
+{
+  "name": "apple-plugin",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "apple": "0.0.1",
+    "elt": "0.0.1",
+    "elt-sqlite": "0.0.1",
+    "import-store": "0.0.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@openai/mcp-extensions": "0.1.0"
+  }
+}

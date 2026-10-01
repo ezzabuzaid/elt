@@ -9,7 +9,7 @@ The Apple plugin imports the apps, accounts, collections and dates the user choo
 
 ## Set up with forms
 
-1. Call `apple_setup`. It shows the user one form to choose apps. Each chosen app is imported from all its accounts, folders and dates with attachments (Calendar: last year through next year); an app narrowed earlier keeps that selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat, and do not ask about accounts, folders or dates unless the user brings them up.
+1. Call `apple_setup`. It shows the user one form to choose apps. Each chosen app is imported from all its accounts, folders and dates with attachments (Calendar: from 2000 through next year); an app narrowed earlier keeps that selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat, and do not ask about accounts, folders or dates unless the user brings them up.
 2. Read its result:
    - `changed: false`: the user cancelled; nothing changed.
    - `unavailable`: apps macOS did not allow. Give their `permissions` guidance as steps. Full Disk Access has no macOS prompt: the user turns on ChatGPT in System Settings, then quits and reopens ChatGPT, which ends this chat, so tell them to run Set up Apple again afterwards. Treat these apps as inaccessible, never as empty.

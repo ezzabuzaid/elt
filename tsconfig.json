@@ -24,10 +24,13 @@
       "path": "./apps/google"
     },
     {
-      "path": "./apps/apple"
+      "path": "./apps/apple/connectors"
     },
     {
-      "path": "./apps/cli"
+      "path": "./apps/apple/plugin"
+    },
+    {
+      "path": "./apps/apple/cli"
     }
   ]
 }

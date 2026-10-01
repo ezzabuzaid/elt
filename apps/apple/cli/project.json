@@ -1,0 +1,16 @@
+{
+  "name": "apple-cli",
+  "sourceRoot": "apps/apple/cli/src",
+  "projectType": "application",
+  "targets": {
+    "lint": {},
+    "start": {
+      "dependsOn": ["build"],
+      "command": "node apps/apple/cli/dist/main.js"
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"apps/apple/cli/dist/*.test.js\""
+    }
+  }
+}

@@ -5,7 +5,8 @@
   "workspaces": [
     "packages/*",
     "packages/destinations/*",
-    "apps/*"
+    "apps/*",
+    "apps/apple/*"
   ],
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

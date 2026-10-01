@@ -6,7 +6,7 @@ Detailed sync, storage, connector, and failure contracts for `elt`.
 
 ## Working example
 
-The examples below live inside `apps/apple/src`: import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and Apple connectors directly from their source modules. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
+The examples below live inside `apps/apple/connectors/src`: import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and Apple connectors directly from their source modules. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
 
 ```ts
 import { Connection, Copy, Pipeline } from 'elt';
@@ -272,7 +272,7 @@ for await (const { connection, outcomes } of pipeline.watch({ signal: controller
 // Call controller.abort() from your app's stop/shutdown handler.
 ```
 
-Watching preflights every connection, then each connection watches its own source: it subscribes before the initial synchronization and runs a pass over the copies whose streams receive notifications. It uses the existing copy modes: incremental Notes and Calendar copies stay incremental, and full-refresh copies stay full refresh. Notifications do not provide records or turn a full-refresh copy into an incremental one. `run()` remains a single execution: the Apple app's `main.ts` uses it, and `serve.ts` watches.
+Watching preflights every connection, then each connection watches its own source: it subscribes before the initial synchronization and runs a pass over the copies whose streams receive notifications. It uses the existing copy modes: incremental Notes and Calendar copies stay incremental, and full-refresh copies stay full refresh. Notifications do not provide records or turn a full-refresh copy into an incremental one. `run()` remains a single execution: `apple-cli sync` uses it, and `sync --watch` watches.
 
 The source owns change detection:
 
@@ -318,7 +318,7 @@ Not verified live, each for a stated reason:
 - **Mentions:** they exist only in a note shared with another iCloud user.
 - **Locations:** added only through the Maps share sheet.
 
-Checklists, tags, tables and a locked note were also read from Apple-made macOS 26 sample stores. The unverified kinds are read as the published format describes them; to verify one, create it in a Notes folder and run the exporter.
+Checklists, tags, tables and a locked note were also read from Apple-made macOS 26 sample stores. The unverified kinds are read as the published format describes them; to verify one, create it in a Notes folder and import Notes with `apple-cli`.
 
 ## Attachment files and document parsing
 
@@ -353,7 +353,7 @@ await new Pipeline({
 }).run();
 ```
 
-This stores the selected source metadata, parsed `content` and an `attachmentRef` as TEXT. The original attachment ID and containing note ID remain available for joins. `LocalFiles` stores the original bytes and returns their absolute local path. SQLite and Postgres receive only that ordinary text value: they do not construct paths or write attachment files. The Apple exporter stores only the `attachmentRef` for every stream with files, under `outputs/apple-<name>-files`; it does not parse file text.
+This stores the selected source metadata, parsed `content` and an `attachmentRef` as TEXT. The original attachment ID and containing note ID remain available for joins. `LocalFiles` stores the original bytes and returns their absolute local path. SQLite and Postgres receive only that ordinary text value: they do not construct paths or write attachment files. The Apple hosts store only the `attachmentRef` for every stream with files, in each import's `files` folder; they do not parse file text.
 
 Storage is selected on each file reference with `.store(files)`, independently of the connection and destination. Two fields can use different stores, and copies can share one store without sharing file ownership. Constructing a store or declaring a field performs no I/O. A stored reference and parsed text must be separate fields; applying `.parse()` to a stored-file field is refused.
 
@@ -427,9 +427,12 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 
 ## Connector applications
 
-`apps/apple/src/pipeline.ts` default-exports one `Pipeline` with a `PostgresSyncHistory` and six connections: `apple-mail`, `apple-notes`, `apple-messages`, `apple-contacts`, `apple-calendar` and `apple-reminders`. Building it signs in to Google for Calendar's Drive and Gmail attachments, so `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` must be set when the app starts; discovery returns each source's static catalog. Apple loads into the shared Postgres warehouse as the loader role, with `raw_<stream>` tables and `_elt_checkpoints` in each connection's `apple_<name>` schema. Apple raw schemas are not granted to the reader.
+The Apple connectors live in `apps/apple/connectors` (project `apple`). Two hosts load them, each into SQLite imports of its own:
 
-- `apps/apple/src/main.ts` (`npx nx run apple:start`), the app's one entry point, installs the sync history and watches the pipeline until `SIGINT` or `SIGTERM`. Every connection's first pass loads all its streams, side by side; after that each connection refreshes at its own source's pace, and every pass is recorded as it completes.
+- `apps/apple/cli` (`npx nx run apple-cli:start -- <command>`) imports the apps a terminal user selects into `outputs/cli`. `sync` runs one pass of each selected app; `sync --watch` keeps them current until stopped, each app refreshing at its own source's pace. Its Calendar import signs in to Google for Drive and Gmail attachments, so `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` must be set.
+- `apps/apple/plugin`, bundled by `npx nx run apple-plugin:bundle` into `plugins/apple/server.mjs`, is the Codex plugin's MCP server: one server per Mac keeps every selected app's import current while Codex is open. Its Calendar keeps remote attachments as links.
+
+Each import holds one `data.sqlite` with `raw_<stream>` tables read through `<snake_stream>` views, its sync history and `catalog` views, `checkpoints.sqlite`, and a `files` folder.
 
 Calendar's coverage declares its configured window for event-derived streams and a listing for accounts and calendars; the other five Apple sources share `localAppleStoreCoverage`, the whole accessible local store.
 
@@ -651,11 +654,11 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messages.app need not be open. A missing file or a denied grant raises `MessagesUnavailableError` before any copy runs, with the SQLite error as `cause`. `npx nx run apple:start` loads every stream incrementally into the Postgres `apple_messages` schema; each attachment file is saved under `outputs/apple-messages-files` and referenced by `attachmentRef`.
+The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messages.app need not be open. A missing file or a denied grant raises `MessagesUnavailableError` before any copy runs, with the SQLite error as `cause`. `npx nx run apple-cli:start -- sync --app messages` loads every stream incrementally into the import's `data.sqlite`; each attachment file is saved in its `files` folder and referenced by `attachmentRef`.
 
 ### Full Disk Access
 
-Messages keeps its history only in `~/Library/Messages/chat.db`; it has no public API for reading messages. macOS guards that folder with **Full Disk Access** and checks it against the *responsible* process: the terminal app that runs `npx nx run apple:start`. Grant that app Full Disk Access.
+Messages keeps its history only in `~/Library/Messages/chat.db`; it has no public API for reading messages. macOS guards that folder with **Full Disk Access** and checks it against the *responsible* process: the terminal app that runs `npx nx run apple-cli:start`. Grant that app Full Disk Access.
 
 ### Streams
 
@@ -799,11 +802,11 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads Contacts' own Core Data stores read-only through `node:sqlite`: `AddressBook-v22.abcddb` at the root of `~/Library/Application Support/AddressBook` (On My Mac) and one `Sources/<id>/AddressBook-v22.abcddb` per account. Contacts.app need not be open. A store or the `Sources` folder that cannot be opened (missing, or no permission) raises `ContactsUnavailableError`, and a store without a column the connector reads raises `ContactsSchemaError` naming the columns, both before any copy runs. `npx nx run apple:start` loads every stream incrementally into the Postgres `apple_contacts` schema; each photo is saved under `outputs/apple-contacts-files` and referenced by `attachmentRef`.
+The source reads Contacts' own Core Data stores read-only through `node:sqlite`: `AddressBook-v22.abcddb` at the root of `~/Library/Application Support/AddressBook` (On My Mac) and one `Sources/<id>/AddressBook-v22.abcddb` per account. Contacts.app need not be open. A store or the `Sources` folder that cannot be opened (missing, or no permission) raises `ContactsUnavailableError`, and a store without a column the connector reads raises `ContactsSchemaError` naming the columns, both before any copy runs. `npx nx run apple-cli:start -- sync --app contacts` loads every stream incrementally into the import's `data.sqlite`; each photo is saved in its `files` folder and referenced by `attachmentRef`.
 
 ### Access
 
-macOS guards the AddressBook folder with the **Contacts** privacy service, and Full Disk Access covers it too; either works, checked against the responsible process: the terminal app that runs `npx nx run apple:start`. Contacts access prompts once for that app; a dismissed prompt is recorded as a denial and never shows again, so enable the app under **System Settings → Privacy & Security → Contacts**, or grant it [Full Disk Access](#full-disk-access).
+macOS guards the AddressBook folder with the **Contacts** privacy service, and Full Disk Access covers it too; either works, checked against the responsible process: the terminal app that runs `npx nx run apple-cli:start`. Contacts access prompts once for that app; a dismissed prompt is recorded as a denial and never shows again, so enable the app under **System Settings → Privacy & Security → Contacts**, or grant it [Full Disk Access](#full-disk-access).
 
 Contacts.framework is not used. It needs the Contacts grant itself and exposes less than the stores hold.
 
@@ -923,7 +926,7 @@ await new Pipeline({
 }).run();
 ```
 
-Calendar reads EventKit through `eventkit`, a compiled Swift helper ([platform/macos/eventkit](../apps/apple/src/platform/macos/eventkit)). The Nx target `apple:eventkit` builds it as a universal (arm64 and x86_64) binary into `apps/apple/dist/platform/macos/eventkit`; `apple:plugin` copies it next to the plugin's `server.mjs`. `eventkit read '<json request>'` writes one JSON document per line (account, calendar, occurrence, ICS export, reminder), and `eventkit watch events|reminders` prints `changed` per store change. One read runs one helper process for every selected stream. The helper reports EventKit's values; the source builds the rows: IDs, ISO timestamps, content-order positions, and scope filtering. macOS attributes access to the app responsible for the process: the terminal, or Codex for the plugin.
+Calendar reads EventKit through `eventkit`, a compiled Swift helper ([platform/macos/eventkit](../apps/apple/connectors/src/platform/macos/eventkit)). The Nx target `apple:eventkit` builds it as a universal (arm64 and x86_64) binary into `apps/apple/connectors/dist/platform/macos/eventkit`; `apple-plugin:bundle` copies it next to the plugin's `server.mjs`. `eventkit read '<json request>'` writes one JSON document per line (account, calendar, occurrence, ICS export, reminder), and `eventkit watch events|reminders` prints `changed` per store change. One read runs one helper process for every selected stream. The helper reports EventKit's values; the source builds the rows: IDs, ISO timestamps, content-order positions, and scope filtering. macOS attributes access to the app responsible for the process: the terminal, or Codex for the plugin.
 
 Calendar needs macOS 27 and full Calendar access for the process running the export. The first extraction requests access if it is undecided or write-only, through `osascript` (macOS shows no prompt for the helper's own request), waiting up to 30 seconds; the grant goes to the terminal or app running the export. If permission is denied, restricted, or still pending, the helper reports `CALENDAR_UNAVAILABLE` and `CalendarUnavailableError` preserves the native cause and explains how to enable access. A sandbox can block access even when macOS permission is granted. Permission failures never become empty successful exports.
 
@@ -990,7 +993,7 @@ These GUI exports are not used. The ICS streams read the same iCalendar data per
 
 ### Attachment files
 
-`icsAttachments` reads attachment bytes only when the target asks for them, and remote references need a fetcher. For Google calendars, the Apple app's `googleCalendarAttachments` downloads Drive files (native Docs, Sheets and Slides as PDF, shortcuts followed to their target, link-shared files with their resource key) and Gmail message attachments. It needs a `googleSession` from `google-auth` whose grant has `drive.readonly` and `gmail.readonly`, from an OAuth client whose project enables the Drive and Gmail APIs. A 403 loads the file as null only when Drive or Gmail says the account may not open it; a rate limit, a disabled API or a missing scope fails the copy, which resumes next run. `npx nx run apple:start` wires it up this way:
+`icsAttachments` reads attachment bytes only when the target asks for them, and remote references need a fetcher. For Google calendars, the Apple connectors' `googleCalendarAttachments` downloads Drive files (native Docs, Sheets and Slides as PDF, shortcuts followed to their target, link-shared files with their resource key) and Gmail message attachments. It needs a `googleSession` from `google-auth` whose grant has `drive.readonly` and `gmail.readonly`, from an OAuth client whose project enables the Drive and Gmail APIs. A 403 loads the file as null only when Drive or Gmail says the account may not open it; a rate limit, a disabled API or a missing scope fails the copy, which resumes next run. The CLI's Calendar import wires it up this way:
 
 ```ts
 const requester = await googleSession({
@@ -1059,7 +1062,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads Safari's own stores read-only; Safari need not be open. `npx nx run apple:start` loads every stream incrementally into the Postgres `apple_safari` schema, read as `marts.safari_<stream>`; a download still on disk is saved under `outputs/apple-safari-files` and referenced by `attachmentRef`. `new AppleSafariSource({ scope })` selects profiles through `collectionIds` and history visits through `startAt`/`endAt` (see Scope below).
+The source reads Safari's own stores read-only; Safari need not be open. `npx nx run apple-cli:start -- sync --app safari` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views; a download still on disk is saved in its `files` folder and referenced by `attachmentRef`. `new AppleSafariSource({ scope })` selects profiles through `collectionIds` and history visits through `startAt`/`endAt` (see Scope below).
 
 | Store | Where | Streams |
 | --- | --- | --- |
@@ -1164,7 +1167,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads the stores Books and its sync daemon, `bookdatastored`, keep; Books need not be open. `npx nx run apple:start` loads every stream incrementally into the Postgres `apple_books` schema, read as `marts.books_<stream>`; a book whose bytes are on this Mac is saved under `outputs/apple-books-files` and referenced by `attachmentRef`.
+The source reads the stores Books and its sync daemon, `bookdatastored`, keep; Books need not be open. `npx nx run apple-cli:start -- sync --app books` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views; a book whose bytes are on this Mac is saved in its `files` folder and referenced by `attachmentRef`.
 
 | Store | Where | Streams |
 | --- | --- | --- |
@@ -1323,12 +1326,11 @@ Because `date` is both the cursor and part of the key, each resumable grain requ
 
 ### Warehouse marts
 
-The Apple and Google apps load into the PostgreSQL warehouse and install a shared metadata contract. Each source publishes its own content views in `marts`, named after the source. The layout:
+The Google app loads into the PostgreSQL warehouse and installs a shared metadata contract. Each source publishes its own content views in `marts`, named after the source. The layout:
 
 ```text
 warehouse database
 ├── google_search_console   raw tables and _elt_checkpoints, loaded by elt-postgresql; readers have no access
-├── apple_<name>            private raw Apple tables and checkpoints
 ├── _warehouse              private sync attempts and coverage declarations
 ├── marts                   documented reader views, one prefix per source
 └── public                  revoked from PUBLIC
@@ -1338,9 +1340,9 @@ roles: warehouse (loads, owns the database) · agent_reader (reads marts only)
 - **Privileges are the barrier.** `agent_reader` has `CONNECT`, `USAGE` on `marts` and `SELECT` on its relations, and nothing else. It has no `TEMP`, no `CREATE`, and no access to raw schemas. Views run with their owner's rights. The role's settings (`default_transaction_read_only`, `statement_timeout 30s`, `search_path = marts`) are only defaults, since a session may change them.
 - **Direct PostgreSQL access works.** Use `psql` as `agent_reader`; MCP is optional. The explicitly invoked `query-warehouse` consumer discovers relations and meanings from `marts.catalog`. It reads connected data only on request and does not run pipelines, refresh data or manage connectors. The existing optional MCP container adds its own SQL restrictions.
 
-The reader's contract is provisioned once, with the database: `infra/init/02-marts.sh` runs `infra/init/marts/contract.sql` in the `warehouse` database. It revokes `PUBLIC` access, gives `agent_reader` `CONNECT` and `USAGE` on `marts`, creates `marts` owned by `warehouse`, publishes `catalog`, and sets default privileges so every table and view the `warehouse` role creates in `marts` is readable by `agent_reader`. No application code grants access. Like every init script, it runs when the volume is first created; to apply a changed contract, recreate the volume with `npx nx run infra:reset`. `installSearchConsoleMarts(sql, { raw })` replaces the Search Console views after extraction, once every Search Console raw table exists; a missing one is named and nothing is replaced. Publication fails if outside views depend on a replaced view; no `CASCADE` is used. Apple views are created by the loads themselves ([reader views](#reader-views)), so the Apple app publishes nothing after a pass.
+The reader's contract is provisioned once, with the database: `infra/init/02-marts.sh` runs `infra/init/marts/contract.sql` in the `warehouse` database. It revokes `PUBLIC` access, gives `agent_reader` `CONNECT` and `USAGE` on `marts`, creates `marts` owned by `warehouse`, publishes `catalog`, and sets default privileges so every table and view the `warehouse` role creates in `marts` is readable by `agent_reader`. No application code grants access. Like every init script, it runs when the volume is first created; to apply a changed contract, recreate the volume with `npx nx run infra:reset`. `installSearchConsoleMarts(sql, { raw })` replaces the Search Console views after extraction, once every Search Console raw table exists; a missing one is named and nothing is replaced. Publication fails if outside views depend on a replaced view; no `CASCADE` is used.
 
-`PostgresSyncHistory({ url })` from `elt-postgresql` is the pipeline's [sync history](#sync-history) for this warehouse. Each pass inserts one `sync_attempts` row, with the connection name as `connector` and the source identity as `source`, and one `extraction_coverage` row per selected stream, with the source's declared `coverage(stream)` and the connection destination's schema as `target_schema`, before it reads; the outcomes close them. A run passes every stream a connection selected; a watch pass reads only the streams its source reported changed, so an attempt vouches only for its own `extraction_coverage` rows. An invalid connection, or a connection whose watcher stopped, records a failed attempt without outcomes. Use the same database for the history and the connection's destination. The Apple app's `main.ts` records every watch pass this way; Google's connector records one run.
+`PostgresSyncHistory({ url })` from `elt-postgresql` is the pipeline's [sync history](#sync-history) for this warehouse. Each pass inserts one `sync_attempts` row, with the connection name as `connector` and the source identity as `source`, and one `extraction_coverage` row per selected stream, with the source's declared `coverage(stream)` and the connection destination's schema as `target_schema`, before it reads; the outcomes close them. A run passes every stream a connection selected; a watch pass reads only the streams its source reported changed, so an attempt vouches only for its own `extraction_coverage` rows. An invalid connection, or a connection whose watcher stopped, records a failed attempt without outcomes. Use the same database for the history and the connection's destination. Google's connector records one run this way.
 
 Every attempt retains its own declarations. `sync_status` gives the latest attempt separately from the most recently completed all-copies-successful attempt. `stream_status` gives the same two facts for each stream, because a watch pass declares only the streams that changed. An unchanged pass advances success even with zero writes. A failed or partial pass keeps earlier success and its original scope available by attempt ID. Per-copy status and failure partitions let a reader distinguish successful streams within a partial attempt. Counts are accepted operations committed during that pass, including deduplication no-ops and deletions of absent keys, not changed-row counts or current totals. A first failure has no successful timestamp.
 
