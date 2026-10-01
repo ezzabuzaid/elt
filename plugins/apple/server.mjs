@@ -65086,7 +65086,7 @@ var properties = {
   },
   style: {
     ...nullableInteger2,
-    description: "Highlight style code: 0 is the underline style (underline is true); 1 to 5 are the highlight colours."
+    description: "Highlight style: 0 underline (underline is true), 1 green, 2 blue, 3 yellow, 4 pink, 5 purple."
   },
   underline: {
     ...boolean4,

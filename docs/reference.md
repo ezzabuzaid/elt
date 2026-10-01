@@ -1190,7 +1190,7 @@ On macOS 27 a terminal without [Full Disk Access](#full-disk-access) read both c
 | `libraryAssets` | Every book, PDF, audiobook and series in this Mac's library: title, authors, genre, language, description, store and EPUB identifiers, `path`, page count, size, reading progress and furthest progress reached, finished state and date, last opened and engaged, ratings, sample, hidden and explicit flags, series membership (`seriesContainerAssetId`). `contentType` is `epub` (code 1) or `pdf` (code 3); other codes keep only `contentTypeCode`. `state` is not whether the file is local. Archived author, narrator and genre lists stay base64. |
 | `collections`, `collectionMembers` | Built-in collections (Finished, Want to Read, Books, PDFs, Downloaded, My Samples, Library, Audiobooks, with fixed `collectionId`s) and those the user made (UUIDs); members by `assetId`, which outlives the book leaving the library. |
 | `bookFiles` | One row per asset with a path: `format` (`epub-package` or `file`), `availableLocally`, file count, size and latest modification over the package. An EPUB package is exported as one `.epub` (OCF: `mimetype` first and stored, entries in name order, fixed timestamps, so an unchanged package yields the same bytes); a single file, such as a PDF or a zipped `.epub`, as it is. |
-| `annotations` | Highlights and underlines (`kind` `highlight`, with `underline` and the `style` code), the reading position Books keeps per book (`readingPosition`), and deletion markers not yet synced (`deleted`, no book, text or location). Text, note, surrounding text, chapter title, EPUB CFI location and offsets, creator and times. |
+| `annotations` | Highlights and underlines (`kind` `highlight`, with `underline` and `style`: 0 underline, 1 green, 2 blue, 3 yellow, 4 pink, 5 purple), the reading position Books keeps per book (`readingPosition`), and deletion markers not yet synced (`deleted`, no book, text or location). Text, note, surrounding text, chapter title, EPUB CFI location and offsets, creator and times. |
 | `assetDetails` | Reading state `bookdatastored` syncs through iCloud, including books read on other devices and absent from this library: progress, furthest progress, finished and still-reading, star rating, audiobook position, and the synced position as an EPUB CFI. |
 | `reviews` | Store reviews the user wrote. |
 | `readingMonths`, `readingDays`, `streakRecords` | Reading history: per day the seconds read (summed over every device's contribution) and the goal in effect; per month the total Books kept after summarizing it and how many days remain; the date each streak length was first reached. |
@@ -1216,13 +1216,14 @@ Every stream diffs a whole read of its store against the previous one. A watch p
 
 Checked live on 2026-10-01 against macOS 27.0 and Books 8:
 
-- 49 library assets (47 EPUB packages, 2 PDFs, all added through iCloud Drive), 8 built-in collections with 114 members, 240 annotations (193 highlights, 38 reading positions, 9 deletion markers with an empty asset ID), 63 synced asset details (14 for books not in this library), 42 months and 18 days of reading history, 7 streak records, a 1800-second goal.
+- 49 library assets (47 EPUB packages, 2 PDFs, all added through iCloud Drive), 8 built-in collections with 114 members, 240 annotations (193 highlights, 38 reading positions, 9 deletion markers with an empty asset ID), 63 synced asset details (14 for books not in this library), 42 months and 18 days of reading history, 7 streak records, and a goal stored as 1800 that Books' settings show as 30 minutes, so reading time and goals are seconds.
 - Opening the library with `immutable=1` showed 0 annotations; read-only showed all 240.
 - 11 EPUB packages were local and 36 EPUBs and both PDFs were placeholders, while Books.plist listed 13 books as local, 10 of them placeholders. Two loads changed no item's flags.
 - Opening a local book in Books in a background window for about 15 minutes added the current month and a day of 487 to the reading history once Books quit, which fits seconds.
+- Switching one highlight through yellow, green, blue, pink, purple and underline stored `style` 3, 1, 2, 4, 5 and 0 (with `underline` set only for 0).
 - The 11 local EPUBs packaged to `.epub` files `unzip -t` accepts; a second load wrote nothing and kept the same copies.
 
-Unverified: which colour each highlight `style` from 1 to 5 is; that `readingTime` and the goal are seconds (inferred from the 1800 goal and the 487 above); content type and annotation type codes this library does not use; audiobooks, store purchases and reviews (none on the probed Mac).
+Unverified: content type and annotation type codes this library does not use; audiobooks, store purchases and reviews (none on the probed Mac).
 
 ## Google Search Console
 
