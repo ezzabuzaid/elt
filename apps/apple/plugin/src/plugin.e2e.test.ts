@@ -662,6 +662,23 @@ test('Apple setup asks only which apps, imports each in full or as narrowed befo
       ),
       [{ app: 'notes', scope: {}, includeAttachments: true }],
     );
+    // Notes is read for real: its background import loads the store's notes.
+    const settings = join(
+      scratch.path,
+      'Library/Application Support/Context Compiler/Apple/settings.sqlite',
+    );
+    let loaded = false;
+    for (let attempt = 0; attempt < 60 && !loaded; attempt++) {
+      const [notes] = read(
+        settings,
+        "SELECT database FROM selected_apps WHERE app = 'notes'",
+      ).rows;
+      loaded =
+        notes !== undefined &&
+        read(notes.database, 'SELECT title FROM notes').rows.length > 0;
+      if (!loaded) await sleep(500);
+    }
+    assert.ok(loaded, 'the Notes import never loaded the store’s notes');
 
     // A selection the user narrowed in chat survives setting up again.
     const narrowed = { collectionIds: ['FOLDER-NOTES'] };
@@ -677,7 +694,7 @@ test('Apple setup asks only which apps, imports each in full or as narrowed befo
 
     const cancelled = await setUp({ action: 'cancel' });
     assert.equal(cancelled.changed, false);
-    assert.deepEqual(cancelled.apps[0]?.scope, narrowed);
+    assert.deepEqual(cancelled.apps, kept.apps);
   } finally {
     await client.close();
     await transport.close();

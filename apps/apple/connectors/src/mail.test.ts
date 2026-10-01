@@ -558,6 +558,14 @@ test('Mail scope filters dates, message ownership and MIME before copying files 
   assert.deepEqual(rows(output, 'SELECT DISTINCT messageId FROM attachments'), [
     { messageId: '1' },
   ]);
+  assert.deepEqual(
+    rows(output, 'SELECT DISTINCT messageId FROM messageParts'),
+    [{ messageId: '1' }],
+  );
+  assert.deepEqual(
+    rows(output, 'SELECT DISTINCT messageId FROM messageHeaders'),
+    [{ messageId: '1' }],
+  );
   assert.deepEqual(rows(output, 'SELECT id FROM recipients'), [{ id: '1' }]);
   assert.deepEqual(rows(output, 'SELECT messageId FROM conversationMessages'), [
     { messageId: '9223372036854775800' },
@@ -579,6 +587,8 @@ test('Mail scope filters dates, message ownership and MIME before copying files 
   await run.run();
   assert.deepEqual(rows(output, 'SELECT id FROM messages'), []);
   assert.deepEqual(rows(output, 'SELECT messageId FROM attachments'), []);
+  assert.deepEqual(rows(output, 'SELECT messageId FROM messageParts'), []);
+  assert.deepEqual(rows(output, 'SELECT messageId FROM messageHeaders'), []);
 });
 
 test('Mail exports the native store, MIME, detached files and unavailable metadata; snapshots update and delete', async (t) => {
@@ -772,6 +782,9 @@ test('Mail message streams re-read only messages whose files or index attachment
           { count, deleted },
         ]),
     );
+  // Re-reading an unchanged message would load identical records, so the
+  // outcomes cannot show the skip. The saved group fingerprints at least show
+  // that an unchanged message's inputs keep the same identity between runs.
   const groups = () =>
     Object.fromEntries(
       rows(

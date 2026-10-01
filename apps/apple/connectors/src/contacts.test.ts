@@ -584,6 +584,13 @@ test('Contacts scope keeps only one container and its related records and images
     rows(destination.path, 'SELECT DISTINCT contactId FROM images'),
     [{ contactId: 'ME:ABPerson' }],
   );
+  // Related records follow their store: Ada's note stays, and account A's
+  // group and its memberships stay out.
+  assert.deepEqual(rows(destination.path, 'SELECT contactId FROM notes'), [
+    { contactId: 'ME:ABPerson' },
+  ]);
+  assert.deepEqual(rows(destination.path, 'SELECT id FROM groups'), []);
+  assert.deepEqual(rows(destination.path, 'SELECT * FROM groupMembers'), []);
   const saved = JSON.stringify(
     rows(join(scratch.path, 'state.sqlite'), 'SELECT state FROM checkpoints'),
   );

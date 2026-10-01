@@ -9,7 +9,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -1886,7 +1886,16 @@ test('Safari reads this Mac’s stores into SQLite', async (t) => {
   using database = new DatabaseSync(destination.path, { readOnly: true });
   const count = (table: string) =>
     Number(database.prepare(`SELECT count(*) AS n FROM "${table}"`).get()?.n);
-  assert.ok(count('historyItems') > 0);
+  // History comes from this Mac's own History.db: when it holds items, so
+  // does the import.
+  using history = new DatabaseSync(
+    join(homedir(), 'Library/Safari/History.db'),
+    { readOnly: true },
+  );
+  const native = history
+    .prepare('SELECT count(*) AS n FROM history_items')
+    .get()?.n;
+  if (Number(native) > 0) assert.ok(count('historyItems') > 0);
   assert.ok(count('historyVisits') >= count('historyItems'));
   assert.equal(
     count('bookmarks') > 0,
