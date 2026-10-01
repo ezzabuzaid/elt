@@ -361,6 +361,7 @@ Permissions apply to the process running the export, and a sandbox can still res
 | Read or watch Apple Notes | Full Disk Access; Notes does not need to be open |
 | Read or watch Apple Contacts | Contacts access or Full Disk Access; Contacts does not need to be open |
 | Read or watch Apple Safari | Full Disk Access; Safari does not need to be open, but only Safari fetches history and tabs from other devices |
+| Read or watch Apple Books | Full Disk Access; Books does not need to be open, and books kept only in iCloud are listed without their files |
 | Read or watch Reminders | Full Reminders access through EventKit |
 | Read or watch Calendar | Full Calendar access through EventKit |
 
@@ -372,7 +373,6 @@ Manage permissions in **System Settings → Privacy & Security**. Calendar and R
 packages/elt/                     Core contracts, pipelines, and the checkpoint protocol
 packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-sqlite)
 packages/destinations/markdown/   Markdown destination (elt-markdown)
-| Read or watch Apple Books | Full Disk Access; Books does not need to be open, and books kept only in iCloud are listed without their files |
 packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
 apps/apple/            Apple connectors, native bridges, document parser, and example app
