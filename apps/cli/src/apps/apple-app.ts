@@ -16,8 +16,7 @@ import {
   SQLiteDestination,
   type SQLiteTable,
 } from 'elt-sqlite';
-import type { ImportScope } from 'import-store';
-import type { Selection, Store } from '../store.ts';
+import type { ImportScope, ImportStore, Selection } from 'import-store';
 import type { Choice, Row } from './choice.ts';
 
 export type ChoiceOptions = Choice & {
@@ -123,7 +122,7 @@ export abstract class AppleApp {
   // The app's streams, loaded incrementally into raw_<stream> tables of its
   // data.sqlite and read through documented views, with files kept beside it.
   async connection(
-    store: Store,
+    store: ImportStore,
     selection: Selection,
   ): Promise<{
     connection: Connection<SQLiteTable>;

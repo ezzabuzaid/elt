@@ -1,5 +1,5 @@
 import type { Command as Declaration } from 'commander';
-import type { AppleApp } from '../apps/apple-app.ts';
+import type { Imports } from '../imports.ts';
 import { json } from '../table.ts';
 
 // What a command shows once it ran: its data as JSON for scripts, or text for
@@ -17,19 +17,8 @@ export abstract class Command {
   abstract readonly name: string;
   abstract readonly summary: string;
 
-  constructor(protected readonly apps: readonly AppleApp[]) {}
-
-  // The names a command accepts, for commander to validate.
-  protected get appNames(): string[] {
-    return this.apps.map(({ name }) => name);
-  }
-
-  // The app a validated name or a saved selection refers to.
-  protected app(name: string): AppleApp {
-    const app = this.apps.find((candidate) => candidate.name === name);
-    if (app === undefined) throw new Error(`Unknown app ${name}`);
-    return app;
-  }
+  // Every command reaches the apps and their imports through the mediator.
+  constructor(protected readonly imports: Imports) {}
 
   protected abstract configure(declaration: Declaration): void;
 

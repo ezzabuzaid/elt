@@ -27,9 +27,9 @@ Their different interfaces are intended: forms against prompts and flags, a sett
 | Connection: raw tables, reader views, files, ids | `apps/apple-app.ts` `connection()` | `plugin/sync.ts` | `warehouse-connection.ts` (Postgres) |
 | Reader view name rule `snake(stream)` | `apps/apple-app.ts` `view()` | `plugin/sync.ts` | `warehouse-connection.ts` |
 | Copy ids | `<app>:<stream>` | `<app>:<stream>` | `apple-<app>:<stream>` |
-| Selection model and validation | `store.ts` `Selection`; `commands/setup.ts` flag checks | `plugin/settings.ts` zod `configurationSchema` | — |
-| Changed selection replaces the import | `store.ts` `select` | `plugin/settings.ts` `importDirectory`, `removeStaleImports` | — |
-| One writer per store | `store.ts` `lock`, `busy` | `plugin/freshness.ts` `lease`, `leaderRunning` | — |
+| Selection model and validation | `import-store` `Selection`, `selectionProblems` (shared since a1ad4ed); `commands/setup.ts` checks flag order | `plugin/settings.ts` zod `configurationSchema` | — |
+| Changed selection replaces the import | `import-store` `ImportStore.select` (shared) via `imports.ts` `Imports.select` | `plugin/settings.ts` `importDirectory`, `removeStaleImports` | — |
+| One writer per store | `import-store` `lease` (shared); `imports.ts` refuses while held | `plugin/freshness.ts` `lease`, `leaderRunning` | — |
 | History and catalog install, pipeline, watch loop | `sync.ts` | `plugin/freshness.ts` `watchImports` | `main.ts` |
 | A connection that cannot be built reported per app | `sync.ts` | `plugin/freshness.ts` | — |
 | Status from sync history | `commands/status.ts` | `apple-plugin.ts` `status()` | `marts.sync_status` |

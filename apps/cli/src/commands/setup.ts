@@ -16,9 +16,9 @@ import {
 } from 'commander';
 import { type ImportScope, selectionProblems } from 'import-store';
 import type { AppleApp, ChoiceOptions } from '../apps/apple-app.ts';
-import type { Selection, Store } from '../store.ts';
+import type { Selection } from '../imports.ts';
+import { SyncReport } from '../sync-report.ts';
 import { Command, type Output } from './command.ts';
-import type { SyncCommand } from './sync.ts';
 
 type Narrowed = {
   app: AppleApp;
@@ -34,14 +34,6 @@ export class SetupCommand extends Command {
   readonly summary =
     'Choose the apps to import, and narrow any of them; prompts when no --app is given';
   readonly #flagged: Narrowed[] = [];
-
-  constructor(
-    apps: readonly AppleApp[],
-    readonly store: Store,
-    readonly syncing: SyncCommand,
-  ) {
-    super(apps);
-  }
 
   protected configure(declaration: Declaration): void {
     const current = (flag: string) => {
@@ -73,7 +65,7 @@ export class SetupCommand extends Command {
     declaration
       .addOption(
         new Option('--app <app>', 'an app to import; repeat for more').choices(
-          this.appNames,
+          this.imports.names,
         ),
       )
       .addOption(
@@ -107,7 +99,7 @@ export class SetupCommand extends Command {
       .option('--sync', 'sync right after saving');
     declaration.on('option:app', (name: string) => {
       this.#flagged.push({
-        app: this.app(name),
+        app: this.imports.app(name),
         scope: {},
         includeAttachments: true,
       });
@@ -139,10 +131,14 @@ export class SetupCommand extends Command {
         includeAttachments,
       }),
     );
-    this.store.select(selections, (name) => this.app(name));
+    this.imports.select(selections);
     // A sync reports itself.
     if (sync) {
-      await this.syncing.sync(undefined, false, interactive);
+      await this.imports.sync(
+        undefined,
+        false,
+        new SyncReport(interactive, false),
+      );
       return undefined;
     }
     return {
@@ -157,13 +153,16 @@ export class SetupCommand extends Command {
   // Cancelling saves nothing; once saved, declining only skips the sync.
   async #fromPrompts(): Promise<void> {
     const previous = new Map(
-      this.store.selections().map((selection) => [selection.app, selection]),
+      this.imports.selections().map((selection) => [selection.app, selection]),
     );
     intro('Apple setup');
     const chosen = await multiselect<AppleApp>({
       message: 'Which apps should be imported?',
-      options: this.apps.map((app) => ({ value: app, label: app.title })),
-      initialValues: this.apps.filter(({ name }) => previous.has(name)),
+      options: this.imports.apps.map((app) => ({
+        value: app,
+        label: app.title,
+      })),
+      initialValues: this.imports.apps.filter(({ name }) => previous.has(name)),
       required: true,
     });
     if (isCancel(chosen)) return cancelled();
@@ -221,13 +220,14 @@ export class SetupCommand extends Command {
       if (scope === null) return cancelled();
       selections.push({ app: app.name, scope, includeAttachments });
     }
-    this.store.select(selections, (name) => this.app(name));
+    this.imports.select(selections);
 
     const sync = await confirm({ message: 'Sync now?' });
     outro(
-      `Saved ${selections.map(({ app, scope }) => this.app(app).titled(scope)).join(', ')}.`,
+      `Saved ${selections.map(({ app, scope }) => this.imports.app(app).titled(scope)).join(', ')}.`,
     );
-    if (sync === true) await this.syncing.sync(undefined, false, true);
+    if (sync === true)
+      await this.imports.sync(undefined, false, new SyncReport(true, false));
   }
 
   async #narrow(

@@ -11,15 +11,12 @@ export class OptionsCommand extends Command {
     "List an app's accounts and collections, for setup's narrowing flags";
 
   protected configure(declaration: Declaration): void {
-    declaration.addArgument(new Argument('<app>').choices(this.appNames));
+    declaration.addArgument(new Argument('<app>').choices(this.imports.names));
   }
 
   protected async run(declaration: Declaration): Promise<Output> {
     const [name] = declaration.processedArgs as [string];
-    const app = this.app(name);
-    const choices = await app.listChoices().catch((error: unknown) => {
-      throw new Error(app.failure(error));
-    });
+    const choices = await this.imports.options(name);
     return {
       data: choices.map(({ title, scope, options }) => ({
         title,

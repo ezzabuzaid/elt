@@ -1,8 +1,6 @@
-import { existsSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { Argument, type Command as Declaration } from 'commander';
 import type { AppleApp } from '../apps/apple-app.ts';
-import type { Store } from '../store.ts';
 import { table } from '../table.ts';
 import { Command, type Output } from './command.ts';
 
@@ -17,20 +15,9 @@ type ViewSummary = {
   readonly coverage: string;
 };
 
-// Nothing a query runs can write to an app's data.sqlite.
-function open(store: Store, { name, title }: AppleApp): DatabaseSync {
-  const selection = store.selection(name);
-  if (selection === undefined)
-    throw new Error(`${title} is not set up; run: setup`);
-  if (!existsSync(store.database(selection)))
-    throw new Error(`${title} has not synced yet; run: sync`);
-  return store.read(selection);
-}
-
 // One statement, read-only; SQLite would otherwise run the first statement
 // and silently drop the rest.
-function query(store: Store, app: AppleApp, sql: string): QueryResult {
-  using database = open(store, app);
+function query(database: DatabaseSync, sql: string): QueryResult {
   const statement = database.prepare(sql);
   if (holdsStatement(database, sql.slice(statement.sourceSQL.length)))
     throw new Error('Run one SQL statement at a time');
@@ -55,8 +42,7 @@ function holdsStatement(database: DatabaseSync, rest: string): boolean {
 
 // What an app's file holds for readers: each stream's view, how many rows it
 // has, and what the latest pass declared it covers.
-function views(store: Store, app: AppleApp): ViewSummary[] {
-  using database = open(store, app);
+function views(database: DatabaseSync, app: AppleApp): ViewSummary[] {
   const streams = database
     .prepare(
       `SELECT s.stream, c.description FROM stream_status s
@@ -97,16 +83,9 @@ export class QueryCommand extends Command {
   readonly summary =
     "Run one read-only SQL statement on an app's data, or list its views with --tables";
 
-  constructor(
-    apps: readonly AppleApp[],
-    readonly store: Store,
-  ) {
-    super(apps);
-  }
-
   protected configure(declaration: Declaration): void {
     declaration
-      .addArgument(new Argument('<app>').choices(this.appNames))
+      .addArgument(new Argument('<app>').choices(this.imports.names))
       .argument(
         '[sql]',
         'one statement; the catalog view lists every view and column: SELECT name, data_type, description FROM catalog',
@@ -119,9 +98,9 @@ export class QueryCommand extends Command {
       string,
       string | undefined,
     ];
-    const app = this.app(name);
     if (declaration.opts().tables === true) {
-      const summaries = views(this.store, app);
+      using database = this.imports.read(name);
+      const summaries = views(database, this.imports.app(name));
       return {
         data: summaries,
         text: () =>
@@ -133,7 +112,8 @@ export class QueryCommand extends Command {
     }
     if (sql === undefined)
       throw new Error('Give one SQL statement, or --tables');
-    const { columns, rows } = query(this.store, app, sql);
+    using database = this.imports.read(name);
+    const { columns, rows } = query(database, sql);
     return {
       data: rows.map((row) =>
         Object.fromEntries(columns.map((name, at) => [name, row[at]])),

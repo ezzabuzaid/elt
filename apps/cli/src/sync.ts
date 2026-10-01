@@ -15,8 +15,8 @@ import {
   SQLiteSyncHistory,
   type SQLiteTable,
 } from 'elt-sqlite';
+import type { ImportStore, Selection } from 'import-store';
 import type { AppleApp } from './apps/apple-app.ts';
-import type { Store } from './store.ts';
 
 // How one pass of one app ended, as sync reports it.
 export type PassSummary = {
@@ -32,7 +32,8 @@ export type PassSummary = {
   readonly error: string | null;
 };
 
-export type SyncObserver = {
+// Sees each pass of a sync while it runs and once it ends.
+export type PassObserver = {
   progress(app: AppleApp, progress: CopyProgress<SQLiteTable>): void;
   passed(app: AppleApp, summary: PassSummary): void;
 };
@@ -41,9 +42,9 @@ export type SyncObserver = {
 // shows the observer each pass while it runs and once it ends.
 class ObservedHistory extends SQLiteSyncHistory {
   readonly #apps: readonly AppleApp[];
-  readonly #observer: SyncObserver;
+  readonly #observer: PassObserver;
 
-  constructor(apps: readonly AppleApp[], observer: SyncObserver) {
+  constructor(apps: readonly AppleApp[], observer: PassObserver) {
     super();
     this.#apps = apps;
     this.#observer = observer;
@@ -106,27 +107,18 @@ function failed(app: AppleApp, error: unknown, seconds: number): PassSummary {
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-// One pass of each app, or with watch, a first pass and then one for each
-// change its source reports, until the process stops. Holds the store's lock
-// throughout, so a second sync is refused rather than colliding, and reads
-// each app's selection under it.
-export async function sync(
-  store: Store,
-  apps: readonly AppleApp[],
+// One pass of each app's selected import, or with watch, a first pass and
+// then one for each change its source reports, until the process stops. The
+// caller holds the store's lease throughout.
+export async function syncImports(
+  store: ImportStore,
+  imports: readonly { app: AppleApp; selection: Selection }[],
   watch: boolean,
-  observer: SyncObserver,
+  observer: PassObserver,
 ): Promise<void> {
-  using _ = store.lock();
-  const selections = store.selections();
   const connections: Connection<SQLiteTable>[] = [];
   const destinations: SQLiteDestination[] = [];
-  for (const app of apps) {
-    const selection = selections.find(({ app: name }) => name === app.name);
-    if (selection === undefined) {
-      const unselected = new Error(`${app.title} is not set up; run: setup`);
-      observer.passed(app, failed(app, unselected, 0));
-      continue;
-    }
+  for (const { app, selection } of imports) {
     try {
       const { connection, destination } = await app.connection(
         store,
@@ -142,7 +134,10 @@ export async function sync(
     }
   }
   if (connections.length === 0) return;
-  const history = new ObservedHistory(apps, observer);
+  const history = new ObservedHistory(
+    imports.map(({ app }) => app),
+    observer,
+  );
   await history.install(destinations);
   for (const { path } of destinations) installSQLiteCatalog({ path });
   const pipeline = new Pipeline({ connections, history });

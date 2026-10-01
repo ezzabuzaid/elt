@@ -2,7 +2,8 @@ import { intro, log, outro, type SpinnerResult, spinner } from '@clack/prompts';
 import type { CopyProgress } from 'elt';
 import type { SQLiteTable } from 'elt-sqlite';
 import type { AppleApp } from './apps/apple-app.ts';
-import type { PassSummary, SyncObserver } from './sync.ts';
+import type { SyncObserver } from './imports.ts';
+import type { PassSummary } from './sync.ts';
 import { json } from './table.ts';
 
 const count = new Intl.NumberFormat('en');
@@ -21,11 +22,6 @@ export class SyncReport implements SyncObserver {
     readonly interactive: boolean,
     readonly watching: boolean,
   ) {}
-
-  // Exit status 1 once any pass did not load completely.
-  get exitCode(): number {
-    return this.#incomplete ? 1 : 0;
-  }
 
   start(): void {
     if (!this.interactive) return;
