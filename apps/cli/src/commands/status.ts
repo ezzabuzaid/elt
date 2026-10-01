@@ -88,11 +88,12 @@ export class StatusCommand extends Command {
   }
 
   // Each selected app as its own data.sqlite records it: the latest pass, the
-  // last successful one, and every stream's own latest outcome.
+  // last successful one, and every stream's own latest outcome; or why its
+  // connection could not be built, which no pass recorded.
   #read(): AppStatus[] {
     const syncing = this.store.busy();
     return this.store.selections().map((selection) => {
-      const path = this.store.database(selection.app);
+      const path = this.store.database(selection);
       const base = {
         app: selection.app,
         selection: this.app(selection.app).describe(selection.scope),
@@ -106,9 +107,17 @@ export class StatusCommand extends Command {
         error: null,
         streams: [],
       };
+      const failure = this.store.connectionFailure(selection);
+      if (failure !== undefined)
+        return {
+          ...never,
+          state: 'failed' as const,
+          completedAt: failure.failedAt,
+          error: this.app(selection.app).failure(new Error(failure.error)),
+        };
       if (base.database === null) return never;
       // A sync installs the history views before it writes anything else.
-      using database = this.store.read(selection.app);
+      using database = this.store.read(selection);
       const latest = database
         .prepare(
           'SELECT status, completed_at, error, last_successful_sync_at FROM sync_status WHERE connector = ?',

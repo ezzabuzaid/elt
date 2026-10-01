@@ -1,5 +1,5 @@
 import { AppleMessagesSource } from 'apple/sources/apple-messages/apple-messages-source';
-import type { ImportScope } from 'apple/sources/import-scope';
+import type { ImportScope } from 'import-store';
 import { AppleApp } from './apple-app.ts';
 import type { Choice } from './choice.ts';
 

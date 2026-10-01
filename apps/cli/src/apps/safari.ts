@@ -1,5 +1,5 @@
 import { AppleSafariSource } from 'apple/sources/apple-safari/apple-safari-source';
-import type { ImportScope } from 'apple/sources/import-scope';
+import type { ImportScope } from 'import-store';
 import { AppleApp } from './apple-app.ts';
 import { byId, type Choice } from './choice.ts';
 

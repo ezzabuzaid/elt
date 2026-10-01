@@ -9,12 +9,12 @@ import {
   spinner,
   text,
 } from '@clack/prompts';
-import type { ImportScope } from 'apple/sources/import-scope';
 import {
   type Command as Declaration,
   InvalidArgumentError,
   Option,
 } from 'commander';
+import { type ImportScope, selectionProblems } from 'import-store';
 import type { AppleApp, ChoiceOptions } from '../apps/apple-app.ts';
 import type { Selection, Store } from '../store.ts';
 import { Command, type Output } from './command.ts';
@@ -23,7 +23,7 @@ import type { SyncCommand } from './sync.ts';
 type Narrowed = {
   app: AppleApp;
   scope: { -readonly [K in keyof ImportScope]: ImportScope[K] };
-  attachments: boolean;
+  includeAttachments: boolean;
 };
 
 // setup --app notes --collection <id> --since 2025-01-01 --app mail: commander
@@ -55,23 +55,15 @@ export class SetupCommand extends Command {
     const narrow =
       (flag: 'account' | 'collection') =>
       (id: string): string => {
-        const { app, scope: narrowed } = current(flag);
+        const { scope: narrowed } = current(flag);
         const scope = flag === 'account' ? 'accountIds' : 'collectionIds';
-        if (!app.narrowsBy(scope))
-          throw new InvalidArgumentError(
-            `${app.title} cannot be narrowed by ${flag}; see: options ${app.name}`,
-          );
         narrowed[scope] = [...(narrowed[scope] ?? []), id];
         return id;
       };
     const date =
       (flag: 'since' | 'until') =>
       (value: string): string => {
-        const { app, scope } = current(flag);
-        if (app.datedBy === null)
-          throw new InvalidArgumentError(
-            `${app.title} records have no date to narrow by`,
-          );
+        const { scope } = current(flag);
         const instant = new Date(value);
         if (Number.isNaN(instant.getTime()))
           throw new InvalidArgumentError('Use YYYY-MM-DD');
@@ -114,13 +106,14 @@ export class SetupCommand extends Command {
       )
       .option('--sync', 'sync right after saving');
     declaration.on('option:app', (name: string) => {
-      const app = this.app(name);
-      if (this.#flagged.some((selection) => selection.app === app))
-        declaration.error(`error: --app ${name} appears twice`);
-      this.#flagged.push({ app, scope: {}, attachments: true });
+      this.#flagged.push({
+        app: this.app(name),
+        scope: {},
+        includeAttachments: true,
+      });
     });
     declaration.on('option:no-attachments', () => {
-      current('no-attachments').attachments = false;
+      current('no-attachments').includeAttachments = false;
     });
   }
 
@@ -139,15 +132,14 @@ export class SetupCommand extends Command {
     sync: boolean,
     interactive: boolean,
   ): Promise<Output | undefined> {
-    for (const { app, scope } of this.#flagged)
-      if (backwards(scope))
-        throw new Error(`${app.title}: --since must precede --until`);
-    const selections = this.#flagged.map(({ app, scope, attachments }) => ({
-      app: app.name,
-      scope,
-      attachments,
-    }));
-    this.store.select(selections);
+    const selections = this.#flagged.map(
+      ({ app, scope, includeAttachments }) => ({
+        app: app.name,
+        scope,
+        includeAttachments,
+      }),
+    );
+    this.store.select(selections, (name) => this.app(name));
     // A sync reports itself.
     if (sync) {
       await this.syncing.sync(undefined, false, interactive);
@@ -215,9 +207,10 @@ export class SetupCommand extends Command {
 
     const selections: Selection[] = [];
     for (const app of chosen) {
-      const attachments = previous.get(app.name)?.attachments ?? true;
+      const includeAttachments =
+        previous.get(app.name)?.includeAttachments ?? true;
       if (!narrowing.includes(app)) {
-        selections.push({ app: app.name, scope: {}, attachments });
+        selections.push({ app: app.name, scope: {}, includeAttachments });
         continue;
       }
       const scope = await this.#narrow(
@@ -226,9 +219,9 @@ export class SetupCommand extends Command {
         previous.get(app.name)?.scope ?? {},
       );
       if (scope === null) return cancelled();
-      selections.push({ app: app.name, scope, attachments });
+      selections.push({ app: app.name, scope, includeAttachments });
     }
-    this.store.select(selections);
+    this.store.select(selections, (name) => this.app(name));
 
     const sync = await confirm({ message: 'Sync now?' });
     outro(
@@ -274,16 +267,17 @@ export class SetupCommand extends Command {
         if (isCancel(answer)) return null;
         if (answer) scope[bound] = new Date(answer).toISOString();
       }
-    if (backwards(scope)) {
-      log.warn(`${title}: the start must precede the end; try again.`);
+    const [problem] = selectionProblems(
+      [{ app: app.name, scope, includeAttachments: true }],
+      () => app,
+    );
+    if (problem !== undefined) {
+      log.warn(`${problem}; try again.`);
       return this.#narrow(app, choices, previous);
     }
     return scope;
   }
 }
-
-const backwards = ({ startAt, endAt }: ImportScope) =>
-  startAt !== undefined && endAt !== undefined && startAt >= endAt;
 
 function cancelled(): void {
   cancel('Setup cancelled; nothing changed.');

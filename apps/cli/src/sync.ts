@@ -120,20 +120,27 @@ export async function sync(
   const selections = store.selections();
   const connections: Connection<SQLiteTable>[] = [];
   const destinations: SQLiteDestination[] = [];
-  for (const app of apps)
+  for (const app of apps) {
+    const selection = selections.find(({ app: name }) => name === app.name);
+    if (selection === undefined) {
+      const unselected = new Error(`${app.title} is not set up; run: setup`);
+      observer.passed(app, failed(app, unselected, 0));
+      continue;
+    }
     try {
-      const selection = selections.find(({ app: name }) => name === app.name);
-      if (selection === undefined)
-        throw new Error(`${app.title} is not set up; run: setup`);
       const { connection, destination } = await app.connection(
         store,
         selection,
       );
+      store.clearConnectionFailure(selection);
       connections.push(connection);
       destinations.push(destination);
     } catch (error) {
+      // No pipeline exists to record it, so the store keeps it for status.
+      store.saveConnectionFailure(selection, message(error));
       observer.passed(app, failed(app, error, 0));
     }
+  }
   if (connections.length === 0) return;
   const history = new ObservedHistory(apps, observer);
   await history.install(destinations);

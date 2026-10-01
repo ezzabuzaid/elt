@@ -1,5 +1,5 @@
 import { AppleContactsSource } from 'apple/sources/apple-contacts/apple-contacts-source';
-import type { ImportScope } from 'apple/sources/import-scope';
+import type { ImportScope } from 'import-store';
 import { AppleApp } from './apple-app.ts';
 import { byId, type Choice, name } from './choice.ts';
 

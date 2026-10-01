@@ -1,5 +1,5 @@
 import { AppleNotesSource } from 'apple/sources/apple-notes/apple-notes-source';
-import type { ImportScope } from 'apple/sources/import-scope';
+import type { ImportScope } from 'import-store';
 import { AppleApp } from './apple-app.ts';
 import { accounts, type Choice, collections, name } from './choice.ts';
 

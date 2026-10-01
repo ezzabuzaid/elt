@@ -1,5 +1,5 @@
 import { AppleRemindersSource } from 'apple/sources/apple-reminders/apple-reminders-source';
-import type { ImportScope } from 'apple/sources/import-scope';
+import type { ImportScope } from 'import-store';
 import { AppleApp } from './apple-app.ts';
 import { accounts, type Choice, collections, name } from './choice.ts';
 

@@ -3,7 +3,7 @@ import {
   AppleMailSource,
   restrictedMailStreams,
 } from 'apple/sources/apple-mail/apple-mail-source';
-import type { ImportScope } from 'apple/sources/import-scope';
+import type { ImportScope } from 'import-store';
 import { AppleApp } from './apple-app.ts';
 import { accounts, byId, type Choice, type Row } from './choice.ts';
 

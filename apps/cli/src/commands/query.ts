@@ -19,11 +19,12 @@ type ViewSummary = {
 
 // Nothing a query runs can write to an app's data.sqlite.
 function open(store: Store, { name, title }: AppleApp): DatabaseSync {
-  if (!store.selections().some((selection) => selection.app === name))
+  const selection = store.selection(name);
+  if (selection === undefined)
     throw new Error(`${title} is not set up; run: setup`);
-  if (!existsSync(store.database(name)))
+  if (!existsSync(store.database(selection)))
     throw new Error(`${title} has not synced yet; run: sync`);
-  return store.read(name);
+  return store.read(selection);
 }
 
 // One statement, read-only; SQLite would otherwise run the first statement

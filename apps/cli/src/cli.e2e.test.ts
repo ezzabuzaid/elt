@@ -118,7 +118,7 @@ test('a second sync is refused while another holds the store, and nothing it imp
   // Stands in for a running sync: a real one would be `sync --watch`, which
   // launches the real Notes app. A sync holds this lock for its whole run.
   mkdirSync(join(mac.path, 'outputs/cli'), { recursive: true });
-  using held = new DatabaseSync(join(mac.path, 'outputs/cli/sync.lock'));
+  using held = new DatabaseSync(join(mac.path, 'outputs/cli/lease.sqlite'));
   held.exec('BEGIN EXCLUSIVE');
 
   const second = cli(mac.path, 'sync');
@@ -162,16 +162,38 @@ test('setup, sync, status and query read the Notes this Mac holds through docume
 
   assert.equal(setup.status, 0, setup.stderr);
   assert.deepEqual(JSON.parse(setup.stdout), {
-    apps: [{ app: 'notes', scope: {}, attachments: true }],
+    apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
   });
   assert.equal(synced.status, 0, synced.stderr);
   assert.equal(lines(synced.stdout)[0].status, 'succeeded');
   const [notes] = JSON.parse(status.stdout);
   assert.equal(notes.state, 'succeeded');
   assert.notEqual(notes.lastSuccessAt, null);
-  assert.equal(
+  assert.match(
     notes.database,
-    join(realpathSync(mac.path), 'outputs/cli/notes/data.sqlite'),
+    new RegExp(
+      `^${join(realpathSync(mac.path), 'outputs/cli/notes')}/[0-9a-f]{16}/data\\.sqlite$`,
+    ),
+  );
+  // Agents find the same import through the store's settings file.
+  const selected = spawnSync(
+    '/usr/bin/sqlite3',
+    [
+      '-readonly',
+      '-json',
+      join(mac.path, 'outputs/cli/settings.sqlite'),
+      'SELECT app, database FROM selected_apps',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.deepEqual(
+    JSON.parse(selected.stdout).map(
+      ({ app, database }: { app: string; database: string }) => [
+        app,
+        realpathSync(database),
+      ],
+    ),
+    [['notes', notes.database]],
   );
   const readable = JSON.parse(views.stdout);
   assert.ok(
@@ -297,7 +319,7 @@ test('a command a script cannot run fails and says why, changing nothing', async
   assert.match(unselected.stderr, /calendar is not set up/);
   assert.match(unnamed.stderr, /--app/);
   assert.match(misplaced.stderr, /must follow the --app/);
-  assert.match(undated.stderr, /no date/);
+  assert.match(undated.stderr, /date filtering is unavailable/);
   assert.match(twoStatements.stderr, /one SQL statement/);
   const status = JSON.parse(cli(mac.path, 'status', '--json').stdout);
   assert.deepEqual(

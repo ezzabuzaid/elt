@@ -1,7 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
-import type { ImportScope } from 'apple/sources/import-scope';
 import {
   Connection,
   Copy,
@@ -17,6 +16,7 @@ import {
   SQLiteDestination,
   type SQLiteTable,
 } from 'elt-sqlite';
+import type { ImportScope } from 'import-store';
 import type { Selection, Store } from '../store.ts';
 import type { Choice, Row } from './choice.ts';
 
@@ -124,31 +124,31 @@ export abstract class AppleApp {
   // data.sqlite and read through documented views, with files kept beside it.
   async connection(
     store: Store,
-    { scope, attachments }: Selection,
+    selection: Selection,
   ): Promise<{
     connection: Connection<SQLiteTable>;
     destination: SQLiteDestination;
   }> {
+    const { scope, includeAttachments } = selection;
     const source = this.source(scope);
     const narrowed = Object.keys(scope).length > 0;
     const { streams } = await source.discover();
     const withFiles = (stream: Stream) =>
-      attachments &&
+      includeAttachments &&
       stream.supportsFileTransfer === true &&
       !this.storeCopies.includes(stream.name);
-    mkdirSync(store.directory(this.name), { recursive: true });
+    const directory = store.directory(selection);
+    mkdirSync(directory, { recursive: true });
     const destination = new SQLiteDestination({
-      path: store.database(this.name),
+      path: store.database(selection),
     });
-    const files = new LocalFiles({
-      directory: join(store.directory(this.name), 'files'),
-    });
+    const files = new LocalFiles({ directory: join(directory, 'files') });
     const connection = new Connection({
       name: this.name,
       source,
       destination,
       checkpoints: new SQLiteCheckpointStore({
-        path: join(store.directory(this.name), 'checkpoints.sqlite'),
+        path: join(directory, 'checkpoints.sqlite'),
       }),
       steps: streams
         .filter(({ name }) => !(narrowed && this.unscoped.includes(name)))
