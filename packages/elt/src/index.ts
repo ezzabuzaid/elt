@@ -1,6 +1,11 @@
 export { Catalog } from './core/catalog.ts';
 export { Connection } from './core/connection.ts';
-export { Copy, type CopyOutcome, type CopyResult } from './core/copy.ts';
+export {
+  Copy,
+  type CopyOutcome,
+  type CopyProgress,
+  type CopyResult,
+} from './core/copy.ts';
 export {
   CopyConfiguration,
   type DedupPolicy,

@@ -3,7 +3,7 @@ import type {
   CheckpointRun,
   CheckpointStore,
 } from '../state/checkpoint-store.ts';
-import type { Copy, CopyOutcome } from './copy.ts';
+import type { Copy, CopyOutcome, CopyProgress } from './copy.ts';
 import type { Destination } from './destination.ts';
 import { FileTransfer } from './file-transfer.ts';
 import {
@@ -20,6 +20,7 @@ import type { LoadFailure, Stage, WriteOperation } from './writer.ts';
 // pending since the last commit, and what did not load.
 class Replicated<Target extends DestinationTarget> {
   stage: Stage | undefined;
+  readonly emitted = { count: 0, deleted: 0 };
   readonly committed = { count: 0, deleted: 0 };
   readonly pending = { count: 0, deleted: 0 };
   readonly failures: LoadFailure[] = [];
@@ -33,6 +34,7 @@ class Replicated<Target extends DestinationTarget> {
   started = false;
   ended = false;
   resuming = false;
+  settled = false;
 
   readonly files: FileTransfer;
 
@@ -40,6 +42,7 @@ class Replicated<Target extends DestinationTarget> {
     readonly copy: Copy<Target>,
     source: Source,
     destination: Destination<Target>,
+    readonly observe: ((progress: CopyProgress<Target>) => void) | undefined,
   ) {
     this.files = new FileTransfer(
       copy.configuration.fileReads,
@@ -55,6 +58,29 @@ class Replicated<Target extends DestinationTarget> {
   outcome(): CopyOutcome<Target> {
     return { copy: this.copy, ...this.committed, failures: this.failures };
   }
+
+  report(): void {
+    if (!this.settled) this.#notify('running');
+  }
+
+  settle(): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.#notify(this.failures.length === 0 ? 'complete' : 'incomplete');
+  }
+
+  #notify(status: CopyProgress<Target>['status']): void {
+    try {
+      this.observe?.({
+        copy: this.copy,
+        status,
+        emitted: { ...this.emitted },
+        committed: { ...this.committed },
+      });
+    } catch {
+      // Progress is advisory; see RecordedPass.progress.
+    }
+  }
 }
 
 // Airbyte's replication worker: one read covers every copy's stream, each
@@ -65,9 +91,10 @@ export async function replicate<Target extends DestinationTarget>(
   destination: Destination<Target>,
   checkpoints: CheckpointStore | undefined,
   copies: readonly Copy<Target>[],
+  observe?: (progress: CopyProgress<Target>) => void,
 ): Promise<CopyOutcome<Target>[]> {
   const replications = copies.map(
-    (copy) => new Replicated(copy, source, destination),
+    (copy) => new Replicated(copy, source, destination, observe),
   );
   const bindings = new Map<string, object>();
   for (const { copy } of replications)
@@ -88,6 +115,8 @@ export async function replicate<Target extends DestinationTarget>(
     for (const replication of replications)
       if (!replication.ended) fail(replication, error);
   }
+  // A broken stream the source never ended settles here, after the read.
+  for (const replication of replications) replication.settle();
   return replications.map((replication) => replication.outcome());
 }
 
@@ -166,6 +195,7 @@ async function transfer<Target extends DestinationTarget>(
             if (replication.started)
               throw new TypeError(`Source started ${message.stream} twice`);
             replication.started = true;
+            replication.report();
           } else if (message.status === 'FAILED') {
             if (replication.broken) continue;
             await started(replication).discard();
@@ -177,9 +207,13 @@ async function transfer<Target extends DestinationTarget>(
               error: message.error,
             });
             await replication.files.reconcile(started(replication).values);
+            replication.report();
           } else {
             replication.ended = true;
-            if (replication.broken) continue;
+            if (replication.broken) {
+              replication.settle();
+              continue;
+            }
             const stage = started(replication);
             // The first commit also makes the prepared target itself durable,
             // so an empty overwrite still clears it.
@@ -187,6 +221,7 @@ async function transfer<Target extends DestinationTarget>(
               await commit(replication);
             replication.stage = undefined;
             await stage[Symbol.asyncDispose]();
+            replication.settle();
           }
           continue;
         }
@@ -210,8 +245,14 @@ async function transfer<Target extends DestinationTarget>(
               : operation,
           );
           replication.clean = false;
-          if (operation.type === 'RECORD') replication.pending.count++;
-          else replication.pending.deleted++;
+          if (operation.type === 'RECORD') {
+            replication.pending.count++;
+            replication.emitted.count++;
+          } else {
+            replication.pending.deleted++;
+            replication.emitted.deleted++;
+          }
+          replication.report();
         }
       } catch (error) {
         await breakStage(replication, error);
@@ -251,6 +292,7 @@ async function commit<Target extends DestinationTarget>(
   replication.pending.count = 0;
   replication.pending.deleted = 0;
   await replication.files.reconcile(started(replication).values);
+  replication.report();
 }
 
 function fail<Target extends DestinationTarget>(
@@ -260,6 +302,7 @@ function fail<Target extends DestinationTarget>(
   replication.failures.push({ partition: null, error });
   replication.broken = true;
   replication.ended = true;
+  replication.settle();
 }
 
 // Fails a stream whose stage or checkpoint failed: its uncommitted rows are

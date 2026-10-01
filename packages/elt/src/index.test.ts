@@ -1200,6 +1200,113 @@ test("connections read side by side, so one connection's pass never waits for an
   ]);
 });
 
+test("a recorded pass sees each copy's progress: what the source emitted, what committed, and how it ended", async () => {
+  const progress: string[] = [];
+  const history = new (class extends SyncHistory<NamedTarget> {
+    override async begin(): Promise<RecordedPass<NamedTarget>> {
+      return {
+        progress: ({ copy, status, emitted, committed }) =>
+          progress.push(
+            `${copy.from.name} ${status} emitted ${emitted.count} committed ${committed.count}`,
+          ),
+        finish: async () => {},
+        fail: async () => {},
+      };
+    }
+  })();
+  const source = new ContextSource({
+    left: [record('left', 'a'), record('left', 'b')],
+    right: [record('right', 'x'), new Error('right lost')],
+  });
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination: new DrainingDestination(),
+        steps: [
+          new Copy(source.left, new NamedTarget('left')),
+          new Copy(source.right, new NamedTarget('right')),
+        ],
+      }),
+    ],
+  });
+
+  await pipeline.run().catch(() => {});
+
+  assert.deepEqual(
+    progress.filter((entry) => entry.startsWith('left')),
+    [
+      'left running emitted 0 committed 0',
+      'left running emitted 1 committed 0',
+      'left running emitted 2 committed 0',
+      'left running emitted 2 committed 2',
+      'left complete emitted 2 committed 2',
+    ],
+  );
+  assert.deepEqual(
+    progress.filter((entry) => entry.startsWith('right')),
+    [
+      'right running emitted 0 committed 0',
+      'right running emitted 1 committed 0',
+      'right running emitted 1 committed 0',
+      'right incomplete emitted 1 committed 0',
+    ],
+  );
+});
+
+test('a copy that fails before reading still reports how it ended', async () => {
+  const progress: string[] = [];
+  const history = new (class extends SyncHistory<NamedTarget> {
+    override async begin(): Promise<RecordedPass<NamedTarget>> {
+      return {
+        progress: ({ copy, status }) =>
+          progress.push(`${copy.from.name} ${status}`),
+        finish: async () => {},
+        fail: async () => {},
+      };
+    }
+  })();
+  const source = new LockedSource(new Error('store locked'));
+  const pipeline = new Pipeline({
+    history,
+    connections: [leftOnly('locked', source)],
+  });
+
+  await pipeline.run().catch(() => {});
+
+  assert.deepEqual(progress, ['left incomplete']);
+});
+
+test('a progress observer that throws never changes what loads', async () => {
+  const history = new (class extends SyncHistory<NamedTarget> {
+    override async begin(): Promise<RecordedPass<NamedTarget>> {
+      return {
+        progress: () => {
+          throw new Error('renderer broke');
+        },
+        finish: async () => {},
+        fail: async () => {},
+      };
+    }
+  })();
+  const source = new ContextSource({
+    left: [record('left', 'a'), record('left', 'b')],
+  });
+  const pipeline = new Pipeline({
+    history,
+    connections: [leftOnly('steady', source)],
+  });
+
+  const results = await pipeline.run();
+
+  assert.deepEqual(
+    results.map(({ copy, count }) => [copy.to.name, count]),
+    [['steady-left', 2]],
+  );
+});
+
 test('a connection whose watcher fails stops alone and is recorded; the others keep watching', async () => {
   const history = new MemoryHistory();
   class Lost extends ContextSource {

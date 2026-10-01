@@ -257,6 +257,7 @@ export class Pipeline<Target extends DestinationTarget> {
         connection.destination,
         connection.checkpoints,
         steps,
+        record?.progress?.bind(record),
       );
     } catch (error) {
       await record?.fail(error);

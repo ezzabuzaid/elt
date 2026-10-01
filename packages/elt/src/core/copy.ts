@@ -18,6 +18,16 @@ export type CopyOutcome<Target extends DestinationTarget> =
     readonly failures: readonly LoadFailure[];
   };
 
+// One copy of a running pass so far, counted as Airbyte's sync stats tracker
+// counts a stream: what the source emitted and what the destination committed.
+// It ends once, complete or incomplete, as Airbyte's stream status does.
+export type CopyProgress<Target extends DestinationTarget> = {
+  readonly copy: Copy<Target>;
+  readonly status: 'running' | 'complete' | 'incomplete';
+  readonly emitted: WriteCount;
+  readonly committed: WriteCount;
+};
+
 export function describeFailures<Target extends DestinationTarget>({
   copy,
   failures,

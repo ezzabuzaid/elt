@@ -1,5 +1,10 @@
 import type { Connection } from '../core/connection.ts';
-import { type Copy, type CopyOutcome, describeFailures } from '../core/copy.ts';
+import {
+  type Copy,
+  type CopyOutcome,
+  type CopyProgress,
+  describeFailures,
+} from '../core/copy.ts';
 import type { ExtractionCoverage } from '../core/source.ts';
 import type { Target as DestinationTarget } from '../core/target.ts';
 
@@ -12,6 +17,10 @@ export type DeclaredCopy<Target extends DestinationTarget> = {
 
 // One pass as recorded: declared before its read, closed with what it loaded.
 export type RecordedPass<Target extends DestinationTarget> = {
+  // A live view of each copy, counted as Airbyte's SyncStatsTracker counts a
+  // stream; nothing here persists it. Advisory: what it throws is ignored and
+  // never changes what loads.
+  progress?(progress: CopyProgress<Target>): void;
   finish(outcomes: readonly CopyOutcome<Target>[]): Promise<void>;
   // The pass produced no outcomes, so what it committed is unknown.
   fail(error: unknown): Promise<void>;

@@ -62868,7 +62868,9 @@ var Source = class {
 // packages/elt/dist/core/replication.js
 var Replicated = class {
   copy;
+  observe;
   stage;
+  emitted = { count: 0, deleted: 0 };
   committed = { count: 0, deleted: 0 };
   pending = { count: 0, deleted: 0 };
   failures = [];
@@ -62882,9 +62884,11 @@ var Replicated = class {
   started = false;
   ended = false;
   resuming = false;
+  settled = false;
   files;
-  constructor(copy, source, destination) {
+  constructor(copy, source, destination, observe) {
     this.copy = copy;
+    this.observe = observe;
     this.files = new FileTransfer(copy.configuration.fileReads, destination.identity(copy.to), copy.writer(source));
   }
   get stream() {
@@ -62893,9 +62897,30 @@ var Replicated = class {
   outcome() {
     return { copy: this.copy, ...this.committed, failures: this.failures };
   }
+  report() {
+    if (!this.settled)
+      this.#notify("running");
+  }
+  settle() {
+    if (this.settled)
+      return;
+    this.settled = true;
+    this.#notify(this.failures.length === 0 ? "complete" : "incomplete");
+  }
+  #notify(status2) {
+    try {
+      this.observe?.({
+        copy: this.copy,
+        status: status2,
+        emitted: { ...this.emitted },
+        committed: { ...this.committed }
+      });
+    } catch {
+    }
+  }
 };
-async function replicate(source, destination, checkpoints, copies) {
-  const replications = copies.map((copy) => new Replicated(copy, source, destination));
+async function replicate(source, destination, checkpoints, copies, observe) {
+  const replications = copies.map((copy) => new Replicated(copy, source, destination, observe));
   const bindings = /* @__PURE__ */ new Map();
   for (const { copy } of replications)
     if (copy.configuration.syncMode === "incremental" && copy.id !== void 0)
@@ -62914,6 +62939,8 @@ async function replicate(source, destination, checkpoints, copies) {
       if (!replication.ended)
         fail(replication, error62);
   }
+  for (const replication of replications)
+    replication.settle();
   return replications.map((replication) => replication.outcome());
 }
 async function transfer(source, destination, run2, replications) {
@@ -62976,6 +63003,7 @@ async function transfer(source, destination, run2, replications) {
               if (replication.started)
                 throw new TypeError(`Source started ${message4.stream} twice`);
               replication.started = true;
+              replication.report();
             } else if (message4.status === "FAILED") {
               if (replication.broken)
                 continue;
@@ -62988,15 +63016,19 @@ async function transfer(source, destination, run2, replications) {
                 error: message4.error
               });
               await replication.files.reconcile(started(replication).values);
+              replication.report();
             } else {
               replication.ended = true;
-              if (replication.broken)
+              if (replication.broken) {
+                replication.settle();
                 continue;
+              }
               const stage = started(replication);
               if (!replication.failed && !replication.clean)
                 await commit(replication);
               replication.stage = void 0;
               await stage[Symbol.asyncDispose]();
+              replication.settle();
             }
             continue;
           }
@@ -63015,10 +63047,14 @@ async function transfer(source, destination, run2, replications) {
               data: await replication.files.record(operation.data)
             } : operation);
             replication.clean = false;
-            if (operation.type === "RECORD")
+            if (operation.type === "RECORD") {
               replication.pending.count++;
-            else
+              replication.emitted.count++;
+            } else {
               replication.pending.deleted++;
+              replication.emitted.deleted++;
+            }
+            replication.report();
           }
         } catch (error62) {
           await breakStage(replication, error62);
@@ -63053,11 +63089,13 @@ async function commit(replication) {
   replication.pending.count = 0;
   replication.pending.deleted = 0;
   await replication.files.reconcile(started(replication).values);
+  replication.report();
 }
 function fail(replication, error62) {
   replication.failures.push({ partition: null, error: error62 });
   replication.broken = true;
   replication.ended = true;
+  replication.settle();
 }
 async function breakStage(replication, error62) {
   replication.failures.push({ partition: null, error: error62 });
@@ -63289,7 +63327,7 @@ var Pipeline = class {
     })));
     let outcomes;
     try {
-      outcomes = await replicate(connection.source, connection.destination, connection.checkpoints, steps);
+      outcomes = await replicate(connection.source, connection.destination, connection.checkpoints, steps, record3?.progress?.bind(record3));
     } catch (error62) {
       await record3?.fail(error62);
       throw error62;
