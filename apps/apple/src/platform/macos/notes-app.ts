@@ -16,7 +16,9 @@ export async function launchNotesHidden(): Promise<boolean> {
     '-app',
     bundle,
   ]);
-  if (/"pid"=\d+/.test(stdout)) return false;
+  // Older macOS prints `"pid"=123`; macOS 27 prints `pid = 123`. A closed app
+  // prints nothing.
+  if (/\bpid"?\s*=\s*\d+/.test(stdout)) return false;
   await execFile('/usr/bin/open', ['-g', '-j', '-b', bundle]);
   return true;
 }
