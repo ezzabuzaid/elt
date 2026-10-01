@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { installSQLiteCatalog, publishSQLiteViews } from 'elt-sqlite';
 import { z } from 'zod';
 import { appNames, apps } from './apps.ts';
 
@@ -84,10 +85,10 @@ export function importDirectory(directory: string, item: AppConfiguration) {
 // of apps no longer selected.
 export function removeStaleImports(
   directory: string,
-  configuration: Configuration | null,
+  configuration: Configuration,
 ) {
   for (const app of appNames) {
-    const item = configuration?.apps.find((selected) => selected.app === app);
+    const item = configuration.apps.find((selected) => selected.app === app);
     const kept = item === undefined ? null : importDirectory(directory, item);
     const root = join(directory, app);
     let entries: string[];
@@ -106,12 +107,39 @@ export function removeStaleImports(
 // history in data.sqlite cannot say.
 export type ConnectionFailure = { error: string; failedAt: string };
 
+// What readers of the settings file see: one row per selected app, with where
+// its import lives and why it could not start, if it could not.
+const selectedApps = {
+  name: 'selected_apps',
+  description:
+    'The Apple apps the user chose to import, in the order chosen. An app missing here is not imported. Each import is its own SQLite file: open database to read its records, catalog and sync_status.',
+  columns: {
+    app: 'Apple app: mail, notes, messages, contacts, calendar, reminders or safari.',
+    scope:
+      'JSON of the chosen accounts (accountIds), collections (collectionIds) and dates (startAt inclusive, endAt exclusive); an absent key means all.',
+    include_attachments:
+      '1 when attachment bytes are copied beside the records, 0 for metadata only.',
+    database:
+      'Path of the SQLite file the import loads. It may not exist yet while the first import starts.',
+    connection_error:
+      'Why the import could not start, such as missing macOS access; NULL when it started. An app with an error is inaccessible, not empty.',
+    connection_failed_at:
+      'When the import last failed to start, as an ISO 8601 UTC timestamp; NULL when it started.',
+    permissions:
+      'What the user can do in macOS to give the plugin access to this app.',
+  },
+  query: `SELECT s."app", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",
+      f."error" AS "connection_error", f."failed_at" AS "connection_failed_at", s."permissions"
+    FROM "selections" s LEFT JOIN "connection_failures" f ON f."directory" = s."directory"
+    ORDER BY s."position"`,
+};
+
 // The user's selection and each import's connection failure, in a private
-// settings file.
+// settings file that agents read through selected_apps.
 export class Settings implements Disposable {
   private readonly database: DatabaseSync;
 
-  constructor(directory: string) {
+  constructor(private readonly directory: string) {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     chmodSync(directory, 0o700);
     const path = join(directory, 'settings.sqlite');
@@ -119,7 +147,7 @@ export class Settings implements Disposable {
     try {
       chmodSync(path, 0o600);
       this.database.exec(
-        'CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (import TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);',
+        'CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, app TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);',
       );
     } catch (error) {
       this.database.close();
@@ -127,19 +155,25 @@ export class Settings implements Disposable {
     }
   }
 
-  configuration(): Configuration | null {
-    const row = this.database
-      .prepare('SELECT value FROM configuration WHERE id=1')
-      .get();
-    return row === undefined
-      ? null
-      : configurationSchema.parse(JSON.parse(String(row.value)));
+  configuration(): Configuration {
+    return configurationSchema.parse({
+      apps: this.database
+        .prepare(
+          'SELECT app, scope, include_attachments FROM selections ORDER BY position',
+        )
+        .all()
+        .map((row) => ({
+          app: row.app,
+          scope: JSON.parse(String(row.scope)),
+          includeAttachments: row.include_attachments === 1,
+        })),
+    });
   }
 
   connectionFailure(importPath: string): ConnectionFailure | undefined {
     const row = this.database
       .prepare(
-        'SELECT error, failed_at FROM connection_failures WHERE import=?',
+        'SELECT error, failed_at FROM connection_failures WHERE directory=?',
       )
       .get(importPath);
     return row === undefined
@@ -150,36 +184,50 @@ export class Settings implements Disposable {
   saveConnectionFailure(importPath: string, error: string) {
     this.database
       .prepare(
-        "INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(import) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at",
+        "INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(directory) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at",
       )
       .run(importPath, error);
   }
 
   clearConnectionFailure(importPath: string) {
     this.database
-      .prepare('DELETE FROM connection_failures WHERE import=?')
+      .prepare('DELETE FROM connection_failures WHERE directory=?')
       .run(importPath);
   }
 
-  // Saves the selection and forgets the failures of every other import.
-  saveConfiguration(configuration: Configuration, imports: readonly string[]) {
+  // Saves the selection, forgets the failures of every other import, and
+  // publishes what readers see.
+  saveConfiguration(configuration: Configuration) {
     this.database.exec('BEGIN IMMEDIATE');
     try {
-      this.database
-        .prepare(
-          'DELETE FROM connection_failures WHERE import NOT IN (SELECT value FROM json_each(?))',
-        )
-        .run(JSON.stringify(imports));
-      this.database
-        .prepare(
-          'INSERT INTO configuration VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value',
-        )
-        .run(JSON.stringify(configuration));
+      this.database.exec('DELETE FROM selections');
+      const insert = this.database.prepare(
+        'INSERT INTO selections VALUES(?,?,?,?,?,?)',
+      );
+      for (const [position, item] of configuration.apps.entries())
+        insert.run(
+          position,
+          item.app,
+          JSON.stringify(item.scope),
+          item.includeAttachments ? 1 : 0,
+          importDirectory(this.directory, item),
+          apps[item.app].permissions,
+        );
+      this.database.exec(
+        'DELETE FROM connection_failures WHERE directory NOT IN (SELECT directory FROM selections)',
+      );
       this.database.exec('COMMIT');
     } catch (error) {
       this.database.exec('ROLLBACK');
       throw error;
     }
+    this.publish();
+  }
+
+  // Publishes selected_apps and the catalog that lists it; safe to repeat.
+  publish() {
+    publishSQLiteViews(this.database, { views: [selectedApps] });
+    installSQLiteCatalog({ path: join(this.directory, 'settings.sqlite') });
   }
 
   // Each running plugin server's version, seen within the last heartbeats;

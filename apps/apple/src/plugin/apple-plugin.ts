@@ -106,8 +106,7 @@ export class ApplePlugin {
     const configuration = settings.configuration();
     const leading = leaderRunning(this.directory);
     return {
-      configured: configuration !== null,
-      apps: (configuration?.apps ?? []).map((item) => {
+      apps: configuration.apps.map((item) => {
         const importPath = importDirectory(this.directory, item);
         const database = join(importPath, 'data.sqlite');
         const pass = latestPass(database);
@@ -146,10 +145,7 @@ export class ApplePlugin {
     });
     {
       using settings = new Settings(this.directory);
-      settings.saveConfiguration(
-        configuration,
-        configuration.apps.map((item) => importDirectory(this.directory, item)),
-      );
+      settings.saveConfiguration(configuration);
     }
     removeStaleImports(this.directory, configuration);
     return this.status();

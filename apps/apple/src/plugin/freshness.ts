@@ -35,9 +35,16 @@ export function leaderRunning(directory: string): boolean {
   return held === null;
 }
 
-function readConfiguration(directory: string): Configuration | null {
+function readConfiguration(directory: string): Configuration {
   using settings = new Settings(directory);
   return settings.configuration();
+}
+
+// Republishes what readers see in the settings file, so a newer plugin's
+// view reaches readers before anyone changes the selection.
+function publishSettings(directory: string) {
+  using settings = new Settings(directory);
+  settings.publish();
 }
 
 // Watches the selected apps until the signal aborts: every app's first pass
@@ -173,9 +180,9 @@ async function lead(
         newer,
         watching,
       );
+      publishSettings(directory);
       removeStaleImports(directory, configuration);
-      if (configuration !== null)
-        await watchImports(directory, configuration, watching);
+      await watchImports(directory, configuration, watching);
     } catch {
       // Retried below, once the selection changes or a minute passes.
     }

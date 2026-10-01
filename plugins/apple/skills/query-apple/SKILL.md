@@ -5,12 +5,19 @@ description: Answer questions about Apple app content imported by the Apple plug
 
 # Query Apple apps
 
-The Apple plugin imports each selected app into its own SQLite file and keeps it current in the background while Codex is open. `apple_status` lists the selected apps, the path of each `database`, its scope and its latest pass. Each file describes itself through views: `catalog` has one row per view and per view column, with its type and meaning; `stream_status` has each stream's latest pass and last successful sync; `extraction_coverage` has what each pass covered. Query the views; `raw_*` tables are their storage. Read these files with `/usr/bin/sqlite3 -readonly`; the plugin's tools only set up and report status.
+The Apple plugin imports each selected app into its own SQLite file and keeps it current in the background while Codex is open. The settings file `"$HOME/Library/Application Support/Context Compiler/Apple/settings.sqlite"` has a `selected_apps` view: each selected app, its scope, the path of its `database`, a `connection_error` when its import could not start, and its macOS `permissions` guidance. Each app's database describes itself through views: `catalog` has one row per view and per view column, with its type and meaning; `sync_status` has the app's latest pass and last successful sync, `stream_status` the same per stream; `extraction_coverage` has what each pass covered. Query the views; `raw_*` tables are their storage. Read every file with `/usr/bin/sqlite3 -readonly`; the plugin's tools only set up.
 
 ## Answer a question
 
-1. Call `apple_status`. If setup is missing or a needed app is not selected, use `$setup-apple` with the user's choice. Use only selected apps.
-2. For each app the question needs, check its `sync`. If it is `null`, or its `lastSucceededAt` is `null`, the app has not finished its first import: say it is still importing, or that it failed with its `error` and `permissions` guidance, and answer from the other apps. Otherwise read right away, even while a pass is `running`.
+1. Read the selection:
+
+   ```sh
+   /usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' \
+     "$HOME/Library/Application Support/Context Compiler/Apple/settings.sqlite" 'SELECT * FROM selected_apps'
+   ```
+
+   If the file or view does not exist, or a needed app is not listed, use `$setup-apple` with the user's choice. Use only selected apps.
+2. For each app the question needs: a `connection_error` means the app is inaccessible; give its `permissions` guidance. Otherwise read `SELECT status, error, last_successful_sync_at FROM sync_status` from its `database`. If the file does not open yet, has no row, or `last_successful_sync_at` is null, the app has not finished its first import: say it is still importing, or that it failed with its `error` and `permissions` guidance, and answer from the other apps. Otherwise read right away, even while a pass is `running`.
 3. Read the catalog of each app you need:
 
    ```sh
@@ -47,5 +54,5 @@ The Apple plugin imports each selected app into its own SQLite file and keeps it
 ## Done when
 
 - The answer rests on rows you read, and counts or aggregates stand in for results too large to list.
-- Coverage and sync status separate "no matching rows" from content that is excluded, inaccessible or stale. A partial or failed sync names the app and its last successful sync. An `interrupted` sync stopped when its Codex chat closed and resumes the next time the plugin runs; answer from its last successful sync and say so.
+- Coverage and sync status separate "no matching rows" from content that is excluded, inaccessible or stale. A partial or failed sync names the app and its last successful sync. A `running` pass may be one a closed Codex chat left unfinished; answer from the last successful sync and say when it was.
 - Gaps are stated in terms the user can act on, such as granting Calendar access or widening a date range.

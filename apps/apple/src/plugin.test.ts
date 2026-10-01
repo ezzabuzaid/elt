@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -57,7 +58,7 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = new ApplePlugin(scratch.path);
-  assert.equal(plugin.status().configured, false);
+  assert.deepEqual(plugin.status().apps, []);
   for (const [apps, message] of [
     [
       [{ app: 'contacts', scope: { startAt: '2025-01-01T00:00:00.000Z' } }],
@@ -69,11 +70,60 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
     [[{ app: 'photos' }], /app/],
   ] as const)
     assert.throws(() => plugin.configure({ apps }), message);
-  assert.equal(plugin.status().configured, false);
+  assert.deepEqual(plugin.status().apps, []);
   const [calendar] = plugin.configure({ apps: [{ app: 'calendar' }] }).apps;
   assert.ok(calendar?.scope.startAt);
   assert.ok(calendar.scope.endAt);
   assert.ok(calendar.scope.startAt < calendar.scope.endAt);
+});
+
+test('agents read the selected apps, where each import lives and what macOS access it needs from the settings file with the sqlite3 shell', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = new ApplePlugin(scratch.path);
+  const notes = {
+    app: 'notes' as const,
+    scope: { collectionIds: ['folder-1'] },
+    includeAttachments: false,
+  };
+  plugin.configure({ apps: [notes, { app: 'mail' }] });
+  const { stdout, stderr } = spawnSync(
+    '/usr/bin/sqlite3',
+    [
+      '-readonly',
+      '-json',
+      join(scratch.path, 'settings.sqlite'),
+      'SELECT app, scope, include_attachments, database, connection_error, permissions FROM selected_apps',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(stderr, '');
+  assert.deepEqual(JSON.parse(stdout), [
+    {
+      app: 'notes',
+      scope: JSON.stringify(notes.scope),
+      include_attachments: 0,
+      database: join(importDirectory(scratch.path, notes), 'data.sqlite'),
+      connection_error: null,
+      permissions: apps.notes.permissions,
+    },
+    {
+      app: 'mail',
+      scope: '{}',
+      include_attachments: 1,
+      database: join(
+        importDirectory(scratch.path, {
+          app: 'mail',
+          scope: {},
+          includeAttachments: true,
+        }),
+        'data.sqlite',
+      ),
+      connection_error: null,
+      permissions: apps.mail.permissions,
+    },
+  ]);
 });
 
 test('Apple setup keeps an unchanged import, removes a changed or disconnected one, and reports a pass no server finishes as interrupted', async () => {

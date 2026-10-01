@@ -13,13 +13,13 @@ The Apple plugin imports the apps, accounts, collections and dates the user choo
 2. Read its result:
    - `changed: false`: the user cancelled; nothing changed.
    - `unavailable`: apps macOS did not allow. Give their `permissions` guidance as steps. Full Disk Access has no macOS prompt: the user turns on ChatGPT in System Settings, then quits and reopens ChatGPT, which ends this chat, so tell them to run Set up Apple again afterwards. Treat these apps as inaccessible, never as empty.
-3. If anything changed, report as described in "Report the result". The import runs in the background; do not wait for it. An app whose `sync` is `null` or `running` without a `lastSucceededAt` is still importing; say so rather than calling it empty.
+3. If anything changed, report as described in "Report the result". The import runs in the background; do not wait for it.
 
 If `apple_setup` fails because the host does not support forms, set up in chat instead.
 
 ## Set up in chat
 
-1. Read `apple_status`, then ask which apps the user wants to connect. Present Mail, Notes, Messages, Contacts, Calendar, Reminders and Safari in plain language. Reconfiguration starts from the current selection. Do not access apps they have not selected.
+1. Read the current selection from `selected_apps` as `$query-apple` describes, then ask which apps the user wants to connect. Present Mail, Notes, Messages, Contacts, Calendar, Reminders and Safari in plain language. Reconfiguration starts from the current selection. Do not access apps they have not selected.
 2. For chosen apps, call `apple_options` to discover real account and collection IDs. It reads metadata and may trigger a macOS prompt. Explain the returned permission guidance when access fails, then retry after the user changes access.
 3. Offer all content or a narrower selection where available:
    - Mail: accounts, mailboxes, received date (sent date if absent).
@@ -34,7 +34,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
 
 ## Report the result
 
-Read `apple_status` and report connected apps, scope, each app's progress (importing, synced, failed with its `permissions` guidance) and last successful sync. A partial sync is incomplete data. Explain that content is stored locally on their Mac and passed to Codex when used to answer their requests. The plugin keeps the copy current while Codex is open, following changes in each app, and catches up the next time Codex opens; nothing runs after Codex closes. With Notes connected, it keeps Notes running hidden while Codex is open, because only Notes syncs iCloud notes to the Mac. Apps can be switched on or off any time under Plugins › Apple › Settings, which also shows each app's sync status; a switched-on app imports everything. Only when the user asks to narrow an app (for example, only a work mailbox or one Notes folder), follow "Set up in chat" for that app.
+Read `selected_apps` and each app's `sync_status` as `$query-apple` describes, and report connected apps, scope, each app's progress and last successful sync. An app whose database does not open yet, has no `sync_status` row, or has no `last_successful_sync_at` is still importing; say so rather than calling it empty. One with a `connection_error` or a failed pass is inaccessible: give its `permissions` guidance. Once an app has synced, `extraction_coverage` gives what its passes loaded per stream. A partial sync is incomplete data. Explain that content is stored locally on their Mac and passed to Codex when used to answer their requests. The plugin keeps the copy current while Codex is open, following changes in each app, and catches up the next time Codex opens; nothing runs after Codex closes. With Notes connected, it keeps Notes running hidden while Codex is open, because only Notes syncs iCloud notes to the Mac. Apps can be switched on or off any time under Plugins › Apple › Settings, which also shows each app's sync status; a switched-on app imports everything. Only when the user asks to narrow an app (for example, only a work mailbox or one Notes folder), follow "Set up in chat" for that app.
 
 ## Gotchas
 

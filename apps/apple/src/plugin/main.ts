@@ -32,23 +32,10 @@ const json = (value: unknown) => ({
 });
 
 server.registerTool(
-  'apple_status',
-  {
-    description:
-      'Show selected Apple apps, import scopes, permissions guidance, last sync results and the path of each imported SQLite database. Does not read Apple app content.',
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      openWorldHint: false,
-    },
-  },
-  () => json(plugin.status()),
-);
-server.registerTool(
   'apple_setup',
   {
     description:
-      'Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, and apple_status reports each app’s progress. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.',
+      'Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, and the selected_apps view in settings.sqlite lists each app’s import for the query skill. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,

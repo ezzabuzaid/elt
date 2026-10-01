@@ -74432,7 +74432,7 @@ function importDirectory(directory, item) {
 }
 function removeStaleImports(directory, configuration) {
   for (const app of appNames) {
-    const item = configuration?.apps.find((selected2) => selected2.app === app);
+    const item = configuration.apps.find((selected2) => selected2.app === app);
     const kept = item === void 0 ? null : importDirectory(directory, item);
     const root = join16(directory, app);
     let entries;
@@ -74446,9 +74446,26 @@ function removeStaleImports(directory, configuration) {
         rmSync(join16(root, entry), { recursive: true, force: true });
   }
 }
+var selectedApps = {
+  name: "selected_apps",
+  description: "The Apple apps the user chose to import, in the order chosen. An app missing here is not imported. Each import is its own SQLite file: open database to read its records, catalog and sync_status.",
+  columns: {
+    app: "Apple app: mail, notes, messages, contacts, calendar, reminders or safari.",
+    scope: "JSON of the chosen accounts (accountIds), collections (collectionIds) and dates (startAt inclusive, endAt exclusive); an absent key means all.",
+    include_attachments: "1 when attachment bytes are copied beside the records, 0 for metadata only.",
+    database: "Path of the SQLite file the import loads. It may not exist yet while the first import starts.",
+    connection_error: "Why the import could not start, such as missing macOS access; NULL when it started. An app with an error is inaccessible, not empty.",
+    connection_failed_at: "When the import last failed to start, as an ISO 8601 UTC timestamp; NULL when it started.",
+    permissions: "What the user can do in macOS to give the plugin access to this app."
+  },
+  query: `SELECT s."app", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",
+      f."error" AS "connection_error", f."failed_at" AS "connection_failed_at", s."permissions"
+    FROM "selections" s LEFT JOIN "connection_failures" f ON f."directory" = s."directory"
+    ORDER BY s."position"`
+};
 var Settings = class {
-  database;
   constructor(directory) {
+    this.directory = directory;
     mkdirSync(directory, { recursive: true, mode: 448 });
     chmodSync2(directory, 448);
     const path = join16(directory, "settings.sqlite");
@@ -74456,46 +74473,72 @@ var Settings = class {
     try {
       chmodSync2(path, 384);
       this.database.exec(
-        "CREATE TABLE IF NOT EXISTS configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (import TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);"
+        "CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, app TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL);"
       );
     } catch (error62) {
       this.database.close();
       throw error62;
     }
   }
+  directory;
+  database;
   configuration() {
-    const row = this.database.prepare("SELECT value FROM configuration WHERE id=1").get();
-    return row === void 0 ? null : configurationSchema.parse(JSON.parse(String(row.value)));
+    return configurationSchema.parse({
+      apps: this.database.prepare(
+        "SELECT app, scope, include_attachments FROM selections ORDER BY position"
+      ).all().map((row) => ({
+        app: row.app,
+        scope: JSON.parse(String(row.scope)),
+        includeAttachments: row.include_attachments === 1
+      }))
+    });
   }
   connectionFailure(importPath) {
     const row = this.database.prepare(
-      "SELECT error, failed_at FROM connection_failures WHERE import=?"
+      "SELECT error, failed_at FROM connection_failures WHERE directory=?"
     ).get(importPath);
     return row === void 0 ? void 0 : { error: String(row.error), failedAt: String(row.failed_at) };
   }
   saveConnectionFailure(importPath, error62) {
     this.database.prepare(
-      "INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(import) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at"
+      "INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(directory) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at"
     ).run(importPath, error62);
   }
   clearConnectionFailure(importPath) {
-    this.database.prepare("DELETE FROM connection_failures WHERE import=?").run(importPath);
+    this.database.prepare("DELETE FROM connection_failures WHERE directory=?").run(importPath);
   }
-  // Saves the selection and forgets the failures of every other import.
-  saveConfiguration(configuration, imports) {
+  // Saves the selection, forgets the failures of every other import, and
+  // publishes what readers see.
+  saveConfiguration(configuration) {
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      this.database.prepare(
-        "DELETE FROM connection_failures WHERE import NOT IN (SELECT value FROM json_each(?))"
-      ).run(JSON.stringify(imports));
-      this.database.prepare(
-        "INSERT INTO configuration VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value"
-      ).run(JSON.stringify(configuration));
+      this.database.exec("DELETE FROM selections");
+      const insert = this.database.prepare(
+        "INSERT INTO selections VALUES(?,?,?,?,?,?)"
+      );
+      for (const [position, item] of configuration.apps.entries())
+        insert.run(
+          position,
+          item.app,
+          JSON.stringify(item.scope),
+          item.includeAttachments ? 1 : 0,
+          importDirectory(this.directory, item),
+          apps[item.app].permissions
+        );
+      this.database.exec(
+        "DELETE FROM connection_failures WHERE directory NOT IN (SELECT directory FROM selections)"
+      );
       this.database.exec("COMMIT");
     } catch (error62) {
       this.database.exec("ROLLBACK");
       throw error62;
     }
+    this.publish();
+  }
+  // Publishes selected_apps and the catalog that lists it; safe to repeat.
+  publish() {
+    publishSQLiteViews(this.database, { views: [selectedApps] });
+    installSQLiteCatalog({ path: join16(this.directory, "settings.sqlite") });
   }
   // Each running plugin server's version, seen within the last heartbeats;
   // servers gone for an hour are forgotten.
@@ -74586,6 +74629,17 @@ function readConfiguration(directory) {
   try {
     const settings = __using(_stack, new Settings(directory));
     return settings.configuration();
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+function publishSettings(directory) {
+  var _stack = [];
+  try {
+    const settings = __using(_stack, new Settings(directory));
+    settings.publish();
   } catch (_) {
     var _error = _, _hasError = true;
   } finally {
@@ -74705,9 +74759,9 @@ async function lead(directory, id12, version3, signal) {
         newer,
         watching
       );
+      publishSettings(directory);
       removeStaleImports(directory, configuration);
-      if (configuration !== null)
-        await watchImports(directory, configuration, watching);
+      await watchImports(directory, configuration, watching);
     } catch {
     }
     await sleep2(6e4, void 0, { signal: watching }).catch(() => {
@@ -74814,8 +74868,7 @@ var ApplePlugin = class {
       const configuration = settings.configuration();
       const leading = leaderRunning(this.directory);
       return {
-        configured: configuration !== null,
-        apps: (configuration?.apps ?? []).map((item) => {
+        apps: configuration.apps.map((item) => {
           const importPath = importDirectory(this.directory, item);
           const database = join19(importPath, "data.sqlite");
           const pass2 = latestPass(database);
@@ -74855,10 +74908,7 @@ var ApplePlugin = class {
       var _stack = [];
       try {
         const settings = __using(_stack, new Settings(this.directory));
-        settings.saveConfiguration(
-          configuration,
-          configuration.apps.map((item) => importDirectory(this.directory, item))
-        );
+        settings.saveConfiguration(configuration);
       } catch (_) {
         var _error = _, _hasError = true;
       } finally {
@@ -75076,21 +75126,9 @@ var json2 = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }]
 });
 server.registerTool(
-  "apple_status",
-  {
-    description: "Show selected Apple apps, import scopes, permissions guidance, last sync results and the path of each imported SQLite database. Does not read Apple app content.",
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      openWorldHint: false
-    }
-  },
-  () => json2(plugin.status())
-);
-server.registerTool(
   "apple_setup",
   {
-    description: "Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, and apple_status reports each app\u2019s progress. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.",
+    description: "Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, and the selected_apps view in settings.sqlite lists each app\u2019s import for the query skill. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,

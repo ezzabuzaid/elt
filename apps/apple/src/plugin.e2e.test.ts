@@ -27,12 +27,21 @@ import { noteStoreFixture } from './fixtures/notes-store.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
 
-// The fields of an apple_status app this test reads.
-type AppStatus = {
+// A selected_apps row with its import's latest pass from sync_status, as the
+// query-apple skill reads them.
+type SelectedApp = {
+  app: string;
+  scope: string;
+  include_attachments: 0 | 1;
   database: string;
-  scope: object;
-  includeAttachments: boolean;
-  sync: { state: string; error: string | null } | null;
+  connection_error: string | null;
+  sync:
+    | {
+        status: string;
+        error: string | null;
+        last_successful_sync_at: string | null;
+      }
+    | undefined;
 };
 
 // The query-apple skill's read command: everything as arguments, since the
@@ -141,26 +150,40 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     assert.equal(block?.type, 'text');
     return JSON.parse(block.text);
   };
-  // Waits for the leading server, with no tool call but apple_status, until
-  // the selected apps reach the state done looks for.
+  // The skill's entry point: the selection, with no tool call.
+  const settingsFile = join(
+    scratch.path,
+    'Library/Application Support/Context Compiler/Apple/settings.sqlite',
+  );
+  const selected = (): SelectedApp[] =>
+    read(
+      settingsFile,
+      'SELECT app, scope, include_attachments, database, connection_error FROM selected_apps',
+    ).rows.map((app: Omit<SelectedApp, 'sync'>) => ({
+      ...app,
+      sync: read(
+        app.database,
+        'SELECT status, error, last_successful_sync_at FROM sync_status',
+      ).rows[0],
+    }));
+  // Waits for the leading server until the selected apps reach the state done
+  // looks for.
   const settled = async (
-    client: Client,
     what: string,
-    done: (apps: AppStatus[]) => boolean,
-  ): Promise<AppStatus[]> => {
+    done: (apps: SelectedApp[]) => boolean,
+  ): Promise<SelectedApp[]> => {
     for (let attempt = 0; attempt < 60; attempt++) {
-      const { apps } = await invoke(client, 'apple_status');
+      const apps = selected();
       if (done(apps)) return apps;
       await sleep(500);
     }
     assert.fail(`The import never ${what}`);
   };
-  const imported = async (client: Client, title: string) => {
+  const imported = async (title: string) => {
     const [notes] = await settled(
-      client,
       `showed ${title}`,
       ([notes]) =>
-        notes?.sync?.state === 'succeeded' &&
+        notes?.sync?.status === 'succeeded' &&
         read(
           notes.database,
           'SELECT title FROM notes WHERE title = @title',
@@ -194,7 +217,6 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
         'apple_settings_read',
         'apple_settings_update',
         'apple_setup',
-        'apple_status',
       ],
     );
     // The server names the installed version, which decides who leads.
@@ -206,7 +228,7 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       ),
       { readTool: 'apple_settings_read', updateTool: 'apple_settings_update' },
     );
-    assert.equal((await invoke(client, 'apple_status')).configured, false);
+    assert.deepEqual(selected(), []);
     assert.deepEqual((await call(other, 'apple_setup')).content, [
       { type: 'text', text: 'Client does not support form elicitation.' },
     ]);
@@ -221,7 +243,7 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       setUp.apps.map(({ app }: { app: string }) => app),
       ['notes'],
     );
-    const synced = await imported(client, 'Groceries');
+    const synced = await imported('Groceries');
     // The file the skill reads tells what it holds and how fresh it is.
     assert.deepEqual(
       read(
@@ -281,18 +303,17 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       apps: [
         {
           app: 'notes',
-          scope: synced.scope,
-          includeAttachments: synced.includeAttachments,
+          scope: JSON.parse(synced.scope),
+          includeAttachments: synced.include_attachments === 1,
         },
         { app: 'messages' },
       ],
     });
     const [kept, messages] = await settled(
-      client,
       'reported Messages as failed',
       ([notes, messages]) =>
-        notes?.sync?.state === 'succeeded' &&
-        messages?.sync?.state === 'failed',
+        notes?.sync?.status === 'succeeded' &&
+        messages?.sync?.status === 'failed',
     );
     assert.ok(kept && messages?.sync);
     assert.equal(kept.database, synced.database);
@@ -300,9 +321,8 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
 
     // A change in Notes reaches the import while nobody calls a tool.
     retitle('Groceries (edited)');
-    await imported(client, 'Groceries (edited)');
     assert.equal(
-      (await invoke(other, 'apple_status')).apps[0].database,
+      (await imported('Groceries (edited)')).database,
       synced.database,
     );
     assert.equal(
@@ -314,7 +334,7 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     await client.close();
     await transport.close();
     retitle('Groceries (after handoff)');
-    await imported(other, 'Groceries (after handoff)');
+    await imported('Groceries (after handoff)');
 
     // Switching Notes off on the Settings page disconnects it and deletes
     // its import; Messages stays selected.
@@ -326,9 +346,7 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     assert.equal(switched.values.messages, true);
     assert.equal(existsSync(synced.database), false);
     assert.deepEqual(
-      (await invoke(other, 'apple_status')).apps.map(
-        ({ app }: { app: string }) => app,
-      ),
+      selected().map(({ app }) => app),
       ['messages'],
     );
   } finally {
