@@ -1,6 +1,6 @@
 ---
 name: setup-apple
-description: Connect or reconfigure Apple Mail, Notes, Messages, Contacts, Calendar, Reminders and Safari for the Apple plugin on a Mac.
+description: Connect or reconfigure Apple Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari and Books for the Apple plugin on a Mac.
 ---
 
 # Set up Apple
@@ -19,7 +19,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
 
 ## Set up in chat
 
-1. Read the current selection from `selected_apps` as `$query-apple` describes, then ask which apps the user wants to connect. Present Mail, Notes, Messages, Contacts, Calendar, Reminders and Safari in plain language. Reconfiguration starts from the current selection. Do not access apps they have not selected.
+1. Read the current selection from `selected_apps` as `$query-apple` describes, then ask which apps the user wants to connect. Present Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari and Books in plain language. Reconfiguration starts from the current selection. Do not access apps they have not selected.
 2. For chosen apps, call `apple_options` to discover real account and collection IDs. It reads metadata and may trigger a macOS prompt. Explain the returned permission guidance when access fails, then retry after the user changes access.
 3. Offer all content or a narrower selection where available:
    - Mail: accounts, mailboxes, received date (sent date if absent).
@@ -29,6 +29,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
    - Calendar: accounts, calendars and event dates. Default to the previous year through the next year; show the dates and let the user change them. Only calendars already available on this Mac are included. Remote attachments retain links; Google sign-in is not needed.
    - Reminders: accounts and lists, including completed and undated reminders.
    - Safari: profiles and visit dates. A narrowed Safari import leaves out bookmarks, the Reading List and iCloud Tabs, which belong to no profile. History and tabs from the user's other devices arrive only while Safari is open.
+   - Books: everything; it has no accounts, collections or dates to choose. Books kept only in iCloud are listed without their files until the user opens them in Books.
 4. Translate plain dates using the user's timezone into canonical UTC timestamps with milliseconds. `startAt` is inclusive and `endAt` exclusive; use the following midnight to include an end date. Do not invent account or collection IDs. Unspecified ID lists mean all; omit an app to disconnect it. Attachments are copied by default; offer metadata only if the user prefers.
 5. Show a concise selection summary before `apple_configure` if any scope was inferred. Existing explicit choices are authorization to configure and sync; do not request a redundant confirmation. Configure the complete selection, then report as described in "Report the result". A changed scope rebuilds that app's imported copy; tell the user when reconfiguration will discard it.
 

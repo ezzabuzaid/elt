@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { PipelineError, type Source } from 'elt';
 import { appleWarehouse } from './fixtures/apple-warehouse.ts';
 import { noteBody, noteStoreFixture } from './fixtures/notes-store.ts';
+import { AppleBooksSource } from './sources/apple-books/apple-books-source.ts';
 import { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
 import { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
 import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
@@ -27,6 +28,7 @@ const sources: Record<string, Source> = {
   }),
   reminders: new AppleRemindersSource(),
   safari: new AppleSafariSource(),
+  books: new AppleBooksSource(),
 };
 
 test('every Apple stream has one documented reader view named after its source and stream', async () => {
@@ -53,6 +55,7 @@ test('every Apple stream has one documented reader view named after its source a
   assert.ok(names.includes('marts.messages_chat_handles'));
   assert.ok(names.includes('marts.calendar_ics_components'));
   assert.ok(names.includes('marts.safari_history_visits'));
+  assert.ok(names.includes('marts.books_reading_days'));
 });
 
 test('Notes reads as documented views that follow edits and deletions without being recreated', async () => {

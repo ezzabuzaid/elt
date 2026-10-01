@@ -243,6 +243,7 @@ test('the Settings page switches apps on and off and describes each import as Op
       calendar: false,
       reminders: false,
       safari: false,
+      books: false,
     },
   );
   const [kept, mail] = plugin.status().apps;

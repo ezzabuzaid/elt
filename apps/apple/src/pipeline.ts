@@ -8,6 +8,7 @@ import {
   grantDirectory,
 } from 'google-auth';
 import { mailDirectory } from './platform/macos/mail-store.ts';
+import { AppleBooksSource } from './sources/apple-books/apple-books-source.ts';
 import { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
 import { googleCalendarAttachments } from './sources/apple-calendar/google-calendar-attachments.ts';
 import { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
@@ -58,5 +59,6 @@ export default new Pipeline({
     ),
     await apple('reminders', new AppleRemindersSource()),
     await apple('safari', new AppleSafariSource()),
+    await apple('books', new AppleBooksSource()),
   ],
 });

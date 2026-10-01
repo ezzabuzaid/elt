@@ -53,6 +53,11 @@ export const configurationSchema = z
           code: 'custom',
           message: `${app}: choose collections instead of account IDs`,
         });
+      if (apps[app].choices.length === 0 && scope.collectionIds !== undefined)
+        context.addIssue({
+          code: 'custom',
+          message: `${app}: imports everything; it has no collections to choose`,
+        });
       if (
         apps[app].datedBy === null &&
         (scope.startAt !== undefined || scope.endAt !== undefined)

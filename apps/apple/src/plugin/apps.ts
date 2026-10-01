@@ -1,5 +1,6 @@
 import type { Source } from 'elt';
 import { mailDirectory } from '../platform/macos/mail-store.ts';
+import { AppleBooksSource } from '../sources/apple-books/apple-books-source.ts';
 import { AppleCalendarSource } from '../sources/apple-calendar/apple-calendar-source.ts';
 import { AppleContactsSource } from '../sources/apple-contacts/apple-contacts-source.ts';
 import {
@@ -20,6 +21,7 @@ export const appNames = [
   'calendar',
   'reminders',
   'safari',
+  'books',
 ] as const;
 export type App = (typeof appNames)[number];
 
@@ -202,5 +204,14 @@ export const apps: Record<App, AppDefinition> = {
       'cloudTabCloseRequests',
     ],
     source: (scope) => new AppleSafariSource({ scope }),
+  },
+  books: {
+    title: 'Books',
+    // Books' collections are built-in lists; everything is imported.
+    choices: [],
+    accounts: false,
+    datedBy: null,
+    permissions: `${fullDiskAccess} Books does not need to be open. Books stored only in iCloud are listed without their files; open them in Books to download them.`,
+    source: () => new AppleBooksSource(),
   },
 };

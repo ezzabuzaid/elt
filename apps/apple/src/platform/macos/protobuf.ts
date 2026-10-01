@@ -77,6 +77,21 @@ export class ProtobufMessage {
     return Number(field.value);
   }
 
+  // An int64 field: negative values arrive as ten-byte two's complement.
+  int(number: number): number | undefined {
+    const field = this.#last(number);
+    if (field === undefined) return undefined;
+    if (field.wire !== 0)
+      throw new TypeError(`Protobuf field ${number} is not a varint`);
+    const value = BigInt.asIntN(64, field.value);
+    if (
+      value > BigInt(Number.MAX_SAFE_INTEGER) ||
+      value < BigInt(Number.MIN_SAFE_INTEGER)
+    )
+      throw new TypeError(`Protobuf field ${number} exceeds a safe integer`);
+    return Number(value);
+  }
+
   float(number: number): number | undefined {
     const field = this.#last(number);
     if (field === undefined) return undefined;

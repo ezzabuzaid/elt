@@ -1,6 +1,6 @@
 {
   "name": "apple",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Choose the Apple apps to connect and ask Codex about their data on your Mac.",
   "author": { "name": "Context Compiler" },
   "repository": "https://github.com/ezzabuzaid/elt",
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Apple",
     "shortDescription": "Ask about your Apple apps",
-    "longDescription": "Connect Mail, Notes, Messages, Contacts, Calendar, Reminders and Safari. Choose apps and accounts, folders, mailboxes, chats, calendars, lists or Safari profiles during setup. Apple imports the selected content into a private local copy while you use it and reports when it last synced. macOS controls access to your apps. Requires the ChatGPT desktop app on a Mac.",
+    "longDescription": "Connect Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari and Books. Choose apps and accounts, folders, mailboxes, chats, calendars, lists or Safari profiles during setup. Apple imports the selected content into a private local copy while you use it and reports when it last synced. macOS controls access to your apps. Requires the ChatGPT desktop app on a Mac.",
     "developerName": "Context Compiler",
     "category": "Productivity",
     "capabilities": ["Read"],

@@ -1125,6 +1125,105 @@ Checked live on 2026-09-30 against macOS 27.0 (26A428) and Safari 27.0 by drivin
 
 Unverified: shared tab groups (they need a second iCloud account).
 
+## Apple Books
+
+```ts
+import { Connection, Copy, LocalFiles, Pipeline } from 'elt';
+import { SQLiteCheckpointStore, SQLiteColumns, SQLiteDestination } from 'elt-sqlite';
+import { AppleBooksSource } from './sources/apple-books/apple-books-source.ts';
+
+const source = new AppleBooksSource(); // Books' container and its group container
+const destination = new SQLiteDestination({ path: './outputs/books.sqlite' });
+const files = new LocalFiles({ directory: './outputs/books-files' });
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'apple-books',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({ path: './outputs/books-state.sqlite' }),
+      steps: [source.annotations, source.readingDays, source.bookFiles].map(
+        (stream) =>
+          new Copy(
+            stream,
+            destination.table(
+              stream.name,
+              stream.supportsFileTransfer
+                ? (columns) => [
+                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                    columns.text('attachmentRef').from(stream.file.store(files)),
+                  ]
+                : undefined,
+            ),
+            { id: stream.name, syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
+          ),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads the stores Books and its sync daemon, `bookdatastored`, keep; Books need not be open. `npx nx run apple:start` loads every stream incrementally into the Postgres `apple_books` schema, read as `marts.books_<stream>`; a book whose bytes are on this Mac is saved under `outputs/apple-books-files` and referenced by `attachmentRef`.
+
+| Store | Where | Streams |
+| --- | --- | --- |
+| `BKLibrary-1-091020131601.sqlite` (Core Data) | `~/Library/Containers/com.apple.iBooksX/Data/Documents/BKLibrary` | `libraryAssets`, `collections`, `collectionMembers`, `bookFiles` |
+| `AEAnnotation_v10312011_1727_local.sqlite` (Core Data) | `…/Documents/AEAnnotation` in the same container | `annotations` |
+| `BCAssetData` (Core Data) | `~/Library/Group Containers/group.com.apple.iBooks/Documents/BCCloudData-BookDataStoreService/BCAssetData` | `assetDetails`, `reviews` |
+| `CRDTModelSync-ReadingHistoryModel` (Core Data holding a CRDT document) | `…/BCCloudData-BookDataStoreService/CRDTModelSync-ReadingHistoryModel` | `readingMonths`, `readingDays`, `streakRecords` |
+| `BKJaliscoServerSource-v09182016.sqlite` (Core Data) | `…/group.com.apple.iBooks/Documents/BKJaliscoServerSource` | `purchases` |
+| `BookTheme.sqlite` (Core Data) | `…/com.apple.iBooksX/Data/Library/Application Support/Books` | `themes` |
+| `com.apple.iBooksX.plist`, `group.com.apple.iBooks.plist` | each container's `Library/Preferences` | `readingGoal` |
+| Book files | each asset's `ZPATH`, usually `~/Library/Mobile Documents/iCloud~com~apple~iBooks/Documents` | `bookFiles` |
+
+A run opens only the stores its selected streams read and pins each database in one read transaction. Every store uses Core Data's persistent WAL and most current rows live only in the WAL, so the connector opens them read-only and never as `immutable`, which would hide them. Stores are separate files, so streams of different stores need not agree, and a store that cannot be opened fails only its own streams: a missing or unreadable file raises `BooksUnavailableError` naming Full Disk Access, and a database without a column the connector reads, or a reading history in another format version, raises `BooksSchemaError`. Rows already loaded stay.
+
+### Access
+
+On macOS 27 a terminal without [Full Disk Access](#full-disk-access) read both containers and iCloud Drive; a process macOS attributes to another app may instead be asked to access other apps' data, and Full Disk Access covers both. Books has no public API or scripting dictionary for its library or annotations.
+
+### Streams
+
+| Stream | Contents and relationships |
+| --- | --- |
+| `libraryAssets` | Every book, PDF, audiobook and series in this Mac's library: title, authors, genre, language, description, store and EPUB identifiers, `path`, page count, size, reading progress and furthest progress reached, finished state and date, last opened and engaged, ratings, sample, hidden and explicit flags, series membership (`seriesContainerAssetId`). `contentType` is `epub` (code 1) or `pdf` (code 3); other codes keep only `contentTypeCode`. `state` is not whether the file is local. Archived author, narrator and genre lists stay base64. |
+| `collections`, `collectionMembers` | Built-in collections (Finished, Want to Read, Books, PDFs, Downloaded, My Samples, Library, Audiobooks, with fixed `collectionId`s) and those the user made (UUIDs); members by `assetId`, which outlives the book leaving the library. |
+| `bookFiles` | One row per asset with a path: `format` (`epub-package` or `file`), `availableLocally`, file count, size and latest modification over the package. An EPUB package is exported as one `.epub` (OCF: `mimetype` first and stored, entries in name order, fixed timestamps, so an unchanged package yields the same bytes); a single file, such as a PDF or a zipped `.epub`, as it is. |
+| `annotations` | Highlights and underlines (`kind` `highlight`, with `underline` and the `style` code), the reading position Books keeps per book (`readingPosition`), and deletion markers not yet synced (`deleted`, no book, text or location). Text, note, surrounding text, chapter title, EPUB CFI location and offsets, creator and times. |
+| `assetDetails` | Reading state `bookdatastored` syncs through iCloud, including books read on other devices and absent from this library: progress, furthest progress, finished and still-reading, star rating, audiobook position, and the synced position as an EPUB CFI. |
+| `reviews` | Store reviews the user wrote. |
+| `readingMonths`, `readingDays`, `streakRecords` | Reading history: per day the seconds read (summed over every device's contribution) and the goal in effect; per month the total Books kept after summarizing it and how many days remain; the date each streak length was first reached. |
+| `readingGoal` | One row: goals on or off, the daily goal in seconds, when it was set, and the current streak. |
+| `purchases` | Store purchases, downloaded or not; download tokens and DRM parameters are left out. |
+| `themes` | Reading themes the user customized. |
+
+Left out: CloudKit mirrors that duplicate the stores above (`ZBCASSETANNOTATIONS`, `BCCloudCollections`, `ZBCREADINGNOWDETAIL`, the widget cache) and the local copy of the reading history (`CRDTModelLocalFile`, a newer format of the same model); sync bookkeeping (`ACHANGE`, `ATRANSACTION*`, sync versions, server change tokens, salts, edit and sync generations, `ZCKSYSTEMFIELDS`, CRDT counters and replicas, `.bcck` files); per-day engagement records in `BDSSecureData` (store impression events, not reading time); transient tables (reading sessions, which Books purges, recents, purge and download queues); telemetry and caches (`BooksMessages`, TipKit, WebKit, the series cache, archived plists, Books.plist, whose local flags are wrong); per-language theme fonts; and secrets (`ZBCSECUREUSERDATUM`, identity tokens, CloudKit user IDs, DRM columns).
+
+### Reading history
+
+The history is a Coherence document (Apple's CRDT framework), signature `crdt` and format version 4, that `bookdatastored` syncs through CloudKit. Its root struct has `months`, a dictionary from `yyyymm` to month objects, and `streakRecords`, from streak length to the date reached. A month holds `days` (day of month to day objects), `lastDayStreakOrdinal` and, once Books summarizes the month and drops its days, `totalTime`. A day holds `readingTime`, a counter where each device keeps its decrements and increments, and `readingGoal`. Months and days are calendar dates in the time zone Books recorded them in.
+
+### Book files
+
+Most books live in iCloud Drive, often as placeholders whose bytes are not on this Mac. Reading a placeholder, or listing one that is a directory, makes macOS download it. The connector reads each item's BSD flags with `/usr/bin/stat` (Node's `stat` has none) and lists a package directory only after its own flags show it is local, checking every entry before descending; any placeholder makes the book `availableLocally: false` with no file. A book downloaded from iCloud without a library change is picked up by the next change or run.
+
+### Changes and deletions
+
+Every stream diffs a whole read of its store against the previous one. A watch polls each database's `data_version`, which changes on every commit by another connection even while Books and `bookdatastored` keep their WALs open, and stats the two preference files.
+
+### Books export probe
+
+Checked live on 2026-10-01 against macOS 27.0 and Books 8:
+
+- 49 library assets (47 EPUB packages, 2 PDFs, all added through iCloud Drive), 8 built-in collections with 114 members, 240 annotations (193 highlights, 38 reading positions, 9 deletion markers with an empty asset ID), 63 synced asset details (14 for books not in this library), 42 months and 18 days of reading history, 7 streak records, a 1800-second goal.
+- Opening the library with `immutable=1` showed 0 annotations; read-only showed all 240.
+- 11 EPUB packages were local and 36 EPUBs and both PDFs were placeholders, while Books.plist listed 13 books as local, 10 of them placeholders. Two loads changed no item's flags.
+- Opening a local book in Books in a background window for about 15 minutes added the current month and a day of 487 to the reading history once Books quit, which fits seconds.
+- The 11 local EPUBs packaged to `.epub` files `unzip -t` accepts; a second load wrote nothing and kept the same copies.
+
+Unverified: which colour each highlight `style` from 1 to 5 is; that `readingTime` and the goal are seconds (inferred from the 1800 goal and the 487 above); content type and annotation type codes this library does not use; audiobooks, store purchases and reviews (none on the probed Mac).
+
 ## Google Search Console
 
 `SearchConsoleSource` reads one property through the `searchconsole:v1` API. `sites`, `sitemaps` and `searchAnalytics` are served under the original `webmasters/v3` path prefix; URL inspection is served from `v1` on the same host.
