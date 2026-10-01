@@ -61,6 +61,9 @@ const catalog = new Catalog(
 const readerOf = (stream: Stream): BooksReader =>
   readers[stream.name as StreamName];
 
+// How often a watch checks the stores for changes.
+const pollIntervalMs = 1000;
+
 // Reads Books' own stores, so Books need not run to export. What Books syncs
 // from the user's other devices is what bookdatastored last fetched.
 export class AppleBooksSource extends Source<BooksScan> {
@@ -81,21 +84,16 @@ export class AppleBooksSource extends Source<BooksScan> {
   readonly themes = readers.themes.describe();
 
   readonly location: BooksLocation;
-  readonly pollIntervalMs: number;
 
   constructor({
     container = defaultBooksLocation.container,
     groupContainer = defaultBooksLocation.groupContainer,
-    // How often a watch checks the stores for changes.
-    pollIntervalMs = 1000,
   }: {
     container?: string;
     groupContainer?: string;
-    pollIntervalMs?: number;
   } = {}) {
     super();
     this.location = Object.freeze({ container, groupContainer });
-    this.pollIntervalMs = pollIntervalMs;
     this.identity = `apple-books:${container}:${groupContainer}`;
     Object.freeze(this);
   }
@@ -140,7 +138,7 @@ export class AppleBooksSource extends Source<BooksScan> {
     for (const [store, probe] of probes) seen.set(store, await probe());
     yield streams;
     try {
-      for await (const _ of setInterval(this.pollIntervalMs, undefined, {
+      for await (const _ of setInterval(pollIntervalMs, undefined, {
         signal,
       })) {
         const changed = new Set<BooksStore>();

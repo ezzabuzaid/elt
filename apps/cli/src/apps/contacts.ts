@@ -24,6 +24,6 @@ export class ContactsApp extends AppleApp {
   }
 
   protected source(scope: ImportScope) {
-    return new AppleContactsSource(undefined, undefined, scope);
+    return new AppleContactsSource(undefined, scope);
   }
 }

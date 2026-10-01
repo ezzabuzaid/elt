@@ -140,7 +140,7 @@ export const apps: Record<App, AppDefinition> = {
     ],
     datedBy: 'message date',
     permissions: `${fullDiskAccess} Only messages synced to this Mac can be imported.`,
-    source: (scope) => new AppleMessagesSource(undefined, undefined, scope),
+    source: (scope) => new AppleMessagesSource(undefined, scope),
   },
   contacts: {
     title: 'Contacts',
@@ -148,7 +148,7 @@ export const apps: Record<App, AppDefinition> = {
     datedBy: null,
     permissions:
       'Allow ChatGPT when macOS asks for Contacts access, or turn it on in System Settings > Privacy & Security > Contacts. Full Disk Access for ChatGPT also works.',
-    source: (scope) => new AppleContactsSource(undefined, undefined, scope),
+    source: (scope) => new AppleContactsSource(undefined, scope),
   },
   calendar: {
     title: 'Calendar',

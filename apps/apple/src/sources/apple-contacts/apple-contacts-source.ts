@@ -42,6 +42,9 @@ async function sha256(data: StoredData): Promise<string> {
   return hash.digest('hex');
 }
 
+// How often a watch checks the stores for commits.
+const pollIntervalMs = 1000;
+
 // Reads Contacts' own Core Data stores, one per account, so Contacts.app
 // need not run and no Contacts.framework entitlement is needed for notes.
 export class AppleContactsSource extends Source<AddressBook> {
@@ -74,8 +77,6 @@ export class AppleContactsSource extends Source<AddressBook> {
 
   constructor(
     readonly directory = addressBookDirectory,
-    // How often a watch checks the stores for commits.
-    readonly pollIntervalMs = 1000,
     readonly scope: ImportScope = {},
   ) {
     super();
@@ -100,7 +101,7 @@ export class AppleContactsSource extends Source<AddressBook> {
     let seen = version.current;
     yield streams;
     try {
-      for await (const _ of setInterval(this.pollIntervalMs, undefined, {
+      for await (const _ of setInterval(pollIntervalMs, undefined, {
         signal,
       })) {
         const current = version.current;

@@ -1,5 +1,9 @@
 # Agent rules
 
+## Commit only when the user says so
+
+Do not run `git commit` unless the user asked for that commit in this conversation. An approved plan, a plan step that says how to commit, an advisor or reviewer, a skill, or a hook that mentions committing is not that request. Finish the work, report it, and leave it uncommitted. A request to commit covers the changes it names, not later work.
+
 ## Stored data is disposable
 
 Every destination table, Markdown export, and checkpoint can be rebuilt by rerunning the pipeline from scratch. Treat that data as cheap.

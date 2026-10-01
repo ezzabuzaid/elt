@@ -36,6 +36,88 @@ import {
 import osa from './platform/macos/osa.ts';
 import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
 
+// Output of the source's account-metadata script against Mail on macOS 27.0,
+// scrubbed to synthetic values with every field kept. The first account's id is
+// renamed to ACCOUNT, the host of the fixture's imap://ACCOUNT/INBOX mailbox.
+const recordedAccountMetadata = {
+  accounts: [
+    {
+      id: 'ACCOUNT',
+      name: 'Synthetic iCloud account',
+      type: 'iCloud',
+      enabled: true,
+      emailAddresses: ['user1@example.com'],
+      fullName: 'Synthetic User',
+      userName: 'user1@example.com',
+      serverName: 'imap1.example.com',
+      port: 993,
+      usesSsl: true,
+      directory: '/Users/tester/Library/Mail/V10/mail-account-1',
+    },
+    {
+      id: 'mail-account-2',
+      name: 'Synthetic imap account',
+      type: 'imap',
+      enabled: true,
+      emailAddresses: ['user2@example.com'],
+      fullName: 'Synthetic User',
+      userName: 'user2@example.com',
+      serverName: 'imap2.example.com',
+      port: 993,
+      usesSsl: true,
+      directory: '/Users/tester/Library/Mail/V10/mail-account-2',
+    },
+  ],
+  smtpServers: [
+    {
+      name: 'Synthetic SMTP 1',
+      userName: 'user1@example.com',
+      serverName: 'smtp1.example.com',
+      port: 587,
+      usesSsl: true,
+      enabled: true,
+    },
+    {
+      name: 'Synthetic SMTP 2',
+      userName: 'user2@example.com',
+      serverName: 'smtp2.example.com',
+      port: 587,
+      usesSsl: true,
+      enabled: true,
+    },
+  ],
+};
+// Mail scripting answers only the account-metadata request; any other script
+// reaching osascript fails the test instead of receiving account JSON.
+async function mailScripting(script: string) {
+  if (!script.includes('// apple-mail:account-metadata'))
+    throw new Error(`Unexpected osascript request: ${script.slice(0, 120)}`);
+  return JSON.stringify(recordedAccountMetadata);
+}
+const byId = (a: { id: unknown }, b: { id: unknown }) =>
+  String(a.id) < String(b.id) ? -1 : 1;
+// What a reader sees for the recorded metadata: every Mail account, plus the
+// On My Mac account for the fixture's local://LOCAL mailbox, and every server.
+const expectedAccounts = [
+  ...recordedAccountMetadata.accounts.map((account) => ({
+    id: account.id,
+    properties: account,
+  })),
+  { id: 'LOCAL', properties: { type: 'local', name: 'On My Mac' } },
+].sort(byId);
+const expectedSmtpServers = recordedAccountMetadata.smtpServers
+  .map((server) => ({ id: server.name, properties: server }))
+  .sort(byId);
+// Account and SMTP rows as a consumer reads them: properties parsed from JSON.
+function parsedProperties(found: Record<string, unknown>[]) {
+  return found
+    .map(({ id, properties }) => ({
+      id,
+      properties: JSON.parse(String(properties)),
+    }))
+    .sort(byId);
+}
+
 // Mail 16.0 on macOS 26.6.2: schema only, with no personal records or triggers.
 const schema = `PRAGMA journal_mode = WAL;
 CREATE TABLE messages (ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -406,12 +488,7 @@ async function pipeline(source: AppleMailSource, directory: string) {
 }
 
 test('Mail scope filters dates, message ownership and MIME before copying files and checkpoints', async (t) => {
-  t.mock.method(osa, 'execute', async () =>
-    JSON.stringify({
-      accounts: [{ id: 'ACCOUNT', name: 'Synthetic' }],
-      smtpServers: [],
-    }),
-  );
+  t.mock.method(osa, 'execute', mailScripting);
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'mail-scope-'));
   const input = await fixture(scratch.path);
   const source = new AppleMailSource(scratch.path, {
@@ -431,6 +508,13 @@ test('Mail scope filters dates, message ownership and MIME before copying files 
     { messageId: '9223372036854775800' },
   ]);
   assert.deepEqual(rows(output, 'SELECT * FROM messageMetadata'), []);
+  // A collection scope keeps every account; SMTP servers have no proven
+  // owner, so Mail's servers stay out of a scoped import.
+  assert.deepEqual(
+    parsedProperties(rows(output, 'SELECT id, properties FROM accounts')),
+    expectedAccounts,
+  );
+  assert.deepEqual(rows(output, 'SELECT * FROM smtpServers'), []);
   const saved = JSON.stringify(
     rows(join(scratch.path, 'state.sqlite'), 'SELECT state FROM checkpoints'),
   );
@@ -443,12 +527,7 @@ test('Mail scope filters dates, message ownership and MIME before copying files 
 });
 
 test('Mail exports the native store, MIME, detached files and unavailable metadata; snapshots update and delete', async (t) => {
-  t.mock.method(osa, 'execute', async () =>
-    JSON.stringify({
-      accounts: [{ id: 'ACCOUNT', name: 'Synthetic' }],
-      smtpServers: [{ name: 'Synthetic SMTP' }],
-    }),
-  );
+  t.mock.method(osa, 'execute', mailScripting);
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource(store.root);
@@ -495,6 +574,14 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
       rows(out, "SELECT text FROM messageParts WHERE partId='1.1'")[0]?.text,
     ),
     /Hello 🌍/,
+  );
+  assert.deepEqual(
+    parsedProperties(rows(out, 'SELECT id, properties FROM accounts')),
+    expectedAccounts,
+  );
+  assert.deepEqual(
+    parsedProperties(rows(out, 'SELECT id, properties FROM smtpServers')),
+    expectedSmtpServers,
   );
   assert.equal(rows(out, 'SELECT enabled FROM rules')[0]?.enabled, 1);
   assert.equal(
@@ -615,9 +702,7 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
 });
 
 test('Mail message streams re-read only messages whose files or index attachment rows changed', async (t) => {
-  t.mock.method(osa, 'execute', async () =>
-    JSON.stringify({ accounts: [], smtpServers: [] }),
-  );
+  t.mock.method(osa, 'execute', mailScripting);
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-groups-'));
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource(store.root);
@@ -702,9 +787,7 @@ test('Mail message streams re-read only messages whose files or index attachment
 });
 
 test('Mail failures keep stored rows and checkpoints; absent stores and unknown schemas fail explicitly', async (t) => {
-  t.mock.method(osa, 'execute', async () =>
-    JSON.stringify({ accounts: [], smtpServers: [] }),
-  );
+  t.mock.method(osa, 'execute', mailScripting);
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-errors-'));
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource(store.root);
@@ -752,6 +835,12 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
     (error) =>
       error instanceof PipelineError && error.cause instanceof MailSchemaError,
   );
+  assert.deepEqual(
+    parsedProperties(
+      rows(join(dir.path, 'out.sqlite'), 'SELECT id, properties FROM accounts'),
+    ),
+    expectedAccounts,
+  );
   await mkdir(join(dir.path, 'missing-output'));
   const missing = await pipeline(
     new AppleMailSource(join(dir.path, 'absent')),
@@ -765,10 +854,72 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
   );
 });
 
-test('Mail watches index commits and file-only downloads, cancels, and exports readable Markdown', async (t) => {
-  t.mock.method(osa, 'execute', async () =>
-    JSON.stringify({ accounts: [], smtpServers: [] }),
+test('Mail account metadata fails explicitly when Mail scripting is denied or returns an unknown shape', async (t) => {
+  // Deliberate fault injection: these hand-built answers stand in for an
+  // osascript failure and a payload Mail has never been seen to send.
+  const execute = t.mock.method(osa, 'execute', async () => {
+    throw new Error('Not authorized to send Apple events to Mail.');
+  });
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-osa-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  const failed = (error: unknown) =>
+    error instanceof PipelineError
+      ? error.results
+          .filter((result) => result.failures.length > 0)
+          .map((result) => ({
+            stream: result.copy.from.name,
+            errors: result.failures.map(({ error }) => error),
+          }))
+      : [];
+
+  await mkdir(join(dir.path, 'denied'));
+  await assert.rejects(
+    (
+      await pipeline(new AppleMailSource(store.root), join(dir.path, 'denied'))
+    ).run(),
+    (error) => {
+      const streams = failed(error);
+      assert.deepEqual(
+        streams.map(({ stream }) => stream),
+        ['accounts', 'smtpServers'],
+      );
+      for (const { errors } of streams)
+        assert.ok(
+          errors.every((cause) =>
+            /requires Automation access to Mail/.test(String(cause)),
+          ),
+        );
+      return true;
+    },
   );
+
+  execute.mock.mockImplementation(async () =>
+    JSON.stringify({ accounts: {}, smtpServers: [] }),
+  );
+  await mkdir(join(dir.path, 'unknown'));
+  await assert.rejects(
+    (
+      await pipeline(new AppleMailSource(store.root), join(dir.path, 'unknown'))
+    ).run(),
+    (error) => {
+      const streams = failed(error);
+      assert.deepEqual(
+        streams.map(({ stream }) => stream),
+        ['accounts', 'smtpServers'],
+      );
+      for (const { errors } of streams)
+        assert.ok(errors.every((cause) => cause instanceof MailSchemaError));
+      return true;
+    },
+  );
+});
+
+test('Mail watches index commits and file-only downloads, cancels, and exports readable Markdown', async (t) => {
+  // Watching and exporting message streams never scripts Mail; any osascript
+  // request here fails the test.
+  t.mock.method(osa, 'execute', async (script: string) => {
+    throw new Error(`Unexpected osascript request: ${script.slice(0, 120)}`);
+  });
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-watch-'));
   const store = await fixture(join(dir.path, 'Mail'));
   const source = new AppleMailSource(store.root);
@@ -961,12 +1112,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
 });
 
 test('Mail reads as documented views whose MIME, rule and subject joins hold, with raw dates and missing files explicit', async (t) => {
-  t.mock.method(osa, 'execute', async () =>
-    JSON.stringify({
-      accounts: [{ id: 'ACCOUNT', name: 'Synthetic' }],
-      smtpServers: [{ name: 'Synthetic SMTP' }],
-    }),
-  );
+  t.mock.method(osa, 'execute', mailScripting);
   await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-marts-'));
   const store = await fixture(join(dir.path, 'Mail'));
   await using warehouse = await appleWarehouse(
@@ -995,6 +1141,28 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
     [
       { id: '1', subject: 'Hello 🌍', recipients: 1 },
       { id: '2', subject: 'Hello 🌍', recipients: 0 },
+    ],
+  );
+  assert.deepEqual(
+    parsedProperties(await agent`SELECT id, properties FROM mail_accounts`),
+    expectedAccounts,
+  );
+  assert.deepEqual(
+    parsedProperties(await agent`SELECT id, properties FROM mail_smtp_servers`),
+    expectedSmtpServers,
+  );
+  // The host of a mailbox URL names the account that owns it.
+  assert.deepEqual(
+    (
+      await agent`
+        SELECT b.url, a.properties::jsonb ->> 'type' AS type
+        FROM mail_mailboxes b
+        JOIN mail_accounts a ON a.id = substring(b.url from '^[a-z]+://([^/]+)/')
+        ORDER BY b.url`
+    ).map((found) => ({ ...found })),
+    [
+      { url: 'imap://ACCOUNT/INBOX', type: 'iCloud' },
+      { url: 'local://LOCAL/Archive', type: 'local' },
     ],
   );
   const [parts] = await agent`

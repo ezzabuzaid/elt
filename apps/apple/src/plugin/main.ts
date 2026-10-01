@@ -24,13 +24,13 @@ const { version } = z
       ),
     ),
   );
-const server = new McpServer({ name: 'apple', version });
+const mcpServer = new McpServer({ name: 'apple', version });
 // McpServer turns a thrown error into an isError result.
 const json = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
 });
 
-server.registerTool(
+mcpServer.registerTool(
   'apple_setup',
   {
     description:
@@ -47,11 +47,11 @@ server.registerTool(
   async () =>
     json(
       await setUpWithForms(plugin, (form) =>
-        server.server.elicitInput(form, { timeout: 1_800_000 }),
+        mcpServer.server.elicitInput(form, { timeout: 1_800_000 }),
       ),
     ),
 );
-server.registerTool(
+mcpServer.registerTool(
   'apple_options',
   {
     description:
@@ -65,7 +65,7 @@ server.registerTool(
   },
   async ({ app }) => json(await plugin.options(app)),
 );
-server.registerTool(
+mcpServer.registerTool(
   'apple_configure',
   {
     description:
@@ -88,7 +88,7 @@ const switches = z.strictObject(
     z.ZodBoolean
   >,
 );
-server.registerTool(
+mcpServer.registerTool(
   'apple_settings_read',
   {
     description:
@@ -131,7 +131,7 @@ server.registerTool(
     return { content: [], structuredContent: result };
   },
 );
-server.registerTool(
+mcpServer.registerTool(
   'apple_settings_update',
   {
     description:
@@ -152,7 +152,7 @@ server.registerTool(
     return { content: [], structuredContent: settingsUpdate(plugin, set) };
   },
 );
-server.server.registerCapabilities({
+mcpServer.server.registerCapabilities({
   experimental: {
     'openai/settings': {
       readTool: 'apple_settings_read',
@@ -163,9 +163,9 @@ server.server.registerCapabilities({
 
 // Keeps the imports current until Codex closes this server.
 const stopping = new AbortController();
-server.server.onclose = () => stopping.abort();
+mcpServer.server.onclose = () => stopping.abort();
 process.stdin.once('end', () => stopping.abort());
 process.once('SIGTERM', () => stopping.abort());
 process.once('SIGINT', () => stopping.abort());
-await server.connect(new StdioServerTransport());
+await mcpServer.connect(new StdioServerTransport());
 await keepFresh(plugin.directory, stopping.signal, version);

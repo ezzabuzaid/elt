@@ -26,6 +26,8 @@ import {
 import { attributedText } from './typedstream.ts';
 
 const catalog = new Catalog(Object.values(streams));
+// How often a watch checks chat.db for commits.
+const pollIntervalMs = 1000;
 
 // Attachment paths are stored home-relative, as ~/Library/Messages/Attachments/…
 const attachmentPath = (filename: string) =>
@@ -54,8 +56,6 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
 
   constructor(
     readonly path = join(messagesDirectory, 'chat.db'),
-    // How often a watch checks chat.db for commits.
-    readonly pollIntervalMs = 1000,
     readonly scope: ImportScope = {},
   ) {
     super();
@@ -80,7 +80,7 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
     let seen = version.current;
     yield streams;
     try {
-      for await (const _ of setInterval(this.pollIntervalMs, undefined, {
+      for await (const _ of setInterval(pollIntervalMs, undefined, {
         signal,
       })) {
         const current = version.current;

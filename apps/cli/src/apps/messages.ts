@@ -24,6 +24,6 @@ export class MessagesApp extends AppleApp {
   }
 
   protected source(scope: ImportScope) {
-    return new AppleMessagesSource(undefined, undefined, scope);
+    return new AppleMessagesSource(undefined, scope);
   }
 }

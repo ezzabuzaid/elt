@@ -34,6 +34,11 @@ const readers = {
 const catalog = new Catalog(
   Object.values(readers).map((reader) => reader.describe()),
 );
+// How often a watch checks the store for commits.
+const pollIntervalMs = 1000;
+// How often a watch makes sure Notes runs: macOS closes a hidden Notes when it
+// frees disk space, and only Notes syncs iCloud notes.
+const launchIntervalMs = 30_000;
 
 // Reads Notes' own store, NoteStore.sqlite, so Notes.app need not run to
 // export. Only Notes.app syncs iCloud notes, so a watch keeps it running,
@@ -48,32 +53,17 @@ export class AppleNotesSource extends Source<NotesScan> {
   readonly attachments = readers.attachments.describe();
 
   readonly path: string;
-  readonly pollIntervalMs: number;
-  readonly launchIntervalMs: number;
-  readonly launch: () => Promise<unknown>;
   readonly scope: ImportScope;
 
   constructor({
     path = join(notesContainer, 'NoteStore.sqlite'),
-    // How often a watch checks the store for commits.
-    pollIntervalMs = 1000,
-    // How often a watch makes sure Notes runs: macOS closes a hidden Notes
-    // when it frees disk space, and only Notes syncs iCloud notes.
-    launchIntervalMs = 30_000,
-    launch = launchNotesHidden,
     scope = {},
   }: {
     path?: string;
-    pollIntervalMs?: number;
-    launchIntervalMs?: number;
-    launch?: () => Promise<unknown>;
     scope?: ImportScope;
   } = {}) {
     super();
     this.path = path;
-    this.pollIntervalMs = pollIntervalMs;
-    this.launchIntervalMs = launchIntervalMs;
-    this.launch = launch;
     this.scope = scope;
     this.identity = `apple-notes:${path}`;
     Object.freeze(this);
@@ -97,16 +87,16 @@ export class AppleNotesSource extends Source<NotesScan> {
     if (signal.aborted) return;
     using version = new NoteStoreVersion(this.path);
     let seen = version.current;
-    await this.launch();
-    let nextLaunch = Date.now() + this.launchIntervalMs;
+    await launchNotesHidden();
+    let nextLaunch = Date.now() + launchIntervalMs;
     yield streams;
     try {
-      for await (const _ of setInterval(this.pollIntervalMs, undefined, {
+      for await (const _ of setInterval(pollIntervalMs, undefined, {
         signal,
       })) {
         if (Date.now() >= nextLaunch) {
-          await this.launch();
-          nextLaunch = Date.now() + this.launchIntervalMs;
+          await launchNotesHidden();
+          nextLaunch = Date.now() + launchIntervalMs;
         }
         const current = version.current;
         if (current === seen) continue;

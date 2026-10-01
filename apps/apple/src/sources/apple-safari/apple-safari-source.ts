@@ -81,6 +81,9 @@ const catalog = new Catalog(
 const readerOf = (stream: Stream): SafariReader =>
   readers[stream.name as StreamName];
 
+// How often a watch checks the stores for changes.
+const pollIntervalMs = 1000;
+
 // Reads Safari's own stores, so Safari need not run to export. Only Safari
 // fetches history and tabs from the user's other devices, so what they
 // contribute is what Safari last fetched while it ran.
@@ -113,24 +116,19 @@ export class AppleSafariSource extends Source<SafariScan> {
   readonly downloads = readers.downloads.describe();
 
   readonly location: SafariLocation;
-  readonly pollIntervalMs: number;
   readonly scope: ImportScope;
 
   constructor({
     directory = safariDirectory,
     container = safariContainer,
-    // How often a watch checks the stores for changes.
-    pollIntervalMs = 1000,
     scope = {},
   }: {
     directory?: string;
     container?: string;
-    pollIntervalMs?: number;
     scope?: ImportScope;
   } = {}) {
     super();
     this.location = Object.freeze({ directory, container });
-    this.pollIntervalMs = pollIntervalMs;
     this.scope = scope;
     this.identity = `apple-safari:${directory}:${container}`;
     Object.freeze(this);
@@ -186,7 +184,7 @@ export class AppleSafariSource extends Source<SafariScan> {
     for (const [store, probe] of probes) seen.set(store, await probe());
     yield streams;
     try {
-      for await (const _ of setInterval(this.pollIntervalMs, undefined, {
+      for await (const _ of setInterval(pollIntervalMs, undefined, {
         signal,
       })) {
         const changed = new Set<SafariStore>();
