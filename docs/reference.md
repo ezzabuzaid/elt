@@ -1121,8 +1121,9 @@ Checked live on 2026-09-30 against macOS 27.0 (26A428) and Safari 27.0 by drivin
 - A plain download recorded its final path; an archive Safari opened on its own recorded paths inside a removed `.download` folder. Clearing the Downloads list emptied `Downloads.plist` and deleted the rows.
 - Safari keeps the previous session's windows and tabs in `SafariTabs.db` until the next session replaces them.
 - A second load with no changes, with Safari running, wrote nothing.
+- Closing an iPhone tab from this Mac's iCloud Tabs (checked 2026-10-01) wrote one close request naming the iPhone as its device, with the tab's URL and id; the next load added it. It stayed until Safari ran on the iPhone, which removed both the request and the tab; the next load deleted both rows.
 
-Unverified: iCloud Tabs close requests (making one closes a real tab on another device), and shared tab groups (they need a second iCloud account).
+Unverified: shared tab groups (they need a second iCloud account).
 
 ## Google Search Console
 
