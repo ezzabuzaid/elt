@@ -1,11 +1,13 @@
 import { access } from 'node:fs/promises';
 import type { SQLOutputValue } from 'node:sqlite';
-import type { SchemaRecord } from 'elt';
+
+import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import {
   type NotesScan,
-  number,
   type Row,
+  number,
   string,
   time,
 } from './notes-scan.ts';
@@ -151,15 +153,18 @@ export class AttachmentsStream extends AppleNotesStream<
     return [...scan.attachments.values()];
   }
 
-  protected async record(row: Row, scan: NotesScan): Promise<Attachment> {
+  protected async record(
+    row: Row,
+    scan: NotesScan,
+  ): Promise<RecordDraft<typeof properties>> {
     // A locked note's attachments keep only what the list of attachments
     // shows, not what they contain.
     const content = (value: SQLOutputValue | undefined) =>
       row.locked === 1 ? null : string(value);
     const file = scan.file(row);
     return {
-      id: row.ZIDENTIFIER as string,
-      noteId: row.note as string,
+      id: row.ZIDENTIFIER,
+      noteId: row.note,
       parentId: string(row.parent),
       type: string(row.ZTYPEUTI) ?? 'public.data',
       title: string(row.title),

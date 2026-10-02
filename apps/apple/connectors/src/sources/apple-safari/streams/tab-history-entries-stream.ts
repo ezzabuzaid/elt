@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
 import { flag, text } from '../safari-values.ts';
@@ -58,9 +59,9 @@ export class TabHistoryEntriesStream extends SafariStream<
     entry,
     position,
     current,
-  }: HistoryEntry): SchemaRecord<typeof properties> {
+  }: HistoryEntry): RecordDraft<typeof properties> {
     return {
-      tabId: tab.external_uuid as string,
+      tabId: tab.external_uuid,
       position,
       current,
       url: text(entry.SessionHistoryEntryURL),

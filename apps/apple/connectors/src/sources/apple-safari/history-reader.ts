@@ -1,7 +1,7 @@
 import { parseBinaryPlist } from '../../platform/macos/plist.ts';
 import type { SafariDatabase } from '../../platform/macos/safari-store.ts';
 import { type ImportScope, selected, withinDates } from '../import-scope.ts';
-import { appleTime, type Row } from './safari-values.ts';
+import { type Row, appleTime } from './safari-values.ts';
 
 // The History.db columns this connector reads, checked against Safari 27 on
 // macOS 27; SafariDatabase.open refuses a store without them.
@@ -61,16 +61,19 @@ const select = (table: keyof typeof historyColumns, order: string) =>
 // $profile. The scope's profiles and dates select visits, and items, tags and
 // tag links follow the visits kept.
 export class HistoryReader {
+  readonly database: SafariDatabase;
+  readonly profileId: string;
+  readonly scope: ImportScope;
   #visits?: Row[];
   #items?: Row[];
   #itemTags?: Row[];
   #tags?: Row[];
 
-  constructor(
-    readonly database: SafariDatabase,
-    readonly profileId: string,
-    readonly scope: ImportScope,
-  ) {}
+  constructor(database: SafariDatabase, profileId: string, scope: ImportScope) {
+    this.database = database;
+    this.profileId = profileId;
+    this.scope = scope;
+  }
 
   get #included(): boolean {
     return selected(this.scope.collectionIds, this.profileId);

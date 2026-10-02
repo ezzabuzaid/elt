@@ -1,4 +1,5 @@
-import { type CopyConfiguration, Destination, type Load } from 'elt';
+import { type CopyConfiguration, Destination, type Load } from '@workspace/elt';
+
 import { quote } from './identifier.ts';
 import { PostgresAppendWriter } from './postgres-append-writer.ts';
 import type { PostgresColumn } from './postgres-column.ts';

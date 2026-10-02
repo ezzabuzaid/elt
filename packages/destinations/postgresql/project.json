@@ -3,7 +3,7 @@
   "sourceRoot": "packages/destinations/postgresql/src",
   "projectType": "library",
   "targets": {
-    "lint": {},
+    "format": {},
     "test": {
       "dependsOn": ["build"],
       "command": "node --test packages/destinations/postgresql/dist/*.test.js"

@@ -1,21 +1,23 @@
 import assert from 'node:assert/strict';
 import {
   mkdtempDisposable,
-  readdir,
   readFile,
+  readdir,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
+
+import type postgres from 'postgres';
+
 import {
   Catalog,
   Connection,
   Copy,
   type CopyConfiguration,
   DocumentParser,
-  diffSnapshot,
   LocalFiles,
   type Partition,
   Pipeline,
@@ -24,8 +26,10 @@ import {
   type SourceMessage,
   type SourceWatchOptions,
   Stream,
-} from 'elt';
-import type postgres from 'postgres';
+  type StreamSchema,
+  diffSnapshot,
+} from '@workspace/elt';
+
 import {
   PostgresCheckpointStore,
   PostgresColumns,
@@ -48,12 +52,13 @@ class Messages extends Source {
 
   messages: SourceMessage[] = [];
   extracted = 0;
+  readonly stream: Stream;
+  readonly identity: string;
   protected readonly catalog: Catalog;
-  constructor(
-    readonly stream: Stream,
-    readonly identity = 'test',
-  ) {
+  constructor(stream: Stream, identity = 'test') {
     super();
+    this.stream = stream;
+    this.identity = identity;
     this.catalog = new Catalog([stream]);
   }
   protected override async *observe({ streams }: SourceWatchOptions) {
@@ -401,7 +406,7 @@ test('schema annotations follow each copy, including projections, append history
       body: { type: 'string' },
     },
     required: ['id', 'title', 'body'],
-  };
+  } satisfies StreamSchema;
   const stream = new Stream({
     name: 'notes',
     jsonSchema: schema,
@@ -517,7 +522,7 @@ test('schema annotations follow each copy, including projections, append history
   // Explicit targets already support sources without a properties schema.
   const unschematized = new Stream({
     name: stream.name,
-    jsonSchema: {},
+    jsonSchema: { type: 'object' },
     supportedSyncModes: ['full_refresh'],
   });
   const plainSource = new Messages(unschematized);
@@ -552,6 +557,7 @@ test('invalid schema annotations fail before extraction or storage access', asyn
     for (const atRoot of [true, false]) {
       const stream = new Stream({
         name: 'items',
+        // @ts-expect-error -- null and 1 are deliberately mistyped descriptions the destination must reject
         jsonSchema: atRoot
           ? {
               type: 'object',
@@ -1209,8 +1215,10 @@ test('a table has one writer, even when another loads only its own partitions', 
     partitionKey: ['owner'],
   });
   class Owned extends Messages {
-    constructor(readonly owner: string) {
+    readonly owner: string;
+    constructor(owner: string) {
       super(stream, owner);
+      this.owner = owner;
       this.messages = rows(stream, [{ owner, id: '1', version: 1 }]);
     }
     protected override partitions() {
@@ -1482,7 +1490,8 @@ test('a checkpoint that cannot be saved after its rows commit is reported with t
     String(failure.cause),
     /was not saved after the destination committed/,
   );
-  assert.match(String((failure.cause as Error).cause), /disk full/);
+  assert.ok(failure.cause instanceof Error);
+  assert.match(String(failure.cause.cause), /disk full/);
   assert.deepEqual(
     (await database.sql`SELECT id FROM raw.items ORDER BY id`).map(
       (row) => row.id,
@@ -1747,14 +1756,16 @@ class ScriptedSource extends Source {
   readonly identity = 'scripted';
   protected readonly catalog: Catalog;
   protected override readonly concurrency: number;
+  scripts: Record<string, readonly Scripted[]>;
 
   constructor(
     streams: readonly Stream[],
-    public scripts: Record<string, readonly Scripted[]>,
+    scripts: Record<string, readonly Scripted[]>,
     { concurrency = 1 } = {},
   ) {
     super();
     this.catalog = new Catalog(streams);
+    this.scripts = scripts;
     this.concurrency = concurrency;
   }
 

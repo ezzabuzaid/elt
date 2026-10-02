@@ -1,16 +1,22 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import type { CopyConfiguration, KeyValue, TargetDescription } from 'elt';
+
+import type {
+  CopyConfiguration,
+  FieldValues,
+  KeyValue,
+  Stage,
+  TargetDescription,
+} from '@workspace/elt';
 import {
-  describeTarget,
-  type FieldValues,
   FileContent,
-  type Stage,
   TargetMissingError,
   TargetOwnedError,
-  undescribed,
   Writer,
-} from 'elt';
+  describeTarget,
+  undescribed,
+} from '@workspace/elt';
+
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { describe } from './sqlite-descriptions.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
@@ -41,14 +47,20 @@ export const op = '"_elt_op"';
 // them and a crash leaves nothing behind; commit merges them into the target
 // with the result of applying them one at a time.
 export abstract class SQLiteWriter extends Writer {
+  readonly configuration: CopyConfiguration;
+  readonly path: string;
+  readonly table: SQLiteTable;
   readonly #description: TargetDescription;
 
   constructor(
-    readonly configuration: CopyConfiguration,
-    readonly path: string,
-    readonly table: SQLiteTable,
+    configuration: CopyConfiguration,
+    path: string,
+    table: SQLiteTable,
   ) {
     super(configuration.stream);
+    this.configuration = configuration;
+    this.path = path;
+    this.table = table;
     this.#description = describeTarget(
       configuration,
       table.columns,

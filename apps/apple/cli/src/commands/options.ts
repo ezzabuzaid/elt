@@ -1,4 +1,5 @@
 import { Argument, type Command as Declaration } from 'commander';
+
 import { table } from '../table.ts';
 import { Command, type Output } from './command.ts';
 
@@ -15,7 +16,7 @@ export class OptionsCommand extends Command {
   }
 
   protected async run(declaration: Declaration): Promise<Output> {
-    const [name] = declaration.processedArgs as [string];
+    const name: string = declaration.processedArgs[0];
     const choices = await this.imports.options(name);
     return {
       data: choices.map(({ title, scope, options }) => ({

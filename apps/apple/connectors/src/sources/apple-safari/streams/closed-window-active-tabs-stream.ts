@@ -1,4 +1,6 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
+import type { PlistValue } from '../../../platform/macos/plist.ts';
 import type { ClosedWindow } from '../closed-tabs-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
@@ -20,7 +22,11 @@ const properties = {
   },
 } as const;
 
-type Entry = { windowId: string; tabGroupId: string; tabId: string };
+type Entry = {
+  windowId: PlistValue | undefined;
+  tabGroupId: string;
+  tabId: PlistValue;
+};
 
 export class ClosedWindowActiveTabsStream extends SafariStream<
   typeof properties,
@@ -41,15 +47,15 @@ export class ClosedWindowActiveTabsStream extends SafariStream<
     return scan.closedTabs.windows.flatMap(({ state }: ClosedWindow) =>
       Object.entries(dictionary(state.TabGroupsToActiveTabs)).map(
         ([tabGroupId, tabId]) => ({
-          windowId: state.WindowUUID as string,
+          windowId: state.WindowUUID,
           tabGroupId,
-          tabId: tabId as string,
+          tabId,
         }),
       ),
     );
   }
 
-  protected record(entry: Entry): SchemaRecord<typeof properties> {
+  protected record(entry: Entry): RecordDraft<typeof properties> {
     return entry;
   }
 }

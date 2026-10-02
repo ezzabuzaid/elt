@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
+
 import {
   Connection,
   Copy,
@@ -14,14 +15,15 @@ import {
   Pipeline,
   PipelineError,
   type Source,
-} from 'elt';
+} from '@workspace/elt';
 import {
-  installSQLiteCatalog,
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from 'elt-sqlite';
+  installSQLiteCatalog,
+} from '@workspace/elt-sqlite';
+
 import { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
 
 const snake = (name: string) =>
@@ -521,7 +523,10 @@ function fileBytes(path: string, table: string, file: unknown): Buffer {
     rows(
       path,
       `SELECT bytes FROM "_elt_files_${table}_bytes" WHERE file = ${Number(file)} ORDER BY n`,
-    ).map(({ bytes }) => bytes as Uint8Array),
+    ).map(({ bytes }) => {
+      assert.ok(bytes instanceof Uint8Array);
+      return bytes;
+    }),
   );
 }
 
@@ -1277,14 +1282,16 @@ test('Contacts reads as documented views whose joins keep one row per contact', 
   // counts once however many phones and groups it has.
   assert.deepEqual(
     contacts
-      .read(`
+      .read(
+        `
         SELECT c.id, c."birthdayYear", coalesce(p.n, 0) AS phones,
           coalesce(g.n, 0) AS "groups", a."calendarIdentifier" AS alternate
         FROM contacts c
         LEFT JOIN (SELECT "contactId", count(*) AS n FROM phone_numbers GROUP BY 1) p ON p."contactId" = c.id
         LEFT JOIN (SELECT "contactId", count(*) AS n FROM group_members GROUP BY 1) g ON g."contactId" = c.id
         LEFT JOIN alternate_birthdays a ON a."contactId" = c.id
-        ORDER BY c.id`)
+        ORDER BY c.id`,
+      )
       .map((found) => ({ ...found })),
     [
       {
@@ -1319,8 +1326,10 @@ test('Contacts reads as documented views whose joins keep one row per contact', 
   );
   assert.deepEqual(
     contacts
-      .read(`SELECT s."parentGroupId", s."childGroupId", child.kind
-        FROM group_subgroups s JOIN "groups" child ON child.id = s."childGroupId"`)
+      .read(
+        `SELECT s."parentGroupId", s."childGroupId", child.kind
+        FROM group_subgroups s JOIN "groups" child ON child.id = s."childGroupId"`,
+      )
       .map((found) => ({ ...found })),
     [
       {

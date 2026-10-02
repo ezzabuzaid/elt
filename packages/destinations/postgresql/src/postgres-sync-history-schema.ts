@@ -1,4 +1,5 @@
-import { syncHistoryRelations } from 'elt';
+import { syncHistoryRelations } from '@workspace/elt';
+
 import type { PostgresView } from './postgres-views.ts';
 
 const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {

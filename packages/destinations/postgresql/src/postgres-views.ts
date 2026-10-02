@@ -1,5 +1,7 @@
-import type { ReaderRelation } from 'elt';
 import type postgres from 'postgres';
+
+import type { ReaderRelation } from '@workspace/elt';
+
 import { identifier, quote } from './identifier.ts';
 import { schemaLock, schemaName } from './postgres-session.ts';
 

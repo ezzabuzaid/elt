@@ -65,7 +65,11 @@ export type Stage = AsyncDisposable & {
 // A destination's loading strategy for one stream; its Load prepares the
 // stream's Stage.
 export abstract class Writer {
-  constructor(readonly stream: Stream) {}
+  readonly stream: Stream;
+
+  constructor(stream: Stream) {
+    this.stream = stream;
+  }
 
   // Empties the target and releases its owner, refusing another writer's target.
   // Acknowledges the committed result while holding the target's write lock.

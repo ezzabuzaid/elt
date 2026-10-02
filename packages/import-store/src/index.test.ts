@@ -6,13 +6,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+
 import {
   type AppFacts,
   ImportStore,
-  lease,
-  leaseHeld,
   NewerLayoutError,
   type Selection,
+  lease,
+  leaseHeld,
   selectionProblems,
 } from './index.ts';
 

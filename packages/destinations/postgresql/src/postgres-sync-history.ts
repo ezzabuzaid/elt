@@ -1,14 +1,16 @@
+import postgres from 'postgres';
+
 import {
   type Connection,
   type CopyOutcome,
-  copyStatus,
   type DeclaredCopy,
-  passError,
-  passStatus,
   type RecordedPass,
   SyncHistory,
-} from 'elt';
-import postgres from 'postgres';
+  copyStatus,
+  passError,
+  passStatus,
+} from '@workspace/elt';
+
 import { PostgresDestination } from './postgres-destination.ts';
 import {
   syncHistoryTables,
@@ -113,16 +115,14 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     });
   }
 
-  async #write<T>(
-    work: (transaction: postgres.TransactionSql) => Promise<T>,
-  ): Promise<T> {
+  async #write<T>(work: (transaction: postgres.TransactionSql) => Promise<T>) {
     const sql = postgres(this.#url, {
       max: 1,
       onnotice: () => {},
       connection: { application_name: 'elt-sync-history' },
     });
     try {
-      return (await sql.begin(work)) as T;
+      return await sql.begin(work);
     } finally {
       await sql.end();
     }

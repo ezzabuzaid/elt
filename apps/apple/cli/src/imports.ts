@@ -1,8 +1,15 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import type { AppleApp, ChoiceOptions } from 'apple/apps/apple-app';
-import { ImportStore, lease, leaseHeld, type Selection } from 'import-store';
+
+import type { AppleApp, ChoiceOptions } from '@workspace/apple/apps/apple-app';
+import {
+  ImportStore,
+  type Selection,
+  lease,
+  leaseHeld,
+} from '@workspace/import-store';
+
 import { type PassObserver, type PassSummary, syncImports } from './sync.ts';
 
 // Shows a sync from its start to its finish, and each pass in between.
@@ -26,12 +33,7 @@ export type AppStatus = {
   readonly database: string | null;
   // never: not synced yet; interrupted: a pass was running when its sync stopped.
   readonly state:
-    | 'never'
-    | 'running'
-    | 'interrupted'
-    | 'succeeded'
-    | 'partial'
-    | 'failed';
+    'never' | 'running' | 'interrupted' | 'succeeded' | 'partial' | 'failed';
   readonly completedAt: string | null;
   readonly lastSuccessAt: string | null;
   readonly error: string | null;
@@ -50,8 +52,11 @@ export type AppStatus = {
 // Everything here can be rebuilt by syncing again.
 export class Imports {
   readonly root = resolve('outputs/cli');
+  readonly apps: readonly AppleApp[];
 
-  constructor(readonly apps: readonly AppleApp[]) {}
+  constructor(apps: readonly AppleApp[]) {
+    this.apps = apps;
+  }
 
   get names(): string[] {
     return this.apps.map(({ name }) => name);
@@ -179,47 +184,23 @@ export class Imports {
           completedAt: failure.failedAt,
           error: app.failure(new Error(failure.error)),
         };
-      if (base.database === null) return never;
-      // A sync installs the history views before it writes anything else.
-      using database = store.read(selection);
-      const latest = database
-        .prepare(
-          'SELECT status, completed_at, error, last_successful_sync_at FROM sync_status WHERE connector = ?',
-        )
-        .get(app.name) as
-        | {
-            status: AppStatus['state'];
-            completed_at: string | null;
-            error: string | null;
-            last_successful_sync_at: string | null;
-          }
-        | undefined;
-      // Installed, but no pass began yet.
-      if (latest === undefined) return never;
+      const latest = store.latestPass(selection);
+      // Not synced yet, or no pass began.
+      if (latest === null) return never;
       return {
         ...base,
         state:
-          latest.status === 'running' && !syncing
-            ? 'interrupted'
-            : latest.status,
-        completedAt: latest.completed_at,
-        lastSuccessAt: latest.last_successful_sync_at,
+          latest.state === 'running' && !syncing ? 'interrupted' : latest.state,
+        completedAt: latest.completedAt,
+        lastSuccessAt: latest.lastSucceededAt,
         error: latest.error,
-        streams: (
-          database
-            .prepare(
-              'SELECT stream, status, last_successful_sync_at FROM stream_status WHERE connector = ? ORDER BY stream',
-            )
-            .all(app.name) as {
-            stream: string;
-            status: string;
-            last_successful_sync_at: string | null;
-          }[]
-        ).map(({ stream, status, last_successful_sync_at }) => ({
-          stream,
-          state: status,
-          lastSuccessAt: last_successful_sync_at,
-        })),
+        streams: store
+          .streamStatuses(selection)
+          .map(({ stream, state, lastSucceededAt }) => ({
+            stream,
+            state,
+            lastSuccessAt: lastSucceededAt,
+          })),
       };
     });
   }

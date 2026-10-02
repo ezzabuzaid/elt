@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { BookmarkNode } from '../bookmarks-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
@@ -101,14 +102,14 @@ export class ReadingListItemsStream extends SafariStream<
   protected record({
     node,
     position,
-  }: BookmarkNode): SchemaRecord<typeof properties> {
+  }: BookmarkNode): RecordDraft<typeof properties> {
     const saved = dictionary(node.ReadingList);
     const fetched = dictionary(node.ReadingListNonSync);
     return {
-      id: node.WebBookmarkUUID as string,
+      id: node.WebBookmarkUUID,
       position,
       title: text(dictionary(node.URIDictionary).title),
-      url: node.URLString as string,
+      url: node.URLString,
       addedAt: plistTime(saved.DateAdded),
       lastViewedAt: plistTime(saved.DateLastViewed),
       previewText: text(saved.PreviewText) ?? text(node.previewText),

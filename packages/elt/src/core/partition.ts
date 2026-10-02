@@ -69,7 +69,10 @@ export function assertInPartition(
   value: unknown,
 ): void {
   for (const [field, expected] of Object.entries(partition)) {
-    const actual = (value as Record<string, unknown> | null)?.[field];
+    const actual: unknown =
+      value !== null && typeof value === 'object'
+        ? Reflect.get(value, field)
+        : undefined;
     if (actual !== expected)
       throw new TypeError(
         `Stream ${stream.name} record for partition ${JSON.stringify(partition)} carries ${field} ${JSON.stringify(actual)}`,
@@ -84,6 +87,7 @@ export function readPartitionStates(
   state: unknown,
 ): Map<string, PartitionState> {
   const identity = partitionIdentity(stream);
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds the envelope Source.read wrote; own state is not re-validated
   const envelope = state as { partitions: PartitionState[] } | null;
   return new Map(
     (envelope?.partitions ?? []).map((entry) => [

@@ -1,4 +1,5 @@
 import type { Command as Declaration } from 'commander';
+
 import type { Imports } from '../imports.ts';
 import { json } from '../table.ts';
 
@@ -18,7 +19,11 @@ export abstract class Command {
   abstract readonly summary: string;
 
   // Every command reaches the apps and their imports through the mediator.
-  constructor(protected readonly imports: Imports) {}
+  protected readonly imports: Imports;
+
+  constructor(imports: Imports) {
+    this.imports = imports;
+  }
 
   protected abstract configure(declaration: Declaration): void;
 

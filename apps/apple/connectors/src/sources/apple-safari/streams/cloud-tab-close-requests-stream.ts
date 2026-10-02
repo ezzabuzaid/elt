@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
 import type { Row } from '../safari-values.ts';
@@ -40,12 +41,12 @@ export class CloudTabCloseRequestsStream extends SafariStream<
     return scan.cloudTabs.closeRequests;
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      id: row.close_request_uuid as string,
-      deviceId: row.destination_device_uuid as string,
-      url: row.url as string,
-      tabId: row.tab_uuid as string,
+      id: row.close_request_uuid,
+      deviceId: row.destination_device_uuid,
+      url: row.url,
+      tabId: row.tab_uuid,
     };
   }
 }

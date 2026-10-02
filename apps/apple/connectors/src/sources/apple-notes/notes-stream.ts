@@ -1,9 +1,10 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import {
-  flag,
   type NoteEntry,
   type NotesScan,
+  flag,
   string,
   time,
 } from './notes-scan.ts';
@@ -97,11 +98,11 @@ export class NotesStream extends AppleNotesStream<
   protected record(
     { row, document }: NoteEntry,
     scan: NotesScan,
-  ): SchemaRecord<typeof properties> {
+  ): RecordDraft<typeof properties> {
     return {
-      id: row.ZIDENTIFIER as string,
-      accountId: row.account as string,
-      folderId: row.folder as string,
+      id: row.ZIDENTIFIER,
+      accountId: row.account,
+      folderId: row.folder,
       title: string(row.ZTITLE1),
       text: document === null ? null : scan.text(document),
       markdown: document === null ? null : scan.markdown(document),

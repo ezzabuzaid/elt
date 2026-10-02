@@ -1,10 +1,11 @@
 import { dirname, join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
+
 import {
-  decodeTable,
-  markdownTable,
   type NoteAttachmentReference,
   NoteDocument,
+  decodeTable,
+  markdownTable,
 } from '../../platform/macos/note-document.ts';
 import type { NoteStore } from '../../platform/macos/note-store.ts';
 import { type ImportScope, selected, withinDates } from '../import-scope.ts';
@@ -150,11 +151,13 @@ export class NotesScan implements AsyncDisposable {
   #attachments?: Map<SQLOutputValue | undefined, Row>;
   #inline?: Map<SQLOutputValue | undefined, Row>;
   readonly #tables = new Map<string, string[][]>();
+  readonly store: NoteStore;
+  readonly scope: ImportScope;
 
-  constructor(
-    readonly store: NoteStore,
-    readonly scope: ImportScope = {},
-  ) {}
+  constructor(store: NoteStore, scope: ImportScope = {}) {
+    this.store = store;
+    this.scope = scope;
+  }
 
   [Symbol.asyncDispose](): Promise<void> {
     return this.store[Symbol.asyncDispose]();

@@ -1,5 +1,10 @@
-import { type PostgresView, publishPostgresViews } from 'elt-postgresql';
 import type postgres from 'postgres';
+
+import {
+  type PostgresView,
+  publishPostgresViews,
+} from '@workspace/elt-postgresql';
+
 import { searchConsoleTables as tables } from './search-console-copies.ts';
 
 type View = Omit<PostgresView, 'query'> & {

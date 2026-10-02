@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { ReaderRelation } from 'elt';
+
+import type { ReaderRelation } from '@workspace/elt';
+
 import { describe } from './sqlite-descriptions.ts';
 
 export type SQLiteView = ReaderRelation & { readonly query: string };

@@ -1,7 +1,8 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { appleTime, flag, type Row, text } from '../safari-values.ts';
+import { type Row, appleTime, flag, text } from '../safari-values.ts';
 import { windowState, windowStateFields } from '../window-state.ts';
 
 const { nullableId, nullableText } = safariFields;
@@ -58,14 +59,11 @@ export class WindowsStream extends SafariStream<typeof properties, Row> {
     return scan.tabs.windows;
   }
 
-  protected record(
-    row: Row,
-    scan: SafariScan,
-  ): SchemaRecord<typeof properties> {
+  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
     const { tabs } = scan;
     const state = windowState(tabs.windowState(row));
     return {
-      id: row.uuid as string,
+      id: row.uuid,
       profileId: tabs.uuid(row.active_profile_id),
       activeTabGroupId: tabs.uuid(row.active_tab_group_id),
       localTabGroupId: tabs.uuid(row.local_tab_group_id),

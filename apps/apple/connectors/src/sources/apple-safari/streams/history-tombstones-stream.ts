@@ -1,7 +1,8 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { appleTime, base64, type Row, text } from '../safari-values.ts';
+import { type Row, appleTime, base64, text } from '../safari-values.ts';
 
 const { profileId, nullableText, nullableTimestamp } = safariFields;
 
@@ -65,17 +66,17 @@ export class HistoryTombstonesStream extends SafariStream<
     return scan.history.flatMap((history) => history.tombstones);
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      profileId: row.$profile as string,
-      id: row.id as number,
+      profileId: row.$profile,
+      id: row.id,
       startAt: appleTime(row.start_time),
       endAt: appleTime(row.end_time),
       url: text(row.url),
       encryptedUrl: base64(row.url),
-      generation: row.generation as number,
+      generation: row.generation,
       deviceId: text(row.udid),
-      attributes: row.attributes as number,
+      attributes: row.attributes,
     };
   }
 }

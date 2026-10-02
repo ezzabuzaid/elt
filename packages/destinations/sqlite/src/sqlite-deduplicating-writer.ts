@@ -1,9 +1,15 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import type { CopyConfiguration, Deduplication, KeyValue } from 'elt';
+
+import type {
+  CopyConfiguration,
+  Deduplication,
+  KeyValue,
+} from '@workspace/elt';
+
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
-import { op, SQLiteWriter, seq } from './sqlite-writer.ts';
+import { SQLiteWriter, op, seq } from './sqlite-writer.ts';
 
 export class SQLiteDeduplicatingWriter extends SQLiteWriter {
   readonly deduplication: Deduplication;

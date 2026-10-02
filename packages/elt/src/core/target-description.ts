@@ -62,9 +62,7 @@ export function describeTarget<Column extends DescribedColumn>(
         : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare by byte order.`,
     );
   }
-  const properties = stream.jsonSchema.properties as
-    | Readonly<Record<string, Readonly<Record<string, unknown>>>>
-    | undefined;
+  const { properties } = stream.jsonSchema;
   const described: Record<string, string | null> = Object.fromEntries(
     columns.map((column) => {
       if (column.storesFile) return [column.name, storedFile(column)];

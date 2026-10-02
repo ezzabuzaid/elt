@@ -6,7 +6,8 @@ import {
   type SQLOutputValue,
   type StatementSync,
 } from 'node:sqlite';
-import { isBinaryPlist, type PlistValue, parseBinaryPlist } from './plist.ts';
+
+import { type PlistValue, isBinaryPlist, parseBinaryPlist } from './plist.ts';
 
 // Books.app's own container: the library, annotations, themes and its
 // preferences.

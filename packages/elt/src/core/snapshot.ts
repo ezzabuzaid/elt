@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+
 import { Deduplication } from './deduplication.ts';
 import type { DeleteMessage, KeyValue, StateMessage } from './source.ts';
 import type { Stream } from './stream.ts';
@@ -85,9 +86,9 @@ export async function* diffGroupedSnapshot<
 > {
   assertSnapshotStream(stream);
   const deduplication = new Deduplication(stream, stream.primaryKey);
-  const previous = new Map(
-    Object.entries((state as GroupedSnapshotState | null)?.groups ?? {}),
-  );
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what diffGroupedSnapshot wrote; own state is not re-validated
+  const saved = state as GroupedSnapshotState | null;
+  const previous = new Map(Object.entries(saved?.groups ?? {}));
   // A record can move between groups; its previous fingerprint is then found
   // through every previous group, indexed only when a lookup misses.
   let everyPrevious: Map<string, string> | null = null;
@@ -171,16 +172,23 @@ function sortedObject<Value>(
 
 // The previous snapshot, as diffSnapshot wrote it.
 function readSnapshot(state: unknown): Map<string, string> {
-  return new Map(
-    Object.entries((state as SnapshotState | null)?.snapshot ?? {}),
-  );
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what diffSnapshot wrote; own state is not re-validated
+  const saved = state as SnapshotState | null;
+  return new Map(Object.entries(saved?.snapshot ?? {}));
 }
 
 // A snapshot key is the JSON of the primary key's values, in field order.
 function keyObject(stream: Stream, key: string): Record<string, KeyValue> {
-  const values = JSON.parse(key) as KeyValue[];
+  const values: KeyValue[] = JSON.parse(key);
   return Object.fromEntries(
-    values.map((value, index) => [stream.primaryKey[index] as string, value]),
+    stream.primaryKey.map((field, index) => {
+      const value = values[index];
+      if (value === undefined)
+        throw new TypeError(
+          `Snapshot key ${key} does not match ${stream.name}'s primary key`,
+        );
+      return [field, value];
+    }),
   );
 }
 

@@ -1,7 +1,8 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';
-import { coreDataTime, integer, type Row } from '../books-values.ts';
+import { type Row, coreDataTime, integer } from '../books-values.ts';
 
 const properties = {
   collectionId: {
@@ -48,10 +49,10 @@ export class CollectionMembersStream extends BooksStream<
       ORDER BY member.Z_PK`);
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      collectionId: row.collectionId as string,
-      assetId: row.ZASSETID as string,
+      collectionId: row.collectionId,
+      assetId: row.ZASSETID,
       sortKey: integer(row.ZSORTKEY),
       addedAt: coreDataTime(row.ZLOCALMODDATE),
     };

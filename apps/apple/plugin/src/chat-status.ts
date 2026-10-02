@@ -1,4 +1,5 @@
 import { relative } from 'node:path';
+
 import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
 
 // What a chat's hooks add to the model's context: each selected app, where its
@@ -63,5 +64,18 @@ export function chatStatus(plugin: ApplePlugin): {
           `- ${plugin.app(app).title}: ${progress(sync, plugin.app(app).guidance())}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`,
       ),
     ].join('\n'),
+  };
+}
+
+// The status to add to one chat's context: always when the chat starts or
+// compacts, and before a prompt only once the status changed since it was
+// last sent.
+export function chatContext(plugin: ApplePlugin) {
+  let sent: string | undefined;
+  return (event: 'SessionStart' | 'UserPromptSubmit'): string | null => {
+    const status = chatStatus(plugin);
+    if (event === 'UserPromptSubmit' && status.state === sent) return null;
+    sent = status.state;
+    return status.text;
   };
 }

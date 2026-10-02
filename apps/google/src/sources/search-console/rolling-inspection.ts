@@ -1,4 +1,4 @@
-import type { DeleteMessage, Stream } from 'elt';
+import type { DeleteMessage, Stream } from '@workspace/elt';
 
 import type { UrlInspection } from './url-inspection.ts';
 
@@ -19,6 +19,7 @@ export type InspectionState = {
 
 export function readInspectionState(state: unknown): Map<string, Inspected> {
   return new Map(
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what this source wrote; own state is not re-validated
     Object.entries((state as InspectionState | null)?.inspected ?? {}),
   );
 }

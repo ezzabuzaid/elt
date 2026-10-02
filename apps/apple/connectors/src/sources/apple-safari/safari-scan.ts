@@ -1,7 +1,8 @@
 import { join } from 'node:path';
+
 import {
-  readSafariPlist,
   SafariDatabase,
+  readSafariPlist,
 } from '../../platform/macos/safari-store.ts';
 import type { ImportScope } from '../import-scope.ts';
 import { BookmarksReader } from './bookmarks-reader.ts';
@@ -9,18 +10,13 @@ import { ClosedTabsReader } from './closed-tabs-reader.ts';
 import { CloudTabsReader, cloudTabsColumns } from './cloud-tabs-reader.ts';
 import { DownloadsReader } from './downloads-reader.ts';
 import { HistoryReader, historyColumns } from './history-reader.ts';
-import { defaultProfile } from './safari-values.ts';
+import { defaultProfile, text } from './safari-values.ts';
 import { TabsReader, tabsColumns } from './tabs-reader.ts';
 
 // Where Safari keeps each kind of data: databases it commits to, and property
 // lists it rewrites whole.
 export type SafariStore =
-  | 'history'
-  | 'tabs'
-  | 'cloudTabs'
-  | 'bookmarks'
-  | 'closedTabs'
-  | 'downloads';
+  'history' | 'tabs' | 'cloudTabs' | 'bookmarks' | 'closedTabs' | 'downloads';
 
 export type SafariLocation = {
   // ~/Library/Safari: History.db and the property lists.
@@ -114,17 +110,22 @@ export class SafariScan implements AsyncDisposable {
           {},
         ).allProfiles;
         const readers: HistoryReader[] = [];
-        for (const profile of profiles)
+        for (const profile of profiles) {
+          const serverId = text(profile.server_id);
+          const profileId = text(profile.external_uuid);
+          if (serverId === null || profileId === null)
+            throw new TypeError('A Safari profile has no identifier');
           readers.push(
             new HistoryReader(
               await database(
-                profileHistory(location, profile.server_id as string),
+                profileHistory(location, serverId),
                 historyColumns,
               ),
-              profile.external_uuid as string,
+              profileId,
               scope,
             ),
           );
+        }
         return readers;
       }),
       tabs: await open(
@@ -182,7 +183,7 @@ export class SafariScan implements AsyncDisposable {
   }
 
   #reader<S extends SafariStore>(store: S): Readers[S] {
-    const opened = this.#stores[store] as Opened<Readers[S]> | undefined;
+    const opened: Opened<Readers[S]> | undefined = this.#stores[store];
     if (opened === undefined)
       throw new Error(`Safari ${store} was not opened for this run`);
     if ('error' in opened) throw opened.error;

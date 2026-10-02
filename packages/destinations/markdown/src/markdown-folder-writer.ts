@@ -4,25 +4,30 @@ import {
   lstat,
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
+  readdir,
   rename,
   rm,
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CopyConfiguration } from 'elt';
+
+import type { CopyConfiguration } from '@workspace/elt';
+
 import { MarkdownDocument } from './markdown-document.ts';
 import { MarkdownFolder } from './markdown-folder.ts';
 import { MarkdownWriter } from './markdown-writer.ts';
 
 export class MarkdownFolderWriter extends MarkdownWriter {
+  readonly target: MarkdownFolder;
+
   constructor(
     configuration: CopyConfiguration,
     path: string,
-    readonly target: MarkdownFolder,
+    target: MarkdownFolder,
   ) {
     super(configuration, path, target.document);
+    this.target = target;
     Object.freeze(this);
   }
 
@@ -94,6 +99,7 @@ export class MarkdownFolderWriter extends MarkdownWriter {
             throw new AggregateError(
               [error, restoreError],
               `Folder publication and restoration failed; previous export retained at ${previous}`,
+              { cause: restoreError },
             );
           }
         }

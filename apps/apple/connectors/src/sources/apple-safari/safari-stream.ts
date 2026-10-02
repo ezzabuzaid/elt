@@ -1,13 +1,13 @@
 import {
-  type FieldSchema,
+  type Properties,
+  type RecordDraft,
   type SchemaRecord,
   Stream,
   type SyncMode,
   validateRecords,
-} from 'elt';
-import type { SafariScan, SafariStore } from './safari-scan.ts';
+} from '@workspace/elt';
 
-type Properties = Readonly<Record<string, FieldSchema>>;
+import type { SafariScan, SafariStore } from './safari-scan.ts';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;
@@ -72,10 +72,10 @@ export abstract class SafariStream<P extends Properties, Row> {
 
   async read(scan: SafariScan): Promise<SchemaRecord<P>[]> {
     return validateRecords(
-      this.describe(),
+      this,
       this.rows(scan).map((row) => this.record(row, scan)),
       'Safari',
-    ) as SchemaRecord<P>[];
+    );
   }
 
   // The file a record carries, for streams that support file reads.
@@ -85,5 +85,5 @@ export abstract class SafariStream<P extends Properties, Row> {
 
   protected abstract rows(scan: SafariScan): readonly Row[];
 
-  protected abstract record(row: Row, scan: SafariScan): SchemaRecord<P>;
+  protected abstract record(row: Row, scan: SafariScan): RecordDraft<P>;
 }

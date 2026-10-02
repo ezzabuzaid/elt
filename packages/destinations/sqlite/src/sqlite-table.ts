@@ -1,6 +1,7 @@
-import type { Stream } from 'elt';
-import { Target } from 'elt';
-import { canonical, SQLiteColumn } from './sqlite-column.ts';
+import type { Stream } from '@workspace/elt';
+import { Target } from '@workspace/elt';
+
+import { SQLiteColumn, canonical } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
 
 // A reusable target definition. Empty columns mean infer from the Copy's stream.

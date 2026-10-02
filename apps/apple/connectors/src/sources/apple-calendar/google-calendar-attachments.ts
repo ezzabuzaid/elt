@@ -1,6 +1,10 @@
 import { writeFile } from 'node:fs/promises';
 
-import { type GoogleRequester, reasonsOf, statusOf } from 'google-auth';
+import {
+  type GoogleRequester,
+  reasonsOf,
+  statusOf,
+} from '@workspace/google-auth';
 
 import type { CalendarAttachmentFetcher } from './apple-calendar-source.ts';
 
@@ -40,7 +44,7 @@ export function googleCalendarAttachments(
   return async ({ uri }, path) => {
     const attachment = parseGoogleAttachment(uri);
     if (attachment === undefined) return false;
-    let bytes: Uint8Array;
+    let bytes: Uint8Array | undefined;
     try {
       bytes =
         attachment.kind === 'drive'
@@ -55,6 +59,7 @@ export function googleCalendarAttachments(
         return false;
       throw error;
     }
+    if (bytes === undefined) return false;
     await writeFile(path, bytes);
     return true;
   };
@@ -125,7 +130,7 @@ async function gmailAttachment(
   requester: GoogleRequester,
   id: string,
   partId: string,
-): Promise<Uint8Array> {
+): Promise<Uint8Array | undefined> {
   const messages = await gmailMessages(requester, id);
   for (const message of messages) {
     const messageId = field(message, 'id');
@@ -144,10 +149,8 @@ async function gmailAttachment(
       throw new TypeError(`Gmail returned no attachment data for ${id}`);
     return Buffer.from(data, 'base64url');
   }
-  throw Object.assign(
-    new Error(`Gmail message ${id} has no attachment part ${partId}`),
-    { status: 404 },
-  );
+  // No message carries the part: the attachment is unreachable, like a 404.
+  return undefined;
 }
 
 // Calendar's `th` is usually a message id; fall back to a thread with that id.

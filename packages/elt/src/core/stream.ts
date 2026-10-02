@@ -1,12 +1,13 @@
 import { Deduplication } from './deduplication.ts';
 import { FileReference } from './file-read.ts';
+import type { StreamSchema } from './record-validation.ts';
 
 export type SyncMode = 'full_refresh' | 'incremental';
 
 // A source's immutable description of a resource, without extraction behavior.
 export class Stream {
   readonly name: string;
-  readonly jsonSchema: Readonly<Record<string, unknown>>;
+  readonly jsonSchema: StreamSchema;
   readonly primaryKey: readonly string[];
   readonly supportedSyncModes: readonly SyncMode[];
   readonly supportsFileTransfer?: true;
@@ -29,7 +30,7 @@ export class Stream {
     partitionKey,
   }: {
     name: string;
-    jsonSchema: Readonly<Record<string, unknown>>;
+    jsonSchema: StreamSchema;
     primaryKey?: readonly string[];
     supportedSyncModes: readonly SyncMode[];
     supportsFileTransfer?: true;

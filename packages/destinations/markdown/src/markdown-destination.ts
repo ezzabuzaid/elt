@@ -1,10 +1,12 @@
 import { join, resolve } from 'node:path';
-import type { CopyConfiguration, Load } from 'elt';
-import { Destination } from 'elt';
-import { MarkdownFile } from './markdown-file.ts';
+
+import type { CopyConfiguration, Load } from '@workspace/elt';
+import { Destination } from '@workspace/elt';
+
 import { MarkdownFileWriter } from './markdown-file-writer.ts';
-import { MarkdownFolder } from './markdown-folder.ts';
+import { MarkdownFile } from './markdown-file.ts';
 import { MarkdownFolderWriter } from './markdown-folder-writer.ts';
+import { MarkdownFolder } from './markdown-folder.ts';
 import type { MarkdownWriter } from './markdown-writer.ts';
 
 export class MarkdownDestination extends Destination<

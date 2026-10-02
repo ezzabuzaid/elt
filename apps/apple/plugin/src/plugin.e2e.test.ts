@@ -8,8 +8,8 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
 } from 'node:fs';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
@@ -19,6 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { gzipSync } from 'node:zlib';
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
@@ -272,59 +273,441 @@ function read(database: string, sql: string, ...commands: string[]) {
   return { rows: JSON.parse(stdout || '[]'), stderr, status };
 }
 
-test('the committed Apple plugin installs from the repo marketplace, sets up through Codex bundled Node, keeps its import current in the background and serves it to the skill read command', {
-  timeout: 180_000,
-}, async (t) => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
-  const marketplace = JSON.parse(
-    readFileSync(join(root, '.agents/plugins/marketplace.json'), 'utf8'),
-  );
-  const [entry] = marketplace.plugins;
-  assert.equal(entry.name, 'apple');
-  // Codex copies the plugin directory into its cache and runs it from there.
-  const plugin = join(scratch.path, 'plugin');
-  cpSync(join(root, entry.source.path), plugin, { recursive: true });
-  for (const path of readdirSync(plugin, { recursive: true, encoding: 'utf8' }))
-    assert.equal(lstatSync(join(plugin, path)).isSymbolicLink(), false, path);
-  const manifest = JSON.parse(
-    readFileSync(join(plugin, '.codex-plugin/plugin.json'), 'utf8'),
-  );
-  assert.equal(manifest.name, entry.name);
-  for (const path of [
-    manifest.extensions['com.openai'].onboardingSkill,
-    manifest.interface.logo,
-    manifest.interface.composerIcon,
-    './skills/query-apple/SKILL.md',
-  ])
-    assert.ok(existsSync(join(plugin, path)), path);
-  const {
-    mcpServers: { apple },
-  } = JSON.parse(readFileSync(join(plugin, manifest.mcpServers), 'utf8'));
-  accessSync(join(plugin, apple.command), constants.X_OK);
-  const runtime =
-    process.env.CODEX_MCP_NODE_PATH ??
-    join(
-      homedir(),
-      '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
+test(
+  'the committed Apple plugin installs from the repo marketplace, sets up through Codex bundled Node, keeps its import current in the background and serves it to the skill read command',
+  {
+    timeout: 180_000,
+  },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
+    const marketplace = JSON.parse(
+      readFileSync(join(root, '.agents/plugins/marketplace.json'), 'utf8'),
     );
-  assert.ok(
-    existsSync(runtime),
-    'Open the ChatGPT desktop app to install the Codex bundled runtime',
-  );
-  // The user's Notes, where the server looks for them under this HOME.
-  const noteStore = await noteStoreFixture(
-    join(scratch.path, 'Library/Group Containers/group.com.apple.notes'),
-  );
-  const retitle = (title: string) => {
-    using database = new DatabaseSync(noteStore);
-    database
-      .prepare(
-        "UPDATE ZICCLOUDSYNCINGOBJECT SET ZTITLE1 = ? WHERE ZIDENTIFIER = 'NOTE-RICH'",
-      )
-      .run(title);
-  };
-  let diagnostics = '';
-  const launch = () => {
+    const [entry] = marketplace.plugins;
+    assert.equal(entry.name, 'apple');
+    // Codex copies the plugin directory into its cache and runs it from there.
+    const plugin = join(scratch.path, 'plugin');
+    cpSync(join(root, entry.source.path), plugin, { recursive: true });
+    for (const path of readdirSync(plugin, {
+      recursive: true,
+      encoding: 'utf8',
+    }))
+      assert.equal(lstatSync(join(plugin, path)).isSymbolicLink(), false, path);
+    const manifest = JSON.parse(
+      readFileSync(join(plugin, '.codex-plugin/plugin.json'), 'utf8'),
+    );
+    assert.equal(manifest.name, entry.name);
+    for (const path of [
+      manifest.extensions['com.openai'].onboardingSkill,
+      manifest.interface.logo,
+      manifest.interface.composerIcon,
+      './skills/query-apple/SKILL.md',
+    ])
+      assert.ok(existsSync(join(plugin, path)), path);
+    const {
+      mcpServers: { apple },
+    } = JSON.parse(readFileSync(join(plugin, manifest.mcpServers), 'utf8'));
+    accessSync(join(plugin, apple.command), constants.X_OK);
+    const runtime =
+      process.env.CODEX_MCP_NODE_PATH ??
+      join(
+        homedir(),
+        '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
+      );
+    assert.ok(
+      existsSync(runtime),
+      'Open the ChatGPT desktop app to install the Codex bundled runtime',
+    );
+    // The user's Notes, where the server looks for them under this HOME.
+    const noteStore = await noteStoreFixture(
+      join(scratch.path, 'Library/Group Containers/group.com.apple.notes'),
+    );
+    const retitle = (title: string) => {
+      using database = new DatabaseSync(noteStore);
+      database
+        .prepare(
+          "UPDATE ZICCLOUDSYNCINGOBJECT SET ZTITLE1 = ? WHERE ZIDENTIFIER = 'NOTE-RICH'",
+        )
+        .run(title);
+    };
+    let diagnostics = '';
+    const launch = () => {
+      const transport = new StdioClientTransport({
+        command: join(plugin, apple.command),
+        args: apple.args,
+        cwd: join(plugin, apple.cwd),
+        env: { HOME: scratch.path, CODEX_MCP_NODE_PATH: runtime, PATH: '' },
+        stderr: 'pipe',
+      });
+      transport.stderr?.on('data', (data) => {
+        diagnostics += String(data);
+      });
+      return transport;
+    };
+    const connect = async (client: Client) => {
+      const transport = launch();
+      await client.connect(transport, { signal: t.signal, timeout: 5_000 });
+      return transport;
+    };
+    const call = (
+      client: Client,
+      name: string,
+      args?: Record<string, unknown>,
+    ) =>
+      client.callTool({ name, arguments: args }, undefined, {
+        signal: t.signal,
+        timeout: 90_000,
+      });
+    const invoke = async (
+      client: Client,
+      name: string,
+      args?: Record<string, unknown>,
+    ) => {
+      const result = await call(client, name, args);
+      assert.notEqual(result.isError, true, JSON.stringify(result.content));
+      assert.ok(Array.isArray(result.content));
+      const block = result.content[0];
+      assert.equal(block?.type, 'text');
+      return JSON.parse(block.text);
+    };
+    // What the plugin's hooks add to a chat's context.
+    const context = async (
+      client: Client,
+      event: 'SessionStart' | 'UserPromptSubmit',
+    ) => {
+      const result = await call(client, 'apple_context', { event });
+      assert.notEqual(result.isError, true, JSON.stringify(result.content));
+      assert.ok(Array.isArray(result.content));
+      return result.content.map((block) => block.text).join('\n');
+    };
+    // The skill's entry point: the selection, with no tool call.
+    const settingsFile = join(
+      scratch.path,
+      'Library/Application Support/Context Compiler/Apple/settings.sqlite',
+    );
+    const selected = (): SelectedApp[] =>
+      read(
+        settingsFile,
+        'SELECT app, scope, include_attachments, database, connection_error FROM selected_apps',
+      ).rows.map((app: Omit<SelectedApp, 'sync'>) => ({
+        ...app,
+        sync: read(
+          app.database,
+          'SELECT status, error, last_successful_sync_at FROM sync_status',
+        ).rows[0],
+      }));
+    // Waits for the leading server until the selected apps reach the state done
+    // looks for.
+    const settled = async (
+      what: string,
+      done: (apps: SelectedApp[]) => boolean,
+    ): Promise<SelectedApp[]> => {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const apps = selected();
+        if (done(apps)) return apps;
+        await sleep(500);
+      }
+      assert.fail(`The import never ${what}`);
+    };
+    const imported = async (title: string) => {
+      const [notes] = await settled(
+        `showed ${title}`,
+        ([notes]) =>
+          notes?.sync?.status === 'succeeded' &&
+          read(
+            notes.database,
+            'SELECT title FROM notes WHERE title = @title',
+            `.parameter set @title "'${title}'"`,
+          ).rows.length === 1,
+      );
+      assert.ok(notes);
+      return notes;
+    };
+
+    const client = new Client(
+      { name: 'apple-e2e', version: '1.0.0' },
+      { capabilities: { elicitation: { form: {} } } },
+    );
+    const forms: string[] = [];
+    client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
+      forms.push(params.message);
+      // A person reads the form for longer than the SDK's 60 s request default.
+      await sleep(61_000);
+      return { action: 'accept', content: { apps: ['notes'] } };
+    });
+    const other = new Client({ name: 'another-chat', version: '1.0.0' });
+    const transport = await connect(client);
+    const otherTransport = await connect(other);
+    try {
+      assert.deepEqual(
+        (await client.listTools()).tools.map((tool) => tool.name).sort(),
+        [
+          'apple_configure',
+          'apple_context',
+          'apple_options',
+          'apple_settings_read',
+          'apple_settings_update',
+          'apple_setup',
+        ],
+      );
+      // Only the hooks call apple_context; Codex keeps it from the model.
+      assert.deepEqual(
+        (await client.listTools()).tools.find(
+          (tool) => tool.name === 'apple_context',
+        )?._meta,
+        { ui: { visibility: ['app'] } },
+      );
+      // Codex shows these instructions with the tools.
+      assert.match(String(client.getInstructions()), /\$query-apple/);
+      // The server names the installed version, which decides who leads.
+      assert.equal(client.getServerVersion()?.version, manifest.version);
+      // The plugin page's native Settings section names two of those tools.
+      assert.deepEqual(
+        OpenAISettingsCapabilitySchema.parse(
+          client.getServerCapabilities()?.experimental?.['openai/settings'],
+        ),
+        {
+          readTool: 'apple_settings_read',
+          updateTool: 'apple_settings_update',
+        },
+      );
+      assert.deepEqual(selected(), []);
+      assert.match(
+        await context(client, 'SessionStart'),
+        /no apps are set up\. Use \$setup-apple/,
+      );
+      assert.equal(await context(client, 'UserPromptSubmit'), '');
+      assert.deepEqual((await call(other, 'apple_setup')).content, [
+        {
+          type: 'text',
+          text: 'This host cannot show forms. Set up with apple_options, then apple_configure.',
+        },
+      ]);
+
+      // Setup returns once the answers are saved; the import runs apart from it.
+      const setUp = await invoke(client, 'apple_setup');
+      // One form: the apps. Notes is imported in full without further questions.
+      assert.equal(forms.length, 1);
+      assert.match(forms[0] ?? '', /Choose the Apple apps/);
+      assert.deepEqual(setUp.unavailable, []);
+      assert.deepEqual(
+        setUp.apps.map(({ app }: { app: string }) => app),
+        ['notes'],
+      );
+      const synced = await imported('Groceries');
+      // The next prompt carries the changed status: where Notes is imported.
+      const status = await context(client, 'UserPromptSubmit');
+      assert.match(
+        status,
+        /^- Notes: synced at \d{4}-\d\d-\d\dT[\d:.]+Z\. Database: notes\/[0-9a-f]{16}\/data\.sqlite$/m,
+      );
+      assert.ok(
+        status.includes(
+          join(
+            scratch.path,
+            'Library/Application Support/Context Compiler/Apple',
+          ),
+        ),
+      );
+      assert.equal(await context(client, 'UserPromptSubmit'), '');
+      // The file the skill reads tells what it holds and how fresh it is.
+      assert.deepEqual(
+        read(
+          synced.database,
+          "SELECT name FROM catalog WHERE kind = 'view' AND name IN ('notes', 'stream_status') ORDER BY name",
+        ).rows,
+        [{ name: 'notes' }, { name: 'stream_status' }],
+      );
+      assert.deepEqual(
+        read(
+          synced.database,
+          "SELECT status FROM stream_status WHERE stream = 'notes' AND last_successful_sync_at IS NOT NULL",
+        ).rows,
+        [{ status: 'succeeded' }],
+      );
+      assert.deepEqual(
+        read(
+          synced.database,
+          'SELECT id FROM notes WHERE title = @title',
+          `.parameter set @title "'Groceries'"`,
+        ).rows,
+        [{ id: 'NOTE-RICH' }],
+      );
+      const settings = OpenAISettingsReadResultSchema.parse(
+        (await call(client, 'apple_settings_read', {})).structuredContent,
+      );
+      assert.equal(settings.values.notes, true);
+      assert.equal(settings.values.mail, false);
+      const notesSetting = settings.schema.properties?.notes;
+      assert.ok(
+        typeof notesSetting === 'object' &&
+          notesSetting !== null &&
+          'description' in notesSetting &&
+          typeof notesSetting.description === 'string',
+      );
+      assert.match(
+        notesSetting.description,
+        /^Synced (just now|\d+ seconds? ago) · everything\.$/,
+      );
+      const write = read(synced.database, 'DELETE FROM raw_notes;');
+      assert.match(write.stderr, /readonly/);
+      assert.equal(
+        read(
+          synced.database,
+          "SELECT name FROM catalog WHERE name = 'attachments.attachmentRef'",
+        ).rows.length,
+        1,
+      );
+      const [attachment] = read(
+        synced.database,
+        'SELECT attachmentRef FROM attachments WHERE id = @id',
+        `.parameter set @id "'ATT-FILE'"`,
+      ).rows;
+      assert.equal(
+        readFileSync(String(attachment.attachmentRef), 'utf8'),
+        'attached words',
+      );
+
+      // An app macOS does not allow fails alone, and Notes keeps its import.
+      await invoke(client, 'apple_configure', {
+        apps: [
+          {
+            app: 'notes',
+            scope: JSON.parse(synced.scope),
+            includeAttachments: synced.include_attachments === 1,
+          },
+          { app: 'messages' },
+        ],
+      });
+      const [kept, messages] = await settled(
+        'reported Messages as failed',
+        ([notes, messages]) =>
+          notes?.sync?.status === 'succeeded' &&
+          messages?.sync?.status === 'failed',
+      );
+      assert.ok(kept && messages?.sync);
+      assert.equal(kept.database, synced.database);
+      assert.match(String(messages.sync.error), /Full Disk Access/);
+      assert.match(
+        await context(client, 'UserPromptSubmit'),
+        /^- Messages: last sync failed at .*Full Disk Access.*; no data yet\. Database: messages\//m,
+      );
+
+      // A change in Notes reaches the import while nobody calls a tool.
+      retitle('Groceries (edited)');
+      assert.equal(
+        (await imported('Groceries (edited)')).database,
+        synced.database,
+      );
+      assert.equal(
+        (await call(client, 'apple_options', { app: 'invalid' })).isError,
+        true,
+      );
+      assert.equal(
+        (
+          await call(client, 'apple_configure', {
+            apps: [{ app: 'invalid' }],
+          })
+        ).isError,
+        true,
+      );
+
+      // When the leading chat closes, another chat's server keeps importing.
+      await client.close();
+      await transport.close();
+      retitle('Groceries (after handoff)');
+      await imported('Groceries (after handoff)');
+
+      // Switching Notes off on the Settings page disconnects it and deletes
+      // its import; Messages stays selected.
+      const switched = OpenAISettingsUpdateResultSchema.parse(
+        (await call(other, 'apple_settings_update', { set: { notes: false } }))
+          .structuredContent,
+      );
+      assert.equal(switched.values.notes, false);
+      assert.equal(switched.values.messages, true);
+      assert.equal(existsSync(synced.database), false);
+      assert.deepEqual(
+        selected().map(({ app }) => app),
+        ['messages'],
+      );
+      // A chat that never got the start-of-chat status gets it on its next prompt.
+      assert.match(
+        await context(other, 'UserPromptSubmit'),
+        /^- Messages: last sync failed/m,
+      );
+
+      // Installing another version deletes this one's folder. The chat still
+      // runs the old server, which now sends the user to a new chat.
+      rmSync(join(plugin, '.codex-plugin'), { recursive: true });
+      for (const event of ['UserPromptSubmit', 'UserPromptSubmit'] as const)
+        assert.match(await context(other, event), /open a new chat/);
+      const refused = await call(other, 'apple_settings_read', {});
+      assert.equal(refused.isError, true);
+      assert.match(JSON.stringify(refused.content), /open a new chat/);
+    } finally {
+      await client.close();
+      await transport.close();
+      await other.close();
+      await otherTransport.close();
+    }
+    assert.ok(!diagnostics.includes('Error'), diagnostics);
+  },
+);
+
+test(
+  'Apple setup asks only which apps, imports each in full or as narrowed before, reports an app macOS denied, and changes nothing when cancelled',
+  {
+    timeout: 120_000,
+  },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(
+      join(tmpdir(), 'apple-forms-'),
+    );
+    // The installed plugin, run as Codex runs it.
+    const plugin = join(scratch.path, 'plugin');
+    const [entry] = JSON.parse(
+      readFileSync(join(root, '.agents/plugins/marketplace.json'), 'utf8'),
+    ).plugins;
+    cpSync(join(root, entry.source.path), plugin, { recursive: true });
+    const manifest = JSON.parse(
+      readFileSync(join(plugin, '.codex-plugin/plugin.json'), 'utf8'),
+    );
+    const {
+      mcpServers: { apple },
+    } = JSON.parse(readFileSync(join(plugin, manifest.mcpServers), 'utf8'));
+    const runtime =
+      process.env.CODEX_MCP_NODE_PATH ??
+      join(
+        homedir(),
+        '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
+      );
+    // Under this HOME, Notes has a store, macOS denies chat.db and Books was
+    // never opened, so it has no stores.
+    await noteStoreFixture(
+      join(scratch.path, 'Library/Group Containers/group.com.apple.notes'),
+    );
+    const messages = join(scratch.path, 'Library/Messages');
+    mkdirSync(messages, { recursive: true });
+    await writeFile(join(messages, 'chat.db'), '');
+    chmodSync(join(messages, 'chat.db'), 0o000);
+    const client = new Client(
+      { name: 'apple-forms', version: '1.0.0' },
+      { capabilities: { elicitation: { form: {} } } },
+    );
+    // The fields each form asks for, and the user's answers, one per form.
+    const forms: string[][] = [];
+    const answers: ElicitResult[] = [];
+    client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
+      forms.push(
+        'requestedSchema' in params
+          ? Object.keys(params.requestedSchema.properties)
+          : [],
+      );
+      const answer = answers.shift();
+      assert.ok(answer, `unexpected form: ${params.message}`);
+      return answer;
+    });
     const transport = new StdioClientTransport({
       command: join(plugin, apple.command),
       args: apple.args,
@@ -332,442 +715,88 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       env: { HOME: scratch.path, CODEX_MCP_NODE_PATH: runtime, PATH: '' },
       stderr: 'pipe',
     });
-    transport.stderr?.on('data', (data) => {
-      diagnostics += String(data);
-    });
-    return transport;
-  };
-  const connect = async (client: Client) => {
-    const transport = launch();
     await client.connect(transport, { signal: t.signal, timeout: 5_000 });
-    return transport;
-  };
-  const call = (client: Client, name: string, args?: Record<string, unknown>) =>
-    client.callTool({ name, arguments: args }, undefined, {
-      signal: t.signal,
-      timeout: 90_000,
-    });
-  const invoke = async (
-    client: Client,
-    name: string,
-    args?: Record<string, unknown>,
-  ) => {
-    const result = await call(client, name, args);
-    assert.notEqual(result.isError, true, JSON.stringify(result.content));
-    assert.ok(Array.isArray(result.content));
-    const block = result.content[0];
-    assert.equal(block?.type, 'text');
-    return JSON.parse(block.text);
-  };
-  // What the plugin's hooks add to a chat's context.
-  const context = async (
-    client: Client,
-    event: 'SessionStart' | 'UserPromptSubmit',
-  ) => {
-    const result = await call(client, 'apple_context', { event });
-    assert.notEqual(result.isError, true, JSON.stringify(result.content));
-    assert.ok(Array.isArray(result.content));
-    return result.content.map((block) => block.text).join('\n');
-  };
-  // The skill's entry point: the selection, with no tool call.
-  const settingsFile = join(
-    scratch.path,
-    'Library/Application Support/Context Compiler/Apple/settings.sqlite',
-  );
-  const selected = (): SelectedApp[] =>
-    read(
-      settingsFile,
-      'SELECT app, scope, include_attachments, database, connection_error FROM selected_apps',
-    ).rows.map((app: Omit<SelectedApp, 'sync'>) => ({
-      ...app,
-      sync: read(
-        app.database,
-        'SELECT status, error, last_successful_sync_at FROM sync_status',
-      ).rows[0],
-    }));
-  // Waits for the leading server until the selected apps reach the state done
-  // looks for.
-  const settled = async (
-    what: string,
-    done: (apps: SelectedApp[]) => boolean,
-  ): Promise<SelectedApp[]> => {
-    for (let attempt = 0; attempt < 60; attempt++) {
-      const apps = selected();
-      if (done(apps)) return apps;
-      await sleep(500);
-    }
-    assert.fail(`The import never ${what}`);
-  };
-  const imported = async (title: string) => {
-    const [notes] = await settled(
-      `showed ${title}`,
-      ([notes]) =>
-        notes?.sync?.status === 'succeeded' &&
-        read(
-          notes.database,
-          'SELECT title FROM notes WHERE title = @title',
-          `.parameter set @title "'${title}'"`,
-        ).rows.length === 1,
-    );
-    assert.ok(notes);
-    return notes;
-  };
-
-  const client = new Client(
-    { name: 'apple-e2e', version: '1.0.0' },
-    { capabilities: { elicitation: { form: {} } } },
-  );
-  const forms: string[] = [];
-  client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
-    forms.push(params.message);
-    // A person reads the form for longer than the SDK's 60 s request default.
-    await sleep(61_000);
-    return { action: 'accept', content: { apps: ['notes'] } };
-  });
-  const other = new Client({ name: 'another-chat', version: '1.0.0' });
-  const transport = await connect(client);
-  const otherTransport = await connect(other);
-  try {
-    assert.deepEqual(
-      (await client.listTools()).tools.map((tool) => tool.name).sort(),
-      [
-        'apple_configure',
-        'apple_context',
-        'apple_options',
-        'apple_settings_read',
-        'apple_settings_update',
-        'apple_setup',
-      ],
-    );
-    // Only the hooks call apple_context; Codex keeps it from the model.
-    assert.deepEqual(
-      (await client.listTools()).tools.find(
-        (tool) => tool.name === 'apple_context',
-      )?._meta,
-      { ui: { visibility: ['app'] } },
-    );
-    // Codex shows these instructions with the tools.
-    assert.match(String(client.getInstructions()), /\$query-apple/);
-    // The server names the installed version, which decides who leads.
-    assert.equal(client.getServerVersion()?.version, manifest.version);
-    // The plugin page's native Settings section names two of those tools.
-    assert.deepEqual(
-      OpenAISettingsCapabilitySchema.parse(
-        client.getServerCapabilities()?.experimental?.['openai/settings'],
-      ),
-      { readTool: 'apple_settings_read', updateTool: 'apple_settings_update' },
-    );
-    assert.deepEqual(selected(), []);
-    assert.match(
-      await context(client, 'SessionStart'),
-      /no apps are set up\. Use \$setup-apple/,
-    );
-    assert.equal(await context(client, 'UserPromptSubmit'), '');
-    assert.deepEqual((await call(other, 'apple_setup')).content, [
-      {
-        type: 'text',
-        text: 'This host cannot show forms. Set up with apple_options, then apple_configure.',
-      },
-    ]);
-
-    // Setup returns once the answers are saved; the import runs apart from it.
-    const setUp = await invoke(client, 'apple_setup');
-    // One form: the apps. Notes is imported in full without further questions.
-    assert.equal(forms.length, 1);
-    assert.match(forms[0] ?? '', /Choose the Apple apps/);
-    assert.deepEqual(setUp.unavailable, []);
-    assert.deepEqual(
-      setUp.apps.map(({ app }: { app: string }) => app),
-      ['notes'],
-    );
-    const synced = await imported('Groceries');
-    // The next prompt carries the changed status: where Notes is imported.
-    const status = await context(client, 'UserPromptSubmit');
-    assert.match(
-      status,
-      /^- Notes: synced at \d{4}-\d\d-\d\dT[\d:.]+Z\. Database: notes\/[0-9a-f]{16}\/data\.sqlite$/m,
-    );
-    assert.ok(
-      status.includes(
-        join(
-          scratch.path,
-          'Library/Application Support/Context Compiler/Apple',
-        ),
-      ),
-    );
-    assert.equal(await context(client, 'UserPromptSubmit'), '');
-    // The file the skill reads tells what it holds and how fresh it is.
-    assert.deepEqual(
-      read(
-        synced.database,
-        "SELECT name FROM catalog WHERE kind = 'view' AND name IN ('notes', 'stream_status') ORDER BY name",
-      ).rows,
-      [{ name: 'notes' }, { name: 'stream_status' }],
-    );
-    assert.deepEqual(
-      read(
-        synced.database,
-        "SELECT status FROM stream_status WHERE stream = 'notes' AND last_successful_sync_at IS NOT NULL",
-      ).rows,
-      [{ status: 'succeeded' }],
-    );
-    assert.deepEqual(
-      read(
-        synced.database,
-        'SELECT id FROM notes WHERE title = @title',
-        `.parameter set @title "'Groceries'"`,
-      ).rows,
-      [{ id: 'NOTE-RICH' }],
-    );
-    const settings = OpenAISettingsReadResultSchema.parse(
-      (await call(client, 'apple_settings_read', {})).structuredContent,
-    );
-    assert.equal(settings.values.notes, true);
-    assert.equal(settings.values.mail, false);
-    const notesSetting = settings.schema.properties?.notes as
-      | { description?: string }
-      | undefined;
-    assert.match(
-      String(notesSetting?.description),
-      /^Synced (just now|\d+ seconds? ago) · everything\.$/,
-    );
-    const write = read(synced.database, 'DELETE FROM raw_notes;');
-    assert.match(write.stderr, /readonly/);
-    assert.equal(
-      read(
-        synced.database,
-        "SELECT name FROM catalog WHERE name = 'attachments.attachmentRef'",
-      ).rows.length,
-      1,
-    );
-    const [attachment] = read(
-      synced.database,
-      'SELECT attachmentRef FROM attachments WHERE id = @id',
-      `.parameter set @id "'ATT-FILE'"`,
-    ).rows;
-    assert.equal(
-      readFileSync(String(attachment.attachmentRef), 'utf8'),
-      'attached words',
-    );
-
-    // An app macOS does not allow fails alone, and Notes keeps its import.
-    await invoke(client, 'apple_configure', {
-      apps: [
+    const invoke = async (name: string, args?: Record<string, unknown>) => {
+      const result = await client.callTool(
+        { name, arguments: args },
+        undefined,
         {
-          app: 'notes',
-          scope: JSON.parse(synced.scope),
-          includeAttachments: synced.include_attachments === 1,
+          signal: t.signal,
+          timeout: 60_000,
         },
-        { app: 'messages' },
-      ],
-    });
-    const [kept, messages] = await settled(
-      'reported Messages as failed',
-      ([notes, messages]) =>
-        notes?.sync?.status === 'succeeded' &&
-        messages?.sync?.status === 'failed',
-    );
-    assert.ok(kept && messages?.sync);
-    assert.equal(kept.database, synced.database);
-    assert.match(String(messages.sync.error), /Full Disk Access/);
-    assert.match(
-      await context(client, 'UserPromptSubmit'),
-      /^- Messages: last sync failed at .*Full Disk Access.*; no data yet\. Database: messages\//m,
-    );
+      );
+      assert.notEqual(result.isError, true, JSON.stringify(result.content));
+      assert.ok(Array.isArray(result.content));
+      const block = result.content[0];
+      assert.equal(block?.type, 'text');
+      return JSON.parse(block.text);
+    };
+    const setUp = async (...given: ElicitResult[]) => {
+      forms.length = 0;
+      answers.push(...given);
+      const result = await invoke('apple_setup');
+      assert.deepEqual(answers, []);
+      return result;
+    };
+    try {
+      // One form, the apps: each chosen app is imported in full.
+      const connected = await setUp({
+        action: 'accept',
+        content: { apps: ['notes', 'messages', 'books'] },
+      });
+      assert.deepEqual(forms, [['apps']]);
+      assert.equal(connected.changed, true);
+      assert.deepEqual(
+        connected.unavailable.map(({ app }: { app: string }) => app),
+        ['messages', 'books'],
+      );
+      assert.match(connected.unavailable[0].error, /Full Disk Access/);
+      assert.deepEqual(
+        connected.apps.map(
+          ({ app, scope, includeAttachments }: Record<string, unknown>) => ({
+            app,
+            scope,
+            includeAttachments,
+          }),
+        ),
+        [{ app: 'notes', scope: {}, includeAttachments: true }],
+      );
+      // Notes is read for real: its background import loads the store's notes.
+      const settings = join(
+        scratch.path,
+        'Library/Application Support/Context Compiler/Apple/settings.sqlite',
+      );
+      let loaded = false;
+      for (let attempt = 0; attempt < 60 && !loaded; attempt++) {
+        const [notes] = read(
+          settings,
+          "SELECT database FROM selected_apps WHERE app = 'notes'",
+        ).rows;
+        loaded =
+          notes !== undefined &&
+          read(notes.database, 'SELECT title FROM notes').rows.length > 0;
+        if (!loaded) await sleep(500);
+      }
+      assert.ok(loaded, 'the Notes import never loaded the store’s notes');
 
-    // A change in Notes reaches the import while nobody calls a tool.
-    retitle('Groceries (edited)');
-    assert.equal(
-      (await imported('Groceries (edited)')).database,
-      synced.database,
-    );
-    assert.equal(
-      (await call(client, 'apple_options', { app: 'invalid' })).isError,
-      true,
-    );
-    assert.equal(
-      (
-        await call(client, 'apple_configure', {
-          apps: [{ app: 'invalid' }],
-        })
-      ).isError,
-      true,
-    );
+      // A selection the user narrowed in chat survives setting up again.
+      const narrowed = { collectionIds: ['FOLDER-NOTES'] };
+      await invoke('apple_configure', {
+        apps: [{ app: 'notes', scope: narrowed, includeAttachments: false }],
+      });
+      const kept = await setUp({
+        action: 'accept',
+        content: { apps: ['notes'] },
+      });
+      assert.deepEqual(kept.apps[0]?.scope, narrowed);
+      assert.equal(kept.apps[0]?.includeAttachments, false);
 
-    // When the leading chat closes, another chat's server keeps importing.
-    await client.close();
-    await transport.close();
-    retitle('Groceries (after handoff)');
-    await imported('Groceries (after handoff)');
-
-    // Switching Notes off on the Settings page disconnects it and deletes
-    // its import; Messages stays selected.
-    const switched = OpenAISettingsUpdateResultSchema.parse(
-      (await call(other, 'apple_settings_update', { set: { notes: false } }))
-        .structuredContent,
-    );
-    assert.equal(switched.values.notes, false);
-    assert.equal(switched.values.messages, true);
-    assert.equal(existsSync(synced.database), false);
-    assert.deepEqual(
-      selected().map(({ app }) => app),
-      ['messages'],
-    );
-    // A chat that never got the start-of-chat status gets it on its next prompt.
-    assert.match(
-      await context(other, 'UserPromptSubmit'),
-      /^- Messages: last sync failed/m,
-    );
-
-    // Installing another version deletes this one's folder. The chat still
-    // runs the old server, which now sends the user to a new chat.
-    rmSync(join(plugin, '.codex-plugin'), { recursive: true });
-    for (const event of ['UserPromptSubmit', 'UserPromptSubmit'] as const)
-      assert.match(await context(other, event), /open a new chat/);
-    const refused = await call(other, 'apple_settings_read', {});
-    assert.equal(refused.isError, true);
-    assert.match(JSON.stringify(refused.content), /open a new chat/);
-  } finally {
-    await client.close();
-    await transport.close();
-    await other.close();
-    await otherTransport.close();
-  }
-  assert.ok(!diagnostics.includes('Error'), diagnostics);
-});
-
-test('Apple setup asks only which apps, imports each in full or as narrowed before, reports an app macOS denied, and changes nothing when cancelled', {
-  timeout: 120_000,
-}, async (t) => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-forms-'));
-  // The installed plugin, run as Codex runs it.
-  const plugin = join(scratch.path, 'plugin');
-  const [entry] = JSON.parse(
-    readFileSync(join(root, '.agents/plugins/marketplace.json'), 'utf8'),
-  ).plugins;
-  cpSync(join(root, entry.source.path), plugin, { recursive: true });
-  const manifest = JSON.parse(
-    readFileSync(join(plugin, '.codex-plugin/plugin.json'), 'utf8'),
-  );
-  const {
-    mcpServers: { apple },
-  } = JSON.parse(readFileSync(join(plugin, manifest.mcpServers), 'utf8'));
-  const runtime =
-    process.env.CODEX_MCP_NODE_PATH ??
-    join(
-      homedir(),
-      '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
-    );
-  // Under this HOME, Notes has a store, macOS denies chat.db and Books was
-  // never opened, so it has no stores.
-  await noteStoreFixture(
-    join(scratch.path, 'Library/Group Containers/group.com.apple.notes'),
-  );
-  const messages = join(scratch.path, 'Library/Messages');
-  mkdirSync(messages, { recursive: true });
-  await writeFile(join(messages, 'chat.db'), '');
-  chmodSync(join(messages, 'chat.db'), 0o000);
-  const client = new Client(
-    { name: 'apple-forms', version: '1.0.0' },
-    { capabilities: { elicitation: { form: {} } } },
-  );
-  // The fields each form asks for, and the user's answers, one per form.
-  const forms: string[][] = [];
-  const answers: ElicitResult[] = [];
-  client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
-    forms.push(
-      'requestedSchema' in params
-        ? Object.keys(params.requestedSchema.properties)
-        : [],
-    );
-    const answer = answers.shift();
-    assert.ok(answer, `unexpected form: ${params.message}`);
-    return answer;
-  });
-  const transport = new StdioClientTransport({
-    command: join(plugin, apple.command),
-    args: apple.args,
-    cwd: join(plugin, apple.cwd),
-    env: { HOME: scratch.path, CODEX_MCP_NODE_PATH: runtime, PATH: '' },
-    stderr: 'pipe',
-  });
-  await client.connect(transport, { signal: t.signal, timeout: 5_000 });
-  const invoke = async (name: string, args?: Record<string, unknown>) => {
-    const result = await client.callTool({ name, arguments: args }, undefined, {
-      signal: t.signal,
-      timeout: 60_000,
-    });
-    assert.notEqual(result.isError, true, JSON.stringify(result.content));
-    assert.ok(Array.isArray(result.content));
-    const block = result.content[0];
-    assert.equal(block?.type, 'text');
-    return JSON.parse(block.text);
-  };
-  const setUp = async (...given: ElicitResult[]) => {
-    forms.length = 0;
-    answers.push(...given);
-    const result = await invoke('apple_setup');
-    assert.deepEqual(answers, []);
-    return result;
-  };
-  try {
-    // One form, the apps: each chosen app is imported in full.
-    const connected = await setUp({
-      action: 'accept',
-      content: { apps: ['notes', 'messages', 'books'] },
-    });
-    assert.deepEqual(forms, [['apps']]);
-    assert.equal(connected.changed, true);
-    assert.deepEqual(
-      connected.unavailable.map(({ app }: { app: string }) => app),
-      ['messages', 'books'],
-    );
-    assert.match(connected.unavailable[0].error, /Full Disk Access/);
-    assert.deepEqual(
-      connected.apps.map(
-        ({ app, scope, includeAttachments }: Record<string, unknown>) => ({
-          app,
-          scope,
-          includeAttachments,
-        }),
-      ),
-      [{ app: 'notes', scope: {}, includeAttachments: true }],
-    );
-    // Notes is read for real: its background import loads the store's notes.
-    const settings = join(
-      scratch.path,
-      'Library/Application Support/Context Compiler/Apple/settings.sqlite',
-    );
-    let loaded = false;
-    for (let attempt = 0; attempt < 60 && !loaded; attempt++) {
-      const [notes] = read(
-        settings,
-        "SELECT database FROM selected_apps WHERE app = 'notes'",
-      ).rows;
-      loaded =
-        notes !== undefined &&
-        read(notes.database, 'SELECT title FROM notes').rows.length > 0;
-      if (!loaded) await sleep(500);
+      const cancelled = await setUp({ action: 'cancel' });
+      assert.equal(cancelled.changed, false);
+      assert.deepEqual(cancelled.apps, kept.apps);
+    } finally {
+      await client.close();
+      await transport.close();
     }
-    assert.ok(loaded, 'the Notes import never loaded the store’s notes');
-
-    // A selection the user narrowed in chat survives setting up again.
-    const narrowed = { collectionIds: ['FOLDER-NOTES'] };
-    await invoke('apple_configure', {
-      apps: [{ app: 'notes', scope: narrowed, includeAttachments: false }],
-    });
-    const kept = await setUp({
-      action: 'accept',
-      content: { apps: ['notes'] },
-    });
-    assert.deepEqual(kept.apps[0]?.scope, narrowed);
-    assert.equal(kept.apps[0]?.includeAttachments, false);
-
-    const cancelled = await setUp({ action: 'cancel' });
-    assert.equal(cancelled.changed, false);
-    assert.deepEqual(cancelled.apps, kept.apps);
-  } finally {
-    await client.close();
-    await transport.close();
-  }
-});
+  },
+);

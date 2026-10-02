@@ -9,9 +9,9 @@ import { LoginTicket, OAuth2Client } from 'google-auth-library';
 import {
   GOOGLE_SEARCH_CONSOLE_SCOPE,
   GrantFiles,
+  OAuthCallbackTimeoutError,
   googleSession,
   listenForCallback,
-  OAuthCallbackTimeoutError,
 } from './index.ts';
 
 test('a grant file is owner-only, lands whole, and reads back', async () => {

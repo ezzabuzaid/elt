@@ -1,5 +1,8 @@
-import { PostgresCheckpointStore, PostgresDestination } from 'elt-postgresql';
-import { scratchDatabase } from 'elt-postgresql/testing';
+import {
+  PostgresCheckpointStore,
+  PostgresDestination,
+} from '@workspace/elt-postgresql';
+import { scratchDatabase } from '@workspace/elt-postgresql/testing';
 
 export const RAW = 'google_search_console';
 

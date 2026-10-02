@@ -1,14 +1,16 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
   SourceWatchOptions,
   Stream,
-} from 'elt';
-import { Catalog, diffSnapshot, Source } from 'elt';
+} from '@workspace/elt';
+import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+
 import {
   SafariDatabaseVersion,
   safariContainer,
@@ -17,10 +19,10 @@ import {
 import type { ImportScope } from '../import-scope.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
-  databaseStores,
   type SafariLocation,
   SafariScan,
   type SafariStore,
+  databaseStores,
   storeFiles,
 } from './safari-scan.ts';
 import type { SafariReader } from './safari-stream.ts';
@@ -73,13 +75,19 @@ const readers = {
   closedTabs: new ClosedTabsStream(),
   downloads: new DownloadsStream(),
 } satisfies Record<string, SafariReader>;
-type StreamName = keyof typeof readers;
 const catalog = new Catalog(
   Object.values(readers).map((reader) => reader.describe()),
 );
+const readersByName = new Map<string, SafariReader>(
+  Object.values(readers).map((reader) => [reader.name, reader]),
+);
 
-const readerOf = (stream: Stream): SafariReader =>
-  readers[stream.name as StreamName];
+function readerOf(stream: Stream): SafariReader {
+  const reader = readersByName.get(stream.name);
+  if (reader === undefined)
+    throw new TypeError(`Safari has no ${stream.name} stream`);
+  return reader;
+}
 
 // How often a watch checks the stores for changes.
 const pollIntervalMs = 1000;

@@ -13,11 +13,35 @@
           "configName": "tsconfig.json"
         }
       }
+    },
+    {
+      "plugin": "@nx/eslint/plugin",
+      "options": {
+        "targetName": "lint"
+      }
     }
   ],
   "targetDefaults": {
+    "format": {
+      "command": "prettier --write {projectRoot}"
+    },
     "lint": {
-      "command": "biome check --write {projectRoot}/src {projectRoot}/package.json {projectRoot}/project.json {projectRoot}/tsconfig.json"
+      "dependsOn": ["format"],
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/eslint.config.mjs",
+        "{workspaceRoot}/personal.eslint.config.mjs",
+        {
+          "externalDependencies": [
+            "eslint",
+            "typescript-eslint",
+            "eslint-plugin-import-x",
+            "eslint-plugin-functional",
+            "@nx/eslint-plugin"
+          ]
+        }
+      ]
     },
     "typecheck": {
       "dependsOn": ["lint", "..."]

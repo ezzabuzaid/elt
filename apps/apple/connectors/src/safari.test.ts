@@ -15,24 +15,26 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { deflateSync } from 'node:zlib';
+
 import {
   Connection,
   Copy,
   LocalFiles,
   Pipeline,
   PipelineError,
-  readerCatalog,
   type Source,
   StreamStatus,
+  readerCatalog,
   syncHistoryRelations,
-} from 'elt';
+} from '@workspace/elt';
 import {
-  installSQLiteCatalog,
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from 'elt-sqlite';
+  installSQLiteCatalog,
+} from '@workspace/elt-sqlite';
+
 import { AppleSafariSource } from './sources/apple-safari/apple-safari-source.ts';
 import type { ImportScope } from './sources/import-scope.ts';
 
@@ -1572,11 +1574,14 @@ test('Safari follows each store on its own: a rerun writes nothing, and edits an
     using cloud = new DatabaseSync(join(location.container, 'CloudTabs.db'));
     cloud.exec('DELETE FROM cloud_tab_devices');
   }
-  const bookmarks = structuredClone(bookmarksPlist) as unknown as {
-    Children: { Children?: unknown[] }[];
-  };
-  bookmarks.Children[1]?.Children?.shift();
-  await writePlist(join(location.directory, 'Bookmarks.plist'), bookmarks);
+  await writePlist(join(location.directory, 'Bookmarks.plist'), {
+    ...bookmarksPlist,
+    Children: bookmarksPlist.Children.map((folder) =>
+      folder.WebBookmarkUUID === 'BAR' && 'Children' in folder
+        ? { ...folder, Children: folder.Children.slice(1) }
+        : folder,
+    ),
+  });
   await writePlist(join(location.directory, 'RecentlyClosedTabs.plist'), {
     ...closedTabsPlist,
     ClosedTabOrWindowPersistentStates:

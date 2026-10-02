@@ -3,7 +3,7 @@
   "sourceRoot": "packages/google-auth/src",
   "projectType": "library",
   "targets": {
-    "lint": {},
+    "format": {},
     "test": {
       "dependsOn": ["build"],
       "command": "node --test packages/google-auth/dist/*.test.js"

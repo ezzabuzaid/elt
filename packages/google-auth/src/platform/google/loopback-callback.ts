@@ -1,12 +1,14 @@
 import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 
 export class OAuthCallbackTimeoutError extends Error {
   override readonly name = 'OAuthCallbackTimeoutError';
-  constructor(readonly timeoutMs: number) {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
     super(
       `Google sign-in was not completed within ${Math.round(timeoutMs / 1000)} seconds.`,
     );
+    this.timeoutMs = timeoutMs;
   }
 }
 
@@ -36,8 +38,12 @@ export async function listenForCallback({
       resolve();
     });
   });
-  const { port } = server.address() as AddressInfo;
-  const redirectUri = `http://127.0.0.1:${port}/callback`;
+  const address = server.address();
+  if (address === null || typeof address === 'string') {
+    server.close();
+    throw new TypeError('The OAuth callback server is not listening on a port');
+  }
+  const redirectUri = `http://127.0.0.1:${address.port}/callback`;
   const answer = Promise.withResolvers<string>();
   // The timeout can fire before anyone asks for the callback.
   answer.promise.catch(() => {});

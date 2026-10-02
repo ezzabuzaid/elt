@@ -6,8 +6,9 @@ import {
   type SQLOutputValue,
   type StatementSync,
 } from 'node:sqlite';
+
 import { readMailPlist } from './mail-store.ts';
-import { isBinaryPlist, type PlistValue, parseBinaryPlist } from './plist.ts';
+import { type PlistValue, isBinaryPlist, parseBinaryPlist } from './plist.ts';
 
 // History, bookmarks, closed tabs and downloads.
 export const safariDirectory = join(homedir(), 'Library/Safari');
@@ -82,12 +83,11 @@ export class SafariDatabaseVersion implements Disposable {
 // agree. Hold it only while reading: an open read stops Safari checkpointing
 // its WAL.
 export class SafariDatabase implements AsyncDisposable {
+  readonly path: string;
   readonly #database: DatabaseSync;
 
-  private constructor(
-    readonly path: string,
-    database: DatabaseSync,
-  ) {
+  private constructor(path: string, database: DatabaseSync) {
+    this.path = path;
     this.#database = database;
   }
 

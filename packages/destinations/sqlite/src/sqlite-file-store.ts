@@ -1,5 +1,7 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import type { FileContent } from 'elt';
+
+import type { FileContent } from '@workspace/elt';
+
 import type { SQLiteColumn } from './sqlite-column.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 

@@ -1,11 +1,11 @@
 import { setTimeout as wait } from 'node:timers/promises';
 
 import {
-  type GoogleError,
+  GaxiosError,
   type GoogleRequester,
   reasonsOf,
   statusOf,
-} from 'google-auth';
+} from '@workspace/google-auth';
 
 const BASE = 'https://searchconsole.googleapis.com/';
 
@@ -228,6 +228,7 @@ export class SearchConsoleApi {
           ...(data === undefined ? {} : { data }),
           ...(signal === undefined ? {} : { signal }),
         });
+        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the API's own response body; GoogleRequester keeps it unknown, and the records built from it pass validateRecords
         return response.data as Response;
       } catch (cause) {
         signal?.throwIfAborted();
@@ -275,9 +276,8 @@ export class SearchConsoleApi {
 
 // Retry-After is either whole seconds or an HTTP date (RFC 9110 section 10.2.3).
 function retryAfterMs(error: unknown): number | undefined {
-  const value = (error as GoogleError | undefined)?.response?.headers
-    ?.get('retry-after')
-    ?.trim();
+  if (!(error instanceof GaxiosError)) return undefined;
+  const value = error.response?.headers.get('retry-after')?.trim();
   if (!value) return undefined;
   if (/^\d+$/.test(value)) return Number(value) * 1000;
   const at = Date.parse(value);

@@ -1,12 +1,13 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
 import {
+  type Row,
   appleTime,
   dictionary,
   flag,
   plistTime,
-  type Row,
   text,
 } from '../safari-values.ts';
 import { tabGroupKinds } from '../tabs-reader.ts';
@@ -91,19 +92,16 @@ export class TabGroupsStream extends SafariStream<typeof properties, Row> {
     return scan.tabs.tabGroups;
   }
 
-  protected record(
-    row: Row,
-    scan: SafariScan,
-  ): SchemaRecord<typeof properties> {
+  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
     const { tabs } = scan;
     const [extra] = tabs.attributes(row);
     return {
-      id: row.external_uuid as string,
+      id: row.external_uuid,
       parentId: row.parent === 0 ? null : tabs.uuid(row.parent),
       profileId: tabs.profileOf(row),
       kind: tabs.kind(row),
       title: text(row.title),
-      position: row.order_index as number,
+      position: row.order_index,
       hidden: flag(row.hidden),
       lastSelectedTabId: tabs.uuid(row.last_selected_child),
       deviceType: text(extra.DeviceTypeIdentifier),

@@ -9,13 +9,15 @@ import {
   spinner,
   text,
 } from '@clack/prompts';
-import type { AppleApp, ChoiceOptions } from 'apple/apps/apple-app';
 import {
   type Command as Declaration,
   InvalidArgumentError,
   Option,
 } from 'commander';
-import { type ImportScope, selectionProblems } from 'import-store';
+
+import type { AppleApp, ChoiceOptions } from '@workspace/apple/apps/apple-app';
+import { type ImportScope, selectionProblems } from '@workspace/import-store';
+
 import type { Selection } from '../imports.ts';
 import { SyncReport } from '../sync-report.ts';
 import { Command, type Output } from './command.ts';

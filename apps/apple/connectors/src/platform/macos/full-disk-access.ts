@@ -14,7 +14,8 @@ export async function hasFullDiskAccess(): Promise<boolean> {
     await readdir(protectedDirectory);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EPERM') return false;
+    if (Error.isError(error) && 'code' in error && error.code === 'EPERM')
+      return false;
     throw error;
   }
 }

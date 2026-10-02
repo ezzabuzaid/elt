@@ -1,6 +1,7 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
-import { flag, type NotesScan, type Row, string } from './notes-scan.ts';
+import { type NotesScan, type Row, flag, string } from './notes-scan.ts';
 
 const { id, nullableId, text, ordinal, nullableText, boolean } = notesFields;
 
@@ -51,13 +52,13 @@ export class FoldersStream extends AppleNotesStream<typeof properties, Row> {
     return scan.folders;
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      id: row.ZIDENTIFIER as string,
-      accountId: row.account as string,
+      id: row.ZIDENTIFIER,
+      accountId: row.account,
       parentId: string(row.parent),
-      name: row.ZTITLE2 as string,
-      type: row.ZFOLDERTYPE as number,
+      name: row.ZTITLE2,
+      type: row.ZFOLDERTYPE,
       smartQuery: string(row.ZSMARTFOLDERQUERYJSON),
       shared: flag(row.shared),
     };

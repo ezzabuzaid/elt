@@ -87,6 +87,7 @@ function unfold(bytes: Uint8Array): Uint8Array {
   let length = 0;
   for (let index = 0; index < bytes.length; index++) {
     const byte = bytes[index];
+    if (byte === undefined) break;
     const lf =
       byte === 0x0d && bytes[index + 1] === 0x0a
         ? index + 1
@@ -98,7 +99,7 @@ function unfold(bytes: Uint8Array): Uint8Array {
       index = lf + 1;
       continue;
     }
-    out[length++] = byte as number;
+    out[length++] = byte;
   }
   return out.subarray(0, length);
 }

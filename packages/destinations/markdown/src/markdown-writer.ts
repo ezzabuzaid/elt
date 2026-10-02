@@ -1,17 +1,30 @@
 import { lstat, mkdir, open, rm, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CopyConfiguration, Deduplication, FieldValues, Stage } from 'elt';
-import { TargetMissingError, TargetOwnedError, Writer } from 'elt';
+
+import type {
+  CopyConfiguration,
+  Deduplication,
+  FieldValues,
+  Stage,
+} from '@workspace/elt';
+import { TargetMissingError, TargetOwnedError, Writer } from '@workspace/elt';
+
 import { MarkdownDocument } from './markdown-document.ts';
 
 export abstract class MarkdownWriter extends Writer {
+  readonly configuration: CopyConfiguration;
+  readonly path: string;
+  readonly document: MarkdownDocument;
   protected readonly deduplication?: Deduplication;
   constructor(
-    readonly configuration: CopyConfiguration,
-    readonly path: string,
-    readonly document: MarkdownDocument,
+    configuration: CopyConfiguration,
+    path: string,
+    document: MarkdownDocument,
   ) {
     super(configuration.stream);
+    this.configuration = configuration;
+    this.path = path;
+    this.document = document;
     const mode = configuration.destinationSyncMode;
     this.deduplication =
       mode === 'append_dedup' || mode === 'overwrite_dedup'
@@ -141,9 +154,11 @@ export abstract class MarkdownWriter extends Writer {
         throw new TypeError('Refusing to replace an unmanaged Markdown file');
       return true;
     } catch (error) {
-      if (
-        !(error instanceof Error && 'code' in error && error.code === 'ENOENT')
-      )
+      if (!(
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ))
         throw error;
       return false;
     }

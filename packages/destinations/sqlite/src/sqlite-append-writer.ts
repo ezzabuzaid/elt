@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { CopyConfiguration } from 'elt';
+
+import type { CopyConfiguration } from '@workspace/elt';
+
 import type { SQLiteTable } from './sqlite-table.ts';
 import { SQLiteWriter } from './sqlite-writer.ts';
 

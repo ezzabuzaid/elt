@@ -1,7 +1,8 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { appleTime, flag, integer, type Row, text } from '../safari-values.ts';
+import { type Row, appleTime, flag, integer, text } from '../safari-values.ts';
 
 const { boolean, nullableText } = safariFields;
 
@@ -61,12 +62,12 @@ export class CloudTabsStream extends SafariStream<typeof properties, Row> {
     return scan.cloudTabs.tabs;
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      id: row.tab_uuid as string,
-      deviceId: row.device_uuid as string,
+      id: row.tab_uuid,
+      deviceId: row.device_uuid,
       title: text(row.title),
-      url: row.url as string,
+      url: row.url,
       showingReader: flag(row.is_showing_reader),
       pinned: flag(row.is_pinned),
       readerScrollPageIndex: integer(row.reader_scroll_position_page_index),

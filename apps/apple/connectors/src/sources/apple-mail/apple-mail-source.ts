@@ -4,28 +4,33 @@ import { copyFile, rm } from 'node:fs/promises';
 import { extname, join, relative } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setInterval } from 'node:timers/promises';
-import type { ExtractionCoverage } from 'elt';
+
+import type {
+  CopyConfiguration,
+  ExtractionCoverage,
+  FieldSchema,
+  RecordDraft,
+  SchemaRecord,
+  SnapshotGroup,
+  SourceMessage,
+  SourceWatchOptions,
+  Stream,
+} from '@workspace/elt';
 import {
   Catalog,
-  type CopyConfiguration,
+  Source,
   diffGroupedSnapshot,
   diffSnapshot,
-  type FieldSchema,
-  type SchemaRecord,
-  type SnapshotGroup,
-  Source,
-  type SourceMessage,
-  type SourceWatchOptions,
-  type Stream,
   validateRecords,
-} from 'elt';
+} from '@workspace/elt';
+
 import { readMailMime } from '../../platform/macos/mail-mime.ts';
 import {
-  assertMailFile,
-  hashMailFile,
   type MailFile,
   MailSchemaError,
   MailStore,
+  assertMailFile,
+  hashMailFile,
   mailVersionDirectory,
   plistJSON,
   plistObject,
@@ -105,7 +110,7 @@ const partId =
   'Dotted MIME part number, such as 1 or 1.2. The root of a multipart message is TEXT; a single-part message is 1, as in the index. Equals indexedAttachments.attachmentId for attachments Mail indexes.';
 const sha256 = 'SHA-256 of the bytes as lowercase hexadecimal';
 
-const streams = {
+const scriptingStreams = {
   accounts: mailStream(
     'accounts',
     'One record per Mail account reported by Mail scripting, plus one On My Mac record for each local:// mailbox host that scripting does not list. Primary key id. The host of mailboxes.url matches id. properties is JSON data; no password or authentication property is read.',
@@ -128,7 +133,8 @@ const streams = {
     ['id'],
     false,
   ),
-  ...tableStreams,
+};
+const fileStreams = {
   mailboxProperties: mailStream(
     'mailboxProperties',
     'One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.',
@@ -339,8 +345,20 @@ const streams = {
     true,
   ),
 };
-const catalog = new Catalog(Object.values(streams));
-type StreamName = keyof typeof streams;
+const catalog = new Catalog([
+  ...Object.values(scriptingStreams),
+  ...tableStreams,
+  ...Object.values(fileStreams),
+]);
+type TableName = keyof typeof mailTables;
+type StreamName =
+  keyof typeof scriptingStreams | TableName | keyof typeof fileStreams;
+const isTableName = (name: string): name is TableName =>
+  Object.hasOwn(mailTables, name);
+const isStreamName = (name: string): name is StreamName =>
+  Object.hasOwn(scriptingStreams, name) ||
+  isTableName(name) ||
+  Object.hasOwn(fileStreams, name);
 
 // Streams read from each message's files, one snapshot group per message.
 const messageStreams = [
@@ -351,7 +369,7 @@ const messageStreams = [
 ] as const;
 type MessageStream = (typeof messageStreams)[number];
 const isMessageStream = (name: StreamName): name is MessageStream =>
-  (messageStreams as readonly string[]).includes(name);
+  messageStreams.some((listed) => listed === name);
 
 // Part of every message group's fingerprint: raise it whenever parsing or a
 // message stream's records change, so saved messages are read again.
@@ -406,7 +424,7 @@ export const restrictedMailStreams = [
 
 function mailSelection(store: MailStore, scope: ImportScope) {
   if (Object.keys(scope).length === 0) return () => true;
-  const rows = (name: keyof typeof mailTables) =>
+  const rows = (name: TableName) =>
     store.database.prepare(mailTables[name].sql).all();
   const mailboxes = new Set<unknown>(
     rows('mailboxes')
@@ -552,10 +570,10 @@ class MailScan implements AsyncDisposable {
   }> | null = null;
   #inputs: MessageInputs | null = null;
 
-  constructor(
-    readonly store: MailStore,
-    scope: ImportScope = {},
-  ) {
+  readonly store: MailStore;
+
+  constructor(store: MailStore, scope: ImportScope = {}) {
+    this.store = store;
     this.accepts = mailSelection(store, scope);
   }
 
@@ -577,7 +595,8 @@ class MailScan implements AsyncDisposable {
         )
         .all()) {
         if (!this.accepts('indexedAttachments', row)) continue;
-        const message = row.message as string;
+        // CAST of attachments.message, which the index declares NOT NULL.
+        const message = String(row.message);
         indexed.set(message, [
           ...(indexed.get(message) ?? []),
           { ...row, message },
@@ -623,7 +642,8 @@ class MailScan implements AsyncDisposable {
       .prepare('SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID')
       .iterate()) {
       if (!this.accepts('messages', row)) continue;
-      const id = row.id as string;
+      // CAST of ROWID, which is never NULL.
+      const id = String(row.id);
       listed.add(id);
       const file = this.store.messages.get(id);
       if (
@@ -726,7 +746,7 @@ class MailScan implements AsyncDisposable {
       if (candidates !== undefined && candidates.length !== 1)
         throw new MailSchemaError(`Ambiguous indexed Mail attachment ${key}`);
       const file = candidates?.[0];
-      const record: SchemaRecord<typeof partFields> = {
+      const record: RecordDraft<typeof partFields> = {
         messageId: row.message,
         partId: row.attachment_id,
         parentPartId: null,
@@ -734,7 +754,7 @@ class MailScan implements AsyncDisposable {
         charset: null,
         transferEncoding: null,
         disposition: null,
-        filename: row.name as string | null,
+        filename: row.name,
         contentId: null,
         isMultipart: false,
         isAttachment: true,
@@ -797,7 +817,8 @@ class MailScan implements AsyncDisposable {
     for (const row of this.store.database
       .prepare('SELECT url FROM mailboxes ORDER BY ROWID')
       .iterate()) {
-      const url = new URL(row.url as string);
+      // mailboxes.url is NOT NULL in the index.
+      const url = new URL(String(row.url));
       if (
         url.protocol === 'local:' &&
         !accounts.some((account) => account.id === url.hostname)
@@ -823,8 +844,8 @@ class MailScan implements AsyncDisposable {
   }
 
   async *read(name: StreamName): AsyncGenerator<Entry> {
-    if (name in mailTables) {
-      const definition = mailTables[name as keyof typeof mailTables];
+    if (isTableName(name)) {
+      const definition = mailTables[name];
       for (const row of this.store.database.prepare(definition.sql).iterate()) {
         if (!this.accepts(name, row)) continue;
         for (const column of definition.blobs)
@@ -943,56 +964,58 @@ class MailScan implements AsyncDisposable {
 }
 
 export class AppleMailSource extends Source<MailScan> {
-  readonly indexedAttachments = streams.indexedAttachments;
-  readonly serverMessages = streams.serverMessages;
-  readonly serverMessageMailboxes = streams.serverMessageMailboxes;
-  readonly conversationMessages = streams.conversationMessages;
-  readonly messageReferences = streams.messageReferences;
-  readonly messageGlobalData = streams.messageGlobalData;
-  readonly subjects = streams.subjects;
-  readonly summaries = streams.summaries;
-  readonly generatedSummaries = streams.generatedSummaries;
-  readonly messageMetadata = streams.messageMetadata;
-  readonly dataDetectionResults = streams.dataDetectionResults;
-  readonly richLinks = streams.richLinks;
-  readonly messageRichLinks = streams.messageRichLinks;
-  readonly protectedMessageData = streams.protectedMessageData;
-  readonly brandIndicators = streams.brandIndicators;
-  readonly brandIndicatorEvidence = streams.brandIndicatorEvidence;
-  readonly addressMetadata = streams.addressMetadata;
-  readonly businesses = streams.businesses;
-  readonly businessAddresses = streams.businessAddresses;
-  readonly businessCategories = streams.businessCategories;
-  readonly senders = streams.senders;
-  readonly senderAddresses = streams.senderAddresses;
-  readonly events = streams.events;
-  readonly smtpServers = streams.smtpServers;
-  readonly mailboxProperties = streams.mailboxProperties;
-  readonly smartMailboxConditions = streams.smartMailboxConditions;
-  readonly configuration = streams.configuration;
+  readonly indexedAttachments = catalog.get('indexedAttachments');
+  readonly serverMessages = catalog.get('serverMessages');
+  readonly serverMessageMailboxes = catalog.get('serverMessageMailboxes');
+  readonly conversationMessages = catalog.get('conversationMessages');
+  readonly messageReferences = catalog.get('messageReferences');
+  readonly messageGlobalData = catalog.get('messageGlobalData');
+  readonly subjects = catalog.get('subjects');
+  readonly summaries = catalog.get('summaries');
+  readonly generatedSummaries = catalog.get('generatedSummaries');
+  readonly messageMetadata = catalog.get('messageMetadata');
+  readonly dataDetectionResults = catalog.get('dataDetectionResults');
+  readonly richLinks = catalog.get('richLinks');
+  readonly messageRichLinks = catalog.get('messageRichLinks');
+  readonly protectedMessageData = catalog.get('protectedMessageData');
+  readonly brandIndicators = catalog.get('brandIndicators');
+  readonly brandIndicatorEvidence = catalog.get('brandIndicatorEvidence');
+  readonly addressMetadata = catalog.get('addressMetadata');
+  readonly businesses = catalog.get('businesses');
+  readonly businessAddresses = catalog.get('businessAddresses');
+  readonly businessCategories = catalog.get('businessCategories');
+  readonly senders = catalog.get('senders');
+  readonly senderAddresses = catalog.get('senderAddresses');
+  readonly events = catalog.get('events');
+  readonly smtpServers = catalog.get('smtpServers');
+  readonly mailboxProperties = catalog.get('mailboxProperties');
+  readonly smartMailboxConditions = catalog.get('smartMailboxConditions');
+  readonly configuration = catalog.get('configuration');
   readonly identity: string;
   protected readonly catalog = catalog;
-  readonly accounts = streams.accounts;
-  readonly messages = streams.messages;
-  readonly mailboxes = streams.mailboxes;
-  readonly messageMailboxes = streams.messageMailboxes;
-  readonly addresses = streams.addresses;
-  readonly recipients = streams.recipients;
-  readonly conversations = streams.conversations;
-  readonly messageFiles = streams.messageFiles;
-  readonly messageHeaders = streams.messageHeaders;
-  readonly messageParts = streams.messageParts;
-  readonly attachments = streams.attachments;
-  readonly rules = streams.rules;
-  readonly ruleConditions = streams.ruleConditions;
-  readonly smartMailboxes = streams.smartMailboxes;
-  readonly signatures = streams.signatures;
+  readonly accounts = catalog.get('accounts');
+  readonly messages = catalog.get('messages');
+  readonly mailboxes = catalog.get('mailboxes');
+  readonly messageMailboxes = catalog.get('messageMailboxes');
+  readonly addresses = catalog.get('addresses');
+  readonly recipients = catalog.get('recipients');
+  readonly conversations = catalog.get('conversations');
+  readonly messageFiles = catalog.get('messageFiles');
+  readonly messageHeaders = catalog.get('messageHeaders');
+  readonly messageParts = catalog.get('messageParts');
+  readonly attachments = catalog.get('attachments');
+  readonly rules = catalog.get('rules');
+  readonly ruleConditions = catalog.get('ruleConditions');
+  readonly smartMailboxes = catalog.get('smartMailboxes');
+  readonly signatures = catalog.get('signatures');
 
-  constructor(
-    readonly path: string,
-    readonly scope: ImportScope = {},
-  ) {
+  readonly path: string;
+  readonly scope: ImportScope;
+
+  constructor(path: string, scope: ImportScope = {}) {
     super();
+    this.path = path;
+    this.scope = scope;
     this.identity = `apple-mail:${path}`;
     Object.freeze(this);
   }
@@ -1016,15 +1039,18 @@ export class AppleMailSource extends Source<MailScan> {
     scan: MailScan,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
-    const name = stream.name as StreamName;
+    const { name } = stream;
+    if (!isStreamName(name)) throw new TypeError(`Unknown Mail stream ${name}`);
     let file: string | null = null;
-    async function* records(entries: AsyncIterable<Entry> | Iterable<Entry>) {
+    const records = async function* (
+      entries: AsyncIterable<Entry> | Iterable<Entry>,
+    ) {
       for await (const entry of entries) {
         if (!scan.accepts(name, entry.data)) continue;
         file = entry.file;
         yield* validateRecords(stream, [entry.data], 'Mail');
       }
-    }
+    };
     async function* groups(from: MessageStream) {
       for await (const group of scan.groups(from))
         yield {
@@ -1084,13 +1110,11 @@ export class AppleMailSource extends Source<MailScan> {
         yield selected;
       }
     } catch (error) {
-      if (
-        !(
-          signal.aborted &&
-          error instanceof Error &&
-          error.name === 'AbortError'
-        )
-      )
+      if (!(
+        signal.aborted &&
+        error instanceof Error &&
+        error.name === 'AbortError'
+      ))
         throw error;
     }
   }

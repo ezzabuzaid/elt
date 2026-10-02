@@ -1,18 +1,18 @@
 import {
   Catalog,
   type CopyConfiguration,
-  diffSnapshot,
   type ExtractionCoverage,
-  isCalendarDate,
   type Partition,
   type RecordMessage,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
   type Stream,
+  diffSnapshot,
+  isCalendarDate,
   validateRecords,
-} from 'elt';
-import { messageOf } from 'google-auth';
+} from '@workspace/elt';
+import { messageOf } from '@workspace/google-auth';
 
 import {
   type RetryPolicy,
@@ -30,10 +30,10 @@ import {
   readInspectionState,
 } from './rolling-inspection.ts';
 import {
+  type SearchAnalyticsRow,
   addDays,
   earlier,
   readSearchAnalytics,
-  type SearchAnalyticsRow,
   subMonths,
   today,
 } from './search-analytics-query.ts';
@@ -49,21 +49,16 @@ import {
   urlInspectionReferrersFields,
   urlInspectionSitemapsFields,
 } from './search-console-schema.ts';
-import { readSitemaps, type SitemapFetch } from './sitemap-urls.ts';
+import { type SitemapFetch, readSitemaps } from './sitemap-urls.ts';
 import {
   type InspectionClock,
+  type UrlInspection,
   inspectUrls,
   systemInspectionClock,
-  type UrlInspection,
 } from './url-inspection.ts';
 
 export type SearchAnalyticsType =
-  | 'WEB'
-  | 'IMAGE'
-  | 'VIDEO'
-  | 'NEWS'
-  | 'DISCOVER'
-  | 'GOOGLE_NEWS';
+  'WEB' | 'IMAGE' | 'VIDEO' | 'NEWS' | 'DISCOVER' | 'GOOGLE_NEWS';
 
 export type SearchConsoleOptions = {
   readonly requester: ConstructorParameters<typeof SearchConsoleApi>[0];
@@ -106,10 +101,6 @@ const SEARCH_TYPES = [
 
 // Search Console keeps the last sixteen months of performance data.
 const RETENTION_MONTHS = 16;
-
-const GRAIN_NAMES = Object.keys(
-  searchAnalyticsGrains,
-) as readonly SearchAnalyticsGrain[];
 
 function isGrain(name: string): name is SearchAnalyticsGrain {
   return Object.hasOwn(searchAnalyticsGrains, name);
@@ -902,8 +893,6 @@ export class SearchConsoleSource extends Source {
   }
 }
 
-export { GRAIN_NAMES };
-
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(finish, ms);
@@ -918,6 +907,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 // The analytics checkpoint is this source's own STATE: the last settled date.
 function readCheckpoint(state: unknown): string | null {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what this source wrote; own state is not re-validated
   return (state as { date: string } | null)?.date ?? null;
 }
 

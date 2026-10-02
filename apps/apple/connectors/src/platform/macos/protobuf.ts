@@ -17,9 +17,9 @@ export class ProtobufMessage {
     const varint = () => {
       let value = 0n;
       for (let shift = 0n; ; shift += 7n) {
-        if (offset >= bytes.length || shift > 63n)
+        const byte = bytes[offset++];
+        if (byte === undefined || shift > 63n)
           throw new TypeError('Truncated protobuf varint');
-        const byte = bytes[offset++] as number;
         value |= BigInt(byte & 0x7f) << shift;
         if ((byte & 0x80) === 0) return value;
       }

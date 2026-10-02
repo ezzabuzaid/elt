@@ -4,10 +4,12 @@ import type { Stream } from './stream.ts';
 
 // A source resource, not a local path. Only the source can export its contents.
 export class FileReference {
-  constructor(
-    readonly stream: Stream,
-    readonly storage?: FileStorage,
-  ) {
+  readonly stream: Stream;
+  readonly storage?: FileStorage;
+
+  constructor(stream: Stream, storage?: FileStorage) {
+    this.stream = stream;
+    this.storage = storage;
     if (
       storage !== undefined &&
       (!(storage instanceof FileStorage) ||
@@ -28,14 +30,16 @@ export class FileReference {
 // A named extraction request. A stored file becomes a scalar reference before
 // its destination receives it; parsing and byte reads remain separate choices.
 export class FileRead {
+  readonly name: string;
+  readonly file: FileReference;
+  readonly parser?: DocumentParser;
   readonly parserIdentity?: string;
   readonly storageIdentity?: string;
 
-  constructor(
-    readonly name: string,
-    readonly file: FileReference,
-    readonly parser?: DocumentParser,
-  ) {
+  constructor(name: string, file: FileReference, parser?: DocumentParser) {
+    this.name = name;
+    this.file = file;
+    this.parser = parser;
     if (!name || name.includes('\0'))
       throw new TypeError('Invalid file field name');
     if (!(file instanceof FileReference))

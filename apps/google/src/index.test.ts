@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
-import { Connection, Copy, Pipeline, PipelineError } from 'elt';
+import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
+import { GaxiosError } from '@workspace/google-auth';
 
 import {
   SearchConsoleApi,
@@ -711,7 +712,7 @@ test('every stream but sites carries its property and keys by it first', async (
     (stream) =>
       stream.name !== 'sites' &&
       (stream.primaryKey[0] !== 'siteUrl' ||
-        !Object.hasOwn(stream.jsonSchema['properties'] as object, 'siteUrl')),
+        stream.jsonSchema.properties?.siteUrl === undefined),
   );
 
   assert.deepEqual(
@@ -853,22 +854,17 @@ test('an unverified property is not offered as a readable site', async () => {
   );
 });
 
-// Shaped like the GaxiosError google-auth-library throws for a real 429:
-// `status`, a `Headers` object, and Google's error body.
+// The GaxiosError google-auth-library throws for a real 429: `status`, a
+// `Headers` object, and Google's error body.
 function httpError(
   status: number,
   { retryAfter, reason }: { retryAfter?: string; reason?: string } = {},
 ) {
-  return Object.assign(new Error(`HTTP ${status}`), {
+  return googleError(
     status,
-    response: {
-      status,
-      headers: new Headers(
-        retryAfter === undefined ? {} : { 'retry-after': retryAfter },
-      ),
-      data: { error: { code: status, errors: reason ? [{ reason }] : [] } },
-    },
-  });
+    { error: { code: status, errors: reason ? [{ reason }] : [] } },
+    retryAfter === undefined ? {} : { 'retry-after': retryAfter },
+  );
 }
 
 function sequence(outcomes: readonly unknown[]) {
@@ -974,119 +970,133 @@ test('a server error is retried, and one that persists passes through unchanged'
   assert.equal(failing.calls, 3);
 });
 
-test('aborting a watcher stops a rate-limit wait instead of sitting it out', {
-  timeout: 5000,
-}, async () => {
-  let loaded = false;
-  const limited = Promise.withResolvers<void>();
-  const requester = {
-    async request() {
-      // Every probe and the load of the first pass succeed; the next probe is
-      // told to come back in 45 seconds. The watcher keeps probing while the
-      // warehouse connects, so the first pass can take more than two calls.
-      if (!loaded)
-        return {
-          data: {
-            rows: [
-              {
-                clicks: 1,
-                ctr: 0.1,
-                impressions: 9,
-                keys: ['2026-09-20'],
-                position: 2,
-              },
-            ],
-          },
-        };
-      limited.resolve();
-      throw httpError(429, { retryAfter: '45' });
-    },
-  };
-  await using warehouse = await searchConsoleDatabase();
-  const { destination } = warehouse;
-  const source = new SearchConsoleSource({
-    now: NOW,
-    pollIntervalMs: 1,
-    requester,
-    retry: { attempts: 3, baseDelayMs: 1, maxDelayMs: 60_000 },
-    searchTypes: ['WEB'],
-    siteUrls: [SITE],
-  });
-  const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
-  const controller = new AbortController();
-  const watching = new Pipeline({
-    connections: [
-      new Connection({ name: 'test', source, destination, steps: [copy] }),
-    ],
-  }).watch({
-    signal: controller.signal,
-  });
+test(
+  'aborting a watcher stops a rate-limit wait instead of sitting it out',
+  {
+    timeout: 5000,
+  },
+  async () => {
+    let loaded = false;
+    const limited = Promise.withResolvers<void>();
+    const requester = {
+      async request() {
+        // Every probe and the load of the first pass succeed; the next probe is
+        // told to come back in 45 seconds. The watcher keeps probing while the
+        // warehouse connects, so the first pass can take more than two calls.
+        if (!loaded)
+          return {
+            data: {
+              rows: [
+                {
+                  clicks: 1,
+                  ctr: 0.1,
+                  impressions: 9,
+                  keys: ['2026-09-20'],
+                  position: 2,
+                },
+              ],
+            },
+          };
+        limited.resolve();
+        throw httpError(429, { retryAfter: '45' });
+      },
+    };
+    await using warehouse = await searchConsoleDatabase();
+    const { destination } = warehouse;
+    const source = new SearchConsoleSource({
+      now: NOW,
+      pollIntervalMs: 1,
+      requester,
+      retry: { attempts: 3, baseDelayMs: 1, maxDelayMs: 60_000 },
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    const copy = new Copy(
+      source.searchAnalyticsDaily,
+      destination.table('rows'),
+    );
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      connections: [
+        new Connection({ name: 'test', source, destination, steps: [copy] }),
+      ],
+    }).watch({
+      signal: controller.signal,
+    });
 
-  assert.deepEqual((await watching.next()).value?.outcomes, [
-    { copy, count: 1, deleted: 0, failures: [] },
-  ]);
-  loaded = true;
-  await limited.promise;
-  const started = performance.now();
-  controller.abort();
+    assert.deepEqual((await watching.next()).value?.outcomes, [
+      { copy, count: 1, deleted: 0, failures: [] },
+    ]);
+    loaded = true;
+    await limited.promise;
+    const started = performance.now();
+    controller.abort();
 
-  assert.deepEqual(await watching.next(), { done: true, value: undefined });
-  assert.ok(performance.now() - started < 1000, 'closed without the 45 s wait');
-});
+    assert.deepEqual(await watching.next(), { done: true, value: undefined });
+    assert.ok(
+      performance.now() - started < 1000,
+      'closed without the 45 s wait',
+    );
+  },
+);
 
-test('aborting a watcher cancels its in-flight probe as an AbortError', {
-  timeout: 5000,
-}, async () => {
-  let served = 0;
-  const probing = Promise.withResolvers<void>();
-  const requester = {
-    request({ signal }: { signal?: AbortSignal }) {
-      served += 1;
-      if (served === 1)
-        return Promise.resolve({
-          data: {
-            rows: [
-              {
-                clicks: 1,
-                ctr: 0.1,
-                impressions: 9,
-                keys: ['2026-09-20'],
-                position: 2,
-              },
-            ],
-          },
+test(
+  'aborting a watcher cancels its in-flight probe as an AbortError',
+  {
+    timeout: 5000,
+  },
+  async () => {
+    let served = 0;
+    const probing = Promise.withResolvers<void>();
+    const requester = {
+      request({ signal }: { signal?: AbortSignal }) {
+        served += 1;
+        if (served === 1)
+          return Promise.resolve({
+            data: {
+              rows: [
+                {
+                  clicks: 1,
+                  ctr: 0.1,
+                  impressions: 9,
+                  keys: ['2026-09-20'],
+                  position: 2,
+                },
+              ],
+            },
+          });
+        probing.resolve();
+        // gaxios rejects a cancelled fetch with a generic error, not AbortError.
+        return new Promise<never>((_, reject) => {
+          signal?.addEventListener('abort', () =>
+            reject(
+              new Error('The operation was aborted.', { cause: signal.reason }),
+            ),
+          );
         });
-      probing.resolve();
-      // gaxios rejects a cancelled fetch with a generic error, not AbortError.
-      return new Promise<never>((_, reject) => {
-        signal?.addEventListener('abort', () =>
-          reject(
-            new Error('The operation was aborted.', { cause: signal.reason }),
-          ),
-        );
-      });
-    },
-  };
-  const source = new SearchConsoleSource({
-    now: NOW,
-    pollIntervalMs: 1,
-    requester,
-    searchTypes: ['WEB'],
-    siteUrls: [SITE],
-  });
-  const controller = new AbortController();
-  const watching = source.watch({
-    signal: controller.signal,
-    streams: [source.searchAnalyticsDaily],
-  });
+      },
+    };
+    const source = new SearchConsoleSource({
+      now: NOW,
+      pollIntervalMs: 1,
+      requester,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    const controller = new AbortController();
+    const watching = source.watch({
+      signal: controller.signal,
+      streams: [source.searchAnalyticsDaily],
+    });
 
-  await watching.next();
-  const polling = watching.next();
-  await probing.promise;
-  controller.abort();
+    await watching.next();
+    const polling = watching.next();
+    await probing.promise;
+    controller.abort();
 
-  await assert.rejects(polling, { name: 'AbortError' });
-});
+    await assert.rejects(polling, { name: 'AbortError' });
+  },
+);
 
 test('an incremental sites copy deletes a property that is no longer listed', async () => {
   let siteEntry = [
@@ -1132,11 +1142,24 @@ test('an incremental sites copy deletes a property that is no longer listed', as
   );
 });
 
-function googleError(status: number, data: unknown = {}) {
-  return Object.assign(new Error(`Request failed with status code ${status}`), {
-    status,
-    response: { status, data },
-  });
+// Built as gaxios builds one: from a response whose body it has already read
+// into `data`. GaxiosError drops `data` from a response with an unread body.
+function googleError(
+  status: number,
+  data: unknown = {},
+  headers: Record<string, string> = {},
+) {
+  const config = {
+    url: new URL('https://searchconsole.googleapis.com/'),
+    headers: new Headers(),
+  };
+  const response = new Response(JSON.stringify(data), { status, headers });
+  void response.text();
+  return new GaxiosError(
+    `Request failed with status code ${status}`,
+    config,
+    Object.assign(response, { config, data }),
+  );
 }
 
 const siteOf = (call: Call) =>
@@ -1304,10 +1327,12 @@ test('a property without permission is reported by name while the others load an
       (row) => row.siteUrl,
     );
   const saved = async () =>
-    (await sql`SELECT state FROM _elt_checkpoints`).flatMap(({ state }) =>
-      (
-        state as { partitions: { partition: { siteUrl: string } }[] }
-      ).partitions.map(({ partition }) => partition.siteUrl),
+    (
+      await sql<
+        { state: { partitions: { partition: { siteUrl: string } }[] } }[]
+      >`SELECT state FROM _elt_checkpoints`
+    ).flatMap(({ state }) =>
+      state.partitions.map(({ partition }) => partition.siteUrl),
     );
 
   const error = await pipeline.run().then(
@@ -1544,9 +1569,7 @@ async function inspectionRun(
   source: SearchConsoleSource,
   { destination, checkpoints }: Warehouse,
   streams: readonly (
-    | 'urlInspection'
-    | 'urlInspectionSitemaps'
-    | 'urlInspectionReferrers'
+    'urlInspection' | 'urlInspectionSitemaps' | 'urlInspectionReferrers'
   )[] = ['urlInspection'],
 ) {
   return new Pipeline({

@@ -3,9 +3,9 @@ import type { OAuth2Client } from 'google-auth-library';
 import type { GoogleOAuthApp } from './app.ts';
 import type { GoogleOAuthCredential } from './credential.ts';
 import { GoogleGrantMissingError, GoogleGrantRevokedError } from './errors.ts';
-import { GoogleGrant, type GoogleOpenableGrant } from './grant.ts';
 import { GoogleGrantSession } from './grant-session.ts';
 import type { GoogleGrantStore } from './grant-store.ts';
+import { GoogleGrant, type GoogleOpenableGrant } from './grant.ts';
 
 /**
  * Opens sessions over stored grants. One instance per process; the host

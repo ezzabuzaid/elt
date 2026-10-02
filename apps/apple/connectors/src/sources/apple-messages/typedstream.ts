@@ -31,7 +31,8 @@ export function attributedText(body: Uint8Array): string | null {
 }
 
 function indexOf(haystack: Uint8Array, needle: Uint8Array): number {
-  const first = needle[0] as number;
+  const first = needle[0];
+  if (first === undefined) return -1;
   for (
     let start = haystack.indexOf(first);
     start !== -1 && start + needle.length <= haystack.length;

@@ -2,15 +2,17 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
-import { Connection, Pipeline } from 'elt';
+import postgres from 'postgres';
+
+import { Connection, Pipeline } from '@workspace/elt';
 import {
-  installPostgresCatalog,
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from 'elt-postgresql';
-import { scratchWarehouse } from 'elt-postgresql/testing';
-import postgres from 'postgres';
+  installPostgresCatalog,
+} from '@workspace/elt-postgresql';
+import { scratchWarehouse } from '@workspace/elt-postgresql/testing';
+
 import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
 import { installSearchConsoleMarts } from './sources/search-console/search-console-marts.ts';
 import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
@@ -54,7 +56,10 @@ async function warehouse(siteUrls: string[], google: Google) {
     schema: RAW,
   });
   const requester = {
-    async request(options: { url: string; data?: Record<string, unknown> }) {
+    async request(options: {
+      url: string;
+      data?: { dimensions?: string[]; type?: string };
+    }) {
       const path = new URL(options.url).pathname;
       if (path.endsWith('/webmasters/v3/sites'))
         return {
@@ -75,8 +80,8 @@ async function warehouse(siteUrls: string[], google: Google) {
           rows: google
             .analytics({
               site,
-              dimensions: (options.data?.['dimensions'] as string[]) ?? [],
-              type: String(options.data?.['type']),
+              dimensions: options.data?.dimensions ?? [],
+              type: String(options.data?.type),
             })
             .map((row) => ({
               ctr: row.impressions > 0 ? row.clicks / row.impressions : 0,

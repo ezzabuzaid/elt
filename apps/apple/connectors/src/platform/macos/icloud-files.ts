@@ -82,15 +82,19 @@ export async function localFiles(item: string): Promise<LocalFile[] | null> {
   if (!info.isDirectory()) return null;
   const files: LocalFile[] = [];
   const pending = [''];
-  while (pending.length > 0) {
-    const relative = pending.pop() as string;
-    const entries = await readdir(join(item, relative), {
-      withFileTypes: true,
-    });
-    const paths = entries.map((entry) => join(item, relative, entry.name));
-    const local = await localPaths(paths);
-    for (const [index, entry] of entries.entries()) {
-      const path = paths[index] as string;
+  for (
+    let relative = pending.pop();
+    relative !== undefined;
+    relative = pending.pop()
+  ) {
+    const directory = join(item, relative);
+    const entries = await readdir(directory, { withFileTypes: true });
+    const listed = entries.map((entry) => ({
+      entry,
+      path: join(directory, entry.name),
+    }));
+    const local = await localPaths(listed.map(({ path }) => path));
+    for (const { entry, path } of listed) {
       if (!local.has(path)) return null;
       const name = relative === '' ? entry.name : `${relative}/${entry.name}`;
       if (entry.isDirectory()) pending.push(name);

@@ -3,7 +3,7 @@
   "sourceRoot": "packages/import-store/src",
   "projectType": "library",
   "targets": {
-    "lint": {},
+    "format": {},
     "test": {
       "dependsOn": ["build"],
       "command": "node --test packages/import-store/dist/*.test.js"

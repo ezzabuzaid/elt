@@ -3,10 +3,10 @@ import type { SafariDatabase } from '../../platform/macos/safari-store.ts';
 import { type ImportScope, selected } from '../import-scope.ts';
 import {
   type Dictionary,
+  type Row,
   defaultProfile,
   dictionary,
   list,
-  type Row,
   text,
 } from './safari-values.ts';
 
@@ -60,7 +60,12 @@ const favoritesSubtype = 1;
 const deviceSubtype = 3;
 const rootId = 0;
 // Folders Safari names by their external_uuid.
-const namedSpecials = new Set(['pinned', 'privatePinned', 'recentlyClosed']);
+const namedSpecials = new Map<unknown, TabGroupKind>(
+  (['pinned', 'privatePinned', 'recentlyClosed'] as const).map((kind) => [
+    kind,
+    kind,
+  ]),
+);
 
 export const tabGroupKinds = [
   'named',
@@ -89,15 +94,16 @@ export type HistoryEntry = {
 // Safari last saved them. Attributes decode once per row. The scope's
 // profiles select profile rows, windows, groups and tabs.
 export class TabsReader {
+  readonly database: SafariDatabase;
+  readonly scope: ImportScope;
   readonly #rows: Row[];
   readonly #byId: Map<unknown, Row>;
   readonly #windows: Row[];
   readonly #attributes = new Map<unknown, [Dictionary, Dictionary]>();
 
-  constructor(
-    readonly database: SafariDatabase,
-    readonly scope: ImportScope,
-  ) {
+  constructor(database: SafariDatabase, scope: ImportScope) {
+    this.database = database;
+    this.scope = scope;
     this.#rows = database.all(select('bookmarks', 'id'));
     this.#byId = new Map(this.#rows.map((row) => [row.id, row]));
     this.#windows = database.all(select('windows', 'id'));
@@ -206,8 +212,8 @@ export class TabsReader {
   }
 
   kind(row: Row): TabGroupKind {
-    const uuid = row.external_uuid as string;
-    if (namedSpecials.has(uuid)) return uuid as TabGroupKind;
+    const named = namedSpecials.get(row.external_uuid);
+    if (named !== undefined) return named;
     if (Number(row.special_id) > 0) return 'special';
     if (row.subtype === favoritesSubtype) return 'favorites';
     if (row.subtype === deviceSubtype) return 'device';
@@ -233,7 +239,7 @@ export class TabsReader {
       current = this.#byId.get(current.parent)
     ) {
       if (current.type === folder && current.subtype === profileSubtype)
-        return current.external_uuid as string;
+        return text(current.external_uuid);
       if (current.parent === rootId) return defaultProfile;
       const window = this.#windows.find(
         (window) =>

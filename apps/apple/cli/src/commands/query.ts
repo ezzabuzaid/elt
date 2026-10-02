@@ -1,6 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { AppleApp } from 'apple/apps/apple-app';
+
 import { Argument, type Command as Declaration } from 'commander';
+
+import type { AppleApp } from '@workspace/apple/apps/apple-app';
+
 import { table } from '../table.ts';
 import { Command, type Output } from './command.ts';
 
@@ -24,6 +27,7 @@ function query(database: DatabaseSync, sql: string): QueryResult {
   statement.setReturnArrays(true);
   return {
     columns: statement.columns().map(({ name }) => name),
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- @types/node types rows as objects even though setReturnArrays(true) makes them arrays
     rows: statement.all() as unknown as unknown[][],
   };
 }
@@ -49,17 +53,18 @@ function views(database: DatabaseSync, app: AppleApp): ViewSummary[] {
        JOIN extraction_coverage c ON c.attempt_id = s.latest_attempt_id AND c.stream = s.stream
        WHERE s.connector = ? ORDER BY s.stream`,
     )
-    .all(app.name) as { stream: string; description: string }[];
+    .all(app.name)
+    .map((row) => ({
+      stream: String(row.stream),
+      description: String(row.description),
+    }));
   // A stream whose table was never prepared, such as one denied before its
   // first load, has a status but no view.
   const readable = new Set(
-    (
-      database
-        .prepare("SELECT name FROM catalog WHERE kind = 'view'")
-        .all() as {
-        name: string;
-      }[]
-    ).map(({ name }) => name),
+    database
+      .prepare("SELECT name FROM catalog WHERE kind = 'view'")
+      .all()
+      .map(({ name }) => String(name)),
   );
   return streams
     .map(({ stream, description }) => ({
@@ -70,11 +75,9 @@ function views(database: DatabaseSync, app: AppleApp): ViewSummary[] {
     .map(({ view, coverage }) => ({
       view,
       coverage,
-      rows: (
-        database.prepare(`SELECT count(*) AS n FROM "${view}"`).get() as {
-          n: number;
-        }
-      ).n,
+      rows: Number(
+        database.prepare(`SELECT count(*) AS n FROM "${view}"`).get()?.n,
+      ),
     }));
 }
 
@@ -94,10 +97,8 @@ export class QueryCommand extends Command {
   }
 
   protected async run(declaration: Declaration): Promise<Output> {
-    const [name, sql] = declaration.processedArgs as [
-      string,
-      string | undefined,
-    ];
+    const name: string = declaration.processedArgs[0];
+    const sql: string | undefined = declaration.processedArgs[1];
     if (declaration.opts().tables === true) {
       using database = this.imports.read(name);
       const summaries = views(database, this.imports.app(name));

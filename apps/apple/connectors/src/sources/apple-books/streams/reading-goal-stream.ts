@@ -1,5 +1,9 @@
-import type { SchemaRecord } from 'elt';
-import type { PlistValue } from '../../../platform/macos/plist.ts';
+import type { RecordDraft } from '@workspace/elt';
+
+import {
+  type PlistValue,
+  isDictionary,
+} from '../../../platform/macos/plist.ts';
 import type { BooksScan, Preferences } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';
 import { integer, plistTime } from '../books-values.ts';
@@ -33,14 +37,9 @@ const properties = {
   },
 } as const;
 
-const dictionary = (value: PlistValue | undefined) =>
-  value !== null &&
-  typeof value === 'object' &&
-  !Array.isArray(value) &&
-  !(value instanceof Date) &&
-  !(value instanceof Uint8Array)
-    ? (value as Readonly<Record<string, PlistValue>>)
-    : {};
+const dictionary = (
+  value: PlistValue | undefined,
+): Readonly<Record<string, PlistValue>> => (isDictionary(value) ? value : {});
 
 export class ReadingGoalStream extends BooksStream<
   typeof properties,
@@ -64,7 +63,7 @@ export class ReadingGoalStream extends BooksStream<
   protected record({
     app,
     shared,
-  }: Preferences): SchemaRecord<typeof properties> {
+  }: Preferences): RecordDraft<typeof properties> {
     const appValues = dictionary(app);
     const sharedValues = dictionary(shared);
     const goal = dictionary(sharedValues.streakDatUserDefaultsKey);

@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdtempDisposable, readdir, readFile, stat } from 'node:fs/promises';
+import { mkdtempDisposable, readFile, readdir, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, relative, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { promisify } from 'node:util';
-import { type PlistValue, parseBinaryPlist } from './plist.ts';
+
+import { type PlistValue, isDictionary, parseBinaryPlist } from './plist.ts';
 
 const execute = promisify(execFile);
 export const mailDirectory = join(homedir(), 'Library/Mail');
@@ -51,15 +52,9 @@ export function plistJSON(value: PlistValue): string {
 }
 
 export function plistObject(value: PlistValue): Record<string, PlistValue> {
-  if (
-    value === null ||
-    typeof value !== 'object' ||
-    Array.isArray(value) ||
-    value instanceof Date ||
-    value instanceof Uint8Array
-  )
+  if (!isDictionary(value))
     throw new MailSchemaError('Mail returned a non-dictionary property list');
-  return value as Record<string, PlistValue>;
+  return value;
 }
 
 export async function mailVersionDirectory(root: string): Promise<string> {
@@ -113,13 +108,22 @@ export class MailStore implements AsyncDisposable {
   readonly attachments = new Map<string, MailFile[]>();
   readonly plists = new Map<string, MailFile>();
   readonly signatures: MailFile[] = [];
+  readonly path: string;
+  readonly database: DatabaseSync;
+  readonly scratch: Awaited<ReturnType<typeof mkdtempDisposable>>;
+  private readonly resources: AsyncDisposableStack;
 
   private constructor(
-    readonly path: string,
-    readonly database: DatabaseSync,
-    readonly scratch: Awaited<ReturnType<typeof mkdtempDisposable>>,
-    private readonly resources: AsyncDisposableStack,
-  ) {}
+    path: string,
+    database: DatabaseSync,
+    scratch: Awaited<ReturnType<typeof mkdtempDisposable>>,
+    resources: AsyncDisposableStack,
+  ) {
+    this.path = path;
+    this.database = database;
+    this.scratch = scratch;
+    this.resources = resources;
+  }
 
   static async open(
     root: string,
@@ -169,7 +173,7 @@ export class MailStore implements AsyncDisposable {
         const segments = relative(path, filePath).split(sep);
         const attachment = segments.indexOf('Attachments');
         if (/^\d+(\.partial)?\.emlx$/.test(entry.name)) {
-          const id = entry.name.split('.')[0] as string;
+          const id = entry.name.slice(0, entry.name.indexOf('.'));
           if (store.messages.has(id))
             throw new MailSchemaError(
               `Mail has more than one file for indexed message ${id}`,

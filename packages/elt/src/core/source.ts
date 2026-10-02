@@ -4,10 +4,10 @@ import type { DocumentParser } from './document-parser.ts';
 import { FileContent } from './file-content.ts';
 import { interleave } from './interleave.ts';
 import {
-  assertInPartition,
-  assertPartitions,
   type Partition,
   type PartitionState,
+  assertInPartition,
+  assertPartitions,
   partitionIdentity,
   readPartition,
   readPartitionStates,
@@ -67,12 +67,21 @@ export type SourceMessage = RecordMessage | StateMessage | DeleteMessage;
 // Source.read creates it, from what extract threw; a connector signals
 // failure by throwing.
 export class StreamStatus {
+  readonly stream: string;
+  readonly status: 'STARTED' | 'FAILED' | 'ENDED';
+  readonly partition: Partition | null;
+  readonly error: unknown;
+
   constructor(
-    readonly stream: string,
-    readonly status: 'STARTED' | 'FAILED' | 'ENDED',
-    readonly partition: Partition | null = null,
-    readonly error: unknown = undefined,
+    stream: string,
+    status: 'STARTED' | 'FAILED' | 'ENDED',
+    partition: Partition | null = null,
+    error: unknown = undefined,
   ) {
+    this.stream = stream;
+    this.status = status;
+    this.partition = partition;
+    this.error = error;
     Object.freeze(this);
   }
 }

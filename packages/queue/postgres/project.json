@@ -5,6 +5,7 @@
   "projectType": "library",
   "tags": ["scope:app", "layer:island"],
   "targets": {
+    "format": {},
     "build": {
       "executor": "@nx/esbuild:esbuild",
       "outputs": ["{options.outputPath}"],
@@ -19,9 +20,6 @@
         "command": "node --test --no-warnings --test-force-exit --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results.xml",
         "cwd": "{projectRoot}"
       }
-    },
-    "format": {
-      "command": "prettier --write {projectRoot}"
     }
   }
 }

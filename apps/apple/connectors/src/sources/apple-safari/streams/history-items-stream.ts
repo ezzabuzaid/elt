@@ -1,8 +1,9 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import { triggers } from '../history-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { counts, flag, integer, type Row, text } from '../safari-values.ts';
+import { type Row, counts, flag, integer, text } from '../safari-values.ts';
 
 const { profileId, id, nullableText, ordinal, boolean } = safariFields;
 const countList = { type: 'integer', minimum: 0 } as const;
@@ -75,19 +76,17 @@ export class HistoryItemsStream extends SafariStream<typeof properties, Row> {
     return scan.history.flatMap((history) => history.items);
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      profileId: row.$profile as string,
-      id: row.id as number,
-      url: row.url as string,
+      profileId: row.$profile,
+      id: row.id,
+      url: row.url,
       domainExpansion: text(row.domain_expansion),
-      visitCount: row.visit_count as number,
-      visitCountScore: row.visit_count_score as number,
-      dailyVisitCounts: counts(row.daily_visit_counts) as number[],
+      visitCount: row.visit_count,
+      visitCountScore: row.visit_count_score,
+      dailyVisitCounts: counts(row.daily_visit_counts),
       weeklyVisitCounts: counts(row.weekly_visit_counts),
-      autocompleteTriggers: triggers(row.autocomplete_triggers) as
-        | string[]
-        | null,
+      autocompleteTriggers: triggers(row.autocomplete_triggers),
       statusCode: integer(row.status_code) || null,
       derivedCountsStale: flag(row.should_recompute_derived_visit_counts),
     };

@@ -1,4 +1,5 @@
-import type { ImportScope } from 'import-store';
+import type { ImportScope } from '@workspace/import-store';
+
 import { AppleMessagesSource } from '../sources/apple-messages/apple-messages-source.ts';
 import { AppleApp } from './apple-app.ts';
 import type { Choice } from './choice.ts';

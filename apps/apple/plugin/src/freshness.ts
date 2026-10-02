@@ -1,12 +1,14 @@
 import { setInterval, setTimeout as sleep } from 'node:timers/promises';
-import { Pipeline } from 'elt';
-import { installSQLiteCatalog, SQLiteSyncHistory } from 'elt-sqlite';
+
+import { Pipeline } from '@workspace/elt';
+import { SQLiteSyncHistory, installSQLiteCatalog } from '@workspace/elt-sqlite';
 import {
   ImportStore,
+  type Selection,
   importDirectory,
   lease,
-  type Selection,
-} from 'import-store';
+} from '@workspace/import-store';
+
 import type { ApplePlugin } from './apple-plugin.ts';
 
 function readSelections(directory: string): Selection[] {

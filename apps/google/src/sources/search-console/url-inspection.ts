@@ -1,6 +1,7 @@
 import { setTimeout as wait } from 'node:timers/promises';
 
-import { messageOf, statusOf } from 'google-auth';
+import { messageOf, statusOf } from '@workspace/google-auth';
+
 import {
   type InspectionResult,
   type SearchConsoleApi,

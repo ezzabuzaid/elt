@@ -6,8 +6,8 @@ import { rmSync } from 'node:fs';
 import {
   mkdir,
   mkdtempDisposable,
-  readdir,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -16,14 +16,13 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
+
 import {
   Catalog,
   Connection,
   Copy,
   type CopyConfiguration,
   type Destination,
-  diffGroupedSnapshot,
-  diffSnapshot,
   type FileContent,
   LocalFiles,
   type Partition,
@@ -36,12 +35,15 @@ import {
   StreamStatus,
   type Target,
   TargetOwnedError,
-} from 'elt';
+  diffGroupedSnapshot,
+  diffSnapshot,
+} from '@workspace/elt';
+
 import {
-  installSQLiteCatalog,
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
+  installSQLiteCatalog,
 } from './index.ts';
 
 test('the public ELT API copies source records into SQLite', async () => {
@@ -383,8 +385,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     protected override async *observe({ streams, signal }: SourceWatchOptions) {
       await using events = on(changes, 'change', { signal });
       yield streams;
-      for await (const [affected] of events)
-        yield affected as readonly Stream[];
+      for await (const [affected] of events) yield affected;
     }
 
     protected override async *extract(
@@ -656,7 +657,8 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
     /can never update a conflicting row/,
   );
   await assert.rejects(
-    validating('unknown', { ...guarded, dedupPolicy: 'newest' } as never),
+    // @ts-expect-error -- 'newest' is not a DedupPolicy; validation must reject it
+    validating('unknown', { ...guarded, dedupPolicy: 'newest' }),
     /Unsupported dedupPolicy/,
   );
   await assert.rejects(
@@ -931,7 +933,10 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
   const checkpoints = new SQLiteCheckpointStore({
     path: join(scratch.path, 'state.sqlite'),
   });
-  const rejects = (options: object, message: RegExp) =>
+  const rejects = (
+    options: Partial<ConstructorParameters<typeof Copy>[2]>,
+    message: RegExp,
+  ) =>
     assert.throws(
       () =>
         new Copy(items, sqlite.table('items'), {
@@ -939,11 +944,7 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
           destinationSyncMode: 'append_dedup',
           id: 'items',
           ...options,
-        } as ConstructorParameters<typeof Copy>[2]).validate(
-          source,
-          sqlite,
-          checkpoints,
-        ),
+        }).validate(source, sqlite, checkpoints),
       message,
     );
 
@@ -987,7 +988,7 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
     [{ id: 1 }, /DELETE for items has an invalid id|requires non-null string/],
     [{ id: '\uD800' }, /invalid id/],
   ] as const) {
-    messages = [{ type: 'DELETE', stream: 'items', key: key as never }];
+    messages = [{ type: 'DELETE', stream: 'items', key }];
     await assert.rejects(run(), message);
   }
   // A full-refresh overwrite cannot apply a deletion, and a stream that does
@@ -1367,11 +1368,12 @@ test('a target has one writer, even when another loads only its own partitions',
       partitionKey: ['owner'],
     });
     protected readonly catalog = new Catalog([this.records]);
-    constructor(
-      readonly identity: string,
-      readonly owner: string,
-    ) {
+    readonly identity: string;
+    readonly owner: string;
+    constructor(identity: string, owner: string) {
       super();
+      this.identity = identity;
+      this.owner = owner;
     }
     protected override partitions() {
       return [{ owner: this.owner }];
@@ -1477,8 +1479,10 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
       supportedSyncModes: ['full_refresh', 'incremental'],
     });
     protected readonly catalog = new Catalog([this.records]);
-    constructor(readonly identity: string) {
+    readonly identity: string;
+    constructor(identity: string) {
       super();
+      this.identity = identity;
     }
     protected override async *observe({ streams }: SourceWatchOptions) {
       yield streams;
@@ -1694,11 +1698,15 @@ class Sites extends Source {
     partitionKey: ['site'],
   });
   protected readonly catalog = new Catalog([this.pages]);
+  sites: string[];
+  pagesOf: Record<string, Iterable<Record<string, unknown>>>;
   constructor(
-    public sites: string[],
-    public pagesOf: Record<string, Iterable<Record<string, unknown>>>,
+    sites: string[],
+    pagesOf: Record<string, Iterable<Record<string, unknown>>>,
   ) {
     super();
+    this.sites = sites;
+    this.pagesOf = pagesOf;
   }
   protected override partitions() {
     return this.sites.map((site) => ({ site }));
@@ -2071,15 +2079,21 @@ class FileSource extends Source {
   }
 
   readonly identity = 'file-test';
+  readonly staging: string;
+  contents: Record<string, { version: number; bytes: Uint8Array }>;
+  readonly snapshot: boolean;
   readonly files: Stream;
   protected readonly catalog: Catalog;
 
   constructor(
-    readonly staging: string,
-    public contents: Record<string, { version: number; bytes: Uint8Array }>,
-    readonly snapshot = true,
+    staging: string,
+    contents: Record<string, { version: number; bytes: Uint8Array }>,
+    snapshot = true,
   ) {
     super();
+    this.staging = staging;
+    this.contents = contents;
+    this.snapshot = snapshot;
     this.files = new Stream({
       name: 'files',
       jsonSchema: {
@@ -2133,7 +2147,10 @@ const storedFiles = (path: string) => {
       'SELECT f.id, c.bytes FROM files f JOIN "_elt_files_files_bytes" c ON c.file = f.bytes ORDER BY f.id, c.n',
     )
     .all()
-    .map((row) => ({ id: String(row.id), bytes: row.bytes as Uint8Array }));
+    .map(({ id, bytes }) => {
+      assert.ok(bytes instanceof Uint8Array);
+      return { id: String(id), bytes };
+    });
   const files = Object.fromEntries(
     [...Map.groupBy(chunks, (row) => row.id)].map(([id, rows]) => [
       id,
@@ -2416,13 +2433,15 @@ class ScriptedSource extends Source {
 
   readonly identity = 'scripted';
   protected readonly catalog: Catalog;
+  scripts: Record<string, readonly (SourceMessage | Error)[]>;
 
   constructor(
     streams: readonly Stream[],
-    public scripts: Record<string, readonly (SourceMessage | Error)[]>,
+    scripts: Record<string, readonly (SourceMessage | Error)[]>,
   ) {
     super();
     this.catalog = new Catalog(streams);
+    this.scripts = scripts;
   }
 
   protected override async open() {

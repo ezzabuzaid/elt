@@ -41,6 +41,7 @@ Report connected apps, scope, each app's progress and last successful sync, read
 ## Offer meeting prep
 
 When Calendar is connected, offer meeting prep once, unless `$CODEX_HOME/automations/*/automation.toml` already holds automations named Meeting prep and Meeting brief.
+
 - **What to tell the user:** Codex prepares each meeting 10 to 20 minutes before it starts and briefs the day's meetings at 09:00, using `$meeting-prep`. It does this here in this chat, with this chat's model, and only while ChatGPT is open. Archiving this chat stops it. It notifies only when a meeting has something to prepare from.
 - **On yes:** find the `automation_update` tool with tool search and call it twice, each with `mode` `create`, `kind` `heartbeat` and `destination` `thread`:
   - `name` `Meeting prep`, `rrule` `FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR=6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21;BYMINUTE=0,10,20,30,40,50`, `prompt` `Prepare each meeting starting in the next 20 minutes with $meeting-prep.`

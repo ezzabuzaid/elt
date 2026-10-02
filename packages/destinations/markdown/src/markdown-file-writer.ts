@@ -1,17 +1,22 @@
 import { mkdtempDisposable, open, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CopyConfiguration } from 'elt';
+
+import type { CopyConfiguration } from '@workspace/elt';
+
 import { MarkdownDocument } from './markdown-document.ts';
 import type { MarkdownFile } from './markdown-file.ts';
 import { MarkdownWriter } from './markdown-writer.ts';
 
 export class MarkdownFileWriter extends MarkdownWriter {
+  readonly target: MarkdownFile;
+
   constructor(
     configuration: CopyConfiguration,
     path: string,
-    readonly target: MarkdownFile,
+    target: MarkdownFile,
   ) {
     super(configuration, path, target.document);
+    this.target = target;
     Object.freeze(this);
   }
 

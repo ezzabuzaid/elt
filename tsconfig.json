@@ -31,6 +31,18 @@
     },
     {
       "path": "./apps/apple/cli"
+    },
+    {
+      "path": "./packages/queue/abstract"
+    },
+    {
+      "path": "./packages/queue/postgres"
+    },
+    {
+      "path": "./packages/queue/sqlite"
+    },
+    {
+      "path": "./packages/test"
     }
   ]
 }

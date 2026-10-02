@@ -9,8 +9,12 @@ Detailed sync, storage, connector, and failure contracts for `elt`.
 The examples below live inside `apps/apple/connectors/src`: import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and Apple connectors directly from their source modules. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
 
 ```ts
-import { Connection, Copy, Pipeline } from 'elt';
-import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+
 import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 
 const notes = new AppleNotesSource();
@@ -23,10 +27,13 @@ const connection = new Connection({
   destination: sqlite,
   checkpoints,
   steps: [
-    new Copy(notes.accounts, sqlite.table('accounts', columns => [
-      columns.text('id').primaryKey(),
-      columns.text('name').notNull(),
-    ])),
+    new Copy(
+      notes.accounts,
+      sqlite.table('accounts', (columns) => [
+        columns.text('id').primaryKey(),
+        columns.text('name').notNull(),
+      ]),
+    ),
     new Copy(notes.notes, sqlite.table('notes'), {
       id: 'notes-to-sqlite',
       syncMode: 'incremental',
@@ -45,13 +52,13 @@ A `Connection` is Airbyte's connection: one source's copies into one destination
 
 `syncMode` selects extraction. `destinationSyncMode` selects loading. Both SQLite and Markdown files/folders implement these five combinations:
 
-| Extraction | Loading | Result |
-| --- | --- | --- |
-| `full_refresh` | `append` | Retain every observation, including repeated IDs within and across runs. |
-| `full_refresh` | `overwrite` | Replace the target with this extraction, preserving repeated IDs. |
-| `full_refresh` | `overwrite_dedup` | Replace the target with the greatest cursor value per selected key. |
-| `incremental` | `append` | Resume from acknowledged source state and retain each emitted observation. |
-| `incremental` | `append_dedup` | Resume from acknowledged state and reconcile each key with its greatest cursor value. |
+| Extraction     | Loading           | Result                                                                                |
+| -------------- | ----------------- | ------------------------------------------------------------------------------------- |
+| `full_refresh` | `append`          | Retain every observation, including repeated IDs within and across runs.              |
+| `full_refresh` | `overwrite`       | Replace the target with this extraction, preserving repeated IDs.                     |
+| `full_refresh` | `overwrite_dedup` | Replace the target with the greatest cursor value per selected key.                   |
+| `incremental`  | `append`          | Resume from acknowledged source state and retain each emitted observation.            |
+| `incremental`  | `append_dedup`    | Resume from acknowledged state and reconcile each key with its greatest cursor value. |
 
 Omitting the entire third `Copy` argument selects `full_refresh` + `overwrite`. An explicit options object requires both mode fields. Incremental + overwrite and full refresh + append_dedup are rejected; use `overwrite_dedup` for the latter outcome.
 
@@ -61,10 +68,10 @@ These combinations follow Airbyte's [documented sync modes](https://docs.airbyte
 
 `dedupPolicy` selects how `append_dedup` and `overwrite_dedup` resolve a conflict on the selected key:
 
-| `dedupPolicy` | Upsert guard | Use when |
-| --- | --- | --- |
-| `cursor_newer` (default) | `WHERE excluded.<cursor> > target.<cursor>` | The cursor advances independently of identity, so a lower cursor means a stale replay. |
-| `replace` | none | The upstream restates facts it already published, so the newest extraction is authoritative. |
+| `dedupPolicy`            | Upsert guard                                | Use when                                                                                     |
+| ------------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `cursor_newer` (default) | `WHERE excluded.<cursor> > target.<cursor>` | The cursor advances independently of identity, so a lower cursor means a stale replay.       |
+| `replace`                | none                                        | The upstream restates facts it already published, so the newest extraction is authoritative. |
 
 A deduplicating copy that leaves `dedupPolicy` unset uses `cursor_newer`, or `replace` for a stream with `sourceDefinedCursor`. Both destinations apply the policy: SQLite as the upsert guard above, Markdown when it merges each record with the previously published one or with an earlier record from the same run.
 
@@ -72,13 +79,17 @@ Selecting `cursor_newer` with a cursor that is a member of the primary key is re
 
 ```ts
 // searchAnalyticsQueries declares the key [siteUrl, date, query].
-new Copy(source.searchAnalyticsQueries, destination.table('raw_searchAnalyticsQueries'), {
-  id: 'search-analytics-queries',
-  syncMode: 'incremental',
-  destinationSyncMode: 'append_dedup',
-  dedupPolicy: 'replace',
-  cursorField: 'date',
-});
+new Copy(
+  source.searchAnalyticsQueries,
+  destination.table('raw_searchAnalyticsQueries'),
+  {
+    id: 'search-analytics-queries',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+    dedupPolicy: 'replace',
+    cursorField: 'date',
+  },
+);
 ```
 
 Capabilities are immutable metadata:
@@ -93,10 +104,10 @@ sqlite.supportedDestinationSyncModes;
 
 A stream that declares `emitsDeletes` can send `DELETE` messages during incremental reads, each carrying exactly the stream's `primaryKey` fields. Such a stream always declares its key, and its incremental copies must use `append_dedup`, which deduplicates on that key, so the destination can find the row:
 
-| Destination | Effect of `DELETE` |
-| --- | --- |
-| SQLite `append_dedup` | Deletes the row with that key inside the copy's transaction. |
-| Markdown `append_dedup` file or folder | Drops the record before the target is republished. |
+| Destination                            | Effect of `DELETE`                                           |
+| -------------------------------------- | ------------------------------------------------------------ |
+| SQLite `append_dedup`                  | Deletes the row with that key inside the copy's transaction. |
+| Markdown `append_dedup` file or folder | Drops the record before the target is republished.           |
 
 Records and deletions apply in the order the source emits them, and deleting an absent key is a no-op, so replaying a run is safe. A deletion is rejected when the stream does not declare `emitsDeletes`, when its key is malformed, or when the load does not deduplicate. Results report accepted deletions as `deleted`, separately from `count`.
 
@@ -153,10 +164,10 @@ A checkpoint is saved after its rows commit, in a separate store. If the rows co
 
 State belongs to the orchestration, not the destination, as in Airbyte, so any store works with any destination, including one that cannot hold state itself: the replication saves each checkpoint only after its stream's rows before it committed. `CheckpointStore.run(bindings, work)` owns that protocol for every incremental copy of a pass at once (the binding check per copy, the cloned input state, advancing only on a commit, `reset` and `clear`). A store supplies a session that holds every copy's lock for the whole pass and whose `save` is durable when it resolves.
 
-| Store | Keeps state in | Concurrency |
-| --- | --- | --- |
-| `SQLiteCheckpointStore({ path })` from `elt-sqlite` | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | The file's write lock, held for the pass and retaken in the same step as each save commits: passes sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Connections pass side by side, so give each connection, and each independent pipeline, its own file. |
-| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | A session advisory lock per copy `id` on its own connection, taken in sorted order: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the writers' schema lock. |
+| Store                                                            | Keeps state in                                                                                                                                                                                                                                    | Concurrency                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SQLiteCheckpointStore({ path })` from `elt-sqlite`              | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | The file's write lock, held for the pass and retaken in the same step as each save commits: passes sharing a file run one at a time, and a concurrent attempt fails with SQLite's lock error. Native locks release on process exit. Connections pass side by side, so give each connection, and each independent pipeline, its own file.                                                          |
+| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both.                                                                | A session advisory lock per copy `id` on its own connection, taken in sorted order: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the writers' schema lock. |
 
 ### Snapshot streams
 
@@ -238,13 +249,13 @@ EventKit has no read transaction, so Calendar and Reminders contexts read optimi
 
 The source reads Notes' own Core Data store, `~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite`, read-only under Full Disk Access; Notes does not need to be open. Each run reads every selected stream inside one SQLite read transaction, so notes, attachments and folders come from the same moment. Note bodies are gzipped protobuf documents and tables are gzipped CRDT documents; both are decoded in-process.
 
-| Stream | Key | Contents |
-| --- | --- | --- |
-| `accounts` | `[id]` | Name and Notes' numeric account `type`. |
-| `folders` | `[id]` | Account, parent folder (nested folders), name, `type` (`1` is Recently Deleted), a smart folder's query, and whether it is shared. |
-| `notes` | `[id]` | Folder, account, title, plain `text`, `markdown`, created and modified times, `pinned`, Notes' own `hasChecklist` and `checklistInProgress` flags, `locked`, `shared`. |
+| Stream              | Key    | Contents                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accounts`          | `[id]` | Name and Notes' numeric account `type`.                                                                                                                                                                                                                                                                                                                           |
+| `folders`           | `[id]` | Account, parent folder (nested folders), name, `type` (`1` is Recently Deleted), a smart folder's query, and whether it is shared.                                                                                                                                                                                                                                |
+| `notes`             | `[id]` | Folder, account, title, plain `text`, `markdown`, created and modified times, `pinned`, Notes' own `hasChecklist` and `checklistInProgress` flags, `locked`, `shared`.                                                                                                                                                                                            |
 | `inlineAttachments` | `[id]` | Tags, mentions, links to other notes and calculation results as Notes stores them: `type` is Notes' identifier (for example `com.apple.notes.inlinetextattachment.hashtag`), `text` is what the note shows (`#travel`), and `target` what it points at: a tag's normalized name (`TRAVEL`), or for a link to another note that note's `applenotes:note/<id>` URL. |
-| `attachments` | `[id]` | Type identifier, title, file name, URL, Notes' summary, recognized text (`ocrText`, `handwritingText`), image labels, audio `transcript`, size, duration, dimensions, location, times, and `availableLocally`. Supports file reads. |
+| `attachments`       | `[id]` | Type identifier, title, file name, URL, Notes' summary, recognized text (`ocrText`, `handwritingText`), image labels, audio `transcript`, size, duration, dimensions, location, times, and `availableLocally`. Supports file reads.                                                                                                                               |
 
 A note's content lives in one place, its `markdown`: checklists render as `- [x]` items and tables as Markdown tables where they sit in the note. They are not repeated as separate streams.
 
@@ -265,7 +276,9 @@ Use the same configured pipeline for continuous synchronization:
 ```ts
 const controller = new AbortController();
 
-for await (const { connection, outcomes } of pipeline.watch({ signal: controller.signal })) {
+for await (const { connection, outcomes } of pipeline.watch({
+  signal: controller.signal,
+})) {
   // This pass's copies have already extracted, loaded, and saved their checkpoints.
 }
 
@@ -291,10 +304,10 @@ Automated verification covers actual filesystem events in temporary storage, the
 
 Live verification on **2026-09-22**, using **macOS 26.6.2 and Node.js 26.8.1**, exercised the existing sources, `Pipeline.watch()`, `Copy`, and temporary SQLite destinations without mocking notifications or extraction. Calendar and Reminders each completed four observed passes: initial sync, creation, update, and deletion. Their mutations were real EventKit writes from separate OSA processes. SQLite assertions ran after the watcher yielded completed loads.
 
-| Source stream | Live assertions |
-| --- | --- |
-| Calendar `events` | A uniquely labeled event appeared, its changed title and start time reached SQLite, and deleting it removed the exported row. The fixed occurrence window was `2026-09-22T00:00:00.000Z` to `2026-09-23T00:00:00.000Z`. |
-| Reminders `reminders` | A uniquely labeled reminder appeared, its changed title and completed status reached SQLite, and deleting it removed the exported row. |
+| Source stream         | Live assertions                                                                                                                                                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Calendar `events`     | A uniquely labeled event appeared, its changed title and start time reached SQLite, and deleting it removed the exported row. The fixed occurrence window was `2026-09-22T00:00:00.000Z` to `2026-09-23T00:00:00.000Z`. |
+| Reminders `reminders` | A uniquely labeled reminder appeared, its changed title and completed status reached SQLite, and deleting it removed the exported row.                                                                                  |
 
 Watchers were closed after verification. The Calendar test event, temporary Reminders list, and temporary databases were removed. EventKit cleanup was checked through fresh native reads. Existing user records were not modified. This live pass covered the primary streams and SQLite; Calendar/Reminders GUI edits, other streams, and Markdown were not exercised live.
 
@@ -323,16 +336,20 @@ Checklists, tags, tables and a locked note were also read from Apple-made macOS 
 ## Attachment files and document parsing
 
 ```ts
-import { LocalFiles } from 'elt';
+import { LocalFiles } from '@workspace/elt';
+
 import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
 
 const files = new LocalFiles({ directory: './outputs/attachments' });
 const attachmentCopy = new Copy(
   notes.attachments,
-  sqlite.table('attachments', c => [
+  sqlite.table('attachments', (c) => [
     c.text('id'),
     c.text('noteId'),
-    c.text('content').from(notes.attachments.file).parse(new MacOSDocumentParser()),
+    c
+      .text('content')
+      .from(notes.attachments.file)
+      .parse(new MacOSDocumentParser()),
     c.text('attachmentRef').from(notes.attachments.file.store(files)),
   ]),
   {
@@ -385,16 +402,25 @@ Postgres supports the same `text().from(file).parse(parser)` and `blob().from(fi
 
 ```ts
 // Text only, under a destination field name you choose.
-new Copy(notes.attachments, sqlite.table('attachment_text', c => [
-  c.text('id'),
-  c.text('search_text').from(notes.attachments.file).parse(new MacOSDocumentParser()),
-]));
+new Copy(
+  notes.attachments,
+  sqlite.table('attachment_text', (c) => [
+    c.text('id'),
+    c
+      .text('search_text')
+      .from(notes.attachments.file)
+      .parse(new MacOSDocumentParser()),
+  ]),
+);
 
 // Original bytes only; no parser runs.
-new Copy(notes.attachments, sqlite.table('originals', c => [
-  c.text('id'),
-  c.blob('bytes').from(notes.attachments.file),
-]));
+new Copy(
+  notes.attachments,
+  sqlite.table('originals', (c) => [
+    c.text('id'),
+    c.blob('bytes').from(notes.attachments.file),
+  ]),
+);
 ```
 
 A bare table still infers the discovered metadata schema. To include all metadata alongside file-derived columns, spread `SQLiteColumns.fromSchema(notes.attachments.jsonSchema)` into the columns array. A plain `c.blob('bytes')` reads a record's existing `bytes` field into an inline BLOB. `.from(file)` selects the original source file; `.parse(parser)` requests its text representation. Original bytes require a BLOB column; parsed text and stored-file references require TEXT. The existing `.notNull()` and `.primaryKey()` constraints apply to these fields. Incompatible types, another stream's file reference, and fields colliding with source metadata or `loaded_at` fail before extraction.
@@ -404,11 +430,20 @@ A bare table still infers the discovered metadata schema. To include all metadat
 Markdown targets use the same destination-independent `FileRead` declaration, alongside their existing metadata rendering:
 
 ```ts
-import { FileRead } from 'elt';
+import { FileRead } from '@workspace/elt';
 
-new Copy(notes.attachments, markdown.folder('attachments', {
-  fields: [new FileRead('content', notes.attachments.file, new MacOSDocumentParser())],
-}));
+new Copy(
+  notes.attachments,
+  markdown.folder('attachments', {
+    fields: [
+      new FileRead(
+        'content',
+        notes.attachments.file,
+        new MacOSDocumentParser(),
+      ),
+    ],
+  }),
+);
 ```
 
 Markdown accepts parsed text and stored-reference fields, such as `new FileRead('attachmentRef', notes.attachments.file.store(files))`, and rejects binary requests before I/O. Its `file()` target supports the same options as `folder()`.
@@ -451,7 +486,7 @@ Verified live on 2026-09-26 (macOS 26.6.2) with the Apple exporter run twice aga
 When any copy is incomplete or any pass could not run, `run()` throws one `PipelineError` once every pass ends:
 
 ```ts
-import { PipelineError } from 'elt';
+import { PipelineError } from '@workspace/elt';
 
 try {
   await pipeline.run(); // [{ copy, count, deleted }] when every copy completed.
@@ -478,7 +513,7 @@ import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from 'elt-postgresql';
+} from '@workspace/elt-postgresql';
 
 const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
 const warehouse = new PostgresDestination({ url, schema: 'apple_notes' });
@@ -515,7 +550,7 @@ Coverage is the source's own statement, `coverage(stream): ExtractionCoverage` w
 ## Markdown destination
 
 ```ts
-import { MarkdownDestination } from 'elt-markdown';
+import { MarkdownDestination } from '@workspace/elt-markdown';
 
 const markdown = new MarkdownDestination({ path: './exports' });
 const exportPipeline = new Pipeline({
@@ -526,7 +561,10 @@ const exportPipeline = new Pipeline({
       destination: markdown,
       checkpoints,
       steps: [
-        new Copy(notes.accounts, markdown.file('accounts.md', { title: 'name' })),
+        new Copy(
+          notes.accounts,
+          markdown.file('accounts.md', { title: 'name' }),
+        ),
         new Copy(notes.notes, markdown.folder('notes', { title: 'title' }), {
           id: 'notes-to-markdown',
           syncMode: 'incremental',
@@ -557,15 +595,15 @@ An exclusive `.markdown-<target>.lock` directory prevents cooperating concurrent
 
 Inferred columns follow the stream schema, and unlike SQLite the string formats get their own types, so readers can do date arithmetic:
 
-| JSON Schema | Postgres |
-| --- | --- |
-| `string` | `TEXT` |
-| `string` + `format: 'date'` | `DATE` |
-| `string` + `format: 'date-time'` | `TIMESTAMPTZ` |
-| `integer` | `BIGINT` |
-| `number` | `DOUBLE PRECISION` |
-| `boolean` | `BOOLEAN` |
-| `array` of any of the above | a native array of that type, such as `BIGINT[]` or `TIMESTAMPTZ[]` |
+| JSON Schema                      | Postgres                                                           |
+| -------------------------------- | ------------------------------------------------------------------ |
+| `string`                         | `TEXT`                                                             |
+| `string` + `format: 'date'`      | `DATE`                                                             |
+| `string` + `format: 'date-time'` | `TIMESTAMPTZ`                                                      |
+| `integer`                        | `BIGINT`                                                           |
+| `number`                         | `DOUBLE PRECISION`                                                 |
+| `boolean`                        | `BOOLEAN`                                                          |
+| `array` of any of the above      | a native array of that type, such as `BIGINT[]` or `TIMESTAMPTZ[]` |
 
 Arrays keep their element order and load a JSON `null` as SQL `NULL`; readers use `= ANY(...)`, `unnest()` and `cardinality()`, and `marts.catalog` shows the element type. ISO dates count years astronomically and Postgres does not, so year `0000` loads as `0001 BC`, the same day; every other year is written as given.
 
@@ -600,20 +638,22 @@ A load never replaces or drops an existing view, because replacing a view reader
 Given a `postgres` client `sql` and an existing `raw.notes` table:
 
 ```ts
-import { publishPostgresViews } from 'elt-postgresql';
+import { publishPostgresViews } from '@workspace/elt-postgresql';
 
 await sql.begin(async (transaction) => {
   await publishPostgresViews(transaction, {
     schema: 'knowledge',
-    views: [{
-      name: 'notes',
-      query: 'SELECT id, title FROM raw.notes',
-      description: 'One row per note, identified by id.',
-      columns: {
-        id: 'Source note identifier.',
-        title: 'Note title.',
+    views: [
+      {
+        name: 'notes',
+        query: 'SELECT id, title FROM raw.notes',
+        description: 'One row per note, identified by id.',
+        columns: {
+          id: 'Source note identifier.',
+          title: 'Note title.',
+        },
       },
-    }],
+    ],
   });
 });
 ```
@@ -627,12 +667,18 @@ Views reflect the underlying tables as queried; publishing them does not copy ro
 ## Apple Messages
 
 ```ts
-import { Connection, Copy, Pipeline } from 'elt';
-import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+
 import { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
 
 const source = new AppleMessagesSource(); // ~/Library/Messages/chat.db
-const destination = new SQLiteDestination({ path: './outputs/messages.sqlite' });
+const destination = new SQLiteDestination({
+  path: './outputs/messages.sqlite',
+});
 
 await new Pipeline({
   connections: [
@@ -640,7 +686,9 @@ await new Pipeline({
       name: 'apple-messages',
       source,
       destination,
-      checkpoints: new SQLiteCheckpointStore({ path: './outputs/messages-state.sqlite' }),
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/messages-state.sqlite',
+      }),
       steps: [source.messages, source.chatMessages].map(
         (stream) =>
           new Copy(stream, destination.table(stream.name), {
@@ -658,27 +706,27 @@ The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messag
 
 ### Full Disk Access
 
-Messages keeps its history only in `~/Library/Messages/chat.db`; it has no public API for reading messages. macOS guards that folder with **Full Disk Access** and checks it against the *responsible* process: the terminal app that runs `npx nx run apple-cli:start`. Grant that app Full Disk Access.
+Messages keeps its history only in `~/Library/Messages/chat.db`; it has no public API for reading messages. macOS guards that folder with **Full Disk Access** and checks it against the _responsible_ process: the terminal app that runs `npx nx run apple-cli:start`. Grant that app Full Disk Access.
 
 ### Streams
 
 Every column of Messages' own tables loads, named in camelCase (`is_from_me` → `isFromMe`); foreign `ROWID`s become the related row's `guid`. Archived Foundation values (binary property lists and `NSKeyedArchiver` graphs) load as JSON text, with data as base64 and dates as ISO timestamps; `attributedBody`, a typedstream, stays base64. Only iCloud sync and task bookkeeping (`deleted_messages`, `sync_*`, `kvtable`, `persistent_tasks`, `message_processing_task`, `index_state_metrics`, `_SqliteDatabaseProperties`) is left out.
 
-| Stream | Key | Contents and relationships |
-| --- | --- | --- |
-| `chats` | `guid` | All 28 `chat` columns: identifier, service, display name, group id, style, archived and filtered flags, last read time, and `properties` as JSON. |
-| `handles` | `id`, `service` | Phone numbers and email addresses per service, with country and person-centric id. |
-| `chatLookups` | `identifier`, `domain` | The identifiers Messages resolves to each chat, with priority. |
-| `chatServices` | `chatGuid`, `service` | Every service a chat runs over. |
-| `chatHandles` | `chatGuid`, `handleId`, `handleService` | Participants of each chat. |
-| `messages` | `guid` | All 92 `message` columns plus the sender and other handle (`handle`, `handleService`, `otherHandle`, `otherHandleService`): text, direction, sent/read/delivered/edited/unsent/played/recovered times, reactions, replies, effects and flags; `messageSummaryInfo` and `payloadData` as JSON, `attributedBody` as base64. |
-| `chatMessages` | `chatGuid`, `messageGuid` | Which chat each message belongs to, with the join's `messageDate`. |
-| `linkPreviews` | `messageGuid` | The rich link a URL message shows, from its `payloadData` archive: `url`, `originalUrl`, `title`, `summary`, `siteName`, `itemType`, `creator`, and the whole `LPLinkMetadata` as JSON. |
-| `messageEdits` | `messageGuid`, `partIndex`, `version` | Every version of an edited message part, oldest first, from `messageSummaryInfo.ec`: `editedAt`, the decoded `text`, and the raw entry as JSON. Version 0 is the original. |
-| `recoverableMessages` | `chatGuid`, `messageGuid` | Recently Deleted: the chat a deleted message came from and its `deleteDate`. Messages keeps the row in `messages` but removes it from `chatMessages`. |
-| `recoverableMessageParts` | `chatGuid`, `messageGuid`, `partIndex` | Deleted parts of a message, with `partText`. |
-| `attachments` | `guid` | All 23 `attachment` columns (path, transfer name, MIME type, UTI, size, dates, flags, archived info as JSON) and `availableLocally`. Supports file reads. |
-| `messageAttachments` | `messageGuid`, `attachmentGuid` | Which message carries each attachment. |
+| Stream                    | Key                                     | Contents and relationships                                                                                                                                                                                                                                                                                                |
+| ------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chats`                   | `guid`                                  | All 28 `chat` columns: identifier, service, display name, group id, style, archived and filtered flags, last read time, and `properties` as JSON.                                                                                                                                                                         |
+| `handles`                 | `id`, `service`                         | Phone numbers and email addresses per service, with country and person-centric id.                                                                                                                                                                                                                                        |
+| `chatLookups`             | `identifier`, `domain`                  | The identifiers Messages resolves to each chat, with priority.                                                                                                                                                                                                                                                            |
+| `chatServices`            | `chatGuid`, `service`                   | Every service a chat runs over.                                                                                                                                                                                                                                                                                           |
+| `chatHandles`             | `chatGuid`, `handleId`, `handleService` | Participants of each chat.                                                                                                                                                                                                                                                                                                |
+| `messages`                | `guid`                                  | All 92 `message` columns plus the sender and other handle (`handle`, `handleService`, `otherHandle`, `otherHandleService`): text, direction, sent/read/delivered/edited/unsent/played/recovered times, reactions, replies, effects and flags; `messageSummaryInfo` and `payloadData` as JSON, `attributedBody` as base64. |
+| `chatMessages`            | `chatGuid`, `messageGuid`               | Which chat each message belongs to, with the join's `messageDate`.                                                                                                                                                                                                                                                        |
+| `linkPreviews`            | `messageGuid`                           | The rich link a URL message shows, from its `payloadData` archive: `url`, `originalUrl`, `title`, `summary`, `siteName`, `itemType`, `creator`, and the whole `LPLinkMetadata` as JSON.                                                                                                                                   |
+| `messageEdits`            | `messageGuid`, `partIndex`, `version`   | Every version of an edited message part, oldest first, from `messageSummaryInfo.ec`: `editedAt`, the decoded `text`, and the raw entry as JSON. Version 0 is the original.                                                                                                                                                |
+| `recoverableMessages`     | `chatGuid`, `messageGuid`               | Recently Deleted: the chat a deleted message came from and its `deleteDate`. Messages keeps the row in `messages` but removes it from `chatMessages`.                                                                                                                                                                     |
+| `recoverableMessageParts` | `chatGuid`, `messageGuid`, `partIndex`  | Deleted parts of a message, with `partText`.                                                                                                                                                                                                                                                                              |
+| `attachments`             | `guid`                                  | All 23 `attachment` columns (path, transfer name, MIME type, UTI, size, dates, flags, archived info as JSON) and `availableLocally`. Supports file reads.                                                                                                                                                                 |
+| `messageAttachments`      | `messageGuid`, `attachmentGuid`         | Which message carries each attachment.                                                                                                                                                                                                                                                                                    |
 
 - **Consistency:** every stream in a run reads through one [read context](#read-context), a read transaction on `chat.db`. The database runs in WAL mode, so all streams see one snapshot however Messages writes meanwhile.
 - **Identity:** rows and relationships use `guid`s. `ROWID`s are local and change when Messages in iCloud rebuilds the database.
@@ -708,23 +756,23 @@ Live verification on **2026-09-25** (macOS 26.6.2, Node.js 26.8.1), running the 
 
 All 42 streams are available as properties and through `discover()`:
 
-| Streams | Data |
-| --- | --- |
-| `accounts`, `smtpServers` | Non-secret native account/server settings as JSON; local On My Mac identity comes from mailbox URLs |
-| `mailboxes`, `mailboxProperties` | Index mailbox URLs, counts and native IDs; `.mbox/Info.plist` properties |
-| `messages`, `subjects`, `summaries`, `generatedSummaries` | Every native message column, subject/summary dictionaries and generated summary payloads |
-| `addresses`, `recipients` | Address/comment dictionary and positioned recipient relationships, including orphaned native rows |
-| `messageMailboxes`, `serverMessages`, `serverMessageMailboxes` | Local and server mailbox memberships, message state, IMAP identifiers |
-| `conversations`, `conversationMessages`, `messageReferences`, `messageGlobalData` | Conversation membership, reply references, global message status and deferred-action metadata |
-| `messageMetadata`, `dataDetectionResults`, `richLinks`, `messageRichLinks`, `protectedMessageData` | Native JSON, detected values, links and opaque protected payloads |
-| `brandIndicators`, `brandIndicatorEvidence`, `addressMetadata`, `businesses`, `businessAddresses`, `businessCategories`, `senders`, `senderAddresses`, `events` | Brand/certificate blobs, sender classification, business metadata, S/MIME capabilities and detected event metadata |
-| `rules`, `ruleConditions` | Synced/local rules, active flags, ordered conditions and original property dictionaries |
-| `smartMailboxes`, `smartMailboxConditions` | Saved hierarchy, ordered criteria and original property dictionaries |
-| `signatures`, `configuration` | MIME signature content and MailData/signature property lists |
-| `messageFiles` | One row per indexed message, relative path, local availability, partial flag, size, SHA-256, original EMLX file |
-| `messageHeaders` | Ordered headers for every MIME part; unfolded/decoded value and original header-line bytes in base64 |
-| `messageParts` | MIME tree, media type, charset, disposition, filename, content ID, local availability, size, SHA-256 and decoded text for `text/*` parts |
-| `attachments`, `indexedAttachments` | Decoded MIME attachments plus indexed attachments whose MIME has not arrived; native attachment-index rows remain separately available |
+| Streams                                                                                                                                                         | Data                                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `accounts`, `smtpServers`                                                                                                                                       | Non-secret native account/server settings as JSON; local On My Mac identity comes from mailbox URLs                                      |
+| `mailboxes`, `mailboxProperties`                                                                                                                                | Index mailbox URLs, counts and native IDs; `.mbox/Info.plist` properties                                                                 |
+| `messages`, `subjects`, `summaries`, `generatedSummaries`                                                                                                       | Every native message column, subject/summary dictionaries and generated summary payloads                                                 |
+| `addresses`, `recipients`                                                                                                                                       | Address/comment dictionary and positioned recipient relationships, including orphaned native rows                                        |
+| `messageMailboxes`, `serverMessages`, `serverMessageMailboxes`                                                                                                  | Local and server mailbox memberships, message state, IMAP identifiers                                                                    |
+| `conversations`, `conversationMessages`, `messageReferences`, `messageGlobalData`                                                                               | Conversation membership, reply references, global message status and deferred-action metadata                                            |
+| `messageMetadata`, `dataDetectionResults`, `richLinks`, `messageRichLinks`, `protectedMessageData`                                                              | Native JSON, detected values, links and opaque protected payloads                                                                        |
+| `brandIndicators`, `brandIndicatorEvidence`, `addressMetadata`, `businesses`, `businessAddresses`, `businessCategories`, `senders`, `senderAddresses`, `events` | Brand/certificate blobs, sender classification, business metadata, S/MIME capabilities and detected event metadata                       |
+| `rules`, `ruleConditions`                                                                                                                                       | Synced/local rules, active flags, ordered conditions and original property dictionaries                                                  |
+| `smartMailboxes`, `smartMailboxConditions`                                                                                                                      | Saved hierarchy, ordered criteria and original property dictionaries                                                                     |
+| `signatures`, `configuration`                                                                                                                                   | MIME signature content and MailData/signature property lists                                                                             |
+| `messageFiles`                                                                                                                                                  | One row per indexed message, relative path, local availability, partial flag, size, SHA-256, original EMLX file                          |
+| `messageHeaders`                                                                                                                                                | Ordered headers for every MIME part; unfolded/decoded value and original header-line bytes in base64                                     |
+| `messageParts`                                                                                                                                                  | MIME tree, media type, charset, disposition, filename, content ID, local availability, size, SHA-256 and decoded text for `text/*` parts |
+| `attachments`, `indexedAttachments`                                                                                                                             | Decoded MIME attachments plus indexed attachments whose MIME has not arrived; native attachment-index rows remain separately available   |
 
 Index column names become camel case; `ROWID` becomes `id`. Integer identities and hashes export as decimal strings to preserve 64-bit precision. `messages.id` is the local row ID used by `attachments.messageId`, `messageParts.messageId` and `messageFiles.messageId`; `messages.messageId` is Apple's distinct RFC Message-ID hash. `messageGlobalData.messageId`, `conversationMessages.messageId` and `messageReferences.reference` use that hash. Mailbox URL hosts identify account directories. Keep native multiple-mailbox relationships instead of assuming one folder per message.
 
@@ -775,12 +823,18 @@ The `remove-code` review retained the Apple-specific frame, detached-file lookup
 ## Apple Contacts
 
 ```ts
-import { Connection, Copy, Pipeline } from 'elt';
-import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+
 import { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
 
 const source = new AppleContactsSource(); // ~/Library/Application Support/AddressBook
-const destination = new SQLiteDestination({ path: './outputs/contacts.sqlite' });
+const destination = new SQLiteDestination({
+  path: './outputs/contacts.sqlite',
+});
 
 await new Pipeline({
   connections: [
@@ -788,7 +842,9 @@ await new Pipeline({
       name: 'apple-contacts',
       source,
       destination,
-      checkpoints: new SQLiteCheckpointStore({ path: './outputs/contacts-state.sqlite' }),
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/contacts-state.sqlite',
+      }),
       steps: [source.contacts, source.phoneNumbers, source.emailAddresses].map(
         (stream) =>
           new Copy(stream, destination.table(stream.name), {
@@ -814,22 +870,22 @@ Contacts.framework is not used. It needs the Contacts grant itself and exposes l
 
 Every stored attribute of the Core Data model (`ABAddressBook`, version `24A2` on macOS 26) loads, named as the model names it (`ZJOBTITLE` → `jobTitle`). Relationships load as the related record's `uniqueId`, which is the Contacts.framework identifier of contacts and groups (`…:ABPerson`, `…:ABGroup`). Property-list data loads as JSON and other data as base64; dates are UTC timestamps. Labels load raw: Apple's constants look like `_$!<Mobile>!$_`, while custom labels and labels written through AppleScript are plain text. Left out are Core Data's own `Z_` columns, transient attributes, values stored only to sort or search (creation and modification year and yearless offsets, `sortingFirstName`, `sortingLastName`, `nameNormalized`, `addressNormalized`, `lastFourDigits`, `ABCDContactIndex`), and sync bookkeeping (`ABCDInfo`, `ABCDDeletedRecordLog`, `CNCDChangeHistoryClient`, `CNCDProviderMetadata`, `CNCDUnifiedContactInfo`, persistent history).
 
-| Stream | Key | Contents and relationships |
-| --- | --- | --- |
-| `containers` | `id` | One per store: `source` (the `Sources` folder name, null for On My Mac), `type`, `isAll`, `remoteLocation`, `lastSyncDate`, `meContactId` (the account's "my card"), and the record fields every entity shares. |
-| `groups` | `id` | `kind` (`group`, `subscribedGroup`, `smartGroup`), `name`, `containerId`, and a smart group's archived query as JSON. |
-| `groupMembers` | `groupId`, `contactId` | Which contacts each group holds. |
-| `groupSubgroups` | `parentGroupId`, `childGroupId` | Groups nested in groups. |
-| `contacts` | `id` | `kind` (`contact`, `subscribedContact`), `containerId`, names and phonetic names, organization, department, job title, `birthdayYear`/`birthdayMonth`/`birthdayDay`, `linkId` (contacts Contacts shows as one), image metadata, `meOfContainerId`, creation and modification times, and sync fields. |
-| `notes` | `contactId` | The note's `text` and `richTextData`. |
-| `alternateBirthdays` | `contactId` | The non-Gregorian birthday: `calendarIdentifier` (such as `chinese`), `era`, `year`, `month`, `day`, `isLeapMonth`. |
-| `phoneNumbers`, `emailAddresses`, `postalAddresses`, `urlAddresses`, `socialProfiles`, `messagingAddresses`, `relatedNames`, `contactDates`, `calendarUris`, `addressingGrammars`, `likenesses` | `id` | Labeled values: `contactId`, `label`, `isPrimary`, `isPrivate`, `orderingIndex`, and each kind's fields. `messagingAddresses.service` is the service's name (`SkypeInstant`, `JabberInstant`); `contactDates` has `year`, `month`, `day`. |
-| `alertTones` | `id` | A contact's ringtone or text tone. |
-| `customPropertyValues` | `id` | A custom property's value on any record, with the property's `propertyName`, `recordType` and `valueType`. |
-| `remoteLocations` | `id` | URLs attached to any record. |
-| `unknownProperties` | `recordId`, `propertyName`, `originalLine` | vCard lines Contacts kept without understanding them; the line (base64) is part of the key, and identical lines load once. |
-| `distributionListConfigs` | `groupId`, `contactId`, `propertyName` | The email, phone or address a group uses for a member. |
-| `images` | `contactId`, `kind` | A contact's `image` and `thumbnail`: `storage` (`inline` or `external`), `externalId`, `byteLength`, `sha256`. Supports file reads. |
+| Stream                                                                                                                                                                                          | Key                                        | Contents and relationships                                                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `containers`                                                                                                                                                                                    | `id`                                       | One per store: `source` (the `Sources` folder name, null for On My Mac), `type`, `isAll`, `remoteLocation`, `lastSyncDate`, `meContactId` (the account's "my card"), and the record fields every entity shares.                                                                                      |
+| `groups`                                                                                                                                                                                        | `id`                                       | `kind` (`group`, `subscribedGroup`, `smartGroup`), `name`, `containerId`, and a smart group's archived query as JSON.                                                                                                                                                                                |
+| `groupMembers`                                                                                                                                                                                  | `groupId`, `contactId`                     | Which contacts each group holds.                                                                                                                                                                                                                                                                     |
+| `groupSubgroups`                                                                                                                                                                                | `parentGroupId`, `childGroupId`            | Groups nested in groups.                                                                                                                                                                                                                                                                             |
+| `contacts`                                                                                                                                                                                      | `id`                                       | `kind` (`contact`, `subscribedContact`), `containerId`, names and phonetic names, organization, department, job title, `birthdayYear`/`birthdayMonth`/`birthdayDay`, `linkId` (contacts Contacts shows as one), image metadata, `meOfContainerId`, creation and modification times, and sync fields. |
+| `notes`                                                                                                                                                                                         | `contactId`                                | The note's `text` and `richTextData`.                                                                                                                                                                                                                                                                |
+| `alternateBirthdays`                                                                                                                                                                            | `contactId`                                | The non-Gregorian birthday: `calendarIdentifier` (such as `chinese`), `era`, `year`, `month`, `day`, `isLeapMonth`.                                                                                                                                                                                  |
+| `phoneNumbers`, `emailAddresses`, `postalAddresses`, `urlAddresses`, `socialProfiles`, `messagingAddresses`, `relatedNames`, `contactDates`, `calendarUris`, `addressingGrammars`, `likenesses` | `id`                                       | Labeled values: `contactId`, `label`, `isPrimary`, `isPrivate`, `orderingIndex`, and each kind's fields. `messagingAddresses.service` is the service's name (`SkypeInstant`, `JabberInstant`); `contactDates` has `year`, `month`, `day`.                                                            |
+| `alertTones`                                                                                                                                                                                    | `id`                                       | A contact's ringtone or text tone.                                                                                                                                                                                                                                                                   |
+| `customPropertyValues`                                                                                                                                                                          | `id`                                       | A custom property's value on any record, with the property's `propertyName`, `recordType` and `valueType`.                                                                                                                                                                                           |
+| `remoteLocations`                                                                                                                                                                               | `id`                                       | URLs attached to any record.                                                                                                                                                                                                                                                                         |
+| `unknownProperties`                                                                                                                                                                             | `recordId`, `propertyName`, `originalLine` | vCard lines Contacts kept without understanding them; the line (base64) is part of the key, and identical lines load once.                                                                                                                                                                           |
+| `distributionListConfigs`                                                                                                                                                                       | `groupId`, `contactId`, `propertyName`     | The email, phone or address a group uses for a member.                                                                                                                                                                                                                                               |
+| `images`                                                                                                                                                                                        | `contactId`, `kind`                        | A contact's `image` and `thumbnail`: `storage` (`inline` or `external`), `externalId`, `byteLength`, `sha256`. Supports file reads.                                                                                                                                                                  |
 
 - **Consistency:** the [read context](#read-context) opens every store in one read transaction each, so a contact agrees with its phones, groups and photos. Stores commit independently, so two accounts are not pinned to the same instant; no relationship crosses stores.
 - **Identity:** `uniqueId`s are UUIDs, unique across stores; `Z_PK`s are local to a store and are never exported. Contacts.framework identifies an account's container as `<source>:ABAccount`, not by the container row's `id`.
@@ -853,8 +909,9 @@ Live verification on **2026-09-25** (macOS 26.6.2, Node.js 26.8.1) against three
 ## Apple Reminders
 
 ```ts
-import { Connection, Copy, Pipeline } from 'elt';
-import { SQLiteDestination } from 'elt-sqlite';
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { SQLiteDestination } from '@workspace/elt-sqlite';
+
 import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
 
 const reminders = new AppleRemindersSource();
@@ -866,8 +923,8 @@ await new Pipeline({
       name: 'apple-reminders',
       source: reminders,
       destination: sqlite,
-      steps: (await reminders.discover()).streams.map(stream =>
-        new Copy(stream, sqlite.table(stream.name)),
+      steps: (await reminders.discover()).streams.map(
+        (stream) => new Copy(stream, sqlite.table(stream.name)),
       ),
     }),
   ],
@@ -878,16 +935,16 @@ Reminders uses **EventKit exclusively**, through the `eventkit` helper (see [Cal
 
 All eight streams support full refresh and [snapshot incremental](#snapshot-streams) and work with inferred SQLite tables or Markdown targets. Discovery and validation perform no native reads or permission requests. The first extraction requests permission if undecided, waiting up to 30 seconds. Denied, restricted, pending, and revoked access throw `RemindersUnavailableError`, retaining the process error as its cause. Asynchronous fetches time out after 60 seconds and cancel the request. A nil fetch result is an error; only a successful empty array can clear a target. Failed reads preserve the previous contents of the affected target. Only macOS 27 is supported, because the helper is built for it.
 
-| Stream | Contents and relationships |
-| --- | --- |
-| `accounts` | Native EventKit sources: `id`, name, type, delegate flag. May include accounts with no visible reminder lists. |
-| `lists` | Native reminder calendars: `id`, `accountId`, name, type, writable/subscribed/immutable flags, sRGB color components, availability and entity masks. |
-| `reminders` | Native `id`, `listId`, nullable external identifier, name/body/location/URL, item time zone, nullable creation/modification/completion timestamps, completion flag, priority (0–9). Includes completed and incomplete reminders. |
-| `dateComponents` | Up to two rows per reminder, linked by `reminderId`, with `kind` of `start` or `due`. Preserves native date components, calendar identifier, and nullable time zone. |
-| `attendees` | Public EventKit participants, when supplied: `reminderId`, position, name/URL, status, role, type, current-user flag. This is not a Reminders sharing/assignment API. |
-| `alarms` | `reminderId`, position, type, relative offset, absolute timestamp, email/sound, proximity, location title, latitude/longitude, radius in meters. |
-| `recurrenceRules` | `reminderId`, position, calendar identifier, frequency, interval, first weekday, ending date/count. |
-| `recurrenceRuleValues` | `reminderId`, `ruleId`, component/position, value and optional weekday ordinal; preserves all six public recurrence selectors. |
+| Stream                 | Contents and relationships                                                                                                                                                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accounts`             | Native EventKit sources: `id`, name, type, delegate flag. May include accounts with no visible reminder lists.                                                                                                                   |
+| `lists`                | Native reminder calendars: `id`, `accountId`, name, type, writable/subscribed/immutable flags, sRGB color components, availability and entity masks.                                                                             |
+| `reminders`            | Native `id`, `listId`, nullable external identifier, name/body/location/URL, item time zone, nullable creation/modification/completion timestamps, completion flag, priority (0–9). Includes completed and incomplete reminders. |
+| `dateComponents`       | Up to two rows per reminder, linked by `reminderId`, with `kind` of `start` or `due`. Preserves native date components, calendar identifier, and nullable time zone.                                                             |
+| `attendees`            | Public EventKit participants, when supplied: `reminderId`, position, name/URL, status, role, type, current-user flag. This is not a Reminders sharing/assignment API.                                                            |
+| `alarms`               | `reminderId`, position, type, relative offset, absolute timestamp, email/sound, proximity, location title, latitude/longitude, radius in meters.                                                                                 |
+| `recurrenceRules`      | `reminderId`, position, calendar identifier, frequency, interval, first weekday, ending date/count.                                                                                                                              |
+| `recurrenceRuleValues` | `reminderId`, `ruleId`, component/position, value and optional weekday ordinal; preserves all six public recurrence selectors.                                                                                                   |
 
 Date components preserve undefined values as `null`, including missing clock components for date-only reminders. A null time zone means a floating date/time; it is never silently replaced with UTC. Start, due, and item time zones remain separate. No UTC due instant is invented from a date-only or floating reminder. Native timestamp properties remain UTC ISO strings. Missing start/due properties produce no component row. On macOS 26.6.2, EventKit refused non-Gregorian date-component calendars (`Calendar must be nil or Gregorian`). It also normalized a due time set with only an hour and no calendar: the stored components carried the Gregorian calendar and `minute: 0`. Exports report the components EventKit stores, not the values an app originally assigned.
 
@@ -901,8 +958,10 @@ See the [EventKit research and implementation notes](eventkit-reminders.md) for 
 
 ```ts
 import { mkdir } from 'node:fs/promises';
-import { Connection, Copy, Pipeline } from 'elt';
-import { SQLiteDestination } from 'elt-sqlite';
+
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { SQLiteDestination } from '@workspace/elt-sqlite';
+
 import { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
 
 await mkdir('./outputs', { recursive: true });
@@ -910,7 +969,9 @@ const calendar = new AppleCalendarSource({
   startAt: '2026-09-01T00:00:00.000Z',
   endAt: '2026-10-01T00:00:00.000Z',
 });
-const sqlite = new SQLiteDestination({ path: './outputs/apple-calendar.sqlite' });
+const sqlite = new SQLiteDestination({
+  path: './outputs/apple-calendar.sqlite',
+});
 
 await new Pipeline({
   connections: [
@@ -918,8 +979,8 @@ await new Pipeline({
       name: 'apple-calendar',
       source: calendar,
       destination: sqlite,
-      steps: (await calendar.discover()).streams.map(stream =>
-        new Copy(stream, sqlite.table(stream.name)),
+      steps: (await calendar.discover()).streams.map(
+        (stream) => new Copy(stream, sqlite.table(stream.name)),
       ),
     }),
   ],
@@ -938,19 +999,19 @@ The `icsComponents`, `icsProperties`, and `icsParameters` streams read each item
 
 All eleven streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables or Markdown targets. Related collections, whose members carry fields of their own, are separate streams of rows.
 
-| Stream | Contents and relationships |
-| --- | --- |
-| `accounts` | EventKit sources: identifier, name, native source type, delegate flag. |
-| `calendars` | Identifier, `accountId`, name, description, native type, write/subscription/immutability flags, sRGB components, supported availability and entity masks. |
-| `events` | Expanded occurrences: native identifiers, `calendarId`, title/body/location/URL, start/end, all-day dates, time zone, creation/modification dates, original occurrence date, detached flag, status/availability, birthday contact identifier, geographic location. |
-| `attendees` | `eventId`, position, participant name/URL, native status/role/type, current-user flag. `kind` distinguishes attendees from the organizer. |
-| `alarms` | `eventId`, position, native alarm type, relative offset in seconds, absolute date, email/sound, proximity and geographic location. |
-| `recurrenceRules` | `eventId`, position, calendar identifier, frequency, interval, first weekday, end date and occurrence count. |
-| `recurrenceRuleValues` | `ruleId`, `eventId`, component and position, integer value, optional weekday ordinal. Preserves weekdays, month/year days, year weeks, months, and set positions. |
-| `icsComponents` | One row per iCalendar component of a native item (`VCALENDAR`, `VEVENT`, `VALARM`, `VTIMEZONE`, …): `id` `[calendarId, calendarItemId, path]`, `parentId`, `position`, `name`, `uid`, the raw `recurrenceId` with its `recurrenceIdTimeZone` (TZID), and `eventId` when it is exact (the master of a non-recurring event). |
-| `icsProperties` | Every property except `DTSTAMP`, with its raw value: `componentId`, `position`, `name`, `value`. Includes `ATTACH`, `RRULE`, `EXDATE`, `RECURRENCE-ID`, `URL`, and vendor properties such as `X-GOOGLE-CONFERENCE` and `X-MICROSOFT-*`. |
-| `icsAttachments` | One row per `ATTACH`: `uri` (raw), `filename` (`X-APPLE-FILENAME` or `FILENAME`), `formatType` (`FMTTYPE`), `inline`. Supports file transfer: inline base64 content is decoded locally; remote references are downloaded by the `attachments` fetcher given to `AppleCalendarSource`, and a file the fetcher reports as unreachable loads as `null`. |
-| `icsParameters` | One row per parameter value: `propertyId`, `componentId`, `position`, `valuePosition`, `name`, `value` (for example `ATTACH;FMTTYPE`, `ATTACH;FILENAME`, `DTSTART;TZID`). |
+| Stream                 | Contents and relationships                                                                                                                                                                                                                                                                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accounts`             | EventKit sources: identifier, name, native source type, delegate flag.                                                                                                                                                                                                                                                                               |
+| `calendars`            | Identifier, `accountId`, name, description, native type, write/subscription/immutability flags, sRGB components, supported availability and entity masks.                                                                                                                                                                                            |
+| `events`               | Expanded occurrences: native identifiers, `calendarId`, title/body/location/URL, start/end, all-day dates, time zone, creation/modification dates, original occurrence date, detached flag, status/availability, birthday contact identifier, geographic location.                                                                                   |
+| `attendees`            | `eventId`, position, participant name/URL, native status/role/type, current-user flag. `kind` distinguishes attendees from the organizer.                                                                                                                                                                                                            |
+| `alarms`               | `eventId`, position, native alarm type, relative offset in seconds, absolute date, email/sound, proximity and geographic location.                                                                                                                                                                                                                   |
+| `recurrenceRules`      | `eventId`, position, calendar identifier, frequency, interval, first weekday, end date and occurrence count.                                                                                                                                                                                                                                         |
+| `recurrenceRuleValues` | `ruleId`, `eventId`, component and position, integer value, optional weekday ordinal. Preserves weekdays, month/year days, year weeks, months, and set positions.                                                                                                                                                                                    |
+| `icsComponents`        | One row per iCalendar component of a native item (`VCALENDAR`, `VEVENT`, `VALARM`, `VTIMEZONE`, …): `id` `[calendarId, calendarItemId, path]`, `parentId`, `position`, `name`, `uid`, the raw `recurrenceId` with its `recurrenceIdTimeZone` (TZID), and `eventId` when it is exact (the master of a non-recurring event).                           |
+| `icsProperties`        | Every property except `DTSTAMP`, with its raw value: `componentId`, `position`, `name`, `value`. Includes `ATTACH`, `RRULE`, `EXDATE`, `RECURRENCE-ID`, `URL`, and vendor properties such as `X-GOOGLE-CONFERENCE` and `X-MICROSOFT-*`.                                                                                                              |
+| `icsAttachments`       | One row per `ATTACH`: `uri` (raw), `filename` (`X-APPLE-FILENAME` or `FILENAME`), `formatType` (`FMTTYPE`), `inline`. Supports file transfer: inline base64 content is decoded locally; remote references are downloaded by the `attachments` fetcher given to `AppleCalendarSource`, and a file the fetcher reports as unreachable loads as `null`. |
+| `icsParameters`        | One row per parameter value: `propertyId`, `componentId`, `position`, `valuePosition`, `name`, `value` (for example `ATTACH;FMTTYPE`, `ATTACH;FILENAME`, `DTSTART;TZID`).                                                                                                                                                                            |
 
 Native enums and bitmasks remain integers. Missing optional values remain `null`; zero recurrence count means no count-based limit. Schema details are available on each stream's `jsonSchema`.
 
@@ -997,17 +1058,23 @@ These GUI exports are not used. The ICS streams read the same iCalendar data per
 
 ```ts
 const requester = await googleSession({
-  clientId, clientSecret,
+  clientId,
+  clientSecret,
   scopes: [GOOGLE_DRIVE_READONLY_SCOPE, GMAIL_READONLY_SCOPE],
 });
 const calendar = new AppleCalendarSource({
-  startAt, endAt,
+  startAt,
+  endAt,
   attachments: googleCalendarAttachments(requester),
 });
-new Copy(calendar.icsAttachments, sqlite.table('attachments', (c) => [
-  c.text('uri'), c.text('filename'),
-  c.blob('bytes').from(calendar.icsAttachments.file),
-]));
+new Copy(
+  calendar.icsAttachments,
+  sqlite.table('attachments', (c) => [
+    c.text('uri'),
+    c.text('filename'),
+    c.blob('bytes').from(calendar.icsAttachments.file),
+  ]),
+);
 ```
 
 A Drive file the account cannot open (HTTP 404, or a 403 that is not a configuration error) loads with a `null` file. A disabled API, a missing scope, or any other failure fails the copy.
@@ -1035,8 +1102,12 @@ That last run also rewrote 48 component rows of other items. Four later no-chang
 ## Apple Safari
 
 ```ts
-import { Connection, Copy, Pipeline } from 'elt';
-import { SQLiteCheckpointStore, SQLiteDestination } from 'elt-sqlite';
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+
 import { AppleSafariSource } from './sources/apple-safari/apple-safari-source.ts';
 
 const source = new AppleSafariSource(); // ~/Library/Safari and Safari's container
@@ -1048,7 +1119,9 @@ await new Pipeline({
       name: 'apple-safari',
       source,
       destination,
-      checkpoints: new SQLiteCheckpointStore({ path: './outputs/safari-state.sqlite' }),
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/safari-state.sqlite',
+      }),
       steps: [source.historyVisits, source.tabs, source.bookmarks].map(
         (stream) =>
           new Copy(stream, destination.table(stream.name), {
@@ -1064,14 +1137,14 @@ await new Pipeline({
 
 The source reads Safari's own stores read-only; Safari need not be open. `npx nx run apple-cli:start -- sync --app safari` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views; a download still on disk is saved in its `files` folder and referenced by `attachmentRef`. `new AppleSafariSource({ scope })` selects profiles through `collectionIds` and history visits through `startAt`/`endAt` (see Scope below).
 
-| Store | Where | Streams |
-| --- | --- | --- |
-| `History.db` (SQLite), one per profile | `~/Library/Safari` for the default profile; `Profiles/<serverId>` in the container for every other | `historyItems`, `historyVisits`, `historyTombstones`, `historyTags`, `historyItemTags` |
-| `SafariTabs.db` (SQLite) | `~/Library/Containers/com.apple.Safari/Data/Library/Safari` | `profiles`, `profileStartPageSections`, `windows`, `windowProfiles`, `windowTabGroups`, `tabGroups`, `tabs`, `tabHistoryEntries` |
-| `CloudTabs.db` (SQLite) | the container | `cloudTabDevices`, `cloudTabs`, `cloudTabPositions`, `cloudTabCloseRequests` |
-| `Bookmarks.plist` | `~/Library/Safari` | `bookmarks`, `readingListItems` |
-| `RecentlyClosedTabs.plist` | `~/Library/Safari` | `closedWindows`, `closedTabs`, `closedWindowActiveTabs` |
-| `Downloads.plist` | `~/Library/Safari` | `downloads` |
+| Store                                  | Where                                                                                              | Streams                                                                                                                          |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `History.db` (SQLite), one per profile | `~/Library/Safari` for the default profile; `Profiles/<serverId>` in the container for every other | `historyItems`, `historyVisits`, `historyTombstones`, `historyTags`, `historyItemTags`                                           |
+| `SafariTabs.db` (SQLite)               | `~/Library/Containers/com.apple.Safari/Data/Library/Safari`                                        | `profiles`, `profileStartPageSections`, `windows`, `windowProfiles`, `windowTabGroups`, `tabGroups`, `tabs`, `tabHistoryEntries` |
+| `CloudTabs.db` (SQLite)                | the container                                                                                      | `cloudTabDevices`, `cloudTabs`, `cloudTabPositions`, `cloudTabCloseRequests`                                                     |
+| `Bookmarks.plist`                      | `~/Library/Safari`                                                                                 | `bookmarks`, `readingListItems`                                                                                                  |
+| `RecentlyClosedTabs.plist`             | `~/Library/Safari`                                                                                 | `closedWindows`, `closedTabs`, `closedWindowActiveTabs`                                                                          |
+| `Downloads.plist`                      | `~/Library/Safari`                                                                                 | `downloads`                                                                                                                      |
 
 A run opens only the stores its selected streams read, pins each database in one read transaction and reads each property list once. Stores are separate files, so streams of different stores need not agree, and a store that cannot be opened fails only its own streams: a missing or unreadable file raises `SafariUnavailableError` naming Full Disk Access, and a database without a column the connector reads raises `SafariSchemaError` naming the columns. A failure never reads as an empty store, which would delete every row. Streams of every store support full refresh and snapshot incremental (`append_dedup` on the stream's own key, no `cursorField`; see [snapshot streams](#snapshot-streams)).
 
@@ -1087,20 +1160,20 @@ A tab or tab group belongs to the nearest profile folder above it; a group under
 
 ### Streams
 
-| Stream | Contents and relationships |
-| --- | --- |
-| `historyItems` | One URL per profile: visit count, ranking score, Safari's per-day and per-week ranking values (weighted, not raw counts; `bigint[]`), autocomplete triggers (`text[]`), last HTTP status. |
-| `historyVisits` | Each visit: `itemId`, time, title, load success, non-GET, synthesized, redirect source and destination visits, `origin` (0 this Mac, 1 another device through iCloud), sync generation, attribute mask, score. |
-| `historyTombstones` | Deletions Safari keeps to sync: a cleared range (an unbounded start reads NULL) and the removed URL, plain in `url` or, as Safari 27 stores it, encrypted in `encryptedUrl` (base64). |
-| `historyTags`, `historyItemTags` | Topics Safari derived from history (Wikidata item identifiers) and the items tagged with them. |
-| `profiles`, `profileStartPageSections` | Profiles with symbol, named color and components, own Favorites folder (`favoritesFolderServerId` → `bookmarks.serverId`), and the Start Page sections a profile customized. |
-| `windows`, `windowProfiles`, `windowTabGroups` | Saved windows with their profile, active, local and private groups, and window state (private, popup, minimized, selected tab, bars, sidebar, frame, unsubmitted address text); the profiles each window remembers; the groups a window holds or shows, with each group's active tab. |
-| `tabGroups` | Every tab folder with its `kind`: `named`, `unnamed` (synced groups of a profile's ordinary tabs), `local` and `private` (a window's own groups), `pinned`, `privatePinned`, `recentlyClosed`, `favorites` (a group's own Favorites), `device` (one device's unnamed groups), `special`. |
-| `tabs`, `tabHistoryEntries` | Open tabs, pinned tabs (with the address they return to) and group Favorites; titles and URLs synced and local, times, reader state, opener chain, page language, keywords with weights (`text[]`, `double precision[]`); each tab's back and forward list, oldest first, with the entry shown. |
-| `cloudTabDevices`, `cloudTabs`, `cloudTabPositions`, `cloudTabCloseRequests` | iCloud Tabs as Safari last fetched them: devices (name, model), their tabs, each tab's ordering values (a zlib-compressed JSON list), and pending requests to close a tab elsewhere. |
-| `bookmarks`, `readingListItems` | The bookmark tree (folders, bookmarks, proxies such as History; titles, descriptions typed or fetched, iCloud `serverId`) including the Reading List folder, and Reading List items (added, viewed, preview, image, offline fetch, added on this Mac). |
-| `closedWindows`, `closedTabs`, `closedWindowActiveTabs` | History › Recently Closed: windows with their state, tabs closed alone or with their window, and each closed window's active tab per group. |
-| `downloads` | The Downloads list: URL, saved path, profile, times, bytes, and the file when it is still at `path` (`availableLocally`). For an archive Safari opened on its own, `path` names the archive inside a `.download` folder that no longer exists and `openedPath` the first extracted file; the extracted files move next to it, so no file loads. |
+| Stream                                                                       | Contents and relationships                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `historyItems`                                                               | One URL per profile: visit count, ranking score, Safari's per-day and per-week ranking values (weighted, not raw counts; `bigint[]`), autocomplete triggers (`text[]`), last HTTP status.                                                                                                                                                       |
+| `historyVisits`                                                              | Each visit: `itemId`, time, title, load success, non-GET, synthesized, redirect source and destination visits, `origin` (0 this Mac, 1 another device through iCloud), sync generation, attribute mask, score.                                                                                                                                  |
+| `historyTombstones`                                                          | Deletions Safari keeps to sync: a cleared range (an unbounded start reads NULL) and the removed URL, plain in `url` or, as Safari 27 stores it, encrypted in `encryptedUrl` (base64).                                                                                                                                                           |
+| `historyTags`, `historyItemTags`                                             | Topics Safari derived from history (Wikidata item identifiers) and the items tagged with them.                                                                                                                                                                                                                                                  |
+| `profiles`, `profileStartPageSections`                                       | Profiles with symbol, named color and components, own Favorites folder (`favoritesFolderServerId` → `bookmarks.serverId`), and the Start Page sections a profile customized.                                                                                                                                                                    |
+| `windows`, `windowProfiles`, `windowTabGroups`                               | Saved windows with their profile, active, local and private groups, and window state (private, popup, minimized, selected tab, bars, sidebar, frame, unsubmitted address text); the profiles each window remembers; the groups a window holds or shows, with each group's active tab.                                                           |
+| `tabGroups`                                                                  | Every tab folder with its `kind`: `named`, `unnamed` (synced groups of a profile's ordinary tabs), `local` and `private` (a window's own groups), `pinned`, `privatePinned`, `recentlyClosed`, `favorites` (a group's own Favorites), `device` (one device's unnamed groups), `special`.                                                        |
+| `tabs`, `tabHistoryEntries`                                                  | Open tabs, pinned tabs (with the address they return to) and group Favorites; titles and URLs synced and local, times, reader state, opener chain, page language, keywords with weights (`text[]`, `double precision[]`); each tab's back and forward list, oldest first, with the entry shown.                                                 |
+| `cloudTabDevices`, `cloudTabs`, `cloudTabPositions`, `cloudTabCloseRequests` | iCloud Tabs as Safari last fetched them: devices (name, model), their tabs, each tab's ordering values (a zlib-compressed JSON list), and pending requests to close a tab elsewhere.                                                                                                                                                            |
+| `bookmarks`, `readingListItems`                                              | The bookmark tree (folders, bookmarks, proxies such as History; titles, descriptions typed or fetched, iCloud `serverId`) including the Reading List folder, and Reading List items (added, viewed, preview, image, offline fetch, added on this Mac).                                                                                          |
+| `closedWindows`, `closedTabs`, `closedWindowActiveTabs`                      | History › Recently Closed: windows with their state, tabs closed alone or with their window, and each closed window's active tab per group.                                                                                                                                                                                                     |
+| `downloads`                                                                  | The Downloads list: URL, saved path, profile, times, bytes, and the file when it is still at `path` (`availableLocally`). For an archive Safari opened on its own, `path` names the archive inside a `.download` folder that no longer exists and `openedPath` the first extracted file; the extracted files move next to it, so no file loads. |
 
 Left out: iCloud sync bookkeeping (`history_events`, `history_event_listeners`, `history_client_versions`, `metadata`, `generations`, `sync_*` tables, CloudKit `system_fields` and `Sync.Data`), derived indexes (`bookmark_title_words`, `folder_ancestors`), WebKit and AppKit state (`SessionHistoryEntryData` form and scroll state, `WindowRestorationArchiveData`, `restoration_archive`), icon caches, AutoFill, form values and passwords, per-site preferences and permissions, and extensions.
 
@@ -1131,8 +1204,13 @@ Unverified: shared tab groups (they need a second iCloud account).
 ## Apple Books
 
 ```ts
-import { Connection, Copy, LocalFiles, Pipeline } from 'elt';
-import { SQLiteCheckpointStore, SQLiteColumns, SQLiteDestination } from 'elt-sqlite';
+import { Connection, Copy, LocalFiles, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteColumns,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+
 import { AppleBooksSource } from './sources/apple-books/apple-books-source.ts';
 
 const source = new AppleBooksSource(); // Books' container and its group container
@@ -1145,7 +1223,9 @@ await new Pipeline({
       name: 'apple-books',
       source,
       destination,
-      checkpoints: new SQLiteCheckpointStore({ path: './outputs/books-state.sqlite' }),
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/books-state.sqlite',
+      }),
       steps: [source.annotations, source.readingDays, source.bookFiles].map(
         (stream) =>
           new Copy(
@@ -1155,11 +1235,17 @@ await new Pipeline({
               stream.supportsFileTransfer
                 ? (columns) => [
                     ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                    columns.text('attachmentRef').from(stream.file.store(files)),
+                    columns
+                      .text('attachmentRef')
+                      .from(stream.file.store(files)),
                   ]
                 : undefined,
             ),
-            { id: stream.name, syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
+            {
+              id: stream.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            },
           ),
       ),
     }),
@@ -1169,16 +1255,16 @@ await new Pipeline({
 
 The source reads the stores Books and its sync daemon, `bookdatastored`, keep; Books need not be open. `npx nx run apple-cli:start -- sync --app books` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views; a book whose bytes are on this Mac is saved in its `files` folder and referenced by `attachmentRef`.
 
-| Store | Where | Streams |
-| --- | --- | --- |
-| `BKLibrary-1-091020131601.sqlite` (Core Data) | `~/Library/Containers/com.apple.iBooksX/Data/Documents/BKLibrary` | `libraryAssets`, `collections`, `collectionMembers`, `bookFiles` |
-| `AEAnnotation_v10312011_1727_local.sqlite` (Core Data) | `…/Documents/AEAnnotation` in the same container | `annotations` |
-| `BCAssetData` (Core Data) | `~/Library/Group Containers/group.com.apple.iBooks/Documents/BCCloudData-BookDataStoreService/BCAssetData` | `assetDetails`, `reviews` |
-| `CRDTModelSync-ReadingHistoryModel` (Core Data holding a CRDT document) | `…/BCCloudData-BookDataStoreService/CRDTModelSync-ReadingHistoryModel` | `readingMonths`, `readingDays`, `streakRecords` |
-| `BKJaliscoServerSource-v09182016.sqlite` (Core Data) | `…/group.com.apple.iBooks/Documents/BKJaliscoServerSource` | `purchases` |
-| `BookTheme.sqlite` (Core Data) | `…/com.apple.iBooksX/Data/Library/Application Support/Books` | `themes` |
-| `com.apple.iBooksX.plist`, `group.com.apple.iBooks.plist` | each container's `Library/Preferences` | `readingGoal` |
-| Book files | each asset's `ZPATH`, usually `~/Library/Mobile Documents/iCloud~com~apple~iBooks/Documents` | `bookFiles` |
+| Store                                                                   | Where                                                                                                      | Streams                                                          |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `BKLibrary-1-091020131601.sqlite` (Core Data)                           | `~/Library/Containers/com.apple.iBooksX/Data/Documents/BKLibrary`                                          | `libraryAssets`, `collections`, `collectionMembers`, `bookFiles` |
+| `AEAnnotation_v10312011_1727_local.sqlite` (Core Data)                  | `…/Documents/AEAnnotation` in the same container                                                           | `annotations`                                                    |
+| `BCAssetData` (Core Data)                                               | `~/Library/Group Containers/group.com.apple.iBooks/Documents/BCCloudData-BookDataStoreService/BCAssetData` | `assetDetails`, `reviews`                                        |
+| `CRDTModelSync-ReadingHistoryModel` (Core Data holding a CRDT document) | `…/BCCloudData-BookDataStoreService/CRDTModelSync-ReadingHistoryModel`                                     | `readingMonths`, `readingDays`, `streakRecords`                  |
+| `BKJaliscoServerSource-v09182016.sqlite` (Core Data)                    | `…/group.com.apple.iBooks/Documents/BKJaliscoServerSource`                                                 | `purchases`                                                      |
+| `BookTheme.sqlite` (Core Data)                                          | `…/com.apple.iBooksX/Data/Library/Application Support/Books`                                               | `themes`                                                         |
+| `com.apple.iBooksX.plist`, `group.com.apple.iBooks.plist`               | each container's `Library/Preferences`                                                                     | `readingGoal`                                                    |
+| Book files                                                              | each asset's `ZPATH`, usually `~/Library/Mobile Documents/iCloud~com~apple~iBooks/Documents`               | `bookFiles`                                                      |
 
 A run opens only the stores its selected streams read and pins each database in one read transaction. Every store uses Core Data's persistent WAL and most current rows live only in the WAL, so the connector opens them read-only and never as `immutable`, which would hide them. Stores are separate files, so streams of different stores need not agree, and a store that cannot be opened fails only its own streams: a missing or unreadable file raises `BooksUnavailableError` naming Full Disk Access, and a database without a column the connector reads, or a reading history in another format version, raises `BooksSchemaError`. Rows already loaded stay.
 
@@ -1188,18 +1274,18 @@ On macOS 27 a terminal without [Full Disk Access](#full-disk-access) read both c
 
 ### Streams
 
-| Stream | Contents and relationships |
-| --- | --- |
-| `libraryAssets` | Every book, PDF, audiobook and series in this Mac's library: title, authors, genre, language, description, store and EPUB identifiers, `path`, page count, size, reading progress and furthest progress reached, finished state and date, last opened and engaged, ratings, sample, hidden and explicit flags, series membership (`seriesContainerAssetId`). `contentType` is `epub` (code 1) or `pdf` (code 3); other codes keep only `contentTypeCode`. `state` is not whether the file is local. Archived author, narrator and genre lists stay base64. |
-| `collections`, `collectionMembers` | Built-in collections (Finished, Want to Read, Books, PDFs, Downloaded, My Samples, Library, Audiobooks, with fixed `collectionId`s) and those the user made (UUIDs); members by `assetId`, which outlives the book leaving the library. |
-| `bookFiles` | One row per asset with a path: `format` (`epub-package` or `file`), `availableLocally`, file count, size and latest modification over the package. An EPUB package is exported as one `.epub` (OCF: `mimetype` first and stored, entries in name order, fixed timestamps, so an unchanged package yields the same bytes); a single file, such as a PDF or a zipped `.epub`, as it is. |
-| `annotations` | Highlights and underlines (`kind` `highlight`, with `underline` and `style`: 0 underline, 1 green, 2 blue, 3 yellow, 4 pink, 5 purple), the reading position Books keeps per book (`readingPosition`), and deletion markers not yet synced (`deleted`, no book, text or location). Text, note, surrounding text, chapter title, EPUB CFI location and offsets, creator and times. |
-| `assetDetails` | Reading state `bookdatastored` syncs through iCloud, including books read on other devices and absent from this library: progress, furthest progress, finished and still-reading, star rating, audiobook position, and the synced position as an EPUB CFI. |
-| `reviews` | Store reviews the user wrote. |
-| `readingMonths`, `readingDays`, `streakRecords` | Reading history: per day the seconds read (summed over every device's contribution) and the goal in effect; per month the total Books kept after summarizing it and how many days remain; the date each streak length was first reached. |
-| `readingGoal` | One row: goals on or off, the daily goal in seconds, when it was set, and the current streak. |
-| `purchases` | Store purchases, downloaded or not; download tokens and DRM parameters are left out. |
-| `themes` | Reading themes the user customized. |
+| Stream                                          | Contents and relationships                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `libraryAssets`                                 | Every book, PDF, audiobook and series in this Mac's library: title, authors, genre, language, description, store and EPUB identifiers, `path`, page count, size, reading progress and furthest progress reached, finished state and date, last opened and engaged, ratings, sample, hidden and explicit flags, series membership (`seriesContainerAssetId`). `contentType` is `epub` (code 1) or `pdf` (code 3); other codes keep only `contentTypeCode`. `state` is not whether the file is local. Archived author, narrator and genre lists stay base64. |
+| `collections`, `collectionMembers`              | Built-in collections (Finished, Want to Read, Books, PDFs, Downloaded, My Samples, Library, Audiobooks, with fixed `collectionId`s) and those the user made (UUIDs); members by `assetId`, which outlives the book leaving the library.                                                                                                                                                                                                                                                                                                                    |
+| `bookFiles`                                     | One row per asset with a path: `format` (`epub-package` or `file`), `availableLocally`, file count, size and latest modification over the package. An EPUB package is exported as one `.epub` (OCF: `mimetype` first and stored, entries in name order, fixed timestamps, so an unchanged package yields the same bytes); a single file, such as a PDF or a zipped `.epub`, as it is.                                                                                                                                                                      |
+| `annotations`                                   | Highlights and underlines (`kind` `highlight`, with `underline` and `style`: 0 underline, 1 green, 2 blue, 3 yellow, 4 pink, 5 purple), the reading position Books keeps per book (`readingPosition`), and deletion markers not yet synced (`deleted`, no book, text or location). Text, note, surrounding text, chapter title, EPUB CFI location and offsets, creator and times.                                                                                                                                                                          |
+| `assetDetails`                                  | Reading state `bookdatastored` syncs through iCloud, including books read on other devices and absent from this library: progress, furthest progress, finished and still-reading, star rating, audiobook position, and the synced position as an EPUB CFI.                                                                                                                                                                                                                                                                                                 |
+| `reviews`                                       | Store reviews the user wrote.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `readingMonths`, `readingDays`, `streakRecords` | Reading history: per day the seconds read (summed over every device's contribution) and the goal in effect; per month the total Books kept after summarizing it and how many days remain; the date each streak length was first reached.                                                                                                                                                                                                                                                                                                                   |
+| `readingGoal`                                   | One row: goals on or off, the daily goal in seconds, when it was set, and the current streak.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `purchases`                                     | Store purchases, downloaded or not; download tokens and DRM parameters are left out.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `themes`                                        | Reading themes the user customized.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 Left out: CloudKit mirrors that duplicate the stores above (`ZBCASSETANNOTATIONS`, `BCCloudCollections`, `ZBCREADINGNOWDETAIL`, the widget cache) and the local copy of the reading history (`CRDTModelLocalFile`, a newer format of the same model); sync bookkeeping (`ACHANGE`, `ATRANSACTION*`, sync versions, server change tokens, salts, edit and sync generations, `ZCKSYSTEMFIELDS`, CRDT counters and replicas, `.bcck` files); per-day engagement records in `BDSSecureData` (store impression events, not reading time); transient tables (reading sessions, which Books purges, recents, purge and download queues); telemetry and caches (`BooksMessages`, TipKit, WebKit, the series cache, archived plists, Books.plist, whose local flags are wrong); per-language theme fonts; and secrets (`ZBCSECUREUSERDATUM`, identity tokens, CloudKit user IDs, DRM columns).
 
@@ -1270,17 +1356,17 @@ Because a user credential is billed to the project that issued its OAuth client,
 
 ### Streams
 
-| Stream | Extraction | Key | Notes |
-| --- | --- | --- | --- |
-| `sites` | Full refresh or snapshot | `[siteUrl]` | Properties the grant can read. `siteUnverifiedUser` entries are dropped: Google lists them, but their history cannot be read. |
-| `sitemaps` | Full refresh or snapshot | `[siteUrl, path]` | Google's report on each listed sitemap (int64 counts arrive as decimal strings; `lastDownloaded` is null until Google first reads it), plus what this connector read from the file itself: `urlsRead`, or `readError` when it could not be read. |
-| `sitemapContents` | Full refresh or snapshot | `[siteUrl, sitemapPath, type]` | The per-content-type rows nested in each sitemap. |
-| `searchAnalyticsDaily` | Incremental | `[siteUrl, date, searchType]` | Site-wide totals per day **per report type**, with `searchType` as a column. |
-| `searchAnalyticsQueries` | Incremental | `[siteUrl, date, query]` | Per day and query, web results only. |
-| `searchAnalyticsPages` | Incremental | `[siteUrl, date, page]` | Per day and page, web results only. |
-| `searchAnalyticsCountries` | Full refresh or snapshot | `[siteUrl, country, device]` | Country and device for a trailing `breakdownMonths` window (default 3), stated on each row as `startDate` and `endDate`. No date dimension, so it is diffed as a whole rather than resumed. |
-| `urlInspection` | Incremental (rolling) | `[siteUrl, inspectionUrl]` | One request per URL. `inSitemap` and `inSearchAnalytics` say where the URL was found, `inspectedAt` when; `errorStatus` and `errorMessage` are set when Google rejected the URL. |
-| `urlInspectionSitemaps` / `urlInspectionReferrers` | Incremental (rolling) | `[siteUrl, inspectionUrl, position]` | The arrays nested in the index status result. |
+| Stream                                             | Extraction               | Key                                  | Notes                                                                                                                                                                                                                                            |
+| -------------------------------------------------- | ------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sites`                                            | Full refresh or snapshot | `[siteUrl]`                          | Properties the grant can read. `siteUnverifiedUser` entries are dropped: Google lists them, but their history cannot be read.                                                                                                                    |
+| `sitemaps`                                         | Full refresh or snapshot | `[siteUrl, path]`                    | Google's report on each listed sitemap (int64 counts arrive as decimal strings; `lastDownloaded` is null until Google first reads it), plus what this connector read from the file itself: `urlsRead`, or `readError` when it could not be read. |
+| `sitemapContents`                                  | Full refresh or snapshot | `[siteUrl, sitemapPath, type]`       | The per-content-type rows nested in each sitemap.                                                                                                                                                                                                |
+| `searchAnalyticsDaily`                             | Incremental              | `[siteUrl, date, searchType]`        | Site-wide totals per day **per report type**, with `searchType` as a column.                                                                                                                                                                     |
+| `searchAnalyticsQueries`                           | Incremental              | `[siteUrl, date, query]`             | Per day and query, web results only.                                                                                                                                                                                                             |
+| `searchAnalyticsPages`                             | Incremental              | `[siteUrl, date, page]`              | Per day and page, web results only.                                                                                                                                                                                                              |
+| `searchAnalyticsCountries`                         | Full refresh or snapshot | `[siteUrl, country, device]`         | Country and device for a trailing `breakdownMonths` window (default 3), stated on each row as `startDate` and `endDate`. No date dimension, so it is diffed as a whole rather than resumed.                                                      |
+| `urlInspection`                                    | Incremental (rolling)    | `[siteUrl, inspectionUrl]`           | One request per URL. `inSitemap` and `inSearchAnalytics` say where the URL was found, `inspectedAt` when; `errorStatus` and `errorMessage` are set when Google rejected the URL.                                                                 |
+| `urlInspectionSitemaps` / `urlInspectionReferrers` | Incremental (rolling)    | `[siteUrl, inspectionUrl, position]` | The arrays nested in the index status result.                                                                                                                                                                                                    |
 
 One source reads several properties. Every stream except `sites` is a [partitioned stream](#partitioned-streams) with `partitionKey: ['siteUrl']`: each property is read with its own checkpoint, every row carries its property in `siteUrl`, and every key starts with it, so all properties share one table per stream. Adding a property backfills its history while the others resume; removing one stops reading it and keeps its rows. `sites` lists what the grant can read, which is the same for every property, so it is not partitioned.
 
@@ -1292,10 +1378,10 @@ The example app lists every property in one source, so each table has one [write
 
 Google withholds rare queries for privacy, and the loss compounds with every dimension added to a request. Measured against one live property over 2026-09-10 to 2026-09-20:
 
-| Request | Rows | Clicks | Impressions |
-| --- | --- | --- | --- |
-| `['date']` | 11 | 58 | 1986 |
-| `['date','query','page','country','device']` | 749 | 37 | 1020 |
+| Request                                      | Rows | Clicks | Impressions |
+| -------------------------------------------- | ---- | ------ | ----------- |
+| `['date']`                                   | 11   | 58     | 1986        |
+| `['date','query','page','country','device']` | 749  | 37     | 1020        |
 
 A single wide request loses 36% of clicks and 49% of impressions, and no aggregation of it can recover the property's real totals. Each grain is therefore its own stream with its own window: `searchAnalyticsDaily` stays authoritative for totals, and the breakdowns are only comparable within themselves. Google additionally caps a property at 50,000 rows per day per search type and states the API "does not guarantee to return all data rows", so a high-cardinality request receives silent truncation rather than an error.
 
@@ -1352,23 +1438,24 @@ Three clocks have different meanings: source record modification fields describe
 
 Apple content is read through one view per stream, `<source>_<stream>` in snake case (for example `notes_inline_attachments`, `messages_chat_handles`), with the stream's native field names as columns (quote camelCase names: `"noteId"`) plus `loaded_at`, and `attachmentRef` for streams with files. Each view and column carries the source's description: grain, keys, joins, null meanings, and where a native value comes from when its meaning is not documented. A view exists once its source's first load commits any stream, so an empty view can mean a stream still loading or failed; check `stream_status`. `marts.catalog` is the authority for available reader relations.
 
-| Relation | Contents |
-| --- | --- |
-| `catalog` | Every view, table and column in `marts`, with its description. The agent's starting point. |
-| `sync_status` | Latest attempt and last successful pass completion per connection, each with its attempt ID. |
-| `stream_status` | Per connection and stream: the latest attempt that declared the stream with its copy status, and the last attempt in which that copy succeeded. A watch pass reads only changed streams, so judge a stream here, not in `sync_status`. |
-| `sync_attempts` | Retained attempt history, start/completion times, status and errors. |
-| `extraction_coverage` | Per attempt and stream: configured selection, scope explanation, target, copy outcome, committed counts and failed partitions. |
-| `search_console_freshness` | Observed latest day, settled day and maximum row `loaded_at` per Search Console view, computed when read. Not sync status. |
-| `search_console_totals_daily` | Authoritative totals per property, day and report type. |
-| `search_console_queries_daily`, `search_console_pages_daily` | Web breakdowns. Pages add `page_path`. Rows a re-read no longer returns are hidden (only the latest load of each property and day shows). |
-| `search_console_withheld_daily` | Web totals, the sum of query rows, and the difference Google withheld. |
-| `search_console_countries` | The trailing country × device window with its `start_date` and `end_date`. |
-| `search_console_properties`, `_sitemaps`, `_sitemap_contents`, `_url_inspection` (+ `_sitemaps`, `_referrers`) | The listings, in snake_case. Inspection adds `page_path`. |
+| Relation                                                                                                       | Contents                                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog`                                                                                                      | Every view, table and column in `marts`, with its description. The agent's starting point.                                                                                                                                             |
+| `sync_status`                                                                                                  | Latest attempt and last successful pass completion per connection, each with its attempt ID.                                                                                                                                           |
+| `stream_status`                                                                                                | Per connection and stream: the latest attempt that declared the stream with its copy status, and the last attempt in which that copy succeeded. A watch pass reads only changed streams, so judge a stream here, not in `sync_status`. |
+| `sync_attempts`                                                                                                | Retained attempt history, start/completion times, status and errors.                                                                                                                                                                   |
+| `extraction_coverage`                                                                                          | Per attempt and stream: configured selection, scope explanation, target, copy outcome, committed counts and failed partitions.                                                                                                         |
+| `search_console_freshness`                                                                                     | Observed latest day, settled day and maximum row `loaded_at` per Search Console view, computed when read. Not sync status.                                                                                                             |
+| `search_console_totals_daily`                                                                                  | Authoritative totals per property, day and report type.                                                                                                                                                                                |
+| `search_console_queries_daily`, `search_console_pages_daily`                                                   | Web breakdowns. Pages add `page_path`. Rows a re-read no longer returns are hidden (only the latest load of each property and day shows).                                                                                              |
+| `search_console_withheld_daily`                                                                                | Web totals, the sum of query rows, and the difference Google withheld.                                                                                                                                                                 |
+| `search_console_countries`                                                                                     | The trailing country × device window with its `start_date` and `end_date`.                                                                                                                                                             |
+| `search_console_properties`, `_sitemaps`, `_sitemap_contents`, `_url_inspection` (+ `_sitemaps`, `_referrers`) | The listings, in snake_case. Inspection adds `page_path`.                                                                                                                                                                              |
 
 Measures are additive only. The views carry `clicks`, `impressions`, `ranked_impressions` (impressions that had a rank) and `position_weight` (rank × impressions), and no per-row `ctr` or `position`. The only rates an agent can express are the correct ones: `sum(clicks)::float / nullif(sum(impressions), 0)` and `sum(position_weight) / nullif(sum(ranked_impressions), 0)`. Column descriptions state both. Dates are Pacific Time calendar days, and `settled` marks days Google may still restate.
 
 Verified on 2026-09-24 against Postgres 18.3, first on a local Homebrew server. The tests load a fake Search Console through the real pipeline, install marts, and read as a fresh reader role. A separate run as the non-superuser `warehouse` and `agent_reader` roles, reading through `postgres-mcp` 0.3.0 in restricted mode, confirmed four things:
+
 - The documented rate formulas return the expected values.
 - Raw schemas answer `permission denied`.
 - `COMMIT; CREATE TABLE …` fails validation.
@@ -1393,13 +1480,13 @@ URL inspection has no listing endpoint: each row costs one request naming one UR
 
 Every Search Console call retries rate limits and transient server errors, then gives up loudly. Search Console allows 1200 queries per minute per site per user, and 40000 per minute and 30000000 per day per project.
 
-| Response | Retried | When retries run out |
-| --- | --- | --- |
-| `429` | Yes | `SearchConsoleQuotaError`, with `status` and `attempts` |
-| `403` with reason `rateLimitExceeded` or `userRateLimitExceeded` | Yes | `SearchConsoleQuotaError` |
-| Any other `403` (insufficient scope, disabled API) | No | The original error, unchanged |
-| `408`, `500`, `502`, `503`, `504` | Yes | The original error, unchanged |
-| Anything else | No | The original error, unchanged |
+| Response                                                         | Retried | When retries run out                                    |
+| ---------------------------------------------------------------- | ------- | ------------------------------------------------------- |
+| `429`                                                            | Yes     | `SearchConsoleQuotaError`, with `status` and `attempts` |
+| `403` with reason `rateLimitExceeded` or `userRateLimitExceeded` | Yes     | `SearchConsoleQuotaError`                               |
+| Any other `403` (insufficient scope, disabled API)               | No      | The original error, unchanged                           |
+| `408`, `500`, `502`, `503`, `504`                                | Yes     | The original error, unchanged                           |
+| Anything else                                                    | No      | The original error, unchanged                           |
 
 The wait honors the server's `Retry-After`, in seconds or as an HTTP date. Without one, it doubles per attempt from `baseDelayMs` with full jitter, capped at `maxDelayMs`. A `Retry-After` longer than `maxDelayMs` fails at once instead of stalling the pipeline. The default policy is five attempts, one second base, one minute ceiling; pass `retry: { attempts, baseDelayMs, maxDelayMs }` to `SearchConsoleSource` to change it.
 

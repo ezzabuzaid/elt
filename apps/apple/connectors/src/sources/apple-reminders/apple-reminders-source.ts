@@ -1,10 +1,12 @@
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  SourceMessage,
   SourceWatchOptions,
   Stream,
-} from 'elt';
-import { diffSnapshot, Source, type SourceMessage, validateRecords } from 'elt';
+} from '@workspace/elt';
+import { Source, diffSnapshot, validateRecords } from '@workspace/elt';
+
 import { EventKit, EventKitSnapshot } from '../../platform/macos/eventkit.ts';
 import {
   eventKitAccountFields,
@@ -188,8 +190,11 @@ export class AppleRemindersSource extends Source<EventKitSnapshot> {
   readonly recurrenceRules = catalog.get('recurrenceRules');
   readonly recurrenceRuleValues = catalog.get('recurrenceRuleValues');
 
-  constructor(readonly scope: ImportScope = {}) {
+  readonly scope: ImportScope;
+
+  constructor(scope: ImportScope = {}) {
     super();
+    this.scope = scope;
     Object.freeze(this);
   }
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
 import {
   Catalog,
   type CheckpointSession,
@@ -12,14 +13,11 @@ import {
   DocumentParser,
   FileRead,
   FileStorage,
-  isCalendarDate,
-  isTimestamp,
   type Load,
   LocalFiles,
   type Partition,
   Pipeline,
   PipelineError,
-  passStatus,
   type ReadMessage,
   type RecordedPass,
   Source,
@@ -31,9 +29,12 @@ import {
   StreamStatus,
   SyncHistory,
   Target,
-  validateRecords,
   type WriteOperation,
   Writer,
+  isCalendarDate,
+  isTimestamp,
+  passStatus,
+  validateRecords,
 } from './index.ts';
 
 test('file storage declarations validate identities and keep parsing separate without doing I/O', () => {
@@ -167,6 +168,7 @@ test('record validation enforces every property of the stream schema', () => {
   ]) {
     const unsupported = new Stream({
       name: 'nested',
+      // @ts-expect-error -- some of these schemas are invalid FieldSchemas; the check must reject them at run time too
       jsonSchema: { type: 'object', properties: { tags } },
       supportedSyncModes: ['full_refresh'],
     });
@@ -223,10 +225,11 @@ class ContextSource extends Source<ReadContext> {
   ]);
 
   // A stream without a script emits one record naming the read context.
-  constructor(
-    readonly scripts: Readonly<Record<string, readonly Step[]>> = {},
-  ) {
+  readonly scripts: Readonly<Record<string, readonly Step[]>>;
+
+  constructor(scripts: Readonly<Record<string, readonly Step[]>> = {}) {
     super();
+    this.scripts = scripts;
   }
 
   protected override async open(
@@ -253,21 +256,25 @@ class ContextSource extends Source<ReadContext> {
     _state: unknown,
     _partition: null,
     context: ReadContext,
-  ) {
+  ): AsyncIterable<SourceMessage> {
     const stream = configuration.stream.name;
     this.readers.push({ stream, context: context.id });
     for (const step of this.scripts[stream] ?? [
       record(stream, `${stream}-${context.id}`),
     ]) {
       if (step instanceof Error) throw step;
-      yield step as SourceMessage;
+      // @ts-expect-error -- a scripted StreamStatus plays a connector that reports status itself, which Source.read must reject
+      yield step;
     }
   }
 }
 
 class LockedSource extends ContextSource {
-  constructor(readonly refusal: Error) {
+  readonly refusal: Error;
+
+  constructor(refusal: Error) {
     super();
+    this.refusal = refusal;
   }
 
   protected override async open(): Promise<ReadContext> {
@@ -276,20 +283,24 @@ class LockedSource extends ContextSource {
 }
 
 class NamedTarget extends Target {
-  constructor(readonly name: string) {
+  readonly name: string;
+
+  constructor(name: string) {
     super();
+    this.name = name;
   }
 }
 
 // Logs each step of the load protocol and keeps no rows, so these tests
 // observe only what the engine asks of a destination.
 class RecordingWriter extends Writer {
-  constructor(
-    stream: Stream,
-    readonly log: string[],
-    readonly refusal?: Error,
-  ) {
+  readonly log: string[];
+  readonly refusal?: Error;
+
+  constructor(stream: Stream, log: string[], refusal?: Error) {
     super(stream);
+    this.log = log;
+    this.refusal = refusal;
   }
 
   async open(): Promise<Stage> {
@@ -454,7 +465,8 @@ test('a failed copy does not stop later copies, and the run reports it at the en
 
   assert.ok(error instanceof PipelineError, String(error));
   assert.match(error.message, /did not load completely: left: left failed/);
-  assert.equal((error.cause as Error).message, 'left failed');
+  assert.ok(error.cause instanceof Error);
+  assert.equal(error.cause.message, 'left failed');
   assert.deepEqual(
     error.results.map(({ copy, count, failures }) => [
       copy.from.name,
@@ -477,9 +489,11 @@ class MemoryCheckpoints extends CheckpointStore {
   readonly saved = new Map<string, StoredCheckpoint>();
   // Ids whose save throws the mapped error.
   readonly refusing = new Map<string, Error>();
+  readonly log: string[];
 
-  constructor(readonly log: string[]) {
+  constructor(log: string[]) {
     super();
+    this.log = log;
   }
 
   protected override async session<T>(

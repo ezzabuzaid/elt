@@ -1,12 +1,14 @@
-import { BooksApp } from 'apple/apps/books';
-import { CalendarApp } from 'apple/apps/calendar';
-import { ContactsApp } from 'apple/apps/contacts';
-import { MailApp } from 'apple/apps/mail';
-import { MessagesApp } from 'apple/apps/messages';
-import { NotesApp } from 'apple/apps/notes';
-import { RemindersApp } from 'apple/apps/reminders';
-import { SafariApp } from 'apple/apps/safari';
 import { Command as Program } from 'commander';
+
+import { BooksApp } from '@workspace/apple/apps/books';
+import { CalendarApp } from '@workspace/apple/apps/calendar';
+import { ContactsApp } from '@workspace/apple/apps/contacts';
+import { MailApp } from '@workspace/apple/apps/mail';
+import { MessagesApp } from '@workspace/apple/apps/messages';
+import { NotesApp } from '@workspace/apple/apps/notes';
+import { RemindersApp } from '@workspace/apple/apps/reminders';
+import { SafariApp } from '@workspace/apple/apps/safari';
+
 import { OptionsCommand } from './commands/options.ts';
 import { QueryCommand } from './commands/query.ts';
 import { SetupCommand } from './commands/setup.ts';

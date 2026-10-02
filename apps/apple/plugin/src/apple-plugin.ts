@@ -1,15 +1,17 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { AppleApp } from 'apple/apps/apple-app';
+
+import { z } from 'zod';
+
+import type { AppleApp } from '@workspace/apple/apps/apple-app';
 import {
   ImportStore,
-  leaseHeld,
   NewerLayoutError,
   type Pass,
   type Selection,
-} from 'import-store';
-import { z } from 'zod';
+  leaseHeld,
+} from '@workspace/import-store';
 
 const ids = z.array(z.string().min(1).max(1024)).max(1000);
 
@@ -82,18 +84,24 @@ export type ImportSync =
 // Setup and status for the Codex plugin. The leading server's keepFresh
 // writes each app's data.sqlite; agents read those files directly.
 export class ApplePlugin {
+  readonly apps: readonly AppleApp[];
+  // The installed plugin's folder. Installing another version deletes it.
+  readonly install: string;
+  readonly directory: string;
   readonly appSchema: z.ZodEnum<Record<string, string>>;
   readonly configurationSchema: ReturnType<typeof configurationSchema>;
 
   constructor(
-    readonly apps: readonly AppleApp[],
-    // The installed plugin's folder. Installing another version deletes it.
-    readonly install: string,
-    readonly directory = join(
+    apps: readonly AppleApp[],
+    install: string,
+    directory = join(
       homedir(),
       'Library/Application Support/Context Compiler/Apple',
     ),
   ) {
+    this.apps = apps;
+    this.install = install;
+    this.directory = directory;
     this.appSchema = z.enum(apps.map(({ name }) => name));
     this.configurationSchema = configurationSchema(this.appSchema, apps.length);
   }

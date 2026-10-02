@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SortValue } from '../cloud-tabs-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
@@ -54,9 +55,9 @@ export class CloudTabPositionsStream extends SafariStream<
     tab,
     entry,
     index,
-  }: Entry): SchemaRecord<typeof properties> {
+  }: Entry): RecordDraft<typeof properties> {
     return {
-      tabId: tab.tab_uuid as string,
+      tabId: tab.tab_uuid,
       position: index,
       changeId: entry.changeID,
       sortValue: entry.sortValue,

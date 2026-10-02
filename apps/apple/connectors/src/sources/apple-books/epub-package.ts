@@ -1,8 +1,9 @@
 import { open } from 'node:fs/promises';
 import { crc32 } from 'node:zlib';
+
 import {
-  compareByName,
   type LocalFile,
+  compareByName,
 } from '../../platform/macos/icloud-files.ts';
 
 // Books keeps an EPUB as its unzipped package directory. This writes the
@@ -91,10 +92,10 @@ export async function writeEpub(
     await output.write(bytes);
     offset += bytes.length;
   };
-  const offsets: number[] = [];
+  const written: { entry: Entry; offset: number }[] = [];
   const buffer = Buffer.allocUnsafe(chunkSize);
   for (const entry of entries) {
-    offsets.push(offset);
+    written.push({ entry, offset });
     await write(localHeader(entry));
     await using input = await open(entry.file.path);
     let remaining = entry.file.size;
@@ -114,8 +115,8 @@ export async function writeEpub(
       throw new RangeError('EPUB package exceeds 4 GiB without ZIP64');
   }
   const directoryStart = offset;
-  for (const [index, entry] of entries.entries())
-    await write(centralHeader(entry, offsets[index] as number));
+  for (const { entry, offset: start } of written)
+    await write(centralHeader(entry, start));
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
   end.writeUInt16LE(entries.length, 8);

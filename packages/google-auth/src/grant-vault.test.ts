@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 
 import type { GoogleDataGrantCredential } from './credential.ts';
-import { GoogleAccountGrant } from './grant.ts';
 import type { GoogleGrantVaultStore } from './grant-store.ts';
 import { GoogleGrantVault } from './grant-vault.ts';
+import { GoogleAccountGrant } from './grant.ts';
 
 const DIRECTORY = 'google-data-grants';
 

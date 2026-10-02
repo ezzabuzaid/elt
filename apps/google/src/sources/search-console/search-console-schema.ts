@@ -1,4 +1,4 @@
-import { type FieldSchema, Stream, type SyncMode } from 'elt';
+import { type FieldSchema, Stream, type SyncMode } from '@workspace/elt';
 
 const text = { type: 'string' } as const;
 const id = { ...text, minLength: 1 };

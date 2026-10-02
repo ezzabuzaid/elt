@@ -4,32 +4,35 @@ import { mkdtempDisposable, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
   SourceWatchOptions,
   Stream,
-} from 'elt';
-import { Catalog, diffSnapshot, Source, validateRecords } from 'elt';
+} from '@workspace/elt';
+import { Source, diffSnapshot, validateRecords } from '@workspace/elt';
+
 import {
   AddressBook,
   type AddressBookStore,
   AddressBookVersion,
-  addressBookDirectory,
   type StoredData,
+  addressBookDirectory,
 } from '../../platform/macos/address-book.ts';
 import { type ImportScope, selected } from '../import-scope.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
+  type StreamName,
+  catalog,
   definitions,
   recordFrom,
   requiredSchema,
-  type StreamName,
-  streams,
 } from './contacts-streams.ts';
 
-const catalog = new Catalog(Object.values(streams));
+const isStreamName = (name: string): name is StreamName =>
+  Object.hasOwn(definitions, name);
 
 const imageKey = (contactId: unknown, kind: unknown) =>
   JSON.stringify([contactId, kind]);
@@ -50,36 +53,38 @@ const pollIntervalMs = 1000;
 export class AppleContactsSource extends Source<AddressBook> {
   readonly identity: string;
   protected readonly catalog = catalog;
-  readonly containers = streams.containers;
-  readonly groups = streams.groups;
-  readonly groupMembers = streams.groupMembers;
-  readonly groupSubgroups = streams.groupSubgroups;
-  readonly contacts = streams.contacts;
-  readonly notes = streams.notes;
-  readonly alternateBirthdays = streams.alternateBirthdays;
-  readonly phoneNumbers = streams.phoneNumbers;
-  readonly emailAddresses = streams.emailAddresses;
-  readonly postalAddresses = streams.postalAddresses;
-  readonly urlAddresses = streams.urlAddresses;
-  readonly socialProfiles = streams.socialProfiles;
-  readonly messagingAddresses = streams.messagingAddresses;
-  readonly relatedNames = streams.relatedNames;
-  readonly contactDates = streams.contactDates;
-  readonly calendarUris = streams.calendarUris;
-  readonly addressingGrammars = streams.addressingGrammars;
-  readonly likenesses = streams.likenesses;
-  readonly alertTones = streams.alertTones;
-  readonly customPropertyValues = streams.customPropertyValues;
-  readonly remoteLocations = streams.remoteLocations;
-  readonly unknownProperties = streams.unknownProperties;
-  readonly distributionListConfigs = streams.distributionListConfigs;
-  readonly images = streams.images;
+  readonly containers = catalog.get('containers');
+  readonly groups = catalog.get('groups');
+  readonly groupMembers = catalog.get('groupMembers');
+  readonly groupSubgroups = catalog.get('groupSubgroups');
+  readonly contacts = catalog.get('contacts');
+  readonly notes = catalog.get('notes');
+  readonly alternateBirthdays = catalog.get('alternateBirthdays');
+  readonly phoneNumbers = catalog.get('phoneNumbers');
+  readonly emailAddresses = catalog.get('emailAddresses');
+  readonly postalAddresses = catalog.get('postalAddresses');
+  readonly urlAddresses = catalog.get('urlAddresses');
+  readonly socialProfiles = catalog.get('socialProfiles');
+  readonly messagingAddresses = catalog.get('messagingAddresses');
+  readonly relatedNames = catalog.get('relatedNames');
+  readonly contactDates = catalog.get('contactDates');
+  readonly calendarUris = catalog.get('calendarUris');
+  readonly addressingGrammars = catalog.get('addressingGrammars');
+  readonly likenesses = catalog.get('likenesses');
+  readonly alertTones = catalog.get('alertTones');
+  readonly customPropertyValues = catalog.get('customPropertyValues');
+  readonly remoteLocations = catalog.get('remoteLocations');
+  readonly unknownProperties = catalog.get('unknownProperties');
+  readonly distributionListConfigs = catalog.get('distributionListConfigs');
+  readonly images = catalog.get('images');
 
-  constructor(
-    readonly directory = addressBookDirectory,
-    readonly scope: ImportScope = {},
-  ) {
+  readonly directory: string;
+  readonly scope: ImportScope;
+
+  constructor(directory = addressBookDirectory, scope: ImportScope = {}) {
     super();
+    this.directory = directory;
+    this.scope = scope;
     this.identity = `apple-contacts:${directory}`;
     Object.freeze(this);
   }
@@ -121,7 +126,9 @@ export class AppleContactsSource extends Source<AddressBook> {
     book: AddressBook,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
-    const name = stream.name as StreamName;
+    const { name } = stream;
+    if (!isStreamName(name))
+      throw new TypeError(`Contacts has no stream ${name}`);
     const files = new Map<string, StoredData>();
     const rows = [];
     for (const store of book.stores) {

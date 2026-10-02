@@ -1,4 +1,5 @@
 import { inflateSync } from 'node:zlib';
+
 import type { SafariDatabase } from '../../platform/macos/safari-store.ts';
 import type { Row } from './safari-values.ts';
 
@@ -47,9 +48,12 @@ export type SortValue = {
 // One run's read of CloudTabs.db: the tabs open on the account's other devices,
 // as Safari last fetched them from iCloud.
 export class CloudTabsReader {
+  readonly database: SafariDatabase;
   #tabs?: Row[];
 
-  constructor(readonly database: SafariDatabase) {}
+  constructor(database: SafariDatabase) {
+    this.database = database;
+  }
 
   get devices(): Row[] {
     return this.database.all(select('cloud_tab_devices', 'device_uuid'));
@@ -71,9 +75,9 @@ export class CloudTabsReader {
     return this.tabs.flatMap((tab) => {
       if (!(tab.position instanceof Uint8Array))
         throw new TypeError('A Safari iCloud tab has no position');
-      const { sortValues } = JSON.parse(
+      const { sortValues }: { sortValues: SortValue[] } = JSON.parse(
         inflateSync(tab.position).toString('utf8'),
-      ) as { sortValues: SortValue[] };
+      );
       return sortValues.map((entry, index) => ({ tab, entry, index }));
     });
   }

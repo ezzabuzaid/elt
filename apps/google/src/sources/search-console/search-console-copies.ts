@@ -1,4 +1,5 @@
-import { Copy, type Target } from 'elt';
+import { Copy, type Target } from '@workspace/elt';
+
 import type { SearchConsoleSource } from './search-console-source.ts';
 
 // Each stream's table, without any destination's prefix or schema.

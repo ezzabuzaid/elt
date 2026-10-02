@@ -3,7 +3,7 @@
   "sourceRoot": "apps/apple/plugin/src",
   "projectType": "application",
   "targets": {
-    "lint": {},
+    "format": {},
     "bundle": {
       "executor": "@nx/esbuild:esbuild",
       "dependsOn": ["^build"],
@@ -33,7 +33,9 @@
         "includeIgnoredAssetFiles": true,
         "esbuildOptions": {
           "logLevel": "warning",
-          "outExtension": { ".js": ".mjs" },
+          "outExtension": {
+            ".js": ".mjs"
+          },
           "banner": {
             "js": "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
           }

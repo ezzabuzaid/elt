@@ -1,11 +1,12 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';
 import {
+  type Row,
   coreDataTime,
   flag,
   integer,
-  type Row,
   text,
 } from '../books-values.ts';
 
@@ -66,9 +67,9 @@ export class CollectionsStream extends BooksStream<typeof properties, Row> {
     );
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      collectionId: row.ZCOLLECTIONID as string,
+      collectionId: row.ZCOLLECTIONID,
       title: text(row.ZTITLE),
       details: text(row.ZDETAILS),
       deleted: flag(row.ZDELETEDFLAG),

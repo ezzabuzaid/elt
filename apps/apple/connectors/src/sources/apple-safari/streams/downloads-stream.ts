@@ -1,5 +1,7 @@
 import { existsSync } from 'node:fs';
-import type { SchemaRecord } from 'elt';
+
+import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
 import {
@@ -77,12 +79,12 @@ export class DownloadsStream extends SafariStream<
     return scan.downloads.downloads;
   }
 
-  protected record(entry: Dictionary): SchemaRecord<typeof properties> {
-    const path = entry.DownloadEntryPath as string;
+  protected record(entry: Dictionary): RecordDraft<typeof properties> {
+    const path = entry.DownloadEntryPath;
     return {
-      id: entry.DownloadEntryIdentifier as string,
+      id: entry.DownloadEntryIdentifier,
       profileId: text(entry.DownloadEntryProfileUUIDStringKey),
-      url: entry.DownloadEntryURL as string,
+      url: entry.DownloadEntryURL,
       path,
       openedPath: text(entry.DownloadEntryPostPath),
       addedAt: plistTime(entry.DownloadEntryDateAddedKey),
@@ -90,7 +92,8 @@ export class DownloadsStream extends SafariStream<
       bytesReceived: integer(entry.DownloadEntryProgressBytesSoFar),
       bytesTotal: integer(entry.DownloadEntryProgressTotalToLoad),
       removeWhenDone: flag(entry.DownloadEntryRemoveWhenDoneKey),
-      availableLocally: existsSync(path),
+      availableLocally:
+        typeof path === 'string' && path !== '' && existsSync(path),
     };
   }
 

@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { basename, extname } from 'node:path';
-import type { AppleHost } from 'apple/apps/apple-app';
+
+import type { AppleHost } from '@workspace/apple/apps/apple-app';
 import {
   type GoogleRequester,
   googleSession,
   grantDirectory,
-} from 'google-auth';
+} from '@workspace/google-auth';
 
 // The CLI as the host of the Apple apps: macOS grants access to the terminal
 // that launched it, and Google content is read with the user's own OAuth

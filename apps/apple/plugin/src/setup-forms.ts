@@ -2,11 +2,13 @@ import type {
   ElicitRequestFormParams,
   ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
+
 import {
   hasFullDiskAccess,
   openFullDiskAccessSettings,
-} from 'apple/platform/macos/full-disk-access';
-import type { Selection } from 'import-store';
+} from '@workspace/apple/platform/macos/full-disk-access';
+import type { Selection } from '@workspace/import-store';
+
 import type { ApplePlugin } from './apple-plugin.ts';
 
 export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;

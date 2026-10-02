@@ -10,16 +10,16 @@ No other indexed working directory has this repository's absolute path in its fi
 
 ## Explicit user decisions
 
-| Decision | Evidence |
-| --- | --- |
-| The consumer reads data only when explicitly asked. The service owns collection and refresh. | Thread `01a0e255-b482-7f51-96f5-dff1fb92a303`, transcript lines 78, 91, 104: “only when expliclity asked”; acceptance of “Starting pipelines, refreshing data, and managing connectors belong to the service.” |
-| Discover meaning from the database; keep the skill small. | Same thread, line 162: “100%. the point is to be able to drive things from db as much as possiple.” |
-| Regenerate stored output; do not preserve old records through compatibility design. | Same thread, line 533: “I do not care about current records. the etl/elt designed to be regenerated”. |
-| Use the skill with direct database access rather than requiring an MCP transport. | Same thread, lines 431–444: “why we need mcp where we have skill?”, followed by authorization to update the skill. |
-| Keep Apple connector/domain implementation in the Apple app; reusable ELT belongs in packages. | Thread `01a0c3a0-c8a5-7cc2-bae9-4e7f9950fa5a`, line 412: “all apple related connectos should live in apps/apple only the elt lib in packages/elt”. |
-| Keep Apple and Google separate apps with plain connector lists and short direct loops. | Thread `01a0dcef-24f2-7240-826e-dbeba19034cb`; memory registry `MEMORY.md:4090–4095` and the September 27 connector-registration/simple-connector-loop notes capture the later correction rejecting the shared runner. |
-| Prefer inline source schema declarations over a speculative shared schema-builder module. | Thread `01a0e2d8-18f6-7743-99b9-a39b6b2ede40`, lines 85–98: “I was thinking just inling it”, then authorization to remove the helper. |
-| Finish splitting hardcoded Google marts per source. This session creates a multi-session plan and phase files only. | Current thread `01a0ee66-96b0-7360-84b0-1d97891c642e`, line 155 and subsequent planning request. |
+| Decision                                                                                                            | Evidence                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The consumer reads data only when explicitly asked. The service owns collection and refresh.                        | Thread `01a0e255-b482-7f51-96f5-dff1fb92a303`, transcript lines 78, 91, 104: “only when expliclity asked”; acceptance of “Starting pipelines, refreshing data, and managing connectors belong to the service.”         |
+| Discover meaning from the database; keep the skill small.                                                           | Same thread, line 162: “100%. the point is to be able to drive things from db as much as possiple.”                                                                                                                    |
+| Regenerate stored output; do not preserve old records through compatibility design.                                 | Same thread, line 533: “I do not care about current records. the etl/elt designed to be regenerated”.                                                                                                                  |
+| Use the skill with direct database access rather than requiring an MCP transport.                                   | Same thread, lines 431–444: “why we need mcp where we have skill?”, followed by authorization to update the skill.                                                                                                     |
+| Keep Apple connector/domain implementation in the Apple app; reusable ELT belongs in packages.                      | Thread `01a0c3a0-c8a5-7cc2-bae9-4e7f9950fa5a`, line 412: “all apple related connectos should live in apps/apple only the elt lib in packages/elt”.                                                                     |
+| Keep Apple and Google separate apps with plain connector lists and short direct loops.                              | Thread `01a0dcef-24f2-7240-826e-dbeba19034cb`; memory registry `MEMORY.md:4090–4095` and the September 27 connector-registration/simple-connector-loop notes capture the later correction rejecting the shared runner. |
+| Prefer inline source schema declarations over a speculative shared schema-builder module.                           | Thread `01a0e2d8-18f6-7743-99b9-a39b6b2ede40`, lines 85–98: “I was thinking just inling it”, then authorization to remove the helper.                                                                                  |
+| Finish splitting hardcoded Google marts per source. This session creates a multi-session plan and phase files only. | Current thread `01a0ee66-96b0-7360-84b0-1d97891c642e`, line 155 and subsequent planning request.                                                                                                                       |
 
 ## Source ownership versus SQL schema names
 
@@ -31,20 +31,20 @@ The same historical thread, line 282, distinguishes source meaning in connector 
 
 ## Relevant thread inventory
 
-| Thread | Topic and evidence |
-| --- | --- |
-| `01a0c35d-7784-7183-8a91-bd02abfbcbc6` | Adding sources and native Apple coverage; attachment feasibility discussion at line 746. |
-| `01a0c3a0-c8a5-7cc2-bae9-4e7f9950fa5a` | Apple app/domain boundaries and EventKit ownership. |
-| `01a0c3de-e7e7-7cd0-900d-f0729e4482c0` | Source-owned watching; historical implementation report at lines 205 and 500. |
+| Thread                                 | Topic and evidence                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `01a0c35d-7784-7183-8a91-bd02abfbcbc6` | Adding sources and native Apple coverage; attachment feasibility discussion at line 746.   |
+| `01a0c3a0-c8a5-7cc2-bae9-4e7f9950fa5a` | Apple app/domain boundaries and EventKit ownership.                                        |
+| `01a0c3de-e7e7-7cd0-900d-f0729e4482c0` | Source-owned watching; historical implementation report at lines 205 and 500.              |
 | `01a0dcef-24f2-7240-826e-dbeba19034cb` | Apple Mail and simplified connector registration; runner rejection is preserved in memory. |
-| `01a0e255-4636-7043-b597-aa71f3411dca` | Continued Apple Mail/shared replication validation. |
-| `01a0e255-b482-7f51-96f5-dff1fb92a303` | Main database discovery/marts/skill design discussion, lines 65–618. |
-| `01a0e2d8-18f6-7743-99b9-a39b6b2ede40` | Inline source schema correction, lines 52–98. |
-| `01a0ec52-3d30-75a3-92b4-44e22ab043d2` | Double-check metadata propagation before further work. |
-| `01a0ec54-70e2-78e1-bb3d-f10382728bd7` | Shared PostgreSQL view-publisher commit; historical report at line 44. |
-| `01a0ec59-7788-7592-ace3-500cad5284e9` | Sync status and extraction coverage; completion report at line 280. |
-| `01a0ee4e-9c64-7281-b686-4cffd8485c84` | Move query-warehouse skill into this repository. |
-| `01a0ee66-96b0-7360-84b0-1d97891c642e` | Current explanation, correction, and planning request. |
+| `01a0e255-4636-7043-b597-aa71f3411dca` | Continued Apple Mail/shared replication validation.                                        |
+| `01a0e255-b482-7f51-96f5-dff1fb92a303` | Main database discovery/marts/skill design discussion, lines 65–618.                       |
+| `01a0e2d8-18f6-7743-99b9-a39b6b2ede40` | Inline source schema correction, lines 52–98.                                              |
+| `01a0ec52-3d30-75a3-92b4-44e22ab043d2` | Double-check metadata propagation before further work.                                     |
+| `01a0ec54-70e2-78e1-bb3d-f10382728bd7` | Shared PostgreSQL view-publisher commit; historical report at line 44.                     |
+| `01a0ec59-7788-7592-ace3-500cad5284e9` | Sync status and extraction coverage; completion report at line 280.                        |
+| `01a0ee4e-9c64-7281-b686-4cffd8485c84` | Move query-warehouse skill into this repository.                                           |
+| `01a0ee66-96b0-7360-84b0-1d97891c642e` | Current explanation, correction, and planning request.                                     |
 
 Archived transcript evidence is under `~/.codex/archived_sessions/`; active transcript evidence is under `~/.codex/sessions/2026/09/`. Locate a file by its thread UUID; some forked filenames contain two UUIDs. The index's `rollout_path` is authoritative for the exact file.
 

@@ -1,4 +1,4 @@
-import type { ImportScope } from 'import-store';
+import type { ImportScope } from '@workspace/import-store';
 
 export type { ImportScope };
 

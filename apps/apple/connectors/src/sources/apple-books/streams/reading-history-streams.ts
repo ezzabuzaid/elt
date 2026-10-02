@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';
 import type {
@@ -54,7 +55,7 @@ export class ReadingMonthsStream extends BooksStream<
     return scan.readingHistory.months;
   }
 
-  protected record(month: ReadingMonth): SchemaRecord<typeof monthProperties> {
+  protected record(month: ReadingMonth): RecordDraft<typeof monthProperties> {
     return {
       month: `${month.year}-${pad(month.month)}`,
       summarizedSeconds: month.totalTime,
@@ -105,7 +106,7 @@ export class ReadingDaysStream extends BooksStream<
     return scan.readingHistory.days;
   }
 
-  protected record(day: ReadingDay): SchemaRecord<typeof dayProperties> {
+  protected record(day: ReadingDay): RecordDraft<typeof dayProperties> {
     const month = `${day.year}-${pad(day.month)}`;
     return {
       date: `${month}-${pad(day.day)}`,
@@ -148,9 +149,7 @@ export class StreakRecordsStream extends BooksStream<
     return scan.readingHistory.streaks;
   }
 
-  protected record(
-    streak: StreakRecord,
-  ): SchemaRecord<typeof streakProperties> {
+  protected record(streak: StreakRecord): RecordDraft<typeof streakProperties> {
     return { days: streak.days, reachedAt: streak.reachedAt.toISOString() };
   }
 }

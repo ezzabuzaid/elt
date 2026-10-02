@@ -17,6 +17,7 @@ The Apple plugin imports each selected app into its own SQLite file and keeps it
    ```
 
    If the file or view does not exist, or a needed app is not listed, use `$setup-apple` with the user's choice. Use only selected apps.
+
 2. For each app the question needs: a failed sync or a `connection_error` means the app is inaccessible; give its error and `permissions` guidance. An app with no database or no data yet has not finished its first import: say it is still importing, and answer from the other apps. Otherwise read right away, even while it is importing. Without a status in context, read `SELECT status, error, last_successful_sync_at FROM sync_status` from its `database`; there, a `running` pass may be one a closed chat left unfinished.
 3. Read the catalog of each app you need:
 

@@ -1,7 +1,8 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { appleTime, flag, type Row, text } from '../safari-values.ts';
+import { type Row, appleTime, flag, text } from '../safari-values.ts';
 
 const { boolean, nullableText } = safariFields;
 
@@ -53,9 +54,9 @@ export class CloudTabDevicesStream extends SafariStream<
     return scan.cloudTabs.devices;
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      id: row.device_uuid as string,
+      id: row.device_uuid,
       name: text(row.device_name),
       type: text(row.device_type_identifier),
       duplicateName: flag(row.has_duplicate_device_name),

@@ -1,19 +1,22 @@
-import { Target } from 'elt';
+import { Target } from '@workspace/elt';
+
 import { MarkdownDocument } from './markdown-document.ts';
 import type { MarkdownFile } from './markdown-file.ts';
 
 export class MarkdownFolder extends Target {
   static readonly markerName = '.elt-markdown';
   static readonly marker = 'elt MarkdownFolder v3\n';
+  readonly name: string;
   readonly document: MarkdownDocument;
 
   constructor(
-    readonly name: string,
+    name: string,
     options?: ConstructorParameters<typeof MarkdownFile>[1],
   ) {
     if (!/^[a-z][a-z0-9_-]*$/.test(name))
       throw new TypeError('Markdown requires a simple folder name');
     super(options?.fields);
+    this.name = name;
     this.document = new MarkdownDocument(options);
     Object.freeze(this);
   }

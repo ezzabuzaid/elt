@@ -1,4 +1,5 @@
-import { syncHistoryRelations } from 'elt';
+import { syncHistoryRelations } from '@workspace/elt';
+
 import type { SQLiteView } from './sqlite-views.ts';
 
 export const attempts = '"_elt_sync_attempts"';

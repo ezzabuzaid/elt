@@ -2,14 +2,16 @@ import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
   SourceWatchOptions,
   Stream,
-} from 'elt';
-import { Catalog, diffSnapshot, Source, validateRecords } from 'elt';
+} from '@workspace/elt';
+import { Source, diffSnapshot, validateRecords } from '@workspace/elt';
+
 import {
   ChatDatabase,
   ChatDatabaseVersion,
@@ -18,14 +20,16 @@ import {
 import { type ImportScope, selected, withinDates } from '../import-scope.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
+  type StreamName,
+  catalog,
   definitions,
   recordFrom,
-  type StreamName,
-  streams,
 } from './messages-streams.ts';
 import { attributedText } from './typedstream.ts';
 
-const catalog = new Catalog(Object.values(streams));
+const isStreamName = (name: string): name is StreamName =>
+  Object.hasOwn(definitions, name);
+
 // How often a watch checks chat.db for commits.
 const pollIntervalMs = 1000;
 
@@ -36,29 +40,34 @@ const attachmentPath = (filename: string) =>
 export class AppleMessagesSource extends Source<ChatDatabase> {
   readonly identity: string;
   protected readonly catalog = catalog;
-  readonly chats = streams.chats;
-  readonly handles = streams.handles;
-  readonly chatLookups = streams.chatLookups;
-  readonly chatServices = streams.chatServices;
-  readonly chatHandles = streams.chatHandles;
-  readonly messages = streams.messages;
-  readonly chatMessages = streams.chatMessages;
-  readonly linkPreviews = streams.linkPreviews;
-  readonly messageEdits = streams.messageEdits;
-  readonly recoverableMessages = streams.recoverableMessages;
-  readonly recoverableMessageParts = streams.recoverableMessageParts;
-  readonly attachments = streams.attachments;
-  readonly messageAttachments = streams.messageAttachments;
+  readonly chats = catalog.get('chats');
+  readonly handles = catalog.get('handles');
+  readonly chatLookups = catalog.get('chatLookups');
+  readonly chatServices = catalog.get('chatServices');
+  readonly chatHandles = catalog.get('chatHandles');
+  readonly messages = catalog.get('messages');
+  readonly chatMessages = catalog.get('chatMessages');
+  readonly linkPreviews = catalog.get('linkPreviews');
+  readonly messageEdits = catalog.get('messageEdits');
+  readonly recoverableMessages = catalog.get('recoverableMessages');
+  readonly recoverableMessageParts = catalog.get('recoverableMessageParts');
+  readonly attachments = catalog.get('attachments');
+  readonly messageAttachments = catalog.get('messageAttachments');
   readonly #scopes = new WeakMap<
     ChatDatabase,
     (name: StreamName, row: Record<string, unknown>) => boolean
   >();
 
+  readonly path: string;
+  readonly scope: ImportScope;
+
   constructor(
-    readonly path = join(messagesDirectory, 'chat.db'),
-    readonly scope: ImportScope = {},
+    path = join(messagesDirectory, 'chat.db'),
+    scope: ImportScope = {},
   ) {
     super();
+    this.path = path;
+    this.scope = scope;
     this.identity = `apple-messages:${path}`;
     Object.freeze(this);
   }
@@ -100,9 +109,12 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
     database: ChatDatabase,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
+    const { name } = stream;
+    if (!isStreamName(name))
+      throw new TypeError(`Messages has no stream ${name}`);
     const records = validateRecords(
       stream,
-      await this.#scan(stream.name as StreamName, database),
+      await this.#scan(name, database),
       'Messages',
     );
     const messages =

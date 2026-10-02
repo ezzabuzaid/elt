@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { Stream } from 'elt';
+
+import type { Stream } from '@workspace/elt';
 
 // Rendering is shared by whole-stream files and individual-record files.
 export class MarkdownDocument {

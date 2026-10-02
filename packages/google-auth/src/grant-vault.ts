@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { GoogleAccountGrant } from './grant.ts';
+
 import type {
   GoogleActiveGrant,
   GoogleGrantVaultStore,
 } from './grant-store.ts';
+import { GoogleAccountGrant } from './grant.ts';
 
 /**
  * Keeps one active grant per user. Layout under `directory`:

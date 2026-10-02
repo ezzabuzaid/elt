@@ -106,8 +106,13 @@ function counter(crdt: ProtobufMessage, layout: Layout): number {
   for (const replicas of value.messages(2))
     for (const replica of replicas.messages(1)) {
       const parts = varints(layout.need(replica.bytes(2), 'counter value'));
-      if (parts.length !== 2) layout.fail('counter value');
-      const [decrements, increments] = parts as [number, number];
+      const [decrements, increments] = parts;
+      if (
+        parts.length !== 2 ||
+        decrements === undefined ||
+        increments === undefined
+      )
+        layout.fail('counter value');
       total += increments - decrements;
     }
   return total;

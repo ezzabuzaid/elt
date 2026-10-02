@@ -1,5 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readerCatalog } from 'elt';
+
+import { readerCatalog } from '@workspace/elt';
+
 import { createDescriptions, descriptions } from './sqlite-descriptions.ts';
 import { publishSQLiteViews } from './sqlite-views.ts';
 

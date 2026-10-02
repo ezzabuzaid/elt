@@ -6,23 +6,25 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
+
 import {
   Connection,
   Copy,
   LocalFiles,
   Pipeline,
   PipelineError,
-  readerCatalog,
   type Source,
+  readerCatalog,
   syncHistoryRelations,
-} from 'elt';
+} from '@workspace/elt';
 import {
-  installSQLiteCatalog,
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from 'elt-sqlite';
+  installSQLiteCatalog,
+} from '@workspace/elt-sqlite';
+
 import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 
 const snake = (name: string) =>
@@ -321,9 +323,11 @@ test('Notes reads as documented views that follow edits and deletions', async ()
   );
   assert.deepEqual(
     notes
-      .read(`SELECT name, data_type FROM catalog
+      .read(
+        `SELECT name, data_type FROM catalog
         WHERE name IN ('notes.locked', 'notes.modifiedAt', 'attachments.attachmentRef', 'notes.loaded_at')
-        ORDER BY name`)
+        ORDER BY name`,
+      )
       .map((found) => ({ ...found })),
     [
       { name: 'attachments.attachmentRef', data_type: 'text' },
@@ -334,8 +338,10 @@ test('Notes reads as documented views that follow edits and deletions', async ()
   );
   assert.deepEqual(
     notes
-      .read(`SELECT n.id, n.locked, n.text IS NULL AS unreadable, f.type AS folder_type
-        FROM notes n JOIN folders f ON f.id = n."folderId" ORDER BY n.id`)
+      .read(
+        `SELECT n.id, n.locked, n.text IS NULL AS unreadable, f.type AS folder_type
+        FROM notes n JOIN folders f ON f.id = n."folderId" ORDER BY n.id`,
+      )
       .map((found) => ({ ...found })),
     [
       { id: 'NOTE-LOCKED', locked: 1, unreadable: 1, folder_type: 0 },
@@ -345,8 +351,10 @@ test('Notes reads as documented views that follow edits and deletions', async ()
   );
   assert.deepEqual(
     notes
-      .read(`SELECT i.id FROM inline_attachments i
-        JOIN notes n ON n.id = i."noteId" WHERE n.id = 'NOTE-RICH' ORDER BY i.id`)
+      .read(
+        `SELECT i.id FROM inline_attachments i
+        JOIN notes n ON n.id = i."noteId" WHERE n.id = 'NOTE-RICH' ORDER BY i.id`,
+      )
       .map(({ id }) => id),
     ['INLINE-LINK', 'INLINE-TAG'],
   );
@@ -418,9 +426,11 @@ test('a Notes store that cannot be read publishes nothing, and an empty one publ
   );
   assert.deepEqual(
     empty
-      .read(`
+      .read(
+        `
         SELECT (SELECT count(*) FROM notes) AS notes,
-          (SELECT count(*) FROM attachments) AS attachments`)
+          (SELECT count(*) FROM attachments) AS attachments`,
+      )
       .map((found) => ({ ...found })),
     [{ notes: 0, attachments: 0 }],
   );

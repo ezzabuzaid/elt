@@ -5,11 +5,15 @@ import type { FieldValues } from './writer.ts';
 // The shared transfer owns coordination. Stores own bytes; destinations only
 // expose the scalar values their rows actually retain after deduplication.
 export class FileTransfer {
-  constructor(
-    readonly reads: readonly FileRead[],
-    readonly target: string,
-    readonly writer: string,
-  ) {}
+  readonly reads: readonly FileRead[];
+  readonly target: string;
+  readonly writer: string;
+
+  constructor(reads: readonly FileRead[], target: string, writer: string) {
+    this.reads = reads;
+    this.target = target;
+    this.writer = writer;
+  }
 
   private scope(read: FileRead): string {
     return JSON.stringify({

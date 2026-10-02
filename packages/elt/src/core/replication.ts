@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+
 import type {
   CheckpointRun,
   CheckpointStore,
@@ -36,14 +37,18 @@ class Replicated<Target extends DestinationTarget> {
   resuming = false;
   settled = false;
 
+  readonly copy: Copy<Target>;
+  readonly observe: ((progress: CopyProgress<Target>) => void) | undefined;
   readonly files: FileTransfer;
 
   constructor(
-    readonly copy: Copy<Target>,
+    copy: Copy<Target>,
     source: Source,
     destination: Destination<Target>,
-    readonly observe: ((progress: CopyProgress<Target>) => void) | undefined,
+    observe: ((progress: CopyProgress<Target>) => void) | undefined,
   ) {
+    this.copy = copy;
+    this.observe = observe;
     this.files = new FileTransfer(
       copy.configuration.fileReads,
       destination.identity(copy.to),

@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { SchemaRecord } from '@workspace/elt';
+
 import { safariFields } from './safari-stream.ts';
 import {
   type Dictionary,

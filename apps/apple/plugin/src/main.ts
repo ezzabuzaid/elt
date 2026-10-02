@@ -1,19 +1,22 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { BooksApp } from 'apple/apps/books';
-import { CalendarApp } from 'apple/apps/calendar';
-import { ContactsApp } from 'apple/apps/contacts';
-import { MailApp } from 'apple/apps/mail';
-import { MessagesApp } from 'apple/apps/messages';
-import { NotesApp } from 'apple/apps/notes';
-import { RemindersApp } from 'apple/apps/reminders';
-import { SafariApp } from 'apple/apps/safari';
 import { z } from 'zod';
+
+import { BooksApp } from '@workspace/apple/apps/books';
+import { CalendarApp } from '@workspace/apple/apps/calendar';
+import { ContactsApp } from '@workspace/apple/apps/contacts';
+import { MailApp } from '@workspace/apple/apps/mail';
+import { MessagesApp } from '@workspace/apple/apps/messages';
+import { NotesApp } from '@workspace/apple/apps/notes';
+import { RemindersApp } from '@workspace/apple/apps/reminders';
+import { SafariApp } from '@workspace/apple/apps/safari';
+
 import { ApplePlugin, PluginUpdatedError } from './apple-plugin.ts';
-import { chatStatus } from './chat-status.ts';
+import { chatContext } from './chat-status.ts';
 import { keepFresh } from './freshness.ts';
 import { settingsRead, settingsUpdate } from './native-settings.ts';
 import { setUpWithForms } from './setup-forms.ts';
@@ -192,10 +195,8 @@ mcpServer.server.registerCapabilities({
   },
 });
 
-// The plugin's hooks add the Apple status to this chat's context when the
-// chat starts or compacts, and before a prompt once the status changed.
-// Codex runs one server per chat, so the last status sent is this chat's.
-let sent: string | undefined;
+// Codex runs one server per chat, so this server's context is this chat's.
+const contextFor = chatContext(plugin);
 mcpServer.registerTool(
   'apple_context',
   {
@@ -211,11 +212,8 @@ mcpServer.registerTool(
       return {
         content: [{ type: 'text', text: new PluginUpdatedError().message }],
       };
-    const status = chatStatus(plugin);
-    if (event === 'UserPromptSubmit' && status.state === sent)
-      return { content: [] };
-    sent = status.state;
-    return { content: [{ type: 'text', text: status.text }] };
+    const text = contextFor(event);
+    return { content: text === null ? [] : [{ type: 'text', text }] };
   },
 );
 

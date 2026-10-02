@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
+
 import {
   Connection,
   Copy,
@@ -21,14 +22,15 @@ import {
   PipelineError,
   type Source,
   StreamStatus,
-} from 'elt';
+} from '@workspace/elt';
 import {
-  installSQLiteCatalog,
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from 'elt-sqlite';
+  installSQLiteCatalog,
+} from '@workspace/elt-sqlite';
+
 import {
   BooksSchemaError,
   BooksUnavailableError,
@@ -294,14 +296,17 @@ function readingHistoryDocument(
                 }),
               ),
             ),
-          ] as [number, Uint8Array],
+          ] satisfies [number, Uint8Array],
       );
       const fields: Record<string, Uint8Array> = {
         days: dictionary(dayEntries),
         lastDayStreakOrdinal: register(int(lastDayStreakOrdinal)),
       };
       if (totalTime !== undefined) fields.totalTime = register(int(totalTime));
-      return [key, reference(object(struct(fields)))] as [number, Uint8Array];
+      return [key, reference(object(struct(fields)))] satisfies [
+        number,
+        Uint8Array,
+      ];
     },
   );
   const root = struct({
@@ -945,7 +950,8 @@ test('Books stores each book on this Mac as one file, packing an EPUB directory 
       },
     ],
   );
-  const epub = files[0]?.attachmentRef as string;
+  const [epub, , pdf, zipped] = files.map(({ attachmentRef }) => attachmentRef);
+  assert.ok(typeof epub === 'string');
   assert.match(epub, /\.epub$/);
   const listing = (await run('/usr/bin/unzip', ['-Z1', epub])).stdout
     .trim()
@@ -962,14 +968,10 @@ test('Books stores each book on this Mac as one file, packing an EPUB directory 
     (await readFile(epub)).subarray(38, 58).toString(),
     'application/epub+zip',
   );
-  assert.equal(
-    await readFile(files[2]?.attachmentRef as string, 'utf8'),
-    '%PDF-1.7\n%fixture\n',
-  );
-  assert.equal(
-    await readFile(files[3]?.attachmentRef as string, 'utf8'),
-    'PK zipped epub fixture',
-  );
+  assert.ok(typeof pdf === 'string');
+  assert.equal(await readFile(pdf, 'utf8'), '%PDF-1.7\n%fixture\n');
+  assert.ok(typeof zipped === 'string');
+  assert.equal(await readFile(zipped, 'utf8'), 'PK zipped epub fixture');
   // The same package yields the same bytes, so a rerun keeps the same copy.
   assert.deepEqual(
     again,

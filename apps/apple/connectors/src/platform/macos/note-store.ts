@@ -77,12 +77,11 @@ export class NoteStoreVersion implements Disposable {
 // attachments and folders agree. Hold it only while reading: an open read
 // stops Notes checkpointing its WAL.
 export class NoteStore implements AsyncDisposable {
+  readonly path: string;
   readonly #database: DatabaseSync;
 
-  private constructor(
-    readonly path: string,
-    database: DatabaseSync,
-  ) {
+  private constructor(path: string, database: DatabaseSync) {
+    this.path = path;
     this.#database = database;
   }
 

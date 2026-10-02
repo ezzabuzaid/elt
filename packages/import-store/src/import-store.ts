@@ -1,16 +1,22 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { installSQLiteCatalog, publishSQLiteViews } from 'elt-sqlite';
+
 import { z } from 'zod';
+
+import {
+  installSQLiteCatalog,
+  publishSQLiteViews,
+} from '@workspace/elt-sqlite';
+
 import {
   type AppFacts,
   type Selection,
   selectionProblems,
 } from './selection.ts';
 import {
-  importDirectory,
   NewerLayoutError,
+  importDirectory,
   storeLayout,
 } from './store-layout.ts';
 
@@ -26,21 +32,21 @@ const passFields = {
   last_successful_sync_at: z.string().nullable(),
 };
 const pass = <
-  Row extends {
-    status: string;
-    started_at: string;
-    completed_at: string | null;
-    last_successful_sync_at: string | null;
-    error: string | null;
-  },
->(
-  row: Row,
-) => ({
-  state: row.status as Row['status'],
+  State extends string,
+  Completed extends string | null,
+  Failure extends string | null,
+>(row: {
+  status: State;
+  started_at: string;
+  completed_at: Completed;
+  last_successful_sync_at: string | null;
+  error: Failure;
+}) => ({
+  state: row.status,
   startedAt: row.started_at,
-  completedAt: row.completed_at as Row['completed_at'],
+  completedAt: row.completed_at,
   lastSucceededAt: row.last_successful_sync_at,
-  error: row.error as Row['error'],
+  error: row.error,
 });
 const passSchema = z.union([
   z
@@ -69,6 +75,21 @@ const passSchema = z.union([
     .transform(pass),
 ]);
 export type Pass = z.infer<typeof passSchema>;
+
+// One row of the stream_status view: each stream's own latest outcome, which
+// a watch pass that skipped the stream leaves as it was.
+const streamStatusSchema = z
+  .object({
+    stream: z.string(),
+    status: z.enum(['running', 'succeeded', 'partial', 'failed']),
+    last_successful_sync_at: z.string().nullable(),
+  })
+  .transform((row) => ({
+    stream: row.stream,
+    state: row.status,
+    lastSucceededAt: row.last_successful_sync_at,
+  }));
+export type StreamStatus = z.infer<typeof streamStatusSchema>;
 
 // What readers of the settings file see: one row per selected app, with where
 // its import lives and why it could not start, if it could not.
@@ -101,9 +122,11 @@ const selectedApps = {
 // the imports through its selected_apps view; each import lives in its own
 // directory beside it.
 export class ImportStore implements Disposable {
+  readonly root: string;
   private readonly settings: DatabaseSync;
 
-  constructor(readonly root: string) {
+  constructor(root: string) {
+    this.root = root;
     mkdirSync(root, { recursive: true, mode: 0o700 });
     chmodSync(root, 0o700);
     const path = join(root, 'settings.sqlite');
@@ -262,20 +285,42 @@ export class ImportStore implements Disposable {
   // The import's latest pass; null until its history is installed and has
   // begun one.
   latestPass(selection: Selection): Pass | null {
+    using data = this.history(selection);
+    const row = data
+      ?.prepare(
+        'SELECT status, started_at, completed_at, error, last_successful_sync_at FROM sync_status',
+      )
+      .get();
+    return row === undefined ? null : passSchema.parse(row);
+  }
+
+  // Each stream's latest outcome, by stream name; empty until the import's
+  // history is installed and a pass declared one.
+  streamStatuses(selection: Selection): StreamStatus[] {
+    using data = this.history(selection);
+    return (
+      data
+        ?.prepare(
+          'SELECT stream, status, last_successful_sync_at FROM stream_status ORDER BY stream',
+        )
+        .all()
+        .map((row) => streamStatusSchema.parse(row)) ?? []
+    );
+  }
+
+  // The import's data.sqlite opened for reading, or null until a sync
+  // installed its history views.
+  private history(selection: Selection): DatabaseSync | null {
     if (!existsSync(this.database(selection))) return null;
-    using data = this.read(selection);
+    const data = this.read(selection);
     const installed = data
       .prepare(
         "SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'",
       )
       .get();
-    if (installed === undefined) return null;
-    const row = data
-      .prepare(
-        'SELECT status, started_at, completed_at, error, last_successful_sync_at FROM sync_status',
-      )
-      .get();
-    return row === undefined ? null : passSchema.parse(row);
+    if (installed !== undefined) return data;
+    data.close();
+    return null;
   }
 
   connectionFailure(selection: Selection): ConnectionFailure | undefined {

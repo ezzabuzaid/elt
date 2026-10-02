@@ -1,4 +1,5 @@
-import type { Selection } from 'import-store';
+import type { Selection } from '@workspace/import-store';
+
 import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
 
 // The plugin page's native Settings section (the openai/settings MCP

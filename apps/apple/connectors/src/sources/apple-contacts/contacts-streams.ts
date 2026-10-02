@@ -1,4 +1,5 @@
-import { type FieldSchema, Stream } from 'elt';
+import { Catalog, type FieldSchema, Stream } from '@workspace/elt';
+
 import type { AddressBookSchema } from '../../platform/macos/address-book.ts';
 import {
   decodeArchive,
@@ -21,13 +22,7 @@ const words = (list = '') => list.split(/\s+/).filter(Boolean);
 
 type Field = readonly [FieldSchema, string];
 type Kind =
-  | 'text'
-  | 'integer'
-  | 'boolean'
-  | 'number'
-  | 'timestamp'
-  | 'data'
-  | 'record';
+  'text' | 'integer' | 'boolean' | 'number' | 'timestamp' | 'data' | 'record';
 
 // Data loads as JSON when it is a property list and as base64 otherwise; a
 // record reference loads as that record's uniqueId, the CNContact, CNGroup or
@@ -44,6 +39,8 @@ const kinds: Record<Kind, (column: string) => Field> = {
     `(SELECT o.ZUNIQUEID FROM ZABCDRECORD o WHERE o.Z_PK = ${column})`,
   ],
 };
+
+const isKind = (name: string): name is Kind => Object.hasOwn(kinds, name);
 
 // How each kind's value reaches the record, as kinds and recordFrom read it.
 const conversions: Record<Kind, string> = {
@@ -102,7 +99,9 @@ function attributes(
   list: Partial<Record<Kind, string>>,
 ): Record<string, Field> {
   const fields: Record<string, Field> = {};
-  for (const [kind, names] of Object.entries(list) as [Kind, string][])
+  for (const [kind, names] of Object.entries(list)) {
+    if (!isKind(kind))
+      throw new TypeError(`Contacts has no column kind ${kind}`);
     for (const token of words(names)) {
       const [name = token, column = `Z${name.toUpperCase()}`] =
         token.split(':');
@@ -113,6 +112,7 @@ function attributes(
         sql,
       ];
     }
+  }
   return fields;
 }
 
@@ -734,25 +734,25 @@ export const requiredSchema: AddressBookSchema = {
 
 export type StreamName = keyof typeof definitions;
 
-export const streams = Object.fromEntries(
-  Object.entries(definitions).map(([name, definition]) => [
-    name,
-    new Stream({
-      name,
-      jsonSchema: {
-        type: 'object',
-        description: `${definition.description} ${localStores}`,
-        properties: definition.properties,
-        required: Object.keys(definition.properties),
-      },
-      primaryKey: [...definition.primaryKey],
-      supportedSyncModes: ['full_refresh', 'incremental'],
-      sourceDefinedCursor: true,
-      emitsDeletes: true,
-      ...('files' in definition && { supportsFileTransfer: true }),
-    }),
-  ]),
-) as Record<StreamName, Stream>;
+export const catalog = new Catalog(
+  Object.entries(definitions).map(
+    ([name, definition]) =>
+      new Stream({
+        name,
+        jsonSchema: {
+          type: 'object',
+          description: `${definition.description} ${localStores}`,
+          properties: definition.properties,
+          required: Object.keys(definition.properties),
+        },
+        primaryKey: [...definition.primaryKey],
+        supportedSyncModes: ['full_refresh', 'incremental'],
+        sourceDefinedCursor: true,
+        emitsDeletes: true,
+        ...('files' in definition && { supportsFileTransfer: true }),
+      }),
+  ),
+);
 
 // One SQL row as its stream's record: 0/1 flags as booleans, property lists
 // as JSON and other bytes as base64.

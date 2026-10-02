@@ -1,8 +1,10 @@
-import { type FieldSchema, Stream } from 'elt';
+import { Catalog, type FieldSchema, Stream } from '@workspace/elt';
+
 import {
+  type PlistValue,
   decodeArchive,
   isBinaryPlist,
-  type PlistValue,
+  isDictionary,
   plistJSON,
 } from '../../platform/macos/plist.ts';
 import { eventKitFields } from '../eventkit-schema.ts';
@@ -21,6 +23,18 @@ const camel = (column: string) =>
   column.replaceAll(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 
 const words = (list = '') => list.split(/\s+/).filter(Boolean);
+
+// The order a table's columns load in.
+const kindOrder = [
+  'text',
+  'nullableText',
+  'integer',
+  'boolean',
+  'timestamp',
+  'base64',
+] as const;
+
+type Kind = (typeof kindOrder)[number];
 
 // How each kind of chat.db column loads: its schema, its SELECT expression and
 // the loaded value, as appleMilliseconds and recordFrom produce it. Booleans
@@ -54,9 +68,14 @@ const kinds = {
     loads:
       'bytes; a binary property list loads as JSON text, with NSKeyedArchiver archives unarchived, nested data as Base64, dates as ISO 8601 and integers beyond 2^53 as strings, and any other bytes load as Base64; NULL when chat.db stores NULL',
   },
-} as const;
-
-type Kind = keyof typeof kinds;
+} as const satisfies Record<
+  Kind,
+  {
+    readonly schema: FieldSchema;
+    readonly select: (column: string) => string;
+    readonly loads: string;
+  }
+>;
 
 // A chat.db table and the alias its SQL uses.
 type Table = { readonly name: string; readonly alias: string };
@@ -101,7 +120,7 @@ function columns(
     );
   const properties: Record<string, FieldSchema> = {};
   const select: string[] = [];
-  for (const kind of Object.keys(kinds) as Kind[])
+  for (const kind of kindOrder)
     for (const column of words(list[kind])) {
       const [schema, expression] = native(table, column, kind);
       const meaning = meanings[column];
@@ -548,44 +567,37 @@ export const definitions = {
 
 export type StreamName = keyof typeof definitions;
 
-export const streams = Object.fromEntries(
-  Object.entries(definitions).map(([name, definition]) => [
-    name,
-    new Stream({
-      name,
-      jsonSchema: {
-        type: 'object',
-        description: definition.description,
-        properties: definition.properties,
-        required: Object.keys(definition.properties),
-      },
-      primaryKey: [...definition.primaryKey],
-      supportedSyncModes: ['full_refresh', 'incremental'],
-      sourceDefinedCursor: true,
-      emitsDeletes: true,
-      ...('files' in definition && { supportsFileTransfer: true }),
-    }),
-  ]),
-) as Record<StreamName, Stream>;
+export const catalog = new Catalog(
+  Object.entries(definitions).map(
+    ([name, definition]) =>
+      new Stream({
+        name,
+        jsonSchema: {
+          type: 'object',
+          description: definition.description,
+          properties: definition.properties,
+          required: Object.keys(definition.properties),
+        },
+        primaryKey: [...definition.primaryKey],
+        supportedSyncModes: ['full_refresh', 'incremental'],
+        sourceDefinedCursor: true,
+        emitsDeletes: true,
+        ...('files' in definition && { supportsFileTransfer: true }),
+      }),
+  ),
+);
 
 const appleEpoch = Date.UTC(2001, 0, 1);
-
-const isObject = (
-  value: PlistValue | undefined,
-): value is { [key: string]: PlistValue } =>
-  value !== null &&
-  typeof value === 'object' &&
-  !Array.isArray(value) &&
-  !(value instanceof Uint8Array) &&
-  !(value instanceof Date);
 
 const textOf = (value: PlistValue | undefined) =>
   typeof value === 'string' ? value : null;
 
 function linkPreviews(row: Record<string, unknown>) {
-  const root = decodeArchive(row.payload as Uint8Array);
-  const metadata = isObject(root) ? root.richLinkMetadata : undefined;
-  if (!isObject(metadata)) return [];
+  if (!(row.payload instanceof Uint8Array))
+    throw new TypeError('chat.db message.payload_data is not a blob');
+  const root = decodeArchive(row.payload);
+  const metadata = isDictionary(root) ? root.richLinkMetadata : undefined;
+  if (!isDictionary(metadata)) return [];
   return [
     {
       messageGuid: row.messageGuid,
@@ -616,17 +628,19 @@ function appleTime(value: PlistValue | undefined): string | null {
 }
 
 function messageEdits(row: Record<string, unknown>) {
-  const summary = decodeArchive(row.summary as Uint8Array);
-  const edited = isObject(summary) ? summary.ec : undefined;
-  if (!isObject(edited)) return [];
+  if (!(row.summary instanceof Uint8Array))
+    throw new TypeError('chat.db message.message_summary_info is not a blob');
+  const summary = decodeArchive(row.summary);
+  const edited = isDictionary(summary) ? summary.ec : undefined;
+  if (!isDictionary(edited)) return [];
   return Object.entries(edited).flatMap(([part, versions]) =>
     (Array.isArray(versions) ? versions : []).map((entry, version) => {
-      const body = isObject(entry) ? entry.t : undefined;
+      const body = isDictionary(entry) ? entry.t : undefined;
       return {
         messageGuid: row.messageGuid,
         partIndex: Number(part),
         version,
-        editedAt: isObject(entry) ? appleTime(entry.d) : null,
+        editedAt: isDictionary(entry) ? appleTime(entry.d) : null,
         text: body instanceof Uint8Array ? attributedText(body) : null,
         entry: plistJSON(entry),
       };

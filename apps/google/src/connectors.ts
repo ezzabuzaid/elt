@@ -1,16 +1,18 @@
-import { Connection, Pipeline, PipelineError } from 'elt';
+import postgres from 'postgres';
+
+import { Connection, Pipeline, PipelineError } from '@workspace/elt';
 import {
-  installPostgresCatalog,
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
-} from 'elt-postgresql';
+  installPostgresCatalog,
+} from '@workspace/elt-postgresql';
 import {
   GOOGLE_SEARCH_CONSOLE_SCOPE,
   googleSession,
   grantDirectory,
-} from 'google-auth';
-import postgres from 'postgres';
+} from '@workspace/google-auth';
+
 import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
 import { installSearchConsoleMarts } from './sources/search-console/search-console-marts.ts';
 import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';

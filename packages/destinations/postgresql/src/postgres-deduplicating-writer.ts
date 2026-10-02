@@ -1,14 +1,20 @@
 import { createHash } from 'node:crypto';
-import type { CopyConfiguration, Deduplication, KeyValue } from 'elt';
+
+import type {
+  CopyConfiguration,
+  Deduplication,
+  KeyValue,
+} from '@workspace/elt';
+
 import { quote } from './identifier.ts';
 import type { EncodedValue, PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import type { PostgresTable } from './postgres-table.ts';
 import {
-  op,
   PostgresWriter,
-  seq,
   type Transaction,
+  op,
+  seq,
 } from './postgres-writer.ts';
 
 export class PostgresDeduplicatingWriter extends PostgresWriter {

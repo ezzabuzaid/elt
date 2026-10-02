@@ -1,5 +1,5 @@
 {
-  "name": "elt-sqlite",
+  "name": "@workspace/elt-sqlite",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,6 +10,6 @@
     }
   },
   "dependencies": {
-    "elt": "0.0.1"
+    "@workspace/elt": "0.0.1"
   }
 }

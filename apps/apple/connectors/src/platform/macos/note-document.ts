@@ -1,4 +1,5 @@
 import { gunzipSync, inflateSync } from 'node:zlib';
+
 import { ProtobufMessage } from './protobuf.ts';
 
 // Notes stores each note body (ZICNOTEDATA.ZDATA) and each table
@@ -146,11 +147,11 @@ export class NoteDocument {
     return this.paragraphs
       .map((paragraph) =>
         paragraph.runs
-          .map((run) =>
-            run.attachment === null
-              ? run.text
-              : run.text.replaceAll(attachmentCharacter, () =>
-                  attachment(run.attachment as NoteAttachmentReference),
+          .map(({ text, attachment: reference }) =>
+            reference === null
+              ? text
+              : text.replaceAll(attachmentCharacter, () =>
+                  attachment(reference),
                 ),
           )
           .join(''),
@@ -259,12 +260,13 @@ const inline = (
   run: Run,
   attachment: (reference: NoteAttachmentReference) => string,
 ): string => {
-  if (run.attachment !== null)
+  const { attachment: reference } = run;
+  if (reference !== null)
     return run.text
       .split('')
       .map((character) =>
         character === attachmentCharacter
-          ? attachment(run.attachment as NoteAttachmentReference)
+          ? attachment(reference)
           : escapeInline(character),
       )
       .join('');
@@ -295,9 +297,10 @@ export function decodeTable(bytes: Uint8Array): string[][] {
   const uuidItems = document.bytesList(6);
   const reference = (id: ProtobufMessage | undefined, label: string) => {
     const index = id?.uint(6);
-    if (index === undefined || objects[index] === undefined)
+    const object = index === undefined ? undefined : objects[index];
+    if (object === undefined)
       throw new TypeError(`Notes table ${label} is not an object reference`);
-    return objects[index] as ProtobufMessage;
+    return object;
   };
   const entries = (object: ProtobufMessage, label: string) => {
     const custom = object.message(13);
@@ -373,13 +376,11 @@ export function decodeTable(bytes: Uint8Array): string[][] {
     const cells = reference(column.message(2), 'column rows').message(6);
     for (const cell of cells?.messages(1) ?? []) {
       const y = rows.order.get(identity(reference(cell.message(1), 'row')));
-      if (x === undefined || y === undefined)
+      const line = y === undefined ? undefined : grid[y];
+      if (x === undefined || line === undefined)
         throw new TypeError('Notes table cell has no row or column position');
       const text = reference(cell.message(2), 'cell').message(10)?.string(2);
-      (grid[y] as string[])[x] = (text ?? '').replaceAll(
-        attachmentCharacter,
-        '',
-      );
+      line[x] = (text ?? '').replaceAll(attachmentCharacter, '');
     }
   }
   return direction === 'CRTableColumnDirectionRightToLeft'

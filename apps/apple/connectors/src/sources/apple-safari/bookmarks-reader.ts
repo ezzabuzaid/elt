@@ -33,7 +33,7 @@ export class BookmarksReader {
           return;
         }
         this.bookmarks.push(entry);
-        walk(node, node.WebBookmarkUUID as string);
+        walk(node, String(node.WebBookmarkUUID));
       });
     walk(root, null);
   }

@@ -1,17 +1,20 @@
 import { createHash } from 'node:crypto';
+
+import type postgres from 'postgres';
+
 import {
   type CopyConfiguration,
-  describeTarget,
   type FieldValues,
   FileContent,
   type KeyValue,
   type Stage,
   TargetMissingError,
   TargetOwnedError,
-  undescribed,
   Writer,
-} from 'elt';
-import type postgres from 'postgres';
+  describeTarget,
+  undescribed,
+} from '@workspace/elt';
+
 import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
@@ -31,15 +34,17 @@ export const op = '"_elt_op"';
 // ponytail: holds the write transaction during extraction; stage elsewhere if long reads hold back vacuum.
 export class PostgresLoad implements AsyncDisposable {
   readonly #connection: PostgresSession;
+  readonly schema: string;
   readonly loadedAt: string;
   #open = false;
 
   private constructor(
     connection: PostgresSession,
-    readonly schema: string,
+    schema: string,
     loadedAt: string,
   ) {
     this.#connection = connection;
+    this.schema = schema;
     this.loadedAt = loadedAt;
   }
 
@@ -110,16 +115,24 @@ export class PostgresLoad implements AsyncDisposable {
 }
 
 export abstract class PostgresWriter extends Writer {
+  readonly configuration: CopyConfiguration;
+  protected readonly url: string;
+  readonly schema: string;
+  readonly table: PostgresTable;
   readonly #tableComment: string;
   readonly #columnComments: Readonly<Record<string, string | null>>;
 
   constructor(
-    readonly configuration: CopyConfiguration,
-    protected readonly url: string,
-    readonly schema: string,
-    readonly table: PostgresTable,
+    configuration: CopyConfiguration,
+    url: string,
+    schema: string,
+    table: PostgresTable,
   ) {
     super(configuration.stream);
+    this.configuration = configuration;
+    this.url = url;
+    this.schema = schema;
+    this.table = table;
     const description = describeTarget(
       configuration,
       table.columns,

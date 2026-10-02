@@ -1,0 +1,14 @@
+# Add files here to ignore them from prettier formatting
+/coverage
+/.nx/cache
+/.nx/workspace-data
+**/dist
+*.tsbuildinfo
+package-lock.json
+# Pipeline exports and rendered videos, rebuilt by their own tools
+/outputs
+/videos
+# Bundled by `nx run apple-plugin:bundle`; esbuild owns its formatting
+plugins/apple/server.mjs
+# Written by VS Code
+.vscode/sessions.json

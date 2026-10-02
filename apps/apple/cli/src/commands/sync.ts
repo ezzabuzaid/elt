@@ -1,4 +1,5 @@
 import { type Command as Declaration, Option } from 'commander';
+
 import { SyncReport } from '../sync-report.ts';
 import { Command, type Output } from './command.ts';
 

@@ -1,4 +1,5 @@
-import type { Stream } from 'elt';
+import type { Stream } from '@workspace/elt';
+
 import { SQLiteColumn } from './sqlite-column.ts';
 
 function scalarKind(

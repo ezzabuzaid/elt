@@ -1,14 +1,16 @@
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { CopyConfiguration, Load } from 'elt';
-import { Destination } from 'elt';
+
+import type { CopyConfiguration, Load } from '@workspace/elt';
+import { Destination } from '@workspace/elt';
+
 import { SQLiteAppendWriter } from './sqlite-append-writer.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
 import { SQLiteDeduplicatingWriter } from './sqlite-deduplicating-writer.ts';
 import { SQLiteOverwriteWriter } from './sqlite-overwrite-writer.ts';
 import { SQLiteTable } from './sqlite-table.ts';
-import { lockWriter, type SQLiteWriter } from './sqlite-writer.ts';
+import { type SQLiteWriter, lockWriter } from './sqlite-writer.ts';
 
 export class SQLiteDestination extends Destination<SQLiteTable> {
   readonly supportedDestinationSyncModes = Object.freeze([

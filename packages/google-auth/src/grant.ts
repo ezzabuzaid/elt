@@ -34,6 +34,7 @@ export class GoogleGrant implements GoogleOpenableGrant {
   // The store holds other secrets too; a grant this package wrote says so in
   // its kind. Anything else, or nothing, is no grant.
   static parse(value: unknown): GoogleGrant | undefined {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- only a grant this package wrote carries its kind; any other secret fails the kind check below
     const credential = value as GoogleOAuthCredential | undefined;
     return credential?.kind === 'GOOGLE_BIGQUERY_OAUTH'
       ? new GoogleGrant(credential)
@@ -152,10 +153,9 @@ export class GoogleImportedGrant implements GoogleOpenableGrant {
   readonly credential: GoogleImportedCredential;
 
   static parse(
-    value: unknown,
+    file: AuthorizedUserFile | undefined,
     options: { readonly account: string; readonly scope: string },
   ): GoogleImportedGrant | undefined {
-    const file = value as AuthorizedUserFile | undefined;
     // Another tool's file: only an authorized user grant can be opened here.
     if (file?.type !== 'authorized_user') return undefined;
     const clientId = file.client_id?.trim();

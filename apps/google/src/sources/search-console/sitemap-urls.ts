@@ -203,14 +203,15 @@ function parse(
 // reason (for example ECONNRESET) on its cause, so the chain is spelled out.
 function describe(cause: unknown): string {
   const reasons: string[] = [];
-  let error = cause as (Error & { code?: string }) | undefined;
   for (
-    ;
-    error instanceof Error && reasons.length < 3;
-    error = error.cause as typeof error
+    let error = cause;
+    Error.isError(error) && reasons.length < 3;
+    error = error.cause
   )
     reasons.push(
-      error.code ? `${error.code}: ${error.message}` : error.message,
+      'code' in error && typeof error.code === 'string' && error.code
+        ? `${error.code}: ${error.message}`
+        : error.message,
     );
   if (reasons.length === 0) reasons.push(String(cause));
   return reasons.join(' (') + ')'.repeat(reasons.length - 1);

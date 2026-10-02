@@ -1,5 +1,7 @@
 import { join } from 'node:path';
-import type { SchemaRecord } from 'elt';
+
+import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+
 import {
   type LocalFile,
   localFiles,
@@ -84,7 +86,8 @@ export class BookFilesStream extends BooksStream<typeof properties, Row> {
     for (const row of scan.library.all(
       'SELECT ZASSETID, ZPATH FROM ZBKLIBRARYASSET WHERE ZASSETID IS NOT NULL AND ZPATH IS NOT NULL ORDER BY Z_PK',
     )) {
-      const path = row.ZPATH as string;
+      // The query selects only rows whose ZASSETID and ZPATH are not null.
+      const path = String(row.ZPATH);
       const files = await localFiles(path).catch(
         (error: NodeJS.ErrnoException) => {
           if (error.code === 'ENOENT') return null;
@@ -92,7 +95,7 @@ export class BookFilesStream extends BooksStream<typeof properties, Row> {
         },
       );
       rows.push({
-        assetId: row.ZASSETID as string,
+        assetId: String(row.ZASSETID),
         path,
         format:
           files === null
@@ -113,7 +116,7 @@ export class BookFilesStream extends BooksStream<typeof properties, Row> {
     path,
     format,
     files,
-  }: Row): SchemaRecord<typeof properties> {
+  }: Row): RecordDraft<typeof properties> {
     return {
       assetId,
       path,

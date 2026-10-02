@@ -1,11 +1,12 @@
-import type { ImportScope } from 'import-store';
+import type { ImportScope } from '@workspace/import-store';
+
 import { mailDirectory } from '../platform/macos/mail-store.ts';
 import {
   AppleMailSource,
   restrictedMailStreams,
 } from '../sources/apple-mail/apple-mail-source.ts';
 import { AppleApp } from './apple-app.ts';
-import { accounts, byId, type Choice, type Row } from './choice.ts';
+import { type Choice, type Row, accounts, byId } from './choice.ts';
 
 const accountName = (row: Row) =>
   String(JSON.parse(String(row.properties)).name);

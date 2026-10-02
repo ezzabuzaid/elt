@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+
 import type { Selection } from './selection.ts';
 
 // What a store holds: its settings file and each import directory. Changing

@@ -26,7 +26,10 @@ export { type Pass, Pipeline, PipelineError } from './core/pipeline.ts';
 export { type ReaderRelation, readerCatalog } from './core/reader-relation.ts';
 export {
   type FieldSchema,
+  type Properties,
+  type RecordDraft,
   type SchemaRecord,
+  type StreamSchema,
   validateRecords,
 } from './core/record-validation.ts';
 export {

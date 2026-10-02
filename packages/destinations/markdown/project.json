@@ -3,7 +3,7 @@
   "sourceRoot": "packages/destinations/markdown/src",
   "projectType": "library",
   "targets": {
-    "lint": {},
+    "format": {},
     "test": {
       "dependsOn": ["build"],
       "command": "node --test packages/destinations/markdown/dist/*.test.js"

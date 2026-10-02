@@ -1,7 +1,9 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
 import {
+  type Row,
   appleTime,
   dictionary,
   flag,
@@ -9,7 +11,6 @@ import {
   list,
   number,
   plistTime,
-  type Row,
   strings,
   text,
 } from '../safari-values.ts';
@@ -171,24 +172,21 @@ export class TabsStream extends SafariStream<typeof properties, Row> {
     return scan.tabs.tabs;
   }
 
-  protected record(
-    row: Row,
-    scan: SafariScan,
-  ): SchemaRecord<typeof properties> {
+  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
     const { tabs } = scan;
     const [extra, local] = tabs.attributes(row);
     const context = dictionary(local.TabPageContextIDKey);
     const parent = tabs.row(row.parent);
     return {
-      id: row.external_uuid as string,
-      tabGroupId: tabs.uuid(row.parent) as string,
+      id: row.external_uuid,
+      tabGroupId: tabs.uuid(row.parent),
       kind:
         parent !== undefined && tabs.kind(parent) === 'favorites'
           ? 'favorite'
           : 'tab',
       profileId: tabs.profileOf(row),
       windowId: text(local.WindowUUID),
-      position: row.order_index as number,
+      position: row.order_index,
       tabIndex: integer(local.TabIndex),
       title: text(row.title),
       url: text(row.url),
@@ -216,7 +214,7 @@ export class TabsStream extends SafariStream<typeof properties, Row> {
       pageLanguage: text(context.pageLanguage),
       pageSummary: text(context.summary),
       pageKeywords: strings(context.keywords),
-      pageKeywordWeights: list(context.keywordsWeights) as number[],
+      pageKeywordWeights: list(context.keywordsWeights),
       featureText: text(extra.featureText),
     };
   }

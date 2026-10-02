@@ -88,14 +88,18 @@ export type StoredData =
     };
 
 export class AddressBookStore {
+  // The Sources directory name, or null for the On My Mac store.
+  readonly source: string | null;
+  readonly directory: string;
   readonly #database: DatabaseSync;
 
   constructor(
-    // The Sources directory name, or null for the On My Mac store.
-    readonly source: string | null,
-    readonly directory: string,
+    source: string | null,
+    directory: string,
     database: DatabaseSync,
   ) {
+    this.source = source;
+    this.directory = directory;
     this.#database = database;
   }
 
@@ -148,7 +152,11 @@ export type AddressBookSchema = {
 // so two accounts are not pinned to the same instant. Hold it only while
 // reading: an open read stops contactsd checkpointing the WAL.
 export class AddressBook implements AsyncDisposable {
-  private constructor(readonly stores: readonly AddressBookStore[]) {}
+  readonly stores: readonly AddressBookStore[];
+
+  private constructor(stores: readonly AddressBookStore[]) {
+    this.stores = stores;
+  }
 
   static async open(
     directory: string,
@@ -211,8 +219,11 @@ export class AddressBookVersion implements Disposable {
     string,
     { readonly database: DatabaseSync; readonly version: StatementSync }
   >();
+  readonly directory: string;
 
-  constructor(readonly directory: string) {}
+  constructor(directory: string) {
+    this.directory = directory;
+  }
 
   get current(): string {
     const paths = storeDirectories(this.directory).map(({ directory }) =>

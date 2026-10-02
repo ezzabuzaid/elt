@@ -10,17 +10,17 @@ The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and 
 
 ## Sources and destinations
 
-| Source | Available data | Extraction | Change trigger |
-| --- | --- | --- | --- |
-| Apple Notes | Accounts, folders, notes (text and Markdown, with checklists and tables), inline tags, mentions and note links, and attachments | Full refresh or snapshot incremental | Commits to Notes' own store; keeps Notes running hidden so iCloud changes arrive |
-| Apple Calendar | Accounts, calendars, event occurrences, recurrence, alarms, attendees, and each item's iCalendar (ICS) components, properties and parameters | Full refresh or snapshot incremental within a required date range | EventKit notifications |
-| Apple Reminders | Accounts, lists, reminders, date components, recurrence, alarms, and attendees | Full refresh or snapshot incremental | EventKit notifications |
-| Apple Messages | Every column of chats, handles, participants, messages (text, edits, unsends, reactions, replies), Recently Deleted, and attachments with their files | Full refresh or snapshot incremental, every stream from one consistent chat.db snapshot | Native filesystem notifications over `~/Library/Messages` |
-| Apple Mail | Accounts, mailboxes and memberships, messages and conversations, MIME bodies and headers, original EMLX files, attachments, rules, smart mailboxes, signatures and index metadata | Full refresh or snapshot incremental over the complete local store | SQLite commits plus recursive filesystem notifications |
-| Apple Contacts | Accounts, groups and memberships, contacts (names, organization, birthdays including year-less and non-Gregorian ones, flags), notes, every labeled value (phones, emails, addresses, URLs, social profiles, instant messaging, related names, dates, calendar URIs), custom and unrecognized vCard properties, and contact photos with their bytes | Full refresh or snapshot incremental, each account store read in one transaction | Commits to Contacts' own stores, and accounts added or removed |
-| Apple Safari | History of every profile (pages, visits from this Mac and synced devices, redirects, deletions, topics), profiles, windows, tab groups, open and pinned tabs with their back and forward lists, iCloud Tabs, bookmarks, the Reading List, recently closed windows and tabs, and downloads with their files | Full refresh or snapshot incremental, each database read in one transaction; a store that cannot be read fails only its streams | Commits to Safari's databases, and rewrites of its property lists |
-| Apple Books | Library (books, PDFs, series, reading progress, finished state), collections and members, highlights, underlines, notes and reading positions, reading state synced from other devices, daily reading time and monthly totals, reading streaks and goal, store purchases and custom themes, with each book file on this Mac (an EPUB package exported as one `.epub`) | Full refresh or snapshot incremental, each database read in one transaction; iCloud Drive placeholders are reported without being downloaded | Commits to Books' and bookdatastored's databases, and rewrites of Books' preferences |
-| Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection of every sitemap and search URL | Full refresh; incremental by date for the dated analytics grains, by snapshot for properties, sitemaps and the country breakdown, and rolling (never-inspected, then stalest, within the daily quota) for URL inspection; every row carries its property, so properties share tables | Change-gated polling (the API publishes no notification) |
+| Source                | Available data                                                                                                                                                                                                                                                                                                                                                        | Extraction                                                                                                                                                                                                                                                                           | Change trigger                                                                       |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Apple Notes           | Accounts, folders, notes (text and Markdown, with checklists and tables), inline tags, mentions and note links, and attachments                                                                                                                                                                                                                                       | Full refresh or snapshot incremental                                                                                                                                                                                                                                                 | Commits to Notes' own store; keeps Notes running hidden so iCloud changes arrive     |
+| Apple Calendar        | Accounts, calendars, event occurrences, recurrence, alarms, attendees, and each item's iCalendar (ICS) components, properties and parameters                                                                                                                                                                                                                          | Full refresh or snapshot incremental within a required date range                                                                                                                                                                                                                    | EventKit notifications                                                               |
+| Apple Reminders       | Accounts, lists, reminders, date components, recurrence, alarms, and attendees                                                                                                                                                                                                                                                                                        | Full refresh or snapshot incremental                                                                                                                                                                                                                                                 | EventKit notifications                                                               |
+| Apple Messages        | Every column of chats, handles, participants, messages (text, edits, unsends, reactions, replies), Recently Deleted, and attachments with their files                                                                                                                                                                                                                 | Full refresh or snapshot incremental, every stream from one consistent chat.db snapshot                                                                                                                                                                                              | Native filesystem notifications over `~/Library/Messages`                            |
+| Apple Mail            | Accounts, mailboxes and memberships, messages and conversations, MIME bodies and headers, original EMLX files, attachments, rules, smart mailboxes, signatures and index metadata                                                                                                                                                                                     | Full refresh or snapshot incremental over the complete local store                                                                                                                                                                                                                   | SQLite commits plus recursive filesystem notifications                               |
+| Apple Contacts        | Accounts, groups and memberships, contacts (names, organization, birthdays including year-less and non-Gregorian ones, flags), notes, every labeled value (phones, emails, addresses, URLs, social profiles, instant messaging, related names, dates, calendar URIs), custom and unrecognized vCard properties, and contact photos with their bytes                   | Full refresh or snapshot incremental, each account store read in one transaction                                                                                                                                                                                                     | Commits to Contacts' own stores, and accounts added or removed                       |
+| Apple Safari          | History of every profile (pages, visits from this Mac and synced devices, redirects, deletions, topics), profiles, windows, tab groups, open and pinned tabs with their back and forward lists, iCloud Tabs, bookmarks, the Reading List, recently closed windows and tabs, and downloads with their files                                                            | Full refresh or snapshot incremental, each database read in one transaction; a store that cannot be read fails only its streams                                                                                                                                                      | Commits to Safari's databases, and rewrites of its property lists                    |
+| Apple Books           | Library (books, PDFs, series, reading progress, finished state), collections and members, highlights, underlines, notes and reading positions, reading state synced from other devices, daily reading time and monthly totals, reading streaks and goal, store purchases and custom themes, with each book file on this Mac (an EPUB package exported as one `.epub`) | Full refresh or snapshot incremental, each database read in one transaction; iCloud Drive placeholders are reported without being downloaded                                                                                                                                         | Commits to Books' and bookdatastored's databases, and rewrites of Books' preferences |
+| Google Search Console | Properties, sitemaps, search analytics at four grains (daily totals per report type, queries, pages, countries), and URL inspection of every sitemap and search URL                                                                                                                                                                                                   | Full refresh; incremental by date for the dated analytics grains, by snapshot for properties, sitemaps and the country breakdown, and rolling (never-inspected, then stalest, within the daily quota) for URL inspection; every row carries its property, so properties share tables | Change-gated polling (the API publishes no notification)                             |
 
 Every destination supports overwrite, append, and deduplication:
 
@@ -84,8 +84,10 @@ A pipeline declares connections of copies; the smallest one copies Notes into SQ
 
 ```ts
 import { mkdir } from 'node:fs/promises';
-import { Connection, Copy, Pipeline } from 'elt';
-import { SQLiteDestination } from 'elt-sqlite';
+
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { SQLiteDestination } from '@workspace/elt-sqlite';
+
 import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
 
 await mkdir('./outputs', { recursive: true });
@@ -125,8 +127,10 @@ Reminders reads through EventKit, so Reminders.app need not be open. Grant the p
 
 ```ts
 import { mkdir } from 'node:fs/promises';
-import { Connection, Copy, Pipeline } from 'elt';
-import { SQLiteDestination } from 'elt-sqlite';
+
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import { SQLiteDestination } from '@workspace/elt-sqlite';
+
 import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
 
 await mkdir('./outputs', { recursive: true });
@@ -158,7 +162,7 @@ A full-refresh overwrite also removes deleted reminders; an incremental copy (`a
 To retain the latest version of each note across runs, keep the quick-start imports and source/destination setup, then replace the pipeline declaration and execution with:
 
 ```ts
-import { SQLiteCheckpointStore } from 'elt-sqlite';
+import { SQLiteCheckpointStore } from '@workspace/elt-sqlite';
 
 const checkpoints = new SQLiteCheckpointStore({
   path: './outputs/checkpoints.sqlite',
@@ -194,8 +198,8 @@ Keep the copy ID and both SQLite files between runs. The checkpoint store must u
 ### Mail: local messages and attachments
 
 ```ts
-import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
 import { mailDirectory } from './platform/macos/mail-store.ts';
+import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
 
 const mail = new AppleMailSource(mailDirectory);
 await new Pipeline({
@@ -265,7 +269,7 @@ Live verification confirmed that Calendar/Reminders writes through EventKit in a
 Using the `source` from the quick start, create a separate connection with a Markdown destination:
 
 ```ts
-import { MarkdownDestination } from 'elt-markdown';
+import { MarkdownDestination } from '@workspace/elt-markdown';
 
 const markdown = new MarkdownDestination({ path: './outputs/markdown' });
 
@@ -292,26 +296,35 @@ Generated Markdown retains canonical record data for subsequent appends and reco
 Using the `source` and `destination` from the quick start, store attachment metadata and parsed text in the database, and save original files in a directory you choose:
 
 ```ts
-import { LocalFiles } from 'elt';
+import { LocalFiles } from '@workspace/elt';
+
 import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
 
 const localFiles = new LocalFiles({ directory: './outputs/attachments' });
 
 const attachments = new Copy(
   source.attachments,
-  destination.table('attachments', columns => [
+  destination.table('attachments', (columns) => [
     columns.text('id'),
     columns.text('noteId'),
-    columns.text('content')
+    columns
+      .text('content')
       .from(source.attachments.file)
       .parse(new MacOSDocumentParser()),
-    columns.text('attachmentRef').from(source.attachments.file.store(localFiles)),
+    columns
+      .text('attachmentRef')
+      .from(source.attachments.file.store(localFiles)),
   ]),
 );
 
 await new Pipeline({
   connections: [
-    new Connection({ name: 'notes', source, destination, steps: [attachments] }),
+    new Connection({
+      name: 'notes',
+      source,
+      destination,
+      steps: [attachments],
+    }),
   ],
 }).run();
 ```
@@ -326,13 +339,13 @@ See [file declarations, parsing, and attachment limitations](docs/reference.md#a
 
 Extraction and loading are separate choices:
 
-| `syncMode` | `destinationSyncMode` | Behavior |
-| --- | --- | --- |
-| `full_refresh` | `overwrite` | Replace the target with the current extraction. This is the default. |
-| `full_refresh` | `append` | Add every observation to existing data. |
-| `full_refresh` | `overwrite_dedup` | Replace the target, keeping the greatest cursor per key. |
-| `incremental` | `append` | Resume from saved state and retain every emitted observation. |
-| `incremental` | `append_dedup` | Resume from saved state and retain the greatest cursor per key. |
+| `syncMode`     | `destinationSyncMode` | Behavior                                                             |
+| -------------- | --------------------- | -------------------------------------------------------------------- |
+| `full_refresh` | `overwrite`           | Replace the target with the current extraction. This is the default. |
+| `full_refresh` | `append`              | Add every observation to existing data.                              |
+| `full_refresh` | `overwrite_dedup`     | Replace the target, keeping the greatest cursor per key.             |
+| `incremental`  | `append`              | Resume from saved state and retain every emitted observation.        |
+| `incremental`  | `append_dedup`        | Resume from saved state and retain the greatest cursor per key.      |
 
 Other combinations are rejected. An explicit options object requires both mode fields. Deduplication uses the key the stream declares; only for a stream that declares none does the copy select `primaryKey`. `cursor_newer` deduplication also requires `cursorField`, except on snapshot streams, which have no cursor field and deduplicate with `replace`. Incremental copies also require a stable `id` and checkpoint store.
 
@@ -342,10 +355,10 @@ A target has one writer, across every connection of a pipeline: a copy into a ta
 
 A deduplicating load resolves a key conflict with `dedupPolicy`:
 
-| `dedupPolicy` | Behavior |
-| --- | --- |
-| `cursor_newer` (default) | Keep the row whose cursor sorts highest. Rejects out-of-order replay. |
-| `replace` | Let the newest extraction win. Required when an upstream restates facts it already published. |
+| `dedupPolicy`            | Behavior                                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| `cursor_newer` (default) | Keep the row whose cursor sorts highest. Rejects out-of-order replay.                         |
+| `replace`                | Let the newest extraction win. Required when an upstream restates facts it already published. |
 
 A cursor that is itself part of the primary key is equal on every conflict, so `cursor_newer` could never update the conflicting row and a restatement would load as a silent no-op. Selecting that combination is rejected; choose `replace` instead. Google Search Console is the worked example: it revises recent metrics, and its rows are identified by the same `date` it is ordered by.
 
@@ -362,15 +375,15 @@ See [execution and error handling](docs/reference.md#execution-and-failures).
 
 Permissions apply to the process running the export, and a sandbox can still restrict access after permission is granted.
 
-| Operation | Required access |
-| --- | --- |
-| Read or watch Apple Mail | Full Disk Access; account settings additionally require Automation access to Mail |
-| Read or watch Apple Notes | Full Disk Access; Notes does not need to be open |
-| Read or watch Apple Contacts | Contacts access or Full Disk Access; Contacts does not need to be open |
-| Read or watch Apple Safari | Full Disk Access; Safari does not need to be open, but only Safari fetches history and tabs from other devices |
-| Read or watch Apple Books | Full Disk Access; Books does not need to be open, and books kept only in iCloud are listed without their files |
-| Read or watch Reminders | Full Reminders access through EventKit |
-| Read or watch Calendar | Full Calendar access through EventKit |
+| Operation                    | Required access                                                                                                |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Read or watch Apple Mail     | Full Disk Access; account settings additionally require Automation access to Mail                              |
+| Read or watch Apple Notes    | Full Disk Access; Notes does not need to be open                                                               |
+| Read or watch Apple Contacts | Contacts access or Full Disk Access; Contacts does not need to be open                                         |
+| Read or watch Apple Safari   | Full Disk Access; Safari does not need to be open, but only Safari fetches history and tabs from other devices |
+| Read or watch Apple Books    | Full Disk Access; Books does not need to be open, and books kept only in iCloud are listed without their files |
+| Read or watch Reminders      | Full Reminders access through EventKit                                                                         |
+| Read or watch Calendar       | Full Calendar access through EventKit                                                                          |
 
 Manage permissions in **System Settings → Privacy & Security**. Calendar and Reminders request access on the first native operation if it is undecided. Packaged hosts must provide the relevant usage descriptions and sandbox entitlements; see the [connector reference](docs/reference.md#apple-reminders).
 
@@ -397,7 +410,7 @@ npx nx run-many -t typecheck
 npx nx run-many -t test
 ```
 
-`build` and `typecheck` are inferred by the `@nx/js/typescript` plugin from each project's `tsconfig.json`, which extends `tsconfig.base.json` and references the workspace packages it imports; Nx keeps those references current before it runs either target. Typecheck runs the project's `lint` target (Biome, which formats and fixes) first. Test targets build first and use Node's test runner. The Apple build compiles the Swift `eventkit` helper (`apple:eventkit`), which needs the Xcode Command Line Tools. The `elt-postgresql` and `google` tests need Postgres: start it with `npx nx run infra:up`, or point `TEST_DATABASE_URL` at a server where the user can create databases and roles. Tests take a database of their own from `elt-postgresql/testing` (`scratchDatabase`, or `scratchWarehouse` provisioned by `infra/init/marts/contract.sql` for reading as `agent_reader`). Apple tests require macOS and an environment that permits native filesystem notifications. They never modify personal app data: Calendar and Reminders tests replace the `eventkit` helper with synthetic documents, and one live test reads this Mac's Calendar and Reminders read-only into a temporary SQLite database, skipped without access.
+`build` and `typecheck` are inferred by the `@nx/js/typescript` plugin from each project's `tsconfig.json`, which extends `tsconfig.base.json` and references the workspace packages it imports; Nx keeps those references current before it runs either target. Typecheck first runs the project's `lint` target (ESLint, inferred by `@nx/eslint/plugin` from the root `eslint.config.mjs`), which runs its `format` target (Prettier, which rewrites files and sorts imports) first; each project opts in with `"format": {}` in its `project.json`. A pre-commit hook runs `nx sync` and formats staged files that no project covers. Test targets build first and use Node's test runner. The Apple build compiles the Swift `eventkit` helper (`apple:eventkit`), which needs the Xcode Command Line Tools. The `elt-postgresql` and `google` tests need Postgres: start it with `npx nx run infra:up`, or point `TEST_DATABASE_URL` at a server where the user can create databases and roles. Tests take a database of their own from `elt-postgresql/testing` (`scratchDatabase`, or `scratchWarehouse` provisioned by `infra/init/marts/contract.sql` for reading as `agent_reader`). Apple tests require macOS and an environment that permits native filesystem notifications. They never modify personal app data: Calendar and Reminders tests replace the `eventkit` helper with synthetic documents, and one live test reads this Mac's Calendar and Reminders read-only into a temporary SQLite database, skipped without access.
 
 Put `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in the workspace `.env` (gitignored), then run the Search Console example with `npx nx run google:start`. It loads `sc-domain:ezz.sh` into the warehouse (`npx nx run infra:up`), checkpoints included, writes no local files, and installs the [agent-facing marts](docs/reference.md#warehouse-marts); an explicitly invoked consumer reads them directly through PostgreSQL as `agent_reader` (MCP is optional). Sync status and declared coverage are discoverable through `marts.catalog`; reading never starts a refresh. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup.
 

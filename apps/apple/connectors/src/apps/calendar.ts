@@ -1,15 +1,16 @@
 import {
   GMAIL_READONLY_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE,
-} from 'google-auth/scopes';
-import type { ImportScope } from 'import-store';
+} from '@workspace/google-auth/scopes';
+import type { ImportScope } from '@workspace/import-store';
+
 import {
   AppleCalendarSource,
   type CalendarAttachmentFetcher,
 } from '../sources/apple-calendar/apple-calendar-source.ts';
 import { googleCalendarAttachments } from '../sources/apple-calendar/google-calendar-attachments.ts';
 import { AppleApp } from './apple-app.ts';
-import { accounts, type Choice, collections, name } from './choice.ts';
+import { type Choice, accounts, collections, name } from './choice.ts';
 
 export class CalendarApp extends AppleApp {
   readonly name = 'calendar';

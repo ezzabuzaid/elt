@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { FileContent } from 'elt';
+
 import type postgres from 'postgres';
+
+import type { FileContent } from '@workspace/elt';
+
 import { quote } from './identifier.ts';
 import type { PostgresColumn } from './postgres-column.ts';
 import type { PostgresTable } from './postgres-table.ts';
@@ -9,13 +12,15 @@ import type { PostgresTable } from './postgres-table.ts';
 // value. A file column contains the UUID of its ordered BYTEA chunks.
 export class PostgresFileStore {
   static readonly chunkSize = 4 * 1024 * 1024;
+  readonly schema: string;
+  readonly table: PostgresTable;
+  readonly column: PostgresColumn;
   readonly qualifiedName: string;
 
-  constructor(
-    readonly schema: string,
-    readonly table: PostgresTable,
-    readonly column: PostgresColumn,
-  ) {
+  constructor(schema: string, table: PostgresTable, column: PostgresColumn) {
+    this.schema = schema;
+    this.table = table;
+    this.column = column;
     const key = createHash('sha256')
       .update(JSON.stringify([table.name, column.name]))
       .digest('hex')

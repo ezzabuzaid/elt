@@ -1,7 +1,8 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';
-import { nullableFlag, number, type Row } from '../books-values.ts';
+import { type Row, nullableFlag, number } from '../books-values.ts';
 
 const { nullableBoolean, nullableNumber } = booksFields;
 
@@ -44,9 +45,9 @@ export class ThemesStream extends BooksStream<typeof properties, Row> {
     );
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      id: row.ZIDENTIFIER as string,
+      id: row.ZIDENTIFIER,
       hasCustomLayout: nullableFlag(row.ZHASCUSTOMLAYOUT),
       boldText: nullableFlag(row.ZISFONTBOLDED),
       justify: nullableFlag(row.ZJUSTIFY),

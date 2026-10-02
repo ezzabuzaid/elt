@@ -3,7 +3,7 @@
   "sourceRoot": "apps/apple/connectors/src",
   "projectType": "library",
   "targets": {
-    "lint": {},
+    "format": {},
     "eventkit": {
       "command": "sh apps/apple/connectors/src/platform/macos/eventkit/build.sh apps/apple/connectors/dist/platform/macos/eventkit",
       "cache": true,

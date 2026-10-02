@@ -1,7 +1,8 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { appleTime, flag, integer, type Row, text } from '../safari-values.ts';
+import { type Row, appleTime, flag, integer, text } from '../safari-values.ts';
 
 const { profileId, boolean, nullableText, nullableInteger } = safariFields;
 
@@ -85,22 +86,22 @@ export class HistoryVisitsStream extends SafariStream<typeof properties, Row> {
     return scan.history.flatMap((history) => history.visits);
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      profileId: row.$profile as string,
-      id: row.id as number,
-      itemId: row.history_item as number,
-      visitedAt: appleTime(row.visit_time) as string,
+      profileId: row.$profile,
+      id: row.id,
+      itemId: row.history_item,
+      visitedAt: appleTime(row.visit_time),
       title: text(row.title),
       loadSuccessful: flag(row.load_successful),
       httpNonGet: flag(row.http_non_get),
       synthesized: flag(row.synthesized),
       redirectSourceId: integer(row.redirect_source),
       redirectDestinationId: integer(row.redirect_destination),
-      origin: row.origin as number,
-      generation: row.generation as number,
-      attributes: row.attributes as number,
-      score: row.score as number,
+      origin: row.origin,
+      generation: row.generation,
+      attributes: row.attributes,
+      score: row.score,
     };
   }
 }

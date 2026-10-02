@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { ClosedTab } from '../closed-tabs-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
@@ -86,13 +87,13 @@ export class ClosedTabsStream extends SafariStream<
     state,
     closedWindowId,
     position,
-  }: ClosedTab): SchemaRecord<typeof properties> {
+  }: ClosedTab): RecordDraft<typeof properties> {
     return {
-      id: state.TabUUID as string,
+      id: state.TabUUID,
       closedWindowId,
       position,
       windowId: text(state.WindowUUID),
-      profileId: state.ProfileUUID as string,
+      profileId: state.ProfileUUID,
       title: text(state.TabTitle),
       url: text(state.TabURL),
       closedAt: plistTime(state.DateClosed),

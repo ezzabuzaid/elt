@@ -6,10 +6,10 @@ import type {
   OccurrenceDocument,
 } from '../../platform/macos/eventkit-documents.ts';
 import {
+  type RelatedRows,
   accountRow,
   calendarRow,
   location,
-  type RelatedRows,
   relatedRows,
   scopedCollections,
   timestamp,

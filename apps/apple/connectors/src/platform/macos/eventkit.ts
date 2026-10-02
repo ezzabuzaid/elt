@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+
 import type { EventKitDocument } from './eventkit-documents.ts';
 import nativeProcess from './native-process.ts';
 
@@ -37,9 +38,13 @@ export class EventKitChangingError extends Error {
 
 // Every selected stream's records, read in one change-free window.
 export class EventKitSnapshot implements AsyncDisposable {
+  readonly records: ReadonlyMap<string, readonly Record<string, unknown>[]>;
+
   constructor(
-    readonly records: ReadonlyMap<string, readonly Record<string, unknown>[]>,
-  ) {}
+    records: ReadonlyMap<string, readonly Record<string, unknown>[]>,
+  ) {
+    this.records = records;
+  }
 
   of(stream: string): readonly Record<string, unknown>[] {
     const records = this.records.get(stream);
@@ -66,7 +71,11 @@ export type EventKitRequest = {
 const helper = fileURLToPath(new URL('./eventkit', import.meta.url));
 
 export class EventKit {
-  constructor(readonly entity: 'events' | 'reminders') {}
+  readonly entity: 'events' | 'reminders';
+
+  constructor(entity: 'events' | 'reminders') {
+    this.entity = entity;
+  }
 
   // One read of the whole store, in one helper process.
   async read(request: EventKitRequest): Promise<EventKitDocument[]> {

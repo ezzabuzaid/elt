@@ -1,4 +1,4 @@
-import { type FieldSchema, Stream } from 'elt';
+import { type FieldSchema, Stream } from '@workspace/elt';
 
 type Kind = 'text' | 'number' | 'time' | 'base64' | 'id';
 
@@ -82,7 +82,12 @@ function table<const Columns extends Readonly<Record<string, Kind>>>(
     description: `${description} Read from the Envelope Index ${name} table; index row identifiers are local to this Mac. Relationships name source streams within this source, not destination tables.`,
     columns: Object.keys(columns),
     properties,
-    primaryKey: keys.map((key) => fieldName(key, columns[key] as string)),
+    primaryKey: keys.map((key) => {
+      const kind = columns[key];
+      if (kind === undefined)
+        throw new TypeError(`Mail table ${name} has no key column ${key}`);
+      return fieldName(key, kind);
+    }),
     blobs,
     sql: `SELECT ${select.join(', ')} FROM "${name}" ORDER BY ${keys.map((key) => `"${key}"`).join(', ')}`,
   };
@@ -597,9 +602,8 @@ export function mailStream(
   });
 }
 
-export const tableStreams = Object.fromEntries(
-  Object.entries(mailTables).map(([name, definition]) => [
-    name,
+export const tableStreams = Object.entries(mailTables).map(
+  ([name, definition]) =>
     mailStream(
       name,
       definition.description,
@@ -607,5 +611,4 @@ export const tableStreams = Object.fromEntries(
       definition.primaryKey,
       false,
     ),
-  ]),
-) as Record<keyof typeof mailTables, Stream>;
+);

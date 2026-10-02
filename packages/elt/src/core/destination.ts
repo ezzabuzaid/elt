@@ -1,14 +1,12 @@
 import { isDeepStrictEqual } from 'node:util';
+
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import type { FieldValues, Stage, Writer } from './writer.ts';
 
 // Recognized warehouse modes; each destination advertises only its implemented subset.
 export type DestinationSyncMode =
-  | 'append'
-  | 'overwrite'
-  | 'append_dedup'
-  | 'overwrite_dedup';
+  'append' | 'overwrite' | 'append_dedup' | 'overwrite_dedup';
 
 // One run's hold on a destination: one transaction every stream's stage
 // shares. As in Airbyte, a checkpoint is a commit point, and a stage commits

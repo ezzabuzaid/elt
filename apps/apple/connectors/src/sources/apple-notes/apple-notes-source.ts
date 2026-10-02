@@ -1,13 +1,15 @@
 import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
   SourceWatchOptions,
   Stream,
-} from 'elt';
-import { Catalog, diffSnapshot, Source } from 'elt';
+} from '@workspace/elt';
+import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+
 import {
   NoteStore,
   NoteStoreVersion,
@@ -33,6 +35,9 @@ const readers = {
 } satisfies Record<string, NotesReader>;
 const catalog = new Catalog(
   Object.values(readers).map((reader) => reader.describe()),
+);
+const readersByName = new Map<string, NotesReader>(
+  Object.values(readers).map((reader) => [reader.name, reader]),
 );
 // How often a watch checks the store for commits.
 const pollIntervalMs = 1000;
@@ -115,7 +120,9 @@ export class AppleNotesSource extends Source<NotesScan> {
     scan: NotesScan,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
-    const reader: NotesReader = readers[stream.name as keyof typeof readers];
+    const reader = readersByName.get(stream.name);
+    if (reader === undefined)
+      throw new Error(`Apple Notes has no stream ${stream.name}`);
     const records = await reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'

@@ -1,14 +1,14 @@
 import {
-  type FieldSchema,
+  type Properties,
+  type RecordDraft,
   type SchemaRecord,
   Stream,
   type SyncMode,
   validateRecords,
-} from 'elt';
+} from '@workspace/elt';
+
 import { eventKitFields } from '../eventkit-schema.ts';
 import type { NotesScan } from './notes-scan.ts';
-
-type Properties = Readonly<Record<string, FieldSchema>>;
 
 export const notesFields = {
   ...eventKitFields,
@@ -18,6 +18,7 @@ export const notesFields = {
 
 // What the source needs from any Notes stream, whatever its record type.
 export type NotesReader = {
+  readonly name: string;
   describe(): Stream;
   read(scan: NotesScan): Promise<Record<string, unknown>[]>;
   file(record: Record<string, unknown>, scan: NotesScan): string | null;
@@ -54,11 +55,7 @@ export abstract class AppleNotesStream<P extends Properties, Row> {
     const records = await Promise.all(
       this.rows(scan).map((row) => this.record(row, scan)),
     );
-    return validateRecords(
-      this.describe(),
-      records,
-      'Notes',
-    ) as SchemaRecord<P>[];
+    return validateRecords(this, records, 'Notes');
   }
 
   // The file a record carries, for streams that support file reads.
@@ -71,5 +68,5 @@ export abstract class AppleNotesStream<P extends Properties, Row> {
   protected abstract record(
     row: Row,
     scan: NotesScan,
-  ): SchemaRecord<P> | Promise<SchemaRecord<P>>;
+  ): RecordDraft<P> | Promise<RecordDraft<P>>;
 }

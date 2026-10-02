@@ -15,7 +15,11 @@ export type PlistValue =
   | { [key: string]: PlistValue };
 
 export class PlistUid {
-  constructor(readonly value: number) {}
+  readonly value: number;
+
+  constructor(value: number) {
+    this.value = value;
+  }
 }
 
 const appleEpoch = Date.UTC(2001, 0, 1);
@@ -143,10 +147,10 @@ export function parseBinaryPlist(bytes: Uint8Array): PlistValue {
 // object with its fields and "$class". A repeated object is decoded again.
 export function unarchive(archive: PlistValue): PlistValue {
   if (
-    !isRecord(archive) ||
+    !isDictionary(archive) ||
     archive.$archiver !== 'NSKeyedArchiver' ||
     !Array.isArray(archive.$objects) ||
-    !isRecord(archive.$top)
+    !isDictionary(archive.$top)
   )
     throw new TypeError('Not an NSKeyedArchiver archive');
   const objects = archive.$objects;
@@ -165,7 +169,7 @@ export function unarchive(archive: PlistValue): PlistValue {
       }
     }
     if (Array.isArray(value)) return value.map(resolve);
-    if (!isRecord(value)) return value;
+    if (!isDictionary(value)) return value;
     const className = isUid(value.$class)
       ? classNameOf(objects[value.$class.value])
       : undefined;
@@ -176,8 +180,8 @@ export function unarchive(archive: PlistValue): PlistValue {
     return decodeClass(className, value, resolve);
   };
   const top = archive.$top;
-  const root = 'root' in top ? top.root : top;
-  return resolve(root as PlistValue);
+  const { root } = top;
+  return resolve(root === undefined ? top : root);
 }
 
 function decodeClass(
@@ -215,9 +219,10 @@ function decodeClass(
       return typeof base === 'string' ? new URL(relative, base).href : relative;
     }
     case 'NSUUID': {
-      const hex = Buffer.from(value['NS.uuidbytes'] as Uint8Array).toString(
-        'hex',
-      );
+      const bytes = value['NS.uuidbytes'];
+      if (!(bytes instanceof Uint8Array))
+        throw new TypeError('NSUUID without bytes');
+      const hex = Buffer.from(bytes).toString('hex');
       return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`.toUpperCase();
     }
   }
@@ -243,12 +248,15 @@ export function plistJSON(value: PlistValue): string {
 // Decodes a stored archive, unarchiving keyed ones.
 export function decodeArchive(bytes: Uint8Array): PlistValue {
   const value = parseBinaryPlist(bytes);
-  return isRecord(value) && value.$archiver === 'NSKeyedArchiver'
+  return isDictionary(value) && value.$archiver === 'NSKeyedArchiver'
     ? unarchive(value)
     : value;
 }
 
-function isRecord(value: unknown): value is { [key: string]: PlistValue } {
+// A plist dictionary: an object that is not an array, data, a date or a UID.
+export function isDictionary(
+  value: unknown,
+): value is { [key: string]: PlistValue } {
   return (
     value !== null &&
     typeof value === 'object' &&
@@ -268,7 +276,7 @@ function asArray(value: PlistValue | undefined): PlistValue[] {
 }
 
 function classNameOf(value: PlistValue | undefined): string | undefined {
-  return isRecord(value) && typeof value.$classname === 'string'
+  return isDictionary(value) && typeof value.$classname === 'string'
     ? value.$classname
     : undefined;
 }

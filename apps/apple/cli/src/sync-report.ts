@@ -1,7 +1,9 @@
-import { intro, log, outro, type SpinnerResult, spinner } from '@clack/prompts';
-import type { AppleApp } from 'apple/apps/apple-app';
-import type { CopyProgress } from 'elt';
-import type { SQLiteTable } from 'elt-sqlite';
+import { type SpinnerResult, intro, log, outro, spinner } from '@clack/prompts';
+
+import type { AppleApp } from '@workspace/apple/apps/apple-app';
+import type { CopyProgress } from '@workspace/elt';
+import type { SQLiteTable } from '@workspace/elt-sqlite';
+
 import type { SyncObserver } from './imports.ts';
 import type { PassSummary } from './sync.ts';
 import { json } from './table.ts';
@@ -13,15 +15,17 @@ const count = new Intl.NumberFormat('en');
 // watching, a spinner waiting for the next change. Without a terminal, one
 // JSON line per pass.
 export class SyncReport implements SyncObserver {
+  readonly interactive: boolean;
+  readonly watching: boolean;
   readonly #reading = new Map<string, string>();
   #spinner: SpinnerResult | undefined;
   #shownAt = 0;
   #incomplete = false;
 
-  constructor(
-    readonly interactive: boolean,
-    readonly watching: boolean,
-  ) {}
+  constructor(interactive: boolean, watching: boolean) {
+    this.interactive = interactive;
+    this.watching = watching;
+  }
 
   start(): void {
     if (!this.interactive) return;

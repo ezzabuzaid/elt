@@ -1,4 +1,5 @@
-import { isCalendarDate } from 'elt';
+import { isCalendarDate } from '@workspace/elt';
+
 import type {
   CallOptions,
   SearchAnalyticsRequest,

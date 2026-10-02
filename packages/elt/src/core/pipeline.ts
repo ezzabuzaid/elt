@@ -193,13 +193,11 @@ export class Pipeline<Target extends DestinationTarget> {
         if (initial && !watching.aborted)
           throw new TypeError('Watcher ended before its initial invalidation');
       } catch (error) {
-        if (
-          !(
-            watching.aborted &&
-            error instanceof Error &&
-            error.name === 'AbortError'
-          )
-        ) {
+        if (!(
+          watching.aborted &&
+          error instanceof Error &&
+          error.name === 'AbortError'
+        )) {
           failed = true;
           failure = error;
         }

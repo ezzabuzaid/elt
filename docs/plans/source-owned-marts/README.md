@@ -43,15 +43,15 @@ Detailed evidence: [history](history.md), [source inventory](source-inventory.md
 
 ## Sessions and dependencies
 
-| Phase | File | Depends on | Status |
-|---|---|---|---|
-| 01 | [Google ownership and reader contract](01-google-ownership.md) | selected architecture | complete |
-| 02 | [Notes and Apple publication boundary](02-notes-publication.md) | 01 | complete |
-| 03 | [Calendar and Reminders](03-eventkit-publication.md) | 02 | complete |
-| 04 | [Contacts](04-contacts-publication.md) | 02 | complete |
-| 05 | [Messages](05-messages-publication.md) | 02 | complete |
-| 06 | [Mail](06-mail-publication.md) | 02 | complete |
-| 07 | [Whole-system acceptance](07-acceptance.md) | 03–06 | complete |
+| Phase | File                                                            | Depends on            | Status   |
+| ----- | --------------------------------------------------------------- | --------------------- | -------- |
+| 01    | [Google ownership and reader contract](01-google-ownership.md)  | selected architecture | complete |
+| 02    | [Notes and Apple publication boundary](02-notes-publication.md) | 01                    | complete |
+| 03    | [Calendar and Reminders](03-eventkit-publication.md)            | 02                    | complete |
+| 04    | [Contacts](04-contacts-publication.md)                          | 02                    | complete |
+| 05    | [Messages](05-messages-publication.md)                          | 02                    | complete |
+| 06    | [Mail](06-mail-publication.md)                                  | 02                    | complete |
+| 07    | [Whole-system acceptance](07-acceptance.md)                     | 03–06                 | complete |
 
 Use one phase per session where practical. Phase 06 has explicit index/supplemental sub-session checkpoints; other phases may pause with a precise completed-stream mapping and next action. A checkpoint is not phase completion. Phases 03–06 can use separate source files in parallel only with explicit ownership; shared app wiring and docs need one owner. Each phase must deliver a working reader outcome, tests, docs and actual live verification before it is marked complete. Source phases must put missing native meanings into the source JSON Schema first, then reuse them in reader projections; only transformation-specific meaning belongs exclusively in the view definition.
 

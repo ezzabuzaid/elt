@@ -1,4 +1,4 @@
-import { Catalog, type FieldSchema, Stream } from 'elt';
+import { Catalog, type FieldSchema, Stream } from '@workspace/elt';
 
 const text = { type: 'string' } as const;
 const id = { ...text, minLength: 1 };

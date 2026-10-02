@@ -1,4 +1,5 @@
-import { readerCatalog } from 'elt';
+import { readerCatalog } from '@workspace/elt';
+
 import { quote } from './identifier.ts';
 import { PostgresSession, schemaName } from './postgres-session.ts';
 import { publishPostgresViews } from './postgres-views.ts';

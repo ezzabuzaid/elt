@@ -1,12 +1,12 @@
 {
-  "name": "google",
+  "name": "@workspace/google",
   "private": true,
   "type": "module",
   "dependencies": {
-    "elt": "0.0.1",
-    "elt-postgresql": "0.0.1",
+    "@workspace/elt": "0.0.1",
+    "@workspace/elt-postgresql": "0.0.1",
     "fast-xml-parser": "^5.11.1",
-    "google-auth": "0.0.1",
+    "@workspace/google-auth": "0.0.1",
     "postgres": "^3.4.9"
   },
   "devDependencies": {

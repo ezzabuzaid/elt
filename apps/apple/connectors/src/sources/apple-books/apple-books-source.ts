@@ -2,14 +2,16 @@ import { mkdtempDisposable, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
   SourceMessage,
   SourceWatchOptions,
   Stream,
-} from 'elt';
-import { Catalog, diffSnapshot, Source } from 'elt';
+} from '@workspace/elt';
+import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+
 import { BooksDatabaseVersion } from '../../platform/macos/books-store.ts';
 import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
@@ -53,13 +55,19 @@ const readers = {
   purchases: new PurchasesStream(),
   themes: new ThemesStream(),
 } satisfies Record<string, BooksReader>;
-type StreamName = keyof typeof readers;
 const catalog = new Catalog(
   Object.values(readers).map((reader) => reader.describe()),
 );
 
-const readerOf = (stream: Stream): BooksReader =>
-  readers[stream.name as StreamName];
+const readersByName = new Map<string, BooksReader>(
+  Object.values(readers).map((reader) => [reader.name, reader]),
+);
+const readerOf = (stream: Stream): BooksReader => {
+  const reader = readersByName.get(stream.name);
+  if (reader === undefined)
+    throw new Error(`Apple Books has no stream ${stream.name}`);
+  return reader;
+};
 
 // How often a watch checks the stores for changes.
 const pollIntervalMs = 1000;

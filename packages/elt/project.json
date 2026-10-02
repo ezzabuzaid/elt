@@ -3,9 +3,7 @@
   "sourceRoot": "packages/elt/src",
   "projectType": "library",
   "targets": {
-    "lint": {
-      "command": "biome check --write packages/elt/src packages/elt/package.json packages/elt/project.json packages/elt/tsconfig.json package.json nx.json tsconfig.json tsconfig.base.json biome.json"
-    },
+    "format": {},
     "test": {
       "dependsOn": ["build"],
       "command": "node --test packages/elt/dist/index.test.js"

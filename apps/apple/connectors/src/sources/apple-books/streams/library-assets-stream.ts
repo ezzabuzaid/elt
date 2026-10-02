@@ -1,14 +1,15 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';
 import {
+  type Row,
   base64,
   coreDataTime,
   flag,
   integer,
   nullableFlag,
   number,
-  type Row,
   text,
 } from '../books-values.ts';
 
@@ -315,10 +316,10 @@ export class LibraryAssetsStream extends BooksStream<typeof properties, Row> {
       ORDER BY asset.Z_PK`);
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     const contentTypeCode = integer(row.ZCONTENTTYPE);
     return {
-      assetId: row.ZASSETID as string,
+      assetId: row.ZASSETID,
       title: text(row.ZTITLE),
       sortTitle: text(row.ZSORTTITLE),
       author: text(row.ZAUTHOR),

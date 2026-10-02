@@ -1,7 +1,8 @@
-import type { ImportScope } from 'import-store';
+import type { ImportScope } from '@workspace/import-store';
+
 import { AppleRemindersSource } from '../sources/apple-reminders/apple-reminders-source.ts';
 import { AppleApp } from './apple-app.ts';
-import { accounts, type Choice, collections, name } from './choice.ts';
+import { type Choice, accounts, collections, name } from './choice.ts';
 
 export class RemindersApp extends AppleApp {
   readonly name = 'reminders';

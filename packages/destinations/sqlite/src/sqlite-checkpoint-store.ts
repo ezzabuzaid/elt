@@ -1,7 +1,8 @@
 import { chmodSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { type CheckpointSession, CheckpointStore } from 'elt';
+
+import { type CheckpointSession, CheckpointStore } from '@workspace/elt';
 
 export class SQLiteCheckpointStore extends CheckpointStore {
   readonly path: string;

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempDisposable, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtempDisposable, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+
 import {
   Catalog,
   Connection,
@@ -15,8 +16,9 @@ import {
   type SourceMessage,
   type SourceWatchOptions,
   Stream,
-} from 'elt';
-import { SQLiteCheckpointStore } from 'elt-sqlite';
+} from '@workspace/elt';
+import { SQLiteCheckpointStore } from '@workspace/elt-sqlite';
+
 import {
   MarkdownDestination,
   type MarkdownFile,
@@ -218,9 +220,7 @@ test('deletions remove keyed records from deduplicating Markdown files and folde
       decode(await readFile(join(markdown.path, 'items.md'), 'utf8')).sort(),
       (
         await Promise.all(
-          (
-            await readdir(folder)
-          ).map(async (file) =>
+          (await readdir(folder)).map(async (file) =>
             decode(await readFile(join(folder, file), 'utf8')),
           ),
         )
@@ -282,11 +282,12 @@ test('a target has one writer, even when another loads only its own partitions',
       partitionKey: ['owner'],
     });
     protected readonly catalog = new Catalog([this.records]);
-    constructor(
-      readonly identity: string,
-      readonly owner: string,
-    ) {
+    readonly identity: string;
+    readonly owner: string;
+    constructor(identity: string, owner: string) {
       super();
+      this.identity = identity;
+      this.owner = owner;
     }
     protected override partitions() {
       return [{ owner: this.owner }];

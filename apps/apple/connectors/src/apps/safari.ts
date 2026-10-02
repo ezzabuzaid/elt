@@ -1,7 +1,8 @@
-import type { ImportScope } from 'import-store';
+import type { ImportScope } from '@workspace/import-store';
+
 import { AppleSafariSource } from '../sources/apple-safari/apple-safari-source.ts';
 import { AppleApp } from './apple-app.ts';
-import { byId, type Choice } from './choice.ts';
+import { type Choice, byId } from './choice.ts';
 
 export class SafariApp extends AppleApp {
   readonly name = 'safari';

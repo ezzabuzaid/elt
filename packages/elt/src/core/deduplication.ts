@@ -2,14 +2,18 @@ import type { Stream } from './stream.ts';
 
 // The selected logical identity and ordering rule, independent of storage constraints.
 export class Deduplication {
+  readonly stream: Stream;
   readonly primaryKey: readonly string[];
+  // Absent when the newest extraction always wins (dedupPolicy replace).
+  readonly cursorField?: string;
 
   constructor(
-    readonly stream: Stream,
+    stream: Stream,
     primaryKey: readonly string[],
-    // Absent when the newest extraction always wins (dedupPolicy replace).
-    readonly cursorField?: string,
+    cursorField?: string,
   ) {
+    this.stream = stream;
+    this.cursorField = cursorField;
     if (
       !Array.isArray(primaryKey) ||
       primaryKey.length === 0 ||

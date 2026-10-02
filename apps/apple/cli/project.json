@@ -3,7 +3,7 @@
   "sourceRoot": "apps/apple/cli/src",
   "projectType": "application",
   "targets": {
-    "lint": {},
+    "format": {},
     "start": {
       "dependsOn": ["build"],
       "command": "node apps/apple/cli/dist/main.js"

@@ -1,14 +1,16 @@
 import { DatabaseSync } from 'node:sqlite';
+
 import {
   type Connection,
   type CopyOutcome,
-  copyStatus,
   type DeclaredCopy,
-  passError,
-  passStatus,
   type RecordedPass,
   SyncHistory,
-} from 'elt';
+  copyStatus,
+  passError,
+  passStatus,
+} from '@workspace/elt';
+
 import { SQLiteDestination } from './sqlite-destination.ts';
 import {
   attempts,

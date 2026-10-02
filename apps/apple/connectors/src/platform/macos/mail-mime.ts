@@ -5,18 +5,20 @@ import { copyFile, open, rm } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { Transform } from 'node:stream';
 import { pipeline, finished as streamFinished } from 'node:stream/promises';
+
 import {
   type MimeNode,
   Splitter,
   type SplitterChunk,
 } from '@zone-eu/mailsplit';
 import libmime from 'libmime';
+
 import {
-  assertMailFile,
-  hashMailFile,
   type MailFile,
   MailSchemaError,
   type MailStore,
+  assertMailFile,
+  hashMailFile,
 } from './mail-store.ts';
 
 export type MailPart = {
@@ -50,6 +52,9 @@ export type DecodedMailPart = {
   path: string | null;
   text: string | null;
 };
+
+const failure = (error: unknown) =>
+  Error.isError(error) ? error : new Error(String(error), { cause: error });
 
 function partId(node: MimeNode): string {
   if (node.partNr === false)
@@ -142,11 +147,11 @@ export async function readMailMime(
           : candidates.filter(
               (candidate) => basename(candidate.path) === record.filename,
             );
-      if (matches.length !== 1)
+      const [original] = matches;
+      if (original === undefined || matches.length !== 1)
         throw new MailSchemaError(
           `Ambiguous detached Mail attachment ${messageId}:${diskId}`,
         );
-      const original = matches[0] as MailFile;
       await assertMailFile(original);
       if (part.path !== null) await copyFile(original.path, part.path);
       if (textDecoder !== null)
@@ -159,8 +164,9 @@ export async function readMailMime(
     }
   };
 
+  const chunks: AsyncIterable<SplitterChunk> = splitter;
   try {
-    for await (const chunk of splitter as AsyncIterable<SplitterChunk>) {
+    for await (const chunk of chunks) {
       if (chunk.type === 'node') {
         await finish();
         const node = chunk;
@@ -256,7 +262,7 @@ export async function readMailMime(
         record.decodedBytes = 0;
         decoder.on('data', (bytes: Buffer) => {
           hash.update(bytes);
-          record.decodedBytes = (record.decodedBytes as number) + bytes.length;
+          record.decodedBytes = (record.decodedBytes ?? 0) + bytes.length;
           if (textDecoder !== null)
             part.text += textDecoder.decode(bytes, { stream: true });
         });
@@ -264,7 +270,7 @@ export async function readMailMime(
           part.path === null
             ? streamFinished(decoder, { cleanup: true })
             : pipeline(decoder, createWriteStream(part.path, { flags: 'wx' }));
-        finished.catch((error: unknown) => splitter.destroy(error as Error));
+        finished.catch((error: unknown) => splitter.destroy(failure(error)));
         active = { decoder, finished, part, hash, textDecoder };
       } else if (chunk.type === 'body' && active !== null) {
         if (!active.decoder.write(chunk.value))
@@ -276,8 +282,9 @@ export async function readMailMime(
     await assertMailFile(file);
     return { headers, parts };
   } catch (error) {
-    splitter.destroy(error as Error);
-    if (active !== null) active.decoder.destroy(error as Error);
+    const reason = failure(error);
+    splitter.destroy(reason);
+    if (active !== null) active.decoder.destroy(reason);
     await input.catch(() => {});
     if (active !== null) await active.finished.catch(() => {});
     await Promise.allSettled(

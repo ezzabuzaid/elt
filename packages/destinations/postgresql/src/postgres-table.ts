@@ -1,4 +1,5 @@
-import { type Stream, Target } from 'elt';
+import { type Stream, Target } from '@workspace/elt';
+
 import { identifier, quote } from './identifier.ts';
 import { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';

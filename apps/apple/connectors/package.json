@@ -1,5 +1,5 @@
 {
-  "name": "apple",
+  "name": "@workspace/apple",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -11,14 +11,14 @@
   },
   "dependencies": {
     "@zone-eu/mailsplit": "5.4.19",
-    "elt": "0.0.1",
-    "elt-sqlite": "0.0.1",
-    "google-auth": "0.0.1",
-    "import-store": "0.0.1",
+    "@workspace/elt": "0.0.1",
+    "@workspace/elt-sqlite": "0.0.1",
+    "@workspace/google-auth": "0.0.1",
+    "@workspace/import-store": "0.0.1",
     "libmime": "5.4.6"
   },
   "devDependencies": {
     "@types/libmime": "5.3.0",
-    "elt-markdown": "0.0.1"
+    "@workspace/elt-markdown": "0.0.1"
   }
 }

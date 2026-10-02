@@ -1,13 +1,13 @@
 import {
-  type FieldSchema,
+  type Properties,
+  type RecordDraft,
   type SchemaRecord,
   Stream,
   type SyncMode,
   validateRecords,
-} from 'elt';
-import type { BooksScan, BooksStore } from './books-scan.ts';
+} from '@workspace/elt';
 
-type Properties = Readonly<Record<string, FieldSchema>>;
+import type { BooksScan, BooksStore } from './books-scan.ts';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;
@@ -37,6 +37,7 @@ export const booksFields = {
 
 // What the source needs from any Books stream, whatever its record type.
 export type BooksReader = {
+  readonly name: string;
   readonly store: BooksStore;
   describe(): Stream;
   read(scan: BooksScan): Promise<Record<string, unknown>[]>;
@@ -78,10 +79,10 @@ export abstract class BooksStream<P extends Properties, Row> {
   async read(scan: BooksScan): Promise<SchemaRecord<P>[]> {
     const rows = await this.rows(scan);
     return validateRecords(
-      this.describe(),
+      this,
       rows.map((row) => this.record(row, scan)),
       'Books',
-    ) as SchemaRecord<P>[];
+    );
   }
 
   // The file a record carries, for streams that support file reads, staged
@@ -98,5 +99,5 @@ export abstract class BooksStream<P extends Properties, Row> {
     scan: BooksScan,
   ): readonly Row[] | Promise<readonly Row[]>;
 
-  protected abstract record(row: Row, scan: BooksScan): SchemaRecord<P>;
+  protected abstract record(row: Row, scan: BooksScan): RecordDraft<P>;
 }

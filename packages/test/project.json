@@ -5,6 +5,7 @@
   "projectType": "library",
   "tags": ["scope:app", "layer:island"],
   "targets": {
+    "format": {},
     "build": {
       "executor": "@nx/esbuild:esbuild",
       "outputs": ["{options.outputPath}"]

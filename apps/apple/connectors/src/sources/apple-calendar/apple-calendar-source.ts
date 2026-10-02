@@ -1,19 +1,21 @@
 import { lstat, mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
+
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  SourceMessage,
   SourceWatchOptions,
   Stream,
-} from 'elt';
+} from '@workspace/elt';
 import {
+  Source,
   diffSnapshot,
   isTimestamp,
-  Source,
-  type SourceMessage,
   validateRecords,
-} from 'elt';
+} from '@workspace/elt';
+
 import {
   EventKit,
   type EventKitRequest,
@@ -545,8 +547,8 @@ export class AppleCalendarSource extends Source<EventKitSnapshot> {
     const attachment = {
       uri: String(data.uri),
       // Validated against the icsAttachments schema: nullable text.
-      filename: data.filename as string | null,
-      formatType: data.formatType as string | null,
+      filename: data.filename === null ? null : String(data.filename),
+      formatType: data.formatType === null ? null : String(data.formatType),
       calendarId: String(data.calendarId),
       calendarItemId: String(data.calendarItemId),
     };

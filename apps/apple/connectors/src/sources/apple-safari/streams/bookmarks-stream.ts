@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { BookmarkNode } from '../bookmarks-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
@@ -12,11 +13,11 @@ import {
 
 const { nullableText } = safariFields;
 
-const kinds = {
-  WebBookmarkTypeList: 'folder',
-  WebBookmarkTypeLeaf: 'bookmark',
-  WebBookmarkTypeProxy: 'proxy',
-} as const;
+const kinds = new Map<unknown, string>([
+  ['WebBookmarkTypeList', 'folder'],
+  ['WebBookmarkTypeLeaf', 'bookmark'],
+  ['WebBookmarkTypeProxy', 'proxy'],
+]);
 
 const properties = {
   id: {
@@ -35,7 +36,7 @@ const properties = {
   },
   kind: {
     ...safariFields.text,
-    enum: Object.values(kinds),
+    enum: [...kinds.values()],
     description:
       'folder, bookmark, or proxy (a placeholder such as the History entry of the Bookmarks menu).',
   },
@@ -111,12 +112,12 @@ export class BookmarksStream extends SafariStream<
     node,
     parentId,
     position,
-  }: BookmarkNode): SchemaRecord<typeof properties> {
+  }: BookmarkNode): RecordDraft<typeof properties> {
     return {
-      id: node.WebBookmarkUUID as string,
+      id: node.WebBookmarkUUID,
       parentId,
       position,
-      kind: kinds[node.WebBookmarkType as keyof typeof kinds],
+      kind: kinds.get(node.WebBookmarkType) ?? null,
       title: text(node.Title) ?? text(dictionary(node.URIDictionary).title),
       url: text(node.URLString),
       identifier: text(node.WebBookmarkIdentifier),

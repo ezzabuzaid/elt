@@ -1,12 +1,13 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
 import {
+  type Row,
   appleTime,
   dictionary,
   number,
   plistTime,
-  type Row,
   text,
 } from '../safari-values.ts';
 
@@ -83,17 +84,14 @@ export class ProfilesStream extends SafariStream<typeof properties, Row> {
     return scan.tabs.profiles;
   }
 
-  protected record(
-    row: Row,
-    scan: SafariScan,
-  ): SchemaRecord<typeof properties> {
+  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
     const [extra] = scan.tabs.attributes(row);
     const color = scan.tabs.color(row);
     return {
-      id: row.external_uuid as string,
-      serverId: row.server_id as string,
+      id: row.external_uuid,
+      serverId: row.server_id,
       title: text(row.title),
-      position: row.order_index as number,
+      position: row.order_index,
       symbol: text(extra.SymbolImageName),
       colorName: text(color.colorName),
       red: number(color.redComponent),

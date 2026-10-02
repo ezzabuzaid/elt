@@ -1,5 +1,6 @@
 import type { SQLOutputValue } from 'node:sqlite';
-import type { PlistValue } from '../../platform/macos/plist.ts';
+
+import { type PlistValue, isDictionary } from '../../platform/macos/plist.ts';
 
 export type Row = Record<string, SQLOutputValue>;
 export type Dictionary = Readonly<Record<string, PlistValue>>;
@@ -47,15 +48,8 @@ export const number = (value: SQLOutputValue | PlistValue | undefined) =>
 export const flag = (value: SQLOutputValue | PlistValue | undefined) =>
   value === 1 || value === true;
 
-export function dictionary(value: PlistValue | undefined): Dictionary {
-  return value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    !(value instanceof Date) &&
-    !(value instanceof Uint8Array)
-    ? (value as Dictionary)
-    : {};
-}
+export const dictionary = (value: PlistValue | undefined): Dictionary =>
+  isDictionary(value) ? value : {};
 
 export const list = (value: PlistValue | undefined): readonly PlistValue[] =>
   Array.isArray(value) ? value : [];

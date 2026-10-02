@@ -1,4 +1,5 @@
 import { relative } from 'node:path';
+
 import { table } from '../table.ts';
 import { Command, type Output } from './command.ts';
 

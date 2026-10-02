@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+
 import {
   BooksDatabase,
   booksContainer,
@@ -405,7 +406,7 @@ export class BooksScan implements AsyncDisposable {
   }
 
   #value<S extends BooksStore>(store: S): Opened[S] {
-    const opened = this.#stores[store] as Result<Opened[S]> | undefined;
+    const opened: Result<Opened[S]> | undefined = this.#stores[store];
     if (opened === undefined)
       throw new Error(`Books ${store} was not opened for this run`);
     if ('error' in opened) throw opened.error;

@@ -1,7 +1,8 @@
-import type { ImportScope } from 'import-store';
+import type { ImportScope } from '@workspace/import-store';
+
 import { AppleNotesSource } from '../sources/apple-notes/apple-notes-source.ts';
 import { AppleApp } from './apple-app.ts';
-import { accounts, type Choice, collections, name } from './choice.ts';
+import { type Choice, accounts, collections, name } from './choice.ts';
 
 export class NotesApp extends AppleApp {
   readonly name = 'notes';

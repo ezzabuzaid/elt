@@ -5,7 +5,7 @@ description: Adds or extends a data source (connector) in context-compiler. Use 
 
 # Add an ELT source
 
-Paths are relative to the repository root. The *upstream* is the system the data comes from (Messages, the Search Console API); the *app* is the Nx project that owns the source (`apps/apple/connectors`, project `apple`; `apps/google`).
+Paths are relative to the repository root. The _upstream_ is the system the data comes from (Messages, the Search Console API); the _app_ is the Nx project that owns the source (`apps/apple/connectors`, project `apple`; `apps/google`).
 
 Copy this checklist into your response and tick it off as you go:
 

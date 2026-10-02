@@ -1,6 +1,7 @@
 import type { SQLInputValue } from 'node:sqlite';
-import type { DocumentParser } from 'elt';
-import { FileRead, type FileReference, isCalendarDate, isTimestamp } from 'elt';
+
+import type { DocumentParser, FileReference } from '@workspace/elt';
+import { FileRead, isCalendarDate, isTimestamp } from '@workspace/elt';
 
 // STRICT tables accept only these types, so dates and timestamps are their
 // canonical ISO text, which sorts in time order.
@@ -195,12 +196,10 @@ export class SQLiteColumn {
         if (typeof value === 'number' && Number.isFinite(value)) return value;
         break;
       case 'blob':
-        if (
-          this.storesFile
-            ? Number.isSafeInteger(value)
-            : value instanceof Uint8Array
-        )
-          return value as number | Uint8Array;
+        if (this.storesFile) {
+          if (typeof value === 'number' && Number.isSafeInteger(value))
+            return value;
+        } else if (value instanceof Uint8Array) return value;
     }
     throw new TypeError(
       `Column "${this.name}" requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,

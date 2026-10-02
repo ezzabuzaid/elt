@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+
 import {
   Connection,
   Copy,
@@ -8,15 +9,16 @@ import {
   type Source,
   type Stream,
   StreamStatus,
-} from 'elt';
+} from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   type SQLiteTable,
-} from 'elt-sqlite';
-import type { GoogleRequester } from 'google-auth';
-import type { ImportScope, Selection } from 'import-store';
+} from '@workspace/elt-sqlite';
+import type { GoogleRequester } from '@workspace/google-auth';
+import type { ImportScope, Selection } from '@workspace/import-store';
+
 import type { Choice, Row, Rows } from './choice.ts';
 
 // What the host running an app offers it.
@@ -58,7 +60,11 @@ export abstract class AppleApp {
   // load metadata only.
   protected abstract readonly storeCopies: readonly string[];
 
-  constructor(protected readonly host: AppleHost) {}
+  protected readonly host: AppleHost;
+
+  constructor(host: AppleHost) {
+    this.host = host;
+  }
 
   // What macOS needs granted to the grantee, besides Full Disk Access.
   protected abstract access(grantee: string): string;
@@ -154,11 +160,10 @@ export abstract class AppleApp {
         if (message.status === 'FAILED') throw message.error;
         continue;
       }
-      // Every Apple source validates its records against the stream's object
-      // schema.
       if (!('type' in message) && message.stream !== this.probe)
         rows.set(message.stream, [
           ...(rows.get(message.stream) ?? []),
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- every Apple source validates its records against the stream's object schema
           message.data as Row,
         ]);
     }

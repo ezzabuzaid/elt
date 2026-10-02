@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
 import { type NotesScan, type Row, string, time } from './notes-scan.ts';
 
@@ -50,11 +51,11 @@ export class InlineAttachmentsStream extends AppleNotesStream<
     return [...scan.inline.values()];
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      id: row.ZIDENTIFIER as string,
-      noteId: row.note as string,
-      type: row.ZTYPEUTI1 as string,
+      id: row.ZIDENTIFIER,
+      noteId: row.note,
+      type: row.ZTYPEUTI1,
       text: string(row.ZALTTEXT),
       target: string(row.ZTOKENCONTENTIDENTIFIER),
       createdAt: time(row.ZCREATIONDATE2),

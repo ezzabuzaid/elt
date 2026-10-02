@@ -1,5 +1,4 @@
 import { isCalendarDate, isTimestamp } from './formats.ts';
-import type { Stream } from './stream.ts';
 
 // The JSON Schema subset stream properties use: scalar types, optionally
 // nullable, with enum, range, length and date formats; or an array of one such
@@ -44,15 +43,33 @@ type Types<F extends FieldSchema> = F['type'] extends readonly (infer T)[]
 type FieldValue<F extends FieldSchema> =
   'array' extends Types<F>
     ? F['items'] extends ItemSchema
-      ?
-          | ScalarValue<F['items']['type']>[]
-          | ScalarValue<Exclude<Types<F>, 'array'>>
+      ? | ScalarValue<F['items']['type']>[]
+        | ScalarValue<Exclude<Types<F>, 'array'>>
       : never
     : ScalarValue<Types<F>>;
 
-// The record type an `as const` properties schema describes.
-export type SchemaRecord<P extends Readonly<Record<string, FieldSchema>>> = {
-  -readonly [K in keyof P]: FieldValue<P[K]>;
+export type Properties = Readonly<Record<string, FieldSchema>>;
+
+// What a stream declares about its records: an object of required properties.
+// A stream without properties loads only into explicit targets, and its
+// records cannot be validated.
+export type StreamSchema = {
+  readonly type: 'object';
+  readonly description?: string;
+  readonly properties?: Properties;
+  readonly required?: readonly string[];
+};
+
+// The record type an `as const` properties schema describes. A schema known
+// only as Properties describes records only as named values.
+export type SchemaRecord<P extends Properties> = string extends keyof P
+  ? Record<string, unknown>
+  : { -readonly [K in keyof P]: FieldValue<P[K]> };
+
+// A record before validateRecords checks its values against the schema: every
+// property named, none typed yet.
+export type RecordDraft<P extends Properties> = {
+  readonly [K in keyof P]: unknown;
 };
 
 const itemTypes = new Set<unknown>(['string', 'integer', 'number', 'boolean']);
@@ -105,7 +122,7 @@ function scalarValid(
   return (
     typed &&
     (field.enum === undefined ||
-      field.enum.includes(value as string | number)) &&
+      field.enum.some((member) => member === value)) &&
     !(
       typeof value === 'number' &&
       ((field.minimum !== undefined && value < field.minimum) ||
@@ -123,46 +140,59 @@ function scalarValid(
 
 // Every property is required and a record carries exactly those properties, so
 // a projection that drops or misspells a field fails here instead of loading.
-export function validateRecords(
-  stream: Stream,
+export function validateRecords<P extends Properties>(
+  stream: {
+    readonly name: string;
+    readonly jsonSchema: { readonly properties?: P };
+  },
   records: unknown,
   source: string,
-): Record<string, unknown>[] {
+): SchemaRecord<P>[] {
   if (!Array.isArray(records))
     throw new TypeError(`${source} returned invalid ${stream.name} records`);
-  const fields = Object.entries(
-    stream.jsonSchema.properties as Readonly<Record<string, FieldSchema>>,
-  );
+  const { properties } = stream.jsonSchema;
+  if (properties === undefined)
+    throw new TypeError(
+      `Stream ${stream.name} declares no properties to validate`,
+    );
+  const fields: [string, FieldSchema][] = Object.entries(properties);
   for (const [name, field] of fields)
     if (!supported(field))
       throw new TypeError(
         `Stream ${stream.name}.${name} declares an unsupported type`,
       );
+  const valid: SchemaRecord<P>[] = [];
   for (const record of records) {
-    if (
-      record === null ||
-      typeof record !== 'object' ||
-      Array.isArray(record) ||
-      Object.keys(record).length !== fields.length
-    )
-      throw new TypeError(
-        `${source} returned an invalid ${stream.name} record`,
-      );
-    for (const [name, field] of fields) {
-      const value: unknown = Reflect.get(record, name);
-      const types = typesOf(field);
-      if (value === null && types.includes('null')) continue;
-      const valid = isArrayField(field)
-        ? Array.isArray(value) &&
-          value.every((item) =>
-            scalarValid(field.items, [field.items.type], item),
-          )
-        : scalarValid(field, types, value);
-      if (!valid)
-        throw new TypeError(
-          `${source} returned invalid ${stream.name}.${name}`,
-        );
-    }
+    assertRecord<P>(record, fields, stream.name, source);
+    valid.push(record);
   }
-  return records;
+  return valid;
+}
+
+function assertRecord<P extends Properties>(
+  record: unknown,
+  fields: readonly [string, FieldSchema][],
+  stream: string,
+  source: string,
+): asserts record is SchemaRecord<P> {
+  if (
+    record === null ||
+    typeof record !== 'object' ||
+    Array.isArray(record) ||
+    Object.keys(record).length !== fields.length
+  )
+    throw new TypeError(`${source} returned an invalid ${stream} record`);
+  for (const [name, field] of fields) {
+    const value: unknown = Reflect.get(record, name);
+    const types = typesOf(field);
+    if (value === null && types.includes('null')) continue;
+    const valid = isArrayField(field)
+      ? Array.isArray(value) &&
+        value.every((item) =>
+          scalarValid(field.items, [field.items.type], item),
+        )
+      : scalarValid(field, types, value);
+    if (!valid)
+      throw new TypeError(`${source} returned invalid ${stream}.${name}`);
+  }
 }

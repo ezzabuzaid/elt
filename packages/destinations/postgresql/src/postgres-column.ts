@@ -4,7 +4,8 @@ import {
   type FileReference,
   isCalendarDate,
   isTimestamp,
-} from 'elt';
+} from '@workspace/elt';
+
 import { identifier, quote } from './identifier.ts';
 
 const storageTypes = {
@@ -30,11 +31,7 @@ const dataTypes = {
 
 // A value the batch insert can carry through JSON and cast back to the column type.
 export type EncodedValue =
-  | string
-  | number
-  | boolean
-  | null
-  | readonly (string | number | boolean)[];
+  string | number | boolean | null | readonly (string | number | boolean)[];
 
 // ISO years count astronomically, so year 0000 is 1 BC, which Postgres spells
 // as year 0001 with a BC suffix; every other year reads the same in both.
@@ -174,8 +171,7 @@ export class PostgresColumn {
     if (this.array) {
       if (Array.isArray(value)) {
         const elements = value.map((element) => this.#scalar(element));
-        if (elements.every((element) => element !== undefined))
-          return elements as (string | number | boolean)[];
+        if (elements.every((element) => element !== undefined)) return elements;
       }
       throw new TypeError(
         `Column "${this.name}" requires an array of ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,

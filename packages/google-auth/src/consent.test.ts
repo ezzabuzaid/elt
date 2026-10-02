@@ -6,9 +6,9 @@ import { LoginTicket, OAuth2Client } from 'google-auth-library';
 import { GoogleOAuthApp } from './app.ts';
 import { GoogleConsent } from './consent.ts';
 import type { GoogleDataGrantCredential } from './credential.ts';
-import { GoogleAccountGrant } from './grant.ts';
 import type { GoogleGrantVaultStore } from './grant-store.ts';
 import { GoogleGrantVault } from './grant-vault.ts';
+import { GoogleAccountGrant } from './grant.ts';
 import { GOOGLE_ANALYTICS_SCOPE, GOOGLE_BIGQUERY_SCOPE } from './scopes.ts';
 
 const APP = new GoogleOAuthApp({

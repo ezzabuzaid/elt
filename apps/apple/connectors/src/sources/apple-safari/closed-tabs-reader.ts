@@ -3,9 +3,10 @@ import { type ImportScope, selected } from '../import-scope.ts';
 import { type Dictionary, dictionary, list } from './safari-values.ts';
 
 // A closed tab: on its own in the list, or one of a closed window's tabs.
+// closedWindowId is the window's UUID as stored, which the stream validates.
 export type ClosedTab = {
   readonly state: Dictionary;
-  readonly closedWindowId: string | null;
+  readonly closedWindowId: PlistValue | undefined;
   readonly position: number;
 };
 
@@ -44,7 +45,7 @@ export class ClosedTabsReader {
       for (const [index, tab] of list(state.TabStates).entries())
         latest(this.#tabs, dictionary(tab).TabUUID, {
           state: dictionary(tab),
-          closedWindowId: state.WindowUUID as string,
+          closedWindowId: state.WindowUUID,
           position: index,
         });
     });

@@ -1,5 +1,6 @@
-import type { FileRead } from 'elt';
-import { Target } from 'elt';
+import type { FileRead } from '@workspace/elt';
+import { Target } from '@workspace/elt';
+
 import { MarkdownDocument } from './markdown-document.ts';
 
 // One stream becomes one document; each record becomes a section.

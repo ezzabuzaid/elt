@@ -16,7 +16,7 @@ export type IcsExport = {
 };
 
 export function isIcsStream(name: string): name is IcsStream {
-  return (icsStreams as readonly string[]).includes(name);
+  return icsStreams.some((stream) => stream === name);
 }
 
 export function validateIcsExports(items: unknown): IcsExport[] {

@@ -2,7 +2,9 @@ import { execFile } from 'node:child_process';
 import { open, readFile } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { DocumentParser } from 'elt';
+
+import { DocumentParser } from '@workspace/elt';
+
 import osa from '../platform/macos/osa.ts';
 
 const execute = promisify(execFile);

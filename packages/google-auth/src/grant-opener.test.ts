@@ -7,9 +7,9 @@ import { setupServer } from 'msw/node';
 import { GoogleOAuthApp } from './app.ts';
 import type { GoogleOAuthCredential } from './credential.ts';
 import { GoogleGrantMissingError, GoogleGrantRevokedError } from './errors.ts';
-import { GoogleGrant, GoogleImportedGrant } from './grant.ts';
 import { GoogleGrantOpener } from './grant-opener.ts';
 import type { GoogleGrantStore } from './grant-store.ts';
+import { GoogleGrant, GoogleImportedGrant } from './grant.ts';
 
 const APP = new GoogleOAuthApp({
   clientId: 'client-id',

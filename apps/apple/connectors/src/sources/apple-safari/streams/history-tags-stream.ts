@@ -1,7 +1,8 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { appleTime, type Row } from '../safari-values.ts';
+import { type Row, appleTime } from '../safari-values.ts';
 
 const { profileId } = safariFields;
 
@@ -53,16 +54,16 @@ export class HistoryTagsStream extends SafariStream<typeof properties, Row> {
     return scan.history.flatMap((history) => history.tags);
   }
 
-  protected record(row: Row): SchemaRecord<typeof properties> {
+  protected record(row: Row): RecordDraft<typeof properties> {
     return {
-      profileId: row.$profile as string,
-      id: row.id as number,
-      type: row.type as number,
-      level: row.level as number,
-      identifier: row.identifier as string,
-      title: row.title as string,
-      modifiedAt: appleTime(row.modification_timestamp) as string,
-      itemCount: row.item_count as number,
+      profileId: row.$profile,
+      id: row.id,
+      type: row.type,
+      level: row.level,
+      identifier: row.identifier,
+      title: row.title,
+      modifiedAt: appleTime(row.modification_timestamp),
+      itemCount: row.item_count,
     };
   }
 }

@@ -1,4 +1,5 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
 import type { Row } from '../safari-values.ts';
@@ -45,9 +46,9 @@ export class ProfileStartPageSectionsStream extends SafariStream<
     return scan.tabs.profiles.flatMap((profile) => {
       const data = scan.tabs.attributes(profile)[0].StartPageSectionsData;
       if (!(data instanceof Uint8Array)) return [];
-      const { Sections } = JSON.parse(Buffer.from(data).toString('utf8')) as {
-        Sections: Section['section'][];
-      };
+      const { Sections }: { Sections: Section['section'][] } = JSON.parse(
+        Buffer.from(data).toString('utf8'),
+      );
       return Sections.map((section, position) => ({
         profile,
         position,
@@ -60,9 +61,9 @@ export class ProfileStartPageSectionsStream extends SafariStream<
     profile,
     position,
     section,
-  }: Section): SchemaRecord<typeof properties> {
+  }: Section): RecordDraft<typeof properties> {
     return {
-      profileId: profile.external_uuid as string,
+      profileId: profile.external_uuid,
       position,
       identifier: section.Identifier,
       enabled: section.IsEnabled,

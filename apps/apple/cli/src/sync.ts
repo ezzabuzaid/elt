@@ -1,22 +1,22 @@
-import type { AppleApp } from 'apple/apps/apple-app';
+import type { AppleApp } from '@workspace/apple/apps/apple-app';
 import {
   type Connection,
   type CopyOutcome,
   type CopyProgress,
   type DeclaredCopy,
   Pipeline,
-  passError,
-  passStatus,
   type RecordedPass,
   type SyncStatus,
-} from 'elt';
+  passError,
+  passStatus,
+} from '@workspace/elt';
 import {
-  installSQLiteCatalog,
   type SQLiteDestination,
   SQLiteSyncHistory,
   type SQLiteTable,
-} from 'elt-sqlite';
-import type { ImportStore, Selection } from 'import-store';
+  installSQLiteCatalog,
+} from '@workspace/elt-sqlite';
+import type { ImportStore, Selection } from '@workspace/import-store';
 
 // How one pass of one app ended, as sync reports it.
 export type PassSummary = {

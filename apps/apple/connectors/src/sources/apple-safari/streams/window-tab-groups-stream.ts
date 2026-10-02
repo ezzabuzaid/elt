@@ -1,7 +1,8 @@
-import type { SchemaRecord } from 'elt';
+import type { RecordDraft } from '@workspace/elt';
+
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { flag, type Row } from '../safari-values.ts';
+import { type Row, flag } from '../safari-values.ts';
 
 const properties = {
   windowId: {
@@ -42,14 +43,11 @@ export class WindowTabGroupsStream extends SafariStream<
     return scan.tabs.windowTabGroups;
   }
 
-  protected record(
-    row: Row,
-    scan: SafariScan,
-  ): SchemaRecord<typeof properties> {
+  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
     const { tabs } = scan;
     return {
-      windowId: tabs.windowUuid(row.window_id) as string,
-      tabGroupId: tabs.uuid(row.tab_group_id) as string,
+      windowId: tabs.windowUuid(row.window_id),
+      tabGroupId: tabs.uuid(row.tab_group_id),
       activeTabId: tabs.uuid(row.active_tab_id),
       unnamed: flag(row.unnamed),
     };

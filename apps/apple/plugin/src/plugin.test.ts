@@ -7,20 +7,27 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+
 import {
   OpenAISettingsReadResultSchema,
   OpenAISettingsUpdateResultSchema,
 } from '@openai/mcp-extensions/server';
-import { BooksApp } from 'apple/apps/books';
-import { CalendarApp } from 'apple/apps/calendar';
-import { ContactsApp } from 'apple/apps/contacts';
-import { MailApp } from 'apple/apps/mail';
-import { MessagesApp } from 'apple/apps/messages';
-import { NotesApp } from 'apple/apps/notes';
-import { RemindersApp } from 'apple/apps/reminders';
-import { SafariApp } from 'apple/apps/safari';
-import { SQLiteSyncHistory } from 'elt-sqlite';
-import { importDirectory, leaseHeld, type Selection } from 'import-store';
+
+import { BooksApp } from '@workspace/apple/apps/books';
+import { CalendarApp } from '@workspace/apple/apps/calendar';
+import { ContactsApp } from '@workspace/apple/apps/contacts';
+import { MailApp } from '@workspace/apple/apps/mail';
+import { MessagesApp } from '@workspace/apple/apps/messages';
+import { NotesApp } from '@workspace/apple/apps/notes';
+import { RemindersApp } from '@workspace/apple/apps/reminders';
+import { SafariApp } from '@workspace/apple/apps/safari';
+import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
+import {
+  type Selection,
+  importDirectory,
+  leaseHeld,
+} from '@workspace/import-store';
+
 import { ApplePlugin } from './apple-plugin.ts';
 import { chatStatus } from './chat-status.ts';
 import { keepFresh } from './freshness.ts';

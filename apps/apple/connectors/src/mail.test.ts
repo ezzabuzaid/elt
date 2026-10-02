@@ -4,8 +4,8 @@ import { mkdirSync } from 'node:fs';
 import {
   mkdir,
   mkdtempDisposable,
-  readdir,
   readFile,
+  readdir,
   rename,
   writeFile,
 } from 'node:fs/promises';
@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { crc32, deflateSync } from 'node:zlib';
+
 import {
   Connection,
   Copy,
@@ -22,15 +23,16 @@ import {
   Pipeline,
   PipelineError,
   type Source,
-} from 'elt';
-import { MarkdownDestination } from 'elt-markdown';
+} from '@workspace/elt';
+import { MarkdownDestination } from '@workspace/elt-markdown';
 import {
-  installSQLiteCatalog,
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
-} from 'elt-sqlite';
+  installSQLiteCatalog,
+} from '@workspace/elt-sqlite';
+
 import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
 import osa from './platform/macos/osa.ts';
 import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
@@ -503,7 +505,10 @@ function bytes(path: string, table: string, file: unknown) {
     rows(
       path,
       `SELECT bytes FROM "_elt_files_${table}_bytes" WHERE file = ${Number(file)} ORDER BY n`,
-    ).map((row) => row.bytes as Uint8Array),
+    ).map((row) => {
+      assert.ok(row.bytes instanceof Uint8Array);
+      return row.bytes;
+    }),
   );
 }
 async function pipeline(source: AppleMailSource, directory: string) {
@@ -1213,12 +1218,14 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
   );
   assert.deepEqual(
     mail
-      .read(`
+      .read(
+        `
         SELECT m.id, s.subject, count(r.id) AS recipients
         FROM messages m
         JOIN subjects s ON s.id = m.subject
         LEFT JOIN recipients r ON r.message = m.id
-        GROUP BY m.id, s.subject ORDER BY m.id`)
+        GROUP BY m.id, s.subject ORDER BY m.id`,
+      )
       .map((found) => ({ ...found })),
     [
       { id: '1', subject: 'Hello 🌍', recipients: 1 },
@@ -1236,11 +1243,13 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
   // The host of a mailbox URL names the account that owns it.
   assert.deepEqual(
     mail
-      .read(`
+      .read(
+        `
         WITH b AS (SELECT url, substr(url, instr(url, '://') + 3) AS rest FROM mailboxes)
         SELECT b.url, a.properties ->> '$.type' AS type
         FROM b JOIN accounts a ON a.id = substr(b.rest, 1, instr(b.rest, '/') - 1)
-        ORDER BY b.url`)
+        ORDER BY b.url`,
+      )
       .map((found) => ({ ...found })),
     [
       { url: 'imap://ACCOUNT/INBOX', type: 'iCloud' },
