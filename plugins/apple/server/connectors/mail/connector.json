@@ -1,0 +1,5 @@
+{
+    "name": "mail",
+    "title": "Mail",
+    "entry": "./mail-app.mjs"
+}

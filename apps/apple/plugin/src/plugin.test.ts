@@ -13,14 +13,8 @@ import {
   OpenAISettingsUpdateResultSchema,
 } from '@openai/mcp-extensions/server';
 
-import BooksApp from '@workspace/apple/apps/books/books-app';
-import CalendarApp from '@workspace/apple/apps/calendar/calendar-app';
-import ContactsApp from '@workspace/apple/apps/contacts/contacts-app';
-import MailApp from '@workspace/apple/apps/mail/mail-app';
-import MessagesApp from '@workspace/apple/apps/messages/messages-app';
-import NotesApp from '@workspace/apple/apps/notes/notes-app';
-import RemindersApp from '@workspace/apple/apps/reminders/reminders-app';
-import SafariApp from '@workspace/apple/apps/safari/safari-app';
+import { Connectors } from '@workspace/apple-manifest/connectors';
+import { builtInConnectors } from '@workspace/apple/apps/built-in-connectors';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import {
   type Selection,
@@ -37,17 +31,9 @@ import { settingsRead, settingsUpdate } from './native-settings.ts';
 const install = resolve('plugins/apple');
 
 // The apps the plugin's server creates.
-const host = { grantee: 'ChatGPT' };
-const apps = [
-  new MailApp(host),
-  new NotesApp(host),
-  new MessagesApp(host),
-  new ContactsApp(host),
-  new CalendarApp(host),
-  new RemindersApp(host),
-  new SafariApp(host),
-  new BooksApp(host),
-];
+const { apps } = await new Connectors([builtInConnectors]).load({
+  grantee: 'ChatGPT',
+});
 
 // Stands in for the leading server's import of one app selection.
 function imported(directory: string, item: Selection) {

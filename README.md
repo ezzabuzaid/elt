@@ -42,7 +42,7 @@ The [Apple plugin](plugins/apple/.codex-plugin/plugin.json) is a Codex plugin wi
 
 Setup asks in one form which apps to import, each in full; an app narrowed earlier in chat keeps that selection. Mail, Notes, Messages, Safari and Books need Full Disk Access for ChatGPT, which macOS does not prompt for; when it is missing, setup reports those apps as unavailable and a second form offers to open the Full Disk Access list in System Settings. Users do not install Node, Docker or a repository: the launcher runs the server on the Node runtime bundled with the desktop app. The terminal equivalent of steps 1–2 is `codex plugin marketplace add ezzabuzaid/elt`. The post-install setup prompt requires Codex 0.156 or later.
 
-`plugins/apple` is the installable package, committed as Codex runs it; [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) lists it. Its server is one bundled file, `plugins/apple/server.mjs`, built from `apps/apple/plugin` by `npx nx run apple-plugin:bundle`. `apple-plugin:test` rebuilds it, so commit the bundle with the source change that produced it.
+`plugins/apple` is the installable package, committed as Codex runs it; [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) lists it. Its server is bundled into `plugins/apple/server` from `apps/apple/plugin` by `npx nx run apple-plugin:bundle` (`apps/apple/plugin/build.mjs`): `main.mjs`, one connector folder per built-in Apple app, and the chunks they share. `apple-plugin:test` rebuilds it, so commit the bundle with the source change that produced it.
 
 The MCP tools only set up; the settings file's `selected_apps` view lists each selected app and where its import lives. Each selection imports into `~/Library/Application Support/Context Compiler/Apple/<app>/<selection>`: `data.sqlite`, where each stream loads into a `raw_<stream>` table read through a described view, beside the `catalog`, `sync_status`, `stream_status` and `extraction_coverage` views elt-sqlite publishes, plus checkpoints and managed attachment copies. The query skill reads each `data.sqlite` directly with `sqlite3 -readonly`; the Codex sandbox also denies writes there. While Codex is open, one plugin server per Mac keeps every selected app's import current: the first pass loads each app, then each app's own change watcher triggers the next, and a pass reads only what changed (Mail skips messages whose files are unchanged). Setup returns once the answers are saved; an app that has not finished its first import is reported as importing. Every pass is recorded in the app's own file, so a reader judges freshness from the file it queries. A changed scope is a new import; the previous copy is removed. After install, the plugin's page in ChatGPT (Plugins › Apple) has a native Settings section, served through the `openai/settings` MCP extension: a switch per app with its sync status. The setup skill can be run again to change or disconnect apps. It accesses content already available on the Mac; Calendar keeps remote attachment links without requiring Google sign-in. Scoped Mail omits global settings and native metadata streams whose ownership cannot be established.
 
@@ -117,7 +117,7 @@ A copy like this replaces the `notes` table's contents with the current snapshot
 
 ### Connector registration
 
-The Apple connectors live in [`apps/apple/connectors`](apps/apple/connectors/src/apps) (project `apple`), one folder per app with a `connector.json` manifest and an `AppleApp` class. The [CLI](apps/apple/cli/src/main.ts) discovers them through [`apps/apple/manifest`](apps/apple/manifest/src/connectors.ts); the [plugin](apps/apple/plugin/src/main.ts) still creates each one. Both load each selected app into its own SQLite import.
+The Apple connectors live in [`apps/apple/connectors`](apps/apple/connectors/src/apps) (project `apple`), one folder per app with a `connector.json` manifest and an `AppleApp` class. The [CLI](apps/apple/cli/src/main.ts) and the [plugin](apps/apple/plugin/src/main.ts) discover them through [`apps/apple/manifest`](apps/apple/manifest/src/connectors.ts). Both load each selected app into its own SQLite import.
 
 [Google connectors](apps/google/src/connectors.ts) default-exports a list of `{ name, run }` entries that `main.ts` calls in a plain loop. Each `run()` configures its own source, credentials, pipeline and post-load work: Search Console's builds a `Pipeline` with one `google-search-console` connection and a `PostgresSyncHistory`, then publishes its marts after a complete or partial load, once every raw table exists.
 
@@ -396,7 +396,7 @@ packages/destinations/markdown/   Markdown destination (elt-markdown)
 packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
 apps/apple/connectors/ Apple connectors, native bridges, and document parser (project apple)
-apps/apple/plugin/     Codex plugin server, bundled into plugins/apple/server.mjs (apple-plugin)
+apps/apple/plugin/     Codex plugin server, bundled into plugins/apple/server (apple-plugin)
 apps/apple/cli/        Terminal CLI over the Apple connectors: setup, sync, status, query (apple-cli)
 apps/google/           Google connectors and example app
 docs/                  Detailed behavior and native API research

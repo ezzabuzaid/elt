@@ -6,14 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import BooksApp from '@workspace/apple/apps/books/books-app';
-import CalendarApp from '@workspace/apple/apps/calendar/calendar-app';
-import ContactsApp from '@workspace/apple/apps/contacts/contacts-app';
-import MailApp from '@workspace/apple/apps/mail/mail-app';
-import MessagesApp from '@workspace/apple/apps/messages/messages-app';
-import NotesApp from '@workspace/apple/apps/notes/notes-app';
-import RemindersApp from '@workspace/apple/apps/reminders/reminders-app';
-import SafariApp from '@workspace/apple/apps/safari/safari-app';
+import { Connectors } from '@workspace/apple-manifest/connectors';
 
 import { ApplePlugin, PluginUpdatedError } from './apple-plugin.ts';
 import { chatContext } from './chat-status.ts';
@@ -24,24 +17,17 @@ import { setUpWithForms } from './setup-forms.ts';
 if (process.platform !== 'darwin')
   throw new Error('Apple requires Codex on a Mac.');
 
-// This bundle sits at the root of the installed plugin.
-const install = fileURLToPath(new URL('.', import.meta.url));
+// This bundle sits in the server folder of the installed plugin, beside the
+// connector folders of the built-in Apple apps.
+const install = fileURLToPath(new URL('..', import.meta.url));
 // macOS grants access to ChatGPT, which runs Codex. Calendar's remote
 // attachments stay links, so users never sign in to Google.
-const host = { grantee: 'ChatGPT' };
-const plugin = new ApplePlugin(
-  [
-    new MailApp(host),
-    new NotesApp(host),
-    new MessagesApp(host),
-    new ContactsApp(host),
-    new CalendarApp(host),
-    new RemindersApp(host),
-    new SafariApp(host),
-    new BooksApp(host),
-  ],
-  install,
-);
+const { apps, broken } = await new Connectors([
+  fileURLToPath(new URL('connectors', import.meta.url)),
+]).load({ grantee: 'ChatGPT' });
+for (const { title, error } of broken)
+  process.stderr.write(`${title} could not be loaded: ${error}\n`);
+const plugin = new ApplePlugin(apps, install);
 const { version } = z
   .object({ version: z.string() })
   .parse(
@@ -52,8 +38,7 @@ const { version } = z
 const mcpServer = new McpServer(
   { name: 'apple', version },
   {
-    instructions:
-      'Apple imports the Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari and Books content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.',
+    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
   },
 );
 // McpServer turns a thrown error into an isError result the model can act on.

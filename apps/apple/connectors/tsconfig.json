@@ -6,7 +6,7 @@
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts", "src/apps/*/connector.json"],
+  "include": ["src/**/*.ts", "src/**/*.mts", "src/apps/*/connector.json"],
   "references": [
     {
       "path": "../../../packages/google-auth"

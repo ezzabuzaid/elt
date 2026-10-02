@@ -8,7 +8,6 @@ import {
   AppleCalendarSource,
   type CalendarAttachmentFetcher,
 } from '../../sources/apple-calendar/apple-calendar-source.ts';
-import { googleCalendarAttachments } from '../../sources/apple-calendar/google-calendar-attachments.ts';
 import { AppleApp } from '../apple-app.ts';
 import { type Choice, accounts, collections, name } from '../choice.ts';
 
@@ -42,13 +41,16 @@ export default class CalendarApp extends AppleApp {
   }
 
   // An import downloads attachments stored in Google Drive and Gmail when
-  // the host offers a Google session.
+  // the host offers a Google session. The Google client loads only then, so
+  // a host without one never runs it.
   protected override async importSource(scope: ImportScope) {
     if (this.host.google === undefined) return this.source(scope);
     const google = await this.host.google([
       GOOGLE_DRIVE_READONLY_SCOPE,
       GMAIL_READONLY_SCOPE,
     ]);
+    const { googleCalendarAttachments } =
+      await import('../../sources/apple-calendar/google-calendar-attachments.ts');
     return this.#calendar(scope, googleCalendarAttachments(google));
   }
 

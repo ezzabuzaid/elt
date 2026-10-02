@@ -9,6 +9,6 @@ package-lock.json
 /outputs
 /videos
 # Bundled by `nx run apple-plugin:bundle`; esbuild owns its formatting
-plugins/apple/server.mjs
+plugins/apple/server
 # Written by VS Code
 .vscode/sessions.json

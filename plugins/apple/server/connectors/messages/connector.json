@@ -1,0 +1,5 @@
+{
+    "name": "messages",
+    "title": "Messages",
+    "entry": "./messages-app.mjs"
+}

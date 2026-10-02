@@ -6,7 +6,7 @@
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts", "src/fixtures/*/connector.json"],
+  "include": ["src/**/*.ts", "src/**/*.mts", "src/fixtures/*/connector.json"],
   "references": [
     {
       "path": "../connectors"

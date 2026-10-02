@@ -1,5 +1,5 @@
 {
   "name": "not-an-app",
   "title": "Not an app",
-  "entry": "./not-an-app-app.js"
+  "entry": "./not-an-app-app.mjs"
 }

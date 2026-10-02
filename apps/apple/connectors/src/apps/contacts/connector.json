@@ -1,5 +1,5 @@
 {
   "name": "contacts",
   "title": "Contacts",
-  "entry": "./contacts-app.js"
+  "entry": "./contacts-app.mjs"
 }

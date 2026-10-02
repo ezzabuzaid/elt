@@ -1,0 +1,5 @@
+{
+    "name": "contacts",
+    "title": "Contacts",
+    "entry": "./contacts-app.mjs"
+}

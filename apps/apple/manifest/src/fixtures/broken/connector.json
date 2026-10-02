@@ -1,5 +1,5 @@
 {
   "name": "broken",
   "title": "Broken",
-  "entry": "./broken-app.js"
+  "entry": "./broken-app.mjs"
 }

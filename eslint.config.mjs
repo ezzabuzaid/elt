@@ -26,7 +26,7 @@ export default [
   {
     // Flat config never reads .gitignore, so build output and the bundled
     // plugin server are listed here.
-    ignores: ['**/dist', '**/out-tsc', 'plugins/apple/server.mjs'],
+    ignores: ['**/dist', '**/out-tsc', 'plugins/apple/server'],
   },
   {
     files: ['**/*.ts', '**/*.js'],

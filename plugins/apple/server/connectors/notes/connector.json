@@ -1,0 +1,5 @@
+{
+    "name": "notes",
+    "title": "Notes",
+    "entry": "./notes-app.mjs"
+}

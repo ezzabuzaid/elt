@@ -2,7 +2,7 @@
   "mcpServers": {
     "apple": {
       "command": "./launch_node",
-      "args": ["./server.mjs"],
+      "args": ["./server/main.mjs"],
       "cwd": ".",
       "tool_timeout_sec": 1800,
       "env_vars": [

@@ -40,7 +40,7 @@ test('every connector folder loads as its app for the host, and one that cannot 
       },
       {
         title: 'Not an app',
-        error: `${fixtures}not-an-app/not-an-app-app.js does not export an AppleApp class by default.`,
+        error: `${fixtures}not-an-app/not-an-app-app.mjs does not export an AppleApp class by default.`,
       },
       { title: 'Notes again', error: 'Another connector is named notes.' },
     ],

@@ -8,7 +8,8 @@
     "@workspace/elt": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1",
     "@workspace/import-store": "0.0.1",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@workspace/apple-manifest": "0.0.1"
   },
   "devDependencies": {
     "@openai/mcp-extensions": "0.1.0"

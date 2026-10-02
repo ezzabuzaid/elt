@@ -1,5 +1,5 @@
 {
   "name": "calendar",
   "title": "Calendar",
-  "entry": "./calendar-app.js"
+  "entry": "./calendar-app.mjs"
 }
