@@ -1,15 +1,11 @@
-import type {
-  AppConfiguration,
-  ApplePlugin,
-  ImportSync,
-} from './apple-plugin.ts';
-import { type App, appNames, apps } from './apps.ts';
+import type { Selection } from 'import-store';
+import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
 
 // The plugin page's native Settings section (the openai/settings MCP
 // extension): one switch per app, described by that app's import status.
 // Scopes other than an app's default are chosen in the setup forms.
 
-export type SettingsValues = Record<App, boolean>;
+export type SettingsValues = Record<string, boolean>;
 
 const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
 
@@ -25,37 +21,13 @@ function ago(instant: string, now: Date): string {
   return 'just now';
 }
 
-// What the import covers, in the words the setup forms use.
-function coverage({ app, scope }: AppConfiguration): string {
-  const parts: string[] = [];
-  if (scope.accountIds !== undefined)
-    parts.push(
-      `${scope.accountIds.length} account${scope.accountIds.length === 1 ? '' : 's'}`,
-    );
-  const collection = apps[app].choices.find(
-    ({ scope: kind }) => kind === 'collectionIds',
-  )?.stream;
-  if (scope.collectionIds !== undefined && collection !== undefined)
-    parts.push(
-      `${scope.collectionIds.length} ${scope.collectionIds.length === 1 ? collection.replace(/(x)es$|s$/, '$1') : collection}`,
-    );
-  if (scope.startAt !== undefined)
-    parts.push(`from ${scope.startAt.slice(0, 10)}`);
-  if (scope.endAt !== undefined)
-    parts.push(
-      `until ${new Date(Date.parse(scope.endAt) - 1).toISOString().slice(0, 10)}`,
-    );
-  return parts.length === 0 ? 'everything' : parts.join(', ');
-}
-
-const failure = (app: App, error: string) =>
-  `${error} ${apps[app].permissions}`;
-
 function describe(
-  item: AppConfiguration & { sync: ImportSync | null },
+  plugin: ApplePlugin,
+  item: Selection & { sync: ImportSync | null },
   now: Date,
 ): string {
   const { sync } = item;
+  const app = plugin.app(item.app);
   if (sync === null) return 'Waiting to import.';
   switch (sync.state) {
     case 'running':
@@ -63,11 +35,11 @@ function describe(
     case 'interrupted':
       return 'Paused: resumes the next time Codex runs the Apple plugin.';
     case 'succeeded':
-      return `Synced ${ago(sync.completedAt, now)} · ${coverage(item)}.`;
+      return `Synced ${ago(sync.completedAt, now)} · ${app.describe(item.scope)}.`;
     case 'partial':
-      return `Partly synced ${ago(sync.completedAt, now)}: ${failure(item.app, sync.error)}`;
+      return `Partly synced ${ago(sync.completedAt, now)}: ${sync.error} ${app.guidance()}`;
     case 'failed':
-      return `Last sync failed: ${failure(item.app, sync.error)}`;
+      return `Last sync failed: ${sync.error} ${app.guidance()}`;
   }
 }
 
@@ -75,34 +47,37 @@ export function settingsRead(plugin: ApplePlugin, now = new Date()) {
   const connected = new Map(
     plugin.status().apps.map((item) => [item.app, item]),
   );
+  const names = plugin.apps.map(({ name }) => name);
   return {
     schema: {
       type: 'object' as const,
       properties: Object.fromEntries(
-        appNames.map((app) => {
-          const item = connected.get(app);
+        plugin.apps.map(({ name, title }) => {
+          const item = connected.get(name);
           return [
-            app,
+            name,
             {
               type: 'boolean' as const,
-              title: apps[app].title,
+              title,
               description:
-                item === undefined ? 'Not connected.' : describe(item, now),
+                item === undefined
+                  ? 'Not connected.'
+                  : describe(plugin, item, now),
             },
           ];
         }),
       ),
     },
     values: Object.fromEntries(
-      appNames.map((app) => [app, connected.has(app)]),
-    ) as SettingsValues,
+      names.map((name) => [name, connected.has(name)]),
+    ),
     layout: [
       {
         kind: 'group' as const,
         title: 'Apps',
-        items: appNames.map((app) => ({
+        items: names.map((name) => ({
           kind: 'property' as const,
-          property: app,
+          property: name,
         })),
       },
     ],
@@ -123,7 +98,8 @@ export function settingsUpdate(
       scope,
       includeAttachments,
     }));
-  const added = appNames
+  const added = plugin.apps
+    .map(({ name }) => name)
     .filter(
       (app) => set[app] === true && !current.some((item) => item.app === app),
     )

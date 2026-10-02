@@ -1,4 +1,7 @@
-import { GMAIL_READONLY_SCOPE, GOOGLE_DRIVE_READONLY_SCOPE } from 'google-auth';
+import {
+  GMAIL_READONLY_SCOPE,
+  GOOGLE_DRIVE_READONLY_SCOPE,
+} from 'google-auth/scopes';
 import type { ImportScope } from 'import-store';
 import {
   AppleCalendarSource,

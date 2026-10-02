@@ -6,12 +6,8 @@ import {
   hasFullDiskAccess,
   openFullDiskAccessSettings,
 } from 'apple/platform/macos/full-disk-access';
-import {
-  type AppConfiguration,
-  type ApplePlugin,
-  appSchema,
-} from './apple-plugin.ts';
-import { type App, appNames, apps } from './apps.ts';
+import type { Selection } from 'import-store';
+import type { ApplePlugin } from './apple-plugin.ts';
 
 export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 
@@ -43,9 +39,9 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
           type: 'array',
           title: 'Apps',
           items: {
-            anyOf: appNames.map((app) => ({
-              const: app,
-              title: apps[app].title,
+            anyOf: plugin.apps.map(({ name, title }) => ({
+              const: name,
+              title,
             })),
           },
           default: [...previous.keys()],
@@ -55,14 +51,16 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
     },
   });
   if (picked.action !== 'accept') return { changed: false, ...plugin.status() };
-  const chosen = appSchema.array().parse(picked.content?.apps);
-  const behindFullDiskAccess = chosen.filter((app) => apps[app].fullDiskAccess);
+  const chosen = plugin.appSchema.array().parse(picked.content?.apps);
+  const behindFullDiskAccess = chosen.filter(
+    (app) => plugin.app(app).fullDiskAccess,
+  );
   const blocked =
     behindFullDiskAccess.length > 0 && !(await hasFullDiskAccess())
       ? behindFullDiskAccess
       : [];
-  const configuration: AppConfiguration[] = [];
-  const unavailable: { app: App; error: string; permissions: string }[] = [];
+  const configuration: Selection[] = [];
+  const unavailable: { app: string; error: string; permissions: string }[] = [];
   for (const app of chosen) {
     try {
       if (blocked.includes(app))
@@ -75,7 +73,7 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       unavailable.push({
         app,
         error: error instanceof Error ? error.message : String(error),
-        permissions: apps[app].permissions,
+        permissions: plugin.app(app).guidance(),
       });
       const kept = previous.get(app);
       if (kept !== undefined) configuration.push(kept);
@@ -86,18 +84,21 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   return {
     changed: true,
     unavailable,
-    openedFullDiskAccess: await offerFullDiskAccess(ask, blocked),
+    openedFullDiskAccess: await offerFullDiskAccess(
+      ask,
+      blocked.map((app) => plugin.app(app).title),
+    ),
     ...saved,
   };
 }
 
-async function offerFullDiskAccess(ask: Ask, blocked: App[]) {
-  const titles = new Intl.ListFormat('en', { type: 'conjunction' }).format(
-    blocked.map((app) => apps[app].title),
+async function offerFullDiskAccess(ask: Ask, titles: readonly string[]) {
+  const listed = new Intl.ListFormat('en', { type: 'conjunction' }).format(
+    titles,
   );
   const answer = await ask({
     mode: 'form',
-    message: `${titles} ${blocked.length === 1 ? 'needs' : 'need'} Full Disk Access, which macOS never asks for. Turn on ChatGPT in the list that opens, then quit and reopen ChatGPT and run Set up Apple again.`,
+    message: `${listed} ${titles.length === 1 ? 'needs' : 'need'} Full Disk Access, which macOS never asks for. Turn on ChatGPT in the list that opens, then quit and reopen ChatGPT and run Set up Apple again.`,
     requestedSchema: {
       type: 'object',
       properties: {

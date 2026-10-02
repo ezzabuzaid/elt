@@ -1,12 +1,11 @@
 import { relative } from 'node:path';
 import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
-import { type App, apps } from './apps.ts';
 
 // What a chat's hooks add to the model's context: each selected app, where its
 // import lives and how its last pass went. A chat keeps it until it changes,
 // so times are instants, not "minutes ago".
 
-const progress = (sync: ImportSync | null, app: App): string => {
+const progress = (sync: ImportSync | null, guidance: string): string => {
   if (sync === null) return 'waiting for its first import';
   const since =
     sync.lastSucceededAt === null
@@ -20,9 +19,9 @@ const progress = (sync: ImportSync | null, app: App): string => {
     case 'interrupted':
       return `its last pass stopped unfinished and resumes when Codex runs the Apple plugin; ${since}`;
     case 'partial':
-      return `partly synced at ${sync.completedAt}: ${sync.error} ${apps[app].permissions}`;
+      return `partly synced at ${sync.completedAt}: ${sync.error} ${guidance}`;
     case 'failed':
-      return `last sync failed at ${sync.completedAt}: ${sync.error} ${apps[app].permissions}; ${since}`;
+      return `last sync failed at ${sync.completedAt}: ${sync.error} ${guidance}; ${since}`;
   }
 };
 
@@ -61,7 +60,7 @@ export function chatStatus(plugin: ApplePlugin): {
       `Apple apps the user connected, each imported into its own SQLite file under "${plugin.directory}". Read them as $query-apple describes.`,
       ...selected.map(
         ({ app, database, sync }) =>
-          `- ${apps[app].title}: ${progress(sync, app)}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`,
+          `- ${plugin.app(app).title}: ${progress(sync, plugin.app(app).guidance())}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`,
       ),
     ].join('\n'),
   };

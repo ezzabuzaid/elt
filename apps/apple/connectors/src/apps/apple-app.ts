@@ -99,11 +99,20 @@ export abstract class AppleApp {
   // What a selection of this app covers, in a person's words.
   describe(scope: ImportScope): string {
     const parts = [
-      ...this.choices.flatMap(({ scope: ids, title }) =>
-        scope[ids] ? [`${scope[ids].length} ${title}`] : [],
-      ),
+      ...this.choices.flatMap(({ scope: ids, title }) => {
+        const count = scope[ids]?.length;
+        if (count === undefined) return [];
+        return [
+          `${count} ${count === 1 ? title.replace(/(x)es$|s$/, '$1') : title}`,
+        ];
+      }),
       ...(scope.startAt ? [`from ${scope.startAt.slice(0, 10)}`] : []),
-      ...(scope.endAt ? [`until ${scope.endAt.slice(0, 10)}`] : []),
+      // endAt is exclusive: the last day covered is the one before it.
+      ...(scope.endAt
+        ? [
+            `until ${new Date(Date.parse(scope.endAt) - 1).toISOString().slice(0, 10)}`,
+          ]
+        : []),
     ];
     return parts.length === 0 ? 'everything' : parts.join(', ');
   }

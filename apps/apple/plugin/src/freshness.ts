@@ -1,9 +1,13 @@
 import { setInterval, setTimeout as sleep } from 'node:timers/promises';
 import { Pipeline } from 'elt';
 import { installSQLiteCatalog, SQLiteSyncHistory } from 'elt-sqlite';
-import { ImportStore, lease, type Selection } from 'import-store';
+import {
+  ImportStore,
+  importDirectory,
+  lease,
+  type Selection,
+} from 'import-store';
 import type { ApplePlugin } from './apple-plugin.ts';
-import { appConnection } from './sync.ts';
 
 function readSelections(directory: string): Selection[] {
   using store = new ImportStore(directory);
@@ -27,14 +31,19 @@ function tidy(directory: string) {
 // an app whose connection cannot be built has no pipeline to record it, so its
 // failure is kept in the store's settings until it builds.
 async function watchImports(
-  directory: string,
+  plugin: ApplePlugin,
   selections: readonly Selection[],
   signal: AbortSignal,
 ) {
+  const { directory } = plugin;
   const imports = [];
   for (const item of selections)
     try {
-      imports.push(await appConnection(directory, item));
+      imports.push(
+        await plugin
+          .app(item.app)
+          .connection(importDirectory(directory, item), item),
+      );
       using store = new ImportStore(directory);
       store.clearConnectionFailure(item);
     } catch (error) {
@@ -121,7 +130,7 @@ async function lead(plugin: ApplePlugin, signal: AbortSignal) {
         watching,
       );
       tidy(directory);
-      await watchImports(directory, selections, watching);
+      await watchImports(plugin, selections, watching);
     } catch {
       // Retried below, once the selection changes or a minute passes.
     }
