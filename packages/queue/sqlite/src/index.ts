@@ -1064,22 +1064,18 @@ export class SqliteJobQueue
       options.orderByCreatedOn === false ? undefined : 'created_on',
       'id',
     ].filter(Boolean);
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM background_jobs
-        WHERE ${where.join(' AND ')}
-        ORDER BY ${order.join(', ')}
-        LIMIT ?`,
-      )
-      .all(...values, batchSize)
-      .map(mapJobRow);
-
-    if (rows.length === 0) {
-      return [];
-    }
-
-    const ids = rows.map((row) => row.id);
-    this.transaction(() => {
+    // Chosen and claimed under one write lock, as pg-boss's FOR UPDATE SKIP
+    // LOCKED does: another process sharing the file cannot claim the same job.
+    const claimed = this.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM background_jobs
+          WHERE ${where.join(' AND ')}
+          ORDER BY ${order.join(', ')}
+          LIMIT ?`,
+        )
+        .all(...values, batchSize)
+        .map(mapJobRow);
       const statement = this.db.prepare(
         `UPDATE background_jobs
         SET state = 'active',
@@ -1090,27 +1086,19 @@ export class SqliteJobQueue
             WHEN started_on IS NOT NULL THEN retry_count + 1
             ELSE retry_count
           END
-        WHERE queue_name = ? AND id = ? AND state IN ('created', 'retry')`,
+        WHERE queue_name = ? AND id = ? AND state IN ('created', 'retry')
+        RETURNING *`,
       );
-      for (const row of rows) {
+      return rows.map((row) => {
         const leaseExpiresOn =
           row.heartbeat_seconds === null
             ? null
             : asIso(addSeconds(this.now(), row.heartbeat_seconds));
-        statement.run(now, now, leaseExpiresOn, name, row.id);
-      }
+        return mapJobRow(statement.get(now, now, leaseExpiresOn, name, row.id));
+      });
     });
 
-    const claimedRows = this.db
-      .prepare(
-        `SELECT * FROM background_jobs
-        WHERE queue_name = ? AND id IN (${ids.map(() => '?').join(', ')})
-        ORDER BY created_on, id`,
-      )
-      .all(name, ...ids)
-      .map(mapJobRow);
-
-    return claimedRows.map((row) => this.mapClaimedJob<TData>(row));
+    return claimed.map((row) => this.mapClaimedJob<TData>(row));
   }
 
   private completeJobs(name: string, ids: string[]): void {
