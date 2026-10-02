@@ -588,7 +588,8 @@ test('Apple setup asks only which apps, imports each in full or as narrowed befo
       homedir(),
       '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
     );
-  // Under this HOME, Notes has a store and macOS denies chat.db.
+  // Under this HOME, Notes has a store, macOS denies chat.db and Books was
+  // never opened, so it has no stores.
   await noteStoreFixture(
     join(scratch.path, 'Library/Group Containers/group.com.apple.notes'),
   );
@@ -643,13 +644,13 @@ test('Apple setup asks only which apps, imports each in full or as narrowed befo
     // One form, the apps: each chosen app is imported in full.
     const connected = await setUp({
       action: 'accept',
-      content: { apps: ['notes', 'messages'] },
+      content: { apps: ['notes', 'messages', 'books'] },
     });
     assert.deepEqual(forms, [['apps']]);
     assert.equal(connected.changed, true);
     assert.deepEqual(
       connected.unavailable.map(({ app }: { app: string }) => app),
-      ['messages'],
+      ['messages', 'books'],
     );
     assert.match(connected.unavailable[0].error, /Full Disk Access/);
     assert.deepEqual(

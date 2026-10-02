@@ -75800,10 +75800,11 @@ var collections = (stream) => ({
     return account === void 0 ? named2(row) : `${named2(account)} / ${named2(row)}`;
   }
 });
-var fullDiskAccess = "Turn on ChatGPT in System Settings > Privacy & Security > Full Disk Access, then quit and reopen ChatGPT. macOS does not ask for this access.";
+var turnOnFullDiskAccess = "Turn on ChatGPT in System Settings > Privacy & Security > Full Disk Access, then quit and reopen ChatGPT. macOS does not ask for this access.";
 var apps = {
   mail: {
     title: "Mail",
+    fullDiskAccess: true,
     choices: [
       {
         ...accounts,
@@ -75825,7 +75826,7 @@ var apps = {
       }
     ],
     datedBy: "date received (date sent if missing)",
-    permissions: `${fullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
+    permissions: `${turnOnFullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
     unscoped: restrictedMailStreams,
     // Each message's raw .emlx; messageParts already holds its decoded text.
     storeCopies: ["messageFiles"],
@@ -75833,14 +75834,16 @@ var apps = {
   },
   notes: {
     title: "Notes",
+    fullDiskAccess: true,
     choices: [accounts, collections("folders")],
     datedBy: "date last edited",
-    permissions: `${fullDiskAccess} Open Notes to let it finish syncing iCloud changes.`,
+    permissions: `${turnOnFullDiskAccess} Open Notes to let it finish syncing iCloud changes.`,
     note: "Exact containing folders; select descendants separately. Smart folders are saved searches and cannot be selected as containing folders.",
     source: (scope) => new AppleNotesSource({ scope })
   },
   messages: {
     title: "Messages",
+    fullDiskAccess: true,
     choices: [
       {
         stream: "chats",
@@ -75850,11 +75853,12 @@ var apps = {
       }
     ],
     datedBy: "message date",
-    permissions: `${fullDiskAccess} Only messages synced to this Mac can be imported.`,
+    permissions: `${turnOnFullDiskAccess} Only messages synced to this Mac can be imported.`,
     source: (scope) => new AppleMessagesSource(void 0, scope)
   },
   contacts: {
     title: "Contacts",
+    fullDiskAccess: false,
     choices: [{ ...accounts, stream: "containers", scope: "collectionIds" }],
     datedBy: null,
     permissions: "Allow ChatGPT when macOS asks for Contacts access, or turn it on in System Settings > Privacy & Security > Contacts. Full Disk Access for ChatGPT also works.",
@@ -75862,6 +75866,7 @@ var apps = {
   },
   calendar: {
     title: "Calendar",
+    fullDiskAccess: false,
     choices: [accounts, collections("calendars")],
     datedBy: "event dates (events that overlap the range)",
     permissions: "Allow full Calendar access when macOS asks. Access can be changed under System Settings > Privacy & Security > Calendars.",
@@ -75875,6 +75880,7 @@ var apps = {
   },
   reminders: {
     title: "Reminders",
+    fullDiskAccess: false,
     choices: [accounts, collections("lists")],
     datedBy: null,
     permissions: "Allow full Reminders access when macOS asks. Access can be changed under System Settings > Privacy & Security > Reminders.",
@@ -75882,6 +75888,7 @@ var apps = {
   },
   safari: {
     title: "Safari",
+    fullDiskAccess: true,
     choices: [
       {
         stream: "profiles",
@@ -75892,7 +75899,7 @@ var apps = {
       }
     ],
     datedBy: "visit time",
-    permissions: `${fullDiskAccess} Open Safari to let it fetch history and tabs from your other devices.`,
+    permissions: `${turnOnFullDiskAccess} Open Safari to let it fetch history and tabs from your other devices.`,
     note: "Profiles select history, windows, tab groups, tabs, recently closed tabs and downloads. Dates select history visits, and the pages and topics those visits reach.",
     // Bookmarks, the Reading List and iCloud Tabs belong to no profile or date.
     unscoped: [
@@ -75907,10 +75914,13 @@ var apps = {
   },
   books: {
     title: "Books",
+    fullDiskAccess: true,
     // Books' collections are built-in lists; everything is imported.
     choices: [],
+    // Collections live in the library store every Books import reads.
+    probe: "collections",
     datedBy: null,
-    permissions: `${fullDiskAccess} Books does not need to be open. Books stored only in iCloud are listed without their files; open them in Books to download them.`,
+    permissions: `${turnOnFullDiskAccess} Books does not need to be open. Books stored only in iCloud are listed without their files; open them in Books to download them.`,
     source: () => new AppleBooksSource()
   }
 };
@@ -76026,9 +76036,10 @@ var ApplePlugin = class {
     const source = definition3.source(definition3.defaultScope?.() ?? {});
     const catalog9 = await source.discover();
     const choices = {};
+    const streams4 = definition3.probe === void 0 ? definition3.choices.map(({ stream }) => stream) : [definition3.probe];
     for await (const message4 of source.read(
-      definition3.choices.map(
-        (choice) => new CopyConfiguration(catalog9.get(choice.stream), {
+      streams4.map(
+        (stream) => new CopyConfiguration(catalog9.get(stream), {
           syncMode: "full_refresh",
           destinationSyncMode: "overwrite"
         })
@@ -76039,7 +76050,7 @@ var ApplePlugin = class {
         if (message4.status === "FAILED") throw message4.error;
         continue;
       }
-      if (!("type" in message4))
+      if (!("type" in message4) && message4.stream !== definition3.probe)
         choices[message4.stream] = [
           ...choices[message4.stream] ?? [],
           message4.data
@@ -76417,6 +76428,28 @@ function settingsUpdate(plugin2, set2) {
   return { values: settingsRead(plugin2).values };
 }
 
+// apps/apple/connectors/dist/platform/macos/full-disk-access.js
+import { execFile as execFileCallback2 } from "node:child_process";
+import { readdir as readdir5 } from "node:fs/promises";
+import { promisify as promisify5 } from "node:util";
+var execFile5 = promisify5(execFileCallback2);
+var protectedDirectory = "/Library/Application Support/com.apple.TCC";
+async function hasFullDiskAccess() {
+  try {
+    await readdir5(protectedDirectory);
+    return true;
+  } catch (error62) {
+    if (error62.code === "EPERM")
+      return false;
+    throw error62;
+  }
+}
+async function openFullDiskAccessSettings() {
+  await execFile5("/usr/bin/open", [
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+  ]);
+}
+
 // apps/apple/plugin/src/setup-forms.ts
 async function setUpWithForms(plugin2, ask) {
   const previous = new Map(
@@ -76447,10 +76480,15 @@ async function setUpWithForms(plugin2, ask) {
     }
   });
   if (picked.action !== "accept") return { changed: false, ...plugin2.status() };
+  const chosen = appSchema.array().parse(picked.content?.apps);
+  const behindFullDiskAccess = chosen.filter((app) => apps[app].fullDiskAccess);
+  const blocked = behindFullDiskAccess.length > 0 && !await hasFullDiskAccess() ? behindFullDiskAccess : [];
   const configuration = [];
   const unavailable = [];
-  for (const app of appSchema.array().parse(picked.content?.apps)) {
+  for (const app of chosen) {
     try {
+      if (blocked.includes(app))
+        throw new Error("ChatGPT does not have Full Disk Access.");
       await plugin2.options(app);
       configuration.push(
         previous.get(app) ?? { app, scope: {}, includeAttachments: true }
@@ -76465,11 +76503,37 @@ async function setUpWithForms(plugin2, ask) {
       if (kept !== void 0) configuration.push(kept);
     }
   }
+  const saved = plugin2.configure({ apps: configuration });
+  if (blocked.length === 0) return { changed: true, unavailable, ...saved };
   return {
     changed: true,
     unavailable,
-    ...plugin2.configure({ apps: configuration })
+    openedFullDiskAccess: await offerFullDiskAccess(ask, blocked),
+    ...saved
   };
+}
+async function offerFullDiskAccess(ask, blocked) {
+  const titles = new Intl.ListFormat("en", { type: "conjunction" }).format(
+    blocked.map((app) => apps[app].title)
+  );
+  const answer = await ask({
+    mode: "form",
+    message: `${titles} ${blocked.length === 1 ? "needs" : "need"} Full Disk Access, which macOS never asks for. Turn on ChatGPT in the list that opens, then quit and reopen ChatGPT and run Set up Apple again.`,
+    requestedSchema: {
+      type: "object",
+      properties: {
+        openSettings: {
+          type: "boolean",
+          title: "Open Full Disk Access in System Settings",
+          default: true
+        }
+      }
+    }
+  });
+  if (answer.action !== "accept" || answer.content?.openSettings === false)
+    return false;
+  await openFullDiskAccessSettings();
+  return true;
 }
 
 // apps/apple/plugin/src/main.ts

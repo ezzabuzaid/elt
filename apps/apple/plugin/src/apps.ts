@@ -40,8 +40,13 @@ export type Choice = {
 type AppDefinition = {
   readonly title: string;
   readonly choices: readonly Choice[];
+  // For an app with no choices: the stream read to show its store opens. Its
+  // rows are not returned.
+  readonly probe?: string;
   // How dates select records, in the user's words; null when they cannot.
   readonly datedBy: string | null;
+  // Whether macOS gates the app's store behind Full Disk Access.
+  readonly fullDiskAccess: boolean;
   readonly permissions: string;
   readonly note?: string;
   // Streams whose rows cannot be attributed to a chosen account or collection.
@@ -84,12 +89,13 @@ const collections = (stream: string): Choice => ({
 });
 
 // macOS lists the ChatGPT desktop app, which runs Codex, as ChatGPT.
-const fullDiskAccess =
+const turnOnFullDiskAccess =
   'Turn on ChatGPT in System Settings > Privacy & Security > Full Disk Access, then quit and reopen ChatGPT. macOS does not ask for this access.';
 
 export const apps: Record<App, AppDefinition> = {
   mail: {
     title: 'Mail',
+    fullDiskAccess: true,
     choices: [
       {
         ...accounts,
@@ -113,7 +119,7 @@ export const apps: Record<App, AppDefinition> = {
       },
     ],
     datedBy: 'date received (date sent if missing)',
-    permissions: `${fullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
+    permissions: `${turnOnFullDiskAccess} Allow ChatGPT to control Mail when macOS asks.`,
     unscoped: restrictedMailStreams,
     // Each message's raw .emlx; messageParts already holds its decoded text.
     storeCopies: ['messageFiles'],
@@ -121,14 +127,16 @@ export const apps: Record<App, AppDefinition> = {
   },
   notes: {
     title: 'Notes',
+    fullDiskAccess: true,
     choices: [accounts, collections('folders')],
     datedBy: 'date last edited',
-    permissions: `${fullDiskAccess} Open Notes to let it finish syncing iCloud changes.`,
+    permissions: `${turnOnFullDiskAccess} Open Notes to let it finish syncing iCloud changes.`,
     note: 'Exact containing folders; select descendants separately. Smart folders are saved searches and cannot be selected as containing folders.',
     source: (scope) => new AppleNotesSource({ scope }),
   },
   messages: {
     title: 'Messages',
+    fullDiskAccess: true,
     choices: [
       {
         stream: 'chats',
@@ -138,11 +146,12 @@ export const apps: Record<App, AppDefinition> = {
       },
     ],
     datedBy: 'message date',
-    permissions: `${fullDiskAccess} Only messages synced to this Mac can be imported.`,
+    permissions: `${turnOnFullDiskAccess} Only messages synced to this Mac can be imported.`,
     source: (scope) => new AppleMessagesSource(undefined, scope),
   },
   contacts: {
     title: 'Contacts',
+    fullDiskAccess: false,
     choices: [{ ...accounts, stream: 'containers', scope: 'collectionIds' }],
     datedBy: null,
     permissions:
@@ -151,6 +160,7 @@ export const apps: Record<App, AppDefinition> = {
   },
   calendar: {
     title: 'Calendar',
+    fullDiskAccess: false,
     choices: [accounts, collections('calendars')],
     datedBy: 'event dates (events that overlap the range)',
     permissions:
@@ -166,6 +176,7 @@ export const apps: Record<App, AppDefinition> = {
   },
   reminders: {
     title: 'Reminders',
+    fullDiskAccess: false,
     choices: [accounts, collections('lists')],
     datedBy: null,
     permissions:
@@ -174,6 +185,7 @@ export const apps: Record<App, AppDefinition> = {
   },
   safari: {
     title: 'Safari',
+    fullDiskAccess: true,
     choices: [
       {
         stream: 'profiles',
@@ -184,7 +196,7 @@ export const apps: Record<App, AppDefinition> = {
       },
     ],
     datedBy: 'visit time',
-    permissions: `${fullDiskAccess} Open Safari to let it fetch history and tabs from your other devices.`,
+    permissions: `${turnOnFullDiskAccess} Open Safari to let it fetch history and tabs from your other devices.`,
     note: 'Profiles select history, windows, tab groups, tabs, recently closed tabs and downloads. Dates select history visits, and the pages and topics those visits reach.',
     // Bookmarks, the Reading List and iCloud Tabs belong to no profile or date.
     unscoped: [
@@ -199,10 +211,13 @@ export const apps: Record<App, AppDefinition> = {
   },
   books: {
     title: 'Books',
+    fullDiskAccess: true,
     // Books' collections are built-in lists; everything is imported.
     choices: [],
+    // Collections live in the library store every Books import reads.
+    probe: 'collections',
     datedBy: null,
-    permissions: `${fullDiskAccess} Books does not need to be open. Books stored only in iCloud are listed without their files; open them in Books to download them.`,
+    permissions: `${turnOnFullDiskAccess} Books does not need to be open. Books stored only in iCloud are listed without their files; open them in Books to download them.`,
     source: () => new AppleBooksSource(),
   },
 };

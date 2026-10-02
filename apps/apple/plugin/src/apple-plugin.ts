@@ -127,10 +127,14 @@ export class ApplePlugin {
     const source = definition.source(definition.defaultScope?.() ?? {});
     const catalog = await source.discover();
     const choices: ChoiceRows = {};
+    const streams =
+      definition.probe === undefined
+        ? definition.choices.map(({ stream }) => stream)
+        : [definition.probe];
     for await (const message of source.read(
-      definition.choices.map(
-        (choice) =>
-          new CopyConfiguration(catalog.get(choice.stream), {
+      streams.map(
+        (stream) =>
+          new CopyConfiguration(catalog.get(stream), {
             syncMode: 'full_refresh',
             destinationSyncMode: 'overwrite',
           }),
@@ -142,7 +146,7 @@ export class ApplePlugin {
         continue;
       }
       // Every Apple source validates its records against the stream's object schema.
-      if (!('type' in message))
+      if (!('type' in message) && message.stream !== definition.probe)
         choices[message.stream] = [
           ...(choices[message.stream] ?? []),
           message.data as ChoiceRows[string][number],

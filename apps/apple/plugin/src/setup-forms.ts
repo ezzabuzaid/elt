@@ -3,6 +3,10 @@ import type {
   ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import {
+  hasFullDiskAccess,
+  openFullDiskAccessSettings,
+} from 'apple/platform/macos/full-disk-access';
+import {
   type AppConfiguration,
   type ApplePlugin,
   appSchema,
@@ -11,10 +15,12 @@ import { type App, appNames, apps } from './apps.ts';
 
 export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 
-// Setup in one form: which apps. Each chosen app is imported from all its
+// Setup asks in one form which apps. Each chosen app is imported from all its
 // accounts and collections with attachments (Calendar within its default
 // window), or keeps a narrower selection the user asked for earlier. Each is
 // opened first, so macOS asks for access now and a denied app is reported.
+// Full Disk Access has no macOS prompt, so apps behind it are reported
+// without opening them and a second form offers to open its Settings list.
 // Cancelling leaves setup unchanged. It returns once the answers are saved;
 // the leading server imports them.
 export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
@@ -49,10 +55,18 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
     },
   });
   if (picked.action !== 'accept') return { changed: false, ...plugin.status() };
+  const chosen = appSchema.array().parse(picked.content?.apps);
+  const behindFullDiskAccess = chosen.filter((app) => apps[app].fullDiskAccess);
+  const blocked =
+    behindFullDiskAccess.length > 0 && !(await hasFullDiskAccess())
+      ? behindFullDiskAccess
+      : [];
   const configuration: AppConfiguration[] = [];
   const unavailable: { app: App; error: string; permissions: string }[] = [];
-  for (const app of appSchema.array().parse(picked.content?.apps)) {
+  for (const app of chosen) {
     try {
+      if (blocked.includes(app))
+        throw new Error('ChatGPT does not have Full Disk Access.');
       await plugin.options(app);
       configuration.push(
         previous.get(app) ?? { app, scope: {}, includeAttachments: true },
@@ -67,9 +81,37 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       if (kept !== undefined) configuration.push(kept);
     }
   }
+  const saved = plugin.configure({ apps: configuration });
+  if (blocked.length === 0) return { changed: true, unavailable, ...saved };
   return {
     changed: true,
     unavailable,
-    ...plugin.configure({ apps: configuration }),
+    openedFullDiskAccess: await offerFullDiskAccess(ask, blocked),
+    ...saved,
   };
+}
+
+async function offerFullDiskAccess(ask: Ask, blocked: App[]) {
+  const titles = new Intl.ListFormat('en', { type: 'conjunction' }).format(
+    blocked.map((app) => apps[app].title),
+  );
+  const answer = await ask({
+    mode: 'form',
+    message: `${titles} ${blocked.length === 1 ? 'needs' : 'need'} Full Disk Access, which macOS never asks for. Turn on ChatGPT in the list that opens, then quit and reopen ChatGPT and run Set up Apple again.`,
+    requestedSchema: {
+      type: 'object',
+      properties: {
+        openSettings: {
+          type: 'boolean',
+          title: 'Open Full Disk Access in System Settings',
+          default: true,
+        },
+      },
+    },
+  });
+  // A client may leave an untouched field out, so only unticking declines.
+  if (answer.action !== 'accept' || answer.content?.openSettings === false)
+    return false;
+  await openFullDiskAccessSettings();
+  return true;
 }

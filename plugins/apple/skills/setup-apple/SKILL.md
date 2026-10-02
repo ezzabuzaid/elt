@@ -9,10 +9,11 @@ The Apple plugin imports the apps, accounts, collections and dates the user choo
 
 ## Set up with forms
 
-1. Call `apple_setup`. It shows the user one form to choose apps. Each chosen app is imported from all its accounts, folders and dates with attachments (Calendar: from 2000 through next year); an app narrowed earlier keeps that selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat, and do not ask about accounts, folders or dates unless the user brings them up.
+1. Call `apple_setup`. It shows the user one form to choose apps, and a second one only when chosen apps need Full Disk Access that ChatGPT lacks. Each chosen app is imported from all its accounts, folders and dates with attachments (Calendar: from 2000 through next year); an app narrowed earlier keeps that selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat, and do not ask about accounts, folders or dates unless the user brings them up.
 2. Read its result:
    - `changed: false`: the user cancelled; nothing changed.
-   - `unavailable`: apps macOS did not allow. Give their `permissions` guidance as steps. Full Disk Access has no macOS prompt: the user turns on ChatGPT in System Settings, then quits and reopens ChatGPT, which ends this chat, so tell them to run Set up Apple again afterwards. Treat these apps as inaccessible, never as empty.
+   - `unavailable`: apps macOS did not allow. Give their `permissions` guidance as steps. Treat these apps as inaccessible, never as empty.
+   - `openedFullDiskAccess`: present when chosen apps need Full Disk Access, which has no macOS prompt. The second form offered to open its list in System Settings; `true` means it opened. Either way the user turns on ChatGPT there, then quits and reopens ChatGPT, which ends this chat, so tell them to run Set up Apple again afterwards.
 3. If anything changed, report as described in "Report the result". The import runs in the background; do not wait for it.
 
 If `apple_setup` fails because the host does not support forms, set up in chat instead.
