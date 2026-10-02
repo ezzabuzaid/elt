@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
+import type { BrokenConnector } from '@workspace/apple-manifest/connectors';
 import type { AppleApp } from '@workspace/apple/apps/apple-app';
 import {
   ImportStore,
@@ -85,6 +86,8 @@ export type ImportSync =
 // writes each app's data.sqlite; agents read those files directly.
 export class ApplePlugin {
   readonly apps: readonly AppleApp[];
+  // Connectors that were found but could not load, for chats to hear of.
+  readonly broken: readonly BrokenConnector[];
   // The installed plugin's folder. Installing another version deletes it.
   readonly install: string;
   readonly directory: string;
@@ -92,7 +95,13 @@ export class ApplePlugin {
   readonly configurationSchema: ReturnType<typeof configurationSchema>;
 
   constructor(
-    apps: readonly AppleApp[],
+    {
+      apps,
+      broken,
+    }: {
+      readonly apps: readonly AppleApp[];
+      readonly broken: readonly BrokenConnector[];
+    },
     install: string,
     directory = join(
       homedir(),
@@ -100,6 +109,7 @@ export class ApplePlugin {
     ),
   ) {
     this.apps = apps;
+    this.broken = broken;
     this.install = install;
     this.directory = directory;
     this.appSchema = z.enum(apps.map(({ name }) => name));

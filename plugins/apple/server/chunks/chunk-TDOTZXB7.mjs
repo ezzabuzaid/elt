@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 import {
   Catalog,
   Stream
-} from "./chunk-PU5AI37R.mjs";
+} from "./chunk-OEQ4WCEQ.mjs";
 
 // apps/apple/connectors/dist/sources/eventkit-schema.js
 var text = { type: "string" };

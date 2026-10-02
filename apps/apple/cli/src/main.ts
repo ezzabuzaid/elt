@@ -1,6 +1,8 @@
 import { Command as Program } from 'commander';
 
 import { Connectors } from '@workspace/apple-manifest/connectors';
+import { provideHostModules } from '@workspace/apple-manifest/host-modules';
+import { userConnectors } from '@workspace/apple-manifest/user-connectors';
 import { builtInConnectors } from '@workspace/apple/apps/built-in-connectors';
 
 import { OptionsCommand } from './commands/options.ts';
@@ -14,9 +16,12 @@ import { TerminalHost } from './terminal-host.ts';
 if (process.platform !== 'darwin')
   throw new Error('The Apple connectors read apps on a Mac.');
 
-const { apps, broken } = await new Connectors([builtInConnectors]).load(
-  new TerminalHost(),
-);
+// The user's own connectors import elt and AppleApp from this CLI's copies.
+provideHostModules(({ specifier }) => import.meta.resolve(specifier));
+const { apps, broken } = await new Connectors([
+  builtInConnectors,
+  userConnectors,
+]).load(new TerminalHost());
 for (const { title, error } of broken)
   process.stderr.write(`${title} could not be loaded: ${error}\n`);
 const imports = new Imports(apps);

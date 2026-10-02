@@ -7,6 +7,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import { Connectors } from '@workspace/apple-manifest/connectors';
+import { provideHostModules } from '@workspace/apple-manifest/host-modules';
+import { userConnectors } from '@workspace/apple-manifest/user-connectors';
 
 import { ApplePlugin, PluginUpdatedError } from './apple-plugin.ts';
 import { chatContext } from './chat-status.ts';
@@ -20,14 +22,21 @@ if (process.platform !== 'darwin')
 // This bundle sits in the server folder of the installed plugin, beside the
 // connector folders of the built-in Apple apps.
 const install = fileURLToPath(new URL('..', import.meta.url));
-// macOS grants access to ChatGPT, which runs Codex. Calendar's remote
-// attachments stay links, so users never sign in to Google.
-const { apps, broken } = await new Connectors([
-  fileURLToPath(new URL('connectors', import.meta.url)),
-]).load({ grantee: 'ChatGPT' });
-for (const { title, error } of broken)
-  process.stderr.write(`${title} could not be loaded: ${error}\n`);
-const plugin = new ApplePlugin(apps, install);
+// The built-in Apple apps are connector folders beside this bundle; the
+// user's own load from their folder on the server's elt and AppleApp, through
+// the host modules beside this bundle. macOS grants access to ChatGPT, which
+// runs Codex. Calendar's remote attachments stay links, so users never sign
+// in to Google.
+provideHostModules(
+  ({ file }) => new URL(`modules/${file}.mjs`, import.meta.url).href,
+);
+const plugin = new ApplePlugin(
+  await new Connectors([
+    fileURLToPath(new URL('connectors', import.meta.url)),
+    userConnectors,
+  ]).load({ grantee: 'ChatGPT' }),
+  install,
+);
 const { version } = z
   .object({ version: z.string() })
   .parse(
@@ -38,7 +47,7 @@ const { version } = z
 const mcpServer = new McpServer(
   { name: 'apple', version },
   {
-    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
+    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
   },
 );
 // McpServer turns a thrown error into an isError result the model can act on.

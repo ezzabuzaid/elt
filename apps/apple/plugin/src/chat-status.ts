@@ -37,20 +37,28 @@ const readiness = (sync: ImportSync | null) => {
   return 'readable';
 };
 
-// state changes only when the selection, an import's file or what a reader
-// can do with it changes.
+// state changes only when the selection, an import's file, what a reader
+// can do with it, or the connectors that could not load change.
 export function chatStatus(plugin: ApplePlugin): {
   state: string;
   text: string;
 } {
   const selected = plugin.status().apps;
+  const broken = plugin.broken.map(
+    ({ title, error }) => `- ${title} could not be loaded: ${error}`,
+  );
+  const state = (apps: unknown) =>
+    JSON.stringify({ apps, broken: plugin.broken });
   if (selected.length === 0)
     return {
-      state: '[]',
-      text: 'Apple: no apps are set up. Use $setup-apple when the user asks about their Apple apps.',
+      state: state([]),
+      text: [
+        'Apple: no apps are set up. Use $setup-apple when the user asks about their Apple apps.',
+        ...broken,
+      ].join('\n'),
     };
   return {
-    state: JSON.stringify(
+    state: state(
       selected.map(({ app, database, sync }) => [
         app,
         database,
@@ -63,6 +71,7 @@ export function chatStatus(plugin: ApplePlugin): {
         ({ app, database, sync }) =>
           `- ${plugin.app(app).title}: ${progress(sync, plugin.app(app).guidance())}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`,
       ),
+      ...broken,
     ].join('\n'),
   };
 }

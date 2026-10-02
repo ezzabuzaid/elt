@@ -10,7 +10,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -1363,6 +1363,76 @@ test('the setup wizard saves what the person picks and syncs it when asked', asy
     JSON.parse(titles.stdout).map(({ title }: { title: string }) => title),
     ['Old'],
   );
+});
+
+// The user's own connectors, where both Apple hosts look for them under HOME:
+// the Photos connector an agent wrote, as its TypeScript source, and Drafts,
+// which does not parse.
+async function withConnectors(mac: string) {
+  const connectors = join(
+    mac,
+    'Library/Application Support/Context Compiler/Connectors',
+  );
+  await mkdir(join(connectors, 'photos'), { recursive: true });
+  await writeFile(
+    join(connectors, 'photos/connector.json'),
+    JSON.stringify({
+      name: 'photos',
+      title: 'Photos',
+      entry: './photos-app.mts',
+    }),
+  );
+  await writeFile(
+    join(connectors, 'photos/photos-app.mts'),
+    await readFile(
+      resolve('apps/apple/manifest/src/fixtures/photos/photos-app.mts'),
+    ),
+  );
+  await mkdir(join(connectors, 'drafts'), { recursive: true });
+  await writeFile(
+    join(connectors, 'drafts/connector.json'),
+    JSON.stringify({
+      name: 'drafts',
+      title: 'Drafts',
+      entry: './drafts-app.mts',
+    }),
+  );
+  await writeFile(
+    join(connectors, 'drafts/drafts-app.mts'),
+    'export default {',
+  );
+  await mkdir(join(mac, 'Pictures'));
+  await writeFile(
+    join(mac, 'Pictures/photos.json'),
+    JSON.stringify([
+      { id: 'p1', title: 'Beach' },
+      { id: 'p2', title: 'Snow' },
+    ]),
+  );
+}
+
+test('a connector the user added syncs and answers queries beside the built-in apps, and one that does not load is reported while the rest work', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+
+  const setup = cli(mac.path, 'setup', '--app', 'photos');
+  const sync = cli(mac.path, 'sync');
+  const photos = cli(
+    mac.path,
+    'query',
+    'photos',
+    'SELECT id, title FROM photos ORDER BY id',
+    '--json',
+  );
+
+  assert.equal(setup.status, 0, setup.stderr);
+  assert.match(setup.stderr, /^Drafts could not be loaded: /m);
+  assert.equal(sync.status, 0, sync.stderr);
+  assert.equal(photos.status, 0, photos.stderr);
+  assert.deepEqual(JSON.parse(photos.stdout), [
+    { id: 'p1', title: 'Beach' },
+    { id: 'p2', title: 'Snow' },
+  ]);
 });
 
 test('one SQL statement runs however it is spaced or commented', async () => {

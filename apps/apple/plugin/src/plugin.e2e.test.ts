@@ -800,3 +800,115 @@ test(
     }
   },
 );
+
+// The user's own connectors, where the server looks for them under HOME: the
+// Photos connector an agent wrote, as its TypeScript source, and Drafts,
+// which does not parse.
+async function withConnectors(home: string) {
+  const connectors = join(
+    home,
+    'Library/Application Support/Context Compiler/Connectors',
+  );
+  mkdirSync(join(connectors, 'photos'), { recursive: true });
+  await writeFile(
+    join(connectors, 'photos/connector.json'),
+    JSON.stringify({
+      name: 'photos',
+      title: 'Photos',
+      entry: './photos-app.mts',
+    }),
+  );
+  await writeFile(
+    join(connectors, 'photos/photos-app.mts'),
+    readFileSync(
+      join(root, 'apps/apple/manifest/src/fixtures/photos/photos-app.mts'),
+    ),
+  );
+  mkdirSync(join(connectors, 'drafts'), { recursive: true });
+  await writeFile(
+    join(connectors, 'drafts/connector.json'),
+    JSON.stringify({
+      name: 'drafts',
+      title: 'Drafts',
+      entry: './drafts-app.mts',
+    }),
+  );
+  await writeFile(
+    join(connectors, 'drafts/drafts-app.mts'),
+    'export default {',
+  );
+  mkdirSync(join(home, 'Pictures'));
+  await writeFile(
+    join(home, 'Pictures/photos.json'),
+    JSON.stringify([
+      { id: 'p1', title: 'Beach' },
+      { id: 'p2', title: 'Snow' },
+    ]),
+  );
+}
+
+test(
+  'a connector the user added imports through the installed plugin on its own elt and AppleApp, and a chat hears of one that does not load',
+  { timeout: 120_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
+    const plugin = join(scratch.path, 'plugin');
+    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    await withConnectors(scratch.path);
+    const runtime =
+      process.env.CODEX_MCP_NODE_PATH ??
+      join(
+        homedir(),
+        '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
+      );
+    const {
+      mcpServers: { apple },
+    } = JSON.parse(readFileSync(join(plugin, '.mcp.json'), 'utf8'));
+    const transport = new StdioClientTransport({
+      command: join(plugin, apple.command),
+      args: apple.args,
+      cwd: join(plugin, apple.cwd),
+      env: { HOME: scratch.path, CODEX_MCP_NODE_PATH: runtime, PATH: '' },
+      stderr: 'pipe',
+    });
+    const client = new Client({ name: 'apple-e2e', version: '1.0.0' });
+    await client.connect(transport, { signal: t.signal, timeout: 10_000 });
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.notEqual(result.isError, true, JSON.stringify(result.content));
+      assert.ok(Array.isArray(result.content));
+      return String(result.content[0]?.text);
+    };
+    try {
+      const context = await call('apple_context', { event: 'SessionStart' });
+      await call('apple_configure', { apps: [{ app: 'photos' }] });
+      const settings = join(
+        scratch.path,
+        'Library/Application Support/Context Compiler/Apple/settings.sqlite',
+      );
+      let photos: unknown[] = [];
+      for (let attempt = 0; attempt < 60 && photos.length === 0; attempt++) {
+        await sleep(500);
+        const [selected] = read(
+          settings,
+          "SELECT database FROM selected_apps WHERE app = 'photos'",
+        ).rows;
+        if (selected !== undefined && existsSync(selected.database))
+          photos = read(
+            selected.database,
+            'SELECT id, title FROM photos ORDER BY id',
+          ).rows;
+      }
+
+      assert.match(context, /^- Drafts could not be loaded: /m);
+      assert.match(client.getInstructions() ?? '', /Photos/);
+      assert.deepEqual(photos, [
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+      ]);
+    } finally {
+      await client.close();
+      await transport.close();
+    }
+  },
+);

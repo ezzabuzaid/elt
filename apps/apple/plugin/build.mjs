@@ -1,8 +1,9 @@
 // Bundles the plugin's MCP server into plugins/apple/server: main.mjs, one
 // connector folder per built-in Apple app (its connector.json beside its
-// entry point), and the chunks they share, so every connector runs on the
-// same elt and AppleApp as the server. @nx/esbuild cannot name each entry's
-// output, so this calls esbuild's API.
+// entry point), the host modules a user's connector imports, and the chunks
+// they all share, so every connector runs on the same elt and AppleApp as the
+// server. @nx/esbuild cannot name each entry's output, so this calls
+// esbuild's API.
 import {
   copyFileSync,
   mkdirSync,
@@ -11,8 +12,11 @@ import {
   rmSync,
 } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
+
+import { hostModules } from '@workspace/apple-manifest/host-modules';
 
 const connectors = 'apps/apple/connectors/dist/apps';
 const eventkit = 'apps/apple/connectors/dist/platform/macos/eventkit';
@@ -37,6 +41,10 @@ const { metafile } = await build({
   entryPoints: [
     { in: 'apps/apple/plugin/src/main.ts', out: 'main' },
     ...builtIns.map(({ in: source, out }) => ({ in: source, out })),
+    ...hostModules.map(({ specifier, file }) => ({
+      in: fileURLToPath(import.meta.resolve(specifier)),
+      out: join('modules', file),
+    })),
   ],
   outdir,
   bundle: true,

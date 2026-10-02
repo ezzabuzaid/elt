@@ -1,11 +1,13 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
   AppleApp,
-  Pipeline,
   SQLiteSyncHistory,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunks/chunk-PU5AI37R.mjs";
+} from "./chunks/chunk-PLJTWAM2.mjs";
+import {
+  Pipeline
+} from "./chunks/chunk-OEQ4WCEQ.mjs";
 import {
   __callDispose,
   __commonJS,
@@ -7182,7 +7184,7 @@ var require_dist = __commonJS({
 
 // apps/apple/plugin/src/main.ts
 import { readFileSync as readFileSync2 } from "node:fs";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -36516,10 +36518,10 @@ var Connectors = class {
     this.#roots = roots;
   }
   async load(host) {
-    const apps2 = [];
-    const broken2 = [];
+    const apps = [];
+    const broken = [];
     for (const folder of this.#folders()) {
-      const failed = (title, error62) => broken2.push({
+      const failed = (title, error62) => broken.push({
         title,
         error: error62 instanceof Error ? error62.message : String(error62)
       });
@@ -36530,17 +36532,17 @@ var Connectors = class {
         failed(folder, error62);
         continue;
       }
-      if (apps2.some(({ name }) => name === manifest.name)) {
+      if (apps.some(({ name }) => name === manifest.name)) {
         failed(manifest.title, `Another connector is named ${manifest.name}.`);
         continue;
       }
       try {
-        apps2.push(await manifest.load(host));
+        apps.push(await manifest.load(host));
       } catch (error62) {
         failed(manifest.title, error62);
       }
     }
-    return { apps: apps2, broken: broken2 };
+    return { apps, broken };
   }
   // Every subfolder holding a connector.json, root by root and by name within
   // a root; a root that does not exist yet holds none.
@@ -36555,14 +36557,36 @@ var Connectors = class {
   }
 };
 
+// apps/apple/manifest/dist/host-modules.js
+import { registerHooks } from "node:module";
+var hostModules = [
+  { specifier: "@workspace/elt", file: "elt" },
+  { specifier: "@workspace/apple/apps/apple-app", file: "apple-app" },
+  { specifier: "@workspace/apple/apps/choice", file: "choice" }
+];
+function provideHostModules(url2) {
+  const urls = new Map(hostModules.map((module) => [module.specifier, url2(module)]));
+  registerHooks({
+    resolve(specifier, context, nextResolve) {
+      const provided = urls.get(specifier);
+      return provided === void 0 ? nextResolve(specifier, context) : { url: provided, shortCircuit: true };
+    }
+  });
+}
+
+// apps/apple/manifest/dist/user-connectors.js
+import { homedir } from "node:os";
+import { join as join3 } from "node:path";
+var userConnectors = join3(homedir(), "Library/Application Support/Context Compiler/Connectors");
+
 // apps/apple/plugin/src/apple-plugin.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { homedir } from "node:os";
-import { join as join6 } from "node:path";
+import { homedir as homedir2 } from "node:os";
+import { join as join7 } from "node:path";
 
 // packages/import-store/dist/import-store.js
 import { chmodSync, existsSync as existsSync2, mkdirSync, readdirSync as readdirSync2, rmSync } from "node:fs";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 // packages/import-store/dist/selection.js
@@ -36596,7 +36620,7 @@ function selectionProblems(selections, facts) {
 
 // packages/import-store/dist/store-layout.js
 import { createHash } from "node:crypto";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 var storeLayout = 3;
 var NewerLayoutError = class extends Error {
   constructor() {
@@ -36609,7 +36633,7 @@ function importDirectory(root, selection) {
     selection.scope,
     selection.includeAttachments
   ])).digest("hex").slice(0, 16);
-  return join3(root, selection.app, key);
+  return join4(root, selection.app, key);
 }
 
 // packages/import-store/dist/import-store.js
@@ -36677,7 +36701,7 @@ var ImportStore = class {
     this.root = root;
     mkdirSync(root, { recursive: true, mode: 448 });
     chmodSync(root, 448);
-    const path = join4(root, "settings.sqlite");
+    const path = join5(root, "settings.sqlite");
     this.settings = new DatabaseSync(path);
     try {
       chmodSync(path, 384);
@@ -36746,9 +36770,9 @@ var ImportStore = class {
     const kept = new Set(this.selections().map((selection) => this.directory(selection)));
     for (const app of readdirSync2(this.root, { withFileTypes: true }))
       if (app.isDirectory()) {
-        for (const entry of readdirSync2(join4(this.root, app.name)))
-          if (!kept.has(join4(this.root, app.name, entry)))
-            rmSync(join4(this.root, app.name, entry), {
+        for (const entry of readdirSync2(join5(this.root, app.name)))
+          if (!kept.has(join5(this.root, app.name, entry)))
+            rmSync(join5(this.root, app.name, entry), {
               recursive: true,
               force: true
             });
@@ -36757,13 +36781,13 @@ var ImportStore = class {
   // Publishes selected_apps and the catalog that lists it; safe to repeat.
   publish() {
     publishSQLiteViews(this.settings, { views: [selectedApps] });
-    installSQLiteCatalog({ path: join4(this.root, "settings.sqlite") });
+    installSQLiteCatalog({ path: join5(this.root, "settings.sqlite") });
   }
   directory(selection) {
     return importDirectory(this.root, selection);
   }
   database(selection) {
-    return join4(this.directory(selection), "data.sqlite");
+    return join5(this.directory(selection), "data.sqlite");
   }
   // Opens an import's data.sqlite for reading only, waiting while a pass
   // commits. A pass stopped mid-commit leaves a hot journal that only a
@@ -36850,13 +36874,13 @@ var ImportStore = class {
 
 // packages/import-store/dist/lease.js
 import { mkdirSync as mkdirSync2 } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 function lease(root) {
   let database;
   try {
     mkdirSync2(root, { recursive: true, mode: 448 });
-    database = new DatabaseSync2(join5(root, "lease.sqlite"));
+    database = new DatabaseSync2(join6(root, "lease.sqlite"));
     database.exec("BEGIN IMMEDIATE");
     return database;
   } catch {
@@ -36872,7 +36896,7 @@ function leaseHeld(root) {
 
 // apps/apple/plugin/src/apple-plugin.ts
 var ids = external_exports.array(external_exports.string().min(1).max(1024)).max(1e3);
-function configurationSchema(appSchema, apps2) {
+function configurationSchema(appSchema, apps) {
   return external_exports.strictObject({
     apps: external_exports.array(
       external_exports.strictObject({
@@ -36893,7 +36917,7 @@ function configurationSchema(appSchema, apps2) {
         }).default({}),
         includeAttachments: external_exports.boolean().describe("Copy attachments; false imports metadata only.").default(true)
       })
-    ).max(apps2).describe(
+    ).max(apps).describe(
       "The complete selection. An app left out is disconnected and its imported copy deleted."
     )
   });
@@ -36908,20 +36932,26 @@ var PluginUpdatedError = class extends Error {
 };
 var ApplePlugin = class {
   apps;
+  // Connectors that were found but could not load, for chats to hear of.
+  broken;
   // The installed plugin's folder. Installing another version deletes it.
   install;
   directory;
   appSchema;
   configurationSchema;
-  constructor(apps2, install2, directory = join6(
-    homedir(),
+  constructor({
+    apps,
+    broken
+  }, install2, directory = join7(
+    homedir2(),
     "Library/Application Support/Context Compiler/Apple"
   )) {
-    this.apps = apps2;
+    this.apps = apps;
+    this.broken = broken;
     this.install = install2;
     this.directory = directory;
-    this.appSchema = external_exports.enum(apps2.map(({ name }) => name));
-    this.configurationSchema = configurationSchema(this.appSchema, apps2.length);
+    this.appSchema = external_exports.enum(apps.map(({ name }) => name));
+    this.configurationSchema = configurationSchema(this.appSchema, apps.length);
   }
   app(name) {
     const app = this.apps.find((candidate) => candidate.name === name);
@@ -36932,7 +36962,7 @@ var ApplePlugin = class {
   // deleted this version's folder, or that version rewrote the settings in a
   // layout this code predates.
   #open() {
-    if (!existsSync3(join6(this.install, ".codex-plugin/plugin.json")))
+    if (!existsSync3(join7(this.install, ".codex-plugin/plugin.json")))
       throw new PluginUpdatedError();
     try {
       return new ImportStore(this.directory);
@@ -37052,13 +37082,20 @@ var readiness = (sync) => {
 };
 function chatStatus(plugin2) {
   const selected = plugin2.status().apps;
+  const broken = plugin2.broken.map(
+    ({ title, error: error62 }) => `- ${title} could not be loaded: ${error62}`
+  );
+  const state = (apps) => JSON.stringify({ apps, broken: plugin2.broken });
   if (selected.length === 0)
     return {
-      state: "[]",
-      text: "Apple: no apps are set up. Use $setup-apple when the user asks about their Apple apps."
+      state: state([]),
+      text: [
+        "Apple: no apps are set up. Use $setup-apple when the user asks about their Apple apps.",
+        ...broken
+      ].join("\n")
     };
   return {
-    state: JSON.stringify(
+    state: state(
       selected.map(({ app, database, sync }) => [
         app,
         database,
@@ -37069,7 +37106,8 @@ function chatStatus(plugin2) {
       `Apple apps the user connected, each imported into its own SQLite file under "${plugin2.directory}". Read them as $query-apple describes.`,
       ...selected.map(
         ({ app, database, sync }) => `- ${plugin2.app(app).title}: ${progress(sync, plugin2.app(app).guidance())}. ${database === null ? "No database yet." : `Database: ${relative(plugin2.directory, database)}`}`
-      )
+      ),
+      ...broken
     ].join("\n")
   };
 }
@@ -37419,22 +37457,25 @@ async function offerFullDiskAccess(ask, titles) {
 if (process.platform !== "darwin")
   throw new Error("Apple requires Codex on a Mac.");
 var install = fileURLToPath(new URL("..", import.meta.url));
-var { apps, broken } = await new Connectors([
-  fileURLToPath(new URL("connectors", import.meta.url))
-]).load({ grantee: "ChatGPT" });
-for (const { title, error: error62 } of broken)
-  process.stderr.write(`${title} could not be loaded: ${error62}
-`);
-var plugin = new ApplePlugin(apps, install);
+provideHostModules(
+  ({ file: file2 }) => new URL(`modules/${file2}.mjs`, import.meta.url).href
+);
+var plugin = new ApplePlugin(
+  await new Connectors([
+    fileURLToPath(new URL("connectors", import.meta.url)),
+    userConnectors
+  ]).load({ grantee: "ChatGPT" }),
+  install
+);
 var { version: version2 } = external_exports.object({ version: external_exports.string() }).parse(
   JSON.parse(
-    readFileSync2(join7(install, ".codex-plugin/plugin.json"), "utf8")
+    readFileSync2(join8(install, ".codex-plugin/plugin.json"), "utf8")
   )
 );
 var mcpServer = new McpServer(
   { name: "apple", version: version2 },
   {
-    instructions: `Apple imports the ${new Intl.ListFormat("en", { type: "conjunction" }).format(apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`
+    instructions: `Apple imports the ${new Intl.ListFormat("en", { type: "conjunction" }).format(plugin.apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`
   }
 );
 var structured = (value) => ({
