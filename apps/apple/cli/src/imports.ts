@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import type { AppleApp, ChoiceOptions } from 'apple/apps/apple-app';
 import { ImportStore, lease, leaseHeld, type Selection } from 'import-store';
-import type { AppleApp, ChoiceOptions } from './apps/apple-app.ts';
 import { type PassObserver, type PassSummary, syncImports } from './sync.ts';
 
 // Shows a sync from its start to its finish, and each pass in between.

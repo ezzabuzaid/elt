@@ -1,7 +1,7 @@
 import { intro, log, outro, type SpinnerResult, spinner } from '@clack/prompts';
+import type { AppleApp } from 'apple/apps/apple-app';
 import type { CopyProgress } from 'elt';
 import type { SQLiteTable } from 'elt-sqlite';
-import type { AppleApp } from './apps/apple-app.ts';
 import type { SyncObserver } from './imports.ts';
 import type { PassSummary } from './sync.ts';
 import { json } from './table.ts';

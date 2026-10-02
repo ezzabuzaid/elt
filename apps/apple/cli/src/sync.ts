@@ -1,3 +1,4 @@
+import type { AppleApp } from 'apple/apps/apple-app';
 import {
   type Connection,
   type CopyOutcome,
@@ -16,7 +17,6 @@ import {
   type SQLiteTable,
 } from 'elt-sqlite';
 import type { ImportStore, Selection } from 'import-store';
-import type { AppleApp } from './apps/apple-app.ts';
 
 // How one pass of one app ended, as sync reports it.
 export type PassSummary = {
@@ -121,7 +121,7 @@ export async function syncImports(
   for (const { app, selection } of imports) {
     try {
       const { connection, destination } = await app.connection(
-        store,
+        store.directory(selection),
         selection,
       );
       store.clearConnectionFailure(selection);

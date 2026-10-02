@@ -1,6 +1,5 @@
-import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { basename, extname, join } from 'node:path';
+import { join } from 'node:path';
 import {
   Connection,
   Copy,
@@ -16,24 +15,42 @@ import {
   SQLiteDestination,
   type SQLiteTable,
 } from 'elt-sqlite';
-import type { ImportScope, ImportStore, Selection } from 'import-store';
-import type { Choice, Row } from './choice.ts';
+import type { GoogleRequester } from 'google-auth';
+import type { ImportScope, Selection } from 'import-store';
+import type { Choice, Row, Rows } from './choice.ts';
+
+// What the host running an app offers it.
+export type AppleHost = {
+  // The app macOS grants access to: ChatGPT for the plugin, the terminal
+  // that launched the CLI.
+  readonly grantee: string;
+  // A Google session for content an Apple app keeps in Google, such as
+  // Calendar attachments in Drive and Gmail. Without one, it stays a link.
+  google?(scopes: readonly string[]): Promise<GoogleRequester>;
+};
 
 export type ChoiceOptions = Choice & {
   readonly options: readonly { readonly id: string; readonly label: string }[];
 };
 
-// One Apple app the CLI imports. Each app declares its facts and its source;
+// One Apple app a host imports. Each app declares its facts and its source;
 // this class lists what it can be narrowed by, builds its load and words its
-// selection and failures the same way for every app.
+// selection and failures the same way for every app and host.
 export abstract class AppleApp {
   abstract readonly name: string;
   abstract readonly title: string;
   // What a date range selects, or null when this app's records have no date.
   abstract readonly datedBy: string | null;
+  // Whether macOS keeps the app's store behind Full Disk Access, which it
+  // never asks for.
+  abstract readonly fullDiskAccess: boolean;
+  // What to know before narrowing this app, such as how its collections nest.
+  readonly note?: string;
   // The streams listing the accounts or collections an import can be
   // narrowed to.
   protected abstract readonly choices: readonly Choice[];
+  // For an app with no choices: a stream read only to show its store opens.
+  protected readonly probe?: string;
   // Streams whose rows belong to no account or collection: a narrowed import
   // cannot attribute them, so it leaves them out.
   protected abstract readonly unscoped: readonly string[];
@@ -41,8 +58,10 @@ export abstract class AppleApp {
   // load metadata only.
   protected abstract readonly storeCopies: readonly string[];
 
-  // What macOS needs granted to the terminal app before this app can be read.
-  protected abstract access(terminal: string): string;
+  constructor(protected readonly host: AppleHost) {}
+
+  // What macOS needs granted to the grantee, besides Full Disk Access.
+  protected abstract access(grantee: string): string;
 
   protected abstract source(scope: ImportScope): Source;
 
@@ -51,12 +70,25 @@ export abstract class AppleApp {
     return this.source(scope);
   }
 
+  // The scope an import uses for what its selection leaves out.
+  defaultScope(): ImportScope {
+    return {};
+  }
+
   narrowsBy(kind: Choice['scope']): boolean {
     return this.choices.some(({ scope }) => scope === kind);
   }
 
   guidance(): string {
-    return this.access(terminalApp());
+    const { grantee } = this.host;
+    return [
+      ...(this.fullDiskAccess
+        ? [
+            `Turn on ${grantee} in System Settings › Privacy & Security › Full Disk Access, then quit and reopen ${grantee}. macOS does not ask for this access.`,
+          ]
+        : []),
+      this.access(grantee),
+    ].join(' ');
   }
 
   // What failed, and what macOS access the app needs, for the user to act on.
@@ -88,16 +120,20 @@ export abstract class AppleApp {
     return stream.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
   }
 
-  // Reads the streams this app can be narrowed by. Opening the app's store is
-  // also what makes macOS ask for access, so a denied app fails here, before
-  // anything is selected.
-  async listChoices(): Promise<ChoiceOptions[]> {
-    const source = this.source({});
+  // The rows of the streams this app can be narrowed by. Opening the app's
+  // store is also what makes macOS ask for access, so a denied app fails
+  // here, before anything is selected.
+  async choiceRows(): Promise<Rows> {
+    const source = this.source(this.defaultScope());
     const catalog = await source.discover();
+    const streams =
+      this.probe === undefined
+        ? this.choices.map(({ stream }) => stream)
+        : [this.probe];
     const rows = new Map<string, Row[]>();
     for await (const message of source.read(
-      this.choices.map(
-        ({ stream }) =>
+      streams.map(
+        (stream) =>
           new CopyConfiguration(catalog.get(stream), {
             syncMode: 'full_refresh',
             destinationSyncMode: 'overwrite',
@@ -109,12 +145,19 @@ export abstract class AppleApp {
         if (message.status === 'FAILED') throw message.error;
         continue;
       }
-      if (!('type' in message)) {
-        const streamRows = rows.get(message.stream) ?? [];
-        streamRows.push(message.data as Row);
-        rows.set(message.stream, streamRows);
-      }
+      // Every Apple source validates its records against the stream's object
+      // schema.
+      if (!('type' in message) && message.stream !== this.probe)
+        rows.set(message.stream, [
+          ...(rows.get(message.stream) ?? []),
+          message.data as Row,
+        ]);
     }
+    return rows;
+  }
+
+  async listChoices(): Promise<ChoiceOptions[]> {
+    const rows = await this.choiceRows();
     return this.choices.map((choice) => ({
       ...choice,
       options: (rows.get(choice.stream) ?? []).map((row) => ({
@@ -124,10 +167,11 @@ export abstract class AppleApp {
     }));
   }
 
-  // The app's streams, loaded incrementally into raw_<stream> tables of its
-  // data.sqlite and read through documented views, with files kept beside it.
+  // The app's streams, loaded incrementally into raw_<stream> tables of the
+  // import directory's data.sqlite and read through documented views, with
+  // checkpoints.sqlite and attachment copies in files/ beside it.
   async connection(
-    store: ImportStore,
+    directory: string,
     selection: Selection,
   ): Promise<{
     connection: Connection<SQLiteTable>;
@@ -141,10 +185,9 @@ export abstract class AppleApp {
       includeAttachments &&
       stream.supportsFileTransfer === true &&
       !this.storeCopies.includes(stream.name);
-    const directory = store.directory(selection);
-    mkdirSync(directory, { recursive: true });
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
     const destination = new SQLiteDestination({
-      path: store.database(selection),
+      path: join(directory, 'data.sqlite'),
     });
     const files = new LocalFiles({ directory: join(directory, 'files') });
     const connection = new Connection({
@@ -183,26 +226,4 @@ export abstract class AppleApp {
     });
     return { connection, destination };
   }
-
-  protected fullDiskAccess(terminal: string): string {
-    return `Turn on ${terminal} in System Settings › Privacy & Security › Full Disk Access, then quit and reopen ${terminal}. macOS does not ask for this access.`;
-  }
-}
-
-// The app macOS asks for access on behalf of: the one that launched this
-// process. TERM_PROGRAM cannot name it; cmux, for one, reports ghostty.
-function terminalApp(): string {
-  const bundle = process.env.__CFBundleIdentifier;
-  if (bundle !== undefined && /^[\w.-]+$/.test(bundle))
-    try {
-      const [path] = execFileSync(
-        '/usr/bin/mdfind',
-        [`kMDItemCFBundleIdentifier == '${bundle}'`],
-        { encoding: 'utf8', timeout: 5_000 },
-      ).split('\n');
-      if (path) return basename(path, extname(path));
-    } catch {
-      // Spotlight is unavailable: name the app generically.
-    }
-  return 'your terminal app';
 }

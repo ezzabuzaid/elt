@@ -1,31 +1,33 @@
+import { BooksApp } from 'apple/apps/books';
+import { CalendarApp } from 'apple/apps/calendar';
+import { ContactsApp } from 'apple/apps/contacts';
+import { MailApp } from 'apple/apps/mail';
+import { MessagesApp } from 'apple/apps/messages';
+import { NotesApp } from 'apple/apps/notes';
+import { RemindersApp } from 'apple/apps/reminders';
+import { SafariApp } from 'apple/apps/safari';
 import { Command as Program } from 'commander';
-import { BooksApp } from './apps/books.ts';
-import { CalendarApp } from './apps/calendar.ts';
-import { ContactsApp } from './apps/contacts.ts';
-import { MailApp } from './apps/mail.ts';
-import { MessagesApp } from './apps/messages.ts';
-import { NotesApp } from './apps/notes.ts';
-import { RemindersApp } from './apps/reminders.ts';
-import { SafariApp } from './apps/safari.ts';
 import { OptionsCommand } from './commands/options.ts';
 import { QueryCommand } from './commands/query.ts';
 import { SetupCommand } from './commands/setup.ts';
 import { StatusCommand } from './commands/status.ts';
 import { SyncCommand } from './commands/sync.ts';
 import { Imports } from './imports.ts';
+import { TerminalHost } from './terminal-host.ts';
 
 if (process.platform !== 'darwin')
   throw new Error('The Apple connectors read apps on a Mac.');
 
+const host = new TerminalHost();
 const imports = new Imports([
-  new MailApp(),
-  new NotesApp(),
-  new MessagesApp(),
-  new ContactsApp(),
-  new CalendarApp(),
-  new RemindersApp(),
-  new SafariApp(),
-  new BooksApp(),
+  new MailApp(host),
+  new NotesApp(host),
+  new MessagesApp(host),
+  new ContactsApp(host),
+  new CalendarApp(host),
+  new RemindersApp(host),
+  new SafariApp(host),
+  new BooksApp(host),
 ]);
 const program = new Program('apple-cli')
   .description(

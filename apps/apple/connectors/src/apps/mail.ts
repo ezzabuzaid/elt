@@ -1,9 +1,9 @@
-import { mailDirectory } from 'apple/platform/macos/mail-store';
+import type { ImportScope } from 'import-store';
+import { mailDirectory } from '../platform/macos/mail-store.ts';
 import {
   AppleMailSource,
   restrictedMailStreams,
-} from 'apple/sources/apple-mail/apple-mail-source';
-import type { ImportScope } from 'import-store';
+} from '../sources/apple-mail/apple-mail-source.ts';
 import { AppleApp } from './apple-app.ts';
 import { accounts, byId, type Choice, type Row } from './choice.ts';
 
@@ -13,7 +13,8 @@ const accountName = (row: Row) =>
 export class MailApp extends AppleApp {
   readonly name = 'mail';
   readonly title = 'Mail';
-  readonly datedBy = 'date received';
+  readonly datedBy = 'date received (date sent if missing)';
+  readonly fullDiskAccess = true;
   protected readonly choices: readonly Choice[] = [
     accounts(accountName),
     {
@@ -38,8 +39,8 @@ export class MailApp extends AppleApp {
   // Each message's raw .emlx; messageParts already holds its decoded text.
   protected readonly storeCopies = ['messageFiles'];
 
-  protected access(terminal: string): string {
-    return `${this.fullDiskAccess(terminal)} Allow ${terminal} to control Mail when macOS asks.`;
+  protected access(grantee: string): string {
+    return `Allow ${grantee} to control Mail when macOS asks.`;
   }
 
   protected source(scope: ImportScope) {

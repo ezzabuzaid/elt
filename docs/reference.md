@@ -427,7 +427,7 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 
 ## Connector applications
 
-The Apple connectors live in `apps/apple/connectors` (project `apple`). Two hosts load them, each into SQLite imports of its own:
+The Apple connectors live in `apps/apple/connectors` (project `apple`), with one `AppleApp` class per app in `src/apps`: its title, what it can be narrowed by, its permission guidance and how it loads. Two hosts create those apps with an `AppleHost`, which names the app macOS grants access to and may offer a Google session, and load them into SQLite imports of their own:
 
 - `apps/apple/cli` (`npx nx run apple-cli:start -- <command>`) imports the apps a terminal user selects into `outputs/cli`. `sync` runs one pass of each selected app; `sync --watch` keeps them current until stopped, each app refreshing at its own source's pace. Its Calendar import signs in to Google for Drive and Gmail attachments, so `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` must be set.
 - `apps/apple/plugin`, bundled by `npx nx run apple-plugin:bundle` into `plugins/apple/server.mjs`, is the Codex plugin's MCP server: one server per Mac keeps every selected app's import current while Codex is open. The plugin's hooks call its `apple_context` tool to give each chat the Apple status when the chat starts and whenever it changes. Codex keeps an older chat's server running after an upgrade but deletes that version's folder, so that server stops importing and tells the chat to open a new one. Its Calendar keeps remote attachments as links.
