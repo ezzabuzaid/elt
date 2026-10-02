@@ -1,10 +1,10 @@
 import type { ImportScope } from '@workspace/import-store';
 
-import { AppleMessagesSource } from '../sources/apple-messages/apple-messages-source.ts';
-import { AppleApp } from './apple-app.ts';
-import type { Choice } from './choice.ts';
+import { AppleMessagesSource } from '../../sources/apple-messages/apple-messages-source.ts';
+import { AppleApp } from '../apple-app.ts';
+import type { Choice } from '../choice.ts';
 
-export class MessagesApp extends AppleApp {
+export default class MessagesApp extends AppleApp {
   readonly name = 'messages';
   readonly title = 'Messages';
   readonly datedBy = 'message date';

@@ -1,8 +1,8 @@
-import { AppleBooksSource } from '../sources/apple-books/apple-books-source.ts';
-import { AppleApp } from './apple-app.ts';
-import type { Choice } from './choice.ts';
+import { AppleBooksSource } from '../../sources/apple-books/apple-books-source.ts';
+import { AppleApp } from '../apple-app.ts';
+import type { Choice } from '../choice.ts';
 
-export class BooksApp extends AppleApp {
+export default class BooksApp extends AppleApp {
   readonly name = 'books';
   readonly title = 'Books';
   readonly datedBy = null;

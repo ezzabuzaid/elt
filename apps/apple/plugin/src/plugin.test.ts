@@ -13,14 +13,14 @@ import {
   OpenAISettingsUpdateResultSchema,
 } from '@openai/mcp-extensions/server';
 
-import { BooksApp } from '@workspace/apple/apps/books';
-import { CalendarApp } from '@workspace/apple/apps/calendar';
-import { ContactsApp } from '@workspace/apple/apps/contacts';
-import { MailApp } from '@workspace/apple/apps/mail';
-import { MessagesApp } from '@workspace/apple/apps/messages';
-import { NotesApp } from '@workspace/apple/apps/notes';
-import { RemindersApp } from '@workspace/apple/apps/reminders';
-import { SafariApp } from '@workspace/apple/apps/safari';
+import BooksApp from '@workspace/apple/apps/books/books-app';
+import CalendarApp from '@workspace/apple/apps/calendar/calendar-app';
+import ContactsApp from '@workspace/apple/apps/contacts/contacts-app';
+import MailApp from '@workspace/apple/apps/mail/mail-app';
+import MessagesApp from '@workspace/apple/apps/messages/messages-app';
+import NotesApp from '@workspace/apple/apps/notes/notes-app';
+import RemindersApp from '@workspace/apple/apps/reminders/reminders-app';
+import SafariApp from '@workspace/apple/apps/safari/safari-app';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import {
   type Selection,

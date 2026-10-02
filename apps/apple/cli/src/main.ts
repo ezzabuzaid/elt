@@ -1,13 +1,7 @@
 import { Command as Program } from 'commander';
 
-import { BooksApp } from '@workspace/apple/apps/books';
-import { CalendarApp } from '@workspace/apple/apps/calendar';
-import { ContactsApp } from '@workspace/apple/apps/contacts';
-import { MailApp } from '@workspace/apple/apps/mail';
-import { MessagesApp } from '@workspace/apple/apps/messages';
-import { NotesApp } from '@workspace/apple/apps/notes';
-import { RemindersApp } from '@workspace/apple/apps/reminders';
-import { SafariApp } from '@workspace/apple/apps/safari';
+import { Connectors } from '@workspace/apple-manifest/connectors';
+import { builtInConnectors } from '@workspace/apple/apps/built-in-connectors';
 
 import { OptionsCommand } from './commands/options.ts';
 import { QueryCommand } from './commands/query.ts';
@@ -20,17 +14,12 @@ import { TerminalHost } from './terminal-host.ts';
 if (process.platform !== 'darwin')
   throw new Error('The Apple connectors read apps on a Mac.');
 
-const host = new TerminalHost();
-const imports = new Imports([
-  new MailApp(host),
-  new NotesApp(host),
-  new MessagesApp(host),
-  new ContactsApp(host),
-  new CalendarApp(host),
-  new RemindersApp(host),
-  new SafariApp(host),
-  new BooksApp(host),
-]);
+const { apps, broken } = await new Connectors([builtInConnectors]).load(
+  new TerminalHost(),
+);
+for (const { title, error } of broken)
+  process.stderr.write(`${title} could not be loaded: ${error}\n`);
+const imports = new Imports(apps);
 const program = new Program('apple-cli')
   .description(
     'Import Apple apps on this Mac into outputs/cli, keep them current, and query them.',

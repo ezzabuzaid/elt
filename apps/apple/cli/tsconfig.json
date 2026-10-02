@@ -11,6 +11,9 @@
       "path": "../connectors"
     },
     {
+      "path": "../manifest"
+    },
+    {
       "path": "../../../packages/elt"
     },
     {

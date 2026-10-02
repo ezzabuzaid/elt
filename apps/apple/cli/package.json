@@ -9,6 +9,7 @@
     "@workspace/elt": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1",
     "@workspace/google-auth": "0.0.1",
-    "@workspace/import-store": "0.0.1"
+    "@workspace/import-store": "0.0.1",
+    "@workspace/apple-manifest": "0.0.1"
   }
 }

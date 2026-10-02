@@ -74714,38 +74714,32 @@ function scalarKind(name2, type, format) {
     case "boolean":
       return "boolean";
     default:
-      throw new TypeError(`Unsupported JSON Schema type for field ${name2}: ${String(type)}`);
+      throw new TypeError(`Unsupported JSON Schema type for field ${name2}: ${type}`);
   }
 }
 var SQLiteColumns = class {
   // Scalars, and arrays of scalars as JSON arrays in TEXT. The date and
   // date-time string formats keep their kind, as in Postgres.
-  static fromSchema(schema) {
-    const { properties: properties39, required: required3 } = schema;
-    if (schema.type !== "object" || properties39 === null || typeof properties39 !== "object" || Array.isArray(properties39))
+  static fromSchema({ properties: properties39, required: required3 = [] }) {
+    if (properties39 === void 0)
       throw new TypeError("SQLite requires an object schema with explicit properties");
-    if (required3 !== void 0 && (!Array.isArray(required3) || !required3.every((name2) => typeof name2 === "string")))
-      throw new TypeError("JSON Schema required must be an array of field names");
     const requiredFields = new Set(required3);
     for (const name2 of requiredFields)
       if (!Object.hasOwn(properties39, name2))
         throw new TypeError(`Schema does not describe field ${name2}`);
     return Object.entries(properties39).map(([name2, field2]) => {
-      if (field2 === null || typeof field2 !== "object" || Array.isArray(field2))
-        throw new TypeError(`Unsupported JSON Schema for field ${name2}`);
-      const type = Reflect.get(field2, "type");
-      const types3 = typeof type === "string" ? [type] : type;
-      if (!Array.isArray(types3) || !types3.every((value) => typeof value === "string") || new Set(types3).size !== types3.length)
+      const types3 = typeof field2.type === "string" ? [field2.type] : field2.type;
+      if (new Set(types3).size !== types3.length)
         throw new TypeError(`Unsupported JSON Schema type for field ${name2}`);
-      const valueTypes = types3.filter((value) => value !== "null");
-      if (valueTypes.length !== 1)
+      const valueTypes = types3.filter((type) => type !== "null");
+      const valueType = valueTypes[0];
+      if (valueType === void 0 || valueTypes.length !== 1)
         throw new TypeError(`SQLite requires one scalar type for field ${name2}`);
-      const array2 = valueTypes[0] === "array";
-      const items = array2 ? Reflect.get(field2, "items") : field2;
-      if (items === null || typeof items !== "object" || Array.isArray(items))
+      const array2 = valueType === "array";
+      const scalar = array2 ? field2.items : { type: valueType, format: field2.format };
+      if (scalar === void 0)
         throw new TypeError(`Unsupported JSON Schema items for field ${name2}`);
-      const kind = scalarKind(name2, array2 ? Reflect.get(items, "type") : valueTypes[0], Reflect.get(items, "format"));
-      return new SQLiteColumn(name2, kind, {
+      return new SQLiteColumn(name2, scalarKind(name2, scalar.type, scalar.format), {
         nullable: types3.includes("null"),
         optional: !requiredFields.has(name2),
         primaryKey: false,
@@ -75614,7 +75608,7 @@ var AppleApp = class {
   }
 };
 
-// apps/apple/connectors/dist/apps/books.js
+// apps/apple/connectors/dist/apps/books/books-app.js
 var BooksApp = class extends AppleApp {
   name = "books";
   title = "Books";
@@ -77924,7 +77918,7 @@ var collections = (stream, title) => ({
   }
 });
 
-// apps/apple/connectors/dist/apps/calendar.js
+// apps/apple/connectors/dist/apps/calendar/calendar-app.js
 var CalendarApp = class extends AppleApp {
   name = "calendar";
   title = "Calendar";
@@ -78758,7 +78752,7 @@ function contactSelection(store, scope) {
   };
 }
 
-// apps/apple/connectors/dist/apps/contacts.js
+// apps/apple/connectors/dist/apps/contacts/contacts-app.js
 var ContactsApp = class extends AppleApp {
   name = "contacts";
   title = "Contacts";
@@ -80231,7 +80225,7 @@ var AppleMailSource = class extends Source {
   }
 };
 
-// apps/apple/connectors/dist/apps/mail.js
+// apps/apple/connectors/dist/apps/mail/mail-app.js
 var accountName = (row) => String(JSON.parse(String(row.properties)).name);
 var MailApp = class extends AppleApp {
   name = "mail";
@@ -80970,7 +80964,7 @@ function messageSelection(database, scope) {
   };
 }
 
-// apps/apple/connectors/dist/apps/messages.js
+// apps/apple/connectors/dist/apps/messages/messages-app.js
 var MessagesApp = class extends AppleApp {
   name = "messages";
   title = "Messages";
@@ -82015,7 +82009,7 @@ var AppleNotesSource = class extends Source {
   }
 };
 
-// apps/apple/connectors/dist/apps/notes.js
+// apps/apple/connectors/dist/apps/notes/notes-app.js
 var NotesApp = class extends AppleApp {
   name = "notes";
   title = "Notes";
@@ -82291,7 +82285,7 @@ var AppleRemindersSource = class extends Source {
   }
 };
 
-// apps/apple/connectors/dist/apps/reminders.js
+// apps/apple/connectors/dist/apps/reminders/reminders-app.js
 var RemindersApp = class extends AppleApp {
   name = "reminders";
   title = "Reminders";
@@ -84836,7 +84830,7 @@ async function fingerprint2(path) {
   }
 }
 
-// apps/apple/connectors/dist/apps/safari.js
+// apps/apple/connectors/dist/apps/safari/safari-app.js
 var SafariApp = class extends AppleApp {
   name = "safari";
   title = "Safari";

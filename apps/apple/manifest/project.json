@@ -1,0 +1,12 @@
+{
+  "name": "apple-manifest",
+  "sourceRoot": "apps/apple/manifest/src",
+  "projectType": "library",
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"apps/apple/manifest/dist/*.test.js\""
+    }
+  }
+}

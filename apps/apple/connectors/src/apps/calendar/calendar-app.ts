@@ -7,12 +7,12 @@ import type { ImportScope } from '@workspace/import-store';
 import {
   AppleCalendarSource,
   type CalendarAttachmentFetcher,
-} from '../sources/apple-calendar/apple-calendar-source.ts';
-import { googleCalendarAttachments } from '../sources/apple-calendar/google-calendar-attachments.ts';
-import { AppleApp } from './apple-app.ts';
-import { type Choice, accounts, collections, name } from './choice.ts';
+} from '../../sources/apple-calendar/apple-calendar-source.ts';
+import { googleCalendarAttachments } from '../../sources/apple-calendar/google-calendar-attachments.ts';
+import { AppleApp } from '../apple-app.ts';
+import { type Choice, accounts, collections, name } from '../choice.ts';
 
-export class CalendarApp extends AppleApp {
+export default class CalendarApp extends AppleApp {
   readonly name = 'calendar';
   readonly title = 'Calendar';
   readonly datedBy = 'event dates (events that overlap the range)';

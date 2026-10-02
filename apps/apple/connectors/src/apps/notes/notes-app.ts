@@ -1,10 +1,10 @@
 import type { ImportScope } from '@workspace/import-store';
 
-import { AppleNotesSource } from '../sources/apple-notes/apple-notes-source.ts';
-import { AppleApp } from './apple-app.ts';
-import { type Choice, accounts, collections, name } from './choice.ts';
+import { AppleNotesSource } from '../../sources/apple-notes/apple-notes-source.ts';
+import { AppleApp } from '../apple-app.ts';
+import { type Choice, accounts, collections, name } from '../choice.ts';
 
-export class NotesApp extends AppleApp {
+export default class NotesApp extends AppleApp {
   readonly name = 'notes';
   readonly title = 'Notes';
   readonly datedBy = 'date last edited';

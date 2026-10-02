@@ -1,0 +1,5 @@
+{
+  "name": "photos",
+  "title": "Photos",
+  "entry": "./photos-app.js"
+}

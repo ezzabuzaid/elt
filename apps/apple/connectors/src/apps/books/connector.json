@@ -1,0 +1,5 @@
+{
+  "name": "books",
+  "title": "Books",
+  "entry": "./books-app.js"
+}

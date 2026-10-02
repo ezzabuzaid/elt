@@ -1,17 +1,17 @@
 import type { ImportScope } from '@workspace/import-store';
 
-import { mailDirectory } from '../platform/macos/mail-store.ts';
+import { mailDirectory } from '../../platform/macos/mail-store.ts';
 import {
   AppleMailSource,
   restrictedMailStreams,
-} from '../sources/apple-mail/apple-mail-source.ts';
-import { AppleApp } from './apple-app.ts';
-import { type Choice, type Row, accounts, byId } from './choice.ts';
+} from '../../sources/apple-mail/apple-mail-source.ts';
+import { AppleApp } from '../apple-app.ts';
+import { type Choice, type Row, accounts, byId } from '../choice.ts';
 
 const accountName = (row: Row) =>
   String(JSON.parse(String(row.properties)).name);
 
-export class MailApp extends AppleApp {
+export default class MailApp extends AppleApp {
   readonly name = 'mail';
   readonly title = 'Mail';
   readonly datedBy = 'date received (date sent if missing)';

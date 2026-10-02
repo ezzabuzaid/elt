@@ -1329,7 +1329,8 @@ test('the setup wizard saves what the person picks and syncs it when asked', asy
   const wizard = terminal(mac.path, 'setup');
   try {
     await wizard.shows('Which apps should be imported?');
-    await wizard.type(down, space, enter);
+    // Apps are listed by name; Notes is the sixth.
+    await wizard.type(down, down, down, down, down, space, enter);
     await wizard.shows('Narrow any app?');
     await wizard.type(space, enter);
     await wizard.shows('Notes: accounts');

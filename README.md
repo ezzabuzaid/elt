@@ -117,7 +117,7 @@ A copy like this replaces the `notes` table's contents with the current snapshot
 
 ### Connector registration
 
-The Apple connectors live in [`apps/apple/connectors`](apps/apple/connectors/src/sources) (project `apple`), and each Apple host registers them itself: the [CLI](apps/apple/cli/src/main.ts) lists one `AppleApp` subclass per app from `apps/apple/cli/src/apps/`, and the [plugin](apps/apple/plugin/src/apps.ts) keeps one entry per app. Both load each selected app into its own SQLite import.
+The Apple connectors live in [`apps/apple/connectors`](apps/apple/connectors/src/apps) (project `apple`), one folder per app with a `connector.json` manifest and an `AppleApp` class. The [CLI](apps/apple/cli/src/main.ts) discovers them through [`apps/apple/manifest`](apps/apple/manifest/src/connectors.ts); the [plugin](apps/apple/plugin/src/main.ts) still creates each one. Both load each selected app into its own SQLite import.
 
 [Google connectors](apps/google/src/connectors.ts) default-exports a list of `{ name, run }` entries that `main.ts` calls in a plain loop. Each `run()` configures its own source, credentials, pipeline and post-load work: Search Console's builds a `Pipeline` with one `google-search-console` connection and a `PostgresSyncHistory`, then publishes its marts after a complete or partial load, once every raw table exists.
 
