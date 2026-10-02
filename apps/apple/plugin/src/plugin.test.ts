@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -17,8 +17,12 @@ import { importDirectory, leaseHeld } from 'import-store';
 import type { AppConfiguration } from './apple-plugin.ts';
 import { ApplePlugin } from './apple-plugin.ts';
 import { apps } from './apps.ts';
+import { chatStatus } from './chat-status.ts';
 import { keepFresh } from './freshness.ts';
 import { settingsRead, settingsUpdate } from './native-settings.ts';
+
+// The committed plugin, as Codex installs it.
+const install = resolve('plugins/apple');
 
 // Stands in for the leading server's import of one app selection.
 function imported(directory: string, item: AppConfiguration) {
@@ -52,7 +56,7 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(scratch.path);
+  const plugin = new ApplePlugin(install, scratch.path);
   assert.deepEqual(plugin.status().apps, []);
   for (const [apps, message] of [
     [
@@ -79,7 +83,7 @@ test('agents read the selected apps, where each import lives and what macOS acce
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(scratch.path);
+  const plugin = new ApplePlugin(install, scratch.path);
   const notes = {
     app: 'notes' as const,
     scope: { collectionIds: ['folder-1'] },
@@ -128,7 +132,7 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(scratch.path);
+  const plugin = new ApplePlugin(install, scratch.path);
   const notes = {
     app: 'notes' as const,
     scope: { collectionIds: ['folder-1'] },
@@ -137,7 +141,7 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   assert.equal(plugin.configure({ apps: [notes] }).apps[0]?.database, null);
   const database = imported(scratch.path, notes);
   assert.equal(
-    new ApplePlugin(scratch.path).status().apps[0]?.database,
+    new ApplePlugin(install, scratch.path).status().apps[0]?.database,
     database,
   );
   plugin.configure({ apps: [notes] });
@@ -171,7 +175,10 @@ test('the leading server keeps leading when its settings cannot be read, and let
   // A directory where the settings file belongs fails every read of them.
   mkdirSync(join(scratch.path, 'settings.sqlite'));
   const stopping = new AbortController();
-  const running = keepFresh(scratch.path, stopping.signal, '0.4.1');
+  const running = keepFresh(
+    new ApplePlugin(install, scratch.path),
+    stopping.signal,
+  );
   try {
     await sleep(1_500);
     assert.equal(leaseHeld(scratch.path), true);
@@ -182,11 +189,58 @@ test('the leading server keeps leading when its settings cannot be read, and let
   assert.equal(leaseHeld(scratch.path), false);
 });
 
+test('a chat hears of a pass only when it changes what a reader can do with the app', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = new ApplePlugin(install, scratch.path);
+  const notes = {
+    app: 'notes' as const,
+    scope: {},
+    includeAttachments: true,
+  };
+  plugin.configure({ apps: [notes] });
+  // The leading server holds the lease while its passes run.
+  using lease = new DatabaseSync(join(scratch.path, 'lease.sqlite'));
+  lease.exec('BEGIN IMMEDIATE');
+  const waiting = chatStatus(plugin);
+  assert.match(
+    waiting.text,
+    /^- Notes: waiting for its first import\. No database yet\.$/m,
+  );
+  const begin = await passes(scratch.path, notes);
+  await begin();
+  const importing = chatStatus(plugin);
+  assert.match(
+    importing.text,
+    /^- Notes: importing since .*; no data yet\. Database: notes\//m,
+  );
+  assert.notEqual(importing.state, waiting.state);
+  await (await begin()).finish([]);
+  const synced = chatStatus(plugin);
+  assert.match(synced.text, /^- Notes: synced at /m);
+  assert.notEqual(synced.state, importing.state);
+
+  // Passes over data already imported change its times, not the state.
+  const again = await begin();
+  assert.equal(chatStatus(plugin).state, synced.state);
+  await again.finish([]);
+  assert.equal(chatStatus(plugin).state, synced.state);
+
+  await (await begin()).fail(new Error('Notes could not be opened.'));
+  const failed = chatStatus(plugin);
+  assert.match(
+    failed.text,
+    /^- Notes: last sync failed at .*: Notes could not be opened\. .*; data as of /m,
+  );
+  assert.notEqual(failed.state, synced.state);
+});
+
 test('the Settings page switches apps on and off and describes each import as OpenAI’s settings schema requires', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(scratch.path);
+  const plugin = new ApplePlugin(install, scratch.path);
   const described = () => {
     const result = settingsRead(plugin);
     OpenAISettingsReadResultSchema.parse(result);
@@ -257,11 +311,45 @@ test('the Settings page switches apps on and off and describes each import as Op
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
 });
 
+test('once another plugin version replaces this one, its server refuses to change apps and never leads', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  // Installing another version deletes this version's folder.
+  const replaced = join(scratch.path, 'install');
+  cpSync(join(install, '.codex-plugin'), join(replaced, '.codex-plugin'), {
+    recursive: true,
+  });
+  const store = join(scratch.path, 'store');
+  const plugin = new ApplePlugin(replaced, store);
+  plugin.configure({ apps: [{ app: 'notes' }] });
+  assert.equal(plugin.updated(), false);
+  rmSync(replaced, { recursive: true });
+  assert.equal(plugin.updated(), true);
+  assert.throws(
+    () => plugin.configure({ apps: [{ app: 'mail' }] }),
+    /open a new chat/,
+  );
+  assert.throws(
+    () => settingsUpdate(plugin, { mail: true }),
+    /open a new chat/,
+  );
+  const stopping = new AbortController();
+  const running = keepFresh(plugin, stopping.signal);
+  try {
+    await sleep(1_500);
+    assert.equal(leaseHeld(store), false);
+  } finally {
+    stopping.abort();
+  }
+  await running;
+});
+
 test('a server whose code predates the settings file refuses to change apps and never leads', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(scratch.path);
+  const plugin = new ApplePlugin(install, scratch.path);
   plugin.configure({ apps: [{ app: 'notes' }] });
   // A newer plugin rewrote the settings file in a layout this code predates.
   {
@@ -273,14 +361,10 @@ test('a server whose code predates the settings file refuses to change apps and 
   }
   assert.throws(
     () => plugin.configure({ apps: [{ app: 'mail' }] }),
-    /Start a new chat/,
-  );
-  assert.throws(
-    () => settingsUpdate(plugin, { mail: true }),
-    /Start a new chat/,
+    /open a new chat/,
   );
   const stopping = new AbortController();
-  const running = keepFresh(scratch.path, stopping.signal, '99.0.0');
+  const running = keepFresh(plugin, stopping.signal);
   try {
     await sleep(1_500);
     assert.equal(leaseHeld(scratch.path), false);
@@ -301,7 +385,7 @@ test('settings an older layout wrote are discarded, so the user sets up again', 
       `CREATE TABLE configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); INSERT INTO configuration VALUES(1, '{"apps":[{"app":"notes","scope":{},"includeAttachments":true}]}');`,
     );
   }
-  const plugin = new ApplePlugin(scratch.path);
+  const plugin = new ApplePlugin(install, scratch.path);
   assert.deepEqual(plugin.status().apps, []);
   using database = new DatabaseSync(join(scratch.path, 'settings.sqlite'), {
     readOnly: true,
@@ -313,42 +397,4 @@ test('settings an older layout wrote are discarded, so the user sets up again', 
     undefined,
   );
   assert.equal(plugin.configure({ apps: [{ app: 'notes' }] }).apps.length, 1);
-});
-
-test('a newer plugin server takes the lead from an older one, and the older one leads again once the newer one stops', async () => {
-  await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'apple-plugin-'),
-  );
-  const older = new AbortController();
-  const olderRunning = keepFresh(scratch.path, older.signal, '0.4.1');
-  const newer = new AbortController();
-  let newerRunning: Promise<void> | undefined;
-  const again = new AbortController();
-  let againRunning: Promise<void> | undefined;
-  try {
-    await sleep(500);
-    assert.equal(leaseHeld(scratch.path), true);
-    newerRunning = keepFresh(scratch.path, newer.signal, '0.10.0');
-    // The older leader steps down on its next check; the newer one takes
-    // the lease on its next attempt.
-    await sleep(4_000);
-    older.abort();
-    await olderRunning;
-    // Had the older server still led, its exit would have left the lease free.
-    assert.equal(leaseHeld(scratch.path), true);
-
-    // An older version installed again leads once the newer server stops.
-    againRunning = keepFresh(scratch.path, again.signal, '0.4.1');
-    await sleep(2_500);
-    newer.abort();
-    await newerRunning;
-    await sleep(2_500);
-    assert.equal(leaseHeld(scratch.path), true);
-  } finally {
-    older.abort();
-    newer.abort();
-    again.abort();
-    await Promise.all([olderRunning, newerRunning, againRunning]);
-  }
-  assert.equal(leaseHeld(scratch.path), false);
 });

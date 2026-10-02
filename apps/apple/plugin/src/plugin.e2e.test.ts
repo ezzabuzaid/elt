@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
 } from 'node:fs';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -358,6 +359,16 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     assert.equal(block?.type, 'text');
     return JSON.parse(block.text);
   };
+  // What the plugin's hooks add to a chat's context.
+  const context = async (
+    client: Client,
+    event: 'SessionStart' | 'UserPromptSubmit',
+  ) => {
+    const result = await call(client, 'apple_context', { event });
+    assert.notEqual(result.isError, true, JSON.stringify(result.content));
+    assert.ok(Array.isArray(result.content));
+    return result.content.map((block) => block.text).join('\n');
+  };
   // The skill's entry point: the selection, with no tool call.
   const settingsFile = join(
     scratch.path,
@@ -421,12 +432,22 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       (await client.listTools()).tools.map((tool) => tool.name).sort(),
       [
         'apple_configure',
+        'apple_context',
         'apple_options',
         'apple_settings_read',
         'apple_settings_update',
         'apple_setup',
       ],
     );
+    // Only the hooks call apple_context; Codex keeps it from the model.
+    assert.deepEqual(
+      (await client.listTools()).tools.find(
+        (tool) => tool.name === 'apple_context',
+      )?._meta,
+      { ui: { visibility: ['app'] } },
+    );
+    // Codex shows these instructions with the tools.
+    assert.match(String(client.getInstructions()), /\$query-apple/);
     // The server names the installed version, which decides who leads.
     assert.equal(client.getServerVersion()?.version, manifest.version);
     // The plugin page's native Settings section names two of those tools.
@@ -437,6 +458,11 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       { readTool: 'apple_settings_read', updateTool: 'apple_settings_update' },
     );
     assert.deepEqual(selected(), []);
+    assert.match(
+      await context(client, 'SessionStart'),
+      /no apps are set up\. Use \$setup-apple/,
+    );
+    assert.equal(await context(client, 'UserPromptSubmit'), '');
     assert.deepEqual((await call(other, 'apple_setup')).content, [
       { type: 'text', text: 'Client does not support form elicitation.' },
     ]);
@@ -452,6 +478,21 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       ['notes'],
     );
     const synced = await imported('Groceries');
+    // The next prompt carries the changed status: where Notes is imported.
+    const status = await context(client, 'UserPromptSubmit');
+    assert.match(
+      status,
+      /^- Notes: synced at \d{4}-\d\d-\d\dT[\d:.]+Z\. Database: notes\/[0-9a-f]{16}\/data\.sqlite$/m,
+    );
+    assert.ok(
+      status.includes(
+        join(
+          scratch.path,
+          'Library/Application Support/Context Compiler/Apple',
+        ),
+      ),
+    );
+    assert.equal(await context(client, 'UserPromptSubmit'), '');
     // The file the skill reads tells what it holds and how fresh it is.
     assert.deepEqual(
       read(
@@ -526,6 +567,10 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     assert.ok(kept && messages?.sync);
     assert.equal(kept.database, synced.database);
     assert.match(String(messages.sync.error), /Full Disk Access/);
+    assert.match(
+      await context(client, 'UserPromptSubmit'),
+      /^- Messages: last sync failed at .*Full Disk Access.*; no data yet\. Database: messages\//m,
+    );
 
     // A change in Notes reaches the import while nobody calls a tool.
     retitle('Groceries (edited)');
@@ -557,6 +602,20 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       selected().map(({ app }) => app),
       ['messages'],
     );
+    // A chat that never got the start-of-chat status gets it on its next prompt.
+    assert.match(
+      await context(other, 'UserPromptSubmit'),
+      /^- Messages: last sync failed/m,
+    );
+
+    // Installing another version deletes this one's folder. The chat still
+    // runs the old server, which now sends the user to a new chat.
+    rmSync(join(plugin, '.codex-plugin'), { recursive: true });
+    for (const event of ['UserPromptSubmit', 'UserPromptSubmit'] as const)
+      assert.match(await context(other, event), /open a new chat/);
+    const refused = await call(other, 'apple_settings_read', {});
+    assert.equal(refused.isError, true);
+    assert.match(JSON.stringify(refused.content), /open a new chat/);
   } finally {
     await client.close();
     await transport.close();

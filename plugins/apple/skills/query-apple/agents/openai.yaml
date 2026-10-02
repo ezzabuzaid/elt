@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ask Apple apps"
+  short_description: "Answer from your imported Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari and Books"
+  icon_small: "../../assets/composer-icon.png"
+  icon_large: "../../assets/logo.png"
+  brand_color: "#2F6BDE"
+  default_prompt: "Use $query-apple to tell me what needs my attention today."

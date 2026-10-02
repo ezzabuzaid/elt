@@ -3925,49 +3925,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative4, options, skipNormalization) {
+    function resolveComponent(base, relative5, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse3(serialize(base, options), options);
-        relative4 = parse3(serialize(relative4, options), options);
+        relative5 = parse3(serialize(relative5, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative4.scheme) {
-        target.scheme = relative4.scheme;
-        target.userinfo = relative4.userinfo;
-        target.host = relative4.host;
-        target.port = relative4.port;
-        target.path = removeDotSegments(relative4.path || "");
-        target.query = relative4.query;
+      if (!options.tolerant && relative5.scheme) {
+        target.scheme = relative5.scheme;
+        target.userinfo = relative5.userinfo;
+        target.host = relative5.host;
+        target.port = relative5.port;
+        target.path = removeDotSegments(relative5.path || "");
+        target.query = relative5.query;
       } else {
-        if (relative4.userinfo !== void 0 || relative4.host !== void 0 || relative4.port !== void 0) {
-          target.userinfo = relative4.userinfo;
-          target.host = relative4.host;
-          target.port = relative4.port;
-          target.path = removeDotSegments(relative4.path || "");
-          target.query = relative4.query;
+        if (relative5.userinfo !== void 0 || relative5.host !== void 0 || relative5.port !== void 0) {
+          target.userinfo = relative5.userinfo;
+          target.host = relative5.host;
+          target.port = relative5.port;
+          target.path = removeDotSegments(relative5.path || "");
+          target.query = relative5.query;
         } else {
-          if (!relative4.path) {
+          if (!relative5.path) {
             target.path = base.path;
-            if (relative4.query !== void 0) {
-              target.query = relative4.query;
+            if (relative5.query !== void 0) {
+              target.query = relative5.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative4.path[0] === "/") {
-              target.path = removeDotSegments(relative4.path);
+            if (relative5.path[0] === "/") {
+              target.path = removeDotSegments(relative5.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative4.path;
+                target.path = "/" + relative5.path;
               } else if (!base.path) {
-                target.path = relative4.path;
+                target.path = relative5.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative4.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative5.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative4.query;
+            target.query = relative5.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3975,7 +3975,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative4.fragment;
+      target.fragment = relative5.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -32830,6 +32830,8 @@ var require_mailsplit = __commonJS({
 
 // apps/apple/plugin/src/main.ts
 import { readFileSync } from "node:fs";
+import { join as join26 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
 var util;
@@ -65476,9 +65478,9 @@ function decodeClass(className, value, resolve4) {
     case "NSDate":
       return new Date(appleEpoch + Number(value["NS.time"]) * 1e3);
     case "NSURL": {
-      const relative4 = String(resolve4(value["NS.relative"] ?? null));
+      const relative5 = String(resolve4(value["NS.relative"] ?? null));
       const base = resolve4(value["NS.base"] ?? null);
-      return typeof base === "string" ? new URL(relative4, base).href : relative4;
+      return typeof base === "string" ? new URL(relative5, base).href : relative5;
     }
     case "NSUUID": {
       const hex3 = Buffer.from(value["NS.uuidbytes"]).toString("hex");
@@ -66703,17 +66705,17 @@ async function localFiles(item) {
   const files = [];
   const pending = [""];
   while (pending.length > 0) {
-    const relative4 = pending.pop();
-    const entries = await readdir3(join8(item, relative4), {
+    const relative5 = pending.pop();
+    const entries = await readdir3(join8(item, relative5), {
       withFileTypes: true
     });
-    const paths = entries.map((entry) => join8(item, relative4, entry.name));
+    const paths = entries.map((entry) => join8(item, relative5, entry.name));
     const local = await localPaths(paths);
     for (const [index, entry] of entries.entries()) {
       const path = paths[index];
       if (!local.has(path))
         return null;
-      const name = relative4 === "" ? entry.name : `${relative4}/${entry.name}`;
+      const name = relative5 === "" ? entry.name : `${relative5}/${entry.name}`;
       if (entry.isDirectory())
         pending.push(name);
       else if (entry.isFile()) {
@@ -70781,7 +70783,7 @@ function mailSelection(store, scope) {
     ...recipients.map((row) => row.address)
   ]);
   const addressText = new Set(rows("addresses").filter((row) => addresses.has(row.id)).map((row) => row.address));
-  const servers2 = new Set(rows("serverMessages").filter((row) => ids2.has(row.message) && mailboxes.has(row.mailbox)).map((row) => row.id));
+  const servers = new Set(rows("serverMessages").filter((row) => ids2.has(row.message) && mailboxes.has(row.mailbox)).map((row) => row.id));
   const conversations = new Set(rows("conversationMessages").filter((row) => hashes.has(row.messageId)).map((row) => row.conversationId));
   const links = new Set(rows("messageRichLinks").filter((row) => globals.has(row.globalMessageId)).map((row) => row.richLink));
   const summaries = new Set(rows("messageGlobalData").filter((row) => globals.has(row.id)).map((row) => row.generatedSummary));
@@ -70811,9 +70813,9 @@ function mailSelection(store, scope) {
       case "messageMailboxes":
         return ids2.has(row.messageId) && mailboxes.has(row.mailboxId);
       case "serverMessages":
-        return servers2.has(row.id);
+        return servers.has(row.id);
       case "serverMessageMailboxes":
-        return servers2.has(row.serverMessage) && mailboxes.has(row.label);
+        return servers.has(row.serverMessage) && mailboxes.has(row.label);
       case "conversationMessages":
         return hashes.has(row.messageId);
       case "conversations":
@@ -75951,30 +75953,57 @@ var configurationSchema = external_exports.strictObject({
     })
   ).max(appNames.length)
 });
-function openStore(directory) {
-  try {
-    return new ImportStore(directory);
-  } catch (error62) {
-    if (error62 instanceof NewerLayoutError)
-      throw new Error(
-        "Apple was updated on this Mac. Start a new chat to use the new version.",
-        { cause: error62 }
-      );
-    throw error62;
+var PluginUpdatedError = class extends Error {
+  constructor(options) {
+    super(
+      "Apple was updated after this chat started. This chat runs the old version, so its Apple tools and status are out of date: open a new chat to use Apple.",
+      options
+    );
   }
-}
+};
 var ApplePlugin = class {
-  constructor(directory = join24(
+  constructor(install2, directory = join24(
     homedir8(),
     "Library/Application Support/Context Compiler/Apple"
   )) {
+    this.install = install2;
     this.directory = directory;
   }
+  install;
   directory;
+  // The store, refused once another plugin version replaced this one: Codex
+  // deleted this version's folder, or that version rewrote the settings in a
+  // layout this code predates.
+  #open() {
+    if (!existsSync3(join24(this.install, ".codex-plugin/plugin.json")))
+      throw new PluginUpdatedError();
+    try {
+      return new ImportStore(this.directory);
+    } catch (error62) {
+      if (error62 instanceof NewerLayoutError)
+        throw new PluginUpdatedError({ cause: error62 });
+      throw error62;
+    }
+  }
+  updated() {
+    try {
+      var _stack = [];
+      try {
+        const _store = __using(_stack, this.#open());
+        return false;
+      } catch (_) {
+        var _error = _, _hasError = true;
+      } finally {
+        __callDispose(_stack, _error, _hasError);
+      }
+    } catch (error62) {
+      return error62 instanceof PluginUpdatedError;
+    }
+  }
   status() {
     var _stack = [];
     try {
-      const store = __using(_stack, openStore(this.directory));
+      const store = __using(_stack, this.#open());
       const configuration = configurationSchema.parse({
         apps: store.selections()
       });
@@ -76018,7 +76047,7 @@ var ApplePlugin = class {
     {
       var _stack = [];
       try {
-        const store = __using(_stack, openStore(this.directory));
+        const store = __using(_stack, this.#open());
         store.select(configuration.apps, {
           facts: appFacts,
           permissions: ({ app }) => apps[app].permissions
@@ -76067,78 +76096,61 @@ var ApplePlugin = class {
   }
 };
 
+// apps/apple/plugin/src/chat-status.ts
+import { relative as relative3 } from "node:path";
+var progress = (sync, app) => {
+  if (sync === null) return "waiting for its first import";
+  const since = sync.lastSucceededAt === null ? "no data yet" : `data as of ${sync.lastSucceededAt}`;
+  switch (sync.state) {
+    case "succeeded":
+      return `synced at ${sync.completedAt}`;
+    case "running":
+      return `importing since ${sync.startedAt}; ${since}`;
+    case "interrupted":
+      return `its last pass stopped unfinished and resumes when Codex runs the Apple plugin; ${since}`;
+    case "partial":
+      return `partly synced at ${sync.completedAt}: ${sync.error} ${apps[app].permissions}`;
+    case "failed":
+      return `last sync failed at ${sync.completedAt}: ${sync.error} ${apps[app].permissions}; ${since}`;
+  }
+};
+var readiness = (sync) => {
+  if (sync === null) return "importing";
+  if (sync.state === "failed" || sync.state === "partial")
+    return [sync.state, sync.error];
+  if (sync.lastSucceededAt === null) return "importing";
+  return "readable";
+};
+function chatStatus(plugin2) {
+  const selected2 = plugin2.status().apps;
+  if (selected2.length === 0)
+    return {
+      state: "[]",
+      text: "Apple: no apps are set up. Use $setup-apple when the user asks about their Apple apps."
+    };
+  return {
+    state: JSON.stringify(
+      selected2.map(({ app, database, sync }) => [
+        app,
+        database,
+        readiness(sync)
+      ])
+    ),
+    text: [
+      `Apple apps the user connected, each imported into its own SQLite file under "${plugin2.directory}". Read them as $query-apple describes.`,
+      ...selected2.map(
+        ({ app, database, sync }) => `- ${apps[app].title}: ${progress(sync, app)}. ${database === null ? "No database yet." : `Database: ${relative3(plugin2.directory, database)}`}`
+      )
+    ].join("\n")
+  };
+}
+
 // apps/apple/plugin/src/freshness.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
 import { setInterval as setInterval7, setTimeout as sleep2 } from "node:timers/promises";
 
-// apps/apple/plugin/src/leadership.ts
+// apps/apple/plugin/src/sync.ts
 import { mkdirSync as mkdirSync3 } from "node:fs";
 import { join as join25 } from "node:path";
-import { DatabaseSync as DatabaseSync15 } from "node:sqlite";
-function servers(root) {
-  mkdirSync3(root, { recursive: true, mode: 448 });
-  const database = new DatabaseSync15(join25(root, "servers.sqlite"));
-  database.exec(
-    "CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, version TEXT NOT NULL, seen_at INTEGER NOT NULL)"
-  );
-  return database;
-}
-var newer = (candidate, version3) => {
-  const [left, right] = [candidate, version3].map(
-    (value) => value.split(".").map(Number)
-  );
-  for (let part = 0; part < 3; part++)
-    if (left?.[part] !== right?.[part])
-      return (left?.[part] ?? 0) > (right?.[part] ?? 0);
-  return false;
-};
-function outdated(root, id12, version3) {
-  try {
-    var _stack = [];
-    try {
-      const _store = __using(_stack, new ImportStore(root));
-    } catch (_) {
-      var _error = _, _hasError = true;
-    } finally {
-      __callDispose(_stack, _error, _hasError);
-    }
-  } catch (error62) {
-    if (error62 instanceof NewerLayoutError) return true;
-  }
-  try {
-    var _stack2 = [];
-    try {
-      const database = __using(_stack2, servers(root));
-      const now2 = Date.now();
-      database.prepare(
-        "INSERT INTO servers VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version, seen_at=excluded.seen_at"
-      ).run(id12, version3, now2);
-      database.prepare("DELETE FROM servers WHERE seen_at < ?").run(now2 - 36e5);
-      return database.prepare("SELECT version FROM servers WHERE seen_at >= ?").all(now2 - 1e4).some((row) => newer(String(row.version), version3));
-    } catch (_2) {
-      var _error2 = _2, _hasError2 = true;
-    } finally {
-      __callDispose(_stack2, _error2, _hasError2);
-    }
-  } catch {
-    return false;
-  }
-}
-function forgetServer(root, id12) {
-  var _stack = [];
-  try {
-    const database = __using(_stack, servers(root));
-    database.prepare("DELETE FROM servers WHERE id=?").run(id12);
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
-}
-
-// apps/apple/plugin/src/sync.ts
-import { mkdirSync as mkdirSync4 } from "node:fs";
-import { join as join26 } from "node:path";
 var snake = (name) => name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 async function appConnection(directory, item) {
   const { app, scope, includeAttachments } = item;
@@ -76150,17 +76162,17 @@ async function appConnection(directory, item) {
   const streams4 = catalog9.streams.filter((stream) => !omitted.has(stream.name));
   const withFiles = (stream) => includeAttachments && stream.supportsFileTransfer === true && !apps[app].storeCopies?.includes(stream.name);
   const importPath = importDirectory(directory, item);
-  mkdirSync4(importPath, { recursive: true, mode: 448 });
+  mkdirSync3(importPath, { recursive: true, mode: 448 });
   const destination = new SQLiteDestination({
-    path: join26(importPath, "data.sqlite")
+    path: join25(importPath, "data.sqlite")
   });
-  const files = new LocalFiles({ directory: join26(importPath, "files") });
+  const files = new LocalFiles({ directory: join25(importPath, "files") });
   const connection = new Connection({
     name: app,
     source,
     destination,
     checkpoints: new SQLiteCheckpointStore({
-      path: join26(importPath, "checkpoints.sqlite")
+      path: join25(importPath, "checkpoints.sqlite")
     }),
     steps: streams4.map(
       (stream) => new Copy(
@@ -76250,24 +76262,23 @@ async function watchImports(directory, configuration, signal) {
   } catch {
   }
 }
-async function followSelection(directory, selection, id12, version3, changed, newer2, signal) {
+async function followSelection(plugin2, selection, changed, updated, signal) {
   try {
     for await (const _ of setInterval7(1e3, void 0, { signal }))
       try {
-        if (outdated(directory, id12, version3)) newer2.abort();
-        else if (JSON.stringify(readConfiguration(directory)) !== selection)
+        if (plugin2.updated()) updated.abort();
+        else if (JSON.stringify(readConfiguration(plugin2.directory)) !== selection)
           changed.abort();
       } catch {
       }
   } catch {
   }
 }
-async function acquire(directory, id12, version3, signal) {
+async function acquire(plugin2, signal) {
   for (; ; ) {
-    if (!outdated(directory, id12, version3)) {
-      const held = lease(directory);
-      if (held !== null) return held;
-    }
+    if (plugin2.updated()) return null;
+    const held = lease(plugin2.directory);
+    if (held !== null) return held;
     try {
       await sleep2(2e3, void 0, { signal });
     } catch {
@@ -76275,9 +76286,10 @@ async function acquire(directory, id12, version3, signal) {
     }
   }
 }
-async function lead(directory, id12, version3, signal) {
-  const newer2 = new AbortController();
-  const leading = AbortSignal.any([signal, newer2.signal]);
+async function lead(plugin2, signal) {
+  const { directory } = plugin2;
+  const updated = new AbortController();
+  const leading = AbortSignal.any([signal, updated.signal]);
   while (!leading.aborted) {
     const changed = new AbortController();
     const watching = AbortSignal.any([leading, changed.signal]);
@@ -76285,12 +76297,10 @@ async function lead(directory, id12, version3, signal) {
     try {
       const configuration = readConfiguration(directory);
       following = followSelection(
-        directory,
+        plugin2,
         JSON.stringify(configuration),
-        id12,
-        version3,
         changed,
-        newer2,
+        updated,
         watching
       );
       tidy(directory);
@@ -76303,32 +76313,24 @@ async function lead(directory, id12, version3, signal) {
     await following;
   }
 }
-async function keepFresh(directory, signal, version3) {
-  const id12 = randomUUID2();
-  try {
-    while (!signal.aborted) {
-      var _stack = [];
-      try {
-        const leader = await acquire(directory, id12, version3, signal);
-        if (leader === null) return;
-        const _lease = __using(_stack, leader);
-        await lead(directory, id12, version3, signal);
-      } catch (_) {
-        var _error = _, _hasError = true;
-      } finally {
-        __callDispose(_stack, _error, _hasError);
-      }
-    }
-  } finally {
+async function keepFresh(plugin2, signal) {
+  while (!signal.aborted) {
+    var _stack = [];
     try {
-      forgetServer(directory, id12);
-    } catch {
+      const leader = await acquire(plugin2, signal);
+      if (leader === null) return;
+      const _lease = __using(_stack, leader);
+      await lead(plugin2, signal);
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
     }
   }
 }
 
 // apps/apple/plugin/src/native-settings.ts
-var relative3 = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+var relative4 = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 function ago(instant2, now2) {
   const seconds = Math.round((Date.parse(instant2) - now2.getTime()) / 1e3);
   for (const [unit, size] of [
@@ -76337,7 +76339,7 @@ function ago(instant2, now2) {
     ["minute", 60]
   ])
     if (Math.abs(seconds) >= size)
-      return relative3.format(Math.round(seconds / size), unit);
+      return relative4.format(Math.round(seconds / size), unit);
   return "just now";
 }
 function coverage2({ app, scope }) {
@@ -76539,23 +76541,26 @@ async function offerFullDiskAccess(ask, blocked) {
 // apps/apple/plugin/src/main.ts
 if (process.platform !== "darwin")
   throw new Error("Apple requires Codex on a Mac.");
-var plugin = new ApplePlugin();
+var install = fileURLToPath2(new URL(".", import.meta.url));
+var plugin = new ApplePlugin(install);
 var { version: version2 } = external_exports.object({ version: external_exports.string() }).parse(
   JSON.parse(
-    readFileSync(
-      new URL("./.codex-plugin/plugin.json", import.meta.url),
-      "utf8"
-    )
+    readFileSync(join26(install, ".codex-plugin/plugin.json"), "utf8")
   )
 );
-var mcpServer = new McpServer({ name: "apple", version: version2 });
+var mcpServer = new McpServer(
+  { name: "apple", version: version2 },
+  {
+    instructions: "Apple imports the Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari and Books content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3."
+  }
+);
 var json2 = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }]
 });
 mcpServer.registerTool(
   "apple_setup",
   {
-    description: "Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, and the selected_apps view in settings.sqlite lists each app\u2019s import for the query skill. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.",
+    description: "Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -76672,10 +76677,35 @@ mcpServer.server.registerCapabilities({
     }
   }
 });
+var sent;
+mcpServer.registerTool(
+  "apple_context",
+  {
+    description: "Apple status for the plugin\u2019s SessionStart and UserPromptSubmit hooks.",
+    inputSchema: { event: external_exports.enum(["SessionStart", "UserPromptSubmit"]) },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false
+    },
+    _meta: { ui: { visibility: ["app"] } }
+  },
+  ({ event }) => {
+    if (plugin.updated())
+      return {
+        content: [{ type: "text", text: new PluginUpdatedError().message }]
+      };
+    const status2 = chatStatus(plugin);
+    if (event === "UserPromptSubmit" && status2.state === sent)
+      return { content: [] };
+    sent = status2.state;
+    return { content: [{ type: "text", text: status2.text }] };
+  }
+);
 var stopping = new AbortController();
 mcpServer.server.onclose = () => stopping.abort();
 process.stdin.once("end", () => stopping.abort());
 process.once("SIGTERM", () => stopping.abort());
 process.once("SIGINT", () => stopping.abort());
 await mcpServer.connect(new StdioServerTransport());
-await keepFresh(plugin.directory, stopping.signal, version2);
+await keepFresh(plugin, stopping.signal);

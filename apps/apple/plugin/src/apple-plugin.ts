@@ -36,18 +36,14 @@ export const configurationSchema = z.strictObject({
 export type Configuration = z.infer<typeof configurationSchema>;
 export type AppConfiguration = Configuration['apps'][number];
 
-// The plugin's store, refusing in the plugin's words when a newer plugin
-// version owns it.
-export function openStore(directory: string): ImportStore {
-  try {
-    return new ImportStore(directory);
-  } catch (error) {
-    if (error instanceof NewerLayoutError)
-      throw new Error(
-        'Apple was updated on this Mac. Start a new chat to use the new version.',
-        { cause: error },
-      );
-    throw error;
+// Thrown by a server whose plugin version was replaced. Codex keeps an old
+// chat's server running after an upgrade, so that chat must move on.
+export class PluginUpdatedError extends Error {
+  constructor(options?: ErrorOptions) {
+    super(
+      'Apple was updated after this chat started. This chat runs the old version, so its Apple tools and status are out of date: open a new chat to use Apple.',
+      options,
+    );
   }
 }
 
@@ -63,14 +59,41 @@ export type ImportSync =
 // writes each app's data.sqlite; agents read those files directly.
 export class ApplePlugin {
   constructor(
+    // The installed plugin's folder. Installing another version deletes it.
+    readonly install: string,
     readonly directory = join(
       homedir(),
       'Library/Application Support/Context Compiler/Apple',
     ),
   ) {}
 
+  // The store, refused once another plugin version replaced this one: Codex
+  // deleted this version's folder, or that version rewrote the settings in a
+  // layout this code predates.
+  #open(): ImportStore {
+    if (!existsSync(join(this.install, '.codex-plugin/plugin.json')))
+      throw new PluginUpdatedError();
+    try {
+      return new ImportStore(this.directory);
+    } catch (error) {
+      if (error instanceof NewerLayoutError)
+        throw new PluginUpdatedError({ cause: error });
+      throw error;
+    }
+  }
+
+  updated(): boolean {
+    try {
+      using _store = this.#open();
+      return false;
+    } catch (error) {
+      // Any other failure, such as a full disk, says nothing about versions.
+      return error instanceof PluginUpdatedError;
+    }
+  }
+
   status() {
-    using store = openStore(this.directory);
+    using store = this.#open();
     const configuration = configurationSchema.parse({
       apps: store.selections(),
     });
@@ -113,7 +136,7 @@ export class ApplePlugin {
       })),
     });
     {
-      using store = openStore(this.directory);
+      using store = this.#open();
       store.select(configuration.apps, {
         facts: appFacts,
         permissions: ({ app }) => apps[app].permissions,

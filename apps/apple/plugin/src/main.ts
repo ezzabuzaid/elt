@@ -1,9 +1,17 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { ApplePlugin, appSchema, configurationSchema } from './apple-plugin.ts';
+import {
+  ApplePlugin,
+  appSchema,
+  configurationSchema,
+  PluginUpdatedError,
+} from './apple-plugin.ts';
 import { appNames } from './apps.ts';
+import { chatStatus } from './chat-status.ts';
 import { keepFresh } from './freshness.ts';
 import { settingsRead, settingsUpdate } from './native-settings.ts';
 import { setUpWithForms } from './setup-forms.ts';
@@ -11,20 +19,23 @@ import { setUpWithForms } from './setup-forms.ts';
 if (process.platform !== 'darwin')
   throw new Error('Apple requires Codex on a Mac.');
 
-const plugin = new ApplePlugin();
-// The installed plugin's version, from the manifest beside this bundle; the
-// newest running version leads background sync.
+// This bundle sits at the root of the installed plugin.
+const install = fileURLToPath(new URL('.', import.meta.url));
+const plugin = new ApplePlugin(install);
 const { version } = z
   .object({ version: z.string() })
   .parse(
     JSON.parse(
-      readFileSync(
-        new URL('./.codex-plugin/plugin.json', import.meta.url),
-        'utf8',
-      ),
+      readFileSync(join(install, '.codex-plugin/plugin.json'), 'utf8'),
     ),
   );
-const mcpServer = new McpServer({ name: 'apple', version });
+const mcpServer = new McpServer(
+  { name: 'apple', version },
+  {
+    instructions:
+      'Apple imports the Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari and Books content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.',
+  },
+);
 // McpServer turns a thrown error into an isError result.
 const json = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -34,7 +45,7 @@ mcpServer.registerTool(
   'apple_setup',
   {
     description:
-      'Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background, and the selected_apps view in settings.sqlite lists each app’s import for the query skill. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.',
+      'Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -161,6 +172,36 @@ mcpServer.server.registerCapabilities({
   },
 });
 
+// The plugin's hooks add the Apple status to this chat's context when the
+// chat starts or compacts, and before a prompt once the status changed.
+// Codex runs one server per chat, so the last status sent is this chat's.
+let sent: string | undefined;
+mcpServer.registerTool(
+  'apple_context',
+  {
+    description:
+      'Apple status for the plugin’s SessionStart and UserPromptSubmit hooks.',
+    inputSchema: { event: z.enum(['SessionStart', 'UserPromptSubmit']) },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
+    _meta: { ui: { visibility: ['app'] } },
+  },
+  ({ event }) => {
+    if (plugin.updated())
+      return {
+        content: [{ type: 'text', text: new PluginUpdatedError().message }],
+      };
+    const status = chatStatus(plugin);
+    if (event === 'UserPromptSubmit' && status.state === sent)
+      return { content: [] };
+    sent = status.state;
+    return { content: [{ type: 'text', text: status.text }] };
+  },
+);
+
 // Keeps the imports current until Codex closes this server.
 const stopping = new AbortController();
 mcpServer.server.onclose = () => stopping.abort();
@@ -168,4 +209,4 @@ process.stdin.once('end', () => stopping.abort());
 process.once('SIGTERM', () => stopping.abort());
 process.once('SIGINT', () => stopping.abort());
 await mcpServer.connect(new StdioServerTransport());
-await keepFresh(plugin.directory, stopping.signal, version);
+await keepFresh(plugin, stopping.signal);

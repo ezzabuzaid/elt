@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "apple",
+            "tool": "apple_context",
+            "input": { "event": "${hook_event_name}" },
+            "statusMessage": "Reading Apple status"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "apple",
+            "tool": "apple_context",
+            "input": { "event": "${hook_event_name}" },
+            "statusMessage": "Reading Apple status"
+          }
+        ]
+      }
+    ]
+  }
+}

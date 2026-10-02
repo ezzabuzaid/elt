@@ -5,11 +5,11 @@ description: Answer questions about Apple app content imported by the Apple plug
 
 # Query Apple apps
 
-The Apple plugin imports each selected app into its own SQLite file and keeps it current in the background while Codex is open. The settings file `"$HOME/Library/Application Support/Context Compiler/Apple/settings.sqlite"` has a `selected_apps` view: each selected app, its scope, the path of its `database`, a `connection_error` when its import could not start, and its macOS `permissions` guidance. Each app's database describes itself through views: `catalog` has one row per view and per view column, with its type and meaning; `sync_status` has the app's latest pass and last successful sync, `stream_status` the same per stream; `extraction_coverage` has what each pass covered. Query the views; `raw_*` tables are their storage. Read every file with `/usr/bin/sqlite3 -readonly`; the plugin's tools only set up.
+The Apple plugin imports each selected app into its own SQLite file and keeps it current in the background while Codex is open. The settings file `"$HOME/Library/Application Support/Context Compiler/Apple/settings.sqlite"` has a `selected_apps` view: each selected app, its scope, the path of its `database`, a `connection_error` when its import could not start, and its macOS `permissions` guidance. Each app's database describes itself through views: `catalog` has one row per view and per view column, with its type and meaning; `sync_status` has the app's latest pass and last successful sync, `stream_status` the same per stream; `extraction_coverage` has what each pass covered. Query the views; `raw_*` tables are their storage. Read every file with `/usr/bin/sqlite3 -readonly`.
 
 ## Answer a question
 
-1. Read the selection:
+1. Find the selected apps. The plugin adds an Apple status to this chat's context when the chat starts and whenever it changes: each selected app, how its last sync went, and its `Database` path under the Apple folder it names. Use the latest one. When the context has none, or setup changed in this chat, read the selection instead:
 
    ```sh
    /usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' \
@@ -17,7 +17,7 @@ The Apple plugin imports each selected app into its own SQLite file and keeps it
    ```
 
    If the file or view does not exist, or a needed app is not listed, use `$setup-apple` with the user's choice. Use only selected apps.
-2. For each app the question needs: a `connection_error` means the app is inaccessible; give its `permissions` guidance. Otherwise read `SELECT status, error, last_successful_sync_at FROM sync_status` from its `database`. If the file does not open yet, has no row, or `last_successful_sync_at` is null, the app has not finished its first import: say it is still importing, or that it failed with its `error` and `permissions` guidance, and answer from the other apps. Otherwise read right away, even while a pass is `running`.
+2. For each app the question needs: a failed sync or a `connection_error` means the app is inaccessible; give its error and `permissions` guidance. An app with no database or no data yet has not finished its first import: say it is still importing, and answer from the other apps. Otherwise read right away, even while it is importing. Without a status in context, read `SELECT status, error, last_successful_sync_at FROM sync_status` from its `database`; there, a `running` pass may be one a closed chat left unfinished.
 3. Read the catalog of each app you need:
 
    ```sh
@@ -38,7 +38,7 @@ The Apple plugin imports each selected app into its own SQLite file and keeps it
 
    Tables of the opened file need no prefix. `ATTACH` another app's file to join across apps; attached files are read-only too.
 
-5. Answer plainly with the app, the record's title, name or date, and useful source links when present. Mention the last sync when freshness matters: `SELECT stream, status, last_successful_sync_at FROM stream_status`.
+5. Answer plainly with the app, the record's title, name or date, and useful source links when present. Mention the app's last sync when freshness matters; `stream_status` has it per stream.
 
 ## Gotchas
 
@@ -55,5 +55,5 @@ The Apple plugin imports each selected app into its own SQLite file and keeps it
 ## Done when
 
 - The answer rests on rows you read, and counts or aggregates stand in for results too large to list.
-- Coverage and sync status separate "no matching rows" from content that is excluded, inaccessible or stale. A partial or failed sync names the app and its last successful sync. A `running` pass may be one a closed Codex chat left unfinished; answer from the last successful sync and say when it was.
+- Coverage and sync status separate "no matching rows" from content that is excluded, inaccessible or stale. A partial, failed or unfinished sync names the app and its last successful sync.
 - Gaps are stated in terms the user can act on, such as granting Calendar access or widening a date range.
