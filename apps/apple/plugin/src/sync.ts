@@ -6,9 +6,8 @@ import {
   SQLiteColumns,
   SQLiteDestination,
 } from 'elt-sqlite';
-import { importDirectory } from 'import-store';
-import type { AppConfiguration } from './apple-plugin.ts';
-import { apps } from './apps.ts';
+import { importDirectory, type Selection } from 'import-store';
+import { appNamed, apps } from './apps.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -17,8 +16,9 @@ const snake = (name: string) =>
 // loads into raw_<stream> and is read through its <snake_stream> view,
 // checkpoints.sqlite, and files/ for attachment copies. Returns the destination
 // too, typed, for the history and catalog installed in its file.
-export async function appConnection(directory: string, item: AppConfiguration) {
-  const { app, scope, includeAttachments } = item;
+export async function appConnection(directory: string, item: Selection) {
+  const { scope, includeAttachments } = item;
+  const app = appNamed(item.app);
   const source = apps[app].source(scope);
   const catalog = await source.discover();
   const omitted = new Set(

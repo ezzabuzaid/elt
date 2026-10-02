@@ -585,6 +585,14 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
       (await call(client, 'apple_options', { app: 'invalid' })).isError,
       true,
     );
+    assert.equal(
+      (
+        await call(client, 'apple_configure', {
+          apps: [{ app: 'invalid' }],
+        })
+      ).isError,
+      true,
+    );
 
     // When the leading chat closes, another chat's server keeps importing.
     await client.close();

@@ -127,7 +127,7 @@ export function settingsUpdate(
     .filter(
       (app) => set[app] === true && !current.some((item) => item.app === app),
     )
-    .map((app) => ({ app }));
+    .map((app) => ({ app, scope: {}, includeAttachments: true }));
   plugin.configure({ apps: [...kept, ...added] });
   return { values: settingsRead(plugin).values };
 }

@@ -75926,10 +75926,13 @@ var apps = {
     source: () => new AppleBooksSource()
   }
 };
-var isApp = (app) => appNames.includes(app);
-function appFacts(app) {
-  if (!isApp(app)) throw new TypeError(`Unknown Apple app ${app}`);
-  const { choices, datedBy } = apps[app];
+function appNamed(name) {
+  const app = appNames.find((known) => known === name);
+  if (app === void 0) throw new TypeError(`Unknown Apple app ${name}`);
+  return app;
+}
+function appFacts(name) {
+  const { choices, datedBy } = apps[appNamed(name)];
   return {
     narrowsBy: (kind) => choices.some(({ scope }) => scope === kind),
     datedBy
@@ -76014,12 +76017,13 @@ var ApplePlugin = class {
     var _stack = [];
     try {
       const store = __using(_stack, this.#open());
-      const configuration = configurationSchema.parse({
-        apps: store.selections()
-      });
       const leading = leaseHeld(this.directory);
       return {
-        apps: configuration.apps.map((item) => {
+        apps: store.selections().map((selection) => {
+          const item = {
+            ...selection,
+            app: appNamed(selection.app)
+          };
           const database = store.database(item);
           const pass2 = store.latestPass(item);
           const failure3 = store.connectionFailure(item);
@@ -76046,19 +76050,16 @@ var ApplePlugin = class {
   }
   // A changed scope is a new import: the leading server loads it, and the
   // previous one is removed, so nothing reads an import that is not selected.
-  configure(input2) {
-    const requested = configurationSchema.parse(input2);
-    const configuration = configurationSchema.parse({
-      apps: requested.apps.map((item) => ({
-        ...item,
-        scope: { ...apps[item.app].defaultScope?.(), ...item.scope }
-      }))
-    });
+  configure(requested) {
+    const configuration = requested.apps.map((item) => ({
+      ...item,
+      scope: { ...apps[item.app].defaultScope?.(), ...item.scope }
+    }));
     {
       var _stack = [];
       try {
         const store = __using(_stack, this.#open());
-        store.select(configuration.apps, {
+        store.select(configuration, {
           facts: appFacts,
           permissions: ({ app }) => apps[app].permissions
         });
@@ -76163,7 +76164,8 @@ import { mkdirSync as mkdirSync3 } from "node:fs";
 import { join as join25 } from "node:path";
 var snake = (name) => name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 async function appConnection(directory, item) {
-  const { app, scope, includeAttachments } = item;
+  const { scope, includeAttachments } = item;
+  const app = appNamed(item.app);
   const source = apps[app].source(scope);
   const catalog9 = await source.discover();
   const omitted = new Set(
@@ -76206,11 +76208,11 @@ async function appConnection(directory, item) {
 }
 
 // apps/apple/plugin/src/freshness.ts
-function readConfiguration(directory) {
+function readSelections(directory) {
   var _stack = [];
   try {
     const store = __using(_stack, new ImportStore(directory));
-    return configurationSchema.parse({ apps: store.selections() });
+    return store.selections();
   } catch (_) {
     var _error = _, _hasError = true;
   } finally {
@@ -76230,9 +76232,9 @@ function tidy(directory) {
     __callDispose(_stack, _error, _hasError);
   }
 }
-async function watchImports(directory, configuration, signal) {
+async function watchImports(directory, selections, signal) {
   const imports = [];
-  for (const item of configuration.apps)
+  for (const item of selections)
     try {
       var _stack = [];
       try {
@@ -76277,7 +76279,7 @@ async function followSelection(plugin2, selection, changed, updated, signal) {
     for await (const _ of setInterval7(1e3, void 0, { signal }))
       try {
         if (plugin2.updated()) updated.abort();
-        else if (JSON.stringify(readConfiguration(plugin2.directory)) !== selection)
+        else if (JSON.stringify(readSelections(plugin2.directory)) !== selection)
           changed.abort();
       } catch {
       }
@@ -76305,16 +76307,16 @@ async function lead(plugin2, signal) {
     const watching = AbortSignal.any([leading, changed.signal]);
     let following = Promise.resolve();
     try {
-      const configuration = readConfiguration(directory);
+      const selections = readSelections(directory);
       following = followSelection(
         plugin2,
-        JSON.stringify(configuration),
+        JSON.stringify(selections),
         changed,
         updated,
         watching
       );
       tidy(directory);
-      await watchImports(directory, configuration, watching);
+      await watchImports(directory, selections, watching);
     } catch {
     }
     await sleep2(6e4, void 0, { signal: watching }).catch(() => {
@@ -76435,7 +76437,7 @@ function settingsUpdate(plugin2, set2) {
   }));
   const added = appNames.filter(
     (app) => set2[app] === true && !current.some((item) => item.app === app)
-  ).map((app) => ({ app }));
+  ).map((app) => ({ app, scope: {}, includeAttachments: true }));
   plugin2.configure({ apps: [...kept, ...added] });
   return { values: settingsRead(plugin2).values };
 }

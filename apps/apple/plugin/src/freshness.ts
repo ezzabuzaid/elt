@@ -1,17 +1,13 @@
 import { setInterval, setTimeout as sleep } from 'node:timers/promises';
 import { Pipeline } from 'elt';
 import { installSQLiteCatalog, SQLiteSyncHistory } from 'elt-sqlite';
-import { ImportStore, lease } from 'import-store';
-import {
-  type ApplePlugin,
-  type Configuration,
-  configurationSchema,
-} from './apple-plugin.ts';
+import { ImportStore, lease, type Selection } from 'import-store';
+import type { ApplePlugin } from './apple-plugin.ts';
 import { appConnection } from './sync.ts';
 
-function readConfiguration(directory: string): Configuration {
+function readSelections(directory: string): Selection[] {
   using store = new ImportStore(directory);
-  return configurationSchema.parse({ apps: store.selections() });
+  return store.selections();
 }
 
 // Republishes what readers see in the settings file, removes imports no
@@ -32,11 +28,11 @@ function tidy(directory: string) {
 // failure is kept in the store's settings until it builds.
 async function watchImports(
   directory: string,
-  configuration: Configuration,
+  selections: readonly Selection[],
   signal: AbortSignal,
 ) {
   const imports = [];
-  for (const item of configuration.apps)
+  for (const item of selections)
     try {
       imports.push(await appConnection(directory, item));
       using store = new ImportStore(directory);
@@ -77,9 +73,7 @@ async function followSelection(
     for await (const _ of setInterval(1_000, undefined, { signal }))
       try {
         if (plugin.updated()) updated.abort();
-        else if (
-          JSON.stringify(readConfiguration(plugin.directory)) !== selection
-        )
+        else if (JSON.stringify(readSelections(plugin.directory)) !== selection)
           changed.abort();
       } catch {
         // Unreadable for now, such as while the disk is full: ask again.
@@ -118,16 +112,16 @@ async function lead(plugin: ApplePlugin, signal: AbortSignal) {
     const watching = AbortSignal.any([leading, changed.signal]);
     let following = Promise.resolve();
     try {
-      const configuration = readConfiguration(directory);
+      const selections = readSelections(directory);
       following = followSelection(
         plugin,
-        JSON.stringify(configuration),
+        JSON.stringify(selections),
         changed,
         updated,
         watching,
       );
       tidy(directory);
-      await watchImports(directory, configuration, watching);
+      await watchImports(directory, selections, watching);
     } catch {
       // Retried below, once the selection changes or a minute passes.
     }

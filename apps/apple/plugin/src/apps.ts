@@ -222,13 +222,16 @@ export const apps: Record<App, AppDefinition> = {
   },
 };
 
-const isApp = (app: string): app is App =>
-  (appNames as readonly string[]).includes(app);
+// The app a saved selection names. The store keeps names as plain strings.
+export function appNamed(name: string): App {
+  const app = appNames.find((known) => known === name);
+  if (app === undefined) throw new TypeError(`Unknown Apple app ${name}`);
+  return app;
+}
 
 // What an app can be narrowed by, for the selection rules both hosts share.
-export function appFacts(app: string): AppFacts {
-  if (!isApp(app)) throw new TypeError(`Unknown Apple app ${app}`);
-  const { choices, datedBy } = apps[app];
+export function appFacts(name: string): AppFacts {
+  const { choices, datedBy } = apps[appNamed(name)];
   return {
     narrowsBy: (kind) => choices.some(({ scope }) => scope === kind),
     datedBy,

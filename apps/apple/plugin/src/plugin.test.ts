@@ -60,20 +60,48 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
   assert.deepEqual(plugin.status().apps, []);
   for (const [apps, message] of [
     [
-      [{ app: 'contacts', scope: { startAt: '2025-01-01T00:00:00.000Z' } }],
+      [
+        {
+          app: 'contacts',
+          scope: { startAt: '2025-01-01T00:00:00.000Z' },
+          includeAttachments: true,
+        },
+      ],
       /date filtering/,
     ],
-    [[{ app: 'messages', scope: { accountIds: ['a'] } }], /account IDs/],
     [
-      [{ app: 'notes', scope: { collectionIds: [] } }],
+      [
+        {
+          app: 'messages',
+          scope: { accountIds: ['a'] },
+          includeAttachments: true,
+        },
+      ],
+      /account IDs/,
+    ],
+    [
+      [
+        {
+          app: 'notes',
+          scope: { collectionIds: [] },
+          includeAttachments: true,
+        },
+      ],
       /at least one collection/,
     ],
-    [[{ app: 'notes' }, { app: 'notes' }], /once/],
-    [[{ app: 'photos' }], /app/],
+    [
+      [
+        { app: 'notes', scope: {}, includeAttachments: true },
+        { app: 'notes', scope: {}, includeAttachments: true },
+      ],
+      /once/,
+    ],
   ] as const)
     assert.throws(() => plugin.configure({ apps }), message);
   assert.deepEqual(plugin.status().apps, []);
-  const [calendar] = plugin.configure({ apps: [{ app: 'calendar' }] }).apps;
+  const [calendar] = plugin.configure({
+    apps: [{ app: 'calendar', scope: {}, includeAttachments: true }],
+  }).apps;
   assert.ok(calendar?.scope.startAt);
   assert.ok(calendar.scope.endAt);
   assert.ok(calendar.scope.startAt < calendar.scope.endAt);
@@ -89,7 +117,9 @@ test('agents read the selected apps, where each import lives and what macOS acce
     scope: { collectionIds: ['folder-1'] },
     includeAttachments: false,
   };
-  plugin.configure({ apps: [notes, { app: 'mail' }] });
+  plugin.configure({
+    apps: [notes, { app: 'mail', scope: {}, includeAttachments: true }],
+  });
   const { stdout, stderr } = spawnSync(
     '/usr/bin/sqlite3',
     [
@@ -322,12 +352,17 @@ test('once another plugin version replaces this one, its server refuses to chang
   });
   const store = join(scratch.path, 'store');
   const plugin = new ApplePlugin(replaced, store);
-  plugin.configure({ apps: [{ app: 'notes' }] });
+  plugin.configure({
+    apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
+  });
   assert.equal(plugin.updated(), false);
   rmSync(replaced, { recursive: true });
   assert.equal(plugin.updated(), true);
   assert.throws(
-    () => plugin.configure({ apps: [{ app: 'mail' }] }),
+    () =>
+      plugin.configure({
+        apps: [{ app: 'mail', scope: {}, includeAttachments: true }],
+      }),
     /open a new chat/,
   );
   assert.throws(
@@ -350,7 +385,9 @@ test('a server whose code predates the settings file refuses to change apps and 
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = new ApplePlugin(install, scratch.path);
-  plugin.configure({ apps: [{ app: 'notes' }] });
+  plugin.configure({
+    apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
+  });
   // A newer plugin rewrote the settings file in a layout this code predates.
   {
     using database = new DatabaseSync(join(scratch.path, 'settings.sqlite'));
@@ -360,7 +397,10 @@ test('a server whose code predates the settings file refuses to change apps and 
     database.exec(`PRAGMA user_version = ${layout + 1}`);
   }
   assert.throws(
-    () => plugin.configure({ apps: [{ app: 'mail' }] }),
+    () =>
+      plugin.configure({
+        apps: [{ app: 'mail', scope: {}, includeAttachments: true }],
+      }),
     /open a new chat/,
   );
   const stopping = new AbortController();
@@ -396,5 +436,10 @@ test('settings an older layout wrote are discarded, so the user sets up again', 
       .get(),
     undefined,
   );
-  assert.equal(plugin.configure({ apps: [{ app: 'notes' }] }).apps.length, 1);
+  assert.equal(
+    plugin.configure({
+      apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
+    }).apps.length,
+    1,
+  );
 });

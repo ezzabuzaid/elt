@@ -7,9 +7,17 @@ import {
   leaseHeld,
   NewerLayoutError,
   type Pass,
+  type Selection,
 } from 'import-store';
 import { z } from 'zod';
-import { type App, appFacts, appNames, apps, type ChoiceRows } from './apps.ts';
+import {
+  type App,
+  appFacts,
+  appNamed,
+  appNames,
+  apps,
+  type ChoiceRows,
+} from './apps.ts';
 
 // The shape of a selection as tools receive it; ImportStore.select checks it
 // against what each app can be narrowed by.
@@ -57,8 +65,7 @@ export const configurationSchema = z.strictObject({
       'The complete selection. An app left out is disconnected and its imported copy deleted.',
     ),
 });
-export type Configuration = z.infer<typeof configurationSchema>;
-export type AppConfiguration = Configuration['apps'][number];
+export type AppConfiguration = Selection & { readonly app: App };
 
 // Thrown by a server whose plugin version was replaced. Codex keeps an old
 // chat's server running after an upgrade, so that chat must move on.
@@ -118,12 +125,13 @@ export class ApplePlugin {
 
   status() {
     using store = this.#open();
-    const configuration = configurationSchema.parse({
-      apps: store.selections(),
-    });
     const leading = leaseHeld(this.directory);
     return {
-      apps: configuration.apps.map((item) => {
+      apps: store.selections().map((selection) => {
+        const item: AppConfiguration = {
+          ...selection,
+          app: appNamed(selection.app),
+        };
         const database = store.database(item);
         const pass = store.latestPass(item);
         const failure = store.connectionFailure(item);
@@ -151,17 +159,14 @@ export class ApplePlugin {
 
   // A changed scope is a new import: the leading server loads it, and the
   // previous one is removed, so nothing reads an import that is not selected.
-  configure(input: unknown) {
-    const requested = configurationSchema.parse(input);
-    const configuration = configurationSchema.parse({
-      apps: requested.apps.map((item) => ({
-        ...item,
-        scope: { ...apps[item.app].defaultScope?.(), ...item.scope },
-      })),
-    });
+  configure(requested: { readonly apps: readonly AppConfiguration[] }) {
+    const configuration = requested.apps.map((item) => ({
+      ...item,
+      scope: { ...apps[item.app].defaultScope?.(), ...item.scope },
+    }));
     {
       using store = this.#open();
-      store.select(configuration.apps, {
+      store.select(configuration, {
         facts: appFacts,
         permissions: ({ app }) => apps[app].permissions,
       });
