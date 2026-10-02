@@ -22,16 +22,40 @@ export const configurationSchema = z.strictObject({
         app: appSchema,
         scope: z
           .strictObject({
-            accountIds: ids.optional(),
-            collectionIds: ids.optional(),
-            startAt: z.iso.datetime({ precision: 3 }).optional(),
-            endAt: z.iso.datetime({ precision: 3 }).optional(),
+            accountIds: ids
+              .describe(
+                'Account IDs from apple_options. Omit to import every account; never pass an empty list.',
+              )
+              .optional(),
+            collectionIds: ids
+              .describe(
+                'Collection IDs (folders, calendars, lists, profiles) from apple_options. Omit to import every collection; never pass an empty list.',
+              )
+              .optional(),
+            startAt: z.iso
+              .datetime({ precision: 3 })
+              .describe(
+                'Inclusive UTC start with milliseconds, such as 2026-01-01T00:00:00.000Z. Only for an app whose apple_options datedBy is not null.',
+              )
+              .optional(),
+            endAt: z.iso
+              .datetime({ precision: 3 })
+              .describe(
+                'Exclusive UTC end with milliseconds; use the following midnight to include an end date.',
+              )
+              .optional(),
           })
           .default({}),
-        includeAttachments: z.boolean().default(true),
+        includeAttachments: z
+          .boolean()
+          .describe('Copy attachments; false imports metadata only.')
+          .default(true),
       }),
     )
-    .max(appNames.length),
+    .max(appNames.length)
+    .describe(
+      'The complete selection. An app left out is disconnected and its imported copy deleted.',
+    ),
 });
 export type Configuration = z.infer<typeof configurationSchema>;
 export type AppConfiguration = Configuration['apps'][number];

@@ -464,7 +464,10 @@ test('the committed Apple plugin installs from the repo marketplace, sets up thr
     );
     assert.equal(await context(client, 'UserPromptSubmit'), '');
     assert.deepEqual((await call(other, 'apple_setup')).content, [
-      { type: 'text', text: 'Client does not support form elicitation.' },
+      {
+        type: 'text',
+        text: 'This host cannot show forms. Set up with apple_options, then apple_configure.',
+      },
     ]);
 
     // Setup returns once the answers are saved; the import runs apart from it.
