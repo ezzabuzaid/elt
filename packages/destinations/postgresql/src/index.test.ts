@@ -2833,19 +2833,22 @@ test('each watch pass is recorded under its own connection when it completes', a
     passes.push(connection.name);
 
   assert.deepEqual(passes.toSorted(), ['mail', 'mail', 'notes', 'notes']);
-  const attempts =
-    await sql`SELECT connector, status, completed_at::text FROM marts.sync_attempts ORDER BY attempt_id`;
+  const attempts = await sql`SELECT connector, status FROM marts.sync_attempts`;
   assert.deepEqual(
     attempts
       .map(({ connector, status }) => `${connector}:${status}`)
       .toSorted(),
     ['mail:succeeded', 'mail:succeeded', 'notes:succeeded', 'notes:succeeded'],
   );
-  // Each pass closes its own attempt when it finishes, not when the watch ends.
-  assert.equal(
-    new Set(attempts.map(({ completed_at }) => completed_at)).size,
-    4,
-  );
+  // Each pass closes its own attempt when it finishes, not when the watch
+  // ends: a connection's earlier attempt is closed before its next one opens.
+  // The two connections run at once, so their timestamps may tie.
+  const overlapping = await sql`
+    SELECT earlier.connector FROM marts.sync_attempts earlier
+    JOIN marts.sync_attempts later ON later.connector = earlier.connector
+      AND later.attempt_id > earlier.attempt_id
+    WHERE earlier.completed_at > later.started_at`;
+  assert.deepEqual([...overlapping], []);
 });
 
 test('stream_status keeps each stream own latest outcome when a watch pass reads only what changed', async () => {
