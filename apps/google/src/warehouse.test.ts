@@ -16,7 +16,7 @@ import { scratchWarehouse } from '@workspace/elt-postgresql/testing';
 import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
 import { installSearchConsoleMarts } from './sources/search-console/search-console-marts.ts';
 import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
-import { RAW } from './test-warehouse.ts';
+import { RAW, testServer } from './test-warehouse.ts';
 
 const NOW = () => new Date('2026-09-22T00:00:00.000Z');
 const contract = new URL(
@@ -45,7 +45,10 @@ type Google = {
  * fake Search Console, and its marts are installed as the app installs them.
  */
 async function warehouse(siteUrls: string[], google: Google) {
-  const base = await scratchWarehouse(await readFile(contract, 'utf8'));
+  const base = await scratchWarehouse(
+    testServer,
+    await readFile(contract, 'utf8'),
+  );
   const loaderUrl = base.url;
   await installPostgresCatalog({ url: loaderUrl, schema: 'marts' });
   const loader = postgres(loaderUrl, { max: 1, onnotice: () => {} });

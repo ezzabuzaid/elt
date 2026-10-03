@@ -6,13 +6,17 @@ import { scratchDatabase } from '@workspace/elt-postgresql/testing';
 
 export const RAW = 'google_search_console';
 
+export const testServer =
+  process.env.TEST_DATABASE_URL ??
+  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
+
 /**
  * A database of its own for one test, dropped when the test ends: the
  * Search Console destination and checkpoints in the raw schema, and a
  * session whose unqualified names resolve there.
  */
 export async function searchConsoleDatabase() {
-  const database = await scratchDatabase({
+  const database = await scratchDatabase(testServer, {
     max: 1,
     connection: { search_path: RAW },
   });

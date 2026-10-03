@@ -2,15 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 import postgres from 'postgres';
 
-const server =
-  process.env.TEST_DATABASE_URL ??
-  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
-
 /**
- * A database of its own for one test, dropped when the test ends. `sql` is an
- * administrator session there; `as` names the same database for another role.
+ * A database of its own on `server` for one test, dropped when the test ends.
+ * `sql` is an administrator session there; `as` names the same database for
+ * another role.
  */
 export async function scratchDatabase(
+  server: string,
   options?: postgres.Options<Record<string, postgres.PostgresType>>,
 ) {
   const admin = postgres(server, { max: 1, onnotice: () => {} });
@@ -52,8 +50,8 @@ export async function scratchDatabase(
  * agent_reader sees. `url` loads as the warehouse role; `agent` reads as
  * agent_reader.
  */
-export async function scratchWarehouse(contract: string) {
-  const database = await scratchDatabase();
+export async function scratchWarehouse(server: string, contract: string) {
+  const database = await scratchDatabase(server);
   const agent = postgres(database.as('agent_reader', 'agent'), {
     max: 1,
     onnotice: () => {},

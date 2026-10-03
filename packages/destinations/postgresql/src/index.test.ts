@@ -40,6 +40,10 @@ import {
 import { PostgresFileStore } from './postgres-file-store.ts';
 import { scratchDatabase } from './testing.ts';
 
+const server =
+  process.env.TEST_DATABASE_URL ??
+  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
+
 // Emits whatever the test sets on `messages`, then an empty checkpoint.
 class Messages extends Source {
   override coverage() {
@@ -76,7 +80,7 @@ const rows = (stream: Stream, data: readonly object[]): SourceMessage[] =>
   data.map((row) => ({ stream: stream.name, data: row }));
 
 test('documented views expose live data and replace atomically without dropping outside dependents', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const { sql } = database;
   await sql`CREATE TABLE source_notes (id integer PRIMARY KEY, title text)`;
   await sql`INSERT INTO source_notes VALUES (1, 'First')`;
@@ -202,7 +206,7 @@ test('documented views expose live data and replace atomically without dropping 
 });
 
 test("a competing load cannot reconcile pending files between another load's commits", async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'docs',
     jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
@@ -256,7 +260,7 @@ test("a competing load cannot reconcile pending files between another load's com
 test('Postgres stores per-field attachment references and reconciles only the files its committed rows retain', async () => {
   const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-local-pg-'));
   try {
-    await using database = await scratchDatabase();
+    await using database = await scratchDatabase(server);
     const path = join(scratch.path, 'source.txt');
     await writeFile(path, 'original');
     const directories = [
@@ -394,7 +398,7 @@ test('Postgres stores per-field attachment references and reconciles only the fi
 });
 
 test('schema annotations follow each copy, including projections, append history and removed descriptions', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const titleDescription =
     "The owner's title.\nLiteral \\paths and '; DROP TABLE notes; -- stay text.";
   const schema = {
@@ -590,7 +594,7 @@ test('invalid schema annotations fail before extraction or storage access', asyn
 });
 
 test('file text and bounded original bytes survive replay, replacement and deletion with checkpoints', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-postgres-files-'),
   );
@@ -767,7 +771,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
 });
 
 test('a copy creates its schema and a table typed from the stream schema', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -882,7 +886,7 @@ test('a copy creates its schema and a table typed from the stream schema', async
 });
 
 test('overwrite replaces rows while readers keep seeing the previous load', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -938,7 +942,7 @@ test('overwrite replaces rows while readers keep seeing the previous load', asyn
 });
 
 test('append keeps every load', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'events',
     jsonSchema: {
@@ -980,7 +984,7 @@ test('append keeps every load', async () => {
 });
 
 test('cursor_newer keeps the greatest cursor by byte order; replace keeps the newest extraction', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'versions',
     jsonSchema: {
@@ -1085,7 +1089,7 @@ test('cursor_newer keeps the greatest cursor by byte order; replace keeps the ne
 });
 
 test('deletions remove keyed rows in source order', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -1154,7 +1158,7 @@ test('deletions remove keyed rows in source order', async () => {
 });
 
 test('a source failure commits nothing: no table, rows or owner', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -1198,7 +1202,7 @@ test('a source failure commits nothing: no table, rows or owner', async () => {
 });
 
 test('a table has one writer, even when another loads only its own partitions', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'records',
     jsonSchema: {
@@ -1297,7 +1301,7 @@ test('a table has one writer, even when another loads only its own partitions', 
 });
 
 test('an existing key column of another type is refused, and a changed key rebuilds the index', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -1377,7 +1381,7 @@ test('declarations are checked before any connection', () => {
 const only = (id: string, binding: object = {}) => new Map([[id, binding]]);
 
 test('a Postgres checkpoint store resumes from the last acknowledged state in the schema', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const store = new PostgresCheckpointStore({
     url: database.url,
     schema: 'raw',
@@ -1410,7 +1414,7 @@ test('a Postgres checkpoint store resumes from the last acknowledged state in th
 });
 
 test('a changed binding is refused until the Postgres checkpoint is reset', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const store = new PostgresCheckpointStore({
     url: database.url,
     schema: 'raw',
@@ -1434,7 +1438,7 @@ test('a changed binding is refused until the Postgres checkpoint is reset', asyn
 });
 
 test('a checkpoint that cannot be saved after its rows commit is reported with the committed rows', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -1501,7 +1505,7 @@ test('a checkpoint that cannot be saved after its rows commit is reported with t
 });
 
 test('a copy commits at each checkpoint, its rows share one loaded_at, and no checkpoint transaction idles meanwhile', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -1579,7 +1583,7 @@ test('a copy commits at each checkpoint, its rows share one loaded_at, and no ch
 });
 
 test('replications checkpoint in parallel, and one already running is refused', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const store = new PostgresCheckpointStore({
     url: database.url,
     schema: 'raw',
@@ -1618,7 +1622,7 @@ test('replications checkpoint in parallel, and one already running is refused', 
 });
 
 test('checkpoint state keeps text JSONB would refuse, and the store holds no credentials', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const store = new PostgresCheckpointStore({
     url: database.url,
     schema: 'raw',
@@ -1645,7 +1649,7 @@ test('checkpoint state keeps text JSONB would refuse, and the store holds no cre
 });
 
 test('clear empties a table and keeps views on it, releasing its owner and checkpoint; a table dropped by hand is refused until cleared', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -1834,7 +1838,7 @@ const savedStates = async (database: { sql: postgres.Sql }) =>
   ).map(({ id, state }) => `${id}=${state}`);
 
 test('a stream that fails publishes none of its staged rows while its sibling commits, and a failing overwrite keeps the old table', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const destination = new PostgresDestination({
     url: database.url,
     schema: 'raw',
@@ -1895,7 +1899,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
 });
 
 test("a failing partition's flushed rows are discarded while the next partition commits", async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const pages = new Stream({
     name: 'pages',
     jsonSchema: {
@@ -1991,7 +1995,7 @@ test("a failing partition's flushed rows are discarded while the next partition 
 });
 
 test('a staged unit merges like its operations applied one at a time, under replace and cursor_newer', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const destination = new PostgresDestination({
     url: database.url,
     schema: 'raw',
@@ -2049,7 +2053,7 @@ test('a staged unit merges like its operations applied one at a time, under repl
 });
 
 test('a checkpoint lost between commit and save replays to the same rows', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const items = new Stream({
     name: 'items',
     jsonSchema: {
@@ -2125,7 +2129,7 @@ test('a checkpoint lost between commit and save replays to the same rows', async
 });
 
 test('array fields load as native arrays of their item type, in order, and an unchanged snapshot writes nothing', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const lists = new Stream({
     name: 'lists',
     jsonSchema: {
@@ -2284,7 +2288,7 @@ test('array fields load as native arrays of their item type, in order, and an un
 });
 
 test("a statement that fails in one stream's merge does not erase a sibling's stage", async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const staged = scripted('staged');
   const dated = new Stream({
     name: 'dated',
@@ -2399,7 +2403,7 @@ test("a statement that fails in one stream's merge does not erase a sibling's st
 });
 
 test('year 0000, which ISO counts astronomically, loads as 1 BC, and year 0001 stays AD', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const moments = new Stream({
     name: 'moments',
     jsonSchema: {
@@ -2459,7 +2463,7 @@ test('year 0000, which ISO counts astronomically, loads as 1 BC, and year 0001 s
 });
 
 test('warehouse sync history distinguishes unchanged success, partial commits, failures and unfinished passes', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const { sql } = database;
   const destination = new PostgresDestination({
     url: database.url,
@@ -2635,7 +2639,7 @@ test('warehouse sync history distinguishes unchanged success, partial commits, f
 });
 
 test('warehouse records failed partitions and validation errors without fabricating success', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const { sql } = database;
   const stream = new Stream({
     name: 'pages',
@@ -2730,7 +2734,7 @@ test('warehouse records failed partitions and validation errors without fabricat
 });
 
 test('one pipeline loads each connection into its own schema, and a failing connection leaves the other recorded as succeeded', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const { sql } = database;
   const connection = (
     schema: string,
@@ -2792,7 +2796,7 @@ test('one pipeline loads each connection into its own schema, and a failing conn
 });
 
 test('each watch pass is recorded under its own connection when it completes', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const { sql } = database;
   class Twice extends ScriptedSource {
     protected override async *observe({ streams }: SourceWatchOptions) {
@@ -2852,7 +2856,7 @@ test('each watch pass is recorded under its own connection when it completes', a
 });
 
 test('stream_status keeps each stream own latest outcome when a watch pass reads only what changed', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const { sql } = database;
   const a = scripted('a');
   const b = scripted('b');
@@ -2988,7 +2992,7 @@ function readerNotes(database: { url: string }, files: LocalFiles) {
 test('a reader view shows exactly the loaded columns and their descriptions, follows changes without being recreated, and never locks readers out', async () => {
   const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reader-pg-'));
   try {
-    await using database = await scratchDatabase();
+    await using database = await scratchDatabase(server);
     const { sql } = database;
     await sql`CREATE SCHEMA marts`;
     const path = join(scratch.path, 'note.txt');
@@ -3073,7 +3077,7 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
 });
 
 test('a reader view needs every column described and refuses a view it did not create', async () => {
-  await using database = await scratchDatabase();
+  await using database = await scratchDatabase(server);
   const { sql } = database;
   await sql`CREATE SCHEMA marts`;
   const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reader-pg-'));
