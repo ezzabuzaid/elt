@@ -11,20 +11,17 @@ import { json } from './table.ts';
 const count = new Intl.NumberFormat('en');
 
 // Shows a sync as it runs: one spinner naming every stream still reading with
-// what it has read so far, a line per app as each pass ends, and while
-// watching, a spinner waiting for the next change. Without a terminal, one
-// JSON line per pass.
+// what it has read so far and a line per app as each pass ends. Without a
+// terminal, one JSON line per pass.
 export class SyncReport implements SyncObserver {
   readonly interactive: boolean;
-  readonly watching: boolean;
   readonly #reading = new Map<string, string>();
   #spinner: SpinnerResult | undefined;
   #shownAt = 0;
   #incomplete = false;
 
-  constructor(interactive: boolean, watching: boolean) {
+  constructor(interactive: boolean) {
     this.interactive = interactive;
-    this.watching = watching;
   }
 
   start(): void {
@@ -63,19 +60,17 @@ export class SyncReport implements SyncObserver {
     const line = `${title.padEnd(10)} ${written === 0 ? 'no changes' : `${count.format(written)} rows`} · ${summary.streams.length} streams · ${summary.seconds}s`;
     if (summary.status === 'succeeded') log.success(line);
     else log.warn(`${title.padEnd(10)} ${summary.status} · ${summary.error}`);
-    if (this.#reading.size > 0 || this.watching) this.#spin();
+    if (this.#reading.size > 0) this.#spin();
   }
 
   finish(): void {
     if (!this.interactive) return;
     this.#spinner?.clear();
-    outro(this.#closing());
-  }
-
-  #closing(): string {
-    if (this.watching) return 'Stopped watching.';
-    if (this.#incomplete) return 'Some apps did not load completely.';
-    return 'All apps current.';
+    outro(
+      this.#incomplete
+        ? 'Some apps did not load completely.'
+        : 'All apps current.',
+    );
   }
 
   // Without its guide, a spinner leaves no bar behind when cleared, so each
@@ -92,9 +87,6 @@ export class SyncReport implements SyncObserver {
   }
 
   #status(): string {
-    return (
-      [...this.#reading.values()].join(' · ') ||
-      (this.watching ? 'Watching for changes' : 'Reading')
-    );
+    return [...this.#reading.values()].join(' · ') || 'Reading';
   }
 }

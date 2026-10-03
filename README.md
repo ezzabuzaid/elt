@@ -44,14 +44,14 @@ Setup asks in one form which apps to import, each in full; an app narrowed earli
 
 `plugins/apple` is the installable package, committed as Codex runs it; [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) lists it. Its server is bundled into `plugins/apple/server` from `apps/apple/plugin` by `npx nx run apple-plugin:bundle` (`apps/apple/plugin/build.mjs`): `main.mjs`, one connector folder per built-in Apple app, and the chunks they share. `apple-plugin:test` rebuilds it, so commit the bundle with the source change that produced it.
 
-The MCP tools only set up; the settings file's `selected_apps` view lists each selected app and where its import lives. Each selection imports into `~/Library/Application Support/Context Compiler/Apple/<app>/<selection>`: `data.sqlite`, where each stream loads into a `raw_<stream>` table read through a described view, beside the `catalog`, `sync_status`, `stream_status` and `extraction_coverage` views elt-sqlite publishes, plus checkpoints and managed attachment copies. The query skill reads each `data.sqlite` directly with `sqlite3 -readonly`; the Codex sandbox also denies writes there. While Codex is open, one plugin server per Mac keeps every selected app's import current: the first pass loads each app, then each app's own change watcher triggers the next, and a pass reads only what changed (Mail skips messages whose files are unchanged). Setup returns once the answers are saved; an app that has not finished its first import is reported as importing. Every pass is recorded in the app's own file, so a reader judges freshness from the file it queries. A changed scope is a new import; the previous copy is removed. After install, the plugin's page in ChatGPT (Plugins › Apple) has a native Settings section, served through the `openai/settings` MCP extension: a switch per app with its sync status. The setup skill can be run again to change or disconnect apps. It accesses content already available on the Mac; Calendar keeps remote attachment links without requiring Google sign-in. Scoped Mail omits global settings and native metadata streams whose ownership cannot be established.
+The MCP tools only set up; the settings file's `selected_apps` view lists each selected app and where its import lives. Each selection imports into `~/Library/Application Support/Context Compiler/Apple/<app>/<selection>`: `data.sqlite`, where each stream loads into a `raw_<stream>` table read through a described view, beside the `catalog`, `sync_status`, `stream_status` and `extraction_coverage` views elt-sqlite publishes, plus checkpoints and managed attachment copies. The query skill reads each `data.sqlite` directly with `sqlite3 -readonly`; the Codex sandbox also denies writes there. While Codex is open, one plugin server per Mac imports every selected app once; an imported app is not refreshed, and an import that did not finish, such as one Codex closed during, is retried. Setup returns once the answers are saved; an app that has not finished its first import is reported as importing. Every pass is recorded in the app's own file, so a reader judges freshness from the file it queries. A changed scope is a new import; the previous copy is removed. After install, the plugin's page in ChatGPT (Plugins › Apple) has a native Settings section, served through the `openai/settings` MCP extension: a switch per app with its sync status. The setup skill can be run again to change or disconnect apps. It accesses content already available on the Mac; Calendar keeps remote attachment links without requiring Google sign-in. Scoped Mail omits global settings and native metadata streams whose ownership cannot be established.
 
 ### Apple CLI
 
 [`apps/apple/cli`](apps/apple/cli/src/main.ts) reads the same Apple connectors from a terminal, into its own store under `outputs/cli`, separate from the plugin's. Run it with `npx nx run apple-cli:start -- <command>`:
 
 - `setup` asks which apps to import and, optionally, which accounts, collections and dates to narrow each one to; `setup --app notes --collection <id> --since 2025-01-01 --app mail` does the same without prompts, each narrowing flag applying to the `--app` before it, and `options <app>` lists the IDs. Changing an app's selection removes its import, so the next sync loads it again.
-- `sync` loads every selected app once, showing each stream's progress, and `sync --watch` keeps them current until stopped. A second sync of the same store is refused while one runs. Ctrl-C stops a sync, watching or not, at once with exit status 130; what it committed stays, `status` shows the pass as interrupted, and the next sync resumes it.
+- `sync` loads every selected app once, showing each stream's progress; run it again to refresh. A second sync of the same store is refused while one runs. Ctrl-C stops a sync at once with exit status 130; what it committed stays, `status` shows the pass as interrupted, and the next sync resumes it.
 - `status` reports each app's latest pass, last success and database; a pass that was stopped shows as interrupted.
 - `query <app> --tables` lists each stream's view, its rows and its declared coverage, and `query <app> "<sql>"` runs one read-only statement. Each app's `catalog` view lists every view and column with its description.
 
@@ -73,11 +73,11 @@ npm ci
 
 The Notes connector reads Notes' own store, `NoteStore.sqlite`, so Notes does not need to be open. macOS protects that store: allow the terminal app you run Nx from **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access**.
 
-Every command runs through Nx. Its targets build their dependencies first and load the workspace `.env`. Choose the Apple apps to import, then keep them current:
+Every command runs through Nx. Its targets build their dependencies first and load the workspace `.env`. Choose the Apple apps to import, then load them:
 
 ```sh
 npx nx run apple-cli:start -- setup
-npx nx run apple-cli:start -- sync --watch
+npx nx run apple-cli:start -- sync
 ```
 
 A pipeline declares connections of copies; the smallest one copies Notes into SQLite:

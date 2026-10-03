@@ -94,7 +94,7 @@ export type ImportSync =
       state: 'interrupted';
     });
 
-// Setup and status for the Codex plugin. The leading server's keepFresh
+// Setup and status for the Codex plugin. The leading server's importSelected
 // writes each app's data.sqlite; agents read those files directly.
 export class ApplePlugin {
   // The installed plugin's folder. Installing another version deletes it.

@@ -275,7 +275,7 @@ function read(database: string, sql: string, ...commands: string[]) {
 }
 
 test(
-  'the committed Apple plugin installs from the repo marketplace, sets up through Codex bundled Node, keeps its import current in the background and serves it to the skill read command',
+  'the committed Apple plugin installs from the repo marketplace, sets up through Codex bundled Node, imports in the background and serves it to the skill read command',
   {
     timeout: 180_000,
   },
@@ -410,16 +410,21 @@ test(
       }
       assert.fail(`The import never ${what}`);
     };
+    const notesOf = (apps: SelectedApp[]) =>
+      apps.find(({ app }) => app === 'notes');
     const imported = async (title: string) => {
-      const [notes] = await settled(
-        `showed ${title}`,
-        ([notes]) =>
-          notes?.sync?.status === 'succeeded' &&
-          read(
-            notes.database,
-            'SELECT title FROM notes WHERE title = @title',
-            `.parameter set @title "'${title}'"`,
-          ).rows.length === 1,
+      const notes = notesOf(
+        await settled(`showed ${title}`, (apps) => {
+          const notes = notesOf(apps);
+          return (
+            notes?.sync?.status === 'succeeded' &&
+            read(
+              notes.database,
+              'SELECT title FROM notes WHERE title = @title',
+              `.parameter set @title "'${title}'"`,
+            ).rows.length === 1
+          );
+        }),
       );
       assert.ok(notes);
       return notes;
@@ -594,12 +599,6 @@ test(
         /^- Messages: last sync failed at .*Full Disk Access.*; no data yet\. Database: messages\//m,
       );
 
-      // A change in Notes reaches the import while nobody calls a tool.
-      retitle('Groceries (edited)');
-      assert.equal(
-        (await imported('Groceries (edited)')).database,
-        synced.database,
-      );
       assert.equal(
         (await call(client, 'apple_options', { app: 'invalid' })).isError,
         true,
@@ -613,11 +612,10 @@ test(
         true,
       );
 
-      // When the leading chat closes, another chat's server keeps importing.
+      // When the leading chat closes, another chat's server leads.
       await client.close();
       await transport.close();
-      retitle('Groceries (after handoff)');
-      await imported('Groceries (after handoff)');
+      retitle('Groceries (edited)');
 
       // Switching Notes off on the Settings page disconnects it and deletes
       // its import; Messages stays selected.
@@ -636,6 +634,13 @@ test(
       assert.match(
         await context(other, 'UserPromptSubmit'),
         /^- Messages: last sync failed/m,
+      );
+      // An imported app is not refreshed; switched on again, Notes imports
+      // afresh, with the change made since, through the new leader.
+      await call(other, 'apple_settings_update', { set: { notes: true } });
+      assert.equal(
+        (await imported('Groceries (edited)')).database,
+        synced.database,
       );
 
       // Installing another version deletes this one's folder. The chat still

@@ -24,7 +24,7 @@ import {
 
 import { ApplePlugin } from './apple-plugin.ts';
 import { chatStatus } from './chat-status.ts';
-import { keepFresh } from './freshness.ts';
+import { importSelected } from './importing.ts';
 import { settingsRead, settingsUpdate } from './native-settings.ts';
 
 // The committed plugin, as Codex installs it.
@@ -215,7 +215,7 @@ test('the leading server keeps leading when its settings cannot be read, and let
   // A directory where the settings file belongs fails every read of them.
   mkdirSync(join(scratch.path, 'settings.sqlite'));
   const stopping = new AbortController();
-  const running = keepFresh(
+  const running = importSelected(
     await applePlugin(install, scratch.path),
     stopping.signal,
   );
@@ -430,7 +430,7 @@ test('once another plugin version replaces this one, its server refuses to chang
     /open a new chat/,
   );
   const stopping = new AbortController();
-  const running = keepFresh(plugin, stopping.signal);
+  const running = importSelected(plugin, stopping.signal);
   try {
     await sleep(1_500);
     assert.equal(leaseHeld(store), false);
@@ -464,7 +464,7 @@ test('a server whose code predates the settings file refuses to change apps and 
     /open a new chat/,
   );
   const stopping = new AbortController();
-  const running = keepFresh(plugin, stopping.signal);
+  const running = importSelected(plugin, stopping.signal);
   try {
     await sleep(1_500);
     assert.equal(leaseHeld(scratch.path), false);

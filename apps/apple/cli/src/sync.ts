@@ -107,13 +107,11 @@ function failed(app: AppleApp, error: unknown, seconds: number): PassSummary {
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-// One pass of each app's selected import, or with watch, a first pass and
-// then one for each change its source reports, until the process stops. The
-// caller holds the store's lease throughout.
+// One pass of each app's selected import. The caller holds the store's lease
+// throughout.
 export async function syncImports(
   store: ImportStore,
   imports: readonly { app: AppleApp; selection: Selection }[],
-  watch: boolean,
   observer: PassObserver,
 ): Promise<void> {
   const connections: Connection<SQLiteTable>[] = [];
@@ -143,19 +141,7 @@ export async function syncImports(
   const pipeline = new Pipeline({ connections, history });
   // Failures reach the observer through the history; the rest is a wiring
   // mistake and propagates.
-  if (!watch) {
-    await pipeline.run().catch(rethrowUnrecorded);
-    return;
-  }
-  try {
-    // Never aborted: a watch ends with the process, or once every app's
-    // watcher stopped.
-    for await (const _pass of pipeline.watch({
-      signal: new AbortController().signal,
-    }));
-  } catch (error) {
-    rethrowUnrecorded(error);
-  }
+  await pipeline.run().catch(rethrowUnrecorded);
 }
 
 function rethrowUnrecorded(error: unknown): void {

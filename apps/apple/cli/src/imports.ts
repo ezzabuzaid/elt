@@ -112,16 +112,14 @@ export class Imports {
     return store.read(selection);
   }
 
-  // One pass of each selected app, or only of those named, or with watch a
-  // first pass and then one for each change, shown through the observer.
-  // Ctrl-C stops a sync, watching or not, at once: what it committed stays,
+  // One pass of each selected app, or only of those named, shown through the
+  // observer. Ctrl-C stops a sync at once: what it committed stays,
   // its checkpoints resume it, and status shows the pass as interrupted. In
   // a terminal clack's spinner takes Ctrl-C itself and exits with 0, so the
   // exit status is set as the process exits. A pass that did not load
   // completely leaves exit status 1.
   async sync(
     only: readonly string[] | undefined,
-    watch: boolean,
     observer: SyncObserver,
   ): Promise<void> {
     using _ = this.#lease();
@@ -152,7 +150,7 @@ export class Imports {
     const passes: PassSummary[] = [];
     observer.start();
     try {
-      await syncImports(store, imports, watch, {
+      await syncImports(store, imports, {
         progress: (app, progress) => observer.progress(app, progress),
         passed: (app, summary) => {
           passes.push(summary);

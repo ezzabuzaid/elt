@@ -27,34 +27,47 @@ function tidy(directory: string) {
   for (const selection of store.selections()) store.recover(selection);
 }
 
-// Watches the selected apps until the signal aborts: every app's first pass
-// loads it, then each source's own watcher decides when to sync again. Each
-// pass is recorded in its app's data.sqlite, beside the catalog readers query;
-// an app whose connection cannot be built has no pipeline to record it, so its
-// failure is kept in the store's settings until it builds.
-async function watchImports(
+// Whether the import's first pass ended: it loaded, at least in part, so it
+// stays as it is until its selection changes.
+function imported(directory: string, selection: Selection): boolean {
+  using store = new ImportStore(directory);
+  const pass = store.latestPass(selection);
+  return (
+    pass !== null &&
+    (pass.state === 'succeeded' ||
+      pass.state === 'partial' ||
+      pass.lastSucceededAt !== null)
+  );
+}
+
+// Loads once every selected app whose first pass has not ended, including
+// one a stopped server left running or that failed. Each pass is recorded in
+// its app's data.sqlite, beside the catalog readers query; an app whose
+// connection cannot be built has no pipeline to record it, so its failure is
+// kept in the store's settings until it builds.
+async function importPending(
   plugin: ApplePlugin,
   selections: readonly Selection[],
-  signal: AbortSignal,
 ) {
   const { directory } = plugin;
   const imports = [];
   for (const item of selections)
-    try {
-      imports.push(
-        await plugin
-          .app(item.app)
-          .connection(importDirectory(directory, item), item),
-      );
-      using store = new ImportStore(directory);
-      store.clearConnectionFailure(item);
-    } catch (error) {
-      using store = new ImportStore(directory);
-      store.saveConnectionFailure(
-        item,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+    if (!imported(directory, item))
+      try {
+        imports.push(
+          await plugin
+            .app(item.app)
+            .connection(importDirectory(directory, item), item),
+        );
+        using store = new ImportStore(directory);
+        store.clearConnectionFailure(item);
+      } catch (error) {
+        using store = new ImportStore(directory);
+        store.saveConnectionFailure(
+          item,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
   if (imports.length === 0) return;
   const history = new SQLiteSyncHistory();
   const destinations = imports.map(({ destination }) => destination);
@@ -64,11 +77,9 @@ async function watchImports(
     connections: imports.map(({ connection }) => connection),
     history,
   });
-  try {
-    for await (const _pass of pipeline.watch({ signal }));
-  } catch {
+  await pipeline.run().catch(() => {
     // Every failure is recorded against its app by the history.
-  }
+  });
 }
 
 // Aborts changed once the saved selection differs from selection, and
@@ -90,7 +101,7 @@ async function followSelection(
         // Unreadable for now, such as while the disk is full: ask again.
       }
   } catch {
-    // Aborted: the selection changed, the plugin was updated, or the watch ended.
+    // Aborted: the selection changed, the plugin was updated, or the wait ended.
   }
 }
 
@@ -120,7 +131,7 @@ async function lead(plugin: ApplePlugin, signal: AbortSignal) {
   const leading = AbortSignal.any([signal, updated.signal]);
   while (!leading.aborted) {
     const changed = new AbortController();
-    const watching = AbortSignal.any([leading, changed.signal]);
+    const waiting = AbortSignal.any([leading, changed.signal]);
     let following = Promise.resolve();
     try {
       const selections = readSelections(directory);
@@ -129,29 +140,29 @@ async function lead(plugin: ApplePlugin, signal: AbortSignal) {
         JSON.stringify(selections),
         changed,
         updated,
-        watching,
+        waiting,
       );
       tidy(directory);
       // A selection may name a connector added since the last pass.
       await plugin.refresh();
-      await watchImports(plugin, selections, watching);
+      await importPending(plugin, selections);
     } catch {
       // Retried below, once the selection changes or a minute passes.
     }
-    await sleep(60_000, undefined, { signal: watching }).catch(() => {});
+    await sleep(60_000, undefined, { signal: waiting }).catch(() => {});
     changed.abort();
     await following;
   }
 }
 
-// While this server runs, keeps every selected app's import current. One
-// server per Mac leads; the others wait to take over. A server whose plugin
-// was updated stops leading for good. A changed selection, from any chat,
-// restarts the watch; a watch whose sources all stopped, such as for a
-// missing permission, retries after a minute. It never throws: a failure
-// outside any pass, such as a full disk, is retried too, so the plugin's
-// tools keep working.
-export async function keepFresh(
+// While this server runs, imports every selected app once; an import is not
+// refreshed after its first pass ends. One server per Mac leads; the others
+// wait to take over. A server whose plugin was updated stops leading for
+// good. A changed selection, from any chat, imports what it added; an import
+// whose first pass did not end, such as for a missing permission, is retried
+// after a minute. It never throws: a failure outside any pass, such as a full
+// disk, is retried too, so the plugin's tools keep working.
+export async function importSelected(
   plugin: ApplePlugin,
   signal: AbortSignal,
 ): Promise<void> {

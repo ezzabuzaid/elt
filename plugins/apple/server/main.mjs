@@ -37168,7 +37168,7 @@ function chatContext(plugin2) {
   };
 }
 
-// apps/apple/plugin/src/freshness.ts
+// apps/apple/plugin/src/importing.ts
 import { setInterval, setTimeout as sleep } from "node:timers/promises";
 function readSelections(directory) {
   var _stack = [];
@@ -37194,37 +37194,50 @@ function tidy(directory) {
     __callDispose(_stack, _error, _hasError);
   }
 }
-async function watchImports(plugin2, selections, signal) {
+function imported(directory, selection) {
+  var _stack = [];
+  try {
+    const store = __using(_stack, new ImportStore(directory));
+    const pass2 = store.latestPass(selection);
+    return pass2 !== null && (pass2.state === "succeeded" || pass2.state === "partial" || pass2.lastSucceededAt !== null);
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
+  }
+}
+async function importPending(plugin2, selections) {
   const { directory } = plugin2;
   const imports = [];
   for (const item of selections)
-    try {
-      var _stack = [];
+    if (!imported(directory, item))
       try {
-        imports.push(
-          await plugin2.app(item.app).connection(importDirectory(directory, item), item)
-        );
-        const store = __using(_stack, new ImportStore(directory));
-        store.clearConnectionFailure(item);
-      } catch (_) {
-        var _error = _, _hasError = true;
-      } finally {
-        __callDispose(_stack, _error, _hasError);
+        var _stack = [];
+        try {
+          imports.push(
+            await plugin2.app(item.app).connection(importDirectory(directory, item), item)
+          );
+          const store = __using(_stack, new ImportStore(directory));
+          store.clearConnectionFailure(item);
+        } catch (_) {
+          var _error = _, _hasError = true;
+        } finally {
+          __callDispose(_stack, _error, _hasError);
+        }
+      } catch (error62) {
+        var _stack2 = [];
+        try {
+          const store = __using(_stack2, new ImportStore(directory));
+          store.saveConnectionFailure(
+            item,
+            error62 instanceof Error ? error62.message : String(error62)
+          );
+        } catch (_2) {
+          var _error2 = _2, _hasError2 = true;
+        } finally {
+          __callDispose(_stack2, _error2, _hasError2);
+        }
       }
-    } catch (error62) {
-      var _stack2 = [];
-      try {
-        const store = __using(_stack2, new ImportStore(directory));
-        store.saveConnectionFailure(
-          item,
-          error62 instanceof Error ? error62.message : String(error62)
-        );
-      } catch (_2) {
-        var _error2 = _2, _hasError2 = true;
-      } finally {
-        __callDispose(_stack2, _error2, _hasError2);
-      }
-    }
   if (imports.length === 0) return;
   const history = new SQLiteSyncHistory();
   const destinations = imports.map(({ destination }) => destination);
@@ -37234,10 +37247,8 @@ async function watchImports(plugin2, selections, signal) {
     connections: imports.map(({ connection }) => connection),
     history
   });
-  try {
-    for await (const _pass of pipeline.watch({ signal })) ;
-  } catch {
-  }
+  await pipeline.run().catch(() => {
+  });
 }
 async function followSelection(plugin2, selection, changed, updated, signal) {
   try {
@@ -37269,7 +37280,7 @@ async function lead(plugin2, signal) {
   const leading = AbortSignal.any([signal, updated.signal]);
   while (!leading.aborted) {
     const changed = new AbortController();
-    const watching = AbortSignal.any([leading, changed.signal]);
+    const waiting = AbortSignal.any([leading, changed.signal]);
     let following = Promise.resolve();
     try {
       const selections = readSelections(directory);
@@ -37278,20 +37289,20 @@ async function lead(plugin2, signal) {
         JSON.stringify(selections),
         changed,
         updated,
-        watching
+        waiting
       );
       tidy(directory);
       await plugin2.refresh();
-      await watchImports(plugin2, selections, watching);
+      await importPending(plugin2, selections);
     } catch {
     }
-    await sleep(6e4, void 0, { signal: watching }).catch(() => {
+    await sleep(6e4, void 0, { signal: waiting }).catch(() => {
     });
     changed.abort();
     await following;
   }
 }
-async function keepFresh(plugin2, signal) {
+async function importSelected(plugin2, signal) {
   while (!signal.aborted) {
     var _stack = [];
     try {
@@ -37529,7 +37540,7 @@ var { version: version2 } = external_exports.object({ version: external_exports.
 var mcpServer = new McpServer(
   { name: "apple", version: version2 },
   {
-    instructions: `Apple imports the ${new Intl.ListFormat("en", { type: "conjunction" }).format(plugin.apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`
+    instructions: `Apple imports the ${new Intl.ListFormat("en", { type: "conjunction" }).format(plugin.apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac, once per app while Codex is open; an imported app is not refreshed. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`
   }
 );
 var structured = (value) => ({
@@ -37689,4 +37700,4 @@ process.stdin.once("end", () => stopping.abort());
 process.once("SIGTERM", () => stopping.abort());
 process.once("SIGINT", () => stopping.abort());
 await mcpServer.connect(new StdioServerTransport());
-await keepFresh(plugin, stopping.signal);
+await importSelected(plugin, stopping.signal);

@@ -17,7 +17,7 @@ import {
   configurationSchema,
 } from './apple-plugin.ts';
 import { chatContext } from './chat-status.ts';
-import { keepFresh } from './freshness.ts';
+import { importSelected } from './importing.ts';
 import { settingsRead, settingsUpdate } from './native-settings.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
@@ -57,7 +57,7 @@ const { version } = z
 const mcpServer = new McpServer(
   { name: 'apple', version },
   {
-    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac and keeps them current while Codex is open. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
+    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac, once per app while Codex is open; an imported app is not refreshed. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
   },
 );
 // McpServer turns a thrown error into an isError result the model can act on.
@@ -226,11 +226,11 @@ mcpServer.registerTool(
   },
 );
 
-// Keeps the imports current until Codex closes this server.
+// Imports the selected apps until Codex closes this server.
 const stopping = new AbortController();
 mcpServer.server.onclose = () => stopping.abort();
 process.stdin.once('end', () => stopping.abort());
 process.once('SIGTERM', () => stopping.abort());
 process.once('SIGINT', () => stopping.abort());
 await mcpServer.connect(new StdioServerTransport());
-await keepFresh(plugin, stopping.signal);
+await importSelected(plugin, stopping.signal);

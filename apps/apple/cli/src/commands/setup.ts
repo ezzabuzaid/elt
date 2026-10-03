@@ -136,11 +136,7 @@ export class SetupCommand extends Command {
     this.imports.select(selections);
     // A sync reports itself.
     if (sync) {
-      await this.imports.sync(
-        undefined,
-        false,
-        new SyncReport(interactive, false),
-      );
+      await this.imports.sync(undefined, new SyncReport(interactive));
       return undefined;
     }
     return {
@@ -228,8 +224,7 @@ export class SetupCommand extends Command {
     outro(
       `Saved ${selections.map(({ app, scope }) => this.imports.app(app).titled(scope)).join(', ')}.`,
     );
-    if (sync === true)
-      await this.imports.sync(undefined, false, new SyncReport(true, false));
+    if (sync === true) await this.imports.sync(undefined, new SyncReport(true));
   }
 
   async #narrow(

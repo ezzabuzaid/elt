@@ -5,32 +5,22 @@ import { Command, type Output } from './command.ts';
 
 export class SyncCommand extends Command {
   readonly name = 'sync';
-  readonly summary =
-    'Load every selected app once, or keep them current with --watch';
+  readonly summary = 'Load every selected app once';
 
   protected configure(declaration: Declaration): void {
-    declaration
-      .addOption(
-        new Option('--app <app...>', 'sync only these apps').choices(
-          this.imports.names,
-        ),
-      )
-      .option('--watch', 'keep syncing as each app changes, until stopped');
+    declaration.addOption(
+      new Option('--app <app...>', 'sync only these apps').choices(
+        this.imports.names,
+      ),
+    );
   }
 
   protected async run(
     declaration: Declaration,
     interactive: boolean,
   ): Promise<Output | undefined> {
-    const { app, watch } = declaration.opts<{
-      app?: string[];
-      watch?: true;
-    }>();
-    await this.imports.sync(
-      app,
-      watch === true,
-      new SyncReport(interactive, watch === true),
-    );
+    const { app } = declaration.opts<{ app?: string[] }>();
+    await this.imports.sync(app, new SyncReport(interactive));
     return undefined;
   }
 }

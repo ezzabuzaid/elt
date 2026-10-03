@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, spawnSync } from 'node:child_process';
-import { once } from 'node:events';
 import { mkdirSync, realpathSync, renameSync } from 'node:fs';
 import {
   mkdir,
@@ -1110,8 +1109,7 @@ test('a second sync is refused while another holds the store, and nothing it imp
   await withNotes(mac.path);
   cli(mac.path, 'setup', '--app', 'notes');
   cli(mac.path, 'sync');
-  // Stands in for a running sync: a real one would be `sync --watch`, which
-  // launches the real Notes app. A sync holds this lock for its whole run.
+  // Stands in for a running sync, which holds this lock for its whole run.
   mkdirSync(join(mac.path, 'outputs/cli'), { recursive: true });
   using held = new DatabaseSync(join(mac.path, 'outputs/cli/lease.sqlite'));
   held.exec('BEGIN EXCLUSIVE');
@@ -1515,7 +1513,7 @@ test('one SQL statement runs however it is spaced or commented', async () => {
   assert.equal(JSON.parse(commented.stdout)[0].n, 3);
 });
 
-test('sync --watch loads each change Safari commits until Ctrl-C stops it, keeping every pass it finished', async () => {
+test('sync loads Safari history from its library and tabs from where Safari keeps its sandbox container', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   // Safari keeps history under ~/Library/Safari and its tabs in its sandbox
   // container; the fixture writes both, and the container moves where Safari
@@ -1528,58 +1526,33 @@ test('sync --watch loads each change Safari commits until Ctrl-C stops it, keepi
   );
   mkdirSync(dirname(sandboxed), { recursive: true });
   renameSync(container, sandboxed);
-  cli(mac.path, 'setup', '--app', 'safari');
-  const watching = spawn(process.execPath, [entry, 'sync', '--watch'], {
-    cwd: mac.path,
-    env: { ...process.env, HOME: mac.path },
-  });
-  try {
-    let stdout = '';
-    watching.stdout.on('data', (data) => {
-      stdout += String(data);
-    });
-    const passes = () => (stdout.trim() === '' ? [] : lines(stdout));
-    const until = async (done: () => boolean) => {
-      for (let tries = 0; !done(); tries++) {
-        if (tries > 200) assert.fail(`never happened:\n${stdout}`);
-        await sleep(100);
-      }
-    };
-    await until(() => passes().length === 1);
-
-    {
-      using history = new DatabaseSync(join(directory, 'History.db'));
-      history
-        .prepare(
-          'INSERT INTO history_visits (history_item, visit_time) VALUES (1, ?)',
-        )
-        .run(appleSeconds('2026-04-01T00:00:00Z'));
-    }
-    await until(() =>
-      passes().some(({ streams }) =>
-        streams.some(
-          ({ stream, written }: { stream: string; written: number }) =>
-            stream === 'historyVisits' && written === 1,
-        ),
-      ),
-    );
-    watching.kill('SIGINT');
-    const [code] = await once(watching, 'close');
-
-    assert.equal(code, 130);
-    assert.ok(
-      passes().every(({ status }) => status === 'succeeded'),
-      stdout,
-    );
-    const visits = cli(
-      mac.path,
-      'query',
-      'safari',
-      "SELECT count(*) AS n FROM history_visits WHERE visitedAt LIKE '2026-04-01%'",
-      '--json',
-    );
-    assert.equal(JSON.parse(visits.stdout)[0].n, 1, visits.stderr);
-  } finally {
-    watching.kill();
+  {
+    using history = new DatabaseSync(join(directory, 'History.db'));
+    history
+      .prepare(
+        'INSERT INTO history_visits (history_item, visit_time) VALUES (1, ?)',
+      )
+      .run(appleSeconds('2026-04-01T00:00:00Z'));
   }
+  cli(mac.path, 'setup', '--app', 'safari');
+
+  const synced = cli(mac.path, 'sync');
+
+  assert.equal(synced.status, 0, synced.stderr);
+  const visits = cli(
+    mac.path,
+    'query',
+    'safari',
+    "SELECT count(*) AS n FROM history_visits WHERE visitedAt LIKE '2026-04-01%'",
+    '--json',
+  );
+  assert.equal(JSON.parse(visits.stdout)[0].n, 1, visits.stderr);
+  const tabs = cli(
+    mac.path,
+    'query',
+    'safari',
+    'SELECT count(*) AS n FROM tabs',
+    '--json',
+  );
+  assert.ok(JSON.parse(tabs.stdout)[0].n > 0, tabs.stderr);
 });
