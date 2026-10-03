@@ -4,7 +4,11 @@
     "rootDir": "src",
     "outDir": "dist",
     "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
-    "types": ["node"]
+    "types": ["node"],
+    // pg-boss 12.35.1 (and 12.36.0) ships .d.ts files that use
+    // types.ResolvedConstructorOptions, which its types.d.ts never exports.
+    // Drop this once pg-boss fixes its declarations.
+    "skipLibCheck": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],

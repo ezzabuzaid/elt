@@ -2,16 +2,7 @@
   "name": "@workspace/test",
   "version": "0.15.0",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/JanuaryLabs/deepagents",
-    "directory": "packages/test"
-  },
-  "bugs": {
-    "url": "https://github.com/JanuaryLabs/deepagents/issues"
-  },
   "private": true,
-  "homepage": "https://github.com/JanuaryLabs/deepagents#readme",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -23,11 +14,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    },
-    "./*": {
-      "types": "./dist/lib/*",
-      "import": "./dist/lib/*",
-      "default": "./dist/lib/*"
     }
   },
   "files": [
@@ -40,8 +26,6 @@
   },
   "peerDependencies": {},
   "devDependencies": {
-    "nano-spawn": "^2.0.0",
-    "mssql": "^12.2.0",
-    "@types/debug": "^4.1.12"
+    "@types/mssql": "^12.3.0"
   }
 }

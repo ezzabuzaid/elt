@@ -41,15 +41,15 @@ async function getMappedPort(
 
   // Output format: "0.0.0.0:32768" or ":::32768"
   const output = result.stdout.trim();
-  const match = output.match(/:(\d+)$/);
+  const port = output.match(/:(?<port>\d+)$/)?.groups?.port;
 
-  if (!match) {
+  if (port === undefined) {
     throw new Error(
       `Failed to get mapped port for container ${containerId}: ${output}`,
     );
   }
 
-  return parseInt(match[1], 10);
+  return parseInt(port, 10);
 }
 
 /**

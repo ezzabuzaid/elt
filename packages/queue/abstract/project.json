@@ -5,14 +5,6 @@
   "projectType": "library",
   "tags": ["layer:island"],
   "targets": {
-    "format": {},
-    "build": {
-      "executor": "@nx/esbuild:esbuild",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "main": "{projectRoot}/src/index.ts",
-        "tsConfig": "{projectRoot}/tsconfig.lib.json"
-      }
-    }
+    "format": {}
   }
 }
