@@ -4,9 +4,15 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
-import type { BrokenConnector } from '@workspace/apple-manifest/connectors';
-import type { AppleApp } from '@workspace/apple/apps/apple-app';
+import type {
+  BrokenConnector,
+  Connectors,
+} from '@workspace/apple-manifest/connectors';
+import { userConnectors } from '@workspace/apple-manifest/user-connectors';
+import type { AppleApp, AppleHost } from '@workspace/apple/apps/apple-app';
 import {
+  type AppFacts,
+  type ImportScope,
   ImportStore,
   NewerLayoutError,
   type Pass,
@@ -16,52 +22,58 @@ import {
 
 const ids = z.array(z.string().min(1).max(1024)).max(1000);
 
+// An app by its connector's name. Connectors are rediscovered on use, so the
+// name is checked when a tool runs, not by an enum fixed when the chat began.
+export const appSchema = z
+  .string()
+  .min(1)
+  .describe(
+    'An Apple app the user chose, by the name the Apple status or apple_options uses.',
+  );
+
 // The shape of a selection as tools receive it; ImportStore.select checks it
 // against what each app can be narrowed by.
-function configurationSchema(appSchema: z.ZodType<string>, apps: number) {
-  return z.strictObject({
-    apps: z
-      .array(
-        z.strictObject({
-          app: appSchema,
-          scope: z
-            .strictObject({
-              accountIds: ids
-                .describe(
-                  'Account IDs from apple_options. Omit to import every account; never pass an empty list.',
-                )
-                .optional(),
-              collectionIds: ids
-                .describe(
-                  'Collection IDs (folders, calendars, lists, profiles) from apple_options. Omit to import every collection; never pass an empty list.',
-                )
-                .optional(),
-              startAt: z.iso
-                .datetime({ precision: 3 })
-                .describe(
-                  'Inclusive UTC start with milliseconds, such as 2026-01-01T00:00:00.000Z. Only for an app whose apple_options datedBy is not null.',
-                )
-                .optional(),
-              endAt: z.iso
-                .datetime({ precision: 3 })
-                .describe(
-                  'Exclusive UTC end with milliseconds; use the following midnight to include an end date.',
-                )
-                .optional(),
-            })
-            .default({}),
-          includeAttachments: z
-            .boolean()
-            .describe('Copy attachments; false imports metadata only.')
-            .default(true),
-        }),
-      )
-      .max(apps)
-      .describe(
-        'The complete selection. An app left out is disconnected and its imported copy deleted.',
-      ),
-  });
-}
+export const configurationSchema = z.strictObject({
+  apps: z
+    .array(
+      z.strictObject({
+        app: appSchema,
+        scope: z
+          .strictObject({
+            accountIds: ids
+              .describe(
+                'Account IDs from apple_options. Omit to import every account; never pass an empty list.',
+              )
+              .optional(),
+            collectionIds: ids
+              .describe(
+                'Collection IDs (folders, calendars, lists, profiles) from apple_options. Omit to import every collection; never pass an empty list.',
+              )
+              .optional(),
+            startAt: z.iso
+              .datetime({ precision: 3 })
+              .describe(
+                'Inclusive UTC start with milliseconds, such as 2026-01-01T00:00:00.000Z. Only for an app whose apple_options datedBy is not null.',
+              )
+              .optional(),
+            endAt: z.iso
+              .datetime({ precision: 3 })
+              .describe(
+                'Exclusive UTC end with milliseconds; use the following midnight to include an end date.',
+              )
+              .optional(),
+          })
+          .default({}),
+        includeAttachments: z
+          .boolean()
+          .describe('Copy attachments; false imports metadata only.')
+          .default(true),
+      }),
+    )
+    .describe(
+      'The complete selection. An app left out is disconnected and its imported copy deleted.',
+    ),
+});
 
 // Thrown by a server whose plugin version was replaced. Codex keeps an old
 // chat's server running after an upgrade, so that chat must move on.
@@ -85,41 +97,66 @@ export type ImportSync =
 // Setup and status for the Codex plugin. The leading server's keepFresh
 // writes each app's data.sqlite; agents read those files directly.
 export class ApplePlugin {
-  readonly apps: readonly AppleApp[];
-  // Connectors that were found but could not load, for chats to hear of.
-  readonly broken: readonly BrokenConnector[];
   // The installed plugin's folder. Installing another version deletes it.
   readonly install: string;
   readonly directory: string;
-  readonly appSchema: z.ZodEnum<Record<string, string>>;
-  readonly configurationSchema: ReturnType<typeof configurationSchema>;
+  readonly #connectors: Connectors;
+  readonly #host: AppleHost;
+  #apps: readonly AppleApp[] = [];
+  #broken: readonly BrokenConnector[] = [];
 
   constructor(
-    {
-      apps,
-      broken,
-    }: {
-      readonly apps: readonly AppleApp[];
-      readonly broken: readonly BrokenConnector[];
-    },
+    connectors: Connectors,
+    host: AppleHost,
     install: string,
     directory = join(
       homedir(),
       'Library/Application Support/Context Compiler/Apple',
     ),
   ) {
-    this.apps = apps;
-    this.broken = broken;
+    this.#connectors = connectors;
+    this.#host = host;
     this.install = install;
     this.directory = directory;
-    this.appSchema = z.enum(apps.map(({ name }) => name));
-    this.configurationSchema = configurationSchema(this.appSchema, apps.length);
+  }
+
+  get apps(): readonly AppleApp[] {
+    return this.#apps;
+  }
+
+  // Connectors that were found but could not load, for chats to hear of.
+  get broken(): readonly BrokenConnector[] {
+    return this.#broken;
+  }
+
+  // Discovers the connectors again, so one added or edited since the last
+  // refresh loads, and one removed is gone.
+  async refresh(): Promise<void> {
+    const { apps, broken } = await this.#connectors.load(this.#host);
+    this.#apps = apps;
+    this.#broken = broken;
   }
 
   app(name: string): AppleApp {
-    const app = this.apps.find((candidate) => candidate.name === name);
-    if (app === undefined) throw new TypeError(`Unknown Apple app ${name}`);
+    const app = this.#loaded(name);
+    if (app === undefined)
+      throw new TypeError(
+        `No Apple app is named ${name}. The apps are ${this.#apps.map((candidate) => candidate.name).join(', ')}.`,
+      );
     return app;
+  }
+
+  #loaded(name: string): AppleApp | undefined {
+    return this.#apps.find((candidate) => candidate.name === name);
+  }
+
+  // What macOS needs granted for an app, or how to bring back a selected app
+  // whose connector is not loaded.
+  #permissions(name: string): string {
+    return (
+      this.#loaded(name)?.guidance() ??
+      `No connector named ${name} is loaded: fix or restore its folder in ${userConnectors}, or disconnect it.`
+    );
   }
 
   // The store, refused once another plugin version replaced this one: Codex
@@ -169,9 +206,10 @@ export class ApplePlugin {
               : pass;
         return {
           ...item,
+          title: this.#loaded(item.app)?.title ?? item.app,
           database: existsSync(database) ? database : null,
           sync,
-          permissions: this.app(item.app).guidance(),
+          permissions: this.#permissions(item.app),
         };
       }),
     };
@@ -179,17 +217,25 @@ export class ApplePlugin {
 
   // A changed scope is a new import: the leading server loads it, and the
   // previous one is removed, so nothing reads an import that is not selected.
+  // An app whose connector is not loaded keeps only the selection it has, so
+  // a connector broken while it is edited loses nothing.
   configure(requested: { readonly apps: readonly Selection[] }) {
-    const configuration = requested.apps.map((item) => ({
-      ...item,
-      scope: { ...this.app(item.app).defaultScope(), ...item.scope },
-    }));
     {
       using store = this.#open();
-      store.select(configuration, {
-        facts: (name) => this.app(name),
-        permissions: ({ app }) => this.app(app).guidance(),
-      });
+      const stored = store.selections();
+      store.select(
+        requested.apps.map((item) => {
+          const app = this.#loaded(item.app);
+          return app === undefined
+            ? item
+            : { ...item, scope: { ...app.defaultScope(), ...item.scope } };
+        }),
+        {
+          facts: (name) =>
+            this.#loaded(name) ?? unchanged(name, stored, requested.apps),
+          permissions: ({ app }) => this.#permissions(app),
+        },
+      );
     }
     return this.status();
   }
@@ -207,4 +253,30 @@ export class ApplePlugin {
       note: app.note,
     };
   }
+}
+
+// What an unloaded app's selection can be narrowed by: exactly what it is
+// narrowed by now, so only the selection it already has passes.
+function unchanged(
+  name: string,
+  stored: readonly Selection[],
+  requested: readonly Selection[],
+): AppFacts {
+  const before = stored.find(({ app }) => app === name);
+  const after = requested.find(({ app }) => app === name);
+  if (
+    before === undefined ||
+    after === undefined ||
+    JSON.stringify(before) !== JSON.stringify(after)
+  )
+    throw new TypeError(
+      `No connector named ${name} is loaded, so its selection cannot change: fix or restore it in ${userConnectors}, or disconnect it.`,
+    );
+  const scope: ImportScope = before.scope;
+  return {
+    narrowsBy: (kind) => scope[kind] !== undefined,
+    // Any value but null lets the dates it already has stand.
+    datedBy:
+      scope.startAt === undefined && scope.endAt === undefined ? null : name,
+  };
 }

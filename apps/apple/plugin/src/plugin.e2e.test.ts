@@ -11,6 +11,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -848,13 +849,12 @@ async function withConnectors(home: string) {
 }
 
 test(
-  'a connector the user added imports through the installed plugin on its own elt and AppleApp, and a chat hears of one that does not load',
+  'a connector the user adds while the server runs imports through it on its own elt and AppleApp, an edit to it loads in the same chat, and a chat hears of one that does not load',
   { timeout: 120_000 },
   async (t) => {
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
     const plugin = join(scratch.path, 'plugin');
     cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
-    await withConnectors(scratch.path);
     const runtime =
       process.env.CODEX_MCP_NODE_PATH ??
       join(
@@ -880,6 +880,8 @@ test(
       return String(result.content[0]?.text);
     };
     try {
+      // The server started before the user's connectors existed.
+      await withConnectors(scratch.path);
       const context = await call('apple_context', { event: 'SessionStart' });
       await call('apple_configure', { apps: [{ app: 'photos' }] });
       const settings = join(
@@ -899,9 +901,21 @@ test(
             'SELECT id, title FROM photos ORDER BY id',
           ).rows;
       }
+      const connector = join(
+        scratch.path,
+        'Library/Application Support/Context Compiler/Connectors/photos/photos-app.mts',
+      );
+      writeFileSync(
+        connector,
+        readFileSync(connector, 'utf8').replace(
+          "readonly title = 'Photos'",
+          "readonly title = 'Pictures'",
+        ),
+      );
+      const edited = await call('apple_context', { event: 'SessionStart' });
 
       assert.match(context, /^- Drafts could not be loaded: /m);
-      assert.match(client.getInstructions() ?? '', /Photos/);
+      assert.match(edited, /^- Pictures: /m);
       assert.deepEqual(photos, [
         { id: 'p1', title: 'Beach' },
         { id: 'p2', title: 'Snow' },

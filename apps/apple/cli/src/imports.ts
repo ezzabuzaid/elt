@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 
+import { userConnectors } from '@workspace/apple-manifest/user-connectors';
 import type { AppleApp, ChoiceOptions } from '@workspace/apple/apps/apple-app';
 import {
   ImportStore,
@@ -29,6 +30,7 @@ export class StoreBusyError extends Error {
 
 export type AppStatus = {
   readonly app: string;
+  readonly title: string;
   readonly selection: string;
   readonly database: string | null;
   // never: not synced yet; interrupted: a pass was running when its sync stopped.
@@ -63,9 +65,13 @@ export class Imports {
   }
 
   app(name: string): AppleApp {
-    const app = this.apps.find((candidate) => candidate.name === name);
+    const app = this.#loaded(name);
     if (app === undefined) throw new Error(`Unknown app ${name}`);
     return app;
+  }
+
+  #loaded(name: string): AppleApp | undefined {
+    return this.apps.find((candidate) => candidate.name === name);
   }
 
   // What an app can be narrowed to; opening it is also what makes macOS ask
@@ -123,12 +129,20 @@ export class Imports {
     const selections = store.selections();
     if (selections.length === 0)
       throw new Error('No apps are set up; run: setup');
-    const imports = (only ?? selections.map(({ app }) => app)).map((name) => {
+    const imports = [];
+    // A selected app whose connector is not loaded cannot sync; status says
+    // so, and the others still sync.
+    let unsynced = false;
+    for (const name of only ?? selections.map(({ app }) => app)) {
       const selection = selections.find(({ app }) => app === name);
       if (selection === undefined)
         throw new Error(`${name} is not set up; run: setup`);
-      return { app: this.app(name), selection };
-    });
+      const app = this.#loaded(name);
+      if (app === undefined) {
+        store.saveConnectionFailure(selection, unloaded(name));
+        unsynced = true;
+      } else imports.push({ app, selection });
+    }
     const interrupted = () => {
       process.exitCode = 130;
     };
@@ -149,9 +163,8 @@ export class Imports {
       process.off('exit', interrupted);
     }
     observer.finish();
-    process.exitCode = passes.every(({ status }) => status === 'succeeded')
-      ? 0
-      : 1;
+    process.exitCode =
+      !unsynced && passes.every(({ status }) => status === 'succeeded') ? 0 : 1;
   }
 
   // Each selected app as its own data.sqlite records it: the latest pass, the
@@ -161,11 +174,12 @@ export class Imports {
     const syncing = leaseHeld(this.root);
     using store = new ImportStore(this.root);
     return store.selections().map((selection) => {
-      const app = this.app(selection.app);
+      const app = this.#loaded(selection.app);
       const path = store.database(selection);
       const base = {
-        app: app.name,
-        selection: app.describe(selection.scope),
+        app: selection.app,
+        title: app?.title ?? selection.app,
+        selection: app?.describe(selection.scope) ?? 'its saved selection',
         database: existsSync(path) ? path : null,
       };
       const never = {
@@ -176,6 +190,12 @@ export class Imports {
         error: null,
         streams: [],
       };
+      if (app === undefined)
+        return {
+          ...never,
+          state: 'failed' as const,
+          error: unloaded(selection.app),
+        };
       const failure = store.connectionFailure(selection);
       if (failure !== undefined)
         return {
@@ -212,4 +232,9 @@ export class Imports {
     if (held === null) throw new StoreBusyError();
     return held;
   }
+}
+
+// Why a selected app cannot be used, and what to do about it.
+function unloaded(name: string): string {
+  return `No connector named ${name} is loaded: fix or restore its folder in ${userConnectors}, or set up without it.`;
 }

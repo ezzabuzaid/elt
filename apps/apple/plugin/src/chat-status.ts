@@ -67,9 +67,11 @@ export function chatStatus(plugin: ApplePlugin): {
     ),
     text: [
       `Apple apps the user connected, each imported into its own SQLite file under "${plugin.directory}". Read them as $query-apple describes.`,
-      ...selected.map(
-        ({ app, database, sync }) =>
-          `- ${plugin.app(app).title}: ${progress(sync, plugin.app(app).guidance())}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`,
+      ...selected.map(({ app, title, database, sync, permissions }) =>
+        // A selected app whose connector is not loaded does not import.
+        plugin.apps.some(({ name }) => name === app)
+          ? `- ${title}: ${progress(sync, permissions)}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`
+          : `- ${title}: ${permissions}`,
       ),
       ...broken,
     ].join('\n'),

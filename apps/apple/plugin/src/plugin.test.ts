@@ -30,10 +30,17 @@ import { settingsRead, settingsUpdate } from './native-settings.ts';
 // The committed plugin, as Codex installs it.
 const install = resolve('plugins/apple');
 
-// The apps the plugin's server creates.
-const connectors = await new Connectors([builtInConnectors]).load({
-  grantee: 'ChatGPT',
-});
+// The plugin as its server creates it, over the built-in connectors.
+async function applePlugin(install: string, directory: string) {
+  const plugin = new ApplePlugin(
+    new Connectors([builtInConnectors]),
+    { grantee: 'ChatGPT' },
+    install,
+    directory,
+  );
+  await plugin.refresh();
+  return plugin;
+}
 
 // Stands in for the leading server's import of one app selection.
 function imported(directory: string, item: Selection) {
@@ -59,7 +66,7 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(connectors, install, scratch.path);
+  const plugin = await applePlugin(install, scratch.path);
   assert.deepEqual(plugin.status().apps, []);
   for (const [selection, message] of [
     [
@@ -114,7 +121,7 @@ test('agents read the selected apps, where each import lives and what macOS acce
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(connectors, install, scratch.path);
+  const plugin = await applePlugin(install, scratch.path);
   const notes = {
     app: 'notes' as const,
     scope: { collectionIds: ['folder-1'] },
@@ -165,7 +172,7 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(connectors, install, scratch.path);
+  const plugin = await applePlugin(install, scratch.path);
   const notes = {
     app: 'notes' as const,
     scope: { collectionIds: ['folder-1'] },
@@ -174,8 +181,7 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   assert.equal(plugin.configure({ apps: [notes] }).apps[0]?.database, null);
   const database = imported(scratch.path, notes);
   assert.equal(
-    new ApplePlugin(connectors, install, scratch.path).status().apps[0]
-      ?.database,
+    (await applePlugin(install, scratch.path)).status().apps[0]?.database,
     database,
   );
   plugin.configure({ apps: [notes] });
@@ -210,7 +216,7 @@ test('the leading server keeps leading when its settings cannot be read, and let
   mkdirSync(join(scratch.path, 'settings.sqlite'));
   const stopping = new AbortController();
   const running = keepFresh(
-    new ApplePlugin(connectors, install, scratch.path),
+    await applePlugin(install, scratch.path),
     stopping.signal,
   );
   try {
@@ -227,7 +233,7 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(connectors, install, scratch.path);
+  const plugin = await applePlugin(install, scratch.path);
   const notes = {
     app: 'notes' as const,
     scope: {},
@@ -270,11 +276,61 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
   assert.notEqual(failed.state, synced.state);
 });
 
+test('a selected app whose connector is no longer loaded is reported, keeps its import through other changes, and can be disconnected', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const withPhotos = new ApplePlugin(
+    new Connectors([
+      builtInConnectors,
+      resolve('apps/apple/manifest/dist/fixtures'),
+    ]),
+    { grantee: 'ChatGPT' },
+    install,
+    scratch.path,
+  );
+  await withPhotos.refresh();
+  const photos = { app: 'photos', scope: {}, includeAttachments: true };
+  withPhotos.configure({ apps: [photos] });
+  const plugin = await applePlugin(install, scratch.path);
+
+  const [reported] = plugin.status().apps;
+  const context = chatStatus(plugin).text;
+  const kept = plugin.configure({
+    apps: [photos, { app: 'notes', scope: {}, includeAttachments: true }],
+  });
+  const changed = () =>
+    plugin.configure({ apps: [{ ...photos, includeAttachments: false }] });
+  const switches = settingsRead(plugin).values;
+  const { values } = settingsUpdate(plugin, { photos: false });
+
+  assert.equal(reported?.title, 'photos');
+  assert.match(
+    String(reported?.permissions),
+    /No connector named photos is loaded/,
+  );
+  assert.match(context, /^- photos: No connector named photos is loaded/m);
+  assert.deepEqual(
+    kept.apps.map(({ app }) => app),
+    ['photos', 'notes'],
+  );
+  assert.throws(
+    changed,
+    /No connector named photos is loaded, so its selection cannot change/,
+  );
+  assert.equal(switches.photos, true);
+  assert.equal(values.photos, undefined);
+  assert.deepEqual(
+    plugin.status().apps.map(({ app }) => app),
+    ['notes'],
+  );
+});
+
 test('the Settings page switches apps on and off and describes each import as OpenAI’s settings schema requires', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(connectors, install, scratch.path);
+  const plugin = await applePlugin(install, scratch.path);
   const described = () => {
     const result = settingsRead(plugin);
     OpenAISettingsReadResultSchema.parse(result);
@@ -355,7 +411,7 @@ test('once another plugin version replaces this one, its server refuses to chang
     recursive: true,
   });
   const store = join(scratch.path, 'store');
-  const plugin = new ApplePlugin(connectors, replaced, store);
+  const plugin = await applePlugin(replaced, store);
   plugin.configure({
     apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
   });
@@ -388,7 +444,7 @@ test('a server whose code predates the settings file refuses to change apps and 
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const plugin = new ApplePlugin(connectors, install, scratch.path);
+  const plugin = await applePlugin(install, scratch.path);
   plugin.configure({
     apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
   });
@@ -429,7 +485,7 @@ test('settings an older layout wrote are discarded, so the user sets up again', 
       `CREATE TABLE configuration (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL); INSERT INTO configuration VALUES(1, '{"apps":[{"app":"notes","scope":{},"includeAttachments":true}]}');`,
     );
   }
-  const plugin = new ApplePlugin(connectors, install, scratch.path);
+  const plugin = await applePlugin(install, scratch.path);
   assert.deepEqual(plugin.status().apps, []);
   using database = new DatabaseSync(join(scratch.path, 'settings.sqlite'), {
     readOnly: true,

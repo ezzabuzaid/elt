@@ -33,15 +33,19 @@ export class StatusCommand extends Command {
         if (statuses.length === 0) return 'No apps are set up. Run: setup';
         const failures = statuses
           .filter(({ error }) => error !== null)
-          .map(
-            ({ app, error }) =>
-              `\n${this.imports.app(app).title}: ${error}\n${this.imports.app(app).guidance()}`,
-          );
+          .map(({ app, title, error }) => {
+            // A selected app whose connector is not loaded has no guidance;
+            // its error says what to do.
+            const guidance = this.imports.apps
+              .find(({ name }) => name === app)
+              ?.guidance();
+            return `\n${title}: ${error}${guidance === undefined ? '' : `\n${guidance}`}`;
+          });
         return [
           table(
             ['App', 'State', 'Last success', 'Scope', 'Database'],
             statuses.map((status) => [
-              this.imports.app(status.app).title,
+              status.title,
               status.state,
               ago(status.lastSuccessAt),
               status.selection,

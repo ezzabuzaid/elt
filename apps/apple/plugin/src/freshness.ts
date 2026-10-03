@@ -132,6 +132,8 @@ async function lead(plugin: ApplePlugin, signal: AbortSignal) {
         watching,
       );
       tidy(directory);
+      // A selection may name a connector added since the last pass.
+      await plugin.refresh();
       await watchImports(plugin, selections, watching);
     } catch {
       // Retried below, once the selection changes or a minute passes.

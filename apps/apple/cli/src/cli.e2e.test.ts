@@ -1435,6 +1435,30 @@ test('a connector the user added syncs and answers queries beside the built-in a
   ]);
 });
 
+test('a selected app whose connector was removed is reported by status, and sync still loads the other apps', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withNotes(mac.path);
+  await withConnectors(mac.path);
+  cli(mac.path, 'setup', '--app', 'notes', '--app', 'photos');
+  await rm(
+    join(
+      mac.path,
+      'Library/Application Support/Context Compiler/Connectors/photos',
+    ),
+    { recursive: true },
+  );
+
+  const sync = cli(mac.path, 'sync');
+  const status = cli(mac.path, 'status', '--json');
+
+  assert.equal(sync.status, 1, sync.stderr);
+  assert.equal(status.status, 0, status.stderr);
+  const [notes, photos] = JSON.parse(status.stdout);
+  assert.equal(notes.state, 'succeeded');
+  assert.equal(photos.state, 'failed');
+  assert.match(photos.error, /^No connector named photos is loaded/);
+});
+
 test('--until takes in the day it names, and a day that is not on the calendar is refused', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);

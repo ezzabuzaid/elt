@@ -2,6 +2,7 @@ import type {
   ElicitRequestFormParams,
   ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 
 import {
   hasFullDiskAccess,
@@ -9,7 +10,7 @@ import {
 } from '@workspace/apple/platform/macos/full-disk-access';
 import type { Selection } from '@workspace/import-store';
 
-import type { ApplePlugin } from './apple-plugin.ts';
+import { type ApplePlugin, appSchema } from './apple-plugin.ts';
 
 export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 
@@ -46,14 +47,16 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
               title,
             })),
           },
-          default: [...previous.keys()],
+          default: plugin.apps
+            .map(({ name }) => name)
+            .filter((name) => previous.has(name)),
         },
       },
       required: ['apps'],
     },
   });
   if (picked.action !== 'accept') return { changed: false, ...plugin.status() };
-  const chosen = plugin.appSchema.array().parse(picked.content?.apps);
+  const chosen = z.array(appSchema).parse(picked.content?.apps);
   const behindFullDiskAccess = chosen.filter(
     (app) => plugin.app(app).fullDiskAccess,
   );
@@ -61,7 +64,11 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
     behindFullDiskAccess.length > 0 && !(await hasFullDiskAccess())
       ? behindFullDiskAccess
       : [];
-  const configuration: Selection[] = [];
+  // A selected app whose connector is not loaded is not in the form; it
+  // keeps its selection rather than losing its import.
+  const configuration: Selection[] = [...previous.values()].filter(
+    ({ app }) => !plugin.apps.some(({ name }) => name === app),
+  );
   const unavailable: { app: string; error: string; permissions: string }[] = [];
   for (const app of chosen) {
     try {

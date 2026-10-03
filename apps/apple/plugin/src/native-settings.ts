@@ -24,11 +24,13 @@ function ago(instant: string, now: Date): string {
 
 function describe(
   plugin: ApplePlugin,
-  item: Selection & { sync: ImportSync | null },
+  item: Selection & {
+    sync: ImportSync | null;
+    permissions: string;
+  },
   now: Date,
 ): string {
-  const { sync } = item;
-  const app = plugin.app(item.app);
+  const { sync, permissions } = item;
   if (sync === null) return 'Waiting to import.';
   switch (sync.state) {
     case 'running':
@@ -36,24 +38,31 @@ function describe(
     case 'interrupted':
       return 'Paused: resumes the next time Codex runs the Apple plugin.';
     case 'succeeded':
-      return `Synced ${ago(sync.completedAt, now)} · ${app.describe(item.scope)}.`;
+      return `Synced ${ago(sync.completedAt, now)} · ${plugin.apps.find(({ name }) => name === item.app)?.describe(item.scope) ?? 'its saved selection'}.`;
     case 'partial':
-      return `Partly synced ${ago(sync.completedAt, now)}: ${sync.error} ${app.guidance()}`;
+      return `Partly synced ${ago(sync.completedAt, now)}: ${sync.error} ${permissions}`;
     case 'failed':
-      return `Last sync failed: ${sync.error} ${app.guidance()}`;
+      return `Last sync failed: ${sync.error} ${permissions}`;
   }
 }
 
 export function settingsRead(plugin: ApplePlugin, now = new Date()) {
-  const connected = new Map(
-    plugin.status().apps.map((item) => [item.app, item]),
-  );
-  const names = plugin.apps.map(({ name }) => name);
+  const selected = plugin.status().apps;
+  const connected = new Map(selected.map((item) => [item.app, item]));
+  // Every loaded app, then each selected app whose connector is not loaded,
+  // so it can still be switched off.
+  const switches = [
+    ...plugin.apps.map(({ name, title }) => ({ name, title })),
+    ...selected
+      .filter(({ app }) => !plugin.apps.some(({ name }) => name === app))
+      .map(({ app, title }) => ({ name: app, title })),
+  ];
+  const names = switches.map(({ name }) => name);
   return {
     schema: {
       type: 'object' as const,
       properties: Object.fromEntries(
-        plugin.apps.map(({ name, title }) => {
+        switches.map(({ name, title }) => {
           const item = connected.get(name);
           return [
             name,

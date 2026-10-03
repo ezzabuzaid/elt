@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -31,11 +31,13 @@ export class ConnectorManifest {
     this.#entry = join(folder, manifest.entry);
   }
 
-  // Runs the entry point and creates its app for the host.
+  // Runs the entry point and creates its app for the host. Node keeps a
+  // module it loaded, so the entry's URL carries its modification time: an
+  // edited entry loads again. Files it imports load once.
   async load(host: AppleHost): Promise<AppleApp> {
-    const { default: App }: { default?: unknown } = await import(
-      pathToFileURL(this.#entry).href
-    );
+    const entry = pathToFileURL(this.#entry);
+    entry.searchParams.set('modified', String(statSync(this.#entry).mtimeMs));
+    const { default: App }: { default?: unknown } = await import(entry.href);
     if (!isAppleAppClass(App))
       throw new TypeError(
         `${this.#entry} does not export an AppleApp class by default.`,
