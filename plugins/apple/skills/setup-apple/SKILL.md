@@ -27,7 +27,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
    - Notes: accounts, containing folders, last modified date. Select child folders separately. Smart folders are saved searches, not containing folders.
    - Messages: chats and message date.
    - Contacts: containers shown by the tool.
-   - Calendar: accounts, calendars and event dates. Default to the previous year through the next year; show the dates and let the user change them. Only calendars already available on this Mac are included. Remote attachments retain links; Google sign-in is not needed.
+   - Calendar: accounts, calendars and event dates. Default to 2000 through a year from today, as `apple_options` returns in `defaultScope`; show the dates and let the user change them. Only calendars already available on this Mac are included. Remote attachments retain links; Google sign-in is not needed.
    - Reminders: accounts and lists, including completed and undated reminders.
    - Safari: profiles and visit dates. A narrowed Safari import leaves out bookmarks, the Reading List and iCloud Tabs, which belong to no profile. History and tabs from the user's other devices arrive only while Safari is open.
    - Books: everything; it has no accounts, collections or dates to choose. Books kept only in iCloud are listed without their files until the user opens them in Books.
