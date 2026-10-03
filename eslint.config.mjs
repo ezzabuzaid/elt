@@ -1,5 +1,6 @@
 import nx from '@nx/eslint-plugin';
 
+import island, { islandConstraint } from './island.eslint.config.mjs';
 import personalConfig from './personal.eslint.config.mjs';
 
 const testHookRestrictedSyntax = [
@@ -16,6 +17,18 @@ const enumRestrictedSyntax = [
     selector: 'TSEnumDeclaration',
     message:
       'No TS enums — they need a runtime transform and break Node strip-only `.ts` execution (tsc/bundlers hide it). Use a `const` object + a union type instead.',
+  },
+];
+
+// msw only answers what a handler lists; without this option an unstubbed
+// request is warned about and sent to the real network, so the test passes on
+// a live dependency it never meant to touch. Scoped by the msw/node import.
+const mswUnhandledRequestSyntax = [
+  {
+    selector:
+      'Program:has(ImportDeclaration[source.value="msw/node"]) CallExpression[callee.property.name="listen"]:matches([arguments.length=0], [arguments.0.type="ObjectExpression"]):not(:has(Property[key.name="onUnhandledRequest"] > Literal[value="error"]))',
+    message:
+      "msw: server.listen() must pass { onUnhandledRequest: 'error' } so an unstubbed request fails the test instead of reaching the network.",
   },
 ];
 
@@ -36,7 +49,17 @@ export default [
         {
           enforceBuildableLibDependency: true,
           allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?js$'],
-          depConstraints: [{ sourceTag: '*', onlyDependOnLibsWithTags: ['*'] }],
+          depConstraints: [
+            { sourceTag: '*', onlyDependOnLibsWithTags: ['*'] },
+            // The hosts' runtimes: the plugin's MCP server and the CLI's
+            // commander and clack.
+            islandConstraint([
+              '@modelcontextprotocol/sdk',
+              '@modelcontextprotocol/sdk/*',
+              'commander',
+              '@clack/prompts',
+            ]),
+          ],
         },
       ],
     },
@@ -75,9 +98,23 @@ export default [
       'no-restricted-syntax': [
         'error',
         ...testHookRestrictedSyntax,
+        ...mswUnhandledRequestSyntax,
         ...enumRestrictedSyntax,
       ],
     },
+  },
+  ...island({ libraries: ['packages/**/*.ts'] }),
+  // BackgroundQueue mirrors pg-boss's API: the queue islands implement it and
+  // the hosts call it, so it is no capability a host provides, and its generic
+  // work<TData> is pg-boss's own signature.
+  {
+    files: ['packages/queue/abstract/src/**/*.ts'],
+    rules: { 'island/no-generic-port': 'off' },
+  },
+  // Prints why a container test skipped when Docker is not available.
+  {
+    files: ['packages/test/src/**/*.ts'],
+    rules: { 'island/no-console': 'off' },
   },
   {
     files: ['**/*.ts', '**/*.cts', '**/*.mts'],

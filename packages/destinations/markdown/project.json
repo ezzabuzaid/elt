@@ -2,6 +2,7 @@
   "name": "elt-markdown",
   "sourceRoot": "packages/destinations/markdown/src",
   "projectType": "library",
+  "tags": ["layer:island"],
   "targets": {
     "format": {},
     "test": {

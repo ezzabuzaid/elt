@@ -2,6 +2,7 @@
   "name": "elt-postgresql",
   "sourceRoot": "packages/destinations/postgresql/src",
   "projectType": "library",
+  "tags": ["layer:island"],
   "targets": {
     "format": {},
     "test": {

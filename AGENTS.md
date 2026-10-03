@@ -38,6 +38,16 @@ Before writing argv routing, help text, usage errors, prompts or terminal render
 
 Model a set of things that share an algorithm as a template class: an abstract base owns the fixed steps, and each variant is its own small class in its own file (`apps/apple/cli/src/commands/`, `apps/apple/cli/src/apps/`, Notes' streams). Do not use a definitions table imported everywhere and indexed by name. Callers ask an object; they do not reach into a registry.
 
+## Agnostic packages
+
+An agnostic package is designed as if it were published to npm: anyone could copy its `src` into another project and use it. Lint owns the boundary; this section holds only what the AST cannot see.
+
+- **Enforced by the `layer:island` tag** through `island.eslint.config.mjs`, a portable file that finds islands by tag in Nx's project graph: an island may depend only on other islands and may not import a host's runtime (the list `eslint.config.mjs` passes to `islandConstraint`), declares no `any` and no generic port signature, declares in its own `package.json` every package its shipped code imports, and, like all of `packages/**`, reads no `process.env` and writes no `console` (`packages/test` may print why a container test skipped). Carried by `packages/elt`, `packages/destinations/*`, `packages/google-auth`, `packages/queue/*` and `packages/test`. A new agnostic package needs only the tag in its `project.json`. `packages/import-store` is not an island: it describes the user's Apple apps.
+- **Also enforced:** no type assertions; no test lifecycle hooks; in every test, msw's `listen()` passes `onUnhandledRequest: 'error'`.
+- **Ports are typed by the package.** A capability or decision the host owns enters as a parameter whose type the package exports, and the consumer conforms: `GoogleRequester` (`packages/google-auth/src/requester.ts`), `onRefreshed` on `GoogleOAuthApp.client`, and `directory` on `googleSession`, where each host decides where its grants live.
+- **Stored shapes carry their own guards.** Anything the host persists and reads back is parsed by a static the package exports (`GoogleGrant.parse`).
+- **Tests reach no network.** Stub below the dependency's transport with msw (`packages/google-auth/src/grant-opener.test.ts`). A test that needs Postgres gets its server from the caller: `scratchDatabase(server)` in `elt-postgresql/testing`.
+
 ## Read every changed file before reporting done
 
 Before calling a change finished, read each file it touched in full, not from memory, and remove what has no single concept or real consumer: forwarding wrappers, conversions of values whose types are known, defaults nobody overrides, exports nobody imports, and files left over from a split. Probe any claim that something cannot work before relying on it. Do this unprompted; the user should not have to audit file by file.

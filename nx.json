@@ -32,13 +32,16 @@
         "^default",
         "{workspaceRoot}/eslint.config.mjs",
         "{workspaceRoot}/personal.eslint.config.mjs",
+        "{workspaceRoot}/island.eslint.config.mjs",
         {
           "externalDependencies": [
             "eslint",
             "typescript-eslint",
             "eslint-plugin-import-x",
             "eslint-plugin-functional",
-            "@nx/eslint-plugin"
+            "@nx/eslint-plugin",
+            "@nx/devkit",
+            "jsonc-eslint-parser"
           ]
         }
       ]

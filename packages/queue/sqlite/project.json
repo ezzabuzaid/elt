@@ -3,7 +3,7 @@
   "$schema": "../../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "packages/queue/sqlite/src",
   "projectType": "library",
-  "tags": ["scope:app", "layer:island"],
+  "tags": ["layer:island"],
   "targets": {
     "format": {},
     "build": {
