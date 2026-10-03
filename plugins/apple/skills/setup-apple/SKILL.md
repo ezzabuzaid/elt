@@ -7,6 +7,8 @@ description: Connect or reconfigure Apple Mail, Notes, Messages, Contacts, Calen
 
 The Apple plugin imports the apps, accounts, collections and dates the user chooses into a private local copy. Users only need Codex and macOS permissions; never ask them to install developer tools, clone a repo, start Docker or run terminal commands. The original Apple apps stay intact.
 
+To import a Mac app this list does not include, use `$add-apple-connector`.
+
 ## Set up with forms
 
 1. Call `apple_setup`. It shows the user one form to choose apps, and a second one only when chosen apps need Full Disk Access that ChatGPT lacks. Each chosen app is imported from all its accounts, folders and dates with attachments (Calendar: from 2000 through next year); an app narrowed earlier keeps that selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat, and do not ask about accounts, folders or dates unless the user brings them up.
