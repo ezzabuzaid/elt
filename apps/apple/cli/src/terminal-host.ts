@@ -1,12 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { basename, extname } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, extname, join } from 'node:path';
 
 import type { AppleHost } from '@workspace/apple/apps/apple-app';
-import {
-  type GoogleRequester,
-  googleSession,
-  grantDirectory,
-} from '@workspace/google-auth';
+import { type GoogleRequester, googleSession } from '@workspace/google-auth';
 
 // The CLI as the host of the Apple apps: macOS grants access to the terminal
 // that launched it, and Google content is read with the user's own OAuth
@@ -36,8 +33,16 @@ export class TerminalHost implements AppleHost {
     const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
     if (!clientId || !clientSecret)
       throw new Error(
-        `Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET for Calendar's Drive/Gmail attachments; grants are stored under ${grantDirectory()}.`,
+        "Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET for Calendar's Drive/Gmail attachments.",
       );
-    return googleSession({ clientId, clientSecret, scopes });
+    return googleSession({
+      clientId,
+      clientSecret,
+      scopes,
+      directory: join(
+        process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
+        'context-compiler',
+      ),
+    });
   }
 }

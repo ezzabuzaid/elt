@@ -1,3 +1,6 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import postgres from 'postgres';
 
 import { Connection, Pipeline, PipelineError } from '@workspace/elt';
@@ -10,7 +13,6 @@ import {
 import {
   GOOGLE_SEARCH_CONSOLE_SCOPE,
   googleSession,
-  grantDirectory,
 } from '@workspace/google-auth';
 
 import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
@@ -29,12 +31,16 @@ export default [
       const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
       if (!clientId || !clientSecret)
         throw new Error(
-          `Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET to a Desktop-type OAuth client whose project has searchconsole.googleapis.com enabled. Grants are stored under ${grantDirectory()}.`,
+          'Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET to a Desktop-type OAuth client whose project has searchconsole.googleapis.com enabled.',
         );
       const requester = await googleSession({
         clientId,
         clientSecret,
         scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
+        directory: join(
+          process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
+          'context-compiler',
+        ),
       });
       const source = new SearchConsoleSource({ requester, siteUrls });
       const destination = new PostgresDestination({

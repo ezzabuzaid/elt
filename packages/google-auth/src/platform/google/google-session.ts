@@ -1,6 +1,3 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
 import { GoogleOAuthApp } from '../../app.ts';
 import { GoogleConsent } from '../../consent.ts';
 import { GoogleGrantRevokedError } from '../../errors.ts';
@@ -15,19 +12,13 @@ import { openBrowser as openInBrowser } from './open-browser.ts';
 // enough; the vault hashes it before it reaches a file name.
 const USER = 'local';
 
-export function grantDirectory(): string {
-  return join(
-    process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'),
-    'context-compiler',
-  );
-}
-
 export type GoogleSessionOptions = {
   /** A Desktop-type OAuth client; its project is billed for API quota. */
   readonly clientId: string;
   readonly clientSecret: string;
   readonly scopes: readonly string[];
-  readonly directory?: string;
+  /** Where the host keeps this user's grants. */
+  readonly directory: string;
   readonly openBrowser?: (url: string) => Promise<void>;
   readonly timeoutMs?: number;
 };
@@ -42,7 +33,7 @@ export async function googleSession({
   clientId,
   clientSecret,
   scopes,
-  directory = grantDirectory(),
+  directory,
   openBrowser = openInBrowser,
   timeoutMs,
 }: GoogleSessionOptions): Promise<GoogleRequester> {
