@@ -69,7 +69,9 @@ type SqliteWorker = {
   id: string;
   name: string;
   options: QueueWorkOptions;
-  handler: (jobs: QueueJob<any>[]) => Promise<unknown>;
+  // Maps claimed rows to the handler's job type inside the generic work() call,
+  // so the worker list holds no `any`.
+  bindJobs: (rows: JobRow[]) => () => Promise<unknown>;
   timer?: ReturnType<typeof setTimeout>;
   activeRuns: Set<Promise<void>>;
   stopped: boolean;
@@ -623,7 +625,10 @@ export class SqliteJobQueue
       id,
       name,
       options,
-      handler,
+      bindJobs: (rows) => {
+        const jobs = rows.map((row) => this.mapClaimedJob<TData>(row));
+        return () => handler(jobs);
+      },
       activeRuns: new Set(),
       stopped: false,
     };
@@ -996,12 +1001,17 @@ export class SqliteJobQueue
   }
 
   private startWorkerRun(worker: SqliteWorker): boolean {
-    const jobs = this.claimJobs(worker.name, worker.options);
-    if (jobs.length === 0) {
+    const rows = this.claimJobs(worker.name, worker.options);
+    if (rows.length === 0) {
       return false;
     }
 
-    const activeRun = this.handleClaimedJobs(worker, jobs)
+    const run = worker.bindJobs(rows);
+    const activeRun = this.handleClaimedJobs(
+      worker,
+      rows.map((row) => row.id),
+      run,
+    )
       .catch((error: unknown) => {
         this.emit('error', toWorkerError(error, worker));
       })
@@ -1013,31 +1023,22 @@ export class SqliteJobQueue
     return true;
   }
 
-  private async handleClaimedJobs<TData>(
+  private async handleClaimedJobs(
     worker: SqliteWorker,
-    jobs: QueueJob<TData>[],
+    ids: string[],
+    run: () => Promise<unknown>,
   ): Promise<void> {
     try {
-      await worker.handler(jobs);
-      this.completeJobs(
-        worker.name,
-        jobs.map((job) => job.id),
-      );
+      await run();
+      this.completeJobs(worker.name, ids);
     } catch (error) {
       const failure =
         error instanceof Error ? { message: error.message } : { value: error };
-      await this.fail(
-        worker.name,
-        jobs.map((job) => job.id),
-        failure,
-      );
+      await this.fail(worker.name, ids, failure);
     }
   }
 
-  private claimJobs<TData>(
-    name: string,
-    options: QueueWorkOptions,
-  ): QueueJob<TData>[] {
+  private claimJobs(name: string, options: QueueWorkOptions): JobRow[] {
     const batchSize = options.batchSize ?? 1;
     const now = asIso(this.now());
     const where = [
@@ -1066,7 +1067,7 @@ export class SqliteJobQueue
     ].filter(Boolean);
     // Chosen and claimed under one write lock, as pg-boss's FOR UPDATE SKIP
     // LOCKED does: another process sharing the file cannot claim the same job.
-    const claimed = this.transaction(() => {
+    return this.transaction(() => {
       const rows = this.db
         .prepare(
           `SELECT * FROM background_jobs
@@ -1097,8 +1098,6 @@ export class SqliteJobQueue
         return mapJobRow(statement.get(now, now, leaseExpiresOn, name, row.id));
       });
     });
-
-    return claimed.map((row) => this.mapClaimedJob<TData>(row));
   }
 
   private completeJobs(name: string, ids: string[]): void {
