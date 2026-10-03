@@ -58,10 +58,10 @@ export class SetupCommand extends Command {
       (flag: 'since' | 'until') =>
       (value: string): string => {
         const { scope } = current(flag);
-        const instant = new Date(value);
-        if (Number.isNaN(instant.getTime()))
-          throw new InvalidArgumentError('Use YYYY-MM-DD');
-        scope[flag === 'since' ? 'startAt' : 'endAt'] = instant.toISOString();
+        const bound = flag === 'since' ? 'startAt' : 'endAt';
+        const instant = boundOf(bound, value);
+        if (instant === null) throw new InvalidArgumentError('Use YYYY-MM-DD');
+        scope[bound] = instant;
         return value;
       };
     declaration
@@ -91,7 +91,7 @@ export class SetupCommand extends Command {
       .addOption(
         new Option(
           '--until <date>',
-          'import records of the --app before it before this date',
+          'import records of the --app before it through this date',
         ).argParser(date('until')),
       )
       .option(
@@ -258,16 +258,18 @@ export class SetupCommand extends Command {
         ['startAt', 'since'],
         ['endAt', 'until'],
       ] as const) {
+        const saved = previous[bound];
         const answer = await text({
           message: `${title}: ${datedBy} ${label} (YYYY-MM-DD, leave empty for no limit)`,
-          initialValue: previous[bound]?.slice(0, 10) ?? '',
+          initialValue: saved === undefined ? '' : dayOf(bound, saved),
           validate: (value) =>
-            !value || !Number.isNaN(new Date(value).getTime())
+            !value || boundOf(bound, value) !== null
               ? undefined
               : 'Use YYYY-MM-DD',
         });
         if (isCancel(answer)) return null;
-        if (answer) scope[bound] = new Date(answer).toISOString();
+        const instant = answer ? boundOf(bound, answer) : null;
+        if (instant !== null) scope[bound] = instant;
       }
     const [problem] = selectionProblems(
       [{ app: app.name, scope, includeAttachments: true }],
@@ -284,4 +286,27 @@ export class SetupCommand extends Command {
 function cancelled(): void {
   cancel('Setup cancelled; nothing changed.');
   process.exitCode = 130;
+}
+
+// The scope bound a typed day names: since starts at that day, and until
+// takes in the whole day, so its exclusive endAt is the next day's start.
+// null when the answer is not a calendar date.
+function boundOf(bound: 'startAt' | 'endAt', day: string): string | null {
+  const instant = new Date(`${day}T00:00:00.000Z`);
+  // Date rolls 2026-02-30 over to March; only a day that reads back as typed
+  // is a calendar date.
+  if (
+    Number.isNaN(instant.getTime()) ||
+    instant.toISOString().slice(0, 10) !== day
+  )
+    return null;
+  if (bound === 'endAt') instant.setUTCDate(instant.getUTCDate() + 1);
+  return instant.toISOString();
+}
+
+// The day a saved bound shows as, the inverse of boundOf.
+function dayOf(bound: 'startAt' | 'endAt', instant: string): string {
+  const day = new Date(instant);
+  if (bound === 'endAt') day.setUTCDate(day.getUTCDate() - 1);
+  return day.toISOString().slice(0, 10);
 }

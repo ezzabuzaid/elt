@@ -1435,6 +1435,44 @@ test('a connector the user added syncs and answers queries beside the built-in a
   ]);
 });
 
+test('--until takes in the day it names, and a day that is not on the calendar is refused', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withNotes(mac.path);
+
+  const impossible = cli(
+    mac.path,
+    'setup',
+    '--app',
+    'notes',
+    '--until',
+    '2025-02-30',
+  );
+  const setup = cli(
+    mac.path,
+    'setup',
+    '--app',
+    'notes',
+    '--until',
+    '2025-02-03',
+  );
+  cli(mac.path, 'sync');
+  const notes = cli(
+    mac.path,
+    'query',
+    'notes',
+    "SELECT title FROM notes WHERE title = 'Groceries'",
+    '--json',
+  );
+
+  assert.equal(impossible.status, 1, impossible.stderr);
+  assert.match(impossible.stderr, /Use YYYY-MM-DD/);
+  assert.equal(setup.status, 0, setup.stderr);
+  const [status] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
+  assert.equal(status.selection, 'until 2025-02-03');
+  // Groceries was last edited at 2025-02-03T04:05Z.
+  assert.deepEqual(JSON.parse(notes.stdout), [{ title: 'Groceries' }]);
+});
+
 test('one SQL statement runs however it is spaced or commented', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
