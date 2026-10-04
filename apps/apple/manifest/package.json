@@ -13,5 +13,8 @@
     "@workspace/apple": "0.0.1",
     "@workspace/elt": "0.0.1",
     "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@workspace/macos-eventkit": "0.0.1"
   }
 }

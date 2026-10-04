@@ -17,7 +17,7 @@ import {
 } from '@workspace/elt';
 import {
   type CalendarQuery,
-  CalendarStore,
+  type CalendarStore,
   IcsExportUnavailableError,
 } from '@workspace/macos-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -55,7 +55,7 @@ export class CalendarIcsUnavailableError extends Error {
 }
 
 export class AppleCalendarSource extends Source<CalendarSnapshot> {
-  readonly #store = new CalendarStore();
+  readonly #store: CalendarStore;
   // The window is not part of the identity: moving it keeps one checkpoint, and
   // incremental copies delete the occurrences that left it.
   readonly identity = 'apple-calendar:eventkit';
@@ -78,11 +78,13 @@ export class AppleCalendarSource extends Source<CalendarSnapshot> {
   readonly #attachments?: CalendarAttachmentFetcher;
 
   constructor({
+    store,
     startAt,
     endAt,
     attachments,
     scope = {},
   }: {
+    store: CalendarStore;
     startAt: string;
     endAt: string;
     // Retrieves remote ATTACH files; only needed when a copy reads their bytes.
@@ -90,6 +92,7 @@ export class AppleCalendarSource extends Source<CalendarSnapshot> {
     scope?: ImportScope;
   }) {
     super();
+    this.#store = store;
     this.#attachments = attachments;
     if (!isTimestamp(startAt) || !isTimestamp(endAt) || startAt >= endAt)
       throw new TypeError(

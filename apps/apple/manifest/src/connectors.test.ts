@@ -13,7 +13,15 @@ test('every connector folder loads as its app for the host, and one that cannot 
     builtInConnectors,
     fixtures,
     fileURLToPath(new URL('./missing/', import.meta.url)),
-  ]).load({ grantee: 'Terminal' });
+  ]).load({
+    grantee: 'Terminal',
+    eventKitHelper: fileURLToPath(
+      new URL(
+        'eventkit-helper',
+        import.meta.resolve('@workspace/macos-eventkit'),
+      ),
+    ),
+  });
 
   assert.deepEqual(apps.map(({ name }) => name).sort(), [
     'books',

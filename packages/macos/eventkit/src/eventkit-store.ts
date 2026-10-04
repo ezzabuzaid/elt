@@ -1,5 +1,4 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
 
 import type {
   AccountDocument,
@@ -10,10 +9,6 @@ import type {
 } from './documents.ts';
 import { EventKitChangingError } from './errors.ts';
 import nativeProcess from './native-process.ts';
-
-// The compiled helper (helper/*.swift) sits next to this module in dist and
-// next to the plugin's bundled server.
-const helper = fileURLToPath(new URL('./eventkit-helper', import.meta.url));
 
 // EventKit posts EKEventStoreChangedNotification up to this long after a change.
 const settleMs = 250;
@@ -38,6 +33,13 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
   protected abstract readonly entity: 'events' | 'reminders';
   // What the helper writes to stderr when access to the entity is missing.
   protected abstract readonly accessMarker: string;
+  // The compiled helper (helper/*.swift). Its host decides where it lives:
+  // beside this package's dist, or beside a bundled server.
+  readonly #helper: string;
+
+  constructor(helper: string) {
+    this.#helper = helper;
+  }
 
   // EventKit has no read transaction. Reads run while a watcher counts
   // EKEventStoreChangedNotification and repeat when a change arrived during
@@ -75,7 +77,7 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
   async *watch(signal: AbortSignal): AsyncGenerator<void> {
     try {
       for await (const message of nativeProcess.lines(
-        helper,
+        this.#helper,
         ['watch', this.entity],
         signal,
       )) {
@@ -118,7 +120,7 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
     };
     const documents: EventKitDocument[] = [];
     try {
-      for await (const line of nativeProcess.lines(helper, [
+      for await (const line of nativeProcess.lines(this.#helper, [
         'read',
         JSON.stringify(request),
       ]))

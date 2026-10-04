@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 import {
   CalendarStore,
   IcsExportUnavailableError
-} from "../../chunks/chunk-72U5EDE2.mjs";
+} from "../../chunks/chunk-R6L4WQ3V.mjs";
 import {
   accounts,
   collections,
@@ -981,7 +981,7 @@ var CalendarIcsUnavailableError = class extends Error {
   }
 };
 var AppleCalendarSource = class extends Source {
-  #store = new CalendarStore();
+  #store;
   // The window is not part of the identity: moving it keeps one checkpoint, and
   // incremental copies delete the occurrences that left it.
   identity = "apple-calendar:eventkit";
@@ -1001,8 +1001,9 @@ var AppleCalendarSource = class extends Source {
   icsParameters = catalog.get("icsParameters");
   icsAttachments = catalog.get("icsAttachments");
   #attachments;
-  constructor({ startAt, endAt, attachments, scope = {} }) {
+  constructor({ store, startAt, endAt, attachments, scope = {} }) {
     super();
+    this.#store = store;
     this.#attachments = attachments;
     if (!isTimestamp(startAt) || !isTimestamp(endAt) || startAt >= endAt)
       throw new TypeError("Calendar requires canonical UTC startAt < endAt timestamps");
@@ -1159,6 +1160,7 @@ var CalendarApp = class extends AppleApp {
   #calendar(scope, attachments) {
     const window = this.defaultScope();
     return new AppleCalendarSource({
+      store: new CalendarStore(this.host.eventKitHelper),
       startAt: scope.startAt ?? window.startAt,
       endAt: scope.endAt ?? window.endAt,
       scope,

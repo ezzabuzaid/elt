@@ -37427,7 +37427,10 @@ var plugin = new ApplePlugin(
     fileURLToPath(new URL("connectors", import.meta.url)),
     userConnectors
   ]),
-  { grantee: "ChatGPT" },
+  {
+    grantee: "ChatGPT",
+    eventKitHelper: fileURLToPath(new URL("eventkit-helper", import.meta.url))
+  },
   install
 );
 await plugin.refresh();

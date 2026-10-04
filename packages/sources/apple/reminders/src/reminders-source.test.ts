@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   Connection,
@@ -27,13 +28,14 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
-import type {
-  AccountDocument,
-  AlarmDocument,
-  DateComponentsDocument,
-  ParticipantDocument,
-  RecurrenceRuleDocument,
-  ReminderDocument,
+import {
+  type AccountDocument,
+  type AlarmDocument,
+  type DateComponentsDocument,
+  type ParticipantDocument,
+  type RecurrenceRuleDocument,
+  type ReminderDocument,
+  RemindersStore,
 } from '@workspace/macos-eventkit';
 import {
   type EventKitDocument,
@@ -43,6 +45,15 @@ import {
 } from '@workspace/macos-eventkit/test';
 
 import { AppleRemindersSource } from './apple-reminders-source.ts';
+
+const remindersStore = new RemindersStore(
+  fileURLToPath(
+    new URL(
+      'eventkit-helper',
+      import.meta.resolve('@workspace/macos-eventkit'),
+    ),
+  ),
+);
 
 // Test support shared by the Apple source packages' tests.
 
@@ -303,7 +314,7 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleRemindersSource();
+    const source = new AppleRemindersSource({ store: remindersStore });
     const streams = (await source.discover()).streams;
     new FakeEventKitHelper()
       .answer(remindersRead, () => [
@@ -568,7 +579,7 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleRemindersSource();
+    const source = new AppleRemindersSource({ store: remindersStore });
     // The recorded timed due, and two hand-built variants of the recorded
     // date-only due: a start in a leap month, and a due without a calendar.
     let native: EventKitDocument[] = [
@@ -667,7 +678,7 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleRemindersSource();
+    const source = new AppleRemindersSource({ store: remindersStore });
     // The helper must not be reached until the selections below are rejected.
     let respond: () => Iterable<EventKitDocument> = () => {
       throw new Error('The EventKit helper was reached before validation');
@@ -780,7 +791,7 @@ test(
 );
 
 test('Reminders snapshot incremental writes only changed reminders and deletes removed ones', async (t) => {
-  const source = new AppleRemindersSource();
+  const source = new AppleRemindersSource({ store: remindersStore });
   const named = (id: string, name: string) => reminder({ id, name });
   let native = [named('r1', 'Buy milk'), named('r2', 'Call Ann')];
   new FakeEventKitHelper().answer(remindersRead, () => native).install(t);
@@ -824,7 +835,7 @@ test('Reminders snapshot incremental writes only changed reminders and deletes r
 test('an EventKit session reads again when a change arrives during the read', async (t) => {
   let change = () => {};
   let edited = false;
-  const source = new AppleRemindersSource();
+  const source = new AppleRemindersSource({ store: remindersStore });
   new FakeEventKitHelper()
     .answer(remindersRead, () => {
       if (edited) return [{ ...recordedReminders.account, name: 'after' }];
@@ -852,7 +863,7 @@ test('an EventKit session reads again when a change arrives during the read', as
 });
 
 test('an EventKit session gives up when every read sees a change', async (t) => {
-  const source = new AppleRemindersSource();
+  const source = new AppleRemindersSource({ store: remindersStore });
   let reads = 0;
   new FakeEventKitHelper()
     .answer(remindersRead, () => {
@@ -894,7 +905,7 @@ test(
       .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'rem-marts-'));
     const reminders = await appleImport(
-      new AppleRemindersSource(),
+      new AppleRemindersSource({ store: remindersStore }),
       join(scratch.path, 'import'),
     );
     await reminders.load();

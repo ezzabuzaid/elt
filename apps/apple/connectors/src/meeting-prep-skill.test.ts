@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 import { Pipeline } from '@workspace/elt';
@@ -24,6 +25,18 @@ import osa from '@workspace/source-apple-macos/osa';
 
 import type { AppleApp } from './apps/apple-app.ts';
 import CalendarApp from './apps/calendar/calendar-app.mts';
+
+// The host the plugin's server passes its apps, with the helper this
+// workspace compiled instead of the bundled copy.
+const host = {
+  grantee: 'Codex',
+  eventKitHelper: fileURLToPath(
+    new URL(
+      'eventkit-helper',
+      import.meta.resolve('@workspace/macos-eventkit'),
+    ),
+  ),
+};
 
 // The Apple plugin's meeting-prep skill tells the agent to read each app's
 // import with these SQL blocks. Each test below imports an app the way the
@@ -234,7 +247,7 @@ test('meeting prep finds the next meetings in own calendars, with who is coming,
     weeksOfTheYear: [],
     setPositions: [],
   };
-  const app = new CalendarApp({ grantee: 'Codex' });
+  const app = new CalendarApp(host);
   const scope = app.defaultScope();
   const { startAt, endAt } = scope;
   new FakeEventKitHelper()
@@ -525,10 +538,7 @@ test('meeting prep finds who an attendee is in Contacts by their email, whatever
   const database = await withHome(scratch.path, async () => {
     const { default: ContactsApp } =
       await import('./apps/contacts/contacts-app.mts');
-    return importApp(
-      new ContactsApp({ grantee: 'Codex' }),
-      join(scratch.path, 'contacts'),
-    );
+    return importApp(new ContactsApp(host), join(scratch.path, 'contacts'));
   });
 
   const cards = read(database, query(reads.contact), {
@@ -635,10 +645,7 @@ test('meeting prep finds notes that mention a meeting, leaving out Recently Dele
   }
   const database = await withHome(scratch.path, async () => {
     const { default: NotesApp } = await import('./apps/notes/notes-app.mts');
-    return importApp(
-      new NotesApp({ grantee: 'Codex' }),
-      join(scratch.path, 'notes'),
-    );
+    return importApp(new NotesApp(host), join(scratch.path, 'notes'));
   });
 
   const byTitle = read(database, query(reads.notes), { '@term': 'standup' });
@@ -756,10 +763,7 @@ test('meeting prep finds recent messages with an attendee by email, or by their 
   const database = await withHome(scratch.path, async () => {
     const { default: MessagesApp } =
       await import('./apps/messages/messages-app.mts');
-    return importApp(
-      new MessagesApp({ grantee: 'Codex' }),
-      join(scratch.path, 'messages'),
-    );
+    return importApp(new MessagesApp(host), join(scratch.path, 'messages'));
   });
 
   const byPhone = read(database, query(reads.messages), {
@@ -1098,10 +1102,7 @@ test('meeting prep finds recent mail with an attendee whatever case Mail stored,
   }
   const database = await withHome(scratch.path, async () => {
     const { default: MailApp } = await import('./apps/mail/mail-app.mts');
-    return importApp(
-      new MailApp({ grantee: 'Codex' }),
-      join(scratch.path, 'mail'),
-    );
+    return importApp(new MailApp(host), join(scratch.path, 'mail'));
   });
 
   const withAnn = read(database, query(reads.mail), {

@@ -18,16 +18,21 @@ if (process.platform !== 'darwin')
 
 // The user's own connectors import elt and AppleApp from this CLI's copies.
 provideHostModules(({ specifier }) => import.meta.resolve(specifier));
+
 const { apps, broken } = await new Connectors([
   builtInConnectors,
   userConnectors,
 ]).load(new TerminalHost());
+
 for (const { title, error } of broken)
   process.stderr.write(`${title} could not be loaded: ${error}\n`);
+
 const imports = new Imports(apps);
+
 const program = new Program('apple-cli')
   .description('Import Apple apps on this Mac into outputs/cli and query them.')
   .showHelpAfterError();
+
 for (const command of [
   new SetupCommand(imports),
   new OptionsCommand(imports),

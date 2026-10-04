@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   OpenAISettingsReadResultSchema,
@@ -25,11 +26,23 @@ import { settingsRead, settingsUpdate } from './native-settings.ts';
 // The committed plugin, as Codex installs it.
 const install = resolve('plugins/apple');
 
+// The host the plugin's server passes its apps, with the helper this
+// workspace compiled instead of the bundled copy.
+const host = {
+  grantee: 'ChatGPT',
+  eventKitHelper: fileURLToPath(
+    new URL(
+      'eventkit-helper',
+      import.meta.resolve('@workspace/macos-eventkit'),
+    ),
+  ),
+};
+
 // The plugin as its server creates it, over the built-in connectors.
 async function applePlugin(install: string, directory: string) {
   const plugin = new ApplePlugin(
     new Connectors([builtInConnectors]),
-    { grantee: 'ChatGPT' },
+    host,
     install,
     directory,
   );
@@ -276,7 +289,7 @@ test('a selected app whose connector is no longer loaded is reported, keeps its 
       builtInConnectors,
       resolve('apps/apple/manifest/dist/fixtures'),
     ]),
-    { grantee: 'ChatGPT' },
+    host,
     install,
     scratch.path,
   );

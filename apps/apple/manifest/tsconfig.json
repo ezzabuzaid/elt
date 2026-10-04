@@ -9,10 +9,13 @@
   "include": ["src/**/*.ts", "src/**/*.mts", "src/fixtures/*/connector.json"],
   "references": [
     {
+      "path": "../../../packages/elt"
+    },
+    {
       "path": "../connectors"
     },
     {
-      "path": "../../../packages/elt"
+      "path": "../../../packages/macos/eventkit"
     }
   ]
 }

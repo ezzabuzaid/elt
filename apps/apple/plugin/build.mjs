@@ -4,13 +4,7 @@
 // they all share, so every connector runs on the same elt and AppleApp as the
 // server. @nx/esbuild cannot name each entry's output, so this calls
 // esbuild's API.
-import {
-  copyFileSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-} from 'node:fs';
+import { copyFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,7 +31,7 @@ const builtIns = readdirSync(connectors, { withFileTypes: true })
   });
 
 rmSync(outdir, { recursive: true, force: true });
-const { metafile } = await build({
+await build({
   entryPoints: [
     { in: 'apps/apple/plugin/src/main.ts', out: 'main' },
     ...builtIns.map(({ in: source, out }) => ({ in: source, out })),
@@ -55,7 +49,6 @@ const { metafile } = await build({
   outExtension: { '.js': '.mjs' },
   chunkNames: 'chunks/[name]-[hash]',
   tsconfig: 'apps/apple/plugin/tsconfig.json',
-  metafile: true,
   logLevel: 'warning',
   banner: {
     js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
@@ -68,13 +61,5 @@ for (const { folder, out } of builtIns)
     join(outdir, dirname(out), 'connector.json'),
   );
 
-// The EventKit store finds its helper beside the file it was bundled into.
-const store = Object.entries(metafile.outputs).find(([, { inputs }]) =>
-  Object.keys(inputs).some((input) =>
-    input.endsWith('macos/eventkit/dist/eventkit-store.js'),
-  ),
-);
-if (store === undefined)
-  throw new Error('No bundled file holds the EventKit store.');
-mkdirSync(dirname(store[0]), { recursive: true });
-copyFileSync(eventkitHelper, join(dirname(store[0]), 'eventkit-helper'));
+// main.ts hands this path to the Calendar and Reminders apps.
+copyFileSync(eventkitHelper, join(outdir, 'eventkit-helper'));

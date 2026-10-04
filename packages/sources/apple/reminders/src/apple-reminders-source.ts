@@ -6,7 +6,7 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Source, diffSnapshot, validateRecords } from '@workspace/elt';
-import { RemindersStore } from '@workspace/macos-eventkit';
+import type { RemindersStore } from '@workspace/macos-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -16,7 +16,7 @@ import { RemindersSnapshot } from './reminders-snapshot.ts';
 
 // Adapter: native EventKit records enter the existing Source/Copy/Pipeline contract.
 export class AppleRemindersSource extends Source<RemindersSnapshot> {
-  readonly #store = new RemindersStore();
+  readonly #store: RemindersStore;
   readonly identity = 'apple-reminders:eventkit';
   protected readonly catalog = catalog;
   readonly accounts = catalog.get('accounts');
@@ -30,8 +30,15 @@ export class AppleRemindersSource extends Source<RemindersSnapshot> {
 
   readonly scope: ImportScope;
 
-  constructor(scope: ImportScope = {}) {
+  constructor({
+    store,
+    scope = {},
+  }: {
+    store: RemindersStore;
+    scope?: ImportScope;
+  }) {
     super();
+    this.#store = store;
     this.scope = scope;
     Object.freeze(this);
   }

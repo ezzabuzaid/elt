@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { basename, extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { AppleHost } from '@workspace/apple/apps/apple-app';
 import { type GoogleRequester, googleSession } from '@workspace/google-auth';
@@ -9,6 +10,14 @@ import { type GoogleRequester, googleSession } from '@workspace/google-auth';
 // that launched it, and Google content is read with the user's own OAuth
 // client.
 export class TerminalHost implements AppleHost {
+  // The helper @workspace/macos-eventkit compiles into its dist.
+  readonly eventKitHelper = fileURLToPath(
+    new URL(
+      'eventkit-helper',
+      import.meta.resolve('@workspace/macos-eventkit'),
+    ),
+  );
+
   // The app macOS asks for access on behalf of: the one that launched this
   // process. TERM_PROGRAM cannot name it; cmux, for one, reports ghostty.
   // Spotlight answers only when guidance is shown.

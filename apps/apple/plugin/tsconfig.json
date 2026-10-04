@@ -23,6 +23,9 @@
       "path": "../connectors"
     },
     {
+      "path": "../../../packages/macos/eventkit"
+    },
+    {
       "path": "../manifest"
     }
   ]

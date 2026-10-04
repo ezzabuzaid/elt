@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
   RemindersStore
-} from "../../chunks/chunk-72U5EDE2.mjs";
+} from "../../chunks/chunk-R6L4WQ3V.mjs";
 import {
   accounts,
   collections,
@@ -590,7 +590,7 @@ var RemindersSnapshot = class {
 
 // packages/sources/apple/reminders/dist/apple-reminders-source.js
 var AppleRemindersSource = class extends Source {
-  #store = new RemindersStore();
+  #store;
   identity = "apple-reminders:eventkit";
   catalog = catalog;
   accounts = catalog.get("accounts");
@@ -602,8 +602,9 @@ var AppleRemindersSource = class extends Source {
   recurrenceRules = catalog.get("recurrenceRules");
   recurrenceRuleValues = catalog.get("recurrenceRuleValues");
   scope;
-  constructor(scope = {}) {
+  constructor({ store, scope = {} }) {
     super();
+    this.#store = store;
     this.scope = scope;
     Object.freeze(this);
   }
@@ -652,7 +653,10 @@ var RemindersApp = class extends AppleApp {
     return `Allow ${grantee} full Reminders access when macOS asks, or in System Settings \u203A Privacy & Security \u203A Reminders.`;
   }
   source(scope) {
-    return new AppleRemindersSource(scope);
+    return new AppleRemindersSource({
+      store: new RemindersStore(this.host.eventKitHelper),
+      scope
+    });
   }
 };
 export {

@@ -21,11 +21,13 @@ import { SQLiteDestination } from '@workspace/elt-sqlite';
 import {
   type AccountDocument,
   type AlarmDocument,
+  CalendarStore,
   type DateComponentsDocument,
   type IcsDocument,
   type OccurrenceDocument,
   type RecurrenceRuleDocument,
   type ReminderDocument,
+  RemindersStore,
 } from '@workspace/macos-eventkit';
 import {
   FakeEventKitHelper,
@@ -329,6 +331,23 @@ const january = {
 
 const execFile = promisify(execFileCallback);
 
+const calendarStore = new CalendarStore(
+  fileURLToPath(
+    new URL(
+      'eventkit-helper',
+      import.meta.resolve('@workspace/macos-eventkit'),
+    ),
+  ),
+);
+const remindersStore = new RemindersStore(
+  fileURLToPath(
+    new URL(
+      'eventkit-helper',
+      import.meta.resolve('@workspace/macos-eventkit'),
+    ),
+  ),
+);
+
 test('Calendar and Reminders scope passes the chosen calendars to the helper and keeps only what it selected', async (t) => {
   const scope = { accountIds: ['account-1'], collectionIds: ['selected'] };
   const missing = { collectionIds: ['missing'] };
@@ -366,10 +385,24 @@ test('Calendar and Reminders scope passes the chosen calendars to the helper and
     const rows = await readRows(source, streams);
     return streams.map((stream) => rows(stream).map(({ id }) => id));
   };
-  const calendars = new AppleCalendarSource({ ...january, scope });
-  const noCalendars = new AppleCalendarSource({ ...january, scope: missing });
-  const reminders = new AppleRemindersSource(scope);
-  const noReminders = new AppleRemindersSource(missing);
+  const calendars = new AppleCalendarSource({
+    store: calendarStore,
+    ...january,
+    scope,
+  });
+  const noCalendars = new AppleCalendarSource({
+    store: calendarStore,
+    ...january,
+    scope: missing,
+  });
+  const reminders = new AppleRemindersSource({
+    store: remindersStore,
+    scope: scope,
+  });
+  const noReminders = new AppleRemindersSource({
+    store: remindersStore,
+    scope: missing,
+  });
 
   const listings = [
     await listed(calendars, [calendars.accounts, calendars.calendars]),
@@ -399,8 +432,11 @@ test(
         import.meta.resolve('@workspace/macos-eventkit'),
       ),
     );
-    const calendar = new AppleCalendarSource(january);
-    const reminders = new AppleRemindersSource();
+    const calendar = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
+    const reminders = new AppleRemindersSource({ store: remindersStore });
     for (const [entity, source, stream, unavailable] of [
       ['events', calendar, calendar.events, 'CalendarUnavailableError'],
       [
@@ -471,10 +507,11 @@ test(
     const day = 24 * 60 * 60 * 1000;
     const now = Date.now();
     const calendar = new AppleCalendarSource({
+      store: calendarStore,
       startAt: new Date(now - 7 * day).toISOString(),
       endAt: new Date(now + 7 * day).toISOString(),
     });
-    const reminders = new AppleRemindersSource();
+    const reminders = new AppleRemindersSource({ store: remindersStore });
     for (const [name, source, unavailable] of [
       ['calendar', calendar, 'CalendarUnavailableError'],
       ['reminders', reminders, 'RemindersUnavailableError'],
@@ -525,8 +562,11 @@ test(
 test('EventKit watching preserves permission failures and rejects invalid or stopped notifications', async (t) => {
   // Injects watcher failures on purpose; nothing is read.
   const helper = new FakeEventKitHelper().install(t);
-  const calendar = new AppleCalendarSource(january);
-  const reminders = new AppleRemindersSource();
+  const calendar = new AppleCalendarSource({
+    store: calendarStore,
+    ...january,
+  });
+  const reminders = new AppleRemindersSource({ store: remindersStore });
   const watching = (source: Source, stream: Stream) =>
     source.watch({ streams: [stream], signal: new AbortController().signal });
   for (const [source, stream, marker, name, access] of [
@@ -580,7 +620,11 @@ test('EventKit watching preserves permission failures and rejects invalid or sto
 test('Calendar declares its event window as the coverage of event streams, and none for its listings', async () => {
   const startAt = '2020-01-01T00:00:00.000Z';
   const endAt = '2021-01-01T00:00:00.000Z';
-  const calendar = new AppleCalendarSource({ startAt, endAt });
+  const calendar = new AppleCalendarSource({
+    store: calendarStore,
+    startAt,
+    endAt,
+  });
   const notes = new AppleNotesSource();
 
   const { streams } = await calendar.discover();

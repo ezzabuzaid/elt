@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   Connection,
@@ -36,6 +37,7 @@ import { GaxiosError, type GoogleRequester } from '@workspace/google-auth';
 import {
   type AccountDocument,
   type AlarmDocument,
+  CalendarStore,
   type IcsDocument,
   IcsExportUnavailableError,
   type OccurrenceDocument,
@@ -54,6 +56,15 @@ import {
   CalendarIcsUnavailableError,
 } from './apple-calendar-source.ts';
 import { googleCalendarAttachments } from './google-calendar-attachments.ts';
+
+const calendarStore = new CalendarStore(
+  fileURLToPath(
+    new URL(
+      'eventkit-helper',
+      import.meta.resolve('@workspace/macos-eventkit'),
+    ),
+  ),
+);
 
 // Test support shared by the Apple source packages' tests.
 
@@ -363,7 +374,10 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     // Every stream is read without the private ICS export.
     new FakeEventKitHelper()
       .answer(eventsRead(january), () => [
@@ -558,6 +572,7 @@ test(
     assert.throws(
       () =>
         new AppleCalendarSource({
+          store: calendarStore,
           startAt: '2025-01-02T03:04:05.006Z',
           endAt: '2025-01-02T03:04:05.006Z',
         }),
@@ -566,18 +581,25 @@ test(
     assert.throws(
       () =>
         new AppleCalendarSource({
+          store: calendarStore,
           startAt: '2025-01-01',
           endAt: '2025-01-02T03:04:05.006Z',
         }),
       /canonical UTC/,
     );
 
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     // A rolling window keeps one checkpoint; incremental copies delete what left it.
     assert.equal(source.identity, 'apple-calendar:eventkit');
     assert.equal(
-      new AppleCalendarSource({ ...january, endAt: '2025-03-01T00:00:00.000Z' })
-        .identity,
+      new AppleCalendarSource({
+        store: calendarStore,
+        ...january,
+        endAt: '2025-03-01T00:00:00.000Z',
+      }).identity,
       source.identity,
     );
     // Set up for no request: a read throws, so each rejection below must come
@@ -662,7 +684,10 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     let respond: () => Iterable<EventKitDocument> = () => [occurrence()];
     new FakeEventKitHelper()
       .answer(eventsRead(january), () => respond())
@@ -797,7 +822,10 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     const event = (itemId: string, name: string, attendees: string[] = []) =>
       occurrence({
         calendarItemId: itemId,
@@ -932,7 +960,7 @@ test(
       startAt: '2024-01-01T00:00:00.000Z',
       endAt: '2026-01-01T00:00:00.000Z',
     };
-    const source = new AppleCalendarSource(window);
+    const source = new AppleCalendarSource({ store: calendarStore, ...window });
     // The helper reads one-year windows and writes an occurrence once per
     // window it overlaps: "spanning" overlaps both, "late" only the second.
     const spanning = occurrence({
@@ -997,7 +1025,7 @@ test('Calendar links alarms, recurrence rules and rule values to their occurrenc
     startAt: '2025-01-01T00:00:00.000Z',
     endAt: '2025-01-02T00:00:00.000Z',
   };
-  const source = new AppleCalendarSource(window);
+  const source = new AppleCalendarSource({ store: calendarStore, ...window });
   new FakeEventKitHelper()
     .answer(eventsRead(window), () => [
       occurrence({
@@ -1039,7 +1067,7 @@ test('Calendar links alarms, recurrence rules and rule values to their occurrenc
 });
 
 test('Calendar numbers attendees and alarms the same whatever order EventKit returns them in', async (t) => {
-  const source = new AppleCalendarSource(january);
+  const source = new AppleCalendarSource({ store: calendarStore, ...january });
   const attendee = (address: string, status: number) =>
     participant({ name: address, url: `mailto:${address}`, status });
   let attendees = [attendee('a@example.com', 2), attendee('b@example.com', 1)];
@@ -1072,7 +1100,7 @@ test('Calendar numbers attendees and alarms the same whatever order EventKit ret
 });
 
 test('Calendar occurrence keys survive rescheduling and preserve all-day dates', async (t) => {
-  const source = new AppleCalendarSource(january);
+  const source = new AppleCalendarSource({ store: calendarStore, ...january });
   const original = recordedEvents.weekly;
   let native: EventKitDocument[] = [original];
   new FakeEventKitHelper().answer(eventsRead(january), () => native).install(t);
@@ -1192,7 +1220,10 @@ test(
       'END:VEVENT\r\nEND:VCALENDAR\r\n',
     );
 
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     // The same export twice: once with CRLF line endings, once with bare LF.
     new FakeEventKitHelper()
       .answer(eventsRead(january, true), () => [
@@ -1283,7 +1314,10 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     // Injects malformed exports on purpose.
     let ics = Buffer.alloc(0);
     new FakeEventKitHelper()
@@ -1368,7 +1402,10 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     const exception = (day: string, alarms: readonly string[]) => [
       'BEGIN:VEVENT',
       'UID:series@example.com',
@@ -1456,7 +1493,10 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     new FakeEventKitHelper()
       .answer(eventsRead(january, true), () => [
         icsItem('meeting', meetingICS),
@@ -1593,7 +1633,10 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     // Injects an export without events on purpose.
     let respond: () => Iterable<EventKitDocument> = () => [
       icsItem('empty', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n'),
@@ -1636,7 +1679,10 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     let ics = meetingICS;
     new FakeEventKitHelper()
       .answer(eventsRead(january, true), () => [icsItem('meeting', ics)])
@@ -1712,6 +1758,7 @@ test(
   async (t) => {
     const fetched: string[] = [];
     const source = new AppleCalendarSource({
+      store: calendarStore,
       ...january,
       attachments: async ({ uri, filename, formatType }, path) => {
         fetched.push(`${filename}:${formatType}`);
@@ -1793,7 +1840,10 @@ test(
     concurrency: false,
   },
   async (t) => {
-    const source = new AppleCalendarSource(january);
+    const source = new AppleCalendarSource({
+      store: calendarStore,
+      ...january,
+    });
     new FakeEventKitHelper()
       .answer(eventsRead(january, true), () => [
         icsItem('files', attachmentsICS),
@@ -1843,6 +1893,7 @@ test(
     let ics = attachmentsICS;
     let fetches = 0;
     const source = new AppleCalendarSource({
+      store: calendarStore,
       ...january,
       attachments: async (_attachment, path) => {
         fetches++;
@@ -1946,6 +1997,7 @@ async function googleAttachmentFiles(
 ) {
   mkdirSync(directory, { recursive: true });
   const source = new AppleCalendarSource({
+    store: calendarStore,
     ...january,
     attachments: googleCalendarAttachments(requester),
   });
@@ -2226,7 +2278,7 @@ test(
       .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'cal-marts-'));
     const imported = await appleImport(
-      new AppleCalendarSource(january),
+      new AppleCalendarSource({ store: calendarStore, ...january }),
       join(scratch.path, 'import'),
     );
     await imported.load();

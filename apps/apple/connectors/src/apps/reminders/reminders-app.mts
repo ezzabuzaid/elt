@@ -1,3 +1,4 @@
+import { RemindersStore } from '@workspace/macos-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
 
@@ -21,6 +22,9 @@ export default class RemindersApp extends AppleApp {
   }
 
   protected source(scope: ImportScope) {
-    return new AppleRemindersSource(scope);
+    return new AppleRemindersSource({
+      store: new RemindersStore(this.host.eventKitHelper),
+      scope,
+    });
   }
 }

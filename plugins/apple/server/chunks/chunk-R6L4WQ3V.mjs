@@ -32,7 +32,6 @@ var EventKitChangingError = class extends Error {
 
 // packages/macos/eventkit/dist/eventkit-store.js
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 
 // packages/macos/eventkit/dist/native-process.js
 import { spawn } from "node:child_process";
@@ -86,10 +85,15 @@ var NativeProcess = class {
 var native_process_default = new NativeProcess();
 
 // packages/macos/eventkit/dist/eventkit-store.js
-var helper = fileURLToPath(new URL("./eventkit-helper", import.meta.url));
 var settleMs = 250;
 var attempts = 5;
 var EventKitStore = class {
+  // The compiled helper (helper/*.swift). Its host decides where it lives:
+  // beside this package's dist, or beside a bundled server.
+  #helper;
+  constructor(helper) {
+    this.#helper = helper;
+  }
   // EventKit has no read transaction. Reads run while a watcher counts
   // EKEventStoreChangedNotification and repeat when a change arrived during
   // them or within settleMs after.
@@ -127,7 +131,7 @@ var EventKitStore = class {
   // Yields once the subscription is confirmed, then once per store change.
   async *watch(signal) {
     try {
-      for await (const message of native_process_default.lines(helper, ["watch", this.entity], signal)) {
+      for await (const message of native_process_default.lines(this.#helper, ["watch", this.entity], signal)) {
         if (message !== "changed")
           throw new TypeError("EventKit watcher returned an invalid notification");
         yield;
@@ -150,7 +154,7 @@ var EventKitStore = class {
     };
     const documents = [];
     try {
-      for await (const line of native_process_default.lines(helper, [
+      for await (const line of native_process_default.lines(this.#helper, [
         "read",
         JSON.stringify(request)
       ]))

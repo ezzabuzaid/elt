@@ -2,6 +2,7 @@ import {
   GMAIL_READONLY_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE,
 } from '@workspace/google-auth/scopes';
+import { CalendarStore } from '@workspace/macos-eventkit';
 import {
   AppleCalendarSource,
   type CalendarAttachmentFetcher,
@@ -57,6 +58,7 @@ export default class CalendarApp extends AppleApp {
   #calendar(scope: ImportScope, attachments: CalendarAttachmentFetcher) {
     const window = this.defaultScope();
     return new AppleCalendarSource({
+      store: new CalendarStore(this.host.eventKitHelper),
       startAt: scope.startAt ?? window.startAt,
       endAt: scope.endAt ?? window.endAt,
       scope,
