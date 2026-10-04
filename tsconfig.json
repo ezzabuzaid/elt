@@ -24,9 +24,6 @@
       "path": "./apps/google"
     },
     {
-      "path": "./apps/apple/connectors"
-    },
-    {
       "path": "./apps/apple/plugin"
     },
     {
