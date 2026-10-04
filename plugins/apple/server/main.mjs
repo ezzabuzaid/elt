@@ -36465,11 +36465,11 @@ var StdioServerTransport = class {
   }
 };
 
-// apps/apple/manifest/dist/connectors.js
+// packages/connectors/apple/manifest/dist/connectors.js
 import { existsSync, readdirSync } from "node:fs";
 import { join as join2 } from "node:path";
 
-// apps/apple/manifest/dist/connector-manifest.js
+// packages/connectors/apple/manifest/dist/connector-manifest.js
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -36515,7 +36515,7 @@ function isAppleAppClass(value) {
   return typeof value === "function" && value.prototype instanceof AppleApp;
 }
 
-// apps/apple/manifest/dist/connectors.js
+// packages/connectors/apple/manifest/dist/connectors.js
 var Connectors = class {
   #roots;
   constructor(roots) {
@@ -36561,7 +36561,7 @@ var Connectors = class {
   }
 };
 
-// apps/apple/manifest/dist/host-modules.js
+// packages/connectors/apple/manifest/dist/host-modules.js
 import { registerHooks } from "node:module";
 var hostModules = [
   { specifier: "@workspace/elt", file: "elt" },
@@ -36578,7 +36578,7 @@ function provideHostModules(url2) {
   });
 }
 
-// apps/apple/manifest/dist/user-connectors.js
+// packages/connectors/apple/manifest/dist/user-connectors.js
 import { homedir } from "node:os";
 import { join as join3 } from "node:path";
 var userConnectors = join3(homedir(), "Library/Application Support/Context Compiler/Connectors");

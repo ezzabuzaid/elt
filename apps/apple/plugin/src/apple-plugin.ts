@@ -5,14 +5,14 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 import type {
-  BrokenConnector,
-  Connectors,
-} from '@workspace/apple-manifest/connectors';
-import { userConnectors } from '@workspace/apple-manifest/user-connectors';
-import type {
   AppleApp,
   AppleHost,
 } from '@workspace/connector-apple-app/apple-app';
+import type {
+  BrokenConnector,
+  Connectors,
+} from '@workspace/connector-apple-manifest/connectors';
+import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
 import {
   type AppFacts,
   ImportStore,

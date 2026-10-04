@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
 
-import { hostModules } from '@workspace/apple-manifest/host-modules';
+import { hostModules } from '@workspace/connector-apple-manifest/host-modules';
 
 const connectors = 'apps/apple/connectors/dist/apps';
 const eventkitHelper = 'packages/macos/eventkit/dist/eventkit-helper';

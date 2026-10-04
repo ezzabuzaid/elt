@@ -2,11 +2,11 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 
-import { userConnectors } from '@workspace/apple-manifest/user-connectors';
 import type {
   AppleApp,
   ChoiceOptions,
 } from '@workspace/connector-apple-app/apple-app';
+import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
 import {
   ImportStore,
   type Selection,

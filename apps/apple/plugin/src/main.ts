@@ -6,9 +6,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { Connectors } from '@workspace/apple-manifest/connectors';
-import { provideHostModules } from '@workspace/apple-manifest/host-modules';
-import { userConnectors } from '@workspace/apple-manifest/user-connectors';
+import { Connectors } from '@workspace/connector-apple-manifest/connectors';
+import { provideHostModules } from '@workspace/connector-apple-manifest/host-modules';
+import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
 
 import {
   ApplePlugin,

@@ -1,5 +1,5 @@
 {
-  "extends": "../../../tsconfig.base.json",
+  "extends": "../../../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
@@ -9,16 +9,16 @@
   "include": ["src/**/*.ts", "src/**/*.mts", "src/fixtures/*/connector.json"],
   "references": [
     {
-      "path": "../../../packages/elt"
+      "path": "../../../elt"
     },
     {
-      "path": "../../../packages/connectors/apple/app"
+      "path": "../app"
     },
     {
-      "path": "../connectors"
+      "path": "../../../../apps/apple/connectors"
     },
     {
-      "path": "../../../packages/macos/eventkit"
+      "path": "../../../macos/eventkit"
     }
   ]
 }

@@ -13,8 +13,8 @@ import {
   OpenAISettingsUpdateResultSchema,
 } from '@openai/mcp-extensions/server';
 
-import { Connectors } from '@workspace/apple-manifest/connectors';
 import { builtInConnectors } from '@workspace/apple/apps/built-in-connectors';
+import { Connectors } from '@workspace/connector-apple-manifest/connectors';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { type Selection, importDirectory } from '@workspace/import-store';
 
@@ -287,7 +287,7 @@ test('a selected app whose connector is no longer loaded is reported, keeps its 
   const withPhotos = new ApplePlugin(
     new Connectors([
       builtInConnectors,
-      resolve('apps/apple/manifest/dist/fixtures'),
+      resolve('packages/connectors/apple/manifest/dist/fixtures'),
     ]),
     host,
     install,

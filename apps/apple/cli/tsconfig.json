@@ -26,10 +26,10 @@
       "path": "../../../packages/elt"
     },
     {
-      "path": "../../../packages/connectors/apple/app"
+      "path": "../../../packages/connectors/apple/manifest"
     },
     {
-      "path": "../manifest"
+      "path": "../../../packages/connectors/apple/app"
     },
     {
       "path": "../connectors"

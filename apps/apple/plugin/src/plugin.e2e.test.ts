@@ -827,7 +827,10 @@ async function withConnectors(home: string) {
   await writeFile(
     join(connectors, 'photos/photos-app.mts'),
     readFileSync(
-      join(root, 'apps/apple/manifest/src/fixtures/photos/photos-app.mts'),
+      join(
+        root,
+        'packages/connectors/apple/manifest/src/fixtures/photos/photos-app.mts',
+      ),
     ),
   );
   mkdirSync(join(connectors, 'drafts'), { recursive: true });

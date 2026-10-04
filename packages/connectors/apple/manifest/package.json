@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/apple-manifest",
+  "name": "@workspace/connector-apple-manifest",
   "version": "0.0.1",
   "private": true,
   "type": "module",

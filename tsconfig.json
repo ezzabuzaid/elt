@@ -27,9 +27,6 @@
       "path": "./apps/apple/connectors"
     },
     {
-      "path": "./apps/apple/manifest"
-    },
-    {
       "path": "./apps/apple/plugin"
     },
     {
@@ -82,6 +79,9 @@
     },
     {
       "path": "./packages/connectors/apple/app"
+    },
+    {
+      "path": "./packages/connectors/apple/manifest"
     }
   ]
 }

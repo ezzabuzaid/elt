@@ -1,9 +1,9 @@
 import { Command as Program } from 'commander';
 
-import { Connectors } from '@workspace/apple-manifest/connectors';
-import { provideHostModules } from '@workspace/apple-manifest/host-modules';
-import { userConnectors } from '@workspace/apple-manifest/user-connectors';
 import { builtInConnectors } from '@workspace/apple/apps/built-in-connectors';
+import { Connectors } from '@workspace/connector-apple-manifest/connectors';
+import { provideHostModules } from '@workspace/connector-apple-manifest/host-modules';
+import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
 
 import { OptionsCommand } from './commands/options.ts';
 import { QueryCommand } from './commands/query.ts';

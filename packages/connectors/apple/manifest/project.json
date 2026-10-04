@@ -1,0 +1,12 @@
+{
+  "name": "connector-apple-manifest",
+  "sourceRoot": "packages/connectors/apple/manifest/src",
+  "projectType": "library",
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/connectors/apple/manifest/dist/*.test.js\""
+    }
+  }
+}

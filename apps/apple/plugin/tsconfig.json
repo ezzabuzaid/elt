@@ -29,7 +29,7 @@
       "path": "../../../packages/macos/eventkit"
     },
     {
-      "path": "../manifest"
+      "path": "../../../packages/connectors/apple/manifest"
     }
   ]
 }
