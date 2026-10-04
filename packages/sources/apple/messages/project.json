@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-messages",
+  "sourceRoot": "packages/sources/apple/messages/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/messages/dist/*.test.js\""
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@workspace/source-apple-messages",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-messages-source": {
+      "types": "./dist/apple-messages-source.d.ts",
+      "default": "./dist/apple-messages-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

@@ -1,6 +1,6 @@
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
 
-import { AppleMessagesSource } from '../../sources/apple-messages/apple-messages-source.ts';
 import { AppleApp } from '../apple-app.ts';
 import type { Choice } from '../choice.ts';
 

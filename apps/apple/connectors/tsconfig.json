@@ -12,6 +12,9 @@
       "path": "../../../packages/sources/apple/notes"
     },
     {
+      "path": "../../../packages/sources/apple/messages"
+    },
+    {
       "path": "../../../packages/sources/apple/macos"
     },
     {

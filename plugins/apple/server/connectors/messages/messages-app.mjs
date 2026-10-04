@@ -30,13 +30,13 @@ import {
   __using
 } from "../../chunks/chunk-ZGXE7NZW.mjs";
 
-// apps/apple/connectors/dist/sources/apple-messages/apple-messages-source.js
+// packages/sources/apple/messages/dist/apple-messages-source.js
 import { access } from "node:fs/promises";
 import { homedir as homedir2 } from "node:os";
 import { join as join2 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
-// apps/apple/connectors/dist/platform/macos/chat-database.js
+// packages/sources/apple/messages/dist/chat-database.js
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -97,7 +97,7 @@ var ChatDatabase = class _ChatDatabase {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-messages/typedstream.js
+// packages/sources/apple/messages/dist/typedstream.js
 var decoder = new TextDecoder("utf-8", { fatal: true });
 var stringClass = new TextEncoder().encode("NSString");
 var cString = 43;
@@ -135,7 +135,7 @@ function indexOf(haystack, needle) {
   return -1;
 }
 
-// apps/apple/connectors/dist/sources/apple-messages/messages-streams.js
+// packages/sources/apple/messages/dist/messages-streams.js
 var { text, id, nullableText, boolean, nullableTimestamp } = eventKitFields;
 var nullableInteger = { type: ["integer", "null"] };
 var appleMilliseconds = (column) => `CASE WHEN ${column} IS NULL OR ${column} = 0 THEN NULL WHEN abs(${column}) > 100000000000 THEN ${column} / 1000000 ELSE ${column} * 1000 END`;
@@ -600,7 +600,7 @@ function recordFrom(name, row) {
   return record;
 }
 
-// apps/apple/connectors/dist/sources/apple-messages/apple-messages-source.js
+// packages/sources/apple/messages/dist/apple-messages-source.js
 var isStreamName = (name) => Object.hasOwn(definitions, name);
 var pollIntervalMs = 1e3;
 var attachmentPath = (filename) => filename.startsWith("~/") ? join2(homedir2(), filename.slice(2)) : filename;

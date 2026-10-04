@@ -22,7 +22,7 @@ import {
   ChatDatabase,
   ChatDatabaseVersion,
   messagesDirectory,
-} from '../../platform/macos/chat-database.ts';
+} from './chat-database.ts';
 import {
   type StreamName,
   catalog,
