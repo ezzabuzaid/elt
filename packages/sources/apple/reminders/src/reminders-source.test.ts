@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { mkdirSync } from 'node:fs';
 import { mkdtempDisposable, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,37 +10,292 @@ import { test } from 'node:test';
 import {
   Connection,
   Copy,
+  LocalFiles,
   Pipeline,
   PipelineError,
+  type Source,
   Stream,
+  StreamStatus,
+  readerCatalog,
+  syncHistoryRelations,
 } from '@workspace/elt';
 import { MarkdownDestination } from '@workspace/elt-markdown';
 import {
   SQLiteCheckpointStore,
+  SQLiteColumns,
   SQLiteDestination,
+  SQLiteSyncHistory,
+  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
-import type { EventKitDocument } from '@workspace/source-apple-eventkit/eventkit-documents';
+import type {
+  AccountDocument,
+  AlarmDocument,
+  DateComponentsDocument,
+  ParticipantDocument,
+  RecurrenceRuleDocument,
+  ReminderDocument,
+} from '@workspace/macos-eventkit';
 import {
-  account,
-  alarm,
-  at,
-  calendar,
-  fakeEventKit,
-  list,
-  participant,
-  recordedDateOnlyDue,
-  recordedReminders,
-  reminder,
-  remindersRead,
-  rule,
-} from '@workspace/source-apple-eventkit/testing';
-import {
-  appleImport,
-  configured,
-  readRows,
-} from '@workspace/source-apple-macos/testing';
+  type EventKitDocument,
+  FakeEventKitHelper,
+  type HelperCalendarDocument,
+  type HelperRequest,
+} from '@workspace/macos-eventkit/test';
 
 import { AppleRemindersSource } from './apple-reminders-source.ts';
+
+// Test support shared by the Apple source packages' tests.
+
+const snake = (name: string) =>
+  name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+
+// One Apple source loaded as the hosts load it: every stream incrementally
+// into raw_<stream> of one SQLite file, read through its documented
+// <snake_stream> view, with files kept beside it.
+async function appleImport(source: Source, directory: string) {
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, 'data.sqlite');
+  const destination = new SQLiteDestination({ path });
+  const files = new LocalFiles({ directory: join(directory, 'files') });
+  const { streams } = await source.discover();
+  const connection = new Connection({
+    name: 'apple',
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(directory, 'checkpoints.sqlite'),
+    }),
+    steps: streams.map(
+      (stream) =>
+        new Copy(
+          stream,
+          destination
+            .table(
+              `raw_${stream.name}`,
+              stream.supportsFileTransfer
+                ? (columns) => [
+                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                    columns
+                      .text('attachmentRef')
+                      .from(stream.file.store(files)),
+                  ]
+                : undefined,
+            )
+            .withReaderView(snake(stream.name)),
+          {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          },
+        ),
+    ),
+  });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  installSQLiteCatalog({ path });
+  const read = (sql: string) => {
+    using database = new DatabaseSync(path, { readOnly: true });
+    return database.prepare(sql).all();
+  };
+  return {
+    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    read,
+    // The documented views the streams publish, beside the catalog and the
+    // sync history every SQLite load has.
+    views: () =>
+      read(`SELECT name FROM catalog WHERE kind = 'view' ORDER BY name`)
+        .map(({ name }) => name)
+        .filter(
+          (name) =>
+            name !== readerCatalog.name &&
+            !Object.values(syncHistoryRelations).some(
+              (relation) => relation.name === name,
+            ),
+        ),
+  };
+}
+
+// Each stream's records from one full-refresh read of streams.
+async function readRows(source: Source, streams: readonly Stream[]) {
+  const rows = new Map<string, Record<string, unknown>[]>();
+  for await (const message of source.read(
+    streams.map((stream) => configured(stream)),
+    new Map(),
+  )) {
+    if (message instanceof StreamStatus && message.status === 'FAILED')
+      throw message.error;
+    if ('data' in message)
+      rows.set(message.stream, [
+        ...(rows.get(message.stream) ?? []),
+        Object(message.data),
+      ]);
+  }
+  return (stream: Stream) => rows.get(stream.name) ?? [];
+}
+
+// The configured stream a full-refresh copy of stream reads.
+const configured = (stream: Stream) =>
+  new Copy(
+    stream,
+    new SQLiteDestination({ path: ':memory:' }).table(stream.name),
+  ).configuration;
+
+// Documents the eventkit helper wrote on a Mac, read with TZ=UTC from a
+// synthetic calendar and reminders list made for the recording; ids are
+// renamed and every value is synthetic. Each factory below starts from one, so
+// every field the helper writes reaches the projections, and a test overrides
+// only what its scenario needs. An override of undefined leaves the field out
+// of the JSON line, as the helper leaves out a nil.
+const recordedAlarm: AlarmDocument = {
+  alarmType: 0,
+  relativeOffset: -600,
+  proximity: 0,
+};
+
+const recordedRule: RecurrenceRuleDocument = {
+  firstDayOfWeek: 2,
+  monthsOfTheYear: [],
+  setPositions: [],
+  weeksOfTheYear: [],
+  interval: 1,
+  end: { occurrenceCount: 3 },
+  frequency: 1,
+  calendarIdentifier: 'gregorian',
+  daysOfTheWeek: [],
+  daysOfTheMonth: [],
+  daysOfTheYear: [],
+};
+
+const recordedTimedDue: DateComponentsDocument = {
+  year: 2025,
+  repeatedDay: false,
+  calendarIdentifier: 'gregorian',
+  era: 1,
+  timeZone: 'Asia/Amman',
+  day: 2,
+  second: 0,
+  minute: 45,
+  leapMonth: false,
+  month: 1,
+  hour: 8,
+};
+
+const recordedDateOnlyDue: DateComponentsDocument = {
+  repeatedDay: false,
+  calendarIdentifier: 'gregorian',
+  leapMonth: false,
+  month: 1,
+  year: 2025,
+  day: 3,
+  era: 1,
+};
+
+const recordedReminders: {
+  readonly account: AccountDocument;
+  readonly list: HelperCalendarDocument;
+  // Open, due at a time in a time zone, with an absolute alarm and notes.
+  readonly buyMilk: ReminderDocument;
+  // Completed, due on a date.
+  readonly filedTaxes: ReminderDocument;
+} = {
+  account: {
+    type: 'account',
+    id: 'account-1',
+    sourceType: 2,
+    isDelegate: false,
+    name: 'iCloud',
+  },
+  list: {
+    selected: true,
+    accountId: 'account-1',
+    writable: true,
+    calendarType: 1,
+    immutable: false,
+    subscribed: false,
+    name: 'Synthetic list',
+    id: 'calendar-1',
+    color: [0, 0.47843137383461, 1, 1],
+    supportedAvailabilities: 0,
+    type: 'calendar',
+    allowedEntityTypes: 2,
+  },
+  buyMilk: {
+    alarms: [
+      {
+        relativeOffset: 0,
+        absoluteMs: 1735796700000,
+        proximity: 0,
+        alarmType: 0,
+      },
+    ],
+    id: 'reminder-1',
+    timeZone: 'Asia/Amman',
+    modifiedMs: 1790851301723.245,
+    body: 'Synthetic notes',
+    recurrenceRules: [],
+    attendees: [],
+    completed: false,
+    listId: 'calendar-1',
+    type: 'reminder',
+    priority: 1,
+    name: 'Synthetic buy milk',
+    createdMs: 1790851301628.685,
+    externalId: 'reminder-1',
+    due: recordedTimedDue,
+  },
+  filedTaxes: {
+    due: recordedDateOnlyDue,
+    externalId: 'reminder-2',
+    recurrenceRules: [],
+    type: 'reminder',
+    modifiedMs: 1790851302411.9302,
+    name: 'Synthetic filed taxes',
+    completedMs: 1790851302411.825,
+    priority: 5,
+    completed: true,
+    attendees: [],
+    listId: 'calendar-1',
+    id: 'reminder-2',
+    alarms: [],
+    createdMs: 1790851301824.6108,
+  },
+};
+
+const list = (
+  overrides: Partial<HelperCalendarDocument> = {},
+): HelperCalendarDocument => ({
+  ...recordedReminders.list,
+  ...overrides,
+});
+
+// No recorded event or reminder had a participant, so this one is written
+// from the helper's ParticipantDocument fields.
+const participant = (
+  overrides: Partial<ParticipantDocument> = {},
+): ParticipantDocument => ({
+  name: 'Ann',
+  url: 'mailto:ann@example.com',
+  status: 2,
+  role: 1,
+  participantType: 1,
+  isCurrentUser: false,
+  ...overrides,
+});
+
+const alarm = (overrides: Partial<AlarmDocument> = {}): AlarmDocument => ({
+  ...recordedAlarm,
+  ...overrides,
+});
+
+const rule = (
+  overrides: Partial<RecurrenceRuleDocument> = {},
+): RecurrenceRuleDocument => ({ ...recordedRule, ...overrides });
+
+const reminder = (
+  overrides: Partial<ReminderDocument> = {},
+): ReminderDocument => ({ ...recordedReminders.buyMilk, ...overrides });
+
+const remindersRead: HelperRequest = { entity: 'reminders' };
 
 test(
   'Reminders EventKit projects native records through every SQLite and Markdown stream',
@@ -49,72 +305,69 @@ test(
   async (t) => {
     const source = new AppleRemindersSource();
     const streams = (await source.discover()).streams;
-    fakeEventKit(t, [
-      [
-        remindersRead,
-        () => [
-          recordedReminders.account,
-          list(),
-          reminder({ id: 'undated', name: 'undated', due: undefined }),
-          reminder({
-            id: 'date-only',
-            name: 'date-only',
-            due: recordedDateOnlyDue,
-          }),
-          reminder({
-            id: 'timed',
-            name: 'timed',
-            url: 'https://example.com/reminder',
-            // Hand-built: no location alarm, rule list values or attendee were
-            // recorded.
-            alarms: [
-              alarm({
-                proximity: 1,
-                location: {
-                  title: 'Synthetic place',
-                  latitude: 31.95,
-                  longitude: 35.93,
-                  radius: 100,
-                },
-              }),
-              ...recordedReminders.buyMilk.alarms,
-            ],
-            recurrenceRules: [
-              rule({
-                frequency: 3,
-                interval: 2,
-                daysOfTheWeek: [{ day: 2, weekNumber: -1 }],
-                daysOfTheMonth: [-1],
-                monthsOfTheYear: [9],
-                weeksOfTheYear: [1],
-                daysOfTheYear: [42],
-                setPositions: [-1],
-                end: { occurrenceCount: 5 },
-              }),
-            ],
-            attendees: [
-              participant({
-                name: 'Synthetic attendee',
-                url: 'mailto:test@example.com',
-                isCurrentUser: true,
-              }),
-            ],
-          }),
-          // Hand-built: a start at a time of day without a time zone.
-          reminder({
-            id: 'floating',
-            name: 'floating',
-            due: undefined,
-            start: { ...recordedDateOnlyDue, hour: 9, minute: 15 },
-          }),
-          {
-            ...recordedReminders.filedTaxes,
-            id: 'completed',
-            name: 'completed',
-          },
-        ],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(remindersRead, () => [
+        recordedReminders.account,
+        list(),
+        reminder({ id: 'undated', name: 'undated', due: undefined }),
+        reminder({
+          id: 'date-only',
+          name: 'date-only',
+          due: recordedDateOnlyDue,
+        }),
+        reminder({
+          id: 'timed',
+          name: 'timed',
+          url: 'https://example.com/reminder',
+          // Hand-built: no location alarm, rule list values or attendee were
+          // recorded.
+          alarms: [
+            alarm({
+              proximity: 1,
+              location: {
+                title: 'Synthetic place',
+                latitude: 31.95,
+                longitude: 35.93,
+                radius: 100,
+              },
+            }),
+            ...recordedReminders.buyMilk.alarms,
+          ],
+          recurrenceRules: [
+            rule({
+              frequency: 3,
+              interval: 2,
+              daysOfTheWeek: [{ day: 2, weekNumber: -1 }],
+              daysOfTheMonth: [-1],
+              monthsOfTheYear: [9],
+              weeksOfTheYear: [1],
+              daysOfTheYear: [42],
+              setPositions: [-1],
+              end: { occurrenceCount: 5 },
+            }),
+          ],
+          attendees: [
+            participant({
+              name: 'Synthetic attendee',
+              url: 'mailto:test@example.com',
+              isCurrentUser: true,
+            }),
+          ],
+        }),
+        // Hand-built: a start at a time of day without a time zone.
+        reminder({
+          id: 'floating',
+          name: 'floating',
+          due: undefined,
+          start: { ...recordedDateOnlyDue, hour: 9, minute: 15 },
+        }),
+        {
+          ...recordedReminders.filedTaxes,
+          id: 'completed',
+          name: 'completed',
+        },
+      ])
+      .install(t);
 
     const records = await readRows(source, streams);
     const reminders = records(source.reminders);
@@ -328,7 +581,7 @@ test(
         due: { ...recordedDateOnlyDue, calendarIdentifier: undefined },
       }),
     ];
-    fakeEventKit(t, [[remindersRead, () => native]]);
+    new FakeEventKitHelper().answer(remindersRead, () => native).install(t);
     const pick = (row: Record<string, unknown>) => ({
       kind: row.kind,
       calendarIdentifier: row.calendarIdentifier,
@@ -419,7 +672,7 @@ test(
     let respond: () => Iterable<EventKitDocument> = () => {
       throw new Error('The EventKit helper was reached before validation');
     };
-    fakeEventKit(t, [[remindersRead, () => respond()]]);
+    new FakeEventKitHelper().answer(remindersRead, () => respond()).install(t);
     const streams = (await source.discover()).streams;
     assert.equal(source.identity, 'apple-reminders:eventkit');
     assert.ok(
@@ -530,7 +783,7 @@ test('Reminders snapshot incremental writes only changed reminders and deletes r
   const source = new AppleRemindersSource();
   const named = (id: string, name: string) => reminder({ id, name });
   let native = [named('r1', 'Buy milk'), named('r2', 'Call Ann')];
-  fakeEventKit(t, [[remindersRead, () => native]]);
+  new FakeEventKitHelper().answer(remindersRead, () => native).install(t);
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-rem-'));
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'r.sqlite'),
@@ -572,29 +825,23 @@ test('an EventKit session reads again when a change arrives during the read', as
   let change = () => {};
   let edited = false;
   const source = new AppleRemindersSource();
-  fakeEventKit(
-    t,
-    [
-      [
-        remindersRead,
-        () => {
-          if (edited) return [{ ...recordedReminders.account, name: 'after' }];
-          // Another app edits Reminders while the first read runs.
-          edited = true;
-          change();
-          return [{ ...recordedReminders.account, name: 'before' }];
-        },
-      ],
-    ],
-    async function* (signal) {
+  new FakeEventKitHelper()
+    .answer(remindersRead, () => {
+      if (edited) return [{ ...recordedReminders.account, name: 'after' }];
+      // Another app edits Reminders while the first read runs.
+      edited = true;
+      change();
+      return [{ ...recordedReminders.account, name: 'before' }];
+    })
+    .watchWith(async function* (signal) {
       yield 'changed';
       await new Promise<void>((resolve) => {
         change = resolve;
       });
       yield 'changed';
       if (!signal.aborted) await once(signal, 'abort');
-    },
-  );
+    })
+    .install(t);
 
   const accounts = (await readRows(source, [source.accounts]))(source.accounts);
 
@@ -607,25 +854,19 @@ test('an EventKit session reads again when a change arrives during the read', as
 test('an EventKit session gives up when every read sees a change', async (t) => {
   const source = new AppleRemindersSource();
   let reads = 0;
-  fakeEventKit(
-    t,
-    [
-      [
-        remindersRead,
-        () => {
-          reads++;
-          return [recordedReminders.account];
-        },
-      ],
-    ],
-    async function* (signal) {
+  new FakeEventKitHelper()
+    .answer(remindersRead, () => {
+      reads++;
+      return [recordedReminders.account];
+    })
+    .watchWith(async function* (signal) {
       yield 'changed';
       while (!signal.aborted) {
         await new Promise((resolve) => setTimeout(resolve, 20));
         yield 'changed';
       }
-    },
-  );
+    })
+    .install(t);
 
   await assert.rejects(readRows(source, [source.accounts]), (error) => {
     assert.ok(error instanceof Error);
@@ -643,17 +884,14 @@ test(
     concurrency: false,
   },
   async (t) => {
-    fakeEventKit(t, [
-      [
-        remindersRead,
-        () => [
-          recordedReminders.account,
-          list(),
-          reminder({ id: 'due-date-only', due: recordedDateOnlyDue }),
-          { ...recordedReminders.filedTaxes, id: 'undated', due: undefined },
-        ],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(remindersRead, () => [
+        recordedReminders.account,
+        list(),
+        reminder({ id: 'due-date-only', due: recordedDateOnlyDue }),
+        { ...recordedReminders.filedTaxes, id: 'undated', due: undefined },
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'rem-marts-'));
     const reminders = await appleImport(
       new AppleRemindersSource(),

@@ -19,7 +19,7 @@ import { build } from 'esbuild';
 import { hostModules } from '@workspace/apple-manifest/host-modules';
 
 const connectors = 'apps/apple/connectors/dist/apps';
-const eventkit = 'packages/sources/apple/eventkit/dist/eventkit';
+const eventkitHelper = 'packages/macos/eventkit/dist/eventkit-helper';
 const outdir = 'plugins/apple/server';
 
 const builtIns = readdirSync(connectors, { withFileTypes: true })
@@ -68,13 +68,13 @@ for (const { folder, out } of builtIns)
     join(outdir, dirname(out), 'connector.json'),
   );
 
-// The EventKit client finds its helper beside the file it was bundled into.
-const client = Object.entries(metafile.outputs).find(([, { inputs }]) =>
+// The EventKit store finds its helper beside the file it was bundled into.
+const store = Object.entries(metafile.outputs).find(([, { inputs }]) =>
   Object.keys(inputs).some((input) =>
-    input.endsWith('sources/apple/eventkit/dist/eventkit.js'),
+    input.endsWith('macos/eventkit/dist/eventkit-store.js'),
   ),
 );
-if (client === undefined)
-  throw new Error('No bundled file holds the EventKit client.');
-mkdirSync(dirname(client[0]), { recursive: true });
-copyFileSync(eventkit, join(dirname(client[0]), 'eventkit'));
+if (store === undefined)
+  throw new Error('No bundled file holds the EventKit store.');
+mkdirSync(dirname(store[0]), { recursive: true });
+copyFileSync(eventkitHelper, join(dirname(store[0]), 'eventkit-helper'));

@@ -4,7 +4,7 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunks/chunk-PLJTWAM2.mjs";
+} from "./chunks/chunk-DLHQSSZC.mjs";
 import {
   Pipeline
 } from "./chunks/chunk-OEQ4WCEQ.mjs";
@@ -37015,7 +37015,6 @@ var ApplePlugin = class {
     var _stack = [];
     try {
       const store = __using(_stack, this.#open());
-      const leading = leaseHeld(this.directory);
       return {
         apps: store.selections().map((item) => {
           const database = store.database(item);
@@ -37027,7 +37026,7 @@ var ApplePlugin = class {
             completedAt: failure2.failedAt,
             lastSucceededAt: pass2?.lastSucceededAt ?? null,
             error: failure2.error
-          } : pass2?.state === "running" && !leading ? { ...pass2, state: "interrupted" } : pass2;
+          } : pass2?.state === "running" && !leaseHeld(store.directory(item)) ? { ...pass2, state: "interrupted" } : pass2;
           return {
             ...item,
             title: this.#loaded(item.app)?.title ?? item.app,
@@ -37043,7 +37042,7 @@ var ApplePlugin = class {
       __callDispose(_stack, _error, _hasError);
     }
   }
-  // A changed scope is a new import: the leading server loads it, and the
+  // A changed scope is a new import: importPending loads it, and the
   // previous one is removed, so nothing reads an import that is not selected.
   // An app whose connector is not loaded keeps only the selection it has, so
   // a connector broken while it is edited loses nothing.
@@ -37169,152 +37168,52 @@ function chatContext(plugin2) {
 }
 
 // apps/apple/plugin/src/importing.ts
-import { setInterval, setTimeout as sleep } from "node:timers/promises";
-function readSelections(directory) {
-  var _stack = [];
-  try {
-    const store = __using(_stack, new ImportStore(directory));
-    return store.selections();
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
+function imported(store, selection) {
+  const pass2 = store.latestPass(selection);
+  return pass2 !== null && (pass2.state === "succeeded" || pass2.state === "partial" || pass2.lastSucceededAt !== null);
 }
-function tidy(directory) {
-  var _stack = [];
+async function importPending(plugin2) {
+  if (plugin2.updated()) return;
   try {
-    const store = __using(_stack, new ImportStore(directory));
-    store.publish();
-    store.removeStaleImports();
-    for (const selection of store.selections()) store.recover(selection);
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
-}
-function imported(directory, selection) {
-  var _stack = [];
-  try {
-    const store = __using(_stack, new ImportStore(directory));
-    const pass2 = store.latestPass(selection);
-    return pass2 !== null && (pass2.state === "succeeded" || pass2.state === "partial" || pass2.lastSucceededAt !== null);
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    __callDispose(_stack, _error, _hasError);
-  }
-}
-async function importPending(plugin2, selections) {
-  const { directory } = plugin2;
-  const imports = [];
-  for (const item of selections)
-    if (!imported(directory, item))
-      try {
-        var _stack = [];
+    var _stack = [];
+    try {
+      const locks = __using(_stack, new DisposableStack());
+      const store = __using(_stack, new ImportStore(plugin2.directory));
+      store.publish();
+      store.removeStaleImports();
+      const imports = [];
+      for (const item of store.selections()) {
+        if (imported(store, item)) continue;
+        const directory = store.directory(item);
+        const held = lease(directory);
+        if (held === null) continue;
+        locks.use(held);
+        store.recover(item);
         try {
-          imports.push(
-            await plugin2.app(item.app).connection(importDirectory(directory, item), item)
-          );
-          const store = __using(_stack, new ImportStore(directory));
+          imports.push(await plugin2.app(item.app).connection(directory, item));
           store.clearConnectionFailure(item);
-        } catch (_) {
-          var _error = _, _hasError = true;
-        } finally {
-          __callDispose(_stack, _error, _hasError);
-        }
-      } catch (error62) {
-        var _stack2 = [];
-        try {
-          const store = __using(_stack2, new ImportStore(directory));
+        } catch (error62) {
           store.saveConnectionFailure(
             item,
             error62 instanceof Error ? error62.message : String(error62)
           );
-        } catch (_2) {
-          var _error2 = _2, _hasError2 = true;
-        } finally {
-          __callDispose(_stack2, _error2, _hasError2);
         }
       }
-  if (imports.length === 0) return;
-  const history = new SQLiteSyncHistory();
-  const destinations = imports.map(({ destination }) => destination);
-  await history.install(destinations);
-  for (const destination of destinations) installSQLiteCatalog(destination);
-  const pipeline = new Pipeline({
-    connections: imports.map(({ connection }) => connection),
-    history
-  });
-  await pipeline.run().catch(() => {
-  });
-}
-async function followSelection(plugin2, selection, changed, updated, signal) {
-  try {
-    for await (const _ of setInterval(1e3, void 0, { signal }))
-      try {
-        if (plugin2.updated()) updated.abort();
-        else if (JSON.stringify(readSelections(plugin2.directory)) !== selection)
-          changed.abort();
-      } catch {
-      }
-  } catch {
-  }
-}
-async function acquire(plugin2, signal) {
-  for (; ; ) {
-    if (plugin2.updated()) return null;
-    const held = lease(plugin2.directory);
-    if (held !== null) return held;
-    try {
-      await sleep(2e3, void 0, { signal });
-    } catch {
-      return null;
-    }
-  }
-}
-async function lead(plugin2, signal) {
-  const { directory } = plugin2;
-  const updated = new AbortController();
-  const leading = AbortSignal.any([signal, updated.signal]);
-  while (!leading.aborted) {
-    const changed = new AbortController();
-    const waiting = AbortSignal.any([leading, changed.signal]);
-    let following = Promise.resolve();
-    try {
-      const selections = readSelections(directory);
-      following = followSelection(
-        plugin2,
-        JSON.stringify(selections),
-        changed,
-        updated,
-        waiting
-      );
-      tidy(directory);
-      await plugin2.refresh();
-      await importPending(plugin2, selections);
-    } catch {
-    }
-    await sleep(6e4, void 0, { signal: waiting }).catch(() => {
-    });
-    changed.abort();
-    await following;
-  }
-}
-async function importSelected(plugin2, signal) {
-  while (!signal.aborted) {
-    var _stack = [];
-    try {
-      const leader = await acquire(plugin2, signal);
-      if (leader === null) return;
-      const _lease = __using(_stack, leader);
-      await lead(plugin2, signal);
+      if (imports.length === 0) return;
+      const history = new SQLiteSyncHistory();
+      const destinations = imports.map(({ destination }) => destination);
+      await history.install(destinations);
+      for (const destination of destinations) installSQLiteCatalog(destination);
+      await new Pipeline({
+        connections: imports.map(({ connection }) => connection),
+        history
+      }).run();
     } catch (_) {
       var _error = _, _hasError = true;
     } finally {
       __callDispose(_stack, _error, _hasError);
     }
+  } catch {
   }
 }
 
@@ -37565,12 +37464,12 @@ mcpServer.registerTool(
       throw new Error(
         "This host cannot show forms. Set up with apple_options, then apple_configure."
       );
-    return structured(
-      await setUpWithForms(
-        plugin,
-        (form) => mcpServer.server.elicitInput(form, { timeout: 18e5 })
-      )
+    const saved = await setUpWithForms(
+      plugin,
+      (form) => mcpServer.server.elicitInput(form, { timeout: 18e5 })
     );
+    void importPending(plugin);
+    return structured(saved);
   }
 );
 mcpServer.registerTool(
@@ -37601,7 +37500,9 @@ mcpServer.registerTool(
   },
   async (input2) => {
     await plugin.refresh();
-    return structured(plugin.configure(input2));
+    const saved = plugin.configure(input2);
+    void importPending(plugin);
+    return structured(saved);
   }
 );
 var switches = external_exports.record(external_exports.string(), external_exports.boolean());
@@ -37663,7 +37564,9 @@ mcpServer.registerTool(
   async ({ set: set2 }) => {
     if (Object.keys(set2).length === 0) throw new Error("Set at least one app.");
     await plugin.refresh();
-    return { content: [], structuredContent: settingsUpdate(plugin, set2) };
+    const saved = settingsUpdate(plugin, set2);
+    void importPending(plugin);
+    return { content: [], structuredContent: saved };
   }
 );
 mcpServer.server.registerCapabilities({
@@ -37694,10 +37597,5 @@ mcpServer.registerTool(
     return { content: text === null ? [] : [{ type: "text", text }] };
   }
 );
-var stopping = new AbortController();
-mcpServer.server.onclose = () => stopping.abort();
-process.stdin.once("end", () => stopping.abort());
-process.once("SIGTERM", () => stopping.abort());
-process.once("SIGINT", () => stopping.abort());
 await mcpServer.connect(new StdioServerTransport());
-await importSelected(plugin, stopping.signal);
+await importPending(plugin);

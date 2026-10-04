@@ -1,18 +1,13 @@
 import type {
   AccountDocument,
+  AlarmDocument,
   CalendarDocument,
   DateComponentsDocument,
-  EventKitDocument,
+  LocationDocument,
+  ParticipantDocument,
   ReminderDocument,
-} from '@workspace/source-apple-eventkit/eventkit-documents';
-import {
-  accountRow,
-  calendarRow,
-  relatedRows,
-  scopedCollections,
-  timestamp,
-} from '@workspace/source-apple-eventkit/eventkit-rows';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+  RemindersContents,
+} from '@workspace/macos-eventkit';
 
 type Row = Record<string, unknown>;
 
@@ -34,30 +29,16 @@ export const dateComponentNames = [
   'dayOfYear',
 ] as const;
 
-// Every Reminders stream's rows from one helper read.
-export function reminderRows(
-  documents: readonly EventKitDocument[],
-  scope: ImportScope,
-): Map<string, Row[]> {
-  const accounts: AccountDocument[] = [];
-  const lists: CalendarDocument[] = [];
-  const reminders: ReminderDocument[] = [];
-  for (const document of documents) {
-    if (document.type === 'account') accounts.push(document);
-    else if (document.type === 'calendar') lists.push(document);
-    else if (document.type === 'reminder') reminders.push(document);
-  }
-  const collections = scopedCollections(scope, accounts, lists);
-  const related = reminders.map((reminder) =>
-    relatedRows(reminder, reminder.id, 'reminderId'),
-  );
+// Every Reminders stream's rows from one store read.
+export function reminderRows(contents: RemindersContents): Map<string, Row[]> {
+  const related = contents.reminders.map(relatedRows);
   return new Map<string, Row[]>([
-    ['accounts', collections.accounts.map(accountRow)],
-    ['lists', collections.calendars.map(calendarRow)],
-    ['reminders', reminders.map(reminderRow)],
+    ['accounts', contents.accounts.map(accountRow)],
+    ['lists', contents.calendars.map(listRow)],
+    ['reminders', contents.reminders.map(reminderRow)],
     [
       'dateComponents',
-      reminders.flatMap((reminder) =>
+      contents.reminders.flatMap((reminder) =>
         (['start', 'due'] as const).flatMap((kind) => {
           const components = reminder[kind];
           return components === undefined
@@ -74,6 +55,46 @@ export function reminderRows(
       related.flatMap((rows) => rows.recurrenceRuleValues),
     ],
   ]);
+}
+
+function timestamp(ms: number | undefined): string | null {
+  return ms === undefined ? null : new Date(ms).toISOString();
+}
+
+function location(place: LocationDocument | undefined) {
+  return {
+    locationTitle: place?.title ?? null,
+    latitude: place?.latitude ?? null,
+    longitude: place?.longitude ?? null,
+    radius: place?.radius ?? null,
+  };
+}
+
+function accountRow(account: AccountDocument): Row {
+  return {
+    id: account.id,
+    name: account.name,
+    type: account.sourceType,
+    isDelegate: account.isDelegate,
+  };
+}
+
+function listRow(list: CalendarDocument): Row {
+  return {
+    id: list.id,
+    accountId: list.accountId ?? null,
+    name: list.name,
+    type: list.calendarType,
+    writable: list.writable,
+    subscribed: list.subscribed,
+    immutable: list.immutable,
+    colorRed: list.color?.[0] ?? null,
+    colorGreen: list.color?.[1] ?? null,
+    colorBlue: list.color?.[2] ?? null,
+    colorAlpha: list.color?.[3] ?? null,
+    supportedAvailabilities: list.supportedAvailabilities,
+    allowedEntityTypes: list.allowedEntityTypes,
+  };
 }
 
 function reminderRow(reminder: ReminderDocument): Row {
@@ -113,4 +134,95 @@ function dateComponentsRow(
     leapMonth: components.leapMonth,
     repeatedDay: components.repeatedDay,
   };
+}
+
+function attendeeRow(
+  reminderId: string,
+  attendee: ParticipantDocument,
+  position: number,
+): Row {
+  return {
+    id: JSON.stringify([reminderId, 'attendee', position]),
+    reminderId,
+    position,
+    kind: 'attendee',
+    name: attendee.name ?? null,
+    url: attendee.url,
+    status: attendee.status,
+    role: attendee.role,
+    type: attendee.participantType,
+    isCurrentUser: attendee.isCurrentUser,
+  };
+}
+
+function alarmRow(reminderId: string, alarm: AlarmDocument, position: number) {
+  return {
+    id: JSON.stringify([reminderId, position]),
+    reminderId,
+    position,
+    type: alarm.alarmType,
+    relativeOffset: alarm.relativeOffset,
+    absoluteAt: timestamp(alarm.absoluteMs),
+    emailAddress: alarm.emailAddress ?? null,
+    soundName: alarm.soundName ?? null,
+    proximity: alarm.proximity,
+    ...location(alarm.location),
+  };
+}
+
+// The attendees, alarms and recurrence rows of one reminder. The store lists
+// attendees and alarms in a stable order, so positions are stable.
+function relatedRows(reminder: ReminderDocument) {
+  const reminderId = reminder.id;
+  const attendees = reminder.attendees.map((attendee, position) =>
+    attendeeRow(reminderId, attendee, position),
+  );
+  const alarms = reminder.alarms.map((alarm, position) =>
+    alarmRow(reminderId, alarm, position),
+  );
+
+  const recurrenceRules: Row[] = [];
+  const recurrenceRuleValues: Row[] = [];
+  for (const [position, rule] of reminder.recurrenceRules.entries()) {
+    const ruleId = JSON.stringify([reminderId, 'recurrenceRule', position]);
+    recurrenceRules.push({
+      id: ruleId,
+      reminderId,
+      position,
+      calendarIdentifier: rule.calendarIdentifier ?? null,
+      frequency: rule.frequency,
+      interval: rule.interval,
+      firstDayOfWeek: rule.firstDayOfWeek,
+      endAt: timestamp(rule.end?.endMs),
+      occurrenceCount: rule.end?.occurrenceCount ?? 0,
+    });
+    const value = (
+      component: string,
+      index: number,
+      value: number,
+      weekNumber: number | null,
+    ) => ({
+      id: JSON.stringify([ruleId, component, index]),
+      reminderId,
+      ruleId,
+      component,
+      position: index,
+      value,
+      weekNumber,
+    });
+    for (const [index, day] of rule.daysOfTheWeek.entries())
+      recurrenceRuleValues.push(
+        value('daysOfTheWeek', index, day.day, day.weekNumber),
+      );
+    for (const component of [
+      'daysOfTheMonth',
+      'daysOfTheYear',
+      'weeksOfTheYear',
+      'monthsOfTheYear',
+      'setPositions',
+    ] as const)
+      for (const [index, number] of rule[component].entries())
+        recurrenceRuleValues.push(value(component, index, number, null));
+  }
+  return { attendees, alarms, recurrenceRules, recurrenceRuleValues };
 }

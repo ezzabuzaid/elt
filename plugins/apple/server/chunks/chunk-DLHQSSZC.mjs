@@ -964,7 +964,7 @@ var SQLiteDestination = class extends Destination {
     let database;
     try {
       resources.use(lockWriter(this.path));
-      database = resources.use(new DatabaseSync4(this.path));
+      database = resources.use(new DatabaseSync4(this.path, { timeout: 3e4 }));
       database.exec("BEGIN IMMEDIATE");
     } catch (error) {
       resources.dispose();

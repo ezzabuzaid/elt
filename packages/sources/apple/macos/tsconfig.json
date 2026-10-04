@@ -8,9 +8,6 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../../../destinations/sqlite"
-    },
-    {
       "path": "../../../elt"
     }
   ]

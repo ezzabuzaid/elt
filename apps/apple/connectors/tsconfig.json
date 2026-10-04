@@ -27,7 +27,7 @@
       "path": "../../../packages/sources/apple/macos"
     },
     {
-      "path": "../../../packages/sources/apple/eventkit"
+      "path": "../../../packages/macos/eventkit"
     },
     {
       "path": "../../../packages/sources/apple/contacts"

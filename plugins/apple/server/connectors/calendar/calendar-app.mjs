@@ -1,19 +1,8 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
-  EventKit,
-  EventKitSnapshot,
-  accountRow,
-  calendarRow,
-  eventKitAccountFields,
-  eventKitCalendarFields,
-  eventKitCatalog,
-  eventKitLocationFields,
-  eventKitRelatedFields,
-  location,
-  relatedRows,
-  scopedCollections,
-  timestamp
-} from "../../chunks/chunk-7OXSWLSW.mjs";
+  CalendarStore,
+  IcsExportUnavailableError
+} from "../../chunks/chunk-72U5EDE2.mjs";
 import {
   accounts,
   collections,
@@ -24,9 +13,11 @@ import {
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleApp
-} from "../../chunks/chunk-PLJTWAM2.mjs";
+} from "../../chunks/chunk-DLHQSSZC.mjs";
 import {
+  Catalog,
   Source,
+  Stream,
   diffSnapshot,
   isTimestamp,
   validateRecords
@@ -45,16 +36,531 @@ import { lstat, mkdtempDisposable, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 
+// packages/sources/apple/calendar/dist/calendar-fields.js
+var { text, id, nullableText, integer, ordinal, boolean, number, nullableTimestamp, location } = eventKitFields;
+var color = { type: ["number", "null"], minimum: 0, maximum: 1 };
+var eventId = {
+  ...id,
+  description: "Owning event occurrence; refers to events.eventId within this source."
+};
+var accountFields = {
+  id: {
+    ...id,
+    description: "EventKit EKSource.sourceIdentifier; accountId of the calendars stream within this source refers to it."
+  },
+  name: { ...text, description: "EventKit EKSource.title." },
+  type: {
+    ...ordinal,
+    description: "EventKit EKSource.sourceType raw value (EKSourceType): 0 local, 1 Exchange, 2 CalDAV, 3 MobileMe, 4 subscribed, 5 birthdays. Unknown codes are kept as numbers."
+  },
+  isDelegate: {
+    ...boolean,
+    description: "EventKit EKSource.isDelegate: whether the account is delegated by another user."
+  }
+};
+var calendarFields = {
+  id: {
+    ...id,
+    description: "EventKit EKCalendar.calendarIdentifier. Apple documents that a full sync can replace it, so it is not a stable identity."
+  },
+  accountId: {
+    ...id,
+    description: "EventKit EKCalendar.source.sourceIdentifier: the owning account; refers to accounts.id within this source."
+  },
+  name: { ...text, description: "EventKit EKCalendar.title." },
+  type: {
+    ...ordinal,
+    description: "EventKit EKCalendar.type raw value (EKCalendarType): 0 local, 1 CalDAV, 2 Exchange, 3 subscription, 4 birthday. Apple reports a subscribed CalDAV calendar as 1 with subscribed true. Unknown codes are kept as numbers."
+  },
+  writable: {
+    ...boolean,
+    description: "EventKit EKCalendar.allowsContentModifications: whether items can be added, removed or modified in it."
+  },
+  subscribed: { ...boolean, description: "EventKit EKCalendar.isSubscribed." },
+  immutable: {
+    ...boolean,
+    description: "EventKit EKCalendar.isImmutable: the calendar itself cannot be modified or deleted. It does not prevent adding items."
+  },
+  colorRed: {
+    ...color,
+    description: "Red component (0 to 1) of EventKit EKCalendar.color converted to sRGB; NULL when the calendar has no color."
+  },
+  colorGreen: {
+    ...color,
+    description: "Green component (0 to 1) of EventKit EKCalendar.color converted to sRGB; NULL when the calendar has no color."
+  },
+  colorBlue: {
+    ...color,
+    description: "Blue component (0 to 1) of EventKit EKCalendar.color converted to sRGB; NULL when the calendar has no color."
+  },
+  colorAlpha: {
+    ...color,
+    description: "Alpha component (0 to 1) of EventKit EKCalendar.color converted to sRGB; NULL when the calendar has no color."
+  },
+  supportedAvailabilities: {
+    ...ordinal,
+    description: "EventKit EKCalendar.supportedEventAvailabilities bitmask (EKCalendarEventAvailabilityMask): 1 busy, 2 free, 4 tentative, 8 unavailable; 0 when the calendar does not support event availability."
+  },
+  allowedEntityTypes: {
+    ...ordinal,
+    description: "EventKit EKCalendar.allowedEntityTypes bitmask (EKEntityMask): 1 events, 2 reminders."
+  },
+  description: {
+    ...text,
+    description: "Calendar.app's calendar description, read from EKCalendar's private notes property; empty when the calendar has none."
+  }
+};
+function locationFields(property) {
+  return {
+    locationTitle: {
+      ...location.locationTitle,
+      description: `EventKit ${property}.title; NULL when there is no structured location or it has no title.`
+    },
+    latitude: {
+      ...location.latitude,
+      description: `Latitude in degrees of EventKit ${property}.geoLocation; NULL when there is no structured location or it has no coordinate.`
+    },
+    longitude: {
+      ...location.longitude,
+      description: `Longitude in degrees of EventKit ${property}.geoLocation; NULL when there is no structured location or it has no coordinate.`
+    },
+    radius: {
+      ...location.radius,
+      description: `EventKit ${property}.radius in meters; 0 means EventKit's default radius. NULL when there is no structured location.`
+    }
+  };
+}
+var attendeeFields = {
+  id: {
+    ...id,
+    description: "JSON [eventId, kind, position]; unique within this stream."
+  },
+  eventId,
+  position: {
+    ...ordinal,
+    description: "Order among the owner's participants of the same kind. Attendees are numbered in content order (URL, name, role, type), not EventKit's order, which changes between reads."
+  },
+  kind: {
+    ...text,
+    description: "'organizer' for EventKit EKEvent.organizer, always at position 0, or 'attendee' for an entry of EKCalendarItem.attendees."
+  },
+  name: {
+    ...nullableText,
+    description: "EventKit EKParticipant.name; NULL when EventKit has none."
+  },
+  url: {
+    ...nullableText,
+    description: "EventKit EKParticipant.URL as a string."
+  },
+  status: {
+    ...ordinal,
+    description: "EventKit EKParticipant.participantStatus raw value (EKParticipantStatus): 0 unknown, 1 pending, 2 accepted, 3 declined, 4 tentative, 5 delegated, 6 completed, 7 in process. Unknown codes are kept as numbers."
+  },
+  role: {
+    ...ordinal,
+    description: "EventKit EKParticipant.participantRole raw value (EKParticipantRole): 0 unknown, 1 required, 2 optional, 3 chair, 4 non-participant. Unknown codes are kept as numbers."
+  },
+  type: {
+    ...ordinal,
+    description: "EventKit EKParticipant.participantType raw value (EKParticipantType): 0 unknown, 1 person, 2 room, 3 resource, 4 group. Unknown codes are kept as numbers."
+  },
+  isCurrentUser: {
+    ...boolean,
+    description: "EventKit EKParticipant.isCurrentUser: whether the participant is the owner of this account."
+  }
+};
+var alarmFields = {
+  id: {
+    ...id,
+    description: "JSON [eventId, position]; unique within this stream."
+  },
+  eventId,
+  position: {
+    ...ordinal,
+    description: "Order among the owner's alarms, numbered in content order, not EventKit's order, which changes between reads."
+  },
+  type: {
+    ...ordinal,
+    description: "EventKit EKAlarm.type raw value (EKAlarmType): 0 display, 1 audio, 2 procedure (opens a URL), 3 email. Unknown codes are kept as numbers."
+  },
+  relativeOffset: {
+    ...number,
+    description: "EventKit EKAlarm.relativeOffset: seconds from the event start at which the alarm fires, negative before it. Apple documents an alarm as either relative or absolute, so it is not the trigger when absoluteAt is set."
+  },
+  absoluteAt: {
+    ...nullableTimestamp,
+    description: "EventKit EKAlarm.absoluteDate as a UTC timestamp; NULL for a relative alarm."
+  },
+  emailAddress: {
+    ...nullableText,
+    description: "EventKit EKAlarm.emailAddress, the recipient of an email alarm; NULL when unset."
+  },
+  soundName: {
+    ...nullableText,
+    description: "EventKit EKAlarm.soundName, the system sound of an audio alarm; NULL when unset."
+  },
+  proximity: {
+    ...ordinal,
+    description: "EventKit EKAlarm.proximity raw value (EKAlarmProximity): 0 none, 1 fires on entering, 2 on leaving the structured location. Unknown codes are kept as numbers."
+  },
+  ...locationFields("EKAlarm.structuredLocation")
+};
+var recurrenceRuleFields = {
+  id: {
+    ...id,
+    description: 'JSON [eventId, "recurrenceRule", position]; recurrenceRuleValues.ruleId refers to it.'
+  },
+  eventId,
+  position: {
+    ...ordinal,
+    description: "Index in EventKit EKCalendarItem.recurrenceRules, in the order EventKit returns them."
+  },
+  calendarIdentifier: {
+    ...text,
+    description: "EventKit EKRecurrenceRule.calendarIdentifier: the calendar system the rule uses."
+  },
+  frequency: {
+    ...ordinal,
+    description: "EventKit EKRecurrenceRule.frequency raw value (EKRecurrenceFrequency): 0 daily, 1 weekly, 2 monthly, 3 yearly. Unknown codes are kept as numbers."
+  },
+  interval: {
+    ...integer,
+    minimum: 1,
+    description: "EventKit EKRecurrenceRule.interval: the rule repeats every interval frequency units, such as 2 with weekly for every other week."
+  },
+  firstDayOfWeek: {
+    ...integer,
+    minimum: 0,
+    maximum: 7,
+    description: "EventKit EKRecurrenceRule.firstDayOfTheWeek: 1 Sunday through 7 Saturday; 0 when the rule does not set it."
+  },
+  endAt: {
+    ...nullableTimestamp,
+    description: "EventKit EKRecurrenceRule.recurrenceEnd.endDate as a UTC timestamp; NULL when the rule ends after a count or never ends."
+  },
+  occurrenceCount: {
+    ...ordinal,
+    description: "EventKit EKRecurrenceRule.recurrenceEnd.occurrenceCount; 0 when the rule ends at endAt or never ends. endAt NULL with 0 here means no end."
+  }
+};
+var recurrenceRuleValueFields = {
+  id: {
+    ...id,
+    description: "JSON [ruleId, component, position]; unique within this stream."
+  },
+  eventId,
+  ruleId: {
+    ...id,
+    description: "Owning rule; refers to recurrenceRules.id within this source."
+  },
+  component: {
+    ...text,
+    description: "The EventKit EKRecurrenceRule list property this value belongs to: daysOfTheWeek (iCalendar BYDAY), daysOfTheMonth (BYMONTHDAY), daysOfTheYear (BYYEARDAY), weeksOfTheYear (BYWEEKNO), monthsOfTheYear (BYMONTH) or setPositions (BYSETPOS)."
+  },
+  position: {
+    ...ordinal,
+    description: "Index in that EventKit list, in the order EventKit returns it."
+  },
+  value: {
+    ...integer,
+    description: "For daysOfTheWeek, EKRecurrenceDayOfWeek.dayOfTheWeek (EKWeekday): 1 Sunday through 7 Saturday. Otherwise the list entry; negative values count from the end of the month or year (setPositions: from the end of the set)."
+  },
+  weekNumber: {
+    type: ["integer", "null"],
+    description: "For daysOfTheWeek, EventKit EKRecurrenceDayOfWeek.weekNumber, which Apple's plain dayOfWeek: constructor sets to 0; NULL for every other component."
+  }
+};
+
+// packages/sources/apple/calendar/dist/calendar-catalog.js
+var { id: id2, text: text2, nullableText: nullableText2, timestamp, nullableTimestamp: nullableTimestamp2, nullableDate, boolean: boolean2, ordinal: ordinal2, integer: integer2 } = eventKitFields;
+var perOccurrence = "Rows belong to an occurrence, not a series: each selected occurrence of a recurring series repeats them, so counts across a series multiply.";
+var icsItem = {
+  calendarId: {
+    ...id2,
+    description: "EventKit calendar identifier of the exported item; refers to calendars.id within this source."
+  },
+  calendarItemId: {
+    ...id2,
+    description: "EventKit EKCalendarItem.calendarItemIdentifier of the exported item. With calendarId it matches events of every occurrence of that item."
+  }
+};
+var streams = {
+  accounts: {
+    description: "One source record per EventKit account (EKSource) in this Mac's event store, including accounts without event calendars. No date filter: the event window does not restrict it. An import scope keeps the selected accounts; a calendar scope also drops accounts owning no selected calendar. Relationships name source streams, not destination tables.",
+    properties: accountFields
+  },
+  calendars: {
+    description: "One source record per event calendar visible through EventKit on this Mac. No date filter: the event window does not restrict it. An import scope keeps only the selected calendars. accountId refers to accounts.id; events and ICS rows refer to id through calendarId. Relationships name source streams, not destination tables.",
+    properties: calendarFields
+  },
+  events: {
+    description: "One source record per event occurrence, not per series: a recurring event yields one record for each occurrence overlapping the configured UTC interval [startAt, endAt); a zero-duration event must start inside it. Key id equals eventId, JSON [calendarId, calendarItemId, occurrenceKey]; never substitute nativeEventId or startAt for it. attendees, alarms, recurrenceRules and recurrenceRuleValues join on eventId. ICS rows describe the whole native item at (calendarId, calendarItemId) and can cover occurrences outside the interval; only a nonrecurring VEVENT carries eventId. startAt and endAt are UTC instants; startDate and endDate are local calendar dates, set for all-day events only. Only calendars visible on this Mac within the import scope are read. Relationships name source streams, not destination tables.",
+    properties: {
+      id: { ...id2, description: "Same value as eventId; the record key." },
+      eventId: {
+        ...id2,
+        description: "Occurrence identity: JSON [calendarId, calendarItemId, occurrenceKey]. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here."
+      },
+      calendarId: {
+        ...id2,
+        description: "EventKit EKCalendarItem.calendar.calendarIdentifier; refers to calendars.id within this source."
+      },
+      calendarItemId: {
+        ...id2,
+        description: "EventKit EKCalendarItem.calendarItemIdentifier of the native item; every occurrence of a recurring series shares it. ICS rows relate on (calendarId, calendarItemId). Apple documents that a full sync can replace it."
+      },
+      externalId: {
+        ...nullableText2,
+        description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier shared by every occurrence of a series; NULL when EventKit has none. Apple documents duplicates across calendars (imports, shared or delegated calendars), so it is not unique."
+      },
+      nativeEventId: {
+        ...nullableText2,
+        description: "EventKit EKEvent.eventIdentifier; NULL when EventKit has none. Apple documents that it can change when the event moves calendar or syncs; it is not the occurrence identity."
+      },
+      name: { ...text2, description: "EventKit EKCalendarItem.title." },
+      body: {
+        ...nullableText2,
+        description: "EventKit EKCalendarItem.notes; NULL when unset."
+      },
+      location: {
+        ...nullableText2,
+        description: "EventKit EKCalendarItem.location; NULL when unset."
+      },
+      url: {
+        ...nullableText2,
+        description: "EventKit EKCalendarItem.URL as a string; NULL when unset."
+      },
+      startAt: {
+        ...timestamp,
+        description: "EventKit EKEvent.startDate as a UTC timestamp. Apple returns a floating event, such as an all-day event, in the default time zone of the process that read it; use startDate for all-day days."
+      },
+      endAt: {
+        ...timestamp,
+        description: "EventKit EKEvent.endDate as a UTC timestamp; never before startAt. Floating events use the reading process time zone, as startAt does."
+      },
+      allDay: { ...boolean2, description: "EventKit EKEvent.isAllDay." },
+      startDate: {
+        ...nullableDate,
+        description: "For an all-day event, the local calendar date of EventKit EKEvent.startDate in the default time zone of the process that read it, as Calendar shows it; NULL for a timed event."
+      },
+      endDate: {
+        ...nullableDate,
+        description: "For an all-day event, the local calendar date of EventKit EKEvent.endDate in the default time zone of the process that read it, not adjusted to an inclusive or exclusive end; NULL for a timed event."
+      },
+      timeZone: {
+        ...nullableText2,
+        description: "EventKit EKCalendarItem.timeZone identifier; NULL for a floating event, which Apple documents as occurring at the same wall-clock time in every time zone."
+      },
+      createdAt: {
+        ...nullableTimestamp2,
+        description: "EventKit EKCalendarItem.creationDate as a UTC timestamp; NULL when EventKit has none."
+      },
+      modifiedAt: {
+        ...nullableTimestamp2,
+        description: "EventKit EKCalendarItem.lastModifiedDate as a UTC timestamp; NULL when EventKit has none."
+      },
+      occurrenceAt: {
+        ...nullableTimestamp2,
+        description: "EventKit EKEvent.occurrenceDate as a UTC timestamp: when this occurrence was originally scheduled, unchanged when it is detached and moved. NULL for a nonrecurring event."
+      },
+      occurrenceDate: {
+        ...nullableDate,
+        description: "Local calendar date of EventKit EKEvent.occurrenceDate in the default time zone of the process that read it, set only for a recurring all-day event; NULL otherwise."
+      },
+      detached: {
+        ...boolean2,
+        description: "EventKit EKEvent.isDetached: an occurrence of a recurring series changed from what the series generates."
+      },
+      status: {
+        ...ordinal2,
+        description: "EventKit EKEvent.status raw value (EKEventStatus): 0 none, 1 confirmed, 2 tentative, 3 canceled. Apple documents only canceled as reliable. Unknown codes are kept as numbers."
+      },
+      availability: {
+        ...integer2,
+        description: "EventKit EKEvent.availability raw value (EKEventAvailability): -1 not supported by the calendar, 0 busy, 1 free, 2 tentative, 3 unavailable. Unknown codes are kept as numbers."
+      },
+      birthdayContactId: {
+        ...nullableText2,
+        description: "EventKit EKEvent.birthdayContactIdentifier, a Contacts framework contact identifier set only for events of the Birthdays calendar; NULL otherwise. Not verified to match identifiers of the Apple Contacts source."
+      },
+      ...locationFields("EKEvent.structuredLocation")
+    }
+  },
+  icsComponents: {
+    description: "One source record per iCalendar component in the private EventKit ICS export of each native item with an occurrence in the event window: the VCALENDAR root, the VEVENT master, exception VEVENTs carrying RECURRENCE-ID, their alarms and any other exported component. Each item is exported once and whole, so a recurring series can describe occurrences outside the window. Grain is the native item (calendarId, calendarItemId), not an occurrence: eventId is set only for a nonrecurring VEVENT. Joining recurring components to events on (calendarId, calendarItemId) repeats them once per occurrence, so aggregate occurrences before joining. The ICS streams are read only when one is selected; on a macOS without the private export the read fails instead of loading no rows. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id2,
+        description: 'JSON [calendarId, calendarItemId, path], where path lists child positions from the root VCALENDAR ("0", "0.1", \u2026).'
+      },
+      ...icsItem,
+      parentId: {
+        ...nullableText2,
+        description: "Enclosing component; refers to icsComponents.id within this source. NULL for the root VCALENDAR."
+      },
+      position: {
+        ...ordinal2,
+        description: "Order among sibling components, numbered in content order: EventKit's export order changes between reads."
+      },
+      name: {
+        ...text2,
+        description: "Component name as exported, uppercased, such as VCALENDAR, VEVENT or VALARM."
+      },
+      uid: {
+        ...nullableText2,
+        description: "Raw value of the component's UID property; NULL when it has none."
+      },
+      recurrenceId: {
+        ...nullableText2,
+        description: "Raw, unparsed value of the component's RECURRENCE-ID property, which marks a component overriding one occurrence of a series; NULL when absent."
+      },
+      recurrenceIdTimeZone: {
+        ...nullableText2,
+        description: "First TZID parameter value of RECURRENCE-ID; NULL when RECURRENCE-ID is absent or has no TZID."
+      },
+      eventId: {
+        ...nullableText2,
+        description: "events.eventId of the nonrecurring event this VEVENT exactly describes: set only for a VEVENT without RECURRENCE-ID of an item that has no recurrence rules and is not detached. NULL for every other component, including all components of a recurring item, which relate at (calendarId, calendarItemId)."
+      }
+    }
+  },
+  icsProperties: {
+    description: "One source record per property line of an icsComponents component, in export order, except DTSTAMP: EventKit sets it to the export time, so it is omitted. Values are raw iCalendar text; vendor X- properties are kept. ATTACH properties also appear in icsAttachments. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id2,
+        description: "JSON [calendarId, calendarItemId, path, position], extending the component path; icsParameters.propertyId and icsAttachments.propertyId refer to it."
+      },
+      componentId: {
+        ...id2,
+        description: "Owning component; refers to icsComponents.id within this source."
+      },
+      ...icsItem,
+      position: {
+        ...ordinal2,
+        description: "Index among the component's properties in export order, counted after DTSTAMP is removed."
+      },
+      name: {
+        ...text2,
+        description: "Property name as exported, uppercased, including vendor X- names."
+      },
+      value: {
+        ...text2,
+        description: "Raw property value as exported after line unfolding: no TEXT unescaping, date parsing or decoding. An inline ATTACH value is a whole base64 file."
+      }
+    }
+  },
+  icsAttachments: {
+    description: "One source record per ATTACH property in the ICS export; the same property also remains in icsProperties with its parameters in icsParameters. File bytes can be inline (base64 in uri), remote (retrieved only by the attachment fetcher the app supplies) or unavailable: an attachment record exists even when no bytes are exported. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id2,
+        description: "Same value as propertyId; the record key."
+      },
+      propertyId: {
+        ...id2,
+        description: "The ATTACH property; refers to icsProperties.id within this source."
+      },
+      componentId: {
+        ...id2,
+        description: "Component holding the ATTACH property; refers to icsComponents.id within this source."
+      },
+      ...icsItem,
+      uri: {
+        ...text2,
+        description: "Raw ATTACH value: the base64 file content when inline is true, otherwise the attachment URI."
+      },
+      filename: {
+        ...nullableText2,
+        description: "First value of the ATTACH X-APPLE-FILENAME parameter, else of FILENAME; NULL when neither is present."
+      },
+      formatType: {
+        ...nullableText2,
+        description: "First value of the ATTACH FMTTYPE parameter, a media type; NULL when absent."
+      },
+      inline: {
+        ...boolean2,
+        description: "Whether ATTACH carries VALUE=BINARY or ENCODING=BASE64, so uri holds the file content itself rather than a location."
+      }
+    }
+  },
+  icsParameters: {
+    description: "One source record per value of each iCalendar property parameter: a comma-separated multi-value parameter yields one record per value. Relationships name source streams, not destination tables.",
+    properties: {
+      id: {
+        ...id2,
+        description: "JSON [calendarId, calendarItemId, path, propertyPosition, position, valuePosition], extending the property id."
+      },
+      propertyId: {
+        ...id2,
+        description: "Owning property; refers to icsProperties.id within this source."
+      },
+      componentId: {
+        ...id2,
+        description: "Component of the owning property; refers to icsComponents.id within this source."
+      },
+      ...icsItem,
+      position: {
+        ...ordinal2,
+        description: "Index of the parameter within its property, in export order."
+      },
+      valuePosition: {
+        ...ordinal2,
+        description: "Index of this value within the parameter."
+      },
+      name: {
+        ...text2,
+        description: "Parameter name as exported, uppercased."
+      },
+      value: {
+        ...text2,
+        description: "One parameter value, with surrounding double quotes removed and RFC 6868 caret escapes (^n, ^', ^^) decoded; otherwise as exported."
+      }
+    }
+  },
+  attendees: {
+    description: `One source record per participant of an event occurrence: its organizer and each attendee. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
+    properties: attendeeFields
+  },
+  alarms: {
+    description: `One source record per EventKit alarm of an event occurrence. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
+    properties: alarmFields
+  },
+  recurrenceRules: {
+    description: `One source record per EventKit recurrence rule of a recurring event occurrence. ${perOccurrence} eventId refers to events.eventId; recurrenceRuleValues holds each rule's list values. Relationships name source streams, not destination tables.`,
+    properties: recurrenceRuleFields
+  },
+  recurrenceRuleValues: {
+    description: `One source record per entry of a recurrence rule's day, week, month or set-position lists. ${perOccurrence} ruleId refers to recurrenceRules.id and eventId to events.eventId. Relationships name source streams, not destination tables.`,
+    properties: recurrenceRuleValueFields
+  }
+};
+var catalog = new Catalog(Object.entries(streams).map(([name2, { description, properties }]) => new Stream({
+  name: name2,
+  jsonSchema: {
+    type: "object",
+    description,
+    properties,
+    required: Object.keys(properties)
+  },
+  primaryKey: ["id"],
+  // Every read is the whole window, so incremental copies diff snapshots.
+  supportedSyncModes: ["full_refresh", "incremental"],
+  sourceDefinedCursor: true,
+  emitsDeletes: true,
+  ...name2 === "icsAttachments" && { supportsFileTransfer: true }
+})));
+
 // packages/sources/apple/calendar/dist/icalendar.js
 var namePattern = /^[A-Za-z0-9-]+/;
 function parseICalendar(bytes) {
-  let text2;
+  let text3;
   try {
-    text2 = new TextDecoder("utf-8", { fatal: true }).decode(unfold(bytes));
+    text3 = new TextDecoder("utf-8", { fatal: true }).decode(unfold(bytes));
   } catch (cause) {
     throw new TypeError("iCalendar data is not valid UTF-8", { cause });
   }
-  const lines = text2.split(/\r?\n/);
+  const lines = text3.split(/\r?\n/);
   if (lines.at(-1) === "")
     lines.pop();
   const stack = [];
@@ -201,11 +707,11 @@ function icsRecords(stream, item) {
     icsAttachments: []
   };
   const walk = (component, path, parentId, position) => {
-    const id2 = JSON.stringify([calendarId, calendarItemId, path]);
+    const id3 = JSON.stringify([calendarId, calendarItemId, path]);
     const property = (name2) => component.properties.find((candidate) => candidate.name === name2);
     const recurrence = property("RECURRENCE-ID");
     rows.icsComponents.push({
-      id: id2,
+      id: id3,
       calendarId,
       calendarItemId,
       parentId,
@@ -225,7 +731,7 @@ function icsRecords(stream, item) {
         rows.icsAttachments.push({
           id: propertyId,
           propertyId,
-          componentId: id2,
+          componentId: id3,
           calendarId,
           calendarItemId,
           uri: value,
@@ -237,7 +743,7 @@ function icsRecords(stream, item) {
       }
       rows.icsProperties.push({
         id: propertyId,
-        componentId: id2,
+        componentId: id3,
         calendarId,
         calendarItemId,
         position: index,
@@ -249,7 +755,7 @@ function icsRecords(stream, item) {
           rows.icsParameters.push({
             id: JSON.stringify([...propertyKey, parameterIndex, valueIndex]),
             propertyId,
-            componentId: id2,
+            componentId: id3,
             calendarId,
             calendarItemId,
             position: parameterIndex,
@@ -259,7 +765,7 @@ function icsRecords(stream, item) {
           });
     }
     for (const [index, child] of component.components.entries())
-      walk(child, `${path}.${index}`, id2, index);
+      walk(child, `${path}.${index}`, id3, index);
   };
   walk(inContentOrder(calendar), "0", null, 0);
   return rows[stream];
@@ -270,45 +776,27 @@ function inContentOrder(component) {
 }
 
 // packages/sources/apple/calendar/dist/calendar-rows.js
-function calendarRows(documents, scope) {
-  const accounts2 = [];
-  const calendars = [];
+function calendarRows(contents) {
   const events = /* @__PURE__ */ new Map();
-  const related2 = [];
-  const exports = [];
-  for (const document of documents) {
-    if (document.type === "account")
-      accounts2.push(document);
-    else if (document.type === "calendar")
-      calendars.push(document);
-    else if (document.type === "ics")
-      exports.push(document);
-    else if (document.type === "occurrence") {
-      const event = eventRow(document);
-      if (events.has(event.eventId))
-        continue;
-      events.set(event.eventId, event);
-      related2.push(relatedRows(document, event.eventId, "eventId"));
-    }
+  const related = [];
+  for (const occurrence of contents.occurrences) {
+    const event = eventRow(occurrence);
+    if (events.has(event.eventId))
+      continue;
+    events.set(event.eventId, event);
+    related.push(relatedRows(occurrence, event.eventId));
   }
-  const collections2 = scopedCollections(scope, accounts2, calendars);
-  const items = validateIcsExports(exports);
+  const items = validateIcsExports(contents.icsExports);
   return new Map([
-    ["accounts", collections2.accounts.map(accountRow)],
-    [
-      "calendars",
-      collections2.calendars.map((calendar) => ({
-        ...calendarRow(calendar),
-        description: calendar.notes ?? ""
-      }))
-    ],
+    ["accounts", contents.accounts.map(accountRow)],
+    ["calendars", contents.calendars.map(calendarRow)],
     ["events", [...events.values()]],
-    ["attendees", related2.flatMap((rows) => rows.attendees)],
-    ["alarms", related2.flatMap((rows) => rows.alarms)],
-    ["recurrenceRules", related2.flatMap((rows) => rows.recurrenceRules)],
+    ["attendees", related.flatMap((rows) => rows.attendees)],
+    ["alarms", related.flatMap((rows) => rows.alarms)],
+    ["recurrenceRules", related.flatMap((rows) => rows.recurrenceRules)],
     [
       "recurrenceRuleValues",
-      related2.flatMap((rows) => rows.recurrenceRuleValues)
+      related.flatMap((rows) => rows.recurrenceRuleValues)
     ],
     ...icsStreams.map((stream) => [
       stream,
@@ -316,21 +804,60 @@ function calendarRows(documents, scope) {
     ])
   ]);
 }
+function timestamp2(ms) {
+  return ms === void 0 ? null : new Date(ms).toISOString();
+}
+function location2(place) {
+  return {
+    locationTitle: place?.title ?? null,
+    latitude: place?.latitude ?? null,
+    longitude: place?.longitude ?? null,
+    radius: place?.radius ?? null
+  };
+}
+function accountRow(account) {
+  return {
+    id: account.id,
+    name: account.name,
+    type: account.sourceType,
+    isDelegate: account.isDelegate
+  };
+}
+function calendarRow(calendar) {
+  return {
+    id: calendar.id,
+    accountId: calendar.accountId ?? null,
+    name: calendar.name,
+    type: calendar.calendarType,
+    writable: calendar.writable,
+    subscribed: calendar.subscribed,
+    immutable: calendar.immutable,
+    colorRed: calendar.color?.[0] ?? null,
+    colorGreen: calendar.color?.[1] ?? null,
+    colorBlue: calendar.color?.[2] ?? null,
+    colorAlpha: calendar.color?.[3] ?? null,
+    supportedAvailabilities: calendar.supportedAvailabilities,
+    allowedEntityTypes: calendar.allowedEntityTypes,
+    description: calendar.notes ?? ""
+  };
+}
 function eventRow(occurrence) {
   const recurring = occurrence.recurrenceRules.length > 0 || occurrence.detached;
   if (recurring && occurrence.occurrenceMs === void 0)
     throw new TypeError("EventKit returned a recurring event without an occurrence date");
-  const occurrenceKey = !recurring ? null : occurrence.allDay ? occurrence.occurrenceDay ?? null : timestamp(occurrence.occurrenceMs);
-  const eventId = JSON.stringify([
+  let occurrenceKey = null;
+  if (recurring)
+    occurrenceKey = occurrence.allDay ? occurrence.occurrenceDay ?? null : timestamp2(occurrence.occurrenceMs);
+  const eventId2 = JSON.stringify([
     occurrence.calendarId,
     occurrence.calendarItemId,
     occurrenceKey
   ]);
   const { allDay } = occurrence;
-  const place = location(occurrence.place);
+  const place = location2(occurrence.place);
   return {
-    id: eventId,
-    eventId,
+    id: eventId2,
+    eventId: eventId2,
     calendarId: occurrence.calendarId,
     calendarItemId: occurrence.calendarItemId,
     externalId: occurrence.externalId ?? null,
@@ -339,15 +866,15 @@ function eventRow(occurrence) {
     body: occurrence.body ?? null,
     location: occurrence.location ?? null,
     url: occurrence.url ?? null,
-    startAt: timestamp(occurrence.startMs),
-    endAt: timestamp(occurrence.endMs),
+    startAt: timestamp2(occurrence.startMs),
+    endAt: timestamp2(occurrence.endMs),
     allDay,
     startDate: allDay ? occurrence.startDay : null,
     endDate: allDay ? occurrence.endDay : null,
     timeZone: occurrence.timeZone ?? null,
-    createdAt: timestamp(occurrence.createdMs),
-    modifiedAt: timestamp(occurrence.modifiedMs),
-    occurrenceAt: recurring ? timestamp(occurrence.occurrenceMs) : null,
+    createdAt: timestamp2(occurrence.createdMs),
+    modifiedAt: timestamp2(occurrence.modifiedMs),
+    occurrenceAt: recurring ? timestamp2(occurrence.occurrenceMs) : null,
     occurrenceDate: allDay && recurring ? occurrence.occurrenceDay ?? null : null,
     detached: occurrence.detached,
     status: occurrence.status,
@@ -356,278 +883,97 @@ function eventRow(occurrence) {
     ...place
   };
 }
+function participantRow(eventId2, participant, kind, position) {
+  return {
+    id: JSON.stringify([eventId2, kind, position]),
+    eventId: eventId2,
+    position,
+    kind,
+    name: participant.name ?? null,
+    url: participant.url,
+    status: participant.status,
+    role: participant.role,
+    type: participant.participantType,
+    isCurrentUser: participant.isCurrentUser
+  };
+}
+function alarmRow(eventId2, alarm, position) {
+  return {
+    id: JSON.stringify([eventId2, position]),
+    eventId: eventId2,
+    position,
+    type: alarm.alarmType,
+    relativeOffset: alarm.relativeOffset,
+    absoluteAt: timestamp2(alarm.absoluteMs),
+    emailAddress: alarm.emailAddress ?? null,
+    soundName: alarm.soundName ?? null,
+    proximity: alarm.proximity,
+    ...location2(alarm.location)
+  };
+}
+function relatedRows(occurrence, eventId2) {
+  const attendees = [];
+  if (occurrence.organizer !== void 0)
+    attendees.push(participantRow(eventId2, occurrence.organizer, "organizer", 0));
+  for (const [position, attendee] of occurrence.attendees.entries())
+    attendees.push(participantRow(eventId2, attendee, "attendee", position));
+  const alarms = occurrence.alarms.map((alarm, position) => alarmRow(eventId2, alarm, position));
+  const recurrenceRules = [];
+  const recurrenceRuleValues = [];
+  for (const [position, rule] of occurrence.recurrenceRules.entries()) {
+    const ruleId = JSON.stringify([eventId2, "recurrenceRule", position]);
+    recurrenceRules.push({
+      id: ruleId,
+      eventId: eventId2,
+      position,
+      calendarIdentifier: rule.calendarIdentifier ?? null,
+      frequency: rule.frequency,
+      interval: rule.interval,
+      firstDayOfWeek: rule.firstDayOfWeek,
+      endAt: timestamp2(rule.end?.endMs),
+      occurrenceCount: rule.end?.occurrenceCount ?? 0
+    });
+    const valueRow = (component, position2, value, weekNumber) => ({
+      id: JSON.stringify([ruleId, component, position2]),
+      eventId: eventId2,
+      ruleId,
+      component,
+      position: position2,
+      value,
+      weekNumber
+    });
+    for (const [position2, day] of rule.daysOfTheWeek.entries())
+      recurrenceRuleValues.push(valueRow("daysOfTheWeek", position2, day.day, day.weekNumber));
+    for (const component of [
+      "daysOfTheMonth",
+      "daysOfTheYear",
+      "weeksOfTheYear",
+      "monthsOfTheYear",
+      "setPositions"
+    ])
+      for (const [position2, value] of rule[component].entries())
+        recurrenceRuleValues.push(valueRow(component, position2, value, null));
+  }
+  return { attendees, alarms, recurrenceRules, recurrenceRuleValues };
+}
 
-// packages/sources/apple/calendar/dist/apple-calendar-source.js
-var { id, text, nullableText, timestamp: timestamp2, nullableTimestamp, nullableDate, boolean, ordinal, integer } = eventKitFields;
-var related = eventKitRelatedFields("eventId");
-var perOccurrence = "Rows belong to an occurrence, not a series: each selected occurrence of a recurring series repeats them, so counts across a series multiply.";
-var icsItem = {
-  calendarId: {
-    ...id,
-    description: "EventKit calendar identifier of the exported item; refers to calendars.id within this source."
-  },
-  calendarItemId: {
-    ...id,
-    description: "EventKit EKCalendarItem.calendarItemIdentifier of the exported item. With calendarId it matches events of every occurrence of that item."
+// packages/sources/apple/calendar/dist/calendar-snapshot.js
+var CalendarSnapshot = class {
+  #records;
+  constructor(records) {
+    this.#records = records;
+  }
+  of(stream) {
+    const records = this.#records.get(stream);
+    if (records === void 0)
+      throw new TypeError(`Stream ${stream} was not read in this session`);
+    return records;
+  }
+  async [Symbol.asyncDispose]() {
   }
 };
-var catalog = eventKitCatalog({
-  accounts: {
-    description: "One source record per EventKit account (EKSource) in this Mac's event store, including accounts without event calendars. No date filter: the event window does not restrict it. An import scope keeps the selected accounts; a calendar scope also drops accounts owning no selected calendar. Relationships name source streams, not destination tables.",
-    properties: eventKitAccountFields
-  },
-  calendars: {
-    description: "One source record per event calendar visible through EventKit on this Mac. No date filter: the event window does not restrict it. An import scope keeps only the selected calendars. accountId refers to accounts.id; events and ICS rows refer to id through calendarId. Relationships name source streams, not destination tables.",
-    properties: {
-      ...eventKitCalendarFields,
-      description: {
-        ...text,
-        description: "Calendar.app's calendar description, read from EKCalendar's private notes property; empty when the calendar has none."
-      }
-    }
-  },
-  events: {
-    description: "One source record per event occurrence, not per series: a recurring event yields one record for each occurrence overlapping the configured UTC interval [startAt, endAt); a zero-duration event must start inside it. Key id equals eventId, JSON [calendarId, calendarItemId, occurrenceKey]; never substitute nativeEventId or startAt for it. attendees, alarms, recurrenceRules and recurrenceRuleValues join on eventId. ICS rows describe the whole native item at (calendarId, calendarItemId) and can cover occurrences outside the interval; only a nonrecurring VEVENT carries eventId. startAt and endAt are UTC instants; startDate and endDate are local calendar dates, set for all-day events only. Only calendars visible on this Mac within the import scope are read. Relationships name source streams, not destination tables.",
-    properties: {
-      id: { ...id, description: "Same value as eventId; the record key." },
-      eventId: {
-        ...id,
-        description: "Occurrence identity: JSON [calendarId, calendarItemId, occurrenceKey]. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here."
-      },
-      calendarId: {
-        ...id,
-        description: "EventKit EKCalendarItem.calendar.calendarIdentifier; refers to calendars.id within this source."
-      },
-      calendarItemId: {
-        ...id,
-        description: "EventKit EKCalendarItem.calendarItemIdentifier of the native item; every occurrence of a recurring series shares it. ICS rows relate on (calendarId, calendarItemId). Apple documents that a full sync can replace it."
-      },
-      externalId: {
-        ...nullableText,
-        description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier shared by every occurrence of a series; NULL when EventKit has none. Apple documents duplicates across calendars (imports, shared or delegated calendars), so it is not unique."
-      },
-      nativeEventId: {
-        ...nullableText,
-        description: "EventKit EKEvent.eventIdentifier; NULL when EventKit has none. Apple documents that it can change when the event moves calendar or syncs; it is not the occurrence identity."
-      },
-      name: { ...text, description: "EventKit EKCalendarItem.title." },
-      body: {
-        ...nullableText,
-        description: "EventKit EKCalendarItem.notes; NULL when unset."
-      },
-      location: {
-        ...nullableText,
-        description: "EventKit EKCalendarItem.location; NULL when unset."
-      },
-      url: {
-        ...nullableText,
-        description: "EventKit EKCalendarItem.URL as a string; NULL when unset."
-      },
-      startAt: {
-        ...timestamp2,
-        description: "EventKit EKEvent.startDate as a UTC timestamp. Apple returns a floating event, such as an all-day event, in the default time zone of the process that read it; use startDate for all-day days."
-      },
-      endAt: {
-        ...timestamp2,
-        description: "EventKit EKEvent.endDate as a UTC timestamp; never before startAt. Floating events use the reading process time zone, as startAt does."
-      },
-      allDay: { ...boolean, description: "EventKit EKEvent.isAllDay." },
-      startDate: {
-        ...nullableDate,
-        description: "For an all-day event, the local calendar date of EventKit EKEvent.startDate in the default time zone of the process that read it, as Calendar shows it; NULL for a timed event."
-      },
-      endDate: {
-        ...nullableDate,
-        description: "For an all-day event, the local calendar date of EventKit EKEvent.endDate in the default time zone of the process that read it, not adjusted to an inclusive or exclusive end; NULL for a timed event."
-      },
-      timeZone: {
-        ...nullableText,
-        description: "EventKit EKCalendarItem.timeZone identifier; NULL for a floating event, which Apple documents as occurring at the same wall-clock time in every time zone."
-      },
-      createdAt: {
-        ...nullableTimestamp,
-        description: "EventKit EKCalendarItem.creationDate as a UTC timestamp; NULL when EventKit has none."
-      },
-      modifiedAt: {
-        ...nullableTimestamp,
-        description: "EventKit EKCalendarItem.lastModifiedDate as a UTC timestamp; NULL when EventKit has none."
-      },
-      occurrenceAt: {
-        ...nullableTimestamp,
-        description: "EventKit EKEvent.occurrenceDate as a UTC timestamp: when this occurrence was originally scheduled, unchanged when it is detached and moved. NULL for a nonrecurring event."
-      },
-      occurrenceDate: {
-        ...nullableDate,
-        description: "Local calendar date of EventKit EKEvent.occurrenceDate in the default time zone of the process that read it, set only for a recurring all-day event; NULL otherwise."
-      },
-      detached: {
-        ...boolean,
-        description: "EventKit EKEvent.isDetached: an occurrence of a recurring series changed from what the series generates."
-      },
-      status: {
-        ...ordinal,
-        description: "EventKit EKEvent.status raw value (EKEventStatus): 0 none, 1 confirmed, 2 tentative, 3 canceled. Apple documents only canceled as reliable. Unknown codes are kept as numbers."
-      },
-      availability: {
-        ...integer,
-        description: "EventKit EKEvent.availability raw value (EKEventAvailability): -1 not supported by the calendar, 0 busy, 1 free, 2 tentative, 3 unavailable. Unknown codes are kept as numbers."
-      },
-      birthdayContactId: {
-        ...nullableText,
-        description: "EventKit EKEvent.birthdayContactIdentifier, a Contacts framework contact identifier set only for events of the Birthdays calendar; NULL otherwise. Not verified to match identifiers of the Apple Contacts source."
-      },
-      ...eventKitLocationFields("EKEvent.structuredLocation")
-    }
-  },
-  icsComponents: {
-    description: "One source record per iCalendar component in the private EventKit ICS export of each native item with an occurrence in the event window: the VCALENDAR root, the VEVENT master, exception VEVENTs carrying RECURRENCE-ID, their alarms and any other exported component. Each item is exported once and whole, so a recurring series can describe occurrences outside the window. Grain is the native item (calendarId, calendarItemId), not an occurrence: eventId is set only for a nonrecurring VEVENT. Joining recurring components to events on (calendarId, calendarItemId) repeats them once per occurrence, so aggregate occurrences before joining. The ICS streams are read only when one is selected; on a macOS without the private export the read fails instead of loading no rows. Relationships name source streams, not destination tables.",
-    properties: {
-      id: {
-        ...id,
-        description: 'JSON [calendarId, calendarItemId, path], where path lists child positions from the root VCALENDAR ("0", "0.1", \u2026).'
-      },
-      ...icsItem,
-      parentId: {
-        ...nullableText,
-        description: "Enclosing component; refers to icsComponents.id within this source. NULL for the root VCALENDAR."
-      },
-      position: {
-        ...ordinal,
-        description: "Order among sibling components, numbered in content order: EventKit's export order changes between reads."
-      },
-      name: {
-        ...text,
-        description: "Component name as exported, uppercased, such as VCALENDAR, VEVENT or VALARM."
-      },
-      uid: {
-        ...nullableText,
-        description: "Raw value of the component's UID property; NULL when it has none."
-      },
-      recurrenceId: {
-        ...nullableText,
-        description: "Raw, unparsed value of the component's RECURRENCE-ID property, which marks a component overriding one occurrence of a series; NULL when absent."
-      },
-      recurrenceIdTimeZone: {
-        ...nullableText,
-        description: "First TZID parameter value of RECURRENCE-ID; NULL when RECURRENCE-ID is absent or has no TZID."
-      },
-      eventId: {
-        ...nullableText,
-        description: "events.eventId of the nonrecurring event this VEVENT exactly describes: set only for a VEVENT without RECURRENCE-ID of an item that has no recurrence rules and is not detached. NULL for every other component, including all components of a recurring item, which relate at (calendarId, calendarItemId)."
-      }
-    }
-  },
-  icsProperties: {
-    description: "One source record per property line of an icsComponents component, in export order, except DTSTAMP: EventKit sets it to the export time, so it is omitted. Values are raw iCalendar text; vendor X- properties are kept. ATTACH properties also appear in icsAttachments. Relationships name source streams, not destination tables.",
-    properties: {
-      id: {
-        ...id,
-        description: "JSON [calendarId, calendarItemId, path, position], extending the component path; icsParameters.propertyId and icsAttachments.propertyId refer to it."
-      },
-      componentId: {
-        ...id,
-        description: "Owning component; refers to icsComponents.id within this source."
-      },
-      ...icsItem,
-      position: {
-        ...ordinal,
-        description: "Index among the component's properties in export order, counted after DTSTAMP is removed."
-      },
-      name: {
-        ...text,
-        description: "Property name as exported, uppercased, including vendor X- names."
-      },
-      value: {
-        ...text,
-        description: "Raw property value as exported after line unfolding: no TEXT unescaping, date parsing or decoding. An inline ATTACH value is a whole base64 file."
-      }
-    }
-  },
-  icsAttachments: {
-    description: "One source record per ATTACH property in the ICS export; the same property also remains in icsProperties with its parameters in icsParameters. File bytes can be inline (base64 in uri), remote (retrieved only by the attachment fetcher the app supplies) or unavailable: an attachment record exists even when no bytes are exported. Relationships name source streams, not destination tables.",
-    properties: {
-      id: {
-        ...id,
-        description: "Same value as propertyId; the record key."
-      },
-      propertyId: {
-        ...id,
-        description: "The ATTACH property; refers to icsProperties.id within this source."
-      },
-      componentId: {
-        ...id,
-        description: "Component holding the ATTACH property; refers to icsComponents.id within this source."
-      },
-      ...icsItem,
-      uri: {
-        ...text,
-        description: "Raw ATTACH value: the base64 file content when inline is true, otherwise the attachment URI."
-      },
-      filename: {
-        ...nullableText,
-        description: "First value of the ATTACH X-APPLE-FILENAME parameter, else of FILENAME; NULL when neither is present."
-      },
-      formatType: {
-        ...nullableText,
-        description: "First value of the ATTACH FMTTYPE parameter, a media type; NULL when absent."
-      },
-      inline: {
-        ...boolean,
-        description: "Whether ATTACH carries VALUE=BINARY or ENCODING=BASE64, so uri holds the file content itself rather than a location."
-      }
-    }
-  },
-  icsParameters: {
-    description: "One source record per value of each iCalendar property parameter: a comma-separated multi-value parameter yields one record per value. Relationships name source streams, not destination tables.",
-    properties: {
-      id: {
-        ...id,
-        description: "JSON [calendarId, calendarItemId, path, propertyPosition, position, valuePosition], extending the property id."
-      },
-      propertyId: {
-        ...id,
-        description: "Owning property; refers to icsProperties.id within this source."
-      },
-      componentId: {
-        ...id,
-        description: "Component of the owning property; refers to icsComponents.id within this source."
-      },
-      ...icsItem,
-      position: {
-        ...ordinal,
-        description: "Index of the parameter within its property, in export order."
-      },
-      valuePosition: {
-        ...ordinal,
-        description: "Index of this value within the parameter."
-      },
-      name: {
-        ...text,
-        description: "Parameter name as exported, uppercased."
-      },
-      value: {
-        ...text,
-        description: "One parameter value, with surrounding double quotes removed and RFC 6868 caret escapes (^n, ^', ^^) decoded; otherwise as exported."
-      }
-    }
-  },
-  attendees: {
-    description: `One source record per participant of an event occurrence: its organizer and each attendee. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
-    properties: related.attendees
-  },
-  alarms: {
-    description: `One source record per EventKit alarm of an event occurrence. ${perOccurrence} eventId refers to events.eventId. Relationships name source streams, not destination tables.`,
-    properties: related.alarms
-  },
-  recurrenceRules: {
-    description: `One source record per EventKit recurrence rule of a recurring event occurrence. ${perOccurrence} eventId refers to events.eventId; recurrenceRuleValues holds each rule's list values. Relationships name source streams, not destination tables.`,
-    properties: related.recurrenceRules
-  },
-  recurrenceRuleValues: {
-    description: `One source record per entry of a recurrence rule's day, week, month or set-position lists. ${perOccurrence} ruleId refers to recurrenceRules.id and eventId to events.eventId. Relationships name source streams, not destination tables.`,
-    properties: related.recurrenceRuleValues
-  }
-}, { snapshot: true, fileTransfer: ["icsAttachments"] });
+
+// packages/sources/apple/calendar/dist/apple-calendar-source.js
 var CalendarIcsUnavailableError = class extends Error {
   name = "CalendarIcsUnavailableError";
   constructor(cause) {
@@ -635,7 +981,7 @@ var CalendarIcsUnavailableError = class extends Error {
   }
 };
 var AppleCalendarSource = class extends Source {
-  #eventKit = new EventKit("events");
+  #store = new CalendarStore();
   // The window is not part of the identity: moving it keeps one checkpoint, and
   // incremental copies delete the occurrences that left it.
   identity = "apple-calendar:eventkit";
@@ -676,36 +1022,32 @@ var AppleCalendarSource = class extends Source {
       selection: { ...this.scope, startAt: this.startAt, endAt: this.endAt }
     };
   }
-  async *observe({ streams, signal }) {
-    for await (const _ of this.#eventKit.watch(signal))
-      yield streams;
+  async *observe({ streams: streams2, signal }) {
+    for await (const _ of this.#store.watch(signal))
+      yield streams2;
   }
   // Every selected stream from one change-free read, so occurrences match
   // their calendars and ICS rows their items.
-  async open(streams) {
-    const { accountIds, collectionIds } = this.scope;
-    const request = {
+  async open(streams2) {
+    const rows = calendarRows(await this.#read({
       startAt: this.startAt,
       endAt: this.endAt,
-      ics: streams.some((stream) => isIcsStream(stream.name)),
-      accountIds,
-      collectionIds
-    };
-    return new EventKitSnapshot(await this.#eventKit.consistently(async () => {
-      const rows = calendarRows(await this.#read(request), this.scope);
-      return new Map(streams.map((stream) => {
-        const records = validateRecords(stream, rows.get(stream.name), "EventKit");
-        if (stream.name === "events")
-          records.forEach(checkEventDates);
-        return [stream.name, records];
-      }));
+      ics: streams2.some((stream) => isIcsStream(stream.name)),
+      accountIds: this.scope.accountIds,
+      calendarIds: this.scope.collectionIds
     }));
+    return new CalendarSnapshot(new Map(streams2.map((stream) => {
+      const records = validateRecords(stream, rows.get(stream.name), "EventKit");
+      if (stream.name === "events")
+        records.forEach(checkEventDates);
+      return [stream.name, records];
+    })));
   }
-  async #read(request) {
+  async #read(query) {
     try {
-      return await this.#eventKit.read(request);
+      return await this.#store.read(query);
     } catch (error) {
-      if (error instanceof Error && "stderr" in error && typeof error.stderr === "string" && error.stderr.includes("CALENDAR_ICS_UNAVAILABLE"))
+      if (error instanceof IcsExportUnavailableError)
         throw new CalendarIcsUnavailableError(error);
       throw error;
     }
@@ -765,7 +1107,13 @@ var AppleCalendarSource = class extends Source {
   }
 };
 function checkEventDates(event) {
-  if (String(event.endAt) < String(event.startAt) || (event.allDay ? event.startDate === null || event.endDate === null || String(event.endDate) < String(event.startDate) : event.startDate !== null || event.endDate !== null))
+  const endsBeforeStart = String(event.endAt) < String(event.startAt);
+  let datesInconsistent;
+  if (event.allDay)
+    datesInconsistent = event.startDate === null || event.endDate === null || String(event.endDate) < String(event.startDate);
+  else
+    datesInconsistent = event.startDate !== null || event.endDate !== null;
+  if (endsBeforeStart || datesInconsistent)
     throw new TypeError("Calendar returned inconsistent event dates");
 }
 

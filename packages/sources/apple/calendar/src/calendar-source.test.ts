@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import {
   mkdtempDisposable,
@@ -18,39 +17,345 @@ import {
   LocalFiles,
   Pipeline,
   PipelineError,
+  type Source,
   Stream,
+  StreamStatus,
+  readerCatalog,
+  syncHistoryRelations,
 } from '@workspace/elt';
 import { MarkdownDestination } from '@workspace/elt-markdown';
 import {
   SQLiteCheckpointStore,
+  SQLiteColumns,
   SQLiteDestination,
+  SQLiteSyncHistory,
   type SQLiteTable,
+  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import { GaxiosError, type GoogleRequester } from '@workspace/google-auth';
-import type { EventKitDocument } from '@workspace/source-apple-eventkit/eventkit-documents';
 import {
-  account,
-  alarm,
-  at,
-  calendar,
-  eventId,
-  eventsRead,
-  fakeEventKit,
-  icsItem,
-  january,
-  list,
-  occurrence,
-  participant,
-  recordedEvents,
-  rule,
-} from '@workspace/source-apple-eventkit/testing';
-import { appleImport, readRows } from '@workspace/source-apple-macos/testing';
+  type AccountDocument,
+  type AlarmDocument,
+  type IcsDocument,
+  IcsExportUnavailableError,
+  type OccurrenceDocument,
+  type ParticipantDocument,
+  type RecurrenceRuleDocument,
+} from '@workspace/macos-eventkit';
+import {
+  type EventKitDocument,
+  FakeEventKitHelper,
+  type HelperCalendarDocument,
+  type HelperRequest,
+} from '@workspace/macos-eventkit/test';
 
 import {
   AppleCalendarSource,
   CalendarIcsUnavailableError,
 } from './apple-calendar-source.ts';
 import { googleCalendarAttachments } from './google-calendar-attachments.ts';
+
+// Test support shared by the Apple source packages' tests.
+
+const snake = (name: string) =>
+  name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+
+// One Apple source loaded as the hosts load it: every stream incrementally
+// into raw_<stream> of one SQLite file, read through its documented
+// <snake_stream> view, with files kept beside it.
+async function appleImport(source: Source, directory: string) {
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, 'data.sqlite');
+  const destination = new SQLiteDestination({ path });
+  const files = new LocalFiles({ directory: join(directory, 'files') });
+  const { streams } = await source.discover();
+  const connection = new Connection({
+    name: 'apple',
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({
+      path: join(directory, 'checkpoints.sqlite'),
+    }),
+    steps: streams.map(
+      (stream) =>
+        new Copy(
+          stream,
+          destination
+            .table(
+              `raw_${stream.name}`,
+              stream.supportsFileTransfer
+                ? (columns) => [
+                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                    columns
+                      .text('attachmentRef')
+                      .from(stream.file.store(files)),
+                  ]
+                : undefined,
+            )
+            .withReaderView(snake(stream.name)),
+          {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          },
+        ),
+    ),
+  });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  installSQLiteCatalog({ path });
+  const read = (sql: string) => {
+    using database = new DatabaseSync(path, { readOnly: true });
+    return database.prepare(sql).all();
+  };
+  return {
+    load: () => new Pipeline({ history, connections: [connection] }).run(),
+    read,
+    // The documented views the streams publish, beside the catalog and the
+    // sync history every SQLite load has.
+    views: () =>
+      read(`SELECT name FROM catalog WHERE kind = 'view' ORDER BY name`)
+        .map(({ name }) => name)
+        .filter(
+          (name) =>
+            name !== readerCatalog.name &&
+            !Object.values(syncHistoryRelations).some(
+              (relation) => relation.name === name,
+            ),
+        ),
+  };
+}
+
+// Each stream's records from one full-refresh read of streams.
+async function readRows(source: Source, streams: readonly Stream[]) {
+  const rows = new Map<string, Record<string, unknown>[]>();
+  for await (const message of source.read(
+    streams.map((stream) => configured(stream)),
+    new Map(),
+  )) {
+    if (message instanceof StreamStatus && message.status === 'FAILED')
+      throw message.error;
+    if ('data' in message)
+      rows.set(message.stream, [
+        ...(rows.get(message.stream) ?? []),
+        Object(message.data),
+      ]);
+  }
+  return (stream: Stream) => rows.get(stream.name) ?? [];
+}
+
+// The configured stream a full-refresh copy of stream reads.
+const configured = (stream: Stream) =>
+  new Copy(
+    stream,
+    new SQLiteDestination({ path: ':memory:' }).table(stream.name),
+  ).configuration;
+
+const at = (iso: string) => Date.parse(iso);
+
+// Documents the eventkit helper wrote on a Mac, read with TZ=UTC from a
+// synthetic calendar and reminders list made for the recording; ids are
+// renamed and every value is synthetic. Each factory below starts from one, so
+// every field the helper writes reaches the projections, and a test overrides
+// only what its scenario needs. An override of undefined leaves the field out
+// of the JSON line, as the helper leaves out a nil.
+const recordedAlarm: AlarmDocument = {
+  alarmType: 0,
+  relativeOffset: -600,
+  proximity: 0,
+};
+
+const recordedRule: RecurrenceRuleDocument = {
+  firstDayOfWeek: 2,
+  monthsOfTheYear: [],
+  setPositions: [],
+  weeksOfTheYear: [],
+  interval: 1,
+  end: { occurrenceCount: 3 },
+  frequency: 1,
+  calendarIdentifier: 'gregorian',
+  daysOfTheWeek: [],
+  daysOfTheMonth: [],
+  daysOfTheYear: [],
+};
+
+const recordedEvents: {
+  readonly account: AccountDocument;
+  readonly calendar: HelperCalendarDocument;
+  // Timed, with alarms, a structured location, a URL and notes.
+  readonly standup: OccurrenceDocument;
+  readonly standupIcs: IcsDocument;
+  readonly holiday: OccurrenceDocument;
+  // The first occurrence of a weekly series of three.
+  readonly weekly: OccurrenceDocument;
+} = {
+  account: {
+    name: 'Default',
+    sourceType: 0,
+    id: 'account-1',
+    type: 'account',
+    isDelegate: false,
+  },
+  calendar: {
+    color: [0.7960784435272217, 0.1882352977991104, 0.8784313797950745, 1],
+    name: 'Synthetic calendar',
+    type: 'calendar',
+    id: 'calendar-1',
+    selected: true,
+    allowedEntityTypes: 1,
+    subscribed: false,
+    notes: 'Synthetic calendar for recorded EventKit test data',
+    immutable: false,
+    writable: true,
+    calendarType: 0,
+    supportedAvailabilities: 0,
+    accountId: 'account-1',
+  },
+  standup: {
+    timeZone: 'Asia/Amman',
+    body: 'Synthetic notes',
+    calendarItemId: 'item-1',
+    name: 'Synthetic standup',
+    place: { title: 'Synthetic Room 1', radius: 0 },
+    allDay: false,
+    externalId: 'external-1',
+    alarms: [
+      recordedAlarm,
+      { alarmType: 0, relativeOffset: -1800, proximity: 0 },
+      { alarmType: 0, relativeOffset: -3600, proximity: 0 },
+    ],
+    type: 'occurrence',
+    recurrenceRules: [],
+    occurrenceDay: '2025-01-02',
+    nativeEventId: 'account-1:external-1',
+    endDay: '2025-01-02',
+    location: 'Synthetic Room 1',
+    occurrenceMs: 1735797600000,
+    startMs: 1735797600000,
+    availability: -1,
+    url: 'https://example.com/standup',
+    createdMs: 1790851279941.809,
+    calendarId: 'calendar-1',
+    startDay: '2025-01-02',
+    modifiedMs: 1790851279941.8489,
+    attendees: [],
+    detached: false,
+    endMs: 1735801200000,
+    status: 0,
+  },
+  standupIcs: {
+    type: 'ics',
+    calendarId: 'calendar-1',
+    ics: 'QkVHSU46VkNBTEVOREFSDQpDQUxTQ0FMRTpHUkVHT1JJQU4NClBST0RJRDotLy9BcHBsZSBJbmMuLy9tYWNPUyAyNy4wLy9FTg0KVkVSU0lPTjoyLjANCkJFR0lOOlZUSU1FWk9ORQ0KVFpJRDpBc2lhL0FtbWFuDQpCRUdJTjpEQVlMSUdIVA0KRFRTVEFSVDoyMDIyMDIyNVQwMDAwMDANClJEQVRFOjIwMjIwMjI1VDAwMDAwMA0KVFpOQU1FOkdNVCszDQpUWk9GRlNFVEZST006KzAyMDANClRaT0ZGU0VUVE86KzAzMDANCkVORDpEQVlMSUdIVA0KRU5EOlZUSU1FWk9ORQ0KQkVHSU46VkVWRU5UDQpDUkVBVEVEOjIwMjYxMDAxVDEwNDExOVoNCkRFU0NSSVBUSU9OOlN5bnRoZXRpYyBub3Rlcw0KRFRFTkQ7VFpJRD1Bc2lhL0FtbWFuOjIwMjUwMTAyVDEwMDAwMA0KRFRTVEFNUDoyMDI2MTAwMVQxMDQyMDJaDQpEVFNUQVJUO1RaSUQ9QXNpYS9BbW1hbjoyMDI1MDEwMlQwOTAwMDANCkxBU1QtTU9ESUZJRUQ6MjAyNjEwMDFUMTA0MTE5Wg0KTE9DQVRJT046U3ludGhldGljIFJvb20gMQ0KU0VRVUVOQ0U6MA0KU1VNTUFSWTpTeW50aGV0aWMgc3RhbmR1cA0KVFJBTlNQOk9QQVFVRQ0KVUlEOmV4dGVybmFsLTENClVSTDtWQUxVRT1VUkk6aHR0cHM6Ly9leGFtcGxlLmNvbS9zdGFuZHVwDQpYLUFQUExFLUNSRUFUT1ItSURFTlRJVFk6Y29tLmFwcGxlLmNhbGVuZGFyDQpYLUFQUExFLUNSRUFUT1ItVEVBTS1JREVOVElUWTowMDAwMDAwMDAwDQpCRUdJTjpWQUxBUk0NCkFDVElPTjpESVNQTEFZDQpERVNDUklQVElPTjpSZW1pbmRlcg0KVFJJR0dFUjotUFQzME0NClVJRDpCRDI4MkVGNS1DNzhBLTRDRUQtQTA5RC05NzU5RDhBNzY1QUMNClgtV1ItQUxBUk1VSUQ6QkQyODJFRjUtQzc4QS00Q0VELUEwOUQtOTc1OUQ4QTc2NUFDDQpFTkQ6VkFMQVJNDQpCRUdJTjpWQUxBUk0NCkFDVElPTjpESVNQTEFZDQpERVNDUklQVElPTjpSZW1pbmRlcg0KVFJJR0dFUjotUFQxSA0KVUlEOjMxMkQ4QTcyLUZENEYtNEJFRC04NjIyLUJGNDc3N0JEQzFEQw0KWC1XUi1BTEFSTVVJRDozMTJEOEE3Mi1GRDRGLTRCRUQtODYyMi1CRjQ3NzdCREMxREMNCkVORDpWQUxBUk0NCkJFR0lOOlZBTEFSTQ0KQUNUSU9OOkRJU1BMQVkNCkRFU0NSSVBUSU9OOlJlbWluZGVyDQpUUklHR0VSOi1QVDEwTQ0KVUlEOjFFQzY2MjA3LTI5MUEtNDhGRS05NzE5LUE0QzdDNzA5MjNCNw0KWC1XUi1BTEFSTVVJRDoxRUM2NjIwNy0yOTFBLTQ4RkUtOTcxOS1BNEM3QzcwOTIzQjcNCkVORDpWQUxBUk0NCkVORDpWRVZFTlQNCkVORDpWQ0FMRU5EQVINCg==',
+    calendarItemId: 'item-1',
+    recurring: false,
+  },
+  holiday: {
+    attendees: [],
+    startMs: 1735862400000,
+    name: 'Synthetic holiday',
+    alarms: [],
+    recurrenceRules: [],
+    status: 0,
+    type: 'occurrence',
+    occurrenceDay: '2025-01-03',
+    calendarItemId: 'item-2',
+    createdMs: 1790851280775.7612,
+    calendarId: 'calendar-1',
+    occurrenceMs: 1735862400000,
+    startDay: '2025-01-03',
+    modifiedMs: 1790851280775.793,
+    detached: false,
+    nativeEventId: 'account-1:external-2',
+    availability: -1,
+    externalId: 'external-2',
+    endDay: '2025-01-03',
+    endMs: 1735948799000,
+    allDay: true,
+  },
+  weekly: {
+    attendees: [],
+    startMs: 1735970400000,
+    name: 'Synthetic weekly',
+    alarms: [],
+    recurrenceRules: [recordedRule],
+    status: 0,
+    type: 'occurrence',
+    timeZone: 'Asia/Amman',
+    occurrenceDay: '2025-01-04',
+    calendarItemId: 'item-3',
+    createdMs: 1790851280902.925,
+    calendarId: 'calendar-1',
+    occurrenceMs: 1735970400000,
+    startDay: '2025-01-04',
+    modifiedMs: 1790851280902.947,
+    detached: false,
+    nativeEventId: 'account-1:external-3',
+    availability: -1,
+    externalId: 'external-3',
+    endDay: '2025-01-04',
+    endMs: 1735972200000,
+    allDay: false,
+  },
+};
+
+const account = (
+  overrides: Partial<AccountDocument> = {},
+): AccountDocument => ({ ...recordedEvents.account, ...overrides });
+
+const calendar = (
+  overrides: Partial<HelperCalendarDocument> = {},
+): HelperCalendarDocument => ({ ...recordedEvents.calendar, ...overrides });
+
+// No recorded event or reminder had a participant, so this one is written
+// from the helper's ParticipantDocument fields.
+const participant = (
+  overrides: Partial<ParticipantDocument> = {},
+): ParticipantDocument => ({
+  name: 'Ann',
+  url: 'mailto:ann@example.com',
+  status: 2,
+  role: 1,
+  participantType: 1,
+  isCurrentUser: false,
+  ...overrides,
+});
+
+const rule = (
+  overrides: Partial<RecurrenceRuleDocument> = {},
+): RecurrenceRuleDocument => ({ ...recordedRule, ...overrides });
+
+const occurrence = (
+  overrides: Partial<OccurrenceDocument> = {},
+): OccurrenceDocument => ({ ...recordedEvents.standup, ...overrides });
+
+const icsItem = (
+  calendarItemId: string,
+  ics: string,
+  recurring = false,
+): IcsDocument => ({
+  ...recordedEvents.standupIcs,
+  calendarItemId,
+  recurring,
+  ics: Buffer.from(ics).toString('base64'),
+});
+
+// The read a Calendar source sends for its window: the private ICS export
+// only when an ICS stream is selected.
+const eventsRead = (
+  { startAt, endAt }: { readonly startAt: string; readonly endAt: string },
+  ics = false,
+): HelperRequest => ({ entity: 'events', startAt, endAt, ics });
+
+const january = {
+  startAt: '2025-01-01T00:00:00.000Z',
+  endAt: '2025-02-01T00:00:00.000Z',
+};
+
+// A Calendar row's event id: calendar, item and, for a recurring event, the
+// occurrence it replaces.
+const eventId = (calendarItemId: string, key: string | null = null) =>
+  JSON.stringify(['calendar-1', calendarItemId, key]);
 
 test(
   'Calendar extracts every scalar stream into SQLite and Markdown',
@@ -60,20 +365,17 @@ test(
   async (t) => {
     const source = new AppleCalendarSource(january);
     // Every stream is read without the private ICS export.
-    fakeEventKit(t, [
-      [
-        eventsRead(january),
-        () => [
-          account(),
-          calendar(),
-          occurrence({
-            attendees: [participant()],
-            // Hand-built: only a weekly rule without list values was recorded.
-            recurrenceRules: [rule({ frequency: 2, daysOfTheMonth: [-1] })],
-          }),
-        ],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january), () => [
+        account(),
+        calendar(),
+        occurrence({
+          attendees: [participant()],
+          // Hand-built: only a weekly rule without list values was recorded.
+          recurrenceRules: [rule({ frequency: 2, daysOfTheMonth: [-1] })],
+        }),
+      ])
+      .install(t);
 
     await using scratch = await mkdtempDisposable(
       join(tmpdir(), 'elt-calendar-'),
@@ -280,7 +582,7 @@ test(
     );
     // Set up for no request: a read throws, so each rejection below must come
     // from validation before the helper is reached.
-    fakeEventKit(t, []);
+    new FakeEventKitHelper().install(t);
     await using scratch = await mkdtempDisposable(
       join(tmpdir(), 'elt-calendar-'),
     );
@@ -362,7 +664,9 @@ test(
   async (t) => {
     const source = new AppleCalendarSource(january);
     let respond: () => Iterable<EventKitDocument> = () => [occurrence()];
-    fakeEventKit(t, [[eventsRead(january), () => respond()]]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january), () => respond())
+      .install(t);
     await using scratch = await mkdtempDisposable(
       join(tmpdir(), 'elt-calendar-'),
     );
@@ -506,7 +810,9 @@ test(
         ),
       });
     let native = [event('e1', 'Standup', ['Ann', 'Bo']), event('e2', 'Review')];
-    fakeEventKit(t, [[eventsRead(january), () => native]]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january), () => native)
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'calendar.sqlite'),
@@ -633,16 +939,13 @@ test(
       calendarItemId: 'spanning',
       attendees: [participant()],
     });
-    fakeEventKit(t, [
-      [
-        eventsRead(window),
-        () => [
-          spanning,
-          { ...spanning, name: 'Second window copy' },
-          occurrence({ calendarItemId: 'late' }),
-        ],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(window), () => [
+        spanning,
+        { ...spanning, name: 'Second window copy' },
+        occurrence({ calendarItemId: 'late' }),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'calendar.sqlite'),
@@ -695,23 +998,20 @@ test('Calendar links alarms, recurrence rules and rule values to their occurrenc
     endAt: '2025-01-02T00:00:00.000Z',
   };
   const source = new AppleCalendarSource(window);
-  fakeEventKit(t, [
-    [
-      eventsRead(window),
-      () => [
-        occurrence({
-          startMs: at('2025-01-01T00:00:00.000Z'),
-          endMs: at('2025-01-01T01:00:00.000Z'),
-          startDay: '2025-01-01',
-          endDay: '2025-01-01',
-          occurrenceMs: at('2025-01-01T00:00:00.000Z'),
-          occurrenceDay: '2025-01-01',
-          // Hand-built: only a weekly rule without list values was recorded.
-          recurrenceRules: [rule({ frequency: 2, daysOfTheMonth: [-1] })],
-        }),
-      ],
-    ],
-  ]);
+  new FakeEventKitHelper()
+    .answer(eventsRead(window), () => [
+      occurrence({
+        startMs: at('2025-01-01T00:00:00.000Z'),
+        endMs: at('2025-01-01T01:00:00.000Z'),
+        startDay: '2025-01-01',
+        endDay: '2025-01-01',
+        occurrenceMs: at('2025-01-01T00:00:00.000Z'),
+        occurrenceDay: '2025-01-01',
+        // Hand-built: only a weekly rule without list values was recorded.
+        recurrenceRules: [rule({ frequency: 2, daysOfTheMonth: [-1] })],
+      }),
+    ])
+    .install(t);
 
   const rows = await readRows(source, [
     source.events,
@@ -744,9 +1044,9 @@ test('Calendar numbers attendees and alarms the same whatever order EventKit ret
     participant({ name: address, url: `mailto:${address}`, status });
   let attendees = [attendee('a@example.com', 2), attendee('b@example.com', 1)];
   let alarms = recordedEvents.standup.alarms;
-  fakeEventKit(t, [
-    [eventsRead(january), () => [occurrence({ attendees, alarms })]],
-  ]);
+  new FakeEventKitHelper()
+    .answer(eventsRead(january), () => [occurrence({ attendees, alarms })])
+    .install(t);
   const read = async () => {
     const rows = await readRows(source, [source.attendees, source.alarms]);
     return { attendees: rows(source.attendees), alarms: rows(source.alarms) };
@@ -775,7 +1075,7 @@ test('Calendar occurrence keys survive rescheduling and preserve all-day dates',
   const source = new AppleCalendarSource(january);
   const original = recordedEvents.weekly;
   let native: EventKitDocument[] = [original];
-  fakeEventKit(t, [[eventsRead(january), () => native]]);
+  new FakeEventKitHelper().answer(eventsRead(january), () => native).install(t);
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'calendar.sqlite'),
@@ -894,21 +1194,18 @@ test(
 
     const source = new AppleCalendarSource(january);
     // The same export twice: once with CRLF line endings, once with bare LF.
-    fakeEventKit(t, [
-      [
-        eventsRead(january, true),
-        () => [
-          { ...icsItem('windows', ''), ics: ics.toString('base64') },
-          {
-            ...icsItem('unix', ''),
-            ics: Buffer.from(
-              ics.toString('latin1').replaceAll('\r\n', '\n'),
-              'latin1',
-            ).toString('base64'),
-          },
-        ],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        { ...icsItem('windows', ''), ics: ics.toString('base64') },
+        {
+          ...icsItem('unix', ''),
+          ics: Buffer.from(
+            ics.toString('latin1').replaceAll('\r\n', '\n'),
+            'latin1',
+          ).toString('base64'),
+        },
+      ])
+      .install(t);
 
     const rows = await readRows(source, [
       source.icsComponents,
@@ -989,12 +1286,11 @@ test(
     const source = new AppleCalendarSource(january);
     // Injects malformed exports on purpose.
     let ics = Buffer.alloc(0);
-    fakeEventKit(t, [
-      [
-        eventsRead(january, true),
-        () => [{ ...icsItem('malformed', ''), ics: ics.toString('base64') }],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        { ...icsItem('malformed', ''), ics: ics.toString('base64') },
+      ])
+      .install(t);
     const parse = (content: string | Buffer) => {
       ics = Buffer.from(content);
       return readRows(source, [source.icsComponents]);
@@ -1099,12 +1395,11 @@ test(
       ].join('\r\n');
     };
     let reversed = false;
-    fakeEventKit(t, [
-      [
-        eventsRead(january, true),
-        () => [icsItem('series', exported(reversed), true)],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        icsItem('series', exported(reversed), true),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'ics.sqlite'),
@@ -1162,15 +1457,12 @@ test(
   },
   async (t) => {
     const source = new AppleCalendarSource(january);
-    fakeEventKit(t, [
-      [
-        eventsRead(january, true),
-        () => [
-          icsItem('meeting', meetingICS),
-          icsItem('series', seriesICS, true),
-        ],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        icsItem('meeting', meetingICS),
+        icsItem('series', seriesICS, true),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'ics.sqlite'),
@@ -1307,7 +1599,9 @@ test(
       icsItem('empty', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n'),
     ];
     // Only a read with the private ICS export is answered.
-    fakeEventKit(t, [[eventsRead(january, true), () => respond()]]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => respond())
+      .install(t);
     await assert.rejects(
       readRows(source, [source.icsComponents]),
       /returned no VEVENT for saved item empty/,
@@ -1329,7 +1623,8 @@ test(
     ])
       await assert.rejects(readRows(source, [stream]), (error) => {
         assert.ok(error instanceof CalendarIcsUnavailableError);
-        assert.equal(error.cause, cause);
+        assert.ok(error.cause instanceof IcsExportUnavailableError);
+        assert.equal(error.cause.cause, cause);
         return true;
       });
   },
@@ -1343,9 +1638,9 @@ test(
   async (t) => {
     const source = new AppleCalendarSource(january);
     let ics = meetingICS;
-    fakeEventKit(t, [
-      [eventsRead(january, true), () => [icsItem('meeting', ics)]],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [icsItem('meeting', ics)])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-ics-'));
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'ics.sqlite'),
@@ -1425,9 +1720,11 @@ test(
         return true;
       },
     });
-    fakeEventKit(t, [
-      [eventsRead(january, true), () => [icsItem('files', attachmentsICS)]],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        icsItem('files', attachmentsICS),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
@@ -1497,9 +1794,11 @@ test(
   },
   async (t) => {
     const source = new AppleCalendarSource(january);
-    fakeEventKit(t, [
-      [eventsRead(january, true), () => [icsItem('files', attachmentsICS)]],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        icsItem('files', attachmentsICS),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
@@ -1551,9 +1850,9 @@ test(
         return true;
       },
     });
-    fakeEventKit(t, [
-      [eventsRead(january, true), () => [icsItem('files', ics)]],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [icsItem('files', ics)])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
@@ -1757,12 +2056,11 @@ test(
       'https://example.com/file.pdf': null,
       '?view=att&th=m1&attid=0.9': null,
     };
-    fakeEventKit(t, [
-      [
-        eventsRead(january, true),
-        () => [icsItem('google', googleAttachmentsICS(Object.keys(expected)))],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        icsItem('google', googleAttachmentsICS(Object.keys(expected))),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-att-'));
 
     const saved = await googleAttachmentFiles(requester, scratch.path);
@@ -1777,17 +2075,14 @@ test(
     concurrency: false,
   },
   async (t) => {
-    fakeEventKit(t, [
-      [
-        eventsRead(january, true),
-        () => [
-          icsItem(
-            'google',
-            googleAttachmentsICS(['https://drive.google.com/file/d/abc/view']),
-          ),
-        ],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        icsItem(
+          'google',
+          googleAttachmentsICS(['https://drive.google.com/file/d/abc/view']),
+        ),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-err-'));
     for (const [index, [error, message]] of (
       [
@@ -1829,17 +2124,14 @@ test(
     concurrency: false,
   },
   async (t) => {
-    fakeEventKit(t, [
-      [
-        eventsRead(january, true),
-        () => [
-          icsItem(
-            'google',
-            googleAttachmentsICS(['https://drive.google.com/file/d/abc/view']),
-          ),
-        ],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        icsItem(
+          'google',
+          googleAttachmentsICS(['https://drive.google.com/file/d/abc/view']),
+        ),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-rate-'));
     for (const reason of ['userRateLimitExceeded', 'rateLimitExceeded']) {
       const { requester } = googleRecorder(() => {
@@ -1880,12 +2172,11 @@ test(
     const shortcut = 'https://drive.google.com/file/d/shortcut/view';
     const shared =
       'https://drive.google.com/file/d/shared/view?resourcekey=key-1';
-    fakeEventKit(t, [
-      [
-        eventsRead(january, true),
-        () => [icsItem('google', googleAttachmentsICS([shortcut, shared]))],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        icsItem('google', googleAttachmentsICS([shortcut, shared])),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'gcal-sc-'));
 
     const saved = await googleAttachmentFiles(requester, scratch.path);
@@ -1924,18 +2215,15 @@ test(
         recurrenceRules: weekly,
       });
     // The warehouse loads every stream, ICS included, from one read.
-    fakeEventKit(t, [
-      [
-        eventsRead(january, true),
-        () => [
-          account(),
-          calendar(),
-          standup('01'),
-          icsItem('series', seriesICS, true),
-          standup('08'),
-        ],
-      ],
-    ]);
+    new FakeEventKitHelper()
+      .answer(eventsRead(january, true), () => [
+        account(),
+        calendar(),
+        standup('01'),
+        icsItem('series', seriesICS, true),
+        standup('08'),
+      ])
+      .install(t);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'cal-marts-'));
     const imported = await appleImport(
       new AppleCalendarSource(january),

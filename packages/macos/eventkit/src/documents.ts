@@ -1,3 +1,15 @@
+// What the eventkit helper reads as its `read` argument.
+export type HelperRequest = {
+  readonly entity: 'events' | 'reminders';
+  // Calendar's UTC interval, as canonical ISO timestamps.
+  readonly startAt?: string;
+  readonly endAt?: string;
+  // Export each event item's iCalendar data through private EventKit API.
+  readonly ics?: boolean;
+  readonly accountIds?: readonly string[];
+  readonly collectionIds?: readonly string[];
+};
+
 // What the eventkit helper writes, one document per line. Dates are epoch
 // milliseconds; `…Day` fields are local yyyy-MM-dd dates. A field the helper
 // leaves out is null.
@@ -24,7 +36,11 @@ export type CalendarDocument = {
   readonly allowedEntityTypes: number;
   // Calendar.app's description of an event calendar.
   readonly notes?: string;
-  // Inside the request's account and collection scope.
+};
+
+// The helper writes every calendar of the entity and marks the ones inside the
+// read's account and calendar scope; a store returns only those.
+export type HelperCalendarDocument = CalendarDocument & {
   readonly selected: boolean;
 };
 
@@ -156,9 +172,10 @@ export type ReminderDocument = CalendarItemDocument & {
   readonly due?: DateComponentsDocument;
 };
 
+// One line the helper writes.
 export type EventKitDocument =
   | AccountDocument
-  | CalendarDocument
+  | HelperCalendarDocument
   | OccurrenceDocument
   | IcsDocument
   | ReminderDocument;

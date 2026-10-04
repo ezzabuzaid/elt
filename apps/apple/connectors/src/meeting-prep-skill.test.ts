@@ -1,24 +1,25 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { once } from 'node:events';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { type TestContext, test } from 'node:test';
+import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
 import { Pipeline } from '@workspace/elt';
 import { SQLiteSyncHistory, installSQLiteCatalog } from '@workspace/elt-sqlite';
 import type {
   AccountDocument,
-  CalendarDocument,
-  EventKitDocument,
   OccurrenceDocument,
   ParticipantDocument,
-} from '@workspace/source-apple-eventkit/eventkit-documents';
-import nativeProcess from '@workspace/source-apple-eventkit/native-process';
+} from '@workspace/macos-eventkit';
+import {
+  FakeEventKitHelper,
+  type HelperCalendarDocument,
+} from '@workspace/macos-eventkit/test';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import osa from '@workspace/source-apple-macos/osa';
 
 import type { AppleApp } from './apps/apple-app.ts';
@@ -122,14 +123,19 @@ function read(
   return JSON.parse(result.stdout || '[]');
 }
 
-// An app's import as the plugin builds one: its connection into a directory,
-// sync history and catalog installed, then one pass. The plugin keeps it
-// current with watch(); run() is that first pass, and it fails on any copy
-// error, so a broken import cannot read as an empty one.
-async function importApp(app: AppleApp, directory: string): Promise<string> {
+// An app's import as the plugin builds one: its connection into a directory
+// with the app's default scope, sync history and catalog installed, then one
+// pass. The plugin keeps it current with watch(); run() is that first pass,
+// and it fails on any copy error, so a broken import cannot read as an empty
+// one.
+async function importApp(
+  app: AppleApp,
+  directory: string,
+  scope: ImportScope = app.defaultScope(),
+): Promise<string> {
   const { connection, destination } = await app.connection(directory, {
     app: app.name,
-    scope: {},
+    scope,
     includeAttachments: false,
   });
   const history = new SQLiteSyncHistory();
@@ -137,34 +143,6 @@ async function importApp(app: AppleApp, directory: string): Promise<string> {
   installSQLiteCatalog(destination);
   await new Pipeline({ connections: [connection], history }).run();
   return join(directory, 'data.sqlite');
-}
-
-// Stands in for the eventkit helper: a watch confirms its subscription and
-// then reports no change, so the read settles at once; the events read a
-// Calendar import sends for its default window gets documents; any other
-// request fails the test.
-function fakeEventKit(t: TestContext, documents: readonly EventKitDocument[]) {
-  t.mock.method(
-    nativeProcess,
-    'lines',
-    async function* (
-      _file: string,
-      args: readonly string[],
-      signal?: AbortSignal,
-    ) {
-      if (args[0] === 'watch') {
-        assert.ok(signal);
-        yield 'changed';
-        if (!signal.aborted) await once(signal, 'abort');
-        return;
-      }
-      const request = JSON.parse(String(args[1]));
-      assert.equal(args[0], 'read');
-      assert.equal(request.entity, 'events');
-      assert.equal(request.startAt, '2000-01-01T00:00:00.000Z');
-      for (const document of documents) yield JSON.stringify(document);
-    },
-  );
 }
 
 const account: AccountDocument = {
@@ -176,8 +154,8 @@ const account: AccountDocument = {
 };
 
 const calendar = (
-  overrides: Partial<CalendarDocument> = {},
-): CalendarDocument => ({
+  overrides: Partial<HelperCalendarDocument> = {},
+): HelperCalendarDocument => ({
   color: [0.8, 0.2, 0.9, 1],
   name: 'Work',
   type: 'calendar',
@@ -256,88 +234,90 @@ test('meeting prep finds the next meetings in own calendars, with who is coming,
     weeksOfTheYear: [],
     setPositions: [],
   };
-  fakeEventKit(t, [
-    account,
-    calendar(),
-    calendar({
-      id: 'calendar-2',
-      name: 'Prayer times',
-      subscribed: true,
-      calendarType: 1,
-      writable: false,
-    }),
-    occurrence(now - 7 * 24 * 60 * minute, {
-      recurrenceRules: [weekly],
-      body: 'Last week: Ann owes the budget numbers.',
-    }),
-    occurrence(now + 10 * minute, {
-      recurrenceRules: [weekly],
-      attendees: [
-        participant(),
-        participant({
-          name: 'Me',
-          url: 'mailto:me@example.com',
-          isCurrentUser: true,
-        }),
-        participant({
-          name: 'Room 4',
-          url: 'mailto:room4@example.com',
-          participantType: 2,
-        }),
-      ],
-    }),
-    occurrence(now + 5 * minute, {
-      calendarId: 'calendar-2',
-      calendarItemId: 'prayer',
-      externalId: 'prayer',
-      nativeEventId: 'account-1:prayer',
-      name: 'Asr',
-    }),
-    occurrence(now + 12 * minute, {
-      calendarItemId: 'canceled',
-      externalId: 'canceled',
-      nativeEventId: 'account-1:canceled',
-      name: 'Canceled review',
-      status: 3,
-    }),
-    occurrence(now + 15 * minute, {
-      calendarId: 'calendar-2',
-      calendarItemId: 'invite',
-      externalId: 'invite',
-      nativeEventId: 'account-1:invite',
-      name: 'Invite on a subscribed calendar',
-      attendees: [participant({ name: 'Bo', url: 'mailto:bo@example.com' })],
-    }),
-    occurrence(now + 8 * minute, {
-      calendarItemId: 'offsite',
-      externalId: 'offsite',
-      nativeEventId: 'account-1:offsite',
-      name: 'All-day offsite',
-      allDay: true,
-    }),
-    occurrence(now + 18 * minute, {
-      calendarItemId: 'focus',
-      externalId: 'focus',
-      nativeEventId: 'account-1:focus',
-      name: 'Budget prep',
-    }),
-    occurrence(now + 26 * 60 * minute, {
-      calendarItemId: 'tomorrow',
-      externalId: 'tomorrow',
-      nativeEventId: 'account-1:tomorrow',
-      name: 'Tomorrow sync',
-    }),
-    occurrence(now + 45 * minute, {
-      calendarItemId: 'later',
-      externalId: 'later',
-      nativeEventId: 'account-1:later',
-      name: 'Later today',
-    }),
-  ]);
-  const database = await importApp(
-    new CalendarApp({ grantee: 'Codex' }),
-    join(scratch.path, 'calendar'),
-  );
+  const app = new CalendarApp({ grantee: 'Codex' });
+  const scope = app.defaultScope();
+  const { startAt, endAt } = scope;
+  new FakeEventKitHelper()
+    .answer({ entity: 'events', startAt, endAt, ics: true }, () => [
+      account,
+      calendar(),
+      calendar({
+        id: 'calendar-2',
+        name: 'Prayer times',
+        subscribed: true,
+        calendarType: 1,
+        writable: false,
+      }),
+      occurrence(now - 7 * 24 * 60 * minute, {
+        recurrenceRules: [weekly],
+        body: 'Last week: Ann owes the budget numbers.',
+      }),
+      occurrence(now + 10 * minute, {
+        recurrenceRules: [weekly],
+        attendees: [
+          participant(),
+          participant({
+            name: 'Me',
+            url: 'mailto:me@example.com',
+            isCurrentUser: true,
+          }),
+          participant({
+            name: 'Room 4',
+            url: 'mailto:room4@example.com',
+            participantType: 2,
+          }),
+        ],
+      }),
+      occurrence(now + 5 * minute, {
+        calendarId: 'calendar-2',
+        calendarItemId: 'prayer',
+        externalId: 'prayer',
+        nativeEventId: 'account-1:prayer',
+        name: 'Asr',
+      }),
+      occurrence(now + 12 * minute, {
+        calendarItemId: 'canceled',
+        externalId: 'canceled',
+        nativeEventId: 'account-1:canceled',
+        name: 'Canceled review',
+        status: 3,
+      }),
+      occurrence(now + 15 * minute, {
+        calendarId: 'calendar-2',
+        calendarItemId: 'invite',
+        externalId: 'invite',
+        nativeEventId: 'account-1:invite',
+        name: 'Invite on a subscribed calendar',
+        attendees: [participant({ name: 'Bo', url: 'mailto:bo@example.com' })],
+      }),
+      occurrence(now + 8 * minute, {
+        calendarItemId: 'offsite',
+        externalId: 'offsite',
+        nativeEventId: 'account-1:offsite',
+        name: 'All-day offsite',
+        allDay: true,
+      }),
+      occurrence(now + 18 * minute, {
+        calendarItemId: 'focus',
+        externalId: 'focus',
+        nativeEventId: 'account-1:focus',
+        name: 'Budget prep',
+      }),
+      occurrence(now + 26 * 60 * minute, {
+        calendarItemId: 'tomorrow',
+        externalId: 'tomorrow',
+        nativeEventId: 'account-1:tomorrow',
+        name: 'Tomorrow sync',
+      }),
+      occurrence(now + 45 * minute, {
+        calendarItemId: 'later',
+        externalId: 'later',
+        nativeEventId: 'account-1:later',
+        name: 'Later today',
+      }),
+    ])
+    .install(t);
+  const database = await importApp(app, join(scratch.path, 'calendar'), scope);
 
   const meetings = read(database, query(reads.meetings), { '@minutes': 20 });
 

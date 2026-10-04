@@ -11,12 +11,11 @@ import {
   PostgresSyncHistory,
   installPostgresCatalog,
 } from '@workspace/elt-postgresql';
-import { scratchWarehouse } from '@workspace/elt-postgresql/testing';
 
 import { searchConsoleCopies } from './search-console-copies.ts';
 import { installSearchConsoleMarts } from './search-console-marts.ts';
 import { SearchConsoleSource } from './search-console-source.ts';
-import { RAW } from './test-warehouse.ts';
+import { RAW, scratchWarehouse } from './test-warehouse.ts';
 
 const testServer =
   process.env.TEST_DATABASE_URL ??

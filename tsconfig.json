@@ -48,9 +48,6 @@
       "path": "./packages/test"
     },
     {
-      "path": "./packages/sources/apple/eventkit"
-    },
-    {
       "path": "./packages/sources/apple/macos"
     },
     {
@@ -79,6 +76,9 @@
     },
     {
       "path": "./packages/sources/google/search-console"
+    },
+    {
+      "path": "./packages/macos/eventkit"
     }
   ]
 }

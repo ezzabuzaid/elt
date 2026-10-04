@@ -35,14 +35,9 @@
     "./protobuf": {
       "types": "./dist/protobuf.d.ts",
       "default": "./dist/protobuf.js"
-    },
-    "./testing": {
-      "types": "./dist/testing.d.ts",
-      "default": "./dist/testing.js"
     }
   },
   "dependencies": {
-    "@workspace/elt": "0.0.1",
-    "@workspace/elt-sqlite": "0.0.1"
+    "@workspace/elt": "0.0.1"
   }
 }

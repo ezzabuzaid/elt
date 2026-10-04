@@ -11,7 +11,7 @@
       "path": "../macos"
     },
     {
-      "path": "../eventkit"
+      "path": "../../../macos/eventkit"
     },
     {
       "path": "../../../elt"
