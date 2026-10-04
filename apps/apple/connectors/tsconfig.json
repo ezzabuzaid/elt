@@ -18,6 +18,9 @@
       "path": "../../../packages/sources/apple/eventkit"
     },
     {
+      "path": "../../../packages/sources/apple/contacts"
+    },
+    {
       "path": "../../../packages/sources/apple/books"
     },
     {

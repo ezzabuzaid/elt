@@ -25,7 +25,7 @@ import {
   AddressBookVersion,
   type StoredData,
   addressBookDirectory,
-} from '../../platform/macos/address-book.ts';
+} from './address-book.ts';
 import {
   type StreamName,
   catalog,

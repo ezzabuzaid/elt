@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-contacts",
+  "sourceRoot": "packages/sources/apple/contacts/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/contacts/dist/*.test.js\""
+    }
+  }
+}

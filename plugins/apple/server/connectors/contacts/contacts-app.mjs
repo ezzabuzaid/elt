@@ -32,7 +32,7 @@ import {
   __using
 } from "../../chunks/chunk-ZGXE7NZW.mjs";
 
-// apps/apple/connectors/dist/sources/apple-contacts/apple-contacts-source.js
+// packages/sources/apple/contacts/dist/apple-contacts-source.js
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdtempDisposable, rm, stat, writeFile } from "node:fs/promises";
@@ -40,7 +40,7 @@ import { tmpdir } from "node:os";
 import { join as join2 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
-// apps/apple/connectors/dist/platform/macos/address-book.js
+// packages/sources/apple/contacts/dist/address-book.js
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -191,7 +191,7 @@ var AddressBookVersion = class {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-contacts/contacts-streams.js
+// packages/sources/apple/contacts/dist/contacts-streams.js
 var { text, id, nullableText, nullableTimestamp } = eventKitFields;
 var nullableInteger = { type: ["integer", "null"] };
 var nullableNumber = { type: ["number", "null"] };
@@ -636,7 +636,7 @@ function recordFrom(name2, row) {
   return record2;
 }
 
-// apps/apple/connectors/dist/sources/apple-contacts/apple-contacts-source.js
+// packages/sources/apple/contacts/dist/apple-contacts-source.js
 var isStreamName = (name2) => Object.hasOwn(definitions, name2);
 var imageKey = (contactId, kind) => JSON.stringify([contactId, kind]);
 async function sha256(data) {

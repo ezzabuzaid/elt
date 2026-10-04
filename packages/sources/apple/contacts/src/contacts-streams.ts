@@ -6,7 +6,7 @@ import {
   plistJSON,
 } from '@workspace/source-apple-macos/plist';
 
-import type { AddressBookSchema } from '../../platform/macos/address-book.ts';
+import type { AddressBookSchema } from './address-book.ts';
 
 const { text, id, nullableText, nullableTimestamp } = eventKitFields;
 const nullableInteger = { type: ['integer', 'null'] } as const;

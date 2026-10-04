@@ -1,6 +1,6 @@
+import { AppleContactsSource } from '@workspace/source-apple-contacts/apple-contacts-source';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
-import { AppleContactsSource } from '../../sources/apple-contacts/apple-contacts-source.ts';
 import { AppleApp } from '../apple-app.ts';
 import { type Choice, byId, name } from '../choice.ts';
 

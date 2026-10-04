@@ -24,7 +24,7 @@ import {
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 
-import { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
+import { AppleContactsSource } from './apple-contacts-source.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
