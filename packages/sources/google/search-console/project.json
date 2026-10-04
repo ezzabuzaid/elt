@@ -1,0 +1,13 @@
+{
+  "name": "source-google-search-console",
+  "sourceRoot": "packages/sources/google/search-console/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/google/search-console/dist/*.test.js\""
+    }
+  }
+}

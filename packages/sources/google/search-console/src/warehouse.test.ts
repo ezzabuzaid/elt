@@ -13,14 +13,18 @@ import {
 } from '@workspace/elt-postgresql';
 import { scratchWarehouse } from '@workspace/elt-postgresql/testing';
 
-import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
-import { installSearchConsoleMarts } from './sources/search-console/search-console-marts.ts';
-import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
-import { RAW, testServer } from './test-warehouse.ts';
+import { searchConsoleCopies } from './search-console-copies.ts';
+import { installSearchConsoleMarts } from './search-console-marts.ts';
+import { SearchConsoleSource } from './search-console-source.ts';
+import { RAW } from './test-warehouse.ts';
+
+const testServer =
+  process.env.TEST_DATABASE_URL ??
+  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
 
 const NOW = () => new Date('2026-09-22T00:00:00.000Z');
 const contract = new URL(
-  '../../../infra/init/marts/contract.sql',
+  '../../../../../infra/init/marts/contract.sql',
   import.meta.url,
 );
 

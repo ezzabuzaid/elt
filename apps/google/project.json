@@ -7,10 +7,6 @@
     "start": {
       "dependsOn": ["build"],
       "command": "node apps/google/dist/main.js"
-    },
-    "test": {
-      "dependsOn": ["build"],
-      "command": "node --test apps/google/dist/*.test.js"
     }
   }
 }

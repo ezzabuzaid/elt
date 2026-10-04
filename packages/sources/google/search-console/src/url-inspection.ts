@@ -7,7 +7,7 @@ import {
   type SearchConsoleApi,
   SearchConsoleQuotaError,
   URL_INSPECTION_QUOTA,
-} from '../../platform/google/search-console-api.ts';
+} from './search-console-api.ts';
 
 export type UrlInspection = {
   readonly inspectionUrl: string;

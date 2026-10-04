@@ -14,10 +14,9 @@ import {
   GOOGLE_SEARCH_CONSOLE_SCOPE,
   googleSession,
 } from '@workspace/google-auth';
-
-import { searchConsoleCopies } from './sources/search-console/search-console-copies.ts';
-import { installSearchConsoleMarts } from './sources/search-console/search-console-marts.ts';
-import { SearchConsoleSource } from './sources/search-console/search-console-source.ts';
+import { searchConsoleCopies } from '@workspace/source-google-search-console/search-console-copies';
+import { installSearchConsoleMarts } from '@workspace/source-google-search-console/search-console-marts';
+import { SearchConsoleSource } from '@workspace/source-google-search-console/search-console-source';
 
 const siteUrls = ['sc-domain:ezz.sh'];
 const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';

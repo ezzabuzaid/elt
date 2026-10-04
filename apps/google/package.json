@@ -5,11 +5,8 @@
   "dependencies": {
     "@workspace/elt": "0.0.1",
     "@workspace/elt-postgresql": "0.0.1",
-    "fast-xml-parser": "^5.11.1",
     "@workspace/google-auth": "0.0.1",
+    "@workspace/source-google-search-console": "0.0.1",
     "postgres": "^3.4.9"
-  },
-  "devDependencies": {
-    "google-auth-library": "^11.1.0"
   }
 }

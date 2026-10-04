@@ -8,6 +8,9 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
+      "path": "../../packages/sources/google/search-console"
+    },
+    {
       "path": "../../packages/google-auth"
     },
     {

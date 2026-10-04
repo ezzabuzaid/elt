@@ -76,6 +76,9 @@
     },
     {
       "path": "./packages/sources/apple/mail"
+    },
+    {
+      "path": "./packages/sources/google/search-console"
     }
   ]
 }

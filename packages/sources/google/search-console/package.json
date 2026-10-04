@@ -1,0 +1,27 @@
+{
+  "name": "@workspace/source-google-search-console",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./search-console-copies": {
+      "types": "./dist/search-console-copies.d.ts",
+      "default": "./dist/search-console-copies.js"
+    },
+    "./search-console-marts": {
+      "types": "./dist/search-console-marts.d.ts",
+      "default": "./dist/search-console-marts.js"
+    },
+    "./search-console-source": {
+      "types": "./dist/search-console-source.d.ts",
+      "default": "./dist/search-console-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/elt-postgresql": "0.0.1",
+    "@workspace/google-auth": "0.0.1",
+    "fast-xml-parser": "^5.11.1",
+    "postgres": "^3.4.9"
+  }
+}

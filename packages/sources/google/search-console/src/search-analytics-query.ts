@@ -4,7 +4,7 @@ import type {
   CallOptions,
   SearchAnalyticsRequest,
   SearchConsoleApi,
-} from '../../platform/google/search-console-api.ts';
+} from './search-console-api.ts';
 
 export const SEARCH_ANALYTICS_ROW_LIMIT = 25_000;
 

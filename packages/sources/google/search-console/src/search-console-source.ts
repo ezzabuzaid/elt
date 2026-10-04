@@ -15,10 +15,6 @@ import {
 import { messageOf } from '@workspace/google-auth';
 
 import {
-  type RetryPolicy,
-  SearchConsoleApi,
-} from '../../platform/google/search-console-api.ts';
-import {
   nextPacificMidnight,
   pageUrl,
   underProperty,
@@ -37,6 +33,7 @@ import {
   subMonths,
   today,
 } from './search-analytics-query.ts';
+import { type RetryPolicy, SearchConsoleApi } from './search-console-api.ts';
 import {
   type SearchAnalyticsGrain,
   searchAnalyticsFields,
