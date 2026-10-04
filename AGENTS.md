@@ -50,7 +50,7 @@ An agnostic package is designed as if it were published to npm: anyone could cop
 
 ## Fake only what cannot run for real
 
-Test against the real dependency: a real `Pipeline`, real SQLite or Postgres, a synthetic app database on disk. Fake a boundary only when the real one cannot produce the case, and say why beside the fake: `FakeEventKitHelper` stands in for the EventKit helper because EventKit cannot create attendees, a test cannot deny access or remove the ICS export, and a Mac's calendars can all sync to servers. A package that owns such a boundary exports its fake as a class under a `./test` subpath. Every other test helper lives in the test file that uses it; packages export no shared testing modules.
+Test against the real dependency: a real `Pipeline`, real SQLite or Postgres, a synthetic app database on disk. A test that needs data in a live store writes it there and deletes it, as the EventKit tests do with a temporary calendar. Fake a boundary only when the real one cannot produce the case, say why beside the fake, and make the fake a real stand-in outside the code under test, never a mock of a module: `StubEventKitHelper` is an executable the EventKit stores run instead of the compiled helper, because EventKit cannot create attendees and a test cannot deny access or remove the ICS export. A package that owns such a boundary exports its fake as a class under a `./test` subpath. Every other test helper lives in the test file that uses it; packages export no shared testing modules.
 
 ## Read every changed file before reporting done
 
