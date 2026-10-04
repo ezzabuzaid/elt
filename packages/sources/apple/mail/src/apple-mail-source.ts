@@ -32,7 +32,7 @@ import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-app
 import osa from '@workspace/source-apple-macos/osa';
 import type { PlistValue } from '@workspace/source-apple-macos/plist';
 
-import { readMailMime } from '../../platform/macos/mail-mime.ts';
+import { readMailMime } from './mail-mime.ts';
 import {
   type MailFile,
   MailSchemaError,
@@ -42,7 +42,7 @@ import {
   mailVersionDirectory,
   plistJSON,
   plistObject,
-} from '../../platform/macos/mail-store.ts';
+} from './mail-store.ts';
 import { mailStream, mailTables, tableStreams } from './mail-tables.ts';
 
 const text = { type: 'string' } as const;

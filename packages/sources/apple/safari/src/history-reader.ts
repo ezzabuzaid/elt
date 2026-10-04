@@ -5,7 +5,7 @@ import {
 } from '@workspace/source-apple-macos/import-scope';
 import { parseBinaryPlist } from '@workspace/source-apple-macos/plist';
 
-import type { SafariDatabase } from '../../platform/macos/safari-store.ts';
+import type { SafariDatabase } from './safari-store.ts';
 import { type Row, appleTime } from './safari-values.ts';
 
 // The History.db columns this connector reads, checked against Safari 27 on

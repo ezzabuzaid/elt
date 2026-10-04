@@ -1,10 +1,10 @@
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-
-import { mailDirectory } from '../../platform/macos/mail-store.ts';
 import {
   AppleMailSource,
   restrictedMailStreams,
-} from '../../sources/apple-mail/apple-mail-source.ts';
+} from '@workspace/source-apple-mail/apple-mail-source';
+import { mailDirectory } from '@workspace/source-apple-mail/mail-store';
+
 import { AppleApp } from '../apple-app.ts';
 import { type Choice, type Row, accounts, byId } from '../choice.ts';
 

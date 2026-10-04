@@ -14,17 +14,17 @@ import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import {
-  SafariDatabaseVersion,
-  safariContainer,
-  safariDirectory,
-} from '../../platform/macos/safari-store.ts';
-import {
   type SafariLocation,
   SafariScan,
   type SafariStore,
   databaseStores,
   storeFiles,
 } from './safari-scan.ts';
+import {
+  SafariDatabaseVersion,
+  safariContainer,
+  safariDirectory,
+} from './safari-store.ts';
 import type { SafariReader } from './safari-stream.ts';
 import { BookmarksStream } from './streams/bookmarks-stream.ts';
 import { ClosedTabsStream } from './streams/closed-tabs-stream.ts';

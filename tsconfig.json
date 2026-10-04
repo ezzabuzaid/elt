@@ -70,6 +70,12 @@
     },
     {
       "path": "./packages/sources/apple/calendar"
+    },
+    {
+      "path": "./packages/sources/apple/safari"
+    },
+    {
+      "path": "./packages/sources/apple/mail"
     }
   ]
 }

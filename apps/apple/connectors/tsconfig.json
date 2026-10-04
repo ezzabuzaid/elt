@@ -9,6 +9,9 @@
   "include": ["src/**/*.ts", "src/**/*.mts", "src/apps/*/connector.json"],
   "references": [
     {
+      "path": "../../../packages/sources/apple/safari"
+    },
+    {
       "path": "../../../packages/sources/apple/reminders"
     },
     {
@@ -16,6 +19,9 @@
     },
     {
       "path": "../../../packages/sources/apple/messages"
+    },
+    {
+      "path": "../../../packages/sources/apple/mail"
     },
     {
       "path": "../../../packages/sources/apple/macos"
@@ -43,9 +49,6 @@
     },
     {
       "path": "../../../packages/elt"
-    },
-    {
-      "path": "../../../packages/destinations/markdown"
     }
   ]
 }

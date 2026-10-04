@@ -1,6 +1,6 @@
 import { inflateSync } from 'node:zlib';
 
-import type { SafariDatabase } from '../../platform/macos/safari-store.ts';
+import type { SafariDatabase } from './safari-store.ts';
 import type { Row } from './safari-values.ts';
 
 // The CloudTabs.db columns this connector reads, checked against Safari 27 on

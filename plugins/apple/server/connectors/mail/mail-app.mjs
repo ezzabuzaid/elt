@@ -25613,7 +25613,37 @@ var require_mailsplit = __commonJS({
   }
 });
 
-// apps/apple/connectors/dist/platform/macos/mail-store.js
+// packages/sources/apple/mail/dist/apple-mail-source.js
+import { createHash as createHash3 } from "node:crypto";
+import { watch } from "node:fs";
+import { copyFile as copyFile2, rm as rm2 } from "node:fs/promises";
+import { extname as extname2, join as join3, relative as relative2 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { setInterval } from "node:timers/promises";
+
+// packages/sources/apple/macos/dist/osa.js
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execute = promisify(execFile);
+var OSA = class {
+  async execute(script) {
+    const { stdout } = await execute("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 12e4 });
+    return stdout;
+  }
+};
+var osa_default = new OSA();
+
+// packages/sources/apple/mail/dist/mail-mime.js
+var import_mailsplit = __toESM(require_mailsplit(), 1);
+var import_libmime = __toESM(require_libmime(), 1);
+import { createHash as createHash2 } from "node:crypto";
+import { once } from "node:events";
+import { createReadStream as createReadStream2, createWriteStream } from "node:fs";
+import { copyFile, open, rm } from "node:fs/promises";
+import { basename as basename2, extname, join as join2 } from "node:path";
+import { pipeline, finished as streamFinished } from "node:stream/promises";
+
+// packages/sources/apple/mail/dist/mail-store.js
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdtempDisposable, readFile, readdir, stat } from "node:fs/promises";
@@ -25768,35 +25798,7 @@ var MailStore = class _MailStore {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-mail/apple-mail-source.js
-import { createHash as createHash3 } from "node:crypto";
-import { watch } from "node:fs";
-import { copyFile as copyFile2, rm as rm2 } from "node:fs/promises";
-import { extname as extname2, join as join3, relative as relative2 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
-import { setInterval } from "node:timers/promises";
-
-// packages/sources/apple/macos/dist/osa.js
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-var execute = promisify(execFile);
-var OSA = class {
-  async execute(script) {
-    const { stdout } = await execute("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 12e4 });
-    return stdout;
-  }
-};
-var osa_default = new OSA();
-
-// apps/apple/connectors/dist/platform/macos/mail-mime.js
-var import_mailsplit = __toESM(require_mailsplit(), 1);
-var import_libmime = __toESM(require_libmime(), 1);
-import { createHash as createHash2 } from "node:crypto";
-import { once } from "node:events";
-import { createReadStream as createReadStream2, createWriteStream } from "node:fs";
-import { copyFile, open, rm } from "node:fs/promises";
-import { basename as basename2, extname, join as join2 } from "node:path";
-import { pipeline, finished as streamFinished } from "node:stream/promises";
+// packages/sources/apple/mail/dist/mail-mime.js
 var failure = (error) => Error.isError(error) ? error : new Error(String(error), { cause: error });
 function partId(node) {
   if (node.partNr === false)
@@ -25970,7 +25972,7 @@ async function mailPartText(path, decoder) {
   return text2 + decoder.decode();
 }
 
-// apps/apple/connectors/dist/sources/apple-mail/mail-tables.js
+// packages/sources/apple/mail/dist/mail-tables.js
 var rawDates = /* @__PURE__ */ new Set([
   "due_by",
   "end_date",
@@ -26322,7 +26324,7 @@ function mailStream(name, description, properties, primaryKey, files) {
 }
 var tableStreams = Object.entries(mailTables).map(([name, definition]) => mailStream(name, definition.description, definition.properties, definition.primaryKey, false));
 
-// apps/apple/connectors/dist/sources/apple-mail/apple-mail-source.js
+// packages/sources/apple/mail/dist/apple-mail-source.js
 var text = { type: "string" };
 var nullableText = { type: ["string", "null"] };
 var nullableNumber = { type: ["number", "null"] };

@@ -1,0 +1,27 @@
+{
+  "name": "@workspace/source-apple-mail",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-mail-source": {
+      "types": "./dist/apple-mail-source.d.ts",
+      "default": "./dist/apple-mail-source.js"
+    },
+    "./mail-store": {
+      "types": "./dist/mail-store.d.ts",
+      "default": "./dist/mail-store.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
+    "@zone-eu/mailsplit": "5.4.19",
+    "libmime": "5.4.6"
+  },
+  "devDependencies": {
+    "@types/libmime": "5.3.0",
+    "@workspace/elt-markdown": "0.0.1",
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

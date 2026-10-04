@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-safari",
+  "sourceRoot": "packages/sources/apple/safari/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/safari/dist/*.test.js\""
+    }
+  }
+}

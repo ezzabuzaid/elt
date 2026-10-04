@@ -33,100 +33,15 @@ import {
   __using
 } from "../../chunks/chunk-ZGXE7NZW.mjs";
 
-// apps/apple/connectors/dist/sources/apple-safari/apple-safari-source.js
+// packages/sources/apple/safari/dist/apple-safari-source.js
 import { readdir, stat } from "node:fs/promises";
 import { join as join3 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
-// apps/apple/connectors/dist/platform/macos/safari-store.js
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-var safariDirectory = join(homedir(), "Library/Safari");
-var safariContainer = join(homedir(), "Library/Containers/com.apple.Safari/Data/Library/Safari");
-var SafariUnavailableError = class extends Error {
-  name = "SafariUnavailableError";
-  constructor(path, cause) {
-    super(`Safari data at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Safari does not need to be open.`, { cause });
-  }
-};
-var SafariSchemaError = class extends Error {
-  name = "SafariSchemaError";
-  constructor(path, missing) {
-    super(`The Safari store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
-  }
-};
-var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
-var open = (path) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
-      throw new SafariUnavailableError(path, cause);
-    throw cause;
-  }
-};
-var SafariDatabaseVersion = class {
-  #database;
-  #version;
-  constructor(path) {
-    this.#database = open(path);
-    this.#version = this.#database.prepare("PRAGMA data_version");
-  }
-  get current() {
-    return Number(this.#version.get()?.data_version);
-  }
-  [Symbol.dispose]() {
-    this.#database.close();
-  }
-};
-var SafariDatabase = class _SafariDatabase {
-  path;
-  #database;
-  constructor(path, database) {
-    this.path = path;
-    this.#database = database;
-  }
-  static async open(path, required) {
-    const database = open(path);
-    try {
-      database.exec("BEGIN");
-      const missing = Object.entries(required).flatMap(([table, columns]) => {
-        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table).map((column) => column.name));
-        return columns.filter((column) => !present.has(column)).map((column) => `${table}.${column}`);
-      });
-      if (missing.length > 0)
-        throw new SafariSchemaError(path, missing);
-      return new _SafariDatabase(path, database);
-    } catch (cause) {
-      database.close();
-      throw cause;
-    }
-  }
-  all(sql) {
-    return this.#database.prepare(sql).all();
-  }
-  async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction)
-      this.#database.exec("COMMIT");
-    this.#database.close();
-  }
-};
-async function readSafariPlist(path) {
-  let bytes;
-  try {
-    bytes = await readFile(path);
-  } catch (cause) {
-    throw new SafariUnavailableError(path, cause);
-  }
-  return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readMailPlist(path);
-}
-
-// apps/apple/connectors/dist/sources/apple-safari/safari-scan.js
+// packages/sources/apple/safari/dist/safari-scan.js
 import { join as join2 } from "node:path";
 
-// apps/apple/connectors/dist/sources/apple-safari/safari-values.js
+// packages/sources/apple/safari/dist/safari-values.js
 var defaultProfile = "DefaultProfile";
 var appleEpochSeconds = 978307200;
 var distantPast = -63114076800;
@@ -150,7 +65,7 @@ function counts(value) {
   return Array.from({ length: value.byteLength / 4 }, (_, index) => view.getInt32(index * 4, true));
 }
 
-// apps/apple/connectors/dist/sources/apple-safari/bookmarks-reader.js
+// packages/sources/apple/safari/dist/bookmarks-reader.js
 var readingListTitle = "com.apple.ReadingList";
 var BookmarksReader = class {
   bookmarks = [];
@@ -173,7 +88,7 @@ var BookmarksReader = class {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/closed-tabs-reader.js
+// packages/sources/apple/safari/dist/closed-tabs-reader.js
 var windowType = 1;
 var ClosedTabsReader = class {
   #windows = /* @__PURE__ */ new Map();
@@ -218,7 +133,7 @@ function latest(entries, id2, entry) {
     entries.set(id2, entry);
 }
 
-// apps/apple/connectors/dist/sources/apple-safari/cloud-tabs-reader.js
+// packages/sources/apple/safari/dist/cloud-tabs-reader.js
 import { inflateSync } from "node:zlib";
 var cloudTabsColumns = {
   cloud_tab_devices: [
@@ -277,7 +192,7 @@ var CloudTabsReader = class {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/downloads-reader.js
+// packages/sources/apple/safari/dist/downloads-reader.js
 var DownloadsReader = class {
   downloads;
   constructor(plist2, scope) {
@@ -288,7 +203,7 @@ var DownloadsReader = class {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/history-reader.js
+// packages/sources/apple/safari/dist/history-reader.js
 var historyColumns = {
   history_items: [
     "id",
@@ -392,7 +307,92 @@ var HistoryReader = class {
 };
 var triggers = (value) => value instanceof Uint8Array ? parseBinaryPlist(value) : null;
 
-// apps/apple/connectors/dist/sources/apple-safari/tabs-reader.js
+// packages/sources/apple/safari/dist/safari-store.js
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+var safariDirectory = join(homedir(), "Library/Safari");
+var safariContainer = join(homedir(), "Library/Containers/com.apple.Safari/Data/Library/Safari");
+var SafariUnavailableError = class extends Error {
+  name = "SafariUnavailableError";
+  constructor(path, cause) {
+    super(`Safari data at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Safari does not need to be open.`, { cause });
+  }
+};
+var SafariSchemaError = class extends Error {
+  name = "SafariSchemaError";
+  constructor(path, missing) {
+    super(`The Safari store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
+  }
+};
+var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
+var open = (path) => {
+  try {
+    return new DatabaseSync(path, { readOnly: true });
+  } catch (cause) {
+    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
+      throw new SafariUnavailableError(path, cause);
+    throw cause;
+  }
+};
+var SafariDatabaseVersion = class {
+  #database;
+  #version;
+  constructor(path) {
+    this.#database = open(path);
+    this.#version = this.#database.prepare("PRAGMA data_version");
+  }
+  get current() {
+    return Number(this.#version.get()?.data_version);
+  }
+  [Symbol.dispose]() {
+    this.#database.close();
+  }
+};
+var SafariDatabase = class _SafariDatabase {
+  path;
+  #database;
+  constructor(path, database) {
+    this.path = path;
+    this.#database = database;
+  }
+  static async open(path, required) {
+    const database = open(path);
+    try {
+      database.exec("BEGIN");
+      const missing = Object.entries(required).flatMap(([table, columns]) => {
+        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table).map((column) => column.name));
+        return columns.filter((column) => !present.has(column)).map((column) => `${table}.${column}`);
+      });
+      if (missing.length > 0)
+        throw new SafariSchemaError(path, missing);
+      return new _SafariDatabase(path, database);
+    } catch (cause) {
+      database.close();
+      throw cause;
+    }
+  }
+  all(sql) {
+    return this.#database.prepare(sql).all();
+  }
+  async [Symbol.asyncDispose]() {
+    if (this.#database.isTransaction)
+      this.#database.exec("COMMIT");
+    this.#database.close();
+  }
+};
+async function readSafariPlist(path) {
+  let bytes;
+  try {
+    bytes = await readFile(path);
+  } catch (cause) {
+    throw new SafariUnavailableError(path, cause);
+  }
+  return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readMailPlist(path);
+}
+
+// packages/sources/apple/safari/dist/tabs-reader.js
 var tabsColumns = {
   bookmarks: [
     "id",
@@ -590,7 +590,7 @@ var TabsReader = class {
 };
 var plist = (value) => value instanceof Uint8Array ? dictionary(parseBinaryPlist(value)) : {};
 
-// apps/apple/connectors/dist/sources/apple-safari/safari-scan.js
+// packages/sources/apple/safari/dist/safari-scan.js
 var storeFiles = ({ directory, container }) => ({
   history: join2(directory, "History.db"),
   tabs: join2(container, "SafariTabs.db"),
@@ -686,7 +686,7 @@ var SafariScan = class _SafariScan {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/safari-stream.js
+// packages/sources/apple/safari/dist/safari-stream.js
 var text2 = { type: "string" };
 var nullableText = { type: ["string", "null"] };
 var integer2 = { type: "integer" };
@@ -731,7 +731,7 @@ var SafariStream = class {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/bookmarks-stream.js
+// packages/sources/apple/safari/dist/streams/bookmarks-stream.js
 var { nullableText: nullableText2 } = safariFields;
 var kinds = /* @__PURE__ */ new Map([
   ["WebBookmarkTypeList", "folder"],
@@ -830,7 +830,7 @@ var BookmarksStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/closed-tabs-stream.js
+// packages/sources/apple/safari/dist/streams/closed-tabs-stream.js
 var { boolean, nullableText: nullableText3, nullableTimestamp } = safariFields;
 var properties2 = {
   id: { ...safariFields.id, description: "Closed tab UUID." },
@@ -919,7 +919,7 @@ var ClosedTabsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/closed-window-active-tabs-stream.js
+// packages/sources/apple/safari/dist/streams/closed-window-active-tabs-stream.js
 var properties3 = {
   windowId: {
     ...safariFields.id,
@@ -956,7 +956,7 @@ var ClosedWindowActiveTabsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/window-state.js
+// packages/sources/apple/safari/dist/window-state.js
 var { boolean: boolean2, nullableText: nullableText4, nullableInteger: nullableInteger2 } = safariFields;
 var windowStateFields = {
   closedAt: {
@@ -1020,7 +1020,7 @@ var windowState = (state) => ({
   addressFieldText: text(state.CustomUnifiedFieldText)
 });
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/closed-windows-stream.js
+// packages/sources/apple/safari/dist/streams/closed-windows-stream.js
 var properties4 = {
   id: {
     ...safariFields.id,
@@ -1061,7 +1061,7 @@ var ClosedWindowsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/cloud-tab-close-requests-stream.js
+// packages/sources/apple/safari/dist/streams/cloud-tab-close-requests-stream.js
 var properties5 = {
   id: {
     ...safariFields.id,
@@ -1100,7 +1100,7 @@ var CloudTabCloseRequestsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/cloud-tab-devices-stream.js
+// packages/sources/apple/safari/dist/streams/cloud-tab-devices-stream.js
 var { boolean: boolean3, nullableText: nullableText5 } = safariFields;
 var properties6 = {
   id: {
@@ -1153,7 +1153,7 @@ var CloudTabDevicesStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/cloud-tab-positions-stream.js
+// packages/sources/apple/safari/dist/streams/cloud-tab-positions-stream.js
 var properties7 = {
   tabId: {
     ...safariFields.id,
@@ -1200,7 +1200,7 @@ var CloudTabPositionsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/cloud-tabs-stream.js
+// packages/sources/apple/safari/dist/streams/cloud-tabs-stream.js
 var { boolean: boolean4, nullableText: nullableText6 } = safariFields;
 var properties8 = {
   id: {
@@ -1267,7 +1267,7 @@ var CloudTabsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/downloads-stream.js
+// packages/sources/apple/safari/dist/streams/downloads-stream.js
 import { existsSync } from "node:fs";
 var { boolean: boolean5, nullableText: nullableText7, nullableTimestamp: nullableTimestamp2, nullableInteger: nullableInteger3 } = safariFields;
 var properties9 = {
@@ -1347,7 +1347,7 @@ var DownloadsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/history-item-tags-stream.js
+// packages/sources/apple/safari/dist/streams/history-item-tags-stream.js
 var properties10 = {
   profileId: safariFields.profileId,
   itemId: {
@@ -1386,7 +1386,7 @@ var HistoryItemTagsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/history-items-stream.js
+// packages/sources/apple/safari/dist/streams/history-items-stream.js
 var { profileId, id, nullableText: nullableText8, ordinal, boolean: boolean6 } = safariFields;
 var countList = { type: "integer", minimum: 0 };
 var properties11 = {
@@ -1462,7 +1462,7 @@ var HistoryItemsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/history-tags-stream.js
+// packages/sources/apple/safari/dist/streams/history-tags-stream.js
 var { profileId: profileId2 } = safariFields;
 var properties12 = {
   profileId: profileId2,
@@ -1519,7 +1519,7 @@ var HistoryTagsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/history-tombstones-stream.js
+// packages/sources/apple/safari/dist/streams/history-tombstones-stream.js
 var { profileId: profileId3, nullableText: nullableText9, nullableTimestamp: nullableTimestamp3 } = safariFields;
 var properties13 = {
   profileId: profileId3,
@@ -1584,7 +1584,7 @@ var HistoryTombstonesStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/history-visits-stream.js
+// packages/sources/apple/safari/dist/streams/history-visits-stream.js
 var { profileId: profileId4, boolean: boolean7, nullableText: nullableText10, nullableInteger: nullableInteger4 } = safariFields;
 var properties14 = {
   profileId: profileId4,
@@ -1674,7 +1674,7 @@ var HistoryVisitsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/profile-start-page-sections-stream.js
+// packages/sources/apple/safari/dist/streams/profile-start-page-sections-stream.js
 var properties15 = {
   profileId: safariFields.profileId,
   position: {
@@ -1723,7 +1723,7 @@ var ProfileStartPageSectionsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/profiles-stream.js
+// packages/sources/apple/safari/dist/streams/profiles-stream.js
 var { nullableText: nullableText11, nullableNumber } = safariFields;
 var component = { ...nullableNumber, minimum: 0, maximum: 1 };
 var properties16 = {
@@ -1808,7 +1808,7 @@ var ProfilesStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/reading-list-items-stream.js
+// packages/sources/apple/safari/dist/streams/reading-list-items-stream.js
 var { nullableText: nullableText12, nullableTimestamp: nullableTimestamp4, nullableInteger: nullableInteger5 } = safariFields;
 var properties17 = {
   id: {
@@ -1905,7 +1905,7 @@ var ReadingListItemsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/tab-groups-stream.js
+// packages/sources/apple/safari/dist/streams/tab-groups-stream.js
 var { nullableId, nullableText: nullableText13 } = safariFields;
 var properties18 = {
   id: {
@@ -1996,7 +1996,7 @@ var TabGroupsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/tab-history-entries-stream.js
+// packages/sources/apple/safari/dist/streams/tab-history-entries-stream.js
 var { nullableText: nullableText14 } = safariFields;
 var properties19 = {
   tabId: { ...safariFields.id, description: "The tab; refers to tabs.id." },
@@ -2050,7 +2050,7 @@ var TabHistoryEntriesStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/tabs-stream.js
+// packages/sources/apple/safari/dist/streams/tabs-stream.js
 var { boolean: boolean8, nullableId: nullableId2, nullableText: nullableText15, nullableTimestamp: nullableTimestamp5 } = safariFields;
 var properties20 = {
   id: {
@@ -2241,7 +2241,7 @@ var TabsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/window-profiles-stream.js
+// packages/sources/apple/safari/dist/streams/window-profiles-stream.js
 var properties21 = {
   windowId: {
     ...safariFields.id,
@@ -2279,7 +2279,7 @@ var WindowProfilesStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/window-tab-groups-stream.js
+// packages/sources/apple/safari/dist/streams/window-tab-groups-stream.js
 var properties22 = {
   windowId: {
     ...safariFields.id,
@@ -2322,7 +2322,7 @@ var WindowTabGroupsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/streams/windows-stream.js
+// packages/sources/apple/safari/dist/streams/windows-stream.js
 var { nullableId: nullableId3, nullableText: nullableText16 } = safariFields;
 var properties23 = {
   id: {
@@ -2385,7 +2385,7 @@ var WindowsStream = class extends SafariStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-safari/apple-safari-source.js
+// packages/sources/apple/safari/dist/apple-safari-source.js
 var readers = {
   historyItems: new HistoryItemsStream(),
   historyVisits: new HistoryVisitsStream(),

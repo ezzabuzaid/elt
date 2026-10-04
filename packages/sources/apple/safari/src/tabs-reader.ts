@@ -7,7 +7,7 @@ import {
   parseBinaryPlist,
 } from '@workspace/source-apple-macos/plist';
 
-import type { SafariDatabase } from '../../platform/macos/safari-store.ts';
+import type { SafariDatabase } from './safari-store.ts';
 import {
   type Dictionary,
   type Row,

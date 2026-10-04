@@ -35,7 +35,7 @@ import {
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 import osa from '@workspace/source-apple-macos/osa';
 
-import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
+import { AppleMailSource } from './apple-mail-source.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);

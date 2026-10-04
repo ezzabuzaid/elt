@@ -1,6 +1,6 @@
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import { AppleSafariSource } from '@workspace/source-apple-safari/apple-safari-source';
 
-import { AppleSafariSource } from '../../sources/apple-safari/apple-safari-source.ts';
 import { AppleApp } from '../apple-app.ts';
 import { type Choice, byId } from '../choice.ts';
 

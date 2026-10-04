@@ -2,15 +2,12 @@ import { join } from 'node:path';
 
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
-import {
-  SafariDatabase,
-  readSafariPlist,
-} from '../../platform/macos/safari-store.ts';
 import { BookmarksReader } from './bookmarks-reader.ts';
 import { ClosedTabsReader } from './closed-tabs-reader.ts';
 import { CloudTabsReader, cloudTabsColumns } from './cloud-tabs-reader.ts';
 import { DownloadsReader } from './downloads-reader.ts';
 import { HistoryReader, historyColumns } from './history-reader.ts';
+import { SafariDatabase, readSafariPlist } from './safari-store.ts';
 import { defaultProfile, text } from './safari-values.ts';
 import { TabsReader, tabsColumns } from './tabs-reader.ts';
 

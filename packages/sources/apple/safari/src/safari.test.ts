@@ -36,7 +36,7 @@ import {
 } from '@workspace/elt-sqlite';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
-import { AppleSafariSource } from './sources/apple-safari/apple-safari-source.ts';
+import { AppleSafariSource } from './apple-safari-source.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
