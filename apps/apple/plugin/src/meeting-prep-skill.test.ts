@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 import type { AppleApp } from '@workspace/connector-apple-app/apple-app';
-import CalendarApp from '@workspace/connector-apple-calendar';
+import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
+import { ConnectorManifest } from '@workspace/connector-apple-manifest/connector-manifest';
 import { Pipeline } from '@workspace/elt';
 import { SQLiteSyncHistory, installSQLiteCatalog } from '@workspace/elt-sqlite';
 import type {
@@ -73,6 +74,13 @@ const reads = {
   mail: 'WITH person AS (SELECT id FROM addresses',
   mailSubjects: "WHERE s.subject LIKE '%' || @term || '%'",
 } as const;
+
+// Loads one built-in connector from its manifest, as the hosts do.
+async function builtIn(name: string): Promise<AppleApp> {
+  const manifest = ConnectorManifest.read(join(builtInConnectors, name));
+  assert.ok(manifest, `${name} is not a built-in connector.`);
+  return manifest.load(host);
+}
 
 // Imports an app whose store lives under the user's home: the app reads its
 // path when its module loads, so HOME points at the test's own folder first.
@@ -246,7 +254,7 @@ test('meeting prep finds the next meetings in own calendars, with who is coming,
     weeksOfTheYear: [],
     setPositions: [],
   };
-  const app = new CalendarApp(host);
+  const app = await builtIn('calendar');
   const scope = app.defaultScope();
   const { startAt, endAt } = scope;
   new FakeEventKitHelper()
@@ -535,9 +543,7 @@ test('meeting prep finds who an attendee is in Contacts by their email, whatever
     ],
   });
   const database = await withHome(scratch.path, async () => {
-    const { default: ContactsApp } =
-      await import('@workspace/connector-apple-contacts');
-    return importApp(new ContactsApp(host), join(scratch.path, 'contacts'));
+    return importApp(await builtIn('contacts'), join(scratch.path, 'contacts'));
   });
 
   const cards = read(database, query(reads.contact), {
@@ -643,9 +649,7 @@ test('meeting prep finds notes that mention a meeting, leaving out Recently Dele
     data.run(3, 6, noteBody('Groceries\nMilk\n'));
   }
   const database = await withHome(scratch.path, async () => {
-    const { default: NotesApp } =
-      await import('@workspace/connector-apple-notes');
-    return importApp(new NotesApp(host), join(scratch.path, 'notes'));
+    return importApp(await builtIn('notes'), join(scratch.path, 'notes'));
   });
 
   const byTitle = read(database, query(reads.notes), { '@term': 'standup' });
@@ -761,9 +765,7 @@ test('meeting prep finds recent messages with an attendee by email, or by their 
     `);
   }
   const database = await withHome(scratch.path, async () => {
-    const { default: MessagesApp } =
-      await import('@workspace/connector-apple-messages');
-    return importApp(new MessagesApp(host), join(scratch.path, 'messages'));
+    return importApp(await builtIn('messages'), join(scratch.path, 'messages'));
   });
 
   const byPhone = read(database, query(reads.messages), {
@@ -1101,9 +1103,7 @@ test('meeting prep finds recent mail with an attendee whatever case Mail stored,
     `);
   }
   const database = await withHome(scratch.path, async () => {
-    const { default: MailApp } =
-      await import('@workspace/connector-apple-mail');
-    return importApp(new MailApp(host), join(scratch.path, 'mail'));
+    return importApp(await builtIn('mail'), join(scratch.path, 'mail'));
   });
 
   const withAnn = read(database, query(reads.mail), {

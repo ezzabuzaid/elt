@@ -10,17 +10,10 @@
     }
   },
   "dependencies": {
-    "@workspace/connector-apple-app": "0.0.1",
-    "@workspace/connector-apple-calendar": "0.0.1",
-    "@workspace/connector-apple-contacts": "0.0.1",
-    "@workspace/connector-apple-mail": "0.0.1",
-    "@workspace/connector-apple-messages": "0.0.1",
-    "@workspace/connector-apple-notes": "0.0.1",
     "@workspace/elt": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1",
     "@workspace/macos-eventkit": "0.0.1",
     "@workspace/source-apple-calendar": "0.0.1",
-    "@workspace/source-apple-macos": "0.0.1",
     "@workspace/source-apple-notes": "0.0.1",
     "@workspace/source-apple-reminders": "0.0.1"
   }

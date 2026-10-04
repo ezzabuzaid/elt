@@ -36563,7 +36563,8 @@ var Connectors = class {
     }
     return { apps, broken };
   }
-  // Every entry of the roots, root by root and by name within a root; a root
+  // What each root holds, root by root and by name within a root, for
+  // ConnectorManifest.read to tell connector folders from the rest; a root
   // that does not exist yet holds none.
   *#folders() {
     for (const root of this.#roots) {
