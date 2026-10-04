@@ -6,12 +6,6 @@ import { isDeepStrictEqual } from 'node:util';
 import type { EventKitDocument, HelperRequest } from './documents.ts';
 import nativeProcess from './native-process.ts';
 
-export type {
-  EventKitDocument,
-  HelperCalendarDocument,
-  HelperRequest,
-} from './documents.ts';
-
 type Documents = () =>
   Iterable<EventKitDocument> | AsyncIterable<EventKitDocument>;
 type Watch = (signal: AbortSignal) => AsyncIterable<string>;
