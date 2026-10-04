@@ -4,8 +4,6 @@ import { AppleContactsSource } from '@workspace/source-apple-contacts/apple-cont
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 export default class ContactsApp extends AppleApp {
-  readonly name = 'contacts';
-  readonly title = 'Contacts';
   readonly datedBy = null;
   readonly fullDiskAccess = false;
   protected readonly choices: readonly Choice[] = [

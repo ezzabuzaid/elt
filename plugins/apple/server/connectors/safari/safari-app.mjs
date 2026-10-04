@@ -20,7 +20,7 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleApp
-} from "../../chunks/chunk-DZDPSHJB.mjs";
+} from "../../chunks/chunk-JO462M2I.mjs";
 import {
   Catalog,
   Source,
@@ -2560,8 +2560,6 @@ async function fingerprint(path) {
 
 // packages/connectors/apple/safari/dist/safari-app.js
 var SafariApp = class extends AppleApp {
-  name = "safari";
-  title = "Safari";
   datedBy = "visit time";
   fullDiskAccess = true;
   note = "Profiles select history, windows, tab groups, tabs, recently closed tabs and downloads. Dates select history visits, and the pages and topics those visits reach.";

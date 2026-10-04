@@ -58,8 +58,6 @@ class PhotosSource extends Source {
 }
 
 export default class PhotosApp extends AppleApp {
-  readonly name = 'photos';
-  readonly title = 'Photos';
   readonly datedBy = null;
   readonly fullDiskAccess = true;
   protected readonly choices: readonly Choice[] = [];

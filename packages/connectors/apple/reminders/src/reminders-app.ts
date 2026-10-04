@@ -10,8 +10,6 @@ import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
 
 export default class RemindersApp extends AppleApp {
-  readonly name = 'reminders';
-  readonly title = 'Reminders';
   readonly datedBy = null;
   readonly fullDiskAccess = false;
   protected readonly choices: readonly Choice[] = [

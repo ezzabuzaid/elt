@@ -15,7 +15,7 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleApp
-} from "../../chunks/chunk-DZDPSHJB.mjs";
+} from "../../chunks/chunk-JO462M2I.mjs";
 import {
   Catalog,
   Source,
@@ -639,8 +639,6 @@ var AppleRemindersSource = class extends Source {
 
 // packages/connectors/apple/reminders/dist/reminders-app.js
 var RemindersApp = class extends AppleApp {
-  name = "reminders";
-  title = "Reminders";
   datedBy = null;
   fullDiskAccess = false;
   choices = [

@@ -17,7 +17,7 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleApp
-} from "../../chunks/chunk-DZDPSHJB.mjs";
+} from "../../chunks/chunk-JO462M2I.mjs";
 import {
   Catalog,
   Source,
@@ -737,8 +737,6 @@ function messageSelection(database, scope) {
 
 // packages/connectors/apple/messages/dist/messages-app.js
 var MessagesApp = class extends AppleApp {
-  name = "messages";
-  title = "Messages";
   datedBy = "message date";
   fullDiskAccess = true;
   choices = [

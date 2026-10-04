@@ -19,7 +19,7 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleApp
-} from "../../chunks/chunk-DZDPSHJB.mjs";
+} from "../../chunks/chunk-JO462M2I.mjs";
 import {
   Catalog,
   Source,
@@ -810,8 +810,6 @@ function contactSelection(store, scope) {
 
 // packages/connectors/apple/contacts/dist/contacts-app.js
 var ContactsApp = class extends AppleApp {
-  name = "contacts";
-  title = "Contacts";
   datedBy = null;
   fullDiskAccess = false;
   choices = [

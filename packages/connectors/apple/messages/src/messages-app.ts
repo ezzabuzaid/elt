@@ -4,8 +4,6 @@ import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
 
 export default class MessagesApp extends AppleApp {
-  readonly name = 'messages';
-  readonly title = 'Messages';
   readonly datedBy = 'message date';
   readonly fullDiskAccess = true;
   protected readonly choices: readonly Choice[] = [

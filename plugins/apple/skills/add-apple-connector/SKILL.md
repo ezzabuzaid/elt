@@ -8,7 +8,7 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
 ## What you need to know
 
 - A connector is a folder in `~/Library/Application Support/Context Compiler/Connectors/<name>/` holding two files: a `package.json` and the entry point it names. The plugin reads that folder on every tool call, so a connector you add or edit is used in this chat; nothing restarts.
-- `package.json` is `{ "type": "module", "exports": "./<name>-app.ts", "contextCompiler": { "name": "<name>", "title": "<Title>" } }`. `name` is lowercase letters, digits and dashes, must equal the app class's `name`, and must not repeat an app the plugin already has. `title` is what the user sees.
+- `package.json` is `{ "type": "module", "exports": "./<name>-app.ts", "contextCompiler": { "name": "<name>", "title": "<Title>" } }`. `name` is lowercase letters, digits and dashes, and must not repeat an app the plugin already has. `title` is what the user sees. The app class takes both from here; it does not declare them.
 - The entry is TypeScript that Node runs as written, without a compiler. Its default export is a class that extends `AppleApp`. Its `source()` returns an elt `Source` that reads the app's own data on this Mac.
 - The entry may import only Node built-ins (`node:fs`, `node:sqlite`, `node:child_process`, ...) and three modules the plugin provides: `@workspace/elt` (`Source`, `Stream`, `Catalog` and their types), `@workspace/connector-apple-app/apple-app` (`AppleApp`) and `@workspace/connector-apple-app/choice` (`accounts`, `collections`, `byId`, `name`, `Choice`). There is no `node_modules`, so no npm package resolves.
 - The plugin imports each stream into `raw_<stream>` in the app's own `data.sqlite`, read through a view named after the stream in snake case (`photoAssets` reads as `photo_assets`). `$query-apple` reads it like any other app.
@@ -82,8 +82,6 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
    }
 
    export default class ExampleApp extends AppleApp {
-     readonly name = 'example';
-     readonly title = 'Example';
      // What a date range selects, such as 'date added', or null.
      readonly datedBy = null;
      // true only when macOS keeps the store behind Full Disk Access, as for
@@ -122,7 +120,7 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
 - When a record's fields do not match its stream's JSON Schema, such as a `null` where the schema says `string`, the pass fails. Allow `null` (`type: ['string', 'null']`) for any column that can be empty.
 - When a connector imports a second file of its own, an edit to that file loads only in a new chat. Keep the connector in its entry.
 - When the code writes to the app's store or runs a command that changes the app, it changes the user's data with ChatGPT's permissions. Open stores read-only and only read.
-- When `name` repeats an app the plugin has, or differs from the class's `name`, the connector is reported as not loading. Pick a new lowercase name and use it in both places.
+- When `name` repeats an app the plugin has, the connector is reported as not loading. Pick a new lowercase name.
 
 ## Done when
 

@@ -18,7 +18,7 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleApp
-} from "../../chunks/chunk-DZDPSHJB.mjs";
+} from "../../chunks/chunk-JO462M2I.mjs";
 import {
   Catalog,
   Source,
@@ -27059,8 +27059,6 @@ var AppleMailSource = class extends Source {
 // packages/connectors/apple/mail/dist/mail-app.js
 var accountName = (row) => String(JSON.parse(String(row.properties)).name);
 var MailApp = class extends AppleApp {
-  name = "mail";
-  title = "Mail";
   datedBy = "date received (date sent if missing)";
   fullDiskAccess = true;
   choices = [

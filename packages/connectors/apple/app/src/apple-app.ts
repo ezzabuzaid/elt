@@ -35,6 +35,12 @@ export type AppleHost = {
   google?(scopes: readonly string[]): Promise<GoogleRequester>;
 };
 
+// The app's name and title, as its connector's manifest declares them.
+export type AppIdentity = {
+  readonly name: string;
+  readonly title: string;
+};
+
 export type ChoiceOptions = Choice & {
   readonly options: readonly { readonly id: string; readonly label: string }[];
 };
@@ -43,8 +49,8 @@ export type ChoiceOptions = Choice & {
 // this class lists what it can be narrowed by, builds its load and words its
 // selection and failures the same way for every app and host.
 export abstract class AppleApp {
-  abstract readonly name: string;
-  abstract readonly title: string;
+  readonly name: string;
+  readonly title: string;
   // What a date range selects, or null when this app's records have no date.
   abstract readonly datedBy: string | null;
   // Whether macOS keeps the app's store behind Full Disk Access, which it
@@ -66,8 +72,10 @@ export abstract class AppleApp {
 
   protected readonly host: AppleHost;
 
-  constructor(host: AppleHost) {
+  constructor(host: AppleHost, identity: AppIdentity) {
     this.host = host;
+    this.name = identity.name;
+    this.title = identity.title;
   }
 
   // What macOS needs granted to the grantee, besides Full Disk Access.

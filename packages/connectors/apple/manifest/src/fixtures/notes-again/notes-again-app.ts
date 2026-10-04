@@ -4,8 +4,6 @@ import type { Source } from '@workspace/elt';
 
 // A second connector named notes.
 export default class NotesAgainApp extends AppleApp {
-  readonly name = 'notes';
-  readonly title = 'Notes again';
   readonly datedBy = 'date taken';
   readonly fullDiskAccess = true;
   protected readonly choices: readonly Choice[] = [];

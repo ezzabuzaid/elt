@@ -1160,13 +1160,17 @@ function message(error) {
 
 // packages/connectors/apple/app/dist/apple-app.js
 var AppleApp = class {
+  name;
+  title;
   // What to know before narrowing this app, such as how its collections nest.
   note;
   // For an app with no choices: a stream read only to show its store opens.
   probe;
   host;
-  constructor(host) {
+  constructor(host, identity) {
     this.host = host;
+    this.name = identity.name;
+    this.title = identity.title;
   }
   // The source an import loads from; listing choices reads source(scope).
   importSource(scope) {

@@ -13,7 +13,7 @@ import {
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleApp
-} from "../../chunks/chunk-DZDPSHJB.mjs";
+} from "../../chunks/chunk-JO462M2I.mjs";
 import {
   Catalog,
   Source,
@@ -1120,8 +1120,6 @@ function checkEventDates(event) {
 
 // packages/connectors/apple/calendar/dist/calendar-app.js
 var CalendarApp = class extends AppleApp {
-  name = "calendar";
-  title = "Calendar";
   datedBy = "event dates (events that overlap the range)";
   fullDiskAccess = false;
   choices = [

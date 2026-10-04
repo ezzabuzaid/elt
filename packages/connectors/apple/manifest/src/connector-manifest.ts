@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 import {
+  type AppIdentity,
   AppleApp,
   type AppleHost,
 } from '@workspace/connector-apple-app/apple-app';
@@ -21,7 +22,7 @@ const manifestSchema = z.object({
   }),
 });
 
-type AppleAppClass = new (host: AppleHost) => AppleApp;
+type AppleAppClass = new (host: AppleHost, identity: AppIdentity) => AppleApp;
 
 // What a connector package says it is, read without running its code.
 export class ConnectorManifest {
@@ -50,9 +51,10 @@ export class ConnectorManifest {
     return new ConnectorManifest(folder, manifestSchema.parse(json));
   }
 
-  // Runs the entry point and creates its app for the host. Node keeps a
-  // module it loaded, so the entry's URL carries its modification time: an
-  // edited entry loads again. Files it imports load once.
+  // Runs the entry point and creates its app for the host, named and titled
+  // by this manifest. Node keeps a module it loaded, so the entry's URL
+  // carries its modification time: an edited entry loads again. Files it
+  // imports load once.
   async load(host: AppleHost): Promise<AppleApp> {
     const entry = pathToFileURL(this.entry);
     entry.searchParams.set('modified', String(statSync(this.entry).mtimeMs));
@@ -61,12 +63,7 @@ export class ConnectorManifest {
       throw new TypeError(
         `${this.entry} does not export an AppleApp class by default.`,
       );
-    const app = new App(host);
-    if (app.name !== this.name)
-      throw new TypeError(
-        `${this.entry} names its app ${app.name}, but its manifest names ${this.name}.`,
-      );
-    return app;
+    return new App(host, { name: this.name, title: this.title });
   }
 }
 

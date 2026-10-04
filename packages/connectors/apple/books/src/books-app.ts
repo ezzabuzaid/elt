@@ -3,8 +3,6 @@ import type { Choice } from '@workspace/connector-apple-app/choice';
 import { AppleBooksSource } from '@workspace/source-apple-books/apple-books-source';
 
 export default class BooksApp extends AppleApp {
-  readonly name = 'books';
-  readonly title = 'Books';
   readonly datedBy = null;
   readonly fullDiskAccess = true;
   // Books' collections are built-in lists; everything is imported.

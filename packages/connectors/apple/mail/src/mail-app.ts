@@ -16,8 +16,6 @@ const accountName = (row: Row) =>
   String(JSON.parse(String(row.properties)).name);
 
 export default class MailApp extends AppleApp {
-  readonly name = 'mail';
-  readonly title = 'Mail';
   readonly datedBy = 'date received (date sent if missing)';
   readonly fullDiskAccess = true;
   protected readonly choices: readonly Choice[] = [

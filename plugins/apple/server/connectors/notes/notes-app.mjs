@@ -19,7 +19,7 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleApp
-} from "../../chunks/chunk-DZDPSHJB.mjs";
+} from "../../chunks/chunk-JO462M2I.mjs";
 import {
   Catalog,
   Source,
@@ -1054,8 +1054,6 @@ var AppleNotesSource = class extends Source {
 
 // packages/connectors/apple/notes/dist/notes-app.js
 var NotesApp = class extends AppleApp {
-  name = "notes";
-  title = "Notes";
   datedBy = "date last edited";
   fullDiskAccess = true;
   note = "Exact containing folders; select descendants separately. Smart folders are saved searches and cannot be selected as containing folders.";

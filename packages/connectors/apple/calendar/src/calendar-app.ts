@@ -17,8 +17,6 @@ import {
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 export default class CalendarApp extends AppleApp {
-  readonly name = 'calendar';
-  readonly title = 'Calendar';
   readonly datedBy = 'event dates (events that overlap the range)';
   readonly fullDiskAccess = false;
   protected readonly choices: readonly Choice[] = [

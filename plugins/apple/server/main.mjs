@@ -4,7 +4,7 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunks/chunk-DZDPSHJB.mjs";
+} from "./chunks/chunk-JO462M2I.mjs";
 import {
   Pipeline
 } from "./chunks/chunk-OEQ4WCEQ.mjs";
@@ -36509,19 +36509,17 @@ var ConnectorManifest = class _ConnectorManifest {
       return void 0;
     return new _ConnectorManifest(folder, manifestSchema.parse(json2));
   }
-  // Runs the entry point and creates its app for the host. Node keeps a
-  // module it loaded, so the entry's URL carries its modification time: an
-  // edited entry loads again. Files it imports load once.
+  // Runs the entry point and creates its app for the host, named and titled
+  // by this manifest. Node keeps a module it loaded, so the entry's URL
+  // carries its modification time: an edited entry loads again. Files it
+  // imports load once.
   async load(host) {
     const entry = pathToFileURL(this.entry);
     entry.searchParams.set("modified", String(statSync(this.entry).mtimeMs));
     const { default: App } = await import(__rewriteRelativeImportExtension(entry.href));
     if (!isAppleAppClass(App))
       throw new TypeError(`${this.entry} does not export an AppleApp class by default.`);
-    const app = new App(host);
-    if (app.name !== this.name)
-      throw new TypeError(`${this.entry} names its app ${app.name}, but its manifest names ${this.name}.`);
-    return app;
+    return new App(host, { name: this.name, title: this.title });
   }
 };
 function isAppleAppClass(value) {

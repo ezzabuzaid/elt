@@ -913,14 +913,14 @@ test(
       writeFileSync(
         connector,
         readFileSync(connector, 'utf8').replace(
-          "readonly title = 'Photos'",
-          "readonly title = 'Pictures'",
+          "'Open Photos once.'",
+          "'Open Pictures once.'",
         ),
       );
-      const edited = await call('apple_context', { event: 'SessionStart' });
+      const edited = await call('apple_options', { app: 'photos' });
 
       assert.match(context, /^- Drafts could not be loaded: /m);
-      assert.match(edited, /^- Pictures: /m);
+      assert.match(edited, /Open Pictures once\./);
       assert.deepEqual(photos, [
         { id: 'p1', title: 'Beach' },
         { id: 'p2', title: 'Snow' },

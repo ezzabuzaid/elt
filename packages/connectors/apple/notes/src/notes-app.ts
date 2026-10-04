@@ -9,8 +9,6 @@ import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
 
 export default class NotesApp extends AppleApp {
-  readonly name = 'notes';
-  readonly title = 'Notes';
   readonly datedBy = 'date last edited';
   readonly fullDiskAccess = true;
   override readonly note =

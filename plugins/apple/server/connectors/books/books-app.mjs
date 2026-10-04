@@ -12,7 +12,7 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleApp
-} from "../../chunks/chunk-DZDPSHJB.mjs";
+} from "../../chunks/chunk-JO462M2I.mjs";
 import {
   Catalog,
   Source,
@@ -2176,8 +2176,6 @@ async function fingerprint(path) {
 
 // packages/connectors/apple/books/dist/books-app.js
 var BooksApp = class extends AppleApp {
-  name = "books";
-  title = "Books";
   datedBy = null;
   fullDiskAccess = true;
   // Books' collections are built-in lists; everything is imported.

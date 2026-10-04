@@ -4,8 +4,6 @@ import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleSafariSource } from '@workspace/source-apple-safari/apple-safari-source';
 
 export default class SafariApp extends AppleApp {
-  readonly name = 'safari';
-  readonly title = 'Safari';
   readonly datedBy = 'visit time';
   readonly fullDiskAccess = true;
   override readonly note =

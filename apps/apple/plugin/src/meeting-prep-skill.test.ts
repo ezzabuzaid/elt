@@ -20,8 +20,8 @@ import type {
   ParticipantDocument,
 } from '@workspace/macos-eventkit';
 import {
-  FakeEventKitHelper,
   type HelperCalendarDocument,
+  StubEventKitHelper,
 } from '@workspace/macos-eventkit/test';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import osa from '@workspace/source-apple-macos/osa';
@@ -76,10 +76,13 @@ const reads = {
 } as const;
 
 // Loads one built-in connector from its manifest, as the hosts do.
-async function builtIn(name: string): Promise<AppleApp> {
+async function builtIn(
+  name: string,
+  appHost: typeof host = host,
+): Promise<AppleApp> {
   const manifest = ConnectorManifest.read(join(builtInConnectors, name));
   assert.ok(manifest, `${name} is not a built-in connector.`);
-  return manifest.load(host);
+  return manifest.load(appHost);
 }
 
 // Imports an app whose store lives under the user's home: the app reads its
@@ -237,7 +240,7 @@ const occurrence = (
   ...overrides,
 });
 
-test('meeting prep finds the next meetings in own calendars, with who is coming, and the series last occurrence', async (t) => {
+test('meeting prep finds the next meetings in own calendars, with who is coming, and the series last occurrence', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'meeting-prep-calendar-'),
   );
@@ -254,89 +257,97 @@ test('meeting prep finds the next meetings in own calendars, with who is coming,
     weeksOfTheYear: [],
     setPositions: [],
   };
-  const app = await builtIn('calendar');
+  // EventKit cannot create attendees, cancel an event or subscribe to a
+  // calendar, so recorded documents reach the app through a stub helper.
+  await using stub = await StubEventKitHelper.create();
+  const app = await builtIn('calendar', { ...host, eventKitHelper: stub.path });
   const scope = app.defaultScope();
   const { startAt, endAt } = scope;
-  new FakeEventKitHelper()
-    .answer({ entity: 'events', startAt, endAt, ics: true }, () => [
-      account,
-      calendar(),
-      calendar({
-        id: 'calendar-2',
-        name: 'Prayer times',
-        subscribed: true,
-        calendarType: 1,
-        writable: false,
-      }),
-      occurrence(now - 7 * 24 * 60 * minute, {
-        recurrenceRules: [weekly],
-        body: 'Last week: Ann owes the budget numbers.',
-      }),
-      occurrence(now + 10 * minute, {
-        recurrenceRules: [weekly],
-        attendees: [
-          participant(),
-          participant({
-            name: 'Me',
-            url: 'mailto:me@example.com',
-            isCurrentUser: true,
-          }),
-          participant({
-            name: 'Room 4',
-            url: 'mailto:room4@example.com',
-            participantType: 2,
-          }),
-        ],
-      }),
-      occurrence(now + 5 * minute, {
-        calendarId: 'calendar-2',
-        calendarItemId: 'prayer',
-        externalId: 'prayer',
-        nativeEventId: 'account-1:prayer',
-        name: 'Asr',
-      }),
-      occurrence(now + 12 * minute, {
-        calendarItemId: 'canceled',
-        externalId: 'canceled',
-        nativeEventId: 'account-1:canceled',
-        name: 'Canceled review',
-        status: 3,
-      }),
-      occurrence(now + 15 * minute, {
-        calendarId: 'calendar-2',
-        calendarItemId: 'invite',
-        externalId: 'invite',
-        nativeEventId: 'account-1:invite',
-        name: 'Invite on a subscribed calendar',
-        attendees: [participant({ name: 'Bo', url: 'mailto:bo@example.com' })],
-      }),
-      occurrence(now + 8 * minute, {
-        calendarItemId: 'offsite',
-        externalId: 'offsite',
-        nativeEventId: 'account-1:offsite',
-        name: 'All-day offsite',
-        allDay: true,
-      }),
-      occurrence(now + 18 * minute, {
-        calendarItemId: 'focus',
-        externalId: 'focus',
-        nativeEventId: 'account-1:focus',
-        name: 'Budget prep',
-      }),
-      occurrence(now + 26 * 60 * minute, {
-        calendarItemId: 'tomorrow',
-        externalId: 'tomorrow',
-        nativeEventId: 'account-1:tomorrow',
-        name: 'Tomorrow sync',
-      }),
-      occurrence(now + 45 * minute, {
-        calendarItemId: 'later',
-        externalId: 'later',
-        nativeEventId: 'account-1:later',
-        name: 'Later today',
-      }),
-    ])
-    .install(t);
+  stub.answer(
+    { entity: 'events', startAt, endAt, ics: true },
+    {
+      documents: [
+        account,
+        calendar(),
+        calendar({
+          id: 'calendar-2',
+          name: 'Prayer times',
+          subscribed: true,
+          calendarType: 1,
+          writable: false,
+        }),
+        occurrence(now - 7 * 24 * 60 * minute, {
+          recurrenceRules: [weekly],
+          body: 'Last week: Ann owes the budget numbers.',
+        }),
+        occurrence(now + 10 * minute, {
+          recurrenceRules: [weekly],
+          attendees: [
+            participant(),
+            participant({
+              name: 'Me',
+              url: 'mailto:me@example.com',
+              isCurrentUser: true,
+            }),
+            participant({
+              name: 'Room 4',
+              url: 'mailto:room4@example.com',
+              participantType: 2,
+            }),
+          ],
+        }),
+        occurrence(now + 5 * minute, {
+          calendarId: 'calendar-2',
+          calendarItemId: 'prayer',
+          externalId: 'prayer',
+          nativeEventId: 'account-1:prayer',
+          name: 'Asr',
+        }),
+        occurrence(now + 12 * minute, {
+          calendarItemId: 'canceled',
+          externalId: 'canceled',
+          nativeEventId: 'account-1:canceled',
+          name: 'Canceled review',
+          status: 3,
+        }),
+        occurrence(now + 15 * minute, {
+          calendarId: 'calendar-2',
+          calendarItemId: 'invite',
+          externalId: 'invite',
+          nativeEventId: 'account-1:invite',
+          name: 'Invite on a subscribed calendar',
+          attendees: [
+            participant({ name: 'Bo', url: 'mailto:bo@example.com' }),
+          ],
+        }),
+        occurrence(now + 8 * minute, {
+          calendarItemId: 'offsite',
+          externalId: 'offsite',
+          nativeEventId: 'account-1:offsite',
+          name: 'All-day offsite',
+          allDay: true,
+        }),
+        occurrence(now + 18 * minute, {
+          calendarItemId: 'focus',
+          externalId: 'focus',
+          nativeEventId: 'account-1:focus',
+          name: 'Budget prep',
+        }),
+        occurrence(now + 26 * 60 * minute, {
+          calendarItemId: 'tomorrow',
+          externalId: 'tomorrow',
+          nativeEventId: 'account-1:tomorrow',
+          name: 'Tomorrow sync',
+        }),
+        occurrence(now + 45 * minute, {
+          calendarItemId: 'later',
+          externalId: 'later',
+          nativeEventId: 'account-1:later',
+          name: 'Later today',
+        }),
+      ],
+    },
+  );
   const database = await importApp(app, join(scratch.path, 'calendar'), scope);
 
   const meetings = read(database, query(reads.meetings), { '@minutes': 20 });
