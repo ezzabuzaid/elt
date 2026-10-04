@@ -82,6 +82,30 @@
     },
     {
       "path": "./packages/connectors/apple/manifest"
+    },
+    {
+      "path": "./packages/connectors/apple/reminders"
+    },
+    {
+      "path": "./packages/connectors/apple/calendar"
+    },
+    {
+      "path": "./packages/connectors/apple/contacts"
+    },
+    {
+      "path": "./packages/connectors/apple/messages"
+    },
+    {
+      "path": "./packages/connectors/apple/safari"
+    },
+    {
+      "path": "./packages/connectors/apple/books"
+    },
+    {
+      "path": "./packages/connectors/apple/notes"
+    },
+    {
+      "path": "./packages/connectors/apple/mail"
     }
   ]
 }

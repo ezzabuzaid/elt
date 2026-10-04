@@ -6,7 +6,7 @@
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts", "src/**/*.mts", "src/fixtures/*/connector.json"],
+  "include": ["src/**/*.ts", "src/fixtures/*/package.json"],
   "references": [
     {
       "path": "../../../elt"
@@ -15,10 +15,31 @@
       "path": "../app"
     },
     {
-      "path": "../../../../apps/apple/connectors"
+      "path": "../../../macos/eventkit"
     },
     {
-      "path": "../../../macos/eventkit"
+      "path": "../safari"
+    },
+    {
+      "path": "../reminders"
+    },
+    {
+      "path": "../notes"
+    },
+    {
+      "path": "../messages"
+    },
+    {
+      "path": "../mail"
+    },
+    {
+      "path": "../contacts"
+    },
+    {
+      "path": "../calendar"
+    },
+    {
+      "path": "../books"
     }
   ]
 }

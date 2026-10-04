@@ -1,5 +1,0 @@
-{
-    "name": "reminders",
-    "title": "Reminders",
-    "entry": "./reminders-app.mjs"
-}

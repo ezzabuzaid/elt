@@ -1,0 +1,8 @@
+{
+  "type": "module",
+  "exports": "./photos-app.js",
+  "contextCompiler": {
+    "name": "photos",
+    "title": "Photos"
+  }
+}

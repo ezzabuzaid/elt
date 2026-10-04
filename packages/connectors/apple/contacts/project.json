@@ -1,0 +1,8 @@
+{
+  "name": "connector-apple-contacts",
+  "sourceRoot": "packages/connectors/apple/contacts/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  }
+}

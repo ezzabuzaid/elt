@@ -1,0 +1,8 @@
+{
+  "name": "connector-apple-calendar",
+  "sourceRoot": "packages/connectors/apple/calendar/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  }
+}

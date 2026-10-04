@@ -808,7 +808,7 @@ function contactSelection(store, scope) {
   };
 }
 
-// apps/apple/connectors/dist/apps/contacts/contacts-app.mjs
+// packages/connectors/apple/contacts/dist/contacts-app.js
 var ContactsApp = class extends AppleApp {
   name = "contacts";
   title = "Contacts";

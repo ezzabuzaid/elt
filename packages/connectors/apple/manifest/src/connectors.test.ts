@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { builtInConnectors } from '@workspace/apple/apps/built-in-connectors';
-
+import { builtInConnectors } from './built-in-connectors.ts';
 import { Connectors } from './connectors.ts';
 
 const fixtures = fileURLToPath(new URL('./fixtures/', import.meta.url));
@@ -48,7 +47,7 @@ test('every connector folder loads as its app for the host, and one that cannot 
       },
       {
         title: 'Not an app',
-        error: `${fixtures}not-an-app/not-an-app-app.mjs does not export an AppleApp class by default.`,
+        error: `${fixtures}not-an-app/not-an-app-app.js does not export an AppleApp class by default.`,
       },
       { title: 'Notes again', error: 'Another connector is named notes.' },
     ],

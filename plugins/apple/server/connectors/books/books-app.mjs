@@ -2174,7 +2174,7 @@ async function fingerprint(path) {
   }
 }
 
-// apps/apple/connectors/dist/apps/books/books-app.mjs
+// packages/connectors/apple/books/dist/books-app.js
 var BooksApp = class extends AppleApp {
   name = "books";
   title = "Books";

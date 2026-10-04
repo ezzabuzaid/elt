@@ -27056,7 +27056,7 @@ var AppleMailSource = class extends Source {
   }
 };
 
-// apps/apple/connectors/dist/apps/mail/mail-app.mjs
+// packages/connectors/apple/mail/dist/mail-app.js
 var accountName = (row) => String(JSON.parse(String(row.properties)).name);
 var MailApp = class extends AppleApp {
   name = "mail";

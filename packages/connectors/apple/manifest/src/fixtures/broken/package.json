@@ -1,0 +1,8 @@
+{
+  "type": "module",
+  "exports": "./broken-app.js",
+  "contextCompiler": {
+    "name": "broken",
+    "title": "Broken"
+  }
+}

@@ -15,9 +15,9 @@ export type BrokenConnector = {
   readonly error: string;
 };
 
-// The Apple apps found in the folders a host reads: each subfolder holding a
-// connector.json. A connector that cannot be read or loaded is reported with
-// its error, and the others still load.
+// The Apple apps found in the folders a host reads: each subfolder whose
+// package.json declares a connector. A connector that cannot be read or
+// loaded is reported with its error, and the others still load.
 export class Connectors {
   readonly #roots: readonly string[];
 
@@ -36,13 +36,14 @@ export class Connectors {
           title,
           error: error instanceof Error ? error.message : String(error),
         });
-      let manifest: ConnectorManifest;
+      let manifest: ConnectorManifest | undefined;
       try {
-        manifest = new ConnectorManifest(folder);
+        manifest = ConnectorManifest.read(folder);
       } catch (error) {
         failed(folder, error);
         continue;
       }
+      if (manifest === undefined) continue;
       if (apps.some(({ name }) => name === manifest.name)) {
         failed(manifest.title, `Another connector is named ${manifest.name}.`);
         continue;
@@ -56,14 +57,13 @@ export class Connectors {
     return { apps, broken };
   }
 
-  // Every subfolder holding a connector.json, root by root and by name within
-  // a root; a root that does not exist yet holds none.
+  // What each root holds, root by root and by name within a root, for
+  // ConnectorManifest.read to tell connector folders from the rest; a root
+  // that does not exist yet holds none.
   *#folders(): Generator<string> {
     for (const root of this.#roots) {
       if (!existsSync(root)) continue;
-      for (const name of readdirSync(root).sort())
-        if (existsSync(join(root, name, 'connector.json')))
-          yield join(root, name);
+      for (const name of readdirSync(root).sort()) yield join(root, name);
     }
   }
 }

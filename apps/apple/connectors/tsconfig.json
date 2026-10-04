@@ -3,14 +3,10 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
-    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
-    "resolveJsonModule": true
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
   },
-  "include": ["src/**/*.ts", "src/**/*.mts", "src/apps/*/connector.json"],
+  "include": ["src/**/*.ts"],
   "references": [
-    {
-      "path": "../../../packages/sources/apple/safari"
-    },
     {
       "path": "../../../packages/sources/apple/reminders"
     },
@@ -18,34 +14,34 @@
       "path": "../../../packages/sources/apple/notes"
     },
     {
-      "path": "../../../packages/sources/apple/messages"
-    },
-    {
-      "path": "../../../packages/sources/apple/mail"
-    },
-    {
       "path": "../../../packages/sources/apple/macos"
-    },
-    {
-      "path": "../../../packages/sources/apple/contacts"
     },
     {
       "path": "../../../packages/sources/apple/calendar"
     },
     {
-      "path": "../../../packages/sources/apple/books"
-    },
-    {
       "path": "../../../packages/macos/eventkit"
-    },
-    {
-      "path": "../../../packages/google-auth"
     },
     {
       "path": "../../../packages/destinations/sqlite"
     },
     {
       "path": "../../../packages/elt"
+    },
+    {
+      "path": "../../../packages/connectors/apple/notes"
+    },
+    {
+      "path": "../../../packages/connectors/apple/messages"
+    },
+    {
+      "path": "../../../packages/connectors/apple/mail"
+    },
+    {
+      "path": "../../../packages/connectors/apple/contacts"
+    },
+    {
+      "path": "../../../packages/connectors/apple/calendar"
     },
     {
       "path": "../../../packages/connectors/apple/app"

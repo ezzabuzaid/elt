@@ -1118,7 +1118,7 @@ function checkEventDates(event) {
     throw new TypeError("Calendar returned inconsistent event dates");
 }
 
-// apps/apple/connectors/dist/apps/calendar/calendar-app.mjs
+// packages/connectors/apple/calendar/dist/calendar-app.js
 var CalendarApp = class extends AppleApp {
   name = "calendar";
   title = "Calendar";

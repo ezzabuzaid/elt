@@ -20,10 +20,31 @@
       "path": "../../../packages/elt"
     },
     {
-      "path": "../../../packages/connectors/apple/app"
+      "path": "../../../packages/connectors/apple/safari"
     },
     {
-      "path": "../connectors"
+      "path": "../../../packages/connectors/apple/reminders"
+    },
+    {
+      "path": "../../../packages/connectors/apple/notes"
+    },
+    {
+      "path": "../../../packages/connectors/apple/messages"
+    },
+    {
+      "path": "../../../packages/connectors/apple/mail"
+    },
+    {
+      "path": "../../../packages/connectors/apple/contacts"
+    },
+    {
+      "path": "../../../packages/connectors/apple/calendar"
+    },
+    {
+      "path": "../../../packages/connectors/apple/books"
+    },
+    {
+      "path": "../../../packages/connectors/apple/app"
     },
     {
       "path": "../../../packages/macos/eventkit"

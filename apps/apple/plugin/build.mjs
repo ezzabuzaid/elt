@@ -1,34 +1,34 @@
 // Bundles the plugin's MCP server into plugins/apple/server: main.mjs, one
-// connector folder per built-in Apple app (its connector.json beside its
-// entry point), the host modules a user's connector imports, and the chunks
+// connector folder per built-in Apple app (its package.json manifest beside
+// its entry point), the host modules a user's connector imports, and the chunks
 // they all share, so every connector runs on the same elt and AppleApp as the
 // server. @nx/esbuild cannot name each entry's output, so this calls
 // esbuild's API.
-import { copyFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { basename, dirname, extname, join } from 'node:path';
+import { copyFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
 
+import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
+import { ConnectorManifest } from '@workspace/connector-apple-manifest/connector-manifest';
 import { hostModules } from '@workspace/connector-apple-manifest/host-modules';
 
-const connectors = 'apps/apple/connectors/dist/apps';
 const eventkitHelper = 'packages/macos/eventkit/dist/eventkit-helper';
 const outdir = 'plugins/apple/server';
 
-const builtIns = readdirSync(connectors, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
-  .map(({ name }) => {
-    const folder = join(connectors, name);
-    const { entry } = JSON.parse(
-      readFileSync(join(folder, 'connector.json'), 'utf8'),
-    );
-    return {
-      folder,
-      in: join(folder, entry),
-      out: join('connectors', name, basename(entry, extname(entry))),
-    };
-  });
+const builtIns = readdirSync(builtInConnectors)
+  .map((name) => ConnectorManifest.read(join(builtInConnectors, name)))
+  .filter((manifest) => manifest !== undefined)
+  .map((manifest) => ({
+    manifest,
+    in: manifest.entry,
+    out: join(
+      'connectors',
+      manifest.name,
+      basename(manifest.entry, extname(manifest.entry)),
+    ),
+  }));
 
 rmSync(outdir, { recursive: true, force: true });
 await build({
@@ -55,10 +55,14 @@ await build({
   },
 });
 
-for (const { folder, out } of builtIns)
-  copyFileSync(
-    join(folder, 'connector.json'),
-    join(outdir, dirname(out), 'connector.json'),
+for (const { manifest, out } of builtIns)
+  writeFileSync(
+    join(outdir, 'connectors', manifest.name, 'package.json'),
+    JSON.stringify({
+      type: 'module',
+      exports: `./${basename(out)}.mjs`,
+      contextCompiler: { name: manifest.name, title: manifest.title },
+    }),
   );
 
 // main.ts hands this path to the Calendar and Reminders apps.

@@ -2558,7 +2558,7 @@ async function fingerprint(path) {
   }
 }
 
-// apps/apple/connectors/dist/apps/safari/safari-app.mjs
+// packages/connectors/apple/safari/dist/safari-app.js
 var SafariApp = class extends AppleApp {
   name = "safari";
   title = "Safari";

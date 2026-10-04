@@ -1,6 +1,6 @@
 import { Command as Program } from 'commander';
 
-import { builtInConnectors } from '@workspace/apple/apps/built-in-connectors';
+import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
 import { Connectors } from '@workspace/connector-apple-manifest/connectors';
 import { provideHostModules } from '@workspace/connector-apple-manifest/host-modules';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';

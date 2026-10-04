@@ -637,7 +637,7 @@ var AppleRemindersSource = class extends Source {
   }
 };
 
-// apps/apple/connectors/dist/apps/reminders/reminders-app.mjs
+// packages/connectors/apple/reminders/dist/reminders-app.js
 var RemindersApp = class extends AppleApp {
   name = "reminders";
   title = "Reminders";

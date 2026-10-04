@@ -1,0 +1,23 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    {
+      "path": "../../../sources/apple/reminders"
+    },
+    {
+      "path": "../../../sources/apple/macos"
+    },
+    {
+      "path": "../../../macos/eventkit"
+    },
+    {
+      "path": "../app"
+    }
+  ]
+}

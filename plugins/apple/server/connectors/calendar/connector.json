@@ -1,5 +1,0 @@
-{
-    "name": "calendar",
-    "title": "Calendar",
-    "entry": "./calendar-app.mjs"
-}

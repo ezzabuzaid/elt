@@ -1,0 +1,8 @@
+{
+  "name": "connector-apple-messages",
+  "sourceRoot": "packages/connectors/apple/messages/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  }
+}

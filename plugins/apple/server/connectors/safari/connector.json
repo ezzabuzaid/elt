@@ -1,5 +1,0 @@
-{
-    "name": "safari",
-    "title": "Safari",
-    "entry": "./safari-app.mjs"
-}

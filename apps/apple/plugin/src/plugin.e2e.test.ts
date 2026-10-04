@@ -817,35 +817,32 @@ async function withConnectors(home: string) {
   );
   mkdirSync(join(connectors, 'photos'), { recursive: true });
   await writeFile(
-    join(connectors, 'photos/connector.json'),
+    join(connectors, 'photos/package.json'),
     JSON.stringify({
-      name: 'photos',
-      title: 'Photos',
-      entry: './photos-app.mts',
+      type: 'module',
+      exports: './photos-app.ts',
+      contextCompiler: { name: 'photos', title: 'Photos' },
     }),
   );
   await writeFile(
-    join(connectors, 'photos/photos-app.mts'),
+    join(connectors, 'photos/photos-app.ts'),
     readFileSync(
       join(
         root,
-        'packages/connectors/apple/manifest/src/fixtures/photos/photos-app.mts',
+        'packages/connectors/apple/manifest/src/fixtures/photos/photos-app.ts',
       ),
     ),
   );
   mkdirSync(join(connectors, 'drafts'), { recursive: true });
   await writeFile(
-    join(connectors, 'drafts/connector.json'),
+    join(connectors, 'drafts/package.json'),
     JSON.stringify({
-      name: 'drafts',
-      title: 'Drafts',
-      entry: './drafts-app.mts',
+      type: 'module',
+      exports: './drafts-app.ts',
+      contextCompiler: { name: 'drafts', title: 'Drafts' },
     }),
   );
-  await writeFile(
-    join(connectors, 'drafts/drafts-app.mts'),
-    'export default {',
-  );
+  await writeFile(join(connectors, 'drafts/drafts-app.ts'), 'export default {');
   mkdirSync(join(home, 'Pictures'));
   await writeFile(
     join(home, 'Pictures/photos.json'),
@@ -911,7 +908,7 @@ test(
       }
       const connector = join(
         scratch.path,
-        'Library/Application Support/Context Compiler/Connectors/photos/photos-app.mts',
+        'Library/Application Support/Context Compiler/Connectors/photos/photos-app.ts',
       );
       writeFileSync(
         connector,

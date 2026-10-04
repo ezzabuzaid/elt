@@ -735,7 +735,7 @@ function messageSelection(database, scope) {
   };
 }
 
-// apps/apple/connectors/dist/apps/messages/messages-app.mjs
+// packages/connectors/apple/messages/dist/messages-app.js
 var MessagesApp = class extends AppleApp {
   name = "messages";
   title = "Messages";

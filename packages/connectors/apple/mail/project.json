@@ -1,0 +1,8 @@
+{
+  "name": "connector-apple-mail",
+  "sourceRoot": "packages/connectors/apple/mail/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  }
+}

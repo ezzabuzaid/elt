@@ -1052,7 +1052,7 @@ var AppleNotesSource = class extends Source {
   }
 };
 
-// apps/apple/connectors/dist/apps/notes/notes-app.mjs
+// packages/connectors/apple/notes/dist/notes-app.js
 var NotesApp = class extends AppleApp {
   name = "notes";
   title = "Notes";

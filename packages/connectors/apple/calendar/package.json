@@ -1,0 +1,18 @@
+{
+  "name": "@workspace/connector-apple-calendar",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/calendar-app.js",
+  "contextCompiler": {
+    "name": "calendar",
+    "title": "Calendar"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-app": "0.0.1",
+    "@workspace/google-auth": "0.0.1",
+    "@workspace/macos-eventkit": "0.0.1",
+    "@workspace/source-apple-calendar": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  }
+}

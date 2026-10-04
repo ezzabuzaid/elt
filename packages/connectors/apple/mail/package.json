@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/connector-apple-mail",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/mail-app.js",
+  "contextCompiler": {
+    "name": "mail",
+    "title": "Mail"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-app": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
+    "@workspace/source-apple-mail": "0.0.1"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/connector-apple-notes",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/notes-app.js",
+  "contextCompiler": {
+    "name": "notes",
+    "title": "Notes"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-app": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
+    "@workspace/source-apple-notes": "0.0.1"
+  }
+}

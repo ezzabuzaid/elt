@@ -1,0 +1,8 @@
+{
+  "type": "module",
+  "exports": "./notes-again-app.js",
+  "contextCompiler": {
+    "name": "notes",
+    "title": "Notes again"
+  }
+}

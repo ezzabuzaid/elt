@@ -13,7 +13,7 @@ import {
   OpenAISettingsUpdateResultSchema,
 } from '@openai/mcp-extensions/server';
 
-import { builtInConnectors } from '@workspace/apple/apps/built-in-connectors';
+import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
 import { Connectors } from '@workspace/connector-apple-manifest/connectors';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { type Selection, importDirectory } from '@workspace/import-store';

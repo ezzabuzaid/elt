@@ -36466,11 +36466,11 @@ var StdioServerTransport = class {
 };
 
 // packages/connectors/apple/manifest/dist/connectors.js
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync as existsSync2, readdirSync } from "node:fs";
 import { join as join2 } from "node:path";
 
 // packages/connectors/apple/manifest/dist/connector-manifest.js
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 var __rewriteRelativeImportExtension = function(path, preserveJsx) {
@@ -36481,33 +36481,46 @@ var __rewriteRelativeImportExtension = function(path, preserveJsx) {
   }
   return path;
 };
-var manifestSchema = external_exports.strictObject({
-  name: external_exports.string().regex(/^[a-z][a-z0-9-]*$/),
-  title: external_exports.string().min(1),
-  entry: external_exports.string().startsWith("./")
+var manifestSchema = external_exports.object({
+  type: external_exports.literal("module"),
+  exports: external_exports.string().startsWith("./"),
+  contextCompiler: external_exports.strictObject({
+    name: external_exports.string().regex(/^[a-z][a-z0-9-]*$/),
+    title: external_exports.string().min(1)
+  })
 });
-var ConnectorManifest = class {
+var ConnectorManifest = class _ConnectorManifest {
   name;
   title;
-  #entry;
-  constructor(folder) {
-    const manifest = manifestSchema.parse(JSON.parse(readFileSync(join(folder, "connector.json"), "utf8")));
-    this.name = manifest.name;
-    this.title = manifest.title;
-    this.#entry = join(folder, manifest.entry);
+  entry;
+  constructor(folder, manifest) {
+    this.name = manifest.contextCompiler.name;
+    this.title = manifest.contextCompiler.title;
+    this.entry = join(folder, manifest.exports);
+  }
+  // The folder's manifest; undefined when the folder holds no package.json
+  // that declares a connector.
+  static read(folder) {
+    const path = join(folder, "package.json");
+    if (!existsSync(path))
+      return void 0;
+    const json2 = external_exports.record(external_exports.string(), external_exports.unknown()).parse(JSON.parse(readFileSync(path, "utf8")));
+    if (!("contextCompiler" in json2))
+      return void 0;
+    return new _ConnectorManifest(folder, manifestSchema.parse(json2));
   }
   // Runs the entry point and creates its app for the host. Node keeps a
   // module it loaded, so the entry's URL carries its modification time: an
   // edited entry loads again. Files it imports load once.
   async load(host) {
-    const entry = pathToFileURL(this.#entry);
-    entry.searchParams.set("modified", String(statSync(this.#entry).mtimeMs));
+    const entry = pathToFileURL(this.entry);
+    entry.searchParams.set("modified", String(statSync(this.entry).mtimeMs));
     const { default: App } = await import(__rewriteRelativeImportExtension(entry.href));
     if (!isAppleAppClass(App))
-      throw new TypeError(`${this.#entry} does not export an AppleApp class by default.`);
+      throw new TypeError(`${this.entry} does not export an AppleApp class by default.`);
     const app = new App(host);
     if (app.name !== this.name)
-      throw new TypeError(`${this.#entry} names its app ${app.name}, but its manifest names ${this.name}.`);
+      throw new TypeError(`${this.entry} names its app ${app.name}, but its manifest names ${this.name}.`);
     return app;
   }
 };
@@ -36531,11 +36544,13 @@ var Connectors = class {
       });
       let manifest;
       try {
-        manifest = new ConnectorManifest(folder);
+        manifest = ConnectorManifest.read(folder);
       } catch (error62) {
         failed(folder, error62);
         continue;
       }
+      if (manifest === void 0)
+        continue;
       if (apps.some(({ name }) => name === manifest.name)) {
         failed(manifest.title, `Another connector is named ${manifest.name}.`);
         continue;
@@ -36548,15 +36563,14 @@ var Connectors = class {
     }
     return { apps, broken };
   }
-  // Every subfolder holding a connector.json, root by root and by name within
-  // a root; a root that does not exist yet holds none.
+  // Every entry of the roots, root by root and by name within a root; a root
+  // that does not exist yet holds none.
   *#folders() {
     for (const root of this.#roots) {
-      if (!existsSync(root))
+      if (!existsSync2(root))
         continue;
       for (const name of readdirSync(root).sort())
-        if (existsSync(join2(root, name, "connector.json")))
-          yield join2(root, name);
+        yield join2(root, name);
     }
   }
 };
@@ -36584,12 +36598,12 @@ import { join as join3 } from "node:path";
 var userConnectors = join3(homedir(), "Library/Application Support/Context Compiler/Connectors");
 
 // apps/apple/plugin/src/apple-plugin.ts
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join7 } from "node:path";
 
 // packages/import-store/dist/import-store.js
-import { chmodSync, existsSync as existsSync2, mkdirSync, readdirSync as readdirSync2, rmSync } from "node:fs";
+import { chmodSync, existsSync as existsSync3, mkdirSync, readdirSync as readdirSync2, rmSync } from "node:fs";
 import { join as join5 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -36810,7 +36824,7 @@ var ImportStore = class {
   recover(selection) {
     var _stack = [];
     try {
-      if (!existsSync2(this.database(selection)))
+      if (!existsSync3(this.database(selection)))
         return;
       const recovery = __using(_stack, new DatabaseSync(this.database(selection), {
         timeout: 3e4
@@ -36852,7 +36866,7 @@ var ImportStore = class {
   // The import's data.sqlite opened for reading, or null until a sync
   // installed its history views.
   history(selection) {
-    if (!existsSync2(this.database(selection)))
+    if (!existsSync3(this.database(selection)))
       return null;
     const data = this.read(selection);
     const installed = data.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'").get();
@@ -36986,7 +37000,7 @@ var ApplePlugin = class {
   // deleted this version's folder, or that version rewrote the settings in a
   // layout this code predates.
   #open() {
-    if (!existsSync3(join7(this.install, ".codex-plugin/plugin.json")))
+    if (!existsSync4(join7(this.install, ".codex-plugin/plugin.json")))
       throw new PluginUpdatedError();
     try {
       return new ImportStore(this.directory);
@@ -37030,7 +37044,7 @@ var ApplePlugin = class {
           return {
             ...item,
             title: this.#loaded(item.app)?.title ?? item.app,
-            database: existsSync3(database) ? database : null,
+            database: existsSync4(database) ? database : null,
             sync,
             permissions: this.#permissions(item.app)
           };

@@ -7,8 +7,8 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
 
 ## What you need to know
 
-- A connector is a folder in `~/Library/Application Support/Context Compiler/Connectors/<name>/` holding two files: `connector.json` and the entry point it names. The plugin reads that folder on every tool call, so a connector you add or edit is used in this chat; nothing restarts.
-- `connector.json` is `{ "name": "<name>", "title": "<Title>", "entry": "./<name>-app.mts" }`. `name` is lowercase letters, digits and dashes, must equal the app class's `name`, and must not repeat an app the plugin already has. `title` is what the user sees.
+- A connector is a folder in `~/Library/Application Support/Context Compiler/Connectors/<name>/` holding two files: a `package.json` and the entry point it names. The plugin reads that folder on every tool call, so a connector you add or edit is used in this chat; nothing restarts.
+- `package.json` is `{ "type": "module", "exports": "./<name>-app.ts", "contextCompiler": { "name": "<name>", "title": "<Title>" } }`. `name` is lowercase letters, digits and dashes, must equal the app class's `name`, and must not repeat an app the plugin already has. `title` is what the user sees.
 - The entry is TypeScript that Node runs as written, without a compiler. Its default export is a class that extends `AppleApp`. Its `source()` returns an elt `Source` that reads the app's own data on this Mac.
 - The entry may import only Node built-ins (`node:fs`, `node:sqlite`, `node:child_process`, ...) and three modules the plugin provides: `@workspace/elt` (`Source`, `Stream`, `Catalog` and their types), `@workspace/connector-apple-app/apple-app` (`AppleApp`) and `@workspace/connector-apple-app/choice` (`accounts`, `collections`, `byId`, `name`, `Choice`). There is no `node_modules`, so no npm package resolves.
 - The plugin imports each stream into `raw_<stream>` in the app's own `data.sqlite`, read through a view named after the stream in snake case (`photoAssets` reads as `photo_assets`). `$query-apple` reads it like any other app.
@@ -18,7 +18,7 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
 ## Writing the connector
 
 1. Find where the app keeps its data and how to read it read-only: a SQLite store (open it with `node:sqlite` and `{ readOnly: true }`), property lists (`plutil -convert json -o - <file>`), or the app's scripting (`osascript`). Inspect real rows before writing a schema.
-2. Write `connector.json` and `<name>-app.mts` from this template. Keep the connector in that one file.
+2. Write `package.json` and `<name>-app.ts` from this template. Keep the connector in that one file.
 
    ```ts
    import { homedir } from 'node:os';
