@@ -7,7 +7,7 @@ import {
   booksContainer,
   booksGroupContainer,
   readBooksPlist,
-} from '../../platform/macos/books-store.ts';
+} from './books-store.ts';
 import { type ReadingHistory, readingHistory } from './reading-history.ts';
 
 // Where Books keeps each kind of data: Core Data stores it commits to, and

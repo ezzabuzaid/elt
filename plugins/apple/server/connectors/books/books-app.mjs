@@ -25,13 +25,16 @@ import {
   __using
 } from "../../chunks/chunk-ZGXE7NZW.mjs";
 
-// apps/apple/connectors/dist/sources/apple-books/apple-books-source.js
+// packages/sources/apple/books/dist/apple-books-source.js
 import { mkdtempDisposable, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join as join5 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
-// apps/apple/connectors/dist/platform/macos/books-store.js
+// packages/sources/apple/books/dist/books-scan.js
+import { join as join2 } from "node:path";
+
+// packages/sources/apple/books/dist/books-store.js
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -118,10 +121,7 @@ async function readBooksPlist(path) {
   return parseBinaryPlist(bytes);
 }
 
-// apps/apple/connectors/dist/sources/apple-books/books-scan.js
-import { join as join2 } from "node:path";
-
-// apps/apple/connectors/dist/sources/apple-books/reading-history.js
+// packages/sources/apple/books/dist/reading-history.js
 var magic = "crdt";
 var supportedVersion = 4;
 var Layout = class {
@@ -232,7 +232,7 @@ function readingHistory(bytes, source) {
   return { months, days, streaks };
 }
 
-// apps/apple/connectors/dist/sources/apple-books/books-scan.js
+// packages/sources/apple/books/dist/books-scan.js
 var defaultBooksLocation = Object.freeze({
   container: booksContainer,
   groupContainer: booksGroupContainer
@@ -561,7 +561,7 @@ var BooksScan = class _BooksScan {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/books-stream.js
+// packages/sources/apple/books/dist/books-stream.js
 var text = { type: "string" };
 var nullableText = { type: ["string", "null"] };
 var integer2 = { type: "integer" };
@@ -609,7 +609,7 @@ var BooksStream = class {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/books-values.js
+// packages/sources/apple/books/dist/books-values.js
 var appleEpochSeconds = 978307200;
 var distantPast = -63114076800;
 var distantFuture = 63113904e3;
@@ -622,7 +622,7 @@ var flag = (value) => value === 1 || value === true;
 var nullableFlag = (value) => value === null || value === void 0 ? null : value === 1;
 var base64 = (value) => value instanceof Uint8Array && value.length > 0 ? Buffer.from(value).toString("base64") : null;
 
-// apps/apple/connectors/dist/sources/apple-books/streams/annotations-stream.js
+// packages/sources/apple/books/dist/streams/annotations-stream.js
 var { boolean, nullableInteger: nullableInteger2, nullableText: nullableText2, nullableTimestamp } = booksFields;
 var kinds = {
   2: "highlight",
@@ -737,7 +737,7 @@ var AnnotationsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/asset-details-stream.js
+// packages/sources/apple/books/dist/streams/asset-details-stream.js
 var { boolean: boolean2, nullableBoolean, nullableInteger: nullableInteger3, nullableNumber, nullableText: nullableText3, nullableTimestamp: nullableTimestamp2 } = booksFields;
 var properties2 = {
   assetId: {
@@ -880,10 +880,14 @@ var AssetDetailsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/book-files-stream.js
+// packages/sources/apple/books/dist/streams/book-files-stream.js
 import { join as join4 } from "node:path";
 
-// apps/apple/connectors/dist/platform/macos/icloud-files.js
+// packages/sources/apple/books/dist/epub-package.js
+import { open as open2 } from "node:fs/promises";
+import { crc32 } from "node:zlib";
+
+// packages/sources/apple/books/dist/icloud-files.js
 import { execFile } from "node:child_process";
 import { lstat, readdir } from "node:fs/promises";
 import { join as join3 } from "node:path";
@@ -963,9 +967,7 @@ async function localFiles(item) {
   return files.sort(compareByName);
 }
 
-// apps/apple/connectors/dist/sources/apple-books/epub-package.js
-import { open as open2 } from "node:fs/promises";
-import { crc32 } from "node:zlib";
+// packages/sources/apple/books/dist/epub-package.js
 var chunkSize = 4 * 1024 * 1024;
 var dosTime = 0;
 var dosDate = 0 << 9 | 1 << 5 | 1;
@@ -1089,7 +1091,7 @@ async function writeEpub(files, target) {
   }
 }
 
-// apps/apple/connectors/dist/sources/apple-books/streams/book-files-stream.js
+// packages/sources/apple/books/dist/streams/book-files-stream.js
 var { boolean: boolean3, nullableInteger: nullableInteger4, nullableTimestamp: nullableTimestamp3 } = booksFields;
 var properties3 = {
   assetId: booksFields.assetId,
@@ -1182,7 +1184,7 @@ var BookFilesStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/collection-members-stream.js
+// packages/sources/apple/books/dist/streams/collection-members-stream.js
 var properties4 = {
   collectionId: {
     ...booksFields.id,
@@ -1230,7 +1232,7 @@ var CollectionMembersStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/collections-stream.js
+// packages/sources/apple/books/dist/streams/collections-stream.js
 var { boolean: boolean4, nullableInteger: nullableInteger5, nullableText: nullableText4, nullableTimestamp: nullableTimestamp4 } = booksFields;
 var properties5 = {
   collectionId: {
@@ -1296,7 +1298,7 @@ var CollectionsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/library-assets-stream.js
+// packages/sources/apple/books/dist/streams/library-assets-stream.js
 var { boolean: boolean5, nullableBoolean: nullableBoolean2, nullableInteger: nullableInteger6, nullableNumber: nullableNumber2, nullableText: nullableText5, nullableTimestamp: nullableTimestamp5 } = booksFields;
 var contentTypes = {
   1: "epub",
@@ -1666,7 +1668,7 @@ var LibraryAssetsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/purchases-stream.js
+// packages/sources/apple/books/dist/streams/purchases-stream.js
 var { nullableBoolean: nullableBoolean3, nullableInteger: nullableInteger7, nullableText: nullableText6, nullableTimestamp: nullableTimestamp6 } = booksFields;
 var properties7 = {
   storeId: {
@@ -1756,7 +1758,7 @@ var PurchasesStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/reading-goal-stream.js
+// packages/sources/apple/books/dist/streams/reading-goal-stream.js
 var { nullableBoolean: nullableBoolean4, nullableInteger: nullableInteger8, nullableTimestamp: nullableTimestamp7 } = booksFields;
 var properties8 = {
   id: {
@@ -1813,7 +1815,7 @@ var ReadingGoalStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/reading-history-streams.js
+// packages/sources/apple/books/dist/streams/reading-history-streams.js
 var { nullableInteger: nullableInteger9 } = booksFields;
 var pad = (value) => String(value).padStart(2, "0");
 var monthProperties = {
@@ -1930,7 +1932,7 @@ var StreakRecordsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/reviews-stream.js
+// packages/sources/apple/books/dist/streams/reviews-stream.js
 var { nullableInteger: nullableInteger10, nullableText: nullableText7, nullableTimestamp: nullableTimestamp8 } = booksFields;
 var properties9 = {
   id: { ...booksFields.id, description: "Review identifier." },
@@ -1976,7 +1978,7 @@ var ReviewsStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/streams/themes-stream.js
+// packages/sources/apple/books/dist/streams/themes-stream.js
 var { nullableBoolean: nullableBoolean5, nullableNumber: nullableNumber3 } = booksFields;
 var properties10 = {
   id: { ...booksFields.id, description: "Theme identifier." },
@@ -2026,7 +2028,7 @@ var ThemesStream = class extends BooksStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-books/apple-books-source.js
+// packages/sources/apple/books/dist/apple-books-source.js
 var readers = {
   libraryAssets: new LibraryAssetsStream(),
   collections: new CollectionsStream(),

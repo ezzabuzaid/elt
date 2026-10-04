@@ -31,13 +31,13 @@ import {
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 
+import { AppleBooksSource } from './apple-books-source.ts';
 import {
   BooksSchemaError,
   BooksUnavailableError,
   booksContainer,
   booksGroupContainer,
-} from './platform/macos/books-store.ts';
-import { AppleBooksSource } from './sources/apple-books/apple-books-source.ts';
+} from './books-store.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);

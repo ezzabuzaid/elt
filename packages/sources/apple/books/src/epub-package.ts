@@ -1,10 +1,7 @@
 import { open } from 'node:fs/promises';
 import { crc32 } from 'node:zlib';
 
-import {
-  type LocalFile,
-  compareByName,
-} from '../../platform/macos/icloud-files.ts';
+import { type LocalFile, compareByName } from './icloud-files.ts';
 
 // Books keeps an EPUB as its unzipped package directory. This writes the
 // single-file form every reader opens: a ZIP whose first entry is the

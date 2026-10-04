@@ -1,4 +1,5 @@
-import { AppleBooksSource } from '../../sources/apple-books/apple-books-source.ts';
+import { AppleBooksSource } from '@workspace/source-apple-books/apple-books-source';
+
 import { AppleApp } from '../apple-app.ts';
 import type { Choice } from '../choice.ts';
 

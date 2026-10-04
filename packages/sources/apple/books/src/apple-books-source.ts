@@ -13,7 +13,6 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
-import { BooksDatabaseVersion } from '../../platform/macos/books-store.ts';
 import {
   type BooksLocation,
   BooksScan,
@@ -23,6 +22,7 @@ import {
   sharedPreferences,
   storeFiles,
 } from './books-scan.ts';
+import { BooksDatabaseVersion } from './books-store.ts';
 import type { BooksReader } from './books-stream.ts';
 import { AnnotationsStream } from './streams/annotations-stream.ts';
 import { AssetDetailsStream } from './streams/asset-details-stream.ts';

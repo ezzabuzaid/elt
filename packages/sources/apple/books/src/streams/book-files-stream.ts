@@ -2,13 +2,10 @@ import { join } from 'node:path';
 
 import type { RecordDraft, SchemaRecord } from '@workspace/elt';
 
-import {
-  type LocalFile,
-  localFiles,
-} from '../../../platform/macos/icloud-files.ts';
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';
 import { writeEpub } from '../epub-package.ts';
+import { type LocalFile, localFiles } from '../icloud-files.ts';
 
 const { boolean, nullableInteger, nullableTimestamp } = booksFields;
 

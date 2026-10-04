@@ -1,0 +1,19 @@
+{
+  "name": "@workspace/source-apple-books",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-books-source": {
+      "types": "./dist/apple-books-source.d.ts",
+      "default": "./dist/apple-books-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

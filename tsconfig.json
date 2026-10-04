@@ -52,6 +52,9 @@
     },
     {
       "path": "./packages/sources/apple/macos"
+    },
+    {
+      "path": "./packages/sources/apple/books"
     }
   ]
 }
