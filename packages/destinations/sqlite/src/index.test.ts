@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { EventEmitter, on } from 'node:events';
+import { EventEmitter, on, once } from 'node:events';
 import { rmSync } from 'node:fs';
 import {
   mkdir,
@@ -2511,6 +2511,49 @@ test('the SQLite writer lock spans commits, permits readers and releases after d
   }
   await destination.clear(copy.configuration, copy.to, 'writer');
   await using next = await destination.load();
+});
+
+test('a commit waits for a reader in another process instead of failing', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-busy-reader-'),
+  );
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const copy = new Copy(scripted('docs'), destination.table('docs'));
+  await using load = await destination.load();
+  const stage = await load.prepare(copy.configuration, copy.to, {
+    writer: 'writer',
+    resuming: false,
+  });
+  // A reader such as an agent's sqlite3 -readonly query, mid-read.
+  const reader = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { DatabaseSync } from 'node:sqlite';
+      const database = new DatabaseSync(process.argv[1], { readOnly: true });
+      database.exec('BEGIN');
+      database.prepare('SELECT count(*) FROM sqlite_schema').get();
+      process.stdout.write('reading');
+      setTimeout(() => database.exec('COMMIT'), 300);`,
+      destination.path,
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  try {
+    await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
+    await once(reader.stdout, 'data');
+
+    await stage.commit();
+
+    using after = new DatabaseSync(destination.path, { readOnly: true });
+    assert.equal(after.prepare('SELECT count(*) AS n FROM docs').get()?.n, 1);
+  } finally {
+    reader.kill();
+    await stage[Symbol.asyncDispose]();
+  }
 });
 
 test('stored file references follow committed SQLite rows, including rejected updates, failures, deletions and clear', async () => {

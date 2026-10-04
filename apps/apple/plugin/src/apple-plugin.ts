@@ -87,15 +87,15 @@ export class PluginUpdatedError extends Error {
 }
 
 // An import's latest pass, as its status reports it. interrupted: running
-// when no server is left to finish it.
+// while no server holds the import's lock to finish it.
 export type ImportSync =
   | Pass
   | (Omit<Extract<Pass, { state: 'running' }>, 'state'> & {
       state: 'interrupted';
     });
 
-// Setup and status for the Codex plugin. The leading server's importSelected
-// writes each app's data.sqlite; agents read those files directly.
+// Setup and status for the Codex plugin. importPending writes each app's
+// data.sqlite; agents read those files directly.
 export class ApplePlugin {
   // The installed plugin's folder. Installing another version deletes it.
   readonly install: string;
@@ -186,7 +186,6 @@ export class ApplePlugin {
 
   status() {
     using store = this.#open();
-    const leading = leaseHeld(this.directory);
     return {
       apps: store.selections().map((item) => {
         const database = store.database(item);
@@ -201,7 +200,7 @@ export class ApplePlugin {
                 lastSucceededAt: pass?.lastSucceededAt ?? null,
                 error: failure.error,
               }
-            : pass?.state === 'running' && !leading
+            : pass?.state === 'running' && !leaseHeld(store.directory(item))
               ? { ...pass, state: 'interrupted' }
               : pass;
         return {
@@ -215,7 +214,7 @@ export class ApplePlugin {
     };
   }
 
-  // A changed scope is a new import: the leading server loads it, and the
+  // A changed scope is a new import: importPending loads it, and the
   // previous one is removed, so nothing reads an import that is not selected.
   // An app whose connector is not loaded keeps only the selection it has, so
   // a connector broken while it is edited loses nothing.

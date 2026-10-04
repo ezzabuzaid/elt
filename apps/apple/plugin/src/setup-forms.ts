@@ -21,7 +21,7 @@ export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 // Full Disk Access has no macOS prompt, so apps behind it are reported
 // without opening them and a second form offers to open its Settings list.
 // Cancelling leaves setup unchanged. It returns once the answers are saved;
-// the leading server imports them.
+// the server then imports them in the background.
 export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   const previous = new Map(
     plugin

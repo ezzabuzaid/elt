@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   OpenAISettingsReadResultSchema,
@@ -16,15 +15,11 @@ import {
 import { Connectors } from '@workspace/apple-manifest/connectors';
 import { builtInConnectors } from '@workspace/apple/apps/built-in-connectors';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
-import {
-  type Selection,
-  importDirectory,
-  leaseHeld,
-} from '@workspace/import-store';
+import { type Selection, importDirectory } from '@workspace/import-store';
 
 import { ApplePlugin } from './apple-plugin.ts';
 import { chatStatus } from './chat-status.ts';
-import { importSelected } from './importing.ts';
+import { importPending } from './importing.ts';
 import { settingsRead, settingsUpdate } from './native-settings.ts';
 
 // The committed plugin, as Codex installs it.
@@ -42,7 +37,7 @@ async function applePlugin(install: string, directory: string) {
   return plugin;
 }
 
-// Stands in for the leading server's import of one app selection.
+// Stands in for a server's import of one app selection.
 function imported(directory: string, item: Selection) {
   const path = importDirectory(directory, item);
   mkdirSync(path, { recursive: true });
@@ -52,7 +47,7 @@ function imported(directory: string, item: Selection) {
 }
 
 // Begins passes of one app selection's import, recorded in its data.sqlite as
-// the leading server's history records them.
+// a server's history records them.
 async function passes(plugin: ApplePlugin, item: Selection) {
   const { connection, destination } = await plugin
     .app(item.app)
@@ -192,7 +187,10 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   await begin();
   assert.equal(plugin.status().apps[0]?.sync?.state, 'interrupted');
   {
-    using lease = new DatabaseSync(join(scratch.path, 'lease.sqlite'));
+    // A server importing it holds the import's lock.
+    using lease = new DatabaseSync(
+      join(importDirectory(scratch.path, notes), 'lease.sqlite'),
+    );
     lease.exec('BEGIN IMMEDIATE');
     assert.equal(plugin.status().apps[0]?.sync?.state, 'running');
   }
@@ -208,25 +206,15 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
 });
 
-test('the leading server keeps leading when its settings cannot be read, and lets go once stopped', async () => {
+test('importing settles when the settings cannot be read, so the server keeps serving its tools', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
   // A directory where the settings file belongs fails every read of them.
   mkdirSync(join(scratch.path, 'settings.sqlite'));
-  const stopping = new AbortController();
-  const running = importSelected(
-    await applePlugin(install, scratch.path),
-    stopping.signal,
-  );
-  try {
-    await sleep(1_500);
-    assert.equal(leaseHeld(scratch.path), true);
-  } finally {
-    stopping.abort();
-  }
-  await running;
-  assert.equal(leaseHeld(scratch.path), false);
+  const plugin = await applePlugin(install, scratch.path);
+
+  await assert.doesNotReject(importPending(plugin));
 });
 
 test('a chat hears of a pass only when it changes what a reader can do with the app', async () => {
@@ -240,8 +228,11 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
     includeAttachments: true,
   };
   plugin.configure({ apps: [notes] });
-  // The leading server holds the lease while its passes run.
-  using lease = new DatabaseSync(join(scratch.path, 'lease.sqlite'));
+  // The importing server holds the import's lock while its passes run.
+  mkdirSync(importDirectory(scratch.path, notes), { recursive: true });
+  using lease = new DatabaseSync(
+    join(importDirectory(scratch.path, notes), 'lease.sqlite'),
+  );
   lease.exec('BEGIN IMMEDIATE');
   const waiting = chatStatus(plugin);
   assert.match(
@@ -365,7 +356,9 @@ test('the Settings page switches apps on and off and describes each import as Op
     'Paused: resumes the next time Codex runs the Apple plugin.',
   );
   {
-    using lease = new DatabaseSync(join(scratch.path, 'lease.sqlite'));
+    using lease = new DatabaseSync(
+      join(importDirectory(scratch.path, notes), 'lease.sqlite'),
+    );
     lease.exec('BEGIN IMMEDIATE');
     assert.match(described().notes ?? '', /^Importing since /);
   }
@@ -401,7 +394,7 @@ test('the Settings page switches apps on and off and describes each import as Op
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
 });
 
-test('once another plugin version replaces this one, its server refuses to change apps and never leads', async () => {
+test('once another plugin version replaces this one, its server refuses to change apps and imports nothing', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
@@ -412,9 +405,10 @@ test('once another plugin version replaces this one, its server refuses to chang
   });
   const store = join(scratch.path, 'store');
   const plugin = await applePlugin(replaced, store);
-  plugin.configure({
-    apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
-  });
+  const notes = { app: 'notes', scope: {}, includeAttachments: true };
+  plugin.configure({ apps: [notes] });
+  // An import the newer version's selection no longer names.
+  const unselected = imported(store, { ...notes, includeAttachments: false });
   assert.equal(plugin.updated(), false);
   rmSync(replaced, { recursive: true });
   assert.equal(plugin.updated(), true);
@@ -429,24 +423,24 @@ test('once another plugin version replaces this one, its server refuses to chang
     () => settingsUpdate(plugin, { mail: true }),
     /open a new chat/,
   );
-  const stopping = new AbortController();
-  const running = importSelected(plugin, stopping.signal);
-  try {
-    await sleep(1_500);
-    assert.equal(leaseHeld(store), false);
-  } finally {
-    stopping.abort();
-  }
-  await running;
+
+  await importPending(plugin);
+
+  // Old code neither removes imports nor starts one.
+  assert.equal(existsSync(unselected), true);
+  assert.equal(existsSync(importDirectory(store, notes)), false);
 });
 
-test('a server whose code predates the settings file refuses to change apps and never leads', async () => {
+test('a server whose code predates the settings file refuses to change apps and imports nothing', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = await applePlugin(install, scratch.path);
-  plugin.configure({
-    apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
+  const notes = { app: 'notes', scope: {}, includeAttachments: true };
+  plugin.configure({ apps: [notes] });
+  const unselected = imported(scratch.path, {
+    ...notes,
+    includeAttachments: false,
   });
   // A newer plugin rewrote the settings file in a layout this code predates.
   {
@@ -463,15 +457,11 @@ test('a server whose code predates the settings file refuses to change apps and 
       }),
     /open a new chat/,
   );
-  const stopping = new AbortController();
-  const running = importSelected(plugin, stopping.signal);
-  try {
-    await sleep(1_500);
-    assert.equal(leaseHeld(scratch.path), false);
-  } finally {
-    stopping.abort();
-  }
-  await running;
+
+  await importPending(plugin);
+
+  assert.equal(existsSync(unselected), true);
+  assert.equal(existsSync(importDirectory(scratch.path, notes)), false);
 });
 
 test('settings an older layout wrote are discarded, so the user sets up again', async () => {

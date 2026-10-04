@@ -17,7 +17,7 @@ import {
   configurationSchema,
 } from './apple-plugin.ts';
 import { chatContext } from './chat-status.ts';
-import { importSelected } from './importing.ts';
+import { importPending } from './importing.ts';
 import { settingsRead, settingsUpdate } from './native-settings.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
@@ -88,11 +88,11 @@ mcpServer.registerTool(
       );
     // A person answers each form: wait for them, not the SDK's 60 seconds.
     // Codex pauses the tool call's timeout while a form is open.
-    return structured(
-      await setUpWithForms(plugin, (form) =>
-        mcpServer.server.elicitInput(form, { timeout: 1_800_000 }),
-      ),
+    const saved = await setUpWithForms(plugin, (form) =>
+      mcpServer.server.elicitInput(form, { timeout: 1_800_000 }),
     );
+    void importPending(plugin);
+    return structured(saved);
   },
 );
 mcpServer.registerTool(
@@ -125,7 +125,9 @@ mcpServer.registerTool(
   },
   async (input) => {
     await plugin.refresh();
-    return structured(plugin.configure(input));
+    const saved = plugin.configure(input);
+    void importPending(plugin);
+    return structured(saved);
   },
 );
 // The plugin page's Settings section: a switch per app, described by its
@@ -191,7 +193,9 @@ mcpServer.registerTool(
   async ({ set }) => {
     if (Object.keys(set).length === 0) throw new Error('Set at least one app.');
     await plugin.refresh();
-    return { content: [], structuredContent: settingsUpdate(plugin, set) };
+    const saved = settingsUpdate(plugin, set);
+    void importPending(plugin);
+    return { content: [], structuredContent: saved };
   },
 );
 mcpServer.server.registerCapabilities({
@@ -226,11 +230,7 @@ mcpServer.registerTool(
   },
 );
 
-// Imports the selected apps until Codex closes this server.
-const stopping = new AbortController();
-mcpServer.server.onclose = () => stopping.abort();
-process.stdin.once('end', () => stopping.abort());
-process.once('SIGTERM', () => stopping.abort());
-process.once('SIGINT', () => stopping.abort());
 await mcpServer.connect(new StdioServerTransport());
-await importSelected(plugin, stopping.signal);
+// Finishes what an earlier server left unimported; each selection change
+// above imports what it added.
+await importPending(plugin);

@@ -42,7 +42,11 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     let database: DatabaseSync;
     try {
       resources.use(lockWriter(this.path));
-      database = resources.use(new DatabaseSync(this.path));
+      // A commit waits for readers, such as an agent's sqlite3 -readonly
+      // query, to finish; the writer lock already refuses a competing load.
+      database = resources.use(
+        new DatabaseSync(this.path, { timeout: 30_000 }),
+      );
       database.exec('BEGIN IMMEDIATE');
     } catch (error) {
       resources.dispose();
