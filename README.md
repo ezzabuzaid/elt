@@ -116,7 +116,7 @@ A copy like this replaces the `notes` table's contents with the current snapshot
 
 ### Connector registration
 
-Each Apple source is its own package under [`packages/sources/apple`](packages/sources/apple) (`@workspace/source-apple-<name>`), written as if published to npm. The Apple connectors live in [`apps/apple/connectors`](apps/apple/connectors/src/apps) (project `apple`), one folder per app with a `connector.json` manifest and an `AppleApp` class that imports its source package. The [CLI](apps/apple/cli/src/main.ts) and the [plugin](apps/apple/plugin/src/main.ts) discover them through [`apps/apple/manifest`](apps/apple/manifest/src/connectors.ts), and then the user's own connectors in `~/Library/Application Support/Context Compiler/Connectors`, which run on the host's `elt` and `AppleApp`. Both load each selected app into its own SQLite import.
+Each Apple source is its own package under [`packages/sources/apple`](packages/sources/apple) (`@workspace/source-apple-<name>`), written as if published to npm. The Apple connectors live in [`packages/connectors/apple`](packages/connectors/apple), one package per app (`@workspace/connector-apple-<name>`) whose `package.json` is its manifest: a `contextCompiler` field with the app's name and title, and `exports` naming its `AppleApp` class, which imports its source package. The [CLI](apps/apple/cli/src/main.ts) and the [plugin](apps/apple/plugin/src/main.ts) discover them through [`connector-apple-manifest`](packages/connectors/apple/manifest/src/connectors.ts), and then the user's own connectors in `~/Library/Application Support/Context Compiler/Connectors`, which run on the host's `elt` and `AppleApp`. Both load each selected app into its own SQLite import.
 
 [Google connectors](apps/google/src/connectors.ts) default-exports a list of `{ name, run }` entries that `main.ts` calls in a plain loop. Each `run()` configures its own source, credentials, pipeline and post-load work: Search Console's builds a `Pipeline` with one `google-search-console` connection and a `PostgresSyncHistory`, then publishes its marts after a complete or partial load, once every raw table exists.
 
@@ -396,7 +396,8 @@ packages/macos/           One package per macOS capability: eventkit (macos-even
 packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared
                           source-apple-macos (readers, document parser)
 packages/sources/google/  The Search Console source (source-google-search-console)
-apps/apple/connectors/ Apple connectors: one folder per app over its source package (project apple)
+packages/connectors/apple/ One package per Apple connector (connector-apple-<name>), with
+                           AppleApp (connector-apple-app) and discovery (connector-apple-manifest)
 apps/apple/plugin/     Codex plugin server, bundled into plugins/apple/server (apple-plugin)
 apps/apple/cli/        Terminal CLI over the Apple connectors: setup, sync, status, query (apple-cli)
 apps/google/           Google example app over the Search Console source
