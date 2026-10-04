@@ -79,6 +79,9 @@
     },
     {
       "path": "./packages/macos/eventkit"
+    },
+    {
+      "path": "./packages/connectors/apple/app"
     }
   ]
 }

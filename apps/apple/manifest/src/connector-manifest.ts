@@ -4,7 +4,10 @@ import { pathToFileURL } from 'node:url';
 
 import { z } from 'zod';
 
-import { AppleApp, type AppleHost } from '@workspace/apple/apps/apple-app';
+import {
+  AppleApp,
+  type AppleHost,
+} from '@workspace/connector-apple-app/apple-app';
 
 // A connector folder's connector.json: the app's name and title, and the
 // entry point whose default export is the app's class, relative to the folder.

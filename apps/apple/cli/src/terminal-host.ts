@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppleHost } from '@workspace/apple/apps/apple-app';
+import type { AppleHost } from '@workspace/connector-apple-app/apple-app';
 import { type GoogleRequester, googleSession } from '@workspace/google-auth';
 
 // The CLI as the host of the Apple apps: macOS grants access to the terminal

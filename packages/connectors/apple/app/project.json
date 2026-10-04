@@ -1,0 +1,8 @@
+{
+  "name": "connector-apple-app",
+  "sourceRoot": "packages/connectors/apple/app/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  }
+}

@@ -2,8 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { AppleApp } from '@workspace/apple/apps/apple-app';
-import type { Choice } from '@workspace/apple/apps/choice';
+import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import type { Choice } from '@workspace/connector-apple-app/choice';
 import {
   Catalog,
   type ExtractionCoverage,

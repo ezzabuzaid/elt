@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
+import type { AppleApp } from '@workspace/connector-apple-app/apple-app';
 import { Pipeline } from '@workspace/elt';
 import { SQLiteSyncHistory, installSQLiteCatalog } from '@workspace/elt-sqlite';
 import type {
@@ -23,7 +24,6 @@ import {
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import osa from '@workspace/source-apple-macos/osa';
 
-import type { AppleApp } from './apps/apple-app.ts';
 import CalendarApp from './apps/calendar/calendar-app.mts';
 
 // The host the plugin's server passes its apps, with the helper this

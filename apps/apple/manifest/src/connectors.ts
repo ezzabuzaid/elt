@@ -1,7 +1,10 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { AppleApp, AppleHost } from '@workspace/apple/apps/apple-app';
+import type {
+  AppleApp,
+  AppleHost,
+} from '@workspace/connector-apple-app/apple-app';
 
 import { ConnectorManifest } from './connector-manifest.ts';
 

@@ -15,7 +15,10 @@ import {
   Option,
 } from 'commander';
 
-import type { AppleApp, ChoiceOptions } from '@workspace/apple/apps/apple-app';
+import type {
+  AppleApp,
+  ChoiceOptions,
+} from '@workspace/connector-apple-app/apple-app';
 import { selectionProblems } from '@workspace/import-store';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 

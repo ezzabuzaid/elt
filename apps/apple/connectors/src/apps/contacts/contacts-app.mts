@@ -1,8 +1,7 @@
+import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import { type Choice, byId, name } from '@workspace/connector-apple-app/choice';
 import { AppleContactsSource } from '@workspace/source-apple-contacts/apple-contacts-source';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-
-import { AppleApp } from '../apple-app.ts';
-import { type Choice, byId, name } from '../choice.ts';
 
 export default class ContactsApp extends AppleApp {
   readonly name = 'contacts';

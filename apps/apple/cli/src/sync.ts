@@ -1,4 +1,4 @@
-import type { AppleApp } from '@workspace/apple/apps/apple-app';
+import type { AppleApp } from '@workspace/connector-apple-app/apple-app';
 import {
   type Connection,
   type CopyOutcome,

@@ -4,7 +4,7 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunks/chunk-DLHQSSZC.mjs";
+} from "./chunks/chunk-DZDPSHJB.mjs";
 import {
   Pipeline
 } from "./chunks/chunk-OEQ4WCEQ.mjs";
@@ -36565,8 +36565,8 @@ var Connectors = class {
 import { registerHooks } from "node:module";
 var hostModules = [
   { specifier: "@workspace/elt", file: "elt" },
-  { specifier: "@workspace/apple/apps/apple-app", file: "apple-app" },
-  { specifier: "@workspace/apple/apps/choice", file: "choice" }
+  { specifier: "@workspace/connector-apple-app/apple-app", file: "apple-app" },
+  { specifier: "@workspace/connector-apple-app/choice", file: "choice" }
 ];
 function provideHostModules(url2) {
   const urls = new Map(hostModules.map((module) => [module.specifier, url2(module)]));

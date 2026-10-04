@@ -1,12 +1,16 @@
+import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import {
+  type Choice,
+  type Row,
+  accounts,
+  byId,
+} from '@workspace/connector-apple-app/choice';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import {
   AppleMailSource,
   restrictedMailStreams,
 } from '@workspace/source-apple-mail/apple-mail-source';
 import { mailDirectory } from '@workspace/source-apple-mail/mail-store';
-
-import { AppleApp } from '../apple-app.ts';
-import { type Choice, type Row, accounts, byId } from '../choice.ts';
 
 const accountName = (row: Row) =>
   String(JSON.parse(String(row.properties)).name);

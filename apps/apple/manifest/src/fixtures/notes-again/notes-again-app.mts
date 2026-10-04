@@ -1,5 +1,5 @@
-import { AppleApp } from '@workspace/apple/apps/apple-app';
-import type { Choice } from '@workspace/apple/apps/choice';
+import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import type { Choice } from '@workspace/connector-apple-app/choice';
 import type { Source } from '@workspace/elt';
 
 // A second connector named notes.

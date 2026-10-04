@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 
 import { Argument, type Command as Declaration } from 'commander';
 
-import type { AppleApp } from '@workspace/apple/apps/apple-app';
+import type { AppleApp } from '@workspace/connector-apple-app/apple-app';
 
 import { table } from '../table.ts';
 import { Command, type Output } from './command.ts';

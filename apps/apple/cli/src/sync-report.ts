@@ -1,6 +1,6 @@
 import { type SpinnerResult, intro, log, outro, spinner } from '@clack/prompts';
 
-import type { AppleApp } from '@workspace/apple/apps/apple-app';
+import type { AppleApp } from '@workspace/connector-apple-app/apple-app';
 import type { CopyProgress } from '@workspace/elt';
 import type { SQLiteTable } from '@workspace/elt-sqlite';
 

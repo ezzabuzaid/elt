@@ -1,8 +1,7 @@
+import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import type { Choice } from '@workspace/connector-apple-app/choice';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
-
-import { AppleApp } from '../apple-app.ts';
-import type { Choice } from '../choice.ts';
 
 export default class MessagesApp extends AppleApp {
   readonly name = 'messages';

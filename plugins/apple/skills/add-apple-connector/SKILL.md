@@ -10,7 +10,7 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
 - A connector is a folder in `~/Library/Application Support/Context Compiler/Connectors/<name>/` holding two files: `connector.json` and the entry point it names. The plugin reads that folder on every tool call, so a connector you add or edit is used in this chat; nothing restarts.
 - `connector.json` is `{ "name": "<name>", "title": "<Title>", "entry": "./<name>-app.mts" }`. `name` is lowercase letters, digits and dashes, must equal the app class's `name`, and must not repeat an app the plugin already has. `title` is what the user sees.
 - The entry is TypeScript that Node runs as written, without a compiler. Its default export is a class that extends `AppleApp`. Its `source()` returns an elt `Source` that reads the app's own data on this Mac.
-- The entry may import only Node built-ins (`node:fs`, `node:sqlite`, `node:child_process`, ...) and three modules the plugin provides: `@workspace/elt` (`Source`, `Stream`, `Catalog` and their types), `@workspace/apple/apps/apple-app` (`AppleApp`) and `@workspace/apple/apps/choice` (`accounts`, `collections`, `byId`, `name`, `Choice`). There is no `node_modules`, so no npm package resolves.
+- The entry may import only Node built-ins (`node:fs`, `node:sqlite`, `node:child_process`, ...) and three modules the plugin provides: `@workspace/elt` (`Source`, `Stream`, `Catalog` and their types), `@workspace/connector-apple-app/apple-app` (`AppleApp`) and `@workspace/connector-apple-app/choice` (`accounts`, `collections`, `byId`, `name`, `Choice`). There is no `node_modules`, so no npm package resolves.
 - The plugin imports each stream into `raw_<stream>` in the app's own `data.sqlite`, read through a view named after the stream in snake case (`photoAssets` reads as `photo_assets`). `$query-apple` reads it like any other app.
 - The connector runs inside the plugin, with every macOS permission ChatGPT has, Full Disk Access included.
 - A connector that cannot load is listed in the Apple status of every chat as `- <Title> could not be loaded: <error>`.
@@ -25,8 +25,8 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
    import { join } from 'node:path';
    import { DatabaseSync } from 'node:sqlite';
 
-   import { AppleApp } from '@workspace/apple/apps/apple-app';
-   import type { Choice } from '@workspace/apple/apps/choice';
+   import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+   import type { Choice } from '@workspace/connector-apple-app/choice';
    import {
      Catalog,
      type ExtractionCoverage,

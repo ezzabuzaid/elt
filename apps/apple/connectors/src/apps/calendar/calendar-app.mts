@@ -1,3 +1,10 @@
+import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import {
+  type Choice,
+  accounts,
+  collections,
+  name,
+} from '@workspace/connector-apple-app/choice';
 import {
   GMAIL_READONLY_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE,
@@ -8,9 +15,6 @@ import {
   type CalendarAttachmentFetcher,
 } from '@workspace/source-apple-calendar/apple-calendar-source';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-
-import { AppleApp } from '../apple-app.ts';
-import { type Choice, accounts, collections, name } from '../choice.ts';
 
 export default class CalendarApp extends AppleApp {
   readonly name = 'calendar';

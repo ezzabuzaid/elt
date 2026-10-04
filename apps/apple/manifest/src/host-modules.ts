@@ -7,8 +7,8 @@ import { registerHooks } from 'node:module';
 // host's elt runs.
 export const hostModules = [
   { specifier: '@workspace/elt', file: 'elt' },
-  { specifier: '@workspace/apple/apps/apple-app', file: 'apple-app' },
-  { specifier: '@workspace/apple/apps/choice', file: 'choice' },
+  { specifier: '@workspace/connector-apple-app/apple-app', file: 'apple-app' },
+  { specifier: '@workspace/connector-apple-app/choice', file: 'choice' },
 ] as const;
 
 export type HostModule = (typeof hostModules)[number];

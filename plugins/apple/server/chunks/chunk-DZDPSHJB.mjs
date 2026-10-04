@@ -29,7 +29,7 @@ import {
   __using
 } from "./chunk-ZGXE7NZW.mjs";
 
-// apps/apple/connectors/dist/apps/apple-app.js
+// packages/connectors/apple/app/dist/apple-app.js
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -1158,7 +1158,7 @@ function message(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-// apps/apple/connectors/dist/apps/apple-app.js
+// packages/connectors/apple/app/dist/apple-app.js
 var AppleApp = class {
   // What to know before narrowing this app, such as how its collections nest.
   note;

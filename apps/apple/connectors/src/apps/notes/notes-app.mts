@@ -1,8 +1,12 @@
+import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import {
+  type Choice,
+  accounts,
+  collections,
+  name,
+} from '@workspace/connector-apple-app/choice';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
-
-import { AppleApp } from '../apple-app.ts';
-import { type Choice, accounts, collections, name } from '../choice.ts';
 
 export default class NotesApp extends AppleApp {
   readonly name = 'notes';

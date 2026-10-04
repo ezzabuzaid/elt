@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
-// apps/apple/connectors/dist/apps/choice.js
+// packages/connectors/apple/app/dist/choice.js
 var name = (row) => String(row.name);
 var byId = (row) => String(row.id);
 var accounts = (label) => ({

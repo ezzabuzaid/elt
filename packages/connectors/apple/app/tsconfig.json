@@ -1,0 +1,26 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    {
+      "path": "../../../sources/apple/macos"
+    },
+    {
+      "path": "../../../import-store"
+    },
+    {
+      "path": "../../../google-auth"
+    },
+    {
+      "path": "../../../destinations/sqlite"
+    },
+    {
+      "path": "../../../elt"
+    }
+  ]
+}

@@ -27,9 +27,6 @@
       "path": "../../../packages/sources/apple/macos"
     },
     {
-      "path": "../../../packages/macos/eventkit"
-    },
-    {
       "path": "../../../packages/sources/apple/contacts"
     },
     {
@@ -39,7 +36,7 @@
       "path": "../../../packages/sources/apple/books"
     },
     {
-      "path": "../../../packages/import-store"
+      "path": "../../../packages/macos/eventkit"
     },
     {
       "path": "../../../packages/google-auth"
@@ -49,6 +46,9 @@
     },
     {
       "path": "../../../packages/elt"
+    },
+    {
+      "path": "../../../packages/connectors/apple/app"
     }
   ]
 }

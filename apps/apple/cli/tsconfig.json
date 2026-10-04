@@ -26,6 +26,9 @@
       "path": "../../../packages/elt"
     },
     {
+      "path": "../../../packages/connectors/apple/app"
+    },
+    {
       "path": "../manifest"
     },
     {

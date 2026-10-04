@@ -1,7 +1,6 @@
+import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import type { Choice } from '@workspace/connector-apple-app/choice';
 import { AppleBooksSource } from '@workspace/source-apple-books/apple-books-source';
-
-import { AppleApp } from '../apple-app.ts';
-import type { Choice } from '../choice.ts';
 
 export default class BooksApp extends AppleApp {
   readonly name = 'books';

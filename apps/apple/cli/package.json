@@ -6,6 +6,7 @@
     "@clack/prompts": "1.8.1",
     "@workspace/apple": "0.0.1",
     "@workspace/apple-manifest": "0.0.1",
+    "@workspace/connector-apple-app": "0.0.1",
     "@workspace/elt": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1",
     "@workspace/google-auth": "0.0.1",

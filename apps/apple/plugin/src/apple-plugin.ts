@@ -9,7 +9,10 @@ import type {
   Connectors,
 } from '@workspace/apple-manifest/connectors';
 import { userConnectors } from '@workspace/apple-manifest/user-connectors';
-import type { AppleApp, AppleHost } from '@workspace/apple/apps/apple-app';
+import type {
+  AppleApp,
+  AppleHost,
+} from '@workspace/connector-apple-app/apple-app';
 import {
   type AppFacts,
   ImportStore,

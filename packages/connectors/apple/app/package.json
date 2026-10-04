@@ -1,0 +1,23 @@
+{
+  "name": "@workspace/connector-apple-app",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-app": {
+      "types": "./dist/apple-app.d.ts",
+      "default": "./dist/apple-app.js"
+    },
+    "./choice": {
+      "types": "./dist/choice.d.ts",
+      "default": "./dist/choice.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/elt-sqlite": "0.0.1",
+    "@workspace/google-auth": "0.0.1",
+    "@workspace/import-store": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  }
+}

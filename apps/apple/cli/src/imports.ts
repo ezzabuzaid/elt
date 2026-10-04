@@ -3,7 +3,10 @@ import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 
 import { userConnectors } from '@workspace/apple-manifest/user-connectors';
-import type { AppleApp, ChoiceOptions } from '@workspace/apple/apps/apple-app';
+import type {
+  AppleApp,
+  ChoiceOptions,
+} from '@workspace/connector-apple-app/apple-app';
 import {
   ImportStore,
   type Selection,
