@@ -50,7 +50,7 @@ The tests in [reminders-source.test.ts](../packages/sources/apple/reminders/src/
 
 A separate read-only live run fetched 69 reminders, 52 date-component rows and 34 alarms into a disposable SQLite database. It also exported 13 EventKit sources and one reminder list, with no orphan reminder or child relationships. This sample had no attendee or recurrence rows; those are covered by synthetic native fixtures. The temporary export was removed automatically. Sandboxed permission requests stayed undetermined; the same process outside the sandbox had full access and fetched successfully. The OS permission-prompt UI and execution on older supported macOS versions were not verified.
 
-Verification targets are `nx run elt:typecheck`, `nx run elt:test`, `nx run source-apple-reminders:typecheck`, and `nx run source-apple-reminders:test`. The generic pipeline test lives in the ELT package; the Reminders tests and their native fixtures live in the Reminders source package, and the tests that read Calendar and Reminders together live with the connectors in `apps/apple/connectors`.
+Verification targets are `nx run elt:typecheck`, `nx run elt:test`, `nx run macos-eventkit:test`, `nx run source-apple-reminders:typecheck`, and `nx run source-apple-reminders:test`. The generic pipeline test lives in the ELT package, the store tests in `packages/macos/eventkit`, and the Reminders tests in the Reminders source package; no test reads Calendar and Reminders together.
 
 ## Apple references
 

@@ -12,6 +12,12 @@ import { join } from 'node:path';
 
 import type { EventKitDocument, HelperRequest } from './documents.ts';
 
+export type {
+  EventKitDocument,
+  HelperCalendarDocument,
+  HelperRequest,
+} from './documents.ts';
+
 // One run of `eventkit read`: the documents it writes, then, with stderr, the
 // failure it exits 1 with.
 export type HelperRead = {

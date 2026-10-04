@@ -9,8 +9,8 @@
       "default": "./dist/index.js"
     },
     "./test": {
-      "types": "./dist/test.d.ts",
-      "default": "./dist/test.js"
+      "types": "./dist/stub-eventkit-helper.d.ts",
+      "default": "./dist/stub-eventkit-helper.js"
     }
   }
 }

@@ -17,7 +17,7 @@ import {
   type HelperCalendarDocument,
   type HelperRequest,
   StubEventKitHelper,
-} from './test.ts';
+} from './stub-eventkit-helper.ts';
 
 const execFile = promisify(execFileCallback);
 
