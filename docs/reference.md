@@ -6,7 +6,7 @@ Detailed sync, storage, connector, and failure contracts for `elt`.
 
 ## Working example
 
-The examples below live inside `apps/apple/connectors/src`: import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and Apple connectors directly from their source modules. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
+The examples below import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and each Apple source from its own package, `@workspace/source-apple-<name>` under `packages/sources/apple`. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
 
 ```ts
 import { Connection, Copy, Pipeline } from '@workspace/elt';
@@ -14,8 +14,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteDestination,
 } from '@workspace/elt-sqlite';
-
-import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
+import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
 
 const notes = new AppleNotesSource();
 const sqlite = new SQLiteDestination({ path: './notes.sqlite' });
@@ -337,8 +336,7 @@ Checklists, tags, tables and a locked note were also read from Apple-made macOS 
 
 ```ts
 import { LocalFiles } from '@workspace/elt';
-
-import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 const files = new LocalFiles({ directory: './outputs/attachments' });
 const attachmentCopy = new Copy(
@@ -462,7 +460,7 @@ The loaded `content` can be queried with normal SQL or indexed with SQLite FTS5 
 
 ## Connector applications
 
-The Apple connectors live in `apps/apple/connectors` (project `apple`), one connector folder per app in `src/apps`: a `connector.json` manifest (`name`, `title`, `entry`) and the entry point, whose default export is the app's `AppleApp` class: its title, what it can be narrowed by, its permission guidance and how it loads. `Connectors` in `apps/apple/manifest` reads the folders under the roots a host gives it, in name order, loads each entry and creates its app with the host's `AppleHost`, which names the app macOS grants access to and may offer a Google session; a connector that cannot be read or loaded is reported with its error while the others load. Both hosts load their apps that way: the CLI from the library's own folders, the plugin from the connector folders bundled beside its server, and both then from the user's own folder, `~/Library/Application Support/Context Compiler/Connectors`, where a connector is added without a release. A user's connector is TypeScript that Node runs as written: its entry is a `.mts` file using only syntax Node can strip (no enums or parameter properties), and every stream and field it declares carries a JSON Schema `description` for its reader view. It imports `@workspace/elt`, `@workspace/apple/apps/apple-app` and `@workspace/apple/apps/choice` from its host: `provideHostModules` registers a resolve hook that maps those specifiers to the host's own copies (the CLI's workspace modules; the plugin's `server/modules`, which re-export its shared chunks), so its classes pass the host's checks. The plugin adds the connectors that could not load to every chat's Apple status; the CLI writes them to stderr. The plugin discovers its connectors again before every tool call and import pass, so a connector added or edited while a chat is open is used without a restart; an edited entry loads again because its import URL carries the file's modification time, while files it imports load once. Because Codex keeps a chat's tool list as it began, `apple_options` and `apple_configure` take the app as a string checked when they run, not an enum. A selected app whose connector is not loaded is reported, not thrown on: its status says how to restore or disconnect it, the plugin keeps its selection unchanged through other changes (and refuses to change it), and the CLI's `sync` records the failure and still loads the other apps. `$add-apple-connector` is the plugin skill that tells the agent how to write one. Both load each selected app into SQLite imports of their own:
+Each Apple source is an island package in `packages/sources/apple/<name>` (`source-apple-<name>`) with its readers and tests; the readers several sources share are in `source-apple-macos`, and the EventKit client with its Swift helper in `source-apple-eventkit`. The Apple connectors live in `apps/apple/connectors` (project `apple`), one connector folder per app in `src/apps`, each importing its source package: a `connector.json` manifest (`name`, `title`, `entry`) and the entry point, whose default export is the app's `AppleApp` class: its title, what it can be narrowed by, its permission guidance and how it loads. `Connectors` in `apps/apple/manifest` reads the folders under the roots a host gives it, in name order, loads each entry and creates its app with the host's `AppleHost`, which names the app macOS grants access to and may offer a Google session; a connector that cannot be read or loaded is reported with its error while the others load. Both hosts load their apps that way: the CLI from the library's own folders, the plugin from the connector folders bundled beside its server, and both then from the user's own folder, `~/Library/Application Support/Context Compiler/Connectors`, where a connector is added without a release. A user's connector is TypeScript that Node runs as written: its entry is a `.mts` file using only syntax Node can strip (no enums or parameter properties), and every stream and field it declares carries a JSON Schema `description` for its reader view. It imports `@workspace/elt`, `@workspace/apple/apps/apple-app` and `@workspace/apple/apps/choice` from its host: `provideHostModules` registers a resolve hook that maps those specifiers to the host's own copies (the CLI's workspace modules; the plugin's `server/modules`, which re-export its shared chunks), so its classes pass the host's checks. The plugin adds the connectors that could not load to every chat's Apple status; the CLI writes them to stderr. The plugin discovers its connectors again before every tool call and import pass, so a connector added or edited while a chat is open is used without a restart; an edited entry loads again because its import URL carries the file's modification time, while files it imports load once. Because Codex keeps a chat's tool list as it began, `apple_options` and `apple_configure` take the app as a string checked when they run, not an enum. A selected app whose connector is not loaded is reported, not thrown on: its status says how to restore or disconnect it, the plugin keeps its selection unchanged through other changes (and refuses to change it), and the CLI's `sync` records the failure and still loads the other apps. `$add-apple-connector` is the plugin skill that tells the agent how to write one. Both load each selected app into SQLite imports of their own:
 
 - `apps/apple/cli` (`npx nx run apple-cli:start -- <command>`) imports the apps a terminal user selects into `outputs/cli`. `sync` runs one pass of each selected app; run it again to refresh. Its Calendar import signs in to Google for Drive and Gmail attachments, so `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` must be set.
 - `apps/apple/plugin`, bundled by `npx nx run apple-plugin:bundle` into `plugins/apple/server` (`main.mjs`, a connector folder per built-in app beside it, and the chunks they share, so every connector runs on the server's own `elt` and `AppleApp`), is the Codex plugin's MCP server: one server per Mac imports every selected app once while Codex is open, and does not refresh an imported app. The plugin's hooks call its `apple_context` tool to give each chat the Apple status when the chat starts and whenever it changes. Codex keeps an older chat's server running after an upgrade but deletes that version's folder, so that server stops importing and tells the chat to open a new one. Its Calendar keeps remote attachments as links.
@@ -672,8 +670,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteDestination,
 } from '@workspace/elt-sqlite';
-
-import { AppleMessagesSource } from './sources/apple-messages/apple-messages-source.ts';
+import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
 
 const source = new AppleMessagesSource(); // ~/Library/Messages/chat.db
 const destination = new SQLiteDestination({
@@ -828,8 +825,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteDestination,
 } from '@workspace/elt-sqlite';
-
-import { AppleContactsSource } from './sources/apple-contacts/apple-contacts-source.ts';
+import { AppleContactsSource } from '@workspace/source-apple-contacts/apple-contacts-source';
 
 const source = new AppleContactsSource(); // ~/Library/Application Support/AddressBook
 const destination = new SQLiteDestination({
@@ -911,8 +907,7 @@ Live verification on **2026-09-25** (macOS 26.6.2, Node.js 26.8.1) against three
 ```ts
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import { SQLiteDestination } from '@workspace/elt-sqlite';
-
-import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
+import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
 
 const reminders = new AppleRemindersSource();
 const sqlite = new SQLiteDestination({ path: './reminders-eventkit.sqlite' });
@@ -961,8 +956,7 @@ import { mkdir } from 'node:fs/promises';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import { SQLiteDestination } from '@workspace/elt-sqlite';
-
-import { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
+import { AppleCalendarSource } from '@workspace/source-apple-calendar/apple-calendar-source';
 
 await mkdir('./outputs', { recursive: true });
 const calendar = new AppleCalendarSource({
@@ -987,7 +981,7 @@ await new Pipeline({
 }).run();
 ```
 
-Calendar reads EventKit through `eventkit`, a compiled Swift helper ([platform/macos/eventkit](../apps/apple/connectors/src/platform/macos/eventkit)). The Nx target `apple:eventkit` builds it as a universal (arm64 and x86_64) binary into `apps/apple/connectors/dist/platform/macos/eventkit`; `apple-plugin:bundle` copies it beside the bundled file that holds the EventKit client, which finds it relative to itself. `eventkit read '<json request>'` writes one JSON document per line (account, calendar, occurrence, ICS export, reminder), and `eventkit watch events|reminders` prints `changed` per store change. One read runs one helper process for every selected stream. The helper reports EventKit's values; the source builds the rows: IDs, ISO timestamps, content-order positions, and scope filtering. macOS attributes access to the app responsible for the process: the terminal, or Codex for the plugin.
+Calendar reads EventKit through `eventkit`, a compiled Swift helper ([eventkit](../packages/sources/apple/eventkit/src/eventkit)). The Nx target `source-apple-eventkit:eventkit` builds it as a universal (arm64 and x86_64) binary into `packages/sources/apple/eventkit/dist/eventkit`; `apple-plugin:bundle` copies it beside the bundled file that holds the EventKit client, which finds it relative to itself. `eventkit read '<json request>'` writes one JSON document per line (account, calendar, occurrence, ICS export, reminder), and `eventkit watch events|reminders` prints `changed` per store change. One read runs one helper process for every selected stream. The helper reports EventKit's values; the source builds the rows: IDs, ISO timestamps, content-order positions, and scope filtering. macOS attributes access to the app responsible for the process: the terminal, or Codex for the plugin.
 
 Calendar needs macOS 27 and full Calendar access for the process running the export. The first extraction requests access if it is undecided or write-only, through `osascript` (macOS shows no prompt for the helper's own request), waiting up to 30 seconds; the grant goes to the terminal or app running the export. If permission is denied, restricted, or still pending, the helper reports `CALENDAR_UNAVAILABLE` and `CalendarUnavailableError` preserves the native cause and explains how to enable access. A sandbox can block access even when macOS permission is granted. Permission failures never become empty successful exports.
 
@@ -1111,8 +1105,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteDestination,
 } from '@workspace/elt-sqlite';
-
-import { AppleSafariSource } from './sources/apple-safari/apple-safari-source.ts';
+import { AppleSafariSource } from '@workspace/source-apple-safari/apple-safari-source';
 
 const source = new AppleSafariSource(); // ~/Library/Safari and Safari's container
 const destination = new SQLiteDestination({ path: './outputs/safari.sqlite' });
@@ -1214,8 +1207,7 @@ import {
   SQLiteColumns,
   SQLiteDestination,
 } from '@workspace/elt-sqlite';
-
-import { AppleBooksSource } from './sources/apple-books/apple-books-source.ts';
+import { AppleBooksSource } from '@workspace/source-apple-books/apple-books-source';
 
 const source = new AppleBooksSource(); // Books' container and its group container
 const destination = new SQLiteDestination({ path: './outputs/books.sqlite' });

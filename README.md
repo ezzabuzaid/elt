@@ -87,8 +87,7 @@ import { mkdir } from 'node:fs/promises';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import { SQLiteDestination } from '@workspace/elt-sqlite';
-
-import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
+import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
 
 await mkdir('./outputs', { recursive: true });
 
@@ -117,7 +116,7 @@ A copy like this replaces the `notes` table's contents with the current snapshot
 
 ### Connector registration
 
-The Apple connectors live in [`apps/apple/connectors`](apps/apple/connectors/src/apps) (project `apple`), one folder per app with a `connector.json` manifest and an `AppleApp` class. The [CLI](apps/apple/cli/src/main.ts) and the [plugin](apps/apple/plugin/src/main.ts) discover them through [`apps/apple/manifest`](apps/apple/manifest/src/connectors.ts), and then the user's own connectors in `~/Library/Application Support/Context Compiler/Connectors`, which run on the host's `elt` and `AppleApp`. Both load each selected app into its own SQLite import.
+Each Apple source is its own package under [`packages/sources/apple`](packages/sources/apple) (`@workspace/source-apple-<name>`), written as if published to npm. The Apple connectors live in [`apps/apple/connectors`](apps/apple/connectors/src/apps) (project `apple`), one folder per app with a `connector.json` manifest and an `AppleApp` class that imports its source package. The [CLI](apps/apple/cli/src/main.ts) and the [plugin](apps/apple/plugin/src/main.ts) discover them through [`apps/apple/manifest`](apps/apple/manifest/src/connectors.ts), and then the user's own connectors in `~/Library/Application Support/Context Compiler/Connectors`, which run on the host's `elt` and `AppleApp`. Both load each selected app into its own SQLite import.
 
 [Google connectors](apps/google/src/connectors.ts) default-exports a list of `{ name, run }` entries that `main.ts` calls in a plain loop. Each `run()` configures its own source, credentials, pipeline and post-load work: Search Console's builds a `Pipeline` with one `google-search-console` connection and a `PostgresSyncHistory`, then publishes its marts after a complete or partial load, once every raw table exists.
 
@@ -130,8 +129,7 @@ import { mkdir } from 'node:fs/promises';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import { SQLiteDestination } from '@workspace/elt-sqlite';
-
-import { AppleRemindersSource } from './sources/apple-reminders/apple-reminders-source.ts';
+import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
 
 await mkdir('./outputs', { recursive: true });
 
@@ -198,8 +196,8 @@ Keep the copy ID and both SQLite files between runs. The checkpoint store must u
 ### Mail: local messages and attachments
 
 ```ts
-import { mailDirectory } from './platform/macos/mail-store.ts';
-import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
+import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
+import { mailDirectory } from '@workspace/source-apple-mail/mail-store';
 
 const mail = new AppleMailSource(mailDirectory);
 await new Pipeline({
@@ -225,7 +223,7 @@ Mail reads all locally indexed history across the accounts on this Mac. `message
 Calendar and Reminders load incrementally the same way:
 
 ```ts
-import { AppleCalendarSource } from './sources/apple-calendar/apple-calendar-source.ts';
+import { AppleCalendarSource } from '@workspace/source-apple-calendar/apple-calendar-source';
 
 const calendar = new AppleCalendarSource({
   startAt: '2026-09-01T00:00:00.000Z',
@@ -297,8 +295,7 @@ Using the `source` and `destination` from the quick start, store attachment meta
 
 ```ts
 import { LocalFiles } from '@workspace/elt';
-
-import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 const localFiles = new LocalFiles({ directory: './outputs/attachments' });
 
@@ -395,10 +392,13 @@ packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-s
 packages/destinations/markdown/   Markdown destination (elt-markdown)
 packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
-apps/apple/connectors/ Apple connectors, native bridges, and document parser (project apple)
+packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared
+                          source-apple-macos (readers, document parser) and source-apple-eventkit
+packages/sources/google/  The Search Console source (source-google-search-console)
+apps/apple/connectors/ Apple connectors: one folder per app over its source package (project apple)
 apps/apple/plugin/     Codex plugin server, bundled into plugins/apple/server (apple-plugin)
 apps/apple/cli/        Terminal CLI over the Apple connectors: setup, sync, status, query (apple-cli)
-apps/google/           Google connectors and example app
+apps/google/           Google example app over the Search Console source
 docs/                  Detailed behavior and native API research
 infra/                 Local Postgres warehouse and optional MCP server
 ```
@@ -410,7 +410,7 @@ npx nx run-many -t typecheck
 npx nx run-many -t test
 ```
 
-`build` and `typecheck` are inferred by the `@nx/js/typescript` plugin from each project's `tsconfig.json`, which extends `tsconfig.base.json` and references the workspace packages it imports; Nx keeps those references current before it runs either target. Typecheck first runs the project's `lint` target (ESLint, inferred by `@nx/eslint/plugin` from the root `eslint.config.mjs`), which runs its `format` target (Prettier, which rewrites files and sorts imports) first; each project opts in with `"format": {}` in its `project.json`. A pre-commit hook runs `nx sync` and formats staged files that no project covers. Test targets build first and use Node's test runner. The Apple build compiles the Swift `eventkit` helper (`apple:eventkit`), which needs the Xcode Command Line Tools. The `elt-postgresql` and `google` tests need Postgres: start it with `npx nx run infra:up`, or point `TEST_DATABASE_URL` at a server where the user can create databases and roles. Tests take a database of their own from `elt-postgresql/testing` (`scratchDatabase`, or `scratchWarehouse` provisioned by `infra/init/marts/contract.sql` for reading as `agent_reader`). Apple tests require macOS and an environment that permits native filesystem notifications. They never modify personal app data: Calendar and Reminders tests replace the `eventkit` helper with synthetic documents, and one live test reads this Mac's Calendar and Reminders read-only into a temporary SQLite database, skipped without access.
+`build` and `typecheck` are inferred by the `@nx/js/typescript` plugin from each project's `tsconfig.json`, which extends `tsconfig.base.json` and references the workspace packages it imports; Nx keeps those references current before it runs either target. Typecheck first runs the project's `lint` target (ESLint, inferred by `@nx/eslint/plugin` from the root `eslint.config.mjs`), which runs its `format` target (Prettier, which rewrites files and sorts imports) first; each project opts in with `"format": {}` in its `project.json`. A pre-commit hook runs `nx sync` and formats staged files that no project covers. Test targets build first and use Node's test runner. The EventKit package compiles the Swift `eventkit` helper (`source-apple-eventkit:eventkit`), which needs the Xcode Command Line Tools. The `elt-postgresql` and `source-google-search-console` tests need Postgres: start it with `npx nx run infra:up`, or point `TEST_DATABASE_URL` at a server where the user can create databases and roles. Tests take a database of their own from `elt-postgresql/testing` (`scratchDatabase`, or `scratchWarehouse` provisioned by `infra/init/marts/contract.sql` for reading as `agent_reader`). Apple tests require macOS and an environment that permits native filesystem notifications. They never modify personal app data: Calendar and Reminders tests replace the `eventkit` helper with synthetic documents, and one live test reads this Mac's Calendar and Reminders read-only into a temporary SQLite database, skipped without access.
 
 Put `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in the workspace `.env` (gitignored), then run the Search Console example with `npx nx run google:start`. It loads `sc-domain:ezz.sh` into the warehouse (`npx nx run infra:up`), checkpoints included, writes no local files, and installs the [agent-facing marts](docs/reference.md#warehouse-marts); an explicitly invoked consumer reads them directly through PostgreSQL as `agent_reader` (MCP is optional). Sync status and declared coverage are discoverable through `marts.catalog`; reading never starts a refresh. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup.
 
