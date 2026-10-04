@@ -9,6 +9,9 @@
   "include": ["src/**/*.ts", "src/**/*.mts", "src/apps/*/connector.json"],
   "references": [
     {
+      "path": "../../../packages/sources/apple/notes"
+    },
+    {
       "path": "../../../packages/sources/apple/macos"
     },
     {

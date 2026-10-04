@@ -1,100 +1,28 @@
 import assert from 'node:assert/strict';
+import { execFile as execFileCallback } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
-import {
-  Connection,
-  Copy,
-  LocalFiles,
-  Pipeline,
-  PipelineError,
-  type Source,
-  readerCatalog,
-  syncHistoryRelations,
-} from '@workspace/elt';
+import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
-  SQLiteSyncHistory,
-  installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
+import {
+  acrossStreams,
+  configured,
+} from '@workspace/source-apple-macos/testing';
 
-import { AppleNotesSource } from './sources/apple-notes/apple-notes-source.ts';
+import { AppleNotesSource } from './apple-notes-source.ts';
 
-const snake = (name: string) =>
-  name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-
-// One Apple source loaded as the hosts load it: every stream incrementally
-// into raw_<stream> of one SQLite file, read through its documented
-// <snake_stream> view, with files kept beside it.
-async function appleImport(source: Source, directory: string) {
-  mkdirSync(directory, { recursive: true });
-  const path = join(directory, 'data.sqlite');
-  const destination = new SQLiteDestination({ path });
-  const files = new LocalFiles({ directory: join(directory, 'files') });
-  const { streams } = await source.discover();
-  const connection = new Connection({
-    name: 'apple',
-    source,
-    destination,
-    checkpoints: new SQLiteCheckpointStore({
-      path: join(directory, 'checkpoints.sqlite'),
-    }),
-    steps: streams.map(
-      (stream) =>
-        new Copy(
-          stream,
-          destination
-            .table(
-              `raw_${stream.name}`,
-              stream.supportsFileTransfer
-                ? (columns) => [
-                    ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                    columns
-                      .text('attachmentRef')
-                      .from(stream.file.store(files)),
-                  ]
-                : undefined,
-            )
-            .withReaderView(snake(stream.name)),
-          {
-            id: stream.name,
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-          },
-        ),
-    ),
-  });
-  const history = new SQLiteSyncHistory();
-  await history.install([destination]);
-  installSQLiteCatalog({ path });
-  const read = (sql: string) => {
-    using database = new DatabaseSync(path, { readOnly: true });
-    return database.prepare(sql).all();
-  };
-  return {
-    load: () => new Pipeline({ history, connections: [connection] }).run(),
-    read,
-    // The documented views the streams publish, beside the catalog and the
-    // sync history every SQLite load has.
-    views: () =>
-      read(`SELECT name FROM catalog WHERE kind = 'view' ORDER BY name`)
-        .map(({ name }) => name)
-        .filter(
-          (name) =>
-            name !== readerCatalog.name &&
-            !Object.values(syncHistoryRelations).some(
-              (relation) => relation.name === name,
-            ),
-        ),
-  };
-}
+const execFile = promisify(execFileCallback);
 
 // NoteStore.sqlite's tables as macOS 26.6.2 creates them (schema only, no
 // data), in WAL mode like the real store.
@@ -299,139 +227,439 @@ const noteStoreFixture = async (directory: string) => {
   return path;
 };
 
-test('Notes reads as documented views that follow edits and deletions', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-views-'));
-  const path = await noteStoreFixture(join(scratch.path, 'native'));
-  const notes = await appleImport(
-    new AppleNotesSource({ path }),
-    join(scratch.path, 'import'),
-  );
-  await notes.load();
+const noteRows = (path: string, sql: string) => {
+  using database = new DatabaseSync(path, { readOnly: true });
+  return database
+    .prepare(sql)
+    .all()
+    .map((row) => ({ ...row }));
+};
 
-  assert.deepEqual(notes.views(), [
-    'accounts',
-    'attachments',
-    'folders',
-    'inline_attachments',
-    'notes',
+const notesPipeline = (source: AppleNotesSource, directory: string) => {
+  const destination = new SQLiteDestination({
+    path: join(directory, 'notes.sqlite'),
+  });
+  return {
+    destination,
+    pipeline: new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(directory, 'notes-state.sqlite'),
+          }),
+          steps: [
+            source.accounts,
+            source.folders,
+            source.notes,
+            source.inlineAttachments,
+            source.attachments,
+          ].map(
+            (stream) =>
+              new Copy(
+                stream,
+                stream.supportsFileTransfer
+                  ? destination.table(stream.name, (columns) => [
+                      ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                      columns.blob('bytes').from(stream.file),
+                    ])
+                  : destination.table(stream.name),
+                {
+                  id: stream.name,
+                  syncMode: 'incremental',
+                  destinationSyncMode: 'append_dedup',
+                },
+              ),
+          ),
+        }),
+      ],
+    }),
+  };
+};
+
+test('Notes scope excludes other folders from records, attachments and checkpoints', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-scope-'));
+  const source = new AppleNotesSource({
+    path: await noteStoreFixture(scratch.path),
+    scope: {
+      accountIds: ['ACCOUNT-1'],
+      collectionIds: ['FOLDER-TRASH'],
+      startAt: '2025-02-01T00:00:00.000Z',
+      endAt: '2025-03-01T00:00:00.000Z',
+    },
+  });
+  const { pipeline, destination } = notesPipeline(source, scratch.path);
+  await pipeline.run();
+  assert.deepEqual(noteRows(destination.path, 'SELECT id FROM notes'), [
+    { id: 'NOTE-TRASHED' },
   ]);
   assert.deepEqual(
-    notes.read(
-      `SELECT kind, name FROM catalog WHERE coalesce(description, '') = ''`,
-    ),
+    noteRows(destination.path, 'SELECT id FROM attachments'),
     [],
   );
-  assert.deepEqual(
-    notes
-      .read(
-        `SELECT name, data_type FROM catalog
-        WHERE name IN ('notes.locked', 'notes.modifiedAt', 'attachments.attachmentRef', 'notes.loaded_at')
-        ORDER BY name`,
-      )
-      .map((found) => ({ ...found })),
-    [
-      { name: 'attachments.attachmentRef', data_type: 'text' },
-      { name: 'notes.loaded_at', data_type: 'timestamp' },
-      { name: 'notes.locked', data_type: 'boolean' },
-      { name: 'notes.modifiedAt', data_type: 'timestamp' },
-    ],
+  const saved = JSON.stringify(
+    noteRows(
+      join(scratch.path, 'notes-state.sqlite'),
+      'SELECT state FROM checkpoints',
+    ),
   );
-  assert.deepEqual(
-    notes
-      .read(
-        `SELECT n.id, n.locked, n.text IS NULL AS unreadable, f.type AS folder_type
-        FROM notes n JOIN folders f ON f.id = n."folderId" ORDER BY n.id`,
-      )
-      .map((found) => ({ ...found })),
-    [
-      { id: 'NOTE-LOCKED', locked: 1, unreadable: 1, folder_type: 0 },
-      { id: 'NOTE-RICH', locked: 0, unreadable: 0, folder_type: 0 },
-      { id: 'NOTE-TRASHED', locked: 0, unreadable: 0, folder_type: 1 },
-    ],
-  );
-  assert.deepEqual(
-    notes
-      .read(
-        `SELECT i.id FROM inline_attachments i
-        JOIN notes n ON n.id = i."noteId" WHERE n.id = 'NOTE-RICH' ORDER BY i.id`,
-      )
-      .map(({ id }) => id),
-    ['INLINE-LINK', 'INLINE-TAG'],
-  );
-  const files = Object.fromEntries(
-    notes
-      .read(
-        `SELECT id, "attachmentRef" FROM attachments WHERE id IN ('ATT-FILE', 'ATT-PHOTO')`,
-      )
-      .map(({ id, attachmentRef }) => [id, attachmentRef]),
-  );
-  assert.equal(
-    await readFile(String(files['ATT-FILE']), 'utf8'),
-    'attached words',
-  );
-  assert.equal(files['ATT-PHOTO'], null);
+  assert.ok(saved.includes('NOTE-TRASHED'));
+  assert.ok(!saved.includes('NOTE-RICH') && !saved.includes('ATT-FILE'));
+});
 
-  {
-    using store = new DatabaseSync(path);
-    store
-      .prepare('UPDATE ZICNOTEDATA SET ZDATA = ? WHERE Z_PK = 4')
-      .run(noteBody([{ text: 'Old\nrestored\n' }]));
-    store.exec(
-      "UPDATE ZICCLOUDSYNCINGOBJECT SET ZMARKEDFORDELETION = 1 WHERE ZIDENTIFIER IN ('ATT-PHOTO', 'NOTE-LOCKED')",
+test('Notes exports every stream from its store, skipping cloud placeholders and locked content', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const source = new AppleNotesSource({
+    path: await noteStoreFixture(scratch.path),
+  });
+  const { destination, pipeline } = notesPipeline(source, scratch.path);
+
+  for (const stream of (await source.discover()).streams) {
+    assert.ok(
+      typeof stream.jsonSchema.description === 'string' &&
+        stream.jsonSchema.description.length > 0,
+      stream.name,
     );
+    const { properties } = stream.jsonSchema;
+    assert.ok(properties, stream.name);
+    for (const [name, field] of Object.entries(properties)) {
+      assert.ok(
+        typeof field.description === 'string' && field.description.length > 0,
+        `${stream.name}.${name}`,
+      );
+    }
   }
-  await notes.load();
 
+  const results = await pipeline.run();
+
+  const rows = (sql: string) => noteRows(destination.path, sql);
   assert.deepEqual(
-    notes
-      .read('SELECT id, text FROM notes ORDER BY id')
-      .map((found) => ({ ...found })),
+    results.map(({ copy, count }) => [copy.from.name, count]),
+    [
+      ['accounts', 1],
+      ['folders', 3],
+      ['notes', 3],
+      ['inlineAttachments', 2],
+      ['attachments', 4],
+    ],
+  );
+  assert.deepEqual(rows('SELECT id, name, type FROM accounts'), [
+    { id: 'ACCOUNT-1', name: 'iCloud', type: 1 },
+  ]);
+  assert.deepEqual(
+    rows('SELECT id, accountId, parentId, name, type FROM folders ORDER BY id'),
     [
       {
-        id: 'NOTE-RICH',
-        text: 'Groceries\nMilk\nEggs\nBuy fresh\nsee site\n\n\ntag #food\nlink Old',
+        id: 'FOLDER-CHILD',
+        accountId: 'ACCOUNT-1',
+        parentId: 'FOLDER-NOTES',
+        name: 'Child',
+        type: 0,
       },
-      { id: 'NOTE-TRASHED', text: 'Old\nrestored' },
+      {
+        id: 'FOLDER-NOTES',
+        accountId: 'ACCOUNT-1',
+        parentId: null,
+        name: 'Notes',
+        type: 0,
+      },
+      {
+        id: 'FOLDER-TRASH',
+        accountId: 'ACCOUNT-1',
+        parentId: null,
+        name: 'Recently Deleted',
+        type: 1,
+      },
     ],
   );
   assert.deepEqual(
-    notes.read('SELECT id FROM attachments ORDER BY id').map(({ id }) => id),
-    ['ATT-FILE', 'ATT-TABLE'],
+    rows(
+      'SELECT id, folderId, title, text, markdown, createdAt, modifiedAt, pinned, hasChecklist, checklistInProgress, locked FROM notes ORDER BY id',
+    ),
+    [
+      {
+        id: 'NOTE-LOCKED',
+        folderId: 'FOLDER-NOTES',
+        title: 'Secret',
+        text: null,
+        markdown: null,
+        createdAt: '2025-01-02T03:04:05.006Z',
+        modifiedAt: '2025-02-03T04:05:06.007Z',
+        pinned: 0,
+        hasChecklist: 0,
+        checklistInProgress: 0,
+        locked: 1,
+      },
+      {
+        id: 'NOTE-RICH',
+        folderId: 'FOLDER-NOTES',
+        title: 'Groceries',
+        text: 'Groceries\nMilk\nEggs\nBuy fresh\nsee site\n\n\ntag #food\nlink Old',
+        markdown: [
+          '# Groceries',
+          '- [x] Milk',
+          '- [ ] Eggs',
+          'Buy **fresh**',
+          'see [site](<https://example.com/list>)',
+          '[list.txt](attachment:ATT-FILE)',
+          '',
+          '| a1 | b1 |',
+          '| --- | --- |',
+          '| a2 | b2 |',
+          '',
+          'tag #food',
+          'link [Old](<applenotes:note/note-trashed>)',
+        ].join('\n'),
+        createdAt: '2025-01-02T03:04:05.006Z',
+        modifiedAt: '2025-02-03T04:05:06.007Z',
+        pinned: 1,
+        hasChecklist: 1,
+        checklistInProgress: 1,
+        locked: 0,
+      },
+      {
+        id: 'NOTE-TRASHED',
+        folderId: 'FOLDER-TRASH',
+        title: 'Old',
+        text: 'Old\nthrown away',
+        markdown: 'Old\nthrown away',
+        createdAt: '2025-01-02T03:04:05.006Z',
+        modifiedAt: '2025-02-03T04:05:06.007Z',
+        pinned: 0,
+        hasChecklist: 0,
+        checklistInProgress: 0,
+        locked: 0,
+      },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      'SELECT id, noteId, type, text, target FROM inlineAttachments ORDER BY id',
+    ),
+    [
+      {
+        id: 'INLINE-LINK',
+        noteId: 'NOTE-RICH',
+        type: 'com.apple.notes.inlinetextattachment.link',
+        text: 'Old',
+        target: 'applenotes:note/note-trashed',
+      },
+      {
+        id: 'INLINE-TAG',
+        noteId: 'NOTE-RICH',
+        type: 'com.apple.notes.inlinetextattachment.hashtag',
+        text: '#food',
+        target: 'FOOD',
+      },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      'SELECT id, noteId, type, filename, ocrText, latitude, longitude, availableLocally, CAST(bytes AS TEXT) AS content FROM attachments ORDER BY id',
+    ).map(({ content, ...row }) => ({ ...row, hasBytes: content !== null })),
+    [
+      {
+        id: 'ATT-FILE',
+        noteId: 'NOTE-RICH',
+        type: 'public.plain-text',
+        filename: 'list.txt',
+        ocrText: null,
+        latitude: null,
+        longitude: null,
+        availableLocally: 1,
+        hasBytes: true,
+      },
+      {
+        id: 'ATT-LOCKED',
+        noteId: 'NOTE-LOCKED',
+        type: 'public.jpeg',
+        filename: null,
+        ocrText: null,
+        latitude: null,
+        longitude: null,
+        availableLocally: 0,
+        hasBytes: false,
+      },
+      {
+        id: 'ATT-PHOTO',
+        noteId: 'NOTE-RICH',
+        type: 'public.jpeg',
+        filename: 'photo.jpg',
+        ocrText: 'photo words',
+        latitude: 52.52,
+        longitude: 13.405,
+        availableLocally: 0,
+        hasBytes: false,
+      },
+      {
+        id: 'ATT-TABLE',
+        noteId: 'NOTE-RICH',
+        type: 'com.apple.notes.table',
+        filename: null,
+        ocrText: null,
+        latitude: null,
+        longitude: null,
+        availableLocally: 0,
+        hasBytes: false,
+      },
+    ],
   );
 });
 
-test('a Notes store that cannot be read publishes nothing, and an empty one publishes empty views', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-views-'));
-  const path = await noteStoreFixture(join(scratch.path, 'native'));
+test('Notes loads edits and deletions incrementally and a repeat run writes nothing', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const path = await noteStoreFixture(scratch.path);
+  const source = new AppleNotesSource({ path });
+  const { pipeline } = notesPipeline(source, scratch.path);
+  const counts = async () =>
+    Object.fromEntries(
+      (await pipeline.run()).map(({ copy, count, deleted }) => [
+        copy.from.name,
+        [count, deleted],
+      ]),
+    );
+
+  await pipeline.run();
+  const unchanged = await counts();
   {
-    using store = new DatabaseSync(path);
-    store.exec('DELETE FROM ZICCLOUDSYNCINGOBJECT; DELETE FROM ZICNOTEDATA');
+    using notes = new DatabaseSync(path);
+    notes
+      .prepare('UPDATE ZICNOTEDATA SET ZDATA = ? WHERE Z_PK = 4')
+      .run(noteBody([{ text: 'Old\nrestored\n' }]));
+    notes.exec(
+      "UPDATE ZICCLOUDSYNCINGOBJECT SET ZMARKEDFORDELETION = 1 WHERE ZIDENTIFIER IN ('ATT-PHOTO', 'NOTE-LOCKED')",
+    );
   }
-  const missing = await appleImport(
-    new AppleNotesSource({ path: join(scratch.path, 'missing.sqlite') }),
-    join(scratch.path, 'missing'),
-  );
-  const empty = await appleImport(
-    new AppleNotesSource({ path }),
-    join(scratch.path, 'empty'),
+  const changed = await counts();
+
+  assert.deepEqual(unchanged, {
+    accounts: [0, 0],
+    folders: [0, 0],
+    notes: [0, 0],
+    inlineAttachments: [0, 0],
+    attachments: [0, 0],
+  });
+  assert.deepEqual(changed, {
+    accounts: [0, 0],
+    folders: [0, 0],
+    notes: [1, 1],
+    inlineAttachments: [0, 0],
+    attachments: [0, 2],
+  });
+});
+
+test('one Notes read sees one moment of the store while Notes keeps writing', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const path = await noteStoreFixture(scratch.path);
+  const source = new AppleNotesSource({ path });
+
+  const { during, after } = await acrossStreams(
+    source,
+    [source.folders, source.notes],
+    () => {
+      using notes = new DatabaseSync(path);
+      notes.exec(
+        "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
+      );
+    },
+    'id',
   );
 
-  await assert.rejects(missing.load(), PipelineError);
-  await empty.load();
+  assert.ok(!during.includes('NOTE-NEW'));
+  assert.deepEqual(after, [...during, 'NOTE-NEW'].sort());
+});
 
-  assert.deepEqual(missing.views(), []);
-  assert.deepEqual(
-    missing.read('SELECT status FROM sync_status').map(({ status }) => status),
-    ['failed'],
+test('Notes names Full Disk Access when its store cannot be opened and refuses an unknown layout', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const unknown = join(scratch.path, 'NoteStore.sqlite');
+  {
+    using database = new DatabaseSync(unknown);
+    database.exec(
+      'CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER, Z_NAME VARCHAR); CREATE TABLE ZICNOTEDATA (Z_PK INTEGER, ZDATA BLOB); CREATE TABLE ZICLOCATION (ZATTACHMENT INTEGER, ZLATITUDE FLOAT, ZLONGITUDE FLOAT); CREATE TABLE ZICCLOUDSYNCINGOBJECT (Z_PK INTEGER, Z_ENT INTEGER, ZIDENTIFIER VARCHAR)',
+    );
+  }
+  const missing = new AppleNotesSource({
+    path: join(scratch.path, 'missing', 'NoteStore.sqlite'),
+  });
+  const other = new AppleNotesSource({ path: unknown });
+
+  const opening = Array.fromAsync(
+    missing.read([configured(missing.notes)], new Map()),
   );
-  assert.deepEqual(
-    empty
-      .read(
-        `
-        SELECT (SELECT count(*) FROM notes) AS notes,
-          (SELECT count(*) FROM attachments) AS attachments`,
-      )
-      .map((found) => ({ ...found })),
-    [{ notes: 0, attachments: 0 }],
+  const reading = Array.fromAsync(
+    other.read([configured(other.notes)], new Map()),
   );
+
+  await assert.rejects(opening, (error) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.name, 'NotesUnavailableError');
+    assert.match(error.message, /Full Disk Access/);
+    assert.ok(error.cause instanceof Error);
+    return true;
+  });
+  await assert.rejects(reading, (error) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.name, 'NotesSchemaError');
+    assert.match(error.message, /ZICCLOUDSYNCINGOBJECT\.ZTITLE1/);
+    return true;
+  });
+});
+
+test('a Notes watch keeps Notes running and loads each commit while Notes keeps its store open', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
+  const path = await noteStoreFixture(scratch.path);
+  const source = new AppleNotesSource({ path });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.notes, destination.table('notes'), {
+            id: 'notes',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+  // Notes holds its connection, and so its WAL, open the whole time.
+  using notes = new DatabaseSync(path);
+  const controller = new AbortController();
+  const batches: number[] = [];
+
+  for await (const { outcomes } of pipeline.watch({
+    // A batch that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  })) {
+    batches.push(outcomes[0]?.count ?? -1);
+    if (batches.length === 1)
+      notes.exec(
+        "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7) VALUES (12, 'NOTE-NEW', 'New', 2, 1)",
+      );
+    // Past the next one-second poll, so a spurious batch would show.
+    else setTimeout(() => controller.abort(), 1500);
+  }
+
+  assert.deepEqual(batches, [3, 1]);
+  // The watch launched Notes hidden if it was closed; Notes stays open after.
+  const { stdout } = await execFile('/usr/bin/lsappinfo', [
+    'info',
+    '-only',
+    'pid',
+    '-app',
+    'com.apple.Notes',
+  ]);
+  // lsappinfo prints nothing for an app that is not running.
+  assert.match(stdout, /pid/);
 });

@@ -32,104 +32,11 @@ import {
   __using
 } from "../../chunks/chunk-ZGXE7NZW.mjs";
 
-// apps/apple/connectors/dist/sources/apple-notes/apple-notes-source.js
+// packages/sources/apple/notes/dist/apple-notes-source.js
 import { join as join3 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
-// apps/apple/connectors/dist/platform/macos/note-store.js
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-var notesContainer = join(homedir(), "Library/Group Containers/group.com.apple.notes");
-var NotesUnavailableError = class extends Error {
-  name = "NotesUnavailableError";
-  constructor(path, cause) {
-    super(`The Notes store at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Notes.app does not need to be open.`, { cause });
-  }
-};
-var NotesSchemaError = class extends Error {
-  name = "NotesSchemaError";
-  constructor(path, missing) {
-    super(`The Notes store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
-  }
-};
-var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
-var open = (path) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
-      throw new NotesUnavailableError(path, cause);
-    throw cause;
-  }
-};
-var NoteStoreVersion = class {
-  #database;
-  #version;
-  constructor(path) {
-    this.#database = open(path);
-    this.#version = this.#database.prepare("PRAGMA data_version");
-  }
-  get current() {
-    return Number(this.#version.get()?.data_version);
-  }
-  [Symbol.dispose]() {
-    this.#database.close();
-  }
-};
-var NoteStore = class _NoteStore {
-  path;
-  #database;
-  constructor(path, database) {
-    this.path = path;
-    this.#database = database;
-  }
-  static async open(path, required) {
-    const database = open(path);
-    try {
-      database.exec("BEGIN");
-      const missing = Object.entries(required).flatMap(([table, columns]) => {
-        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table).map((column) => column.name));
-        return columns.filter((column) => !present.has(column)).map((column) => `${table}.${column}`);
-      });
-      if (missing.length > 0)
-        throw new NotesSchemaError(path, missing);
-      return new _NoteStore(path, database);
-    } catch (cause) {
-      database.close();
-      throw cause;
-    }
-  }
-  all(sql, ...parameters) {
-    return this.#database.prepare(sql).all(...parameters);
-  }
-  async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction)
-      this.#database.exec("COMMIT");
-    this.#database.close();
-  }
-};
-
-// apps/apple/connectors/dist/platform/macos/notes-app.js
-import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
-var execFile = promisify(execFileCallback);
-var bundle = "com.apple.Notes";
-async function launchNotesHidden() {
-  const { stdout } = await execFile("/usr/bin/lsappinfo", [
-    "info",
-    "-only",
-    "pid",
-    "-app",
-    bundle
-  ]);
-  if (/\bpid"?\s*=\s*\d+/.test(stdout))
-    return false;
-  await execFile("/usr/bin/open", ["-g", "-j", "-b", bundle]);
-  return true;
-}
-
-// apps/apple/connectors/dist/sources/apple-notes/apple-notes-stream.js
+// packages/sources/apple/notes/dist/apple-notes-stream.js
 var notesFields = {
   ...eventKitFields,
   nullableId: { type: ["string", "null"], minLength: 1 },
@@ -159,7 +66,7 @@ var AppleNotesStream = class {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-notes/accounts-stream.js
+// packages/sources/apple/notes/dist/accounts-stream.js
 var { id, text, ordinal } = notesFields;
 var properties = {
   id: {
@@ -192,13 +99,13 @@ var AccountsStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-notes/attachments-stream.js
+// packages/sources/apple/notes/dist/attachments-stream.js
 import { access } from "node:fs/promises";
 
-// apps/apple/connectors/dist/sources/apple-notes/notes-scan.js
-import { dirname, join as join2 } from "node:path";
+// packages/sources/apple/notes/dist/notes-scan.js
+import { dirname, join } from "node:path";
 
-// apps/apple/connectors/dist/platform/macos/note-document.js
+// packages/sources/apple/notes/dist/note-document.js
 import { gunzipSync, inflateSync } from "node:zlib";
 var decompress = (bytes) => bytes[0] === 31 && bytes[1] === 139 ? gunzipSync(bytes) : inflateSync(bytes);
 var versionData = (bytes) => {
@@ -450,7 +357,7 @@ function markdownTable(grid) {
   ].join("\n");
 }
 
-// apps/apple/connectors/dist/sources/apple-notes/notes-scan.js
+// packages/sources/apple/notes/dist/notes-scan.js
 var requiredColumns = {
   Z_PRIMARYKEY: ["Z_ENT", "Z_NAME"],
   ZICNOTEDATA: ["Z_PK", "ZDATA"],
@@ -609,7 +516,7 @@ var NotesScan = class {
   file(row) {
     if (row.locked === 1 || typeof row.account !== "string" || typeof row.media !== "string" || typeof row.ZFILENAME !== "string")
       return null;
-    return join2(dirname(this.store.path), "Accounts", row.account, "Media", row.media, ...typeof row.ZGENERATION1 === "string" ? [row.ZGENERATION1] : [], row.ZFILENAME);
+    return join(dirname(this.store.path), "Accounts", row.account, "Media", row.media, ...typeof row.ZGENERATION1 === "string" ? [row.ZGENERATION1] : [], row.ZFILENAME);
   }
   // Plain text keeps what reads as text: inline tags and mentions.
   text(document) {
@@ -638,7 +545,7 @@ ${markdownTable(grid)}
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-notes/attachments-stream.js
+// packages/sources/apple/notes/dist/attachments-stream.js
 var { id: id2, nullableId, text: text2, nullableText, ordinal: ordinal2, nullableNumber, nullableTimestamp, boolean } = notesFields;
 var properties2 = {
   id: {
@@ -776,7 +683,7 @@ var AttachmentsStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-notes/folders-stream.js
+// packages/sources/apple/notes/dist/folders-stream.js
 var { id: id3, nullableId: nullableId2, text: text3, ordinal: ordinal3, nullableText: nullableText2, boolean: boolean2 } = notesFields;
 var properties3 = {
   id: {
@@ -829,7 +736,7 @@ var FoldersStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-notes/inline-attachments-stream.js
+// packages/sources/apple/notes/dist/inline-attachments-stream.js
 var { id: id4, text: text4, nullableText: nullableText3, nullableTimestamp: nullableTimestamp2 } = notesFields;
 var properties4 = {
   id: { ...id4, description: "Notes identifier of this inline attachment." },
@@ -877,7 +784,100 @@ var InlineAttachmentsStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-notes/notes-stream.js
+// packages/sources/apple/notes/dist/note-store.js
+import { homedir } from "node:os";
+import { join as join2 } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+var notesContainer = join2(homedir(), "Library/Group Containers/group.com.apple.notes");
+var NotesUnavailableError = class extends Error {
+  name = "NotesUnavailableError";
+  constructor(path, cause) {
+    super(`The Notes store at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Notes.app does not need to be open.`, { cause });
+  }
+};
+var NotesSchemaError = class extends Error {
+  name = "NotesSchemaError";
+  constructor(path, missing) {
+    super(`The Notes store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
+  }
+};
+var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
+var open = (path) => {
+  try {
+    return new DatabaseSync(path, { readOnly: true });
+  } catch (cause) {
+    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
+      throw new NotesUnavailableError(path, cause);
+    throw cause;
+  }
+};
+var NoteStoreVersion = class {
+  #database;
+  #version;
+  constructor(path) {
+    this.#database = open(path);
+    this.#version = this.#database.prepare("PRAGMA data_version");
+  }
+  get current() {
+    return Number(this.#version.get()?.data_version);
+  }
+  [Symbol.dispose]() {
+    this.#database.close();
+  }
+};
+var NoteStore = class _NoteStore {
+  path;
+  #database;
+  constructor(path, database) {
+    this.path = path;
+    this.#database = database;
+  }
+  static async open(path, required) {
+    const database = open(path);
+    try {
+      database.exec("BEGIN");
+      const missing = Object.entries(required).flatMap(([table, columns]) => {
+        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table).map((column) => column.name));
+        return columns.filter((column) => !present.has(column)).map((column) => `${table}.${column}`);
+      });
+      if (missing.length > 0)
+        throw new NotesSchemaError(path, missing);
+      return new _NoteStore(path, database);
+    } catch (cause) {
+      database.close();
+      throw cause;
+    }
+  }
+  all(sql, ...parameters) {
+    return this.#database.prepare(sql).all(...parameters);
+  }
+  async [Symbol.asyncDispose]() {
+    if (this.#database.isTransaction)
+      this.#database.exec("COMMIT");
+    this.#database.close();
+  }
+};
+
+// packages/sources/apple/notes/dist/notes-app.js
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
+var execFile = promisify(execFileCallback);
+var bundle = "com.apple.Notes";
+async function launchNotesHidden() {
+  const { stdout } = await execFile("/usr/bin/lsappinfo", [
+    "info",
+    "-only",
+    "pid",
+    "-app",
+    bundle
+  ]);
+  if (/\bpid"?\s*=\s*\d+/.test(stdout))
+    return false;
+  await execFile("/usr/bin/open", ["-g", "-j", "-b", bundle]);
+  return true;
+}
+
+// packages/sources/apple/notes/dist/notes-stream.js
 var { id: id5, nullableText: nullableText4, nullableTimestamp: nullableTimestamp3, boolean: boolean3 } = notesFields;
 var properties5 = {
   id: {
@@ -964,7 +964,7 @@ var NotesStream = class extends AppleNotesStream {
   }
 };
 
-// apps/apple/connectors/dist/sources/apple-notes/apple-notes-source.js
+// packages/sources/apple/notes/dist/apple-notes-source.js
 var readers = {
   accounts: new AccountsStream(),
   folders: new FoldersStream(),

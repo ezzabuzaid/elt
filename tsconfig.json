@@ -55,6 +55,9 @@
     },
     {
       "path": "./packages/sources/apple/books"
+    },
+    {
+      "path": "./packages/sources/apple/notes"
     }
   ]
 }

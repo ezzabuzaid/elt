@@ -1,6 +1,6 @@
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
 
-import { AppleNotesSource } from '../../sources/apple-notes/apple-notes-source.ts';
 import { AppleApp } from '../apple-app.ts';
 import { type Choice, accounts, collections, name } from '../choice.ts';
 

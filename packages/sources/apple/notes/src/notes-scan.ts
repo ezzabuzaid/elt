@@ -12,8 +12,8 @@ import {
   NoteDocument,
   decodeTable,
   markdownTable,
-} from '../../platform/macos/note-document.ts';
-import type { NoteStore } from '../../platform/macos/note-store.ts';
+} from './note-document.ts';
+import type { NoteStore } from './note-store.ts';
 
 // Every Notes object lives in one Core Data table; Z_ENT names its entity, and
 // each entity's relationships sit in their own numbered columns. These are the

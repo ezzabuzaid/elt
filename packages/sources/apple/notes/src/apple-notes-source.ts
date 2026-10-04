@@ -12,17 +12,13 @@ import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
-import {
-  NoteStore,
-  NoteStoreVersion,
-  notesContainer,
-} from '../../platform/macos/note-store.ts';
-import { launchNotesHidden } from '../../platform/macos/notes-app.ts';
 import { AccountsStream } from './accounts-stream.ts';
 import type { NotesReader } from './apple-notes-stream.ts';
 import { AttachmentsStream } from './attachments-stream.ts';
 import { FoldersStream } from './folders-stream.ts';
 import { InlineAttachmentsStream } from './inline-attachments-stream.ts';
+import { NoteStore, NoteStoreVersion, notesContainer } from './note-store.ts';
+import { launchNotesHidden } from './notes-app.ts';
 import { NotesScan, requiredColumns } from './notes-scan.ts';
 import { NotesStream } from './notes-stream.ts';
 

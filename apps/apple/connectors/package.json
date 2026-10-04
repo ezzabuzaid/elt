@@ -17,6 +17,7 @@
     "@workspace/source-apple-books": "0.0.1",
     "@workspace/source-apple-eventkit": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
+    "@workspace/source-apple-notes": "0.0.1",
     "@zone-eu/mailsplit": "5.4.19",
     "libmime": "5.4.6"
   },
