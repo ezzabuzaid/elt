@@ -5,28 +5,52 @@ import type {
   SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
-import { Source, diffSnapshot, validateRecords } from '@workspace/elt';
+import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import type { RemindersStore } from '@workspace/macos-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
-import { reminderRows } from './reminder-rows.ts';
-import { catalog } from './reminders-catalog.ts';
-import { RemindersSnapshot } from './reminders-snapshot.ts';
+import type { RemindersReader } from './apple-reminders-stream.ts';
+import { RemindersScan } from './reminders-scan.ts';
+import { AccountsStream } from './streams/accounts-stream.ts';
+import { AlarmsStream } from './streams/alarms-stream.ts';
+import { AttendeesStream } from './streams/attendees-stream.ts';
+import { DateComponentsStream } from './streams/date-components-stream.ts';
+import { ListsStream } from './streams/lists-stream.ts';
+import { RecurrenceRuleValuesStream } from './streams/recurrence-rule-values-stream.ts';
+import { RecurrenceRulesStream } from './streams/recurrence-rules-stream.ts';
+import { RemindersStream } from './streams/reminders-stream.ts';
+
+const readers = {
+  accounts: new AccountsStream(),
+  lists: new ListsStream(),
+  reminders: new RemindersStream(),
+  dateComponents: new DateComponentsStream(),
+  attendees: new AttendeesStream(),
+  alarms: new AlarmsStream(),
+  recurrenceRules: new RecurrenceRulesStream(),
+  recurrenceRuleValues: new RecurrenceRuleValuesStream(),
+} satisfies Record<string, RemindersReader>;
+const catalog = new Catalog(
+  Object.values(readers).map((reader) => reader.describe()),
+);
+const readersByName = new Map<string, RemindersReader>(
+  Object.values(readers).map((reader) => [reader.name, reader]),
+);
 
 // Adapter: native EventKit records enter the existing Source/Copy/Pipeline contract.
-export class AppleRemindersSource extends Source<RemindersSnapshot> {
+export class AppleRemindersSource extends Source<RemindersScan> {
   readonly #store: RemindersStore;
   readonly identity = 'apple-reminders:eventkit';
   protected readonly catalog = catalog;
-  readonly accounts = catalog.get('accounts');
-  readonly lists = catalog.get('lists');
-  readonly reminders = catalog.get('reminders');
-  readonly dateComponents = catalog.get('dateComponents');
-  readonly attendees = catalog.get('attendees');
-  readonly alarms = catalog.get('alarms');
-  readonly recurrenceRules = catalog.get('recurrenceRules');
-  readonly recurrenceRuleValues = catalog.get('recurrenceRuleValues');
+  readonly accounts = readers.accounts.describe();
+  readonly lists = readers.lists.describe();
+  readonly reminders = readers.reminders.describe();
+  readonly dateComponents = readers.dateComponents.describe();
+  readonly attendees = readers.attendees.describe();
+  readonly alarms = readers.alarms.describe();
+  readonly recurrenceRules = readers.recurrenceRules.describe();
+  readonly recurrenceRuleValues = readers.recurrenceRuleValues.describe();
 
   readonly scope: ImportScope;
 
@@ -54,24 +78,14 @@ export class AppleRemindersSource extends Source<RemindersSnapshot> {
     for await (const _ of this.#store.watch(signal)) yield streams;
   }
 
-  // Every selected stream from one change-free read, so reminders match
-  // their lists and alarms their reminders.
-  protected override async open(
-    streams: readonly Stream[],
-  ): Promise<RemindersSnapshot> {
-    const rows = reminderRows(
+  // One change-free read for every selected stream, so reminders match their
+  // lists and alarms their reminders.
+  protected override async open(): Promise<RemindersScan> {
+    return new RemindersScan(
       await this.#store.read({
         accountIds: this.scope.accountIds,
         calendarIds: this.scope.collectionIds,
       }),
-    );
-    return new RemindersSnapshot(
-      new Map(
-        streams.map((stream) => [
-          stream.name,
-          validateRecords(stream, rows.get(stream.name), 'EventKit'),
-        ]),
-      ),
     );
   }
 
@@ -79,9 +93,12 @@ export class AppleRemindersSource extends Source<RemindersSnapshot> {
     { stream, syncMode }: CopyConfiguration,
     state: unknown,
     _partition: null,
-    snapshot: RemindersSnapshot,
+    scan: RemindersScan,
   ): AsyncGenerator<SourceMessage> {
-    const records = snapshot.of(stream.name);
+    const reader = readersByName.get(stream.name);
+    if (reader === undefined)
+      throw new Error(`Apple Reminders has no stream ${stream.name}`);
+    const records = reader.read(scan);
     if (syncMode === 'incremental') yield* diffSnapshot(stream, records, state);
     else for (const data of records) yield { stream: stream.name, data };
   }
