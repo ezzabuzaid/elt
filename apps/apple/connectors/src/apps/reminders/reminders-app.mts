@@ -1,6 +1,6 @@
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
 
-import { AppleRemindersSource } from '../../sources/apple-reminders/apple-reminders-source.ts';
 import { AppleApp } from '../apple-app.ts';
 import { type Choice, accounts, collections, name } from '../choice.ts';
 

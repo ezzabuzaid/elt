@@ -64,6 +64,12 @@
     },
     {
       "path": "./packages/sources/apple/messages"
+    },
+    {
+      "path": "./packages/sources/apple/reminders"
+    },
+    {
+      "path": "./packages/sources/apple/calendar"
     }
   ]
 }

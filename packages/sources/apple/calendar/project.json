@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-calendar",
+  "sourceRoot": "packages/sources/apple/calendar/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/calendar/dist/*.test.js\""
+    }
+  }
+}

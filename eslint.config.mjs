@@ -49,6 +49,17 @@ export default [
         {
           enforceBuildableLibDependency: true,
           allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?js$'],
+          // The Calendar app imports ./google-calendar-attachments with a
+          // dynamic import() so gaxios stays out of the plugin's startup
+          // code, and its source statically from the same package. Nx marks
+          // the whole project edge lazy once one dynamic import crosses it
+          // (@nx/eslint-plugin runtime-lint-utils hasDynamicImport) and then
+          // rejects every static import of it; that guards per-project code
+          // splitting, while the plugin bundle splits per module. Matched as
+          // an unanchored regex, hence the anchors.
+          checkDynamicDependenciesExceptions: [
+            '^@workspace/source-apple-calendar(/.*)?$',
+          ],
           depConstraints: [
             { sourceTag: '*', onlyDependOnLibsWithTags: ['*'] },
             // The hosts' runtimes: the plugin's MCP server and the CLI's

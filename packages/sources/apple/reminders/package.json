@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/source-apple-reminders",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-reminders-source": {
+      "types": "./dist/apple-reminders-source.d.ts",
+      "default": "./dist/apple-reminders-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/source-apple-eventkit": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-markdown": "0.0.1",
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

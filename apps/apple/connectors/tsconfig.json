@@ -9,6 +9,9 @@
   "include": ["src/**/*.ts", "src/**/*.mts", "src/apps/*/connector.json"],
   "references": [
     {
+      "path": "../../../packages/sources/apple/reminders"
+    },
+    {
       "path": "../../../packages/sources/apple/notes"
     },
     {
@@ -22,6 +25,9 @@
     },
     {
       "path": "../../../packages/sources/apple/contacts"
+    },
+    {
+      "path": "../../../packages/sources/apple/calendar"
     },
     {
       "path": "../../../packages/sources/apple/books"

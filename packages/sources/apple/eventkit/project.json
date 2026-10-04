@@ -13,6 +13,10 @@
     },
     "build": {
       "dependsOn": ["...", "eventkit"]
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/eventkit/dist/*.test.js\""
     }
   }
 }

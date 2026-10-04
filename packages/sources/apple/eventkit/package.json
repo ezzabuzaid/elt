@@ -23,6 +23,10 @@
     "./native-process": {
       "types": "./dist/native-process.d.ts",
       "default": "./dist/native-process.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
     }
   },
   "dependencies": {

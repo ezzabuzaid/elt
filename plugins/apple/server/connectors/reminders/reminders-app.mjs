@@ -33,7 +33,7 @@ import {
 } from "../../chunks/chunk-OEQ4WCEQ.mjs";
 import "../../chunks/chunk-ZGXE7NZW.mjs";
 
-// apps/apple/connectors/dist/sources/apple-reminders/reminder-rows.js
+// packages/sources/apple/reminders/dist/reminder-rows.js
 var dateComponentNames = [
   "era",
   "year",
@@ -115,7 +115,7 @@ function dateComponentsRow(reminderId, kind, components) {
   };
 }
 
-// apps/apple/connectors/dist/sources/apple-reminders/apple-reminders-source.js
+// packages/sources/apple/reminders/dist/apple-reminders-source.js
 var { id, text, nullableText, nullableTimestamp, integer, boolean } = eventKitFields;
 var related = eventKitRelatedFields("reminderId");
 var catalog = eventKitCatalog({

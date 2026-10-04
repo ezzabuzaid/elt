@@ -15,11 +15,13 @@
     "@workspace/google-auth": "0.0.1",
     "@workspace/import-store": "0.0.1",
     "@workspace/source-apple-books": "0.0.1",
+    "@workspace/source-apple-calendar": "0.0.1",
     "@workspace/source-apple-contacts": "0.0.1",
     "@workspace/source-apple-eventkit": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
     "@workspace/source-apple-messages": "0.0.1",
     "@workspace/source-apple-notes": "0.0.1",
+    "@workspace/source-apple-reminders": "0.0.1",
     "@zone-eu/mailsplit": "5.4.19",
     "libmime": "5.4.6"
   },

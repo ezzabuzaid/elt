@@ -2,12 +2,12 @@ import {
   GMAIL_READONLY_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE,
 } from '@workspace/google-auth/scopes';
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-
 import {
   AppleCalendarSource,
   type CalendarAttachmentFetcher,
-} from '../../sources/apple-calendar/apple-calendar-source.ts';
+} from '@workspace/source-apple-calendar/apple-calendar-source';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+
 import { AppleApp } from '../apple-app.ts';
 import { type Choice, accounts, collections, name } from '../choice.ts';
 
@@ -50,7 +50,7 @@ export default class CalendarApp extends AppleApp {
       GMAIL_READONLY_SCOPE,
     ]);
     const { googleCalendarAttachments } =
-      await import('../../sources/apple-calendar/google-calendar-attachments.ts');
+      await import('@workspace/source-apple-calendar/google-calendar-attachments');
     return this.#calendar(scope, googleCalendarAttachments(google));
   }
 

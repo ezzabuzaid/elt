@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-reminders",
+  "sourceRoot": "packages/sources/apple/reminders/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/reminders/dist/*.test.js\""
+    }
+  }
+}

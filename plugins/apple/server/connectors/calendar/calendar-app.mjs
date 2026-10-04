@@ -40,12 +40,12 @@ import {
 var GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 var GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 
-// apps/apple/connectors/dist/sources/apple-calendar/apple-calendar-source.js
+// packages/sources/apple/calendar/dist/apple-calendar-source.js
 import { lstat, mkdtempDisposable, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 
-// apps/apple/connectors/dist/sources/apple-calendar/icalendar.js
+// packages/sources/apple/calendar/dist/icalendar.js
 var namePattern = /^[A-Za-z0-9-]+/;
 function parseICalendar(bytes) {
   let text2;
@@ -174,7 +174,7 @@ function freeze(component) {
   });
 }
 
-// apps/apple/connectors/dist/sources/apple-calendar/ics-records.js
+// packages/sources/apple/calendar/dist/ics-records.js
 var icsStreams = [
   "icsComponents",
   "icsProperties",
@@ -269,7 +269,7 @@ function inContentOrder(component) {
   return { ...component, components };
 }
 
-// apps/apple/connectors/dist/sources/apple-calendar/calendar-rows.js
+// packages/sources/apple/calendar/dist/calendar-rows.js
 function calendarRows(documents, scope) {
   const accounts2 = [];
   const calendars = [];
@@ -357,7 +357,7 @@ function eventRow(occurrence) {
   };
 }
 
-// apps/apple/connectors/dist/sources/apple-calendar/apple-calendar-source.js
+// packages/sources/apple/calendar/dist/apple-calendar-source.js
 var { id, text, nullableText, timestamp: timestamp2, nullableTimestamp, nullableDate, boolean, ordinal, integer } = eventKitFields;
 var related = eventKitRelatedFields("eventId");
 var perOccurrence = "Rows belong to an occurrence, not a series: each selected occurrence of a recurring series repeats them, so counts across a series multiply.";
@@ -805,7 +805,7 @@ var CalendarApp = class extends AppleApp {
       GOOGLE_DRIVE_READONLY_SCOPE,
       GMAIL_READONLY_SCOPE
     ]);
-    const { googleCalendarAttachments } = await import("../../chunks/google-calendar-attachments-Y27HTHVV.mjs");
+    const { googleCalendarAttachments } = await import("../../chunks/google-calendar-attachments-OZZRMXLH.mjs");
     return this.#calendar(scope, googleCalendarAttachments(google));
   }
   #calendar(scope, attachments) {

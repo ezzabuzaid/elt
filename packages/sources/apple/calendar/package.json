@@ -1,0 +1,26 @@
+{
+  "name": "@workspace/source-apple-calendar",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-calendar-source": {
+      "types": "./dist/apple-calendar-source.d.ts",
+      "default": "./dist/apple-calendar-source.js"
+    },
+    "./google-calendar-attachments": {
+      "types": "./dist/google-calendar-attachments.d.ts",
+      "default": "./dist/google-calendar-attachments.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/google-auth": "0.0.1",
+    "@workspace/source-apple-eventkit": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-markdown": "0.0.1",
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

@@ -215,7 +215,7 @@ var require_util = __commonJS({
   }
 });
 
-// apps/apple/connectors/dist/sources/apple-calendar/google-calendar-attachments.js
+// packages/sources/apple/calendar/dist/google-calendar-attachments.js
 import { writeFile } from "node:fs/promises";
 
 // node_modules/gaxios/build/esm/src/gaxios.js
@@ -1031,7 +1031,7 @@ function reasonsOf(error) {
   return bodyOf(error)?.error?.errors?.map((entry) => entry.reason ?? "") ?? [];
 }
 
-// apps/apple/connectors/dist/sources/apple-calendar/google-calendar-attachments.js
+// packages/sources/apple/calendar/dist/google-calendar-attachments.js
 var DRIVE = "https://www.googleapis.com/drive/v3/files";
 var GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 var NO_ACCESS = /* @__PURE__ */ new Set([
