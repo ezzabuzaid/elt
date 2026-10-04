@@ -1,24 +1,7 @@
 import { Catalog, type FieldSchema, Stream } from '@workspace/elt';
+import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 
-const text = { type: 'string' } as const;
-const id = { ...text, minLength: 1 };
-const nullableText = { type: ['string', 'null'] } as const;
-const integer = { type: 'integer' } as const;
-const ordinal = { ...integer, minimum: 0 };
-const boolean = { type: 'boolean' } as const;
-const number = { type: 'number' } as const;
-const timestamp = { ...text, format: 'date-time' } as const;
-const nullableTimestamp = { ...nullableText, format: 'date-time' } as const;
-const nullableDate = { ...nullableText, format: 'date' } as const;
-const color = { type: ['number', 'null'], minimum: 0, maximum: 1 } as const;
-const location = {
-  locationTitle: nullableText,
-  latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 },
-  longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 },
-  radius: { type: ['number', 'null'], minimum: 0 },
-} as const;
-
-export const eventKitFields = {
+const {
   text,
   id,
   nullableText,
@@ -26,14 +9,12 @@ export const eventKitFields = {
   ordinal,
   boolean,
   number,
-  timestamp,
   nullableTimestamp,
-  nullableDate,
   location,
-};
+} = eventKitFields;
+const color = { type: ['number', 'null'], minimum: 0, maximum: 1 } as const;
 
-// The shared primitives above stay undescribed: Notes, Contacts and Messages
-// reuse them. Descriptions below hold for Calendar and Reminders alike.
+// Descriptions below hold for Calendar and Reminders alike.
 
 export const eventKitAccountFields = {
   id: {

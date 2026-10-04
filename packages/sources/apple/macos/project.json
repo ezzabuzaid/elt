@@ -1,0 +1,9 @@
+{
+  "name": "source-apple-macos",
+  "sourceRoot": "packages/sources/apple/macos/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {}
+  }
+}

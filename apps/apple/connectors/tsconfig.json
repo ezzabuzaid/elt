@@ -9,10 +9,16 @@
   "include": ["src/**/*.ts", "src/**/*.mts", "src/apps/*/connector.json"],
   "references": [
     {
-      "path": "../../../packages/google-auth"
+      "path": "../../../packages/sources/apple/macos"
+    },
+    {
+      "path": "../../../packages/sources/apple/eventkit"
     },
     {
       "path": "../../../packages/import-store"
+    },
+    {
+      "path": "../../../packages/google-auth"
     },
     {
       "path": "../../../packages/destinations/sqlite"

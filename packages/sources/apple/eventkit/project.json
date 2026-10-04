@@ -1,0 +1,18 @@
+{
+  "name": "source-apple-eventkit",
+  "sourceRoot": "packages/sources/apple/eventkit/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "eventkit": {
+      "command": "sh packages/sources/apple/eventkit/src/eventkit/build.sh packages/sources/apple/eventkit/dist/eventkit",
+      "cache": true,
+      "inputs": ["{projectRoot}/src/eventkit/*"],
+      "outputs": ["{projectRoot}/dist/eventkit"]
+    },
+    "build": {
+      "dependsOn": ["...", "eventkit"]
+    }
+  }
+}

@@ -4,15 +4,6 @@
   "projectType": "library",
   "targets": {
     "format": {},
-    "eventkit": {
-      "command": "sh apps/apple/connectors/src/platform/macos/eventkit/build.sh apps/apple/connectors/dist/platform/macos/eventkit",
-      "cache": true,
-      "inputs": ["{projectRoot}/src/platform/macos/eventkit/*"],
-      "outputs": ["{projectRoot}/dist/platform/macos/eventkit"]
-    },
-    "build": {
-      "dependsOn": ["...", "eventkit"]
-    },
     "test": {
       "dependsOn": ["build"],
       "command": "node --test \"apps/apple/connectors/dist/*.test.js\""

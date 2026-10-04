@@ -4,7 +4,7 @@ import type {
   EventKitDocument,
   IcsDocument,
   OccurrenceDocument,
-} from '../../platform/macos/eventkit-documents.ts';
+} from '@workspace/source-apple-eventkit/eventkit-documents';
 import {
   type RelatedRows,
   accountRow,
@@ -13,8 +13,9 @@ import {
   relatedRows,
   scopedCollections,
   timestamp,
-} from '../eventkit-rows.ts';
-import type { ImportScope } from '../import-scope.ts';
+} from '@workspace/source-apple-eventkit/eventkit-rows';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+
 import { icsRecords, icsStreams, validateIcsExports } from './ics-records.ts';
 
 type Row = Record<string, unknown>;

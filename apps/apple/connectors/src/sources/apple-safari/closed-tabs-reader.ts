@@ -1,5 +1,9 @@
-import type { PlistValue } from '../../platform/macos/plist.ts';
-import { type ImportScope, selected } from '../import-scope.ts';
+import {
+  type ImportScope,
+  selected,
+} from '@workspace/source-apple-macos/import-scope';
+import type { PlistValue } from '@workspace/source-apple-macos/plist';
+
 import { type Dictionary, dictionary, list } from './safari-values.ts';
 
 // A closed tab: on its own in the list, or one of a closed window's tabs.

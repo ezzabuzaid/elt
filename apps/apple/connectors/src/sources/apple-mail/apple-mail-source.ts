@@ -23,6 +23,14 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
+import {
+  type ImportScope,
+  selected,
+  withinDates,
+} from '@workspace/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+import osa from '@workspace/source-apple-macos/osa';
+import type { PlistValue } from '@workspace/source-apple-macos/plist';
 
 import { readMailMime } from '../../platform/macos/mail-mime.ts';
 import {
@@ -35,10 +43,6 @@ import {
   plistJSON,
   plistObject,
 } from '../../platform/macos/mail-store.ts';
-import osa from '../../platform/macos/osa.ts';
-import type { PlistValue } from '../../platform/macos/plist.ts';
-import { type ImportScope, selected, withinDates } from '../import-scope.ts';
-import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import { mailStream, mailTables, tableStreams } from './mail-tables.ts';
 
 const text = { type: 'string' } as const;

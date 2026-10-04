@@ -8,19 +8,22 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../connectors"
+      "path": "../../../packages/sources/apple/macos"
     },
     {
-      "path": "../manifest"
-    },
-    {
-      "path": "../../../packages/elt"
+      "path": "../../../packages/import-store"
     },
     {
       "path": "../../../packages/destinations/sqlite"
     },
     {
-      "path": "../../../packages/import-store"
+      "path": "../../../packages/elt"
+    },
+    {
+      "path": "../connectors"
+    },
+    {
+      "path": "../manifest"
     }
   ]
 }

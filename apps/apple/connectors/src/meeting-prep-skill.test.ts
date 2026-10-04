@@ -11,18 +11,18 @@ import { gzipSync } from 'node:zlib';
 
 import { Pipeline } from '@workspace/elt';
 import { SQLiteSyncHistory, installSQLiteCatalog } from '@workspace/elt-sqlite';
-
-import type { AppleApp } from './apps/apple-app.ts';
-import CalendarApp from './apps/calendar/calendar-app.mts';
 import type {
   AccountDocument,
   CalendarDocument,
   EventKitDocument,
   OccurrenceDocument,
   ParticipantDocument,
-} from './platform/macos/eventkit-documents.ts';
-import nativeProcess from './platform/macos/native-process.ts';
-import osa from './platform/macos/osa.ts';
+} from '@workspace/source-apple-eventkit/eventkit-documents';
+import nativeProcess from '@workspace/source-apple-eventkit/native-process';
+import osa from '@workspace/source-apple-macos/osa';
+
+import type { AppleApp } from './apps/apple-app.ts';
+import CalendarApp from './apps/calendar/calendar-app.mts';
 
 // The Apple plugin's meeting-prep skill tells the agent to read each app's
 // import with these SQL blocks. Each test below imports an app the way the

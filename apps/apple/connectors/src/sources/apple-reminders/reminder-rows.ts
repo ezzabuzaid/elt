@@ -4,15 +4,15 @@ import type {
   DateComponentsDocument,
   EventKitDocument,
   ReminderDocument,
-} from '../../platform/macos/eventkit-documents.ts';
+} from '@workspace/source-apple-eventkit/eventkit-documents';
 import {
   accountRow,
   calendarRow,
   relatedRows,
   scopedCollections,
   timestamp,
-} from '../eventkit-rows.ts';
-import type { ImportScope } from '../import-scope.ts';
+} from '@workspace/source-apple-eventkit/eventkit-rows';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 type Row = Record<string, unknown>;
 

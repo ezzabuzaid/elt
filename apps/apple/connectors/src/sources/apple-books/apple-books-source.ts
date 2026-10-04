@@ -11,9 +11,9 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import { BooksDatabaseVersion } from '../../platform/macos/books-store.ts';
-import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
   type BooksLocation,
   BooksScan,

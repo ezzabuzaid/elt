@@ -1,13 +1,13 @@
 import { Catalog, type FieldSchema, Stream } from '@workspace/elt';
-
+import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 import {
   type PlistValue,
   decodeArchive,
   isBinaryPlist,
   isDictionary,
   plistJSON,
-} from '../../platform/macos/plist.ts';
-import { eventKitFields } from '../eventkit-schema.ts';
+} from '@workspace/source-apple-macos/plist';
+
 import { attributedText } from './typedstream.ts';
 
 const { text, id, nullableText, boolean, nullableTimestamp } = eventKitFields;

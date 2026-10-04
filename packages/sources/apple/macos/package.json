@@ -1,0 +1,43 @@
+{
+  "name": "@workspace/source-apple-macos",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eventkit-fields": {
+      "types": "./dist/eventkit-fields.d.ts",
+      "default": "./dist/eventkit-fields.js"
+    },
+    "./import-scope": {
+      "types": "./dist/import-scope.d.ts",
+      "default": "./dist/import-scope.js"
+    },
+    "./local-apple-store-coverage": {
+      "types": "./dist/local-apple-store-coverage.d.ts",
+      "default": "./dist/local-apple-store-coverage.js"
+    },
+    "./macos-document-parser": {
+      "types": "./dist/macos-document-parser.d.ts",
+      "default": "./dist/macos-document-parser.js"
+    },
+    "./osa": {
+      "types": "./dist/osa.d.ts",
+      "default": "./dist/osa.js"
+    },
+    "./plist": {
+      "types": "./dist/plist.d.ts",
+      "default": "./dist/plist.js"
+    },
+    "./plutil": {
+      "types": "./dist/plutil.d.ts",
+      "default": "./dist/plutil.js"
+    },
+    "./protobuf": {
+      "types": "./dist/protobuf.d.ts",
+      "default": "./dist/protobuf.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1"
+  }
+}

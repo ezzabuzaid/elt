@@ -12,13 +12,13 @@ import { userConnectors } from '@workspace/apple-manifest/user-connectors';
 import type { AppleApp, AppleHost } from '@workspace/apple/apps/apple-app';
 import {
   type AppFacts,
-  type ImportScope,
   ImportStore,
   NewerLayoutError,
   type Pass,
   type Selection,
   leaseHeld,
 } from '@workspace/import-store';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 const ids = z.array(z.string().min(1).max(1024)).max(1000);
 

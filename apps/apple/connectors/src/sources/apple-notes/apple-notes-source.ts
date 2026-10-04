@@ -9,6 +9,8 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import {
   NoteStore,
@@ -16,8 +18,6 @@ import {
   notesContainer,
 } from '../../platform/macos/note-store.ts';
 import { launchNotesHidden } from '../../platform/macos/notes-app.ts';
-import type { ImportScope } from '../import-scope.ts';
-import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import { AccountsStream } from './accounts-stream.ts';
 import type { NotesReader } from './apple-notes-stream.ts';
 import { AttachmentsStream } from './attachments-stream.ts';

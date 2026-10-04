@@ -1,5 +1,6 @@
+import { ProtobufMessage } from '@workspace/source-apple-macos/protobuf';
+
 import { BooksSchemaError } from '../../platform/macos/books-store.ts';
-import { ProtobufMessage } from '../../platform/macos/protobuf.ts';
 
 // Books' reading history is a Coherence CRDT document (Apple's private CRDT
 // framework, wire format version 4) that bookdatastored syncs through

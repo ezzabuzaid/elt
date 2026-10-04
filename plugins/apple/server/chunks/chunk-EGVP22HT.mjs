@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
-// apps/apple/connectors/dist/platform/macos/plist.js
+// packages/sources/apple/macos/dist/plist.js
 var PlistUid = class {
   value;
   constructor(value) {

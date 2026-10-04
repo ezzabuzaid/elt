@@ -6,6 +6,7 @@
     "packages/*",
     "packages/destinations/*",
     "packages/queue/*",
+    "packages/sources/*/*",
     "apps/*",
     "apps/apple/*"
   ],

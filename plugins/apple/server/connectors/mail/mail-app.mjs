@@ -1,26 +1,21 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
-  MailSchemaError,
-  MailStore,
-  assertMailFile,
-  hashMailFile,
-  mailDirectory,
-  mailVersionDirectory,
-  plistJSON,
-  plistObject
-} from "../../chunks/chunk-OVYOGYRK.mjs";
-import "../../chunks/chunk-462G4OOY.mjs";
+  readMailPlist
+} from "../../chunks/chunk-HMG5B6SF.mjs";
+import {
+  isDictionary
+} from "../../chunks/chunk-EGVP22HT.mjs";
 import {
   selected,
   withinDates
-} from "../../chunks/chunk-YDCQQEHM.mjs";
+} from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
   accounts,
   byId
 } from "../../chunks/chunk-PCDODET2.mjs";
 import {
   localAppleStoreCoverage
-} from "../../chunks/chunk-4HBD6YP5.mjs";
+} from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleApp
 } from "../../chunks/chunk-PLJTWAM2.mjs";
@@ -25618,22 +25613,189 @@ var require_mailsplit = __commonJS({
   }
 });
 
+// apps/apple/connectors/dist/platform/macos/mail-store.js
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { mkdtempDisposable, readFile, readdir, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, join, relative, sep } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+var mailDirectory = join(homedir(), "Library/Mail");
+var MailUnavailableError = class extends Error {
+  name = "MailUnavailableError";
+  constructor(path, cause) {
+    super(`Mail's store at ${path} cannot be read. Grant the exporting process Full Disk Access in System Settings > Privacy & Security.`, { cause });
+  }
+};
+var MailSchemaError = class extends Error {
+  name = "MailSchemaError";
+};
+var MailChangingError = class extends Error {
+  name = "MailChangingError";
+};
+function plistJSON(value) {
+  return JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item instanceof Uint8Array ? Buffer.from(item).toString("base64") : item);
+}
+function plistObject(value) {
+  if (!isDictionary(value))
+    throw new MailSchemaError("Mail returned a non-dictionary property list");
+  return value;
+}
+async function mailVersionDirectory(root) {
+  const info = plistObject(await readMailPlist(join(root, "PersistenceInfo.plist")));
+  const version = info.LastUsedVersionDirectoryName;
+  if (typeof version !== "string" || !/^V\d+$/.test(version))
+    throw new MailSchemaError("Mail has no valid current version directory");
+  return join(root, version);
+}
+async function inspectMailFile(path) {
+  const info = await stat(path, { bigint: true });
+  if (!info.isFile())
+    throw new MailSchemaError(`Mail content is not a regular file: ${path}`);
+  return {
+    path,
+    size: Number(info.size),
+    version: `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`
+  };
+}
+async function assertMailFile(file) {
+  const current = await inspectMailFile(file.path).catch((cause) => {
+    throw new MailChangingError(`Mail removed a file during extraction: ${file.path}`, { cause });
+  });
+  if (current.version !== file.version)
+    throw new MailChangingError(`Mail changed a file during extraction: ${file.path}`);
+}
+async function hashMailFile(file) {
+  await assertMailFile(file);
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file.path))
+    hash.update(chunk);
+  await assertMailFile(file);
+  return hash.digest("hex");
+}
+var MailStore = class _MailStore {
+  messages = /* @__PURE__ */ new Map();
+  attachments = /* @__PURE__ */ new Map();
+  plists = /* @__PURE__ */ new Map();
+  signatures = [];
+  path;
+  database;
+  scratch;
+  resources;
+  constructor(path, database, scratch, resources) {
+    this.path = path;
+    this.database = database;
+    this.scratch = scratch;
+    this.resources = resources;
+  }
+  static async open(root, required) {
+    let path;
+    let database;
+    try {
+      path = await mailVersionDirectory(root);
+      database = new DatabaseSync(join(path, "MailData/Envelope Index"), {
+        readOnly: true
+      });
+    } catch (cause) {
+      if (cause instanceof MailSchemaError)
+        throw cause;
+      throw new MailUnavailableError(root, cause);
+    }
+    const resources = new AsyncDisposableStack();
+    resources.use(database);
+    try {
+      database.exec("BEGIN");
+      const missing = Object.entries(required).flatMap(([table2, columns]) => {
+        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((row) => row.name));
+        return columns.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
+      });
+      if (missing.length)
+        throw new MailSchemaError(`Unsupported Mail index schema: missing ${missing.join(", ")}`);
+      const scratch = resources.use(await mkdtempDisposable(join(tmpdir(), "apple-mail-")));
+      const store = new _MailStore(path, database, scratch, resources);
+      const entries = await readdir(path, {
+        recursive: true,
+        withFileTypes: true
+      });
+      for (const entry of entries) {
+        if (!entry.isFile())
+          continue;
+        const filePath = join(entry.parentPath, entry.name);
+        const segments = relative(path, filePath).split(sep);
+        const attachment = segments.indexOf("Attachments");
+        if (/^\d+(\.partial)?\.emlx$/.test(entry.name)) {
+          const id = entry.name.slice(0, entry.name.indexOf("."));
+          if (store.messages.has(id))
+            throw new MailSchemaError(`Mail has more than one file for indexed message ${id}`);
+          store.messages.set(id, await inspectMailFile(filePath));
+        } else if (attachment !== -1 && segments.length >= attachment + 4) {
+          const key = `${segments[attachment + 1]}:${segments[attachment + 2]}`;
+          const files = store.attachments.get(key);
+          const file = await inspectMailFile(filePath);
+          if (files === void 0)
+            store.attachments.set(key, [file]);
+          else
+            files.push(file);
+        } else if (entry.name.endsWith(".plist")) {
+          store.plists.set(relative(path, filePath), await inspectMailFile(filePath));
+        } else if (entry.name.endsWith(".mailsignature")) {
+          store.signatures.push(await inspectMailFile(filePath));
+        }
+      }
+      return store;
+    } catch (error) {
+      await resources.disposeAsync();
+      throw error;
+    }
+  }
+  async plist(name) {
+    const file = this.plists.get(name);
+    if (file === void 0)
+      return null;
+    await assertMailFile(file);
+    const value = await readMailPlist(file.path);
+    await assertMailFile(file);
+    return value;
+  }
+  async signature(file) {
+    await assertMailFile(file);
+    const content = await readFile(file.path, "utf8");
+    await assertMailFile(file);
+    return { id: basename(file.path, ".mailsignature"), content };
+  }
+  async [Symbol.asyncDispose]() {
+    await this.resources.disposeAsync();
+  }
+};
+
 // apps/apple/connectors/dist/sources/apple-mail/apple-mail-source.js
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { watch } from "node:fs";
 import { copyFile as copyFile2, rm as rm2 } from "node:fs/promises";
-import { extname as extname2, join as join2, relative } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { extname as extname2, join as join3, relative as relative2 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 import { setInterval } from "node:timers/promises";
+
+// packages/sources/apple/macos/dist/osa.js
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execute = promisify(execFile);
+var OSA = class {
+  async execute(script) {
+    const { stdout } = await execute("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 12e4 });
+    return stdout;
+  }
+};
+var osa_default = new OSA();
 
 // apps/apple/connectors/dist/platform/macos/mail-mime.js
 var import_mailsplit = __toESM(require_mailsplit(), 1);
 var import_libmime = __toESM(require_libmime(), 1);
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 import { once } from "node:events";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream as createReadStream2, createWriteStream } from "node:fs";
 import { copyFile, open, rm } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { basename as basename2, extname, join as join2 } from "node:path";
 import { pipeline, finished as streamFinished } from "node:stream/promises";
 var failure = (error) => Error.isError(error) ? error : new Error(String(error), { cause: error });
 function partId(node) {
@@ -25690,7 +25852,7 @@ async function readMailMime(store, messageId, file, readHeaders, stageFiles, dec
           part.text = null;
           return;
         }
-        const matches = candidates.length === 1 ? candidates : candidates.filter((candidate) => basename(candidate.path) === record.filename);
+        const matches = candidates.length === 1 ? candidates : candidates.filter((candidate) => basename2(candidate.path) === record.filename);
         const [original] = matches;
         if (original === void 0 || matches.length !== 1)
           throw new MailSchemaError(`Ambiguous detached Mail attachment ${messageId}:${diskId}`);
@@ -25756,9 +25918,9 @@ async function readMailMime(store, messageId, file, readHeaders, stageFiles, dec
             continue;
           const extension = node.filename === false ? node.contentType === "text/html" ? ".html" : node.contentType !== false && node.contentType.startsWith("text/") ? ".txt" : "" : extname(node.filename);
           if (stageFiles)
-            part.path = join(store.scratch.path, `${messageId}-${id}${extension}`);
+            part.path = join2(store.scratch.path, `${messageId}-${id}${extension}`);
           const decoder = node.getDecoder();
-          const hash = createHash("sha256");
+          const hash = createHash2("sha256");
           const textDecoder = !stageFiles && record.contentType !== null && record.contentType.startsWith("text/") ? new TextDecoder(record.charset === null ? void 0 : record.charset) : null;
           if (textDecoder !== null)
             part.text = "";
@@ -25803,22 +25965,10 @@ async function readMailMime(store, messageId, file, readHeaders, stageFiles, dec
 }
 async function mailPartText(path, decoder) {
   let text2 = "";
-  for await (const bytes of createReadStream(path))
+  for await (const bytes of createReadStream2(path))
     text2 += decoder.decode(bytes, { stream: true });
   return text2 + decoder.decode();
 }
-
-// apps/apple/connectors/dist/platform/macos/osa.js
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-var execute = promisify(execFile);
-var OSA = class {
-  async execute(script) {
-    const { stdout } = await execute("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 12e4 });
-    return stdout;
-  }
-};
-var osa_default = new OSA();
 
 // apps/apple/connectors/dist/sources/apple-mail/mail-tables.js
 var rawDates = /* @__PURE__ */ new Set([
@@ -26504,10 +26654,10 @@ var MailScan = class {
   #fingerprint(id, file) {
     const { detached, indexed } = this.#messageInputs();
     const identity = ({ path, version }) => [
-      relative(this.store.path, path),
+      relative2(this.store.path, path),
       version
     ];
-    return createHash2("sha256").update(JSON.stringify([
+    return createHash3("sha256").update(JSON.stringify([
       messageParserVersion,
       file === void 0 ? null : identity(file),
       (detached.get(id) ?? []).map(([key, files]) => [
@@ -26550,7 +26700,7 @@ var MailScan = class {
     if (name === "messageFiles") {
       const data = {
         messageId: id,
-        relativePath: file === void 0 ? null : relative(this.store.path, file.path),
+        relativePath: file === void 0 ? null : relative2(this.store.path, file.path),
         availableLocally: file !== void 0,
         partial: file === void 0 ? null : file.path.endsWith(".partial.emlx"),
         size: file === void 0 ? null : file.size,
@@ -26618,7 +26768,7 @@ var MailScan = class {
       };
       let path = null;
       if (file !== void 0) {
-        path = join2(this.store.scratch.path, `indexed-${row.message}-${row.attachment_id}${extname2(file.path)}`);
+        path = join3(this.store.scratch.path, `indexed-${row.message}-${row.attachment_id}${extname2(file.path)}`);
         await assertMailFile(file);
         await copyFile2(file.path, path);
         await assertMailFile(file);
@@ -26865,7 +27015,7 @@ var AppleMailSource = class extends Source {
       if (signal.aborted)
         return;
       const path = await mailVersionDirectory(this.path);
-      const database = __using(_stack, new DatabaseSync(join2(path, "MailData/Envelope Index"), {
+      const database = __using(_stack, new DatabaseSync2(join3(path, "MailData/Envelope Index"), {
         readOnly: true
       }));
       const version = database.prepare("PRAGMA data_version");

@@ -8,6 +8,9 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
+      "path": "../sources/apple/macos"
+    },
+    {
       "path": "../destinations/sqlite"
     }
   ]

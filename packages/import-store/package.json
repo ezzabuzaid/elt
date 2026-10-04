@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@workspace/elt-sqlite": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
     "zod": "4.6.5"
   }
 }

@@ -37401,7 +37401,7 @@ function settingsUpdate(plugin2, set2) {
   return { values: settingsRead(plugin2).values };
 }
 
-// apps/apple/connectors/dist/platform/macos/full-disk-access.js
+// apps/apple/plugin/src/full-disk-access.ts
 import { execFile as execFileCallback } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { promisify } from "node:util";

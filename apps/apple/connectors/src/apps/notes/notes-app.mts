@@ -1,4 +1,4 @@
-import type { ImportScope } from '@workspace/import-store';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { AppleNotesSource } from '../../sources/apple-notes/apple-notes-source.ts';
 import { AppleApp } from '../apple-app.ts';

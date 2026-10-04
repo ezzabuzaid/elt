@@ -1,3 +1,5 @@
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+
 import type {
   AccountDocument,
   AlarmDocument,
@@ -5,8 +7,7 @@ import type {
   CalendarItemDocument,
   LocationDocument,
   ParticipantDocument,
-} from '../platform/macos/eventkit-documents.ts';
-import type { ImportScope } from './import-scope.ts';
+} from './eventkit-documents.ts';
 
 type Row = Record<string, unknown>;
 

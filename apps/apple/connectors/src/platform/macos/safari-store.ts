@@ -7,8 +7,12 @@ import {
   type StatementSync,
 } from 'node:sqlite';
 
-import { readMailPlist } from './mail-store.ts';
-import { type PlistValue, isBinaryPlist, parseBinaryPlist } from './plist.ts';
+import {
+  type PlistValue,
+  isBinaryPlist,
+  parseBinaryPlist,
+} from '@workspace/source-apple-macos/plist';
+import { readMailPlist } from '@workspace/source-apple-macos/plutil';
 
 // History, bookmarks, closed tabs and downloads.
 export const safariDirectory = join(homedir(), 'Library/Safari');

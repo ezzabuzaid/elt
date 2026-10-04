@@ -1,4 +1,4 @@
-import type { ImportScope } from './import-scope.ts';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 // One app's import: what it covers, and whether it copies attachment files.
 export type Selection = {

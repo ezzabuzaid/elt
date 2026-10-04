@@ -1,4 +1,4 @@
-import type { ImportScope } from '@workspace/import-store';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { AppleContactsSource } from '../../sources/apple-contacts/apple-contacts-source.ts';
 import { AppleApp } from '../apple-app.ts';

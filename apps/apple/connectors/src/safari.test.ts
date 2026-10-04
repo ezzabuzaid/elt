@@ -34,9 +34,9 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { AppleSafariSource } from './sources/apple-safari/apple-safari-source.ts';
-import type { ImportScope } from './sources/import-scope.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);

@@ -8,22 +8,25 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../connectors"
-    },
-    {
-      "path": "../manifest"
-    },
-    {
-      "path": "../../../packages/elt"
-    },
-    {
-      "path": "../../../packages/destinations/sqlite"
+      "path": "../../../packages/sources/apple/macos"
     },
     {
       "path": "../../../packages/import-store"
     },
     {
       "path": "../../../packages/google-auth"
+    },
+    {
+      "path": "../../../packages/destinations/sqlite"
+    },
+    {
+      "path": "../../../packages/elt"
+    },
+    {
+      "path": "../manifest"
+    },
+    {
+      "path": "../connectors"
     }
   ]
 }

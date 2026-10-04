@@ -11,14 +11,18 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Source, diffSnapshot, validateRecords } from '@workspace/elt';
+import {
+  type ImportScope,
+  selected,
+  withinDates,
+} from '@workspace/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import {
   ChatDatabase,
   ChatDatabaseVersion,
   messagesDirectory,
 } from '../../platform/macos/chat-database.ts';
-import { type ImportScope, selected, withinDates } from '../import-scope.ts';
-import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
   type StreamName,
   catalog,

@@ -1,10 +1,11 @@
 import { join } from 'node:path';
 
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+
 import {
   SafariDatabase,
   readSafariPlist,
 } from '../../platform/macos/safari-store.ts';
-import type { ImportScope } from '../import-scope.ts';
 import { BookmarksReader } from './bookmarks-reader.ts';
 import { ClosedTabsReader } from './closed-tabs-reader.ts';
 import { CloudTabsReader, cloudTabsColumns } from './cloud-tabs-reader.ts';

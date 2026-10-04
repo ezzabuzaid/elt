@@ -1,6 +1,6 @@
 import { gunzipSync, inflateSync } from 'node:zlib';
 
-import { ProtobufMessage } from './protobuf.ts';
+import { ProtobufMessage } from '@workspace/source-apple-macos/protobuf';
 
 // Notes stores each note body (ZICNOTEDATA.ZDATA) and each table
 // (ZMERGEABLEDATA1) as a compressed versioned_document.Document whose newest

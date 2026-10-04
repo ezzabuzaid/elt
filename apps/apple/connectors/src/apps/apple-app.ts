@@ -17,7 +17,8 @@ import {
   type SQLiteTable,
 } from '@workspace/elt-sqlite';
 import type { GoogleRequester } from '@workspace/google-auth';
-import type { ImportScope, Selection } from '@workspace/import-store';
+import type { Selection } from '@workspace/import-store';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import type { Choice, Row, Rows } from './choice.ts';
 

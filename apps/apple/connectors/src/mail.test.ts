@@ -32,9 +32,9 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+import osa from '@workspace/source-apple-macos/osa';
 
-import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
-import osa from './platform/macos/osa.ts';
 import { AppleMailSource } from './sources/apple-mail/apple-mail-source.ts';
 
 const snake = (name: string) =>

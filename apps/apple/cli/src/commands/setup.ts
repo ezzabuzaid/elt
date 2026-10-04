@@ -16,7 +16,8 @@ import {
 } from 'commander';
 
 import type { AppleApp, ChoiceOptions } from '@workspace/apple/apps/apple-app';
-import { type ImportScope, selectionProblems } from '@workspace/import-store';
+import { selectionProblems } from '@workspace/import-store';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import type { Selection } from '../imports.ts';
 import { SyncReport } from '../sync-report.ts';

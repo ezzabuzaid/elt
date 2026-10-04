@@ -10,14 +10,14 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import {
   SafariDatabaseVersion,
   safariContainer,
   safariDirectory,
 } from '../../platform/macos/safari-store.ts';
-import type { ImportScope } from '../import-scope.ts';
-import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
   type SafariLocation,
   SafariScan,

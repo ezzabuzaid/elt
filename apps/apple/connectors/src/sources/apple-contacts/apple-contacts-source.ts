@@ -13,6 +13,11 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Source, diffSnapshot, validateRecords } from '@workspace/elt';
+import {
+  type ImportScope,
+  selected,
+} from '@workspace/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import {
   AddressBook,
@@ -21,8 +26,6 @@ import {
   type StoredData,
   addressBookDirectory,
 } from '../../platform/macos/address-book.ts';
-import { type ImportScope, selected } from '../import-scope.ts';
-import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
 import {
   type StreamName,
   catalog,

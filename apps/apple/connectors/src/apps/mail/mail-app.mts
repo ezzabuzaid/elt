@@ -1,4 +1,4 @@
-import type { ImportScope } from '@workspace/import-store';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { mailDirectory } from '../../platform/macos/mail-store.ts';
 import {

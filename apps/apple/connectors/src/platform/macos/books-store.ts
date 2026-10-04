@@ -7,7 +7,11 @@ import {
   type StatementSync,
 } from 'node:sqlite';
 
-import { type PlistValue, isBinaryPlist, parseBinaryPlist } from './plist.ts';
+import {
+  type PlistValue,
+  isBinaryPlist,
+  parseBinaryPlist,
+} from '@workspace/source-apple-macos/plist';
 
 // Books.app's own container: the library, annotations, themes and its
 // preferences.

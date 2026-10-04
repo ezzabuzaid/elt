@@ -1,15 +1,16 @@
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdtempDisposable, readFile, readdir, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, relative, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { promisify } from 'node:util';
 
-import { type PlistValue, isDictionary, parseBinaryPlist } from './plist.ts';
+import {
+  type PlistValue,
+  isDictionary,
+} from '@workspace/source-apple-macos/plist';
+import { readMailPlist } from '@workspace/source-apple-macos/plutil';
 
-const execute = promisify(execFile);
 export const mailDirectory = join(homedir(), 'Library/Mail');
 
 export class MailUnavailableError extends Error {
@@ -28,17 +29,6 @@ export class MailSchemaError extends Error {
 
 export class MailChangingError extends Error {
   override name = 'MailChangingError';
-}
-
-export async function readMailPlist(path: string): Promise<PlistValue> {
-  // plutil owns XML parsing and converts every plist kind, including dates/data;
-  // our existing binary decoder already preserves those native value types.
-  const { stdout } = await execute(
-    '/usr/bin/plutil',
-    ['-convert', 'binary1', '-o', '-', path],
-    { encoding: 'buffer' },
-  );
-  return parseBinaryPlist(stdout);
 }
 
 export function plistJSON(value: PlistValue): string {

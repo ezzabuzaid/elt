@@ -1,12 +1,12 @@
 import { Catalog, type FieldSchema, Stream } from '@workspace/elt';
-
-import type { AddressBookSchema } from '../../platform/macos/address-book.ts';
+import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 import {
   decodeArchive,
   isBinaryPlist,
   plistJSON,
-} from '../../platform/macos/plist.ts';
-import { eventKitFields } from '../eventkit-schema.ts';
+} from '@workspace/source-apple-macos/plist';
+
+import type { AddressBookSchema } from '../../platform/macos/address-book.ts';
 
 const { text, id, nullableText, nullableTimestamp } = eventKitFields;
 const nullableInteger = { type: ['integer', 'null'] } as const;

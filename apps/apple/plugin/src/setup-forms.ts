@@ -4,13 +4,13 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-import {
-  hasFullDiskAccess,
-  openFullDiskAccessSettings,
-} from '@workspace/apple/platform/macos/full-disk-access';
 import type { Selection } from '@workspace/import-store';
 
 import { type ApplePlugin, appSchema } from './apple-plugin.ts';
+import {
+  hasFullDiskAccess,
+  openFullDiskAccessSettings,
+} from './full-disk-access.ts';
 
 export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 

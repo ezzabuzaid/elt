@@ -19,7 +19,7 @@ import { build } from 'esbuild';
 import { hostModules } from '@workspace/apple-manifest/host-modules';
 
 const connectors = 'apps/apple/connectors/dist/apps';
-const eventkit = 'apps/apple/connectors/dist/platform/macos/eventkit';
+const eventkit = 'packages/sources/apple/eventkit/dist/eventkit';
 const outdir = 'plugins/apple/server';
 
 const builtIns = readdirSync(connectors, { withFileTypes: true })
@@ -71,7 +71,7 @@ for (const { folder, out } of builtIns)
 // The EventKit client finds its helper beside the file it was bundled into.
 const client = Object.entries(metafile.outputs).find(([, { inputs }]) =>
   Object.keys(inputs).some((input) =>
-    input.endsWith('platform/macos/eventkit.js'),
+    input.endsWith('sources/apple/eventkit/dist/eventkit.js'),
   ),
 );
 if (client === undefined)

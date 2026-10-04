@@ -1,6 +1,13 @@
-import { decodeArchive, parseBinaryPlist } from '../../platform/macos/plist.ts';
+import {
+  type ImportScope,
+  selected,
+} from '@workspace/source-apple-macos/import-scope';
+import {
+  decodeArchive,
+  parseBinaryPlist,
+} from '@workspace/source-apple-macos/plist';
+
 import type { SafariDatabase } from '../../platform/macos/safari-store.ts';
-import { type ImportScope, selected } from '../import-scope.ts';
 import {
   type Dictionary,
   type Row,

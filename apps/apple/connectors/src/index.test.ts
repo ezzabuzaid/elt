@@ -39,8 +39,7 @@ import {
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
 import { GaxiosError, type GoogleRequester } from '@workspace/google-auth';
-
-import { MacOSDocumentParser } from './parsers/macos-document-parser.ts';
+import type { EventKitRequest } from '@workspace/source-apple-eventkit/eventkit';
 import type {
   AccountDocument,
   AlarmDocument,
@@ -52,9 +51,10 @@ import type {
   ParticipantDocument,
   RecurrenceRuleDocument,
   ReminderDocument,
-} from './platform/macos/eventkit-documents.ts';
-import type { EventKitRequest } from './platform/macos/eventkit.ts';
-import nativeProcess from './platform/macos/native-process.ts';
+} from '@workspace/source-apple-eventkit/eventkit-documents';
+import nativeProcess from '@workspace/source-apple-eventkit/native-process';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+
 import {
   AppleCalendarSource,
   CalendarIcsUnavailableError,
@@ -2570,7 +2570,10 @@ test(
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
     const helper = fileURLToPath(
-      new URL('./platform/macos/eventkit', import.meta.url),
+      new URL(
+        './eventkit',
+        import.meta.resolve('@workspace/source-apple-eventkit/eventkit'),
+      ),
     );
     const calendar = new AppleCalendarSource(january);
     const reminders = new AppleRemindersSource();

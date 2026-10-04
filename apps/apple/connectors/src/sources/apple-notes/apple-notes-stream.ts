@@ -6,8 +6,8 @@ import {
   type SyncMode,
   validateRecords,
 } from '@workspace/elt';
+import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 
-import { eventKitFields } from '../eventkit-schema.ts';
 import type { NotesScan } from './notes-scan.ts';
 
 export const notesFields = {

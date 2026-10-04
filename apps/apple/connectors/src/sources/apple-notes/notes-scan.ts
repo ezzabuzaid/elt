@@ -2,13 +2,18 @@ import { dirname, join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
 import {
+  type ImportScope,
+  selected,
+  withinDates,
+} from '@workspace/source-apple-macos/import-scope';
+
+import {
   type NoteAttachmentReference,
   NoteDocument,
   decodeTable,
   markdownTable,
 } from '../../platform/macos/note-document.ts';
 import type { NoteStore } from '../../platform/macos/note-store.ts';
-import { type ImportScope, selected, withinDates } from '../import-scope.ts';
 
 // Every Notes object lives in one Core Data table; Z_ENT names its entity, and
 // each entity's relationships sit in their own numbered columns. These are the

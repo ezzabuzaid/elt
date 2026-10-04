@@ -1,4 +1,5 @@
-import type { PlistValue } from '../../platform/macos/plist.ts';
+import type { PlistValue } from '@workspace/source-apple-macos/plist';
+
 import { type Dictionary, dictionary, list } from './safari-values.ts';
 
 // A node of Bookmarks.plist in tree order, with its place in its folder.

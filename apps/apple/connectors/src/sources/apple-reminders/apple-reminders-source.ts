@@ -6,17 +6,20 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Source, diffSnapshot, validateRecords } from '@workspace/elt';
-
-import { EventKit, EventKitSnapshot } from '../../platform/macos/eventkit.ts';
+import {
+  EventKit,
+  EventKitSnapshot,
+} from '@workspace/source-apple-eventkit/eventkit';
 import {
   eventKitAccountFields,
   eventKitCalendarFields,
   eventKitCatalog,
-  eventKitFields,
   eventKitRelatedFields,
-} from '../eventkit-schema.ts';
-import type { ImportScope } from '../import-scope.ts';
-import { localAppleStoreCoverage } from '../local-apple-store-coverage.ts';
+} from '@workspace/source-apple-eventkit/eventkit-schema';
+import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
+
 import { dateComponentNames, reminderRows } from './reminder-rows.ts';
 
 const { id, text, nullableText, nullableTimestamp, integer, boolean } =

@@ -15,21 +15,21 @@ import {
   isTimestamp,
   validateRecords,
 } from '@workspace/elt';
-
 import {
   EventKit,
   type EventKitRequest,
   EventKitSnapshot,
-} from '../../platform/macos/eventkit.ts';
+} from '@workspace/source-apple-eventkit/eventkit';
 import {
   eventKitAccountFields,
   eventKitCalendarFields,
   eventKitCatalog,
-  eventKitFields,
   eventKitLocationFields,
   eventKitRelatedFields,
-} from '../eventkit-schema.ts';
-import type { ImportScope } from '../import-scope.ts';
+} from '@workspace/source-apple-eventkit/eventkit-schema';
+import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+
 import { calendarRows } from './calendar-rows.ts';
 import { isIcsStream } from './ics-records.ts';
 

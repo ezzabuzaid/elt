@@ -1,12 +1,13 @@
 import { join } from 'node:path';
 
+import type { PlistValue } from '@workspace/source-apple-macos/plist';
+
 import {
   BooksDatabase,
   booksContainer,
   booksGroupContainer,
   readBooksPlist,
 } from '../../platform/macos/books-store.ts';
-import type { PlistValue } from '../../platform/macos/plist.ts';
 import { type ReadingHistory, readingHistory } from './reading-history.ts';
 
 // Where Books keeps each kind of data: Core Data stores it commits to, and

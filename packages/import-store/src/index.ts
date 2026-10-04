@@ -1,4 +1,3 @@
-export type { ImportScope } from './import-scope.ts';
 export {
   type ConnectionFailure,
   ImportStore,

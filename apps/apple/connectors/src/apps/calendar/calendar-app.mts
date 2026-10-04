@@ -2,7 +2,7 @@ import {
   GMAIL_READONLY_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE,
 } from '@workspace/google-auth/scopes';
-import type { ImportScope } from '@workspace/import-store';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import {
   AppleCalendarSource,

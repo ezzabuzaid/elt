@@ -1,4 +1,4 @@
-import type { ImportScope } from '@workspace/import-store';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { AppleSafariSource } from '../../sources/apple-safari/apple-safari-source.ts';
 import { AppleApp } from '../apple-app.ts';

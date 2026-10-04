@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 
 import { DocumentParser } from '@workspace/elt';
 
-import osa from '../platform/macos/osa.ts';
+import osa from './osa.ts';
 
 const execute = promisify(execFile);
 
