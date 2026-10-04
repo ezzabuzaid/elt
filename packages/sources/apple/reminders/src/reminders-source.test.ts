@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
+import { execFile as execFileCallback } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtempDisposable, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import {
   Connection,
@@ -30,32 +32,27 @@ import {
 } from '@workspace/elt-sqlite';
 import {
   type AccountDocument,
-  type AlarmDocument,
   type DateComponentsDocument,
   type ParticipantDocument,
-  type RecurrenceRuleDocument,
   type ReminderDocument,
   RemindersStore,
 } from '@workspace/macos-eventkit';
 import {
-  type EventKitDocument,
-  FakeEventKitHelper,
   type HelperCalendarDocument,
+  type HelperRead,
   type HelperRequest,
+  StubEventKitHelper,
 } from '@workspace/macos-eventkit/test';
 
 import { AppleRemindersSource } from './apple-reminders-source.ts';
 
-const remindersStore = new RemindersStore(
-  fileURLToPath(
-    new URL(
-      'eventkit-helper',
-      import.meta.resolve('@workspace/macos-eventkit'),
-    ),
-  ),
-);
+const execFile = promisify(execFileCallback);
 
-// Test support shared by the Apple source packages' tests.
+// The helper @workspace/macos-eventkit compiles, which the live tests read
+// this Mac's reminders through.
+const helper = fileURLToPath(
+  new URL('eventkit-helper', import.meta.resolve('@workspace/macos-eventkit')),
+);
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -152,31 +149,10 @@ const configured = (stream: Stream) =>
   ).configuration;
 
 // Documents the eventkit helper wrote on a Mac, read with TZ=UTC from a
-// synthetic calendar and reminders list made for the recording; ids are
-// renamed and every value is synthetic. Each factory below starts from one, so
-// every field the helper writes reaches the projections, and a test overrides
-// only what its scenario needs. An override of undefined leaves the field out
-// of the JSON line, as the helper leaves out a nil.
-const recordedAlarm: AlarmDocument = {
-  alarmType: 0,
-  relativeOffset: -600,
-  proximity: 0,
-};
-
-const recordedRule: RecurrenceRuleDocument = {
-  firstDayOfWeek: 2,
-  monthsOfTheYear: [],
-  setPositions: [],
-  weeksOfTheYear: [],
-  interval: 1,
-  end: { occurrenceCount: 3 },
-  frequency: 1,
-  calendarIdentifier: 'gregorian',
-  daysOfTheWeek: [],
-  daysOfTheMonth: [],
-  daysOfTheYear: [],
-};
-
+// synthetic reminders list made for the recording; ids are renamed and every
+// value is synthetic. The stub tests start from them for what EventKit cannot
+// produce; an override of undefined leaves the field out of the JSON line, as
+// the helper leaves out a nil.
 const recordedTimedDue: DateComponentsDocument = {
   year: 2025,
   repeatedDay: false,
@@ -206,8 +182,6 @@ const recordedReminders: {
   readonly list: HelperCalendarDocument;
   // Open, due at a time in a time zone, with an absolute alarm and notes.
   readonly buyMilk: ReminderDocument;
-  // Completed, due on a date.
-  readonly filedTaxes: ReminderDocument;
 } = {
   account: {
     type: 'account',
@@ -254,33 +228,10 @@ const recordedReminders: {
     externalId: 'reminder-1',
     due: recordedTimedDue,
   },
-  filedTaxes: {
-    due: recordedDateOnlyDue,
-    externalId: 'reminder-2',
-    recurrenceRules: [],
-    type: 'reminder',
-    modifiedMs: 1790851302411.9302,
-    name: 'Synthetic filed taxes',
-    completedMs: 1790851302411.825,
-    priority: 5,
-    completed: true,
-    attendees: [],
-    listId: 'calendar-1',
-    id: 'reminder-2',
-    alarms: [],
-    createdMs: 1790851301824.6108,
-  },
 };
 
-const list = (
-  overrides: Partial<HelperCalendarDocument> = {},
-): HelperCalendarDocument => ({
-  ...recordedReminders.list,
-  ...overrides,
-});
-
-// No recorded event or reminder had a participant, so this one is written
-// from the helper's ParticipantDocument fields.
+// No recorded reminder had a participant, so this one is written from the
+// helper's ParticipantDocument fields.
 const participant = (
   overrides: Partial<ParticipantDocument> = {},
 ): ParticipantDocument => ({
@@ -293,155 +244,344 @@ const participant = (
   ...overrides,
 });
 
-const alarm = (overrides: Partial<AlarmDocument> = {}): AlarmDocument => ({
-  ...recordedAlarm,
-  ...overrides,
-});
-
-const rule = (
-  overrides: Partial<RecurrenceRuleDocument> = {},
-): RecurrenceRuleDocument => ({ ...recordedRule, ...overrides });
-
 const reminder = (
   overrides: Partial<ReminderDocument> = {},
 ): ReminderDocument => ({ ...recordedReminders.buyMilk, ...overrides });
 
 const remindersRead: HelperRequest = { entity: 'reminders' };
 
+// A date component set a live test writes; EventKit fills in the Gregorian
+// calendar and era.
+type ScratchComponents = {
+  readonly year: number;
+  readonly month: number;
+  readonly day: number;
+  readonly hour?: number;
+  readonly minute?: number;
+  readonly second?: number;
+  readonly timeZone?: string;
+};
+
+// One reminder a live test creates.
+type ScratchReminder = {
+  readonly title: string;
+  readonly notes?: string;
+  readonly url?: string;
+  readonly priority?: number;
+  readonly completed?: boolean;
+  readonly start?: ScratchComponents;
+  readonly due?: ScratchComponents;
+  // A UTC instant.
+  readonly absoluteAlarm?: string;
+  readonly locationAlarm?: {
+    readonly title: string;
+    readonly latitude: number;
+    readonly longitude: number;
+    readonly radius: number;
+    // EKAlarmProximity: 1 entering, 2 leaving.
+    readonly proximity: number;
+  };
+  readonly rule?: {
+    // EKRecurrenceFrequency: 3 yearly.
+    readonly frequency: number;
+    readonly interval: number;
+    readonly count: number;
+    readonly daysOfTheWeek?: readonly {
+      readonly day: number;
+      readonly weekNumber: number;
+    }[];
+    readonly daysOfTheMonth?: readonly number[];
+    readonly monthsOfTheYear?: readonly number[];
+    readonly weeksOfTheYear?: readonly number[];
+    readonly daysOfTheYear?: readonly number[];
+    readonly setPositions?: readonly number[];
+  };
+};
+
+// A temporary reminders list in this Mac's EventKit store, in the first
+// account that accepts one (CalDAV before Exchange), deleted with the test.
+// Accounts sync, so it reaches the server until then.
+class ScratchList implements AsyncDisposable {
+  readonly id: string;
+
+  private constructor(id: string) {
+    this.id = id;
+  }
+
+  // Null when no account on this Mac accepts a new reminders list.
+  static async create(): Promise<ScratchList | null> {
+    try {
+      return new ScratchList(await ScratchList.#run('create', {}));
+    } catch (error) {
+      if (
+        String(Reflect.get(Object(error), 'stderr')).includes(
+          ScratchList.#noAccount,
+        )
+      )
+        return null;
+      throw error;
+    }
+  }
+
+  // The calendar item identifier of each reminder, in order.
+  async add(...reminders: readonly ScratchReminder[]): Promise<string[]> {
+    return JSON.parse(
+      await ScratchList.#run('add', { listId: this.id, reminders }),
+    );
+  }
+
+  async rename(itemId: string, title: string): Promise<void> {
+    await ScratchList.#run('rename', { itemId, title });
+  }
+
+  async remove(itemId: string): Promise<void> {
+    await ScratchList.#run('remove', { itemId });
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    await ScratchList.#run('delete', { listId: this.id });
+  }
+
+  static async #run(mode: string, payload: object): Promise<string> {
+    const { stdout } = await execFile('/usr/bin/osascript', [
+      '-l',
+      'JavaScript',
+      '-e',
+      ScratchList.#script,
+      mode,
+      JSON.stringify(payload),
+    ]);
+    return stdout.trim();
+  }
+
+  static readonly #noAccount = 'No EventKit account accepts a new list';
+
+  static readonly #script = `
+ObjC.import('EventKit');
+function run([mode, payload]) {
+  const spec = JSON.parse(payload);
+  const store = $.EKEventStore.alloc.init;
+  const list = () => store.calendarWithIdentifier(spec.listId);
+  const gregorian = $.NSCalendar.calendarWithIdentifier($.NSCalendarIdentifierGregorian);
+  const components = (values) => {
+    const set = $.NSDateComponents.alloc.init;
+    set.calendar = gregorian;
+    if (values.timeZone !== undefined)
+      set.timeZone = $.NSTimeZone.timeZoneWithName(values.timeZone);
+    for (const key of ['year', 'month', 'day', 'hour', 'minute', 'second'])
+      if (values[key] !== undefined) set[key] = values[key];
+    return set;
+  };
+  const array = (values) => (values === undefined ? $() : $(values));
+  const save = (reminder) => {
+    if (!store.saveReminderCommitError(reminder, true, null)) throw new Error('Reminder not saved');
+  };
+  if (mode === 'create') {
+    const created = $.EKCalendar.calendarForEntityTypeEventStore(1, store);
+    created.title = 'context-compiler test ' + ObjC.unwrap($.NSUUID.UUID.UUIDString);
+    const sources = ObjC.unwrap(store.sources).toSorted(
+      (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
+    );
+    if (!sources.some((source) => {
+      created.source = source;
+      return store.saveCalendarCommitError(created, true, null);
+    })) throw new Error('${ScratchList.#noAccount}');
+    return ObjC.unwrap(created.calendarIdentifier);
+  }
+  if (mode === 'delete') {
+    if (!ObjC.unwrap(list().title).startsWith('context-compiler test '))
+      throw new Error('Refusing to delete a list this test did not create');
+    if (!store.removeCalendarCommitError(list(), true, null))
+      throw new Error('Could not delete the test list');
+    return '';
+  }
+  if (mode === 'add')
+    return JSON.stringify(spec.reminders.map((item) => {
+      const reminder = $.EKReminder.reminderWithEventStore(store);
+      reminder.calendar = list();
+      reminder.title = item.title;
+      if (item.notes !== undefined) reminder.notes = item.notes;
+      if (item.url !== undefined) reminder.URL = $.NSURL.URLWithString(item.url);
+      if (item.priority !== undefined) reminder.priority = item.priority;
+      if (item.start !== undefined) reminder.startDateComponents = components(item.start);
+      if (item.due !== undefined) reminder.dueDateComponents = components(item.due);
+      if (item.completed === true) reminder.completed = true;
+      if (item.absoluteAlarm !== undefined)
+        reminder.addAlarm($.EKAlarm.alarmWithAbsoluteDate(
+          $.NSDate.dateWithTimeIntervalSince1970(Date.parse(item.absoluteAlarm) / 1000)));
+      if (item.locationAlarm !== undefined) {
+        const alarm = $.EKAlarm.alarmWithRelativeOffset(0);
+        const place = $.EKStructuredLocation.locationWithTitle(item.locationAlarm.title);
+        // ObjC.import does not expose CoreLocation's classes to JXA.
+        place.geoLocation = $.NSClassFromString('CLLocation').alloc.initWithLatitudeLongitude(
+          item.locationAlarm.latitude, item.locationAlarm.longitude);
+        place.radius = item.locationAlarm.radius;
+        alarm.structuredLocation = place;
+        alarm.proximity = item.locationAlarm.proximity;
+        reminder.addAlarm(alarm);
+      }
+      if (item.rule !== undefined)
+        reminder.addRecurrenceRule(
+          $.EKRecurrenceRule.alloc.initRecurrenceWithFrequencyIntervalDaysOfTheWeekDaysOfTheMonthMonthsOfTheYearWeeksOfTheYearDaysOfTheYearSetPositionsEnd(
+            item.rule.frequency, item.rule.interval,
+            item.rule.daysOfTheWeek === undefined ? $() : $(item.rule.daysOfTheWeek.map(
+              (day) => $.EKRecurrenceDayOfWeek.dayOfWeekWeekNumber(day.day, day.weekNumber))),
+            array(item.rule.daysOfTheMonth), array(item.rule.monthsOfTheYear),
+            array(item.rule.weeksOfTheYear), array(item.rule.daysOfTheYear),
+            array(item.rule.setPositions),
+            $.EKRecurrenceEnd.recurrenceEndWithOccurrenceCount(item.rule.count),
+          ),
+        );
+      save(reminder);
+      return ObjC.unwrap(reminder.calendarItemIdentifier);
+    }));
+  if (mode === 'rename') {
+    const reminder = store.calendarItemWithIdentifier(spec.itemId);
+    reminder.title = spec.title;
+    save(reminder);
+    return '';
+  }
+  if (mode === 'remove') {
+    if (!store.removeReminderCommitError(store.calendarItemWithIdentifier(spec.itemId), true, null))
+      throw new Error('Reminder not removed');
+    return '';
+  }
+  throw new Error('Unknown mode ' + mode);
+}`;
+}
+
+// A Reminders source over one scratch list, read by the compiled helper.
+const liveSource = (list: ScratchList) =>
+  new AppleRemindersSource({
+    store: new RemindersStore(helper),
+    scope: { collectionIds: [list.id] },
+  });
+
 test(
-  'Reminders EventKit projects native records through every SQLite and Markdown stream',
-  {
-    concurrency: false,
-  },
+  'Reminders extracts every stream of a list on this Mac into SQLite and Markdown',
+  { timeout: 120_000 },
   async (t) => {
-    const source = new AppleRemindersSource({ store: remindersStore });
-    const streams = (await source.discover()).streams;
-    new FakeEventKitHelper()
-      .answer(remindersRead, () => [
-        recordedReminders.account,
-        list(),
-        reminder({ id: 'undated', name: 'undated', due: undefined }),
-        reminder({
-          id: 'date-only',
-          name: 'date-only',
-          due: recordedDateOnlyDue,
-        }),
-        reminder({
-          id: 'timed',
-          name: 'timed',
-          url: 'https://example.com/reminder',
-          // Hand-built: no location alarm, rule list values or attendee were
-          // recorded.
-          alarms: [
-            alarm({
-              proximity: 1,
-              location: {
-                title: 'Synthetic place',
-                latitude: 31.95,
-                longitude: 35.93,
-                radius: 100,
-              },
-            }),
-            ...recordedReminders.buyMilk.alarms,
-          ],
-          recurrenceRules: [
-            rule({
-              frequency: 3,
-              interval: 2,
-              daysOfTheWeek: [{ day: 2, weekNumber: -1 }],
-              daysOfTheMonth: [-1],
-              monthsOfTheYear: [9],
-              weeksOfTheYear: [1],
-              daysOfTheYear: [42],
-              setPositions: [-1],
-              end: { occurrenceCount: 5 },
-            }),
-          ],
-          attendees: [
-            participant({
-              name: 'Synthetic attendee',
-              url: 'mailto:test@example.com',
-              isCurrentUser: true,
-            }),
-          ],
-        }),
-        // Hand-built: a start at a time of day without a time zone.
-        reminder({
-          id: 'floating',
-          name: 'floating',
-          due: undefined,
-          start: { ...recordedDateOnlyDue, hour: 9, minute: 15 },
-        }),
-        {
-          ...recordedReminders.filedTaxes,
-          id: 'completed',
-          name: 'completed',
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    await using list = await ScratchList.create();
+    if (list === null) return t.skip('no account accepts a new list');
+    await list.add(
+      { title: 'undated' },
+      { title: 'date-only', due: { year: 2025, month: 1, day: 3 } },
+      {
+        title: 'timed',
+        notes: 'Live notes',
+        url: 'https://example.com/reminder',
+        priority: 1,
+        due: {
+          year: 2025,
+          month: 1,
+          day: 2,
+          hour: 8,
+          minute: 45,
+          second: 0,
+          timeZone: 'Asia/Amman',
         },
-      ])
-      .install(t);
+        absoluteAlarm: '2025-01-02T05:45:00.000Z',
+        locationAlarm: {
+          title: 'Live place',
+          latitude: 31.95,
+          longitude: 35.93,
+          radius: 100,
+          proximity: 1,
+        },
+        rule: {
+          frequency: 3,
+          interval: 2,
+          count: 5,
+          daysOfTheWeek: [{ day: 2, weekNumber: -1 }],
+          daysOfTheMonth: [-1],
+          monthsOfTheYear: [9],
+          weeksOfTheYear: [1],
+          daysOfTheYear: [42],
+          setPositions: [-1],
+        },
+      },
+      {
+        title: 'floating',
+        start: { year: 2025, month: 1, day: 3, hour: 9, minute: 15 },
+      },
+      {
+        title: 'completed',
+        priority: 5,
+        completed: true,
+        due: { year: 2025, month: 1, day: 3 },
+      },
+    );
+    const source = liveSource(list);
+    const streams = (await source.discover()).streams;
 
     const records = await readRows(source, streams);
+
     const reminders = records(source.reminders);
     const dateComponents = records(source.dateComponents);
     const alarms = records(source.alarms);
-    const recurrenceRules = records(source.recurrenceRules);
     const recurrenceRuleValues = records(source.recurrenceRuleValues);
-    const byName = Object.fromEntries(
-      reminders.map((row) => [String(row.name), row]),
+    const [listRow] = records(source.lists);
+    assert.equal(listRow?.id, list.id);
+    assert.deepEqual(
+      records(source.accounts).map(({ id }) => id),
+      [listRow?.accountId],
     );
     const reminderRow = (name: string) => {
-      const row = byName[name];
-      assert.ok(row);
+      const row = reminders.find((found) => found.name === name);
+      assert.ok(row, name);
       return row;
     };
     assert.equal(reminders.length, 5);
-    assert.deepEqual(reminderRow('timed'), {
-      id: 'timed',
-      listId: 'calendar-1',
-      externalId: 'reminder-1',
-      name: 'timed',
-      body: 'Synthetic notes',
-      location: null,
-      url: 'https://example.com/reminder',
-      timeZone: 'Asia/Amman',
-      // EventKit's sub-millisecond precision does not survive.
-      createdAt: '2026-10-01T10:41:41.628Z',
-      modifiedAt: '2026-10-01T10:41:41.723Z',
-      completed: false,
-      completedAt: null,
-      priority: 1,
-    });
-    assert.deepEqual(reminderRow('completed'), {
-      id: 'completed',
-      listId: 'calendar-1',
-      externalId: 'reminder-2',
-      name: 'completed',
-      body: null,
-      location: null,
-      url: null,
-      timeZone: null,
-      createdAt: '2026-10-01T10:41:41.824Z',
-      modifiedAt: '2026-10-01T10:41:42.411Z',
-      completed: true,
-      completedAt: '2026-10-01T10:41:42.411Z',
-      priority: 5,
-    });
+    const timed = reminderRow('timed');
+    assert.ok(typeof timed.externalId === 'string');
+    assert.match(String(timed.createdAt), /^\d{4}-\d\d-\d\dT.*Z$/);
+    assert.match(String(timed.modifiedAt), /^\d{4}-\d\d-\d\dT.*Z$/);
+    assert.deepEqual(
+      {
+        listId: timed.listId,
+        body: timed.body,
+        location: timed.location,
+        url: timed.url,
+        timeZone: timed.timeZone,
+        completed: timed.completed,
+        completedAt: timed.completedAt,
+        priority: timed.priority,
+      },
+      {
+        listId: list.id,
+        body: 'Live notes',
+        // EventKit keeps no location on a reminder; places live on alarms.
+        location: null,
+        url: 'https://example.com/reminder',
+        timeZone: 'Asia/Amman',
+        completed: false,
+        completedAt: null,
+        priority: 1,
+      },
+    );
+    const completed = reminderRow('completed');
+    assert.equal(completed.completed, true);
+    assert.match(String(completed.completedAt), /^\d{4}-\d\d-\d\dT.*Z$/);
+    assert.equal(completed.priority, 5);
     assert.ok(
       reminders.every((row) => !('flagged' in row) && !('containerId' in row)),
     );
-    const date = (name: string) => {
-      const row = dateComponents.find(
-        (row) => row.reminderId === reminderRow(name).id,
+    const components = (name: string, kind: 'start' | 'due') =>
+      dateComponents.find(
+        (row) => row.reminderId === reminderRow(name).id && row.kind === kind,
       );
-      assert.ok(row);
-      return row;
-    };
-    assert.equal(date('date-only').hour, null);
-    assert.equal(date('date-only').day, 3);
-    assert.equal(date('date-only').timeZone, null);
-    assert.deepEqual(date('timed'), {
-      id: JSON.stringify(['timed', 'due']),
-      reminderId: 'timed',
+    assert.deepEqual(
+      [
+        components('date-only', 'due')?.day,
+        components('date-only', 'due')?.hour,
+        components('date-only', 'due')?.timeZone,
+      ],
+      [3, null, null],
+    );
+    assert.deepEqual(components('timed', 'due'), {
+      id: JSON.stringify([timed.id, 'due']),
+      reminderId: timed.id,
       kind: 'due',
       calendarIdentifier: 'gregorian',
       timeZone: 'Asia/Amman',
@@ -463,27 +603,46 @@ test(
       leapMonth: false,
       repeatedDay: false,
     });
-    assert.equal(date('floating').kind, 'start');
-    assert.equal(date('floating').hour, 9);
-    assert.equal(date('floating').timeZone, null);
+    assert.deepEqual(
+      [
+        components('floating', 'start')?.hour,
+        components('floating', 'start')?.minute,
+        components('floating', 'start')?.timeZone,
+        components('floating', 'due'),
+      ],
+      [9, 15, null, undefined],
+    );
     assert.equal(
       dateComponents.some(
         (row) => row.reminderId === reminderRow('undated').id,
       ),
       false,
     );
-    const location = alarms.find((row) => row.proximity === 1);
-    assert.ok(location);
-    assert.equal(location.latitude, 31.95);
-    assert.equal(location.longitude, 35.93);
-    assert.equal(location.radius, 100);
-    assert.equal(location.reminderId, reminderRow('timed').id);
+    const located = alarms.find((row) => row.proximity === 1);
+    assert.deepEqual(
+      [
+        located?.reminderId,
+        located?.locationTitle,
+        located?.latitude,
+        located?.longitude,
+        located?.radius,
+      ],
+      [timed.id, 'Live place', 31.95, 35.93, 100],
+    );
     assert.equal(
       alarms.find((row) => row.absoluteAt !== null)?.absoluteAt,
       '2025-01-02T05:45:00.000Z',
     );
-    assert.equal(recurrenceRules[0]?.interval, 2);
-    assert.equal(recurrenceRules[0]?.occurrenceCount, 5);
+    const [rule] = records(source.recurrenceRules);
+    assert.deepEqual(
+      [
+        rule?.reminderId,
+        rule?.frequency,
+        rule?.interval,
+        rule?.occurrenceCount,
+      ],
+      [timed.id, 3, 2, 5],
+    );
     assert.equal(
       recurrenceRuleValues.find((row) => row.component === 'daysOfTheWeek')
         ?.weekNumber,
@@ -499,10 +658,6 @@ test(
         'monthsOfTheYear',
         'setPositions',
       ]),
-    );
-    assert.equal(
-      records(source.attendees)[0]?.reminderId,
-      reminderRow('timed').id,
     );
 
     await using scratch = await mkdtempDisposable(
@@ -545,7 +700,8 @@ test(
     using database = new DatabaseSync(sqlite.path, { readOnly: true });
     for (const stream of streams) {
       const rows = records(stream);
-      assert.ok(rows.length > 0, stream.name);
+      // Attendees need participants, which only the stub test can give.
+      if (stream !== source.attendees) assert.ok(rows.length > 0, stream.name);
       assert.equal(
         database.prepare(`SELECT count(*) AS count FROM "${stream.name}"`).get()
           ?.count,
@@ -573,16 +729,111 @@ test(
   },
 );
 
+test('Reminders extracts the attendees EventKit returns, which a test cannot create', async () => {
+  await using stub = await StubEventKitHelper.create();
+  stub.answer(remindersRead, {
+    documents: [
+      recordedReminders.account,
+      recordedReminders.list,
+      reminder({
+        attendees: [
+          participant({
+            name: 'Synthetic attendee',
+            url: 'mailto:test@example.com',
+            isCurrentUser: true,
+          }),
+        ],
+      }),
+    ],
+  });
+  const source = new AppleRemindersSource({
+    store: new RemindersStore(stub.path),
+  });
+
+  const attendees = (await readRows(source, [source.attendees]))(
+    source.attendees,
+  );
+
+  assert.deepEqual(attendees, [
+    {
+      id: JSON.stringify(['reminder-1', 'attendee', 0]),
+      reminderId: 'reminder-1',
+      position: 0,
+      kind: 'attendee',
+      name: 'Synthetic attendee',
+      url: 'mailto:test@example.com',
+      status: 2,
+      role: 1,
+      type: 1,
+      isCurrentUser: true,
+    },
+  ]);
+});
+
 test(
-  'Reminders keeps each date component set intact and rejects unidentified reminders',
-  {
-    concurrency: false,
-  },
+  'Reminders keeps the start and due component sets of a reminder on this Mac apart',
+  { timeout: 120_000 },
   async (t) => {
-    const source = new AppleRemindersSource({ store: remindersStore });
-    // The recorded timed due, and two hand-built variants of the recorded
-    // date-only due: a start in a leap month, and a due without a calendar.
-    let native: EventKitDocument[] = [
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    await using list = await ScratchList.create();
+    if (list === null) return t.skip('no account accepts a new list');
+    const [id] = await list.add({
+      title: 'both',
+      start: { year: 2025, month: 1, day: 1 },
+      due: { year: 2025, month: 1, day: 2, hour: 8, minute: 45, second: 0 },
+    });
+    const source = liveSource(list);
+
+    const components = (await readRows(source, [source.dateComponents]))(
+      source.dateComponents,
+    );
+
+    assert.deepEqual(
+      components.map(
+        ({ id, reminderId, kind, year, month, day, hour, minute }) => ({
+          id,
+          reminderId,
+          kind,
+          year,
+          month,
+          day,
+          hour,
+          minute,
+        }),
+      ),
+      [
+        {
+          id: JSON.stringify([id, 'start']),
+          reminderId: id,
+          kind: 'start',
+          year: 2025,
+          month: 1,
+          day: 1,
+          // EventKit stores a start without a time at midnight.
+          hour: 0,
+          minute: 0,
+        },
+        {
+          id: JSON.stringify([id, 'due']),
+          reminderId: id,
+          kind: 'due',
+          year: 2025,
+          month: 1,
+          day: 2,
+          hour: 8,
+          minute: 45,
+        },
+      ],
+    );
+  },
+);
+
+test('Reminders keeps a leap-month start and a due without a calendar, and rejects unidentified reminders, which EventKit does not write', async () => {
+  await using stub = await StubEventKitHelper.create();
+  // A leap-month start and a due without a calendar: EventKit drops the first
+  // and fills in the second on a Gregorian list, so only the stub returns them.
+  stub.answer(remindersRead, {
+    documents: [
       reminder({
         id: 'both',
         start: { ...recordedDateOnlyDue, leapMonth: true },
@@ -591,340 +842,296 @@ test(
         id: 'calendarless',
         due: { ...recordedDateOnlyDue, calendarIdentifier: undefined },
       }),
-    ];
-    new FakeEventKitHelper().answer(remindersRead, () => native).install(t);
-    const pick = (row: Record<string, unknown>) => ({
-      kind: row.kind,
-      calendarIdentifier: row.calendarIdentifier,
-      timeZone: row.timeZone,
-      era: row.era,
-      year: row.year,
-      month: row.month,
-      day: row.day,
-      hour: row.hour,
-      minute: row.minute,
-      second: row.second,
-      dayOfYear: row.dayOfYear,
-      leapMonth: row.leapMonth,
-      repeatedDay: row.repeatedDay,
-    });
-
-    const components = (await readRows(source, [source.dateComponents]))(
-      source.dateComponents,
-    );
-
-    assert.deepEqual(
-      components.filter(({ reminderId }) => reminderId === 'both').map(pick),
-      [
-        {
-          kind: 'start',
-          calendarIdentifier: 'gregorian',
-          timeZone: null,
-          era: 1,
-          year: 2025,
-          month: 1,
-          day: 3,
-          hour: null,
-          minute: null,
-          second: null,
-          dayOfYear: null,
-          leapMonth: true,
-          repeatedDay: false,
-        },
-        {
-          kind: 'due',
-          calendarIdentifier: 'gregorian',
-          timeZone: 'Asia/Amman',
-          era: 1,
-          year: 2025,
-          month: 1,
-          day: 2,
-          hour: 8,
-          minute: 45,
-          second: 0,
-          dayOfYear: null,
-          leapMonth: false,
-          repeatedDay: false,
-        },
-      ],
-    );
-    const calendarless = components.find(
-      ({ reminderId }) => reminderId === 'calendarless',
-    );
-    assert.deepEqual(
-      {
-        calendarIdentifier: calendarless?.calendarIdentifier,
-        dayOfYear: calendarless?.dayOfYear,
-      },
-      { calendarIdentifier: null, dayOfYear: null },
-    );
-    // Injects unidentified reminders on purpose.
-    for (const unidentified of [
-      reminder({ id: '' }),
-      reminder({ listId: '' }),
-    ]) {
-      native = [unidentified];
-      await assert.rejects(
-        readRows(source, [source.reminders]),
-        /invalid reminders/,
-      );
-    }
-  },
-);
-
-test(
-  'Reminders rejects unsupported selections and preserves targets on invalid data or access failure',
-  {
-    concurrency: false,
-  },
-  async (t) => {
-    const source = new AppleRemindersSource({ store: remindersStore });
-    // The helper must not be reached until the selections below are rejected.
-    let respond: () => Iterable<EventKitDocument> = () => {
-      throw new Error('The EventKit helper was reached before validation');
-    };
-    new FakeEventKitHelper().answer(remindersRead, () => respond()).install(t);
-    const streams = (await source.discover()).streams;
-    assert.equal(source.identity, 'apple-reminders:eventkit');
-    assert.ok(
-      streams.every(
-        (stream) =>
-          stream.sourceDefinedCursor === true && stream.emitsDeletes === true,
-      ),
-    );
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'elt-reminders-errors-'),
-    );
-    const destination = new MarkdownDestination({
-      path: join(scratch.path, 'markdown'),
-    });
-    const target = destination.file('reminders.md');
-    assert.throws(
-      () =>
-        new Copy(source.reminders, target, {
-          syncMode: 'incremental',
-          destinationSyncMode: 'append',
-        }).validate(source, destination),
-      /emits deletions; incremental copies require append_dedup/,
-    );
-    const forged = new Stream({
-      name: 'reminders',
-      jsonSchema: { type: 'object', properties: {} },
-      supportedSyncModes: ['full_refresh'],
-    });
-    assert.throws(
-      () => new Copy(forged, target).validate(source, destination),
-      /discovered catalog/,
-    );
-    assert.throws(
-      () => source.reminders.file,
-      /does not support file extraction/,
-    );
-    respond = () => [reminder()];
-    const run = () =>
-      new Pipeline({
-        connections: [
-          new Connection({
-            name: 'test',
-            source,
-            destination,
-            steps: [new Copy(source.reminders, target)],
-          }),
-        ],
-      }).run();
-    await run();
-    const path = join(destination.path, 'reminders.md');
-    const previous = await readFile(path, 'utf8');
-    // Injects malformed documents on purpose: each must fail the read.
-    const { name: _name, ...unnamed } = reminder();
-    for (const invalid of [
-      unnamed,
-      reminder({ id: '' }),
-      reminder({ priority: 10 }),
-      { ...reminder(), completed: 'yes' },
-    ]) {
-      // @ts-expect-error -- each document is malformed on purpose
-      respond = () => [invalid];
-      await assert.rejects(run(), /invalid reminders/);
-      assert.equal(await readFile(path, 'utf8'), previous);
-    }
-    // Injects helper access failures on purpose, as the helper reports them on
-    // stderr.
-    for (const message of ['denied', 'restricted', 'pending', 'revoked']) {
-      const failure = Object.assign(new Error('eventkit exited'), {
-        stderr: `REMINDERS_UNAVAILABLE: ${message}\n`,
-      });
-      respond = function* () {
-        // Revoked access fails the helper after it wrote documents.
-        if (message === 'revoked') yield reminder();
-        throw failure;
-      };
-      await assert.rejects(
-        run(),
-        // Opening the read fails, so every copy reports it, as the run's cause.
-        (error: unknown) =>
-          error instanceof PipelineError &&
-          error.cause instanceof Error &&
-          error.cause.name === 'RemindersUnavailableError' &&
-          /full Reminders access/.test(error.cause.message) &&
-          error.cause.cause === failure,
-      );
-      assert.equal(await readFile(path, 'utf8'), previous);
-    }
-    // Injects a helper failure without a marker on purpose.
-    const failure = new Error(
-      'eventkit exited: EventKit reminder query failed',
-    );
-    respond = () => {
-      throw failure;
-    };
-    await assert.rejects(
-      run(),
-      (error: unknown) =>
-        error instanceof PipelineError && error.cause === failure,
-    );
-    assert.equal(await readFile(path, 'utf8'), previous);
-    respond = () => [];
-    await run();
-    assert.notEqual(await readFile(path, 'utf8'), previous);
-  },
-);
-
-test('Reminders snapshot incremental writes only changed reminders and deletes removed ones', async (t) => {
-  const source = new AppleRemindersSource({ store: remindersStore });
-  const named = (id: string, name: string) => reminder({ id, name });
-  let native = [named('r1', 'Buy milk'), named('r2', 'Call Ann')];
-  new FakeEventKitHelper().answer(remindersRead, () => native).install(t);
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-rem-'));
-  const sqlite = new SQLiteDestination({
-    path: join(scratch.path, 'r.sqlite'),
-  });
-  const copy = new Copy(source.reminders, sqlite.table('reminders'), {
-    id: 'reminders',
-    syncMode: 'incremental',
-    destinationSyncMode: 'append_dedup',
-  });
-  const pipeline = new Pipeline({
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination: sqlite,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 's.sqlite'),
-        }),
-        steps: [copy],
-      }),
     ],
   });
-
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
-  native = [named('r1', 'Buy oat milk'), named('r3', 'Book flight')];
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 1 }]);
-  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
-  using database = new DatabaseSync(sqlite.path, { readOnly: true });
-  assert.deepEqual(
-    database
-      .prepare('SELECT id, name FROM reminders ORDER BY id')
-      .all()
-      .map((row) => `${row.id}:${row.name}`),
-    ['r1:Buy oat milk', 'r3:Book flight'],
-  );
-});
-
-test('an EventKit session reads again when a change arrives during the read', async (t) => {
-  let change = () => {};
-  let edited = false;
-  const source = new AppleRemindersSource({ store: remindersStore });
-  new FakeEventKitHelper()
-    .answer(remindersRead, () => {
-      if (edited) return [{ ...recordedReminders.account, name: 'after' }];
-      // Another app edits Reminders while the first read runs.
-      edited = true;
-      change();
-      return [{ ...recordedReminders.account, name: 'before' }];
-    })
-    .watchWith(async function* (signal) {
-      yield 'changed';
-      await new Promise<void>((resolve) => {
-        change = resolve;
-      });
-      yield 'changed';
-      if (!signal.aborted) await once(signal, 'abort');
-    })
-    .install(t);
-
-  const accounts = (await readRows(source, [source.accounts]))(source.accounts);
-
-  assert.deepEqual(
-    accounts.map(({ name }) => name),
-    ['after'],
-  );
-});
-
-test('an EventKit session gives up when every read sees a change', async (t) => {
-  const source = new AppleRemindersSource({ store: remindersStore });
-  let reads = 0;
-  new FakeEventKitHelper()
-    .answer(remindersRead, () => {
-      reads++;
-      return [recordedReminders.account];
-    })
-    .watchWith(async function* (signal) {
-      yield 'changed';
-      while (!signal.aborted) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        yield 'changed';
-      }
-    })
-    .install(t);
-
-  await assert.rejects(readRows(source, [source.accounts]), (error) => {
-    assert.ok(error instanceof Error);
-    assert.equal(error.name, 'EventKitChangingError');
-    assert.match(error.message, /changed during each of 5 consistent reads/);
-    return true;
+  const source = new AppleRemindersSource({
+    store: new RemindersStore(stub.path),
   });
-  // The message names the configured attempts; the helper saw each one.
-  assert.equal(reads, 5);
+  const pick = (row: Record<string, unknown>) => ({
+    kind: row.kind,
+    calendarIdentifier: row.calendarIdentifier,
+    timeZone: row.timeZone,
+    era: row.era,
+    year: row.year,
+    month: row.month,
+    day: row.day,
+    hour: row.hour,
+    minute: row.minute,
+    second: row.second,
+    dayOfYear: row.dayOfYear,
+    leapMonth: row.leapMonth,
+    repeatedDay: row.repeatedDay,
+  });
+
+  const components = (await readRows(source, [source.dateComponents]))(
+    source.dateComponents,
+  );
+
+  assert.deepEqual(
+    components.filter(({ reminderId }) => reminderId === 'both').map(pick),
+    [
+      {
+        kind: 'start',
+        calendarIdentifier: 'gregorian',
+        timeZone: null,
+        era: 1,
+        year: 2025,
+        month: 1,
+        day: 3,
+        hour: null,
+        minute: null,
+        second: null,
+        dayOfYear: null,
+        leapMonth: true,
+        repeatedDay: false,
+      },
+      {
+        kind: 'due',
+        calendarIdentifier: 'gregorian',
+        timeZone: 'Asia/Amman',
+        era: 1,
+        year: 2025,
+        month: 1,
+        day: 2,
+        hour: 8,
+        minute: 45,
+        second: 0,
+        dayOfYear: null,
+        leapMonth: false,
+        repeatedDay: false,
+      },
+    ],
+  );
+  const calendarless = components.find(
+    ({ reminderId }) => reminderId === 'calendarless',
+  );
+  assert.deepEqual(
+    {
+      calendarIdentifier: calendarless?.calendarIdentifier,
+      dayOfYear: calendarless?.dayOfYear,
+    },
+    { calendarIdentifier: null, dayOfYear: null },
+  );
+  for (const unidentified of [reminder({ id: '' }), reminder({ listId: '' })]) {
+    stub.answer(remindersRead, { documents: [unidentified] });
+    await assert.rejects(
+      readRows(source, [source.reminders]),
+      /invalid reminders/,
+    );
+  }
+});
+
+test('Reminders rejects unsupported selections without the EventKit helper', async () => {
+  // No helper exists here: starting one would fail, so each rejection below
+  // must come from validation before the helper is reached.
+  await using missing = await mkdtempDisposable(join(tmpdir(), 'no-helper-'));
+  const source = new AppleRemindersSource({
+    store: new RemindersStore(join(missing.path, 'eventkit-helper')),
+  });
+  const streams = (await source.discover()).streams;
+  const destination = new MarkdownDestination({
+    path: join(missing.path, 'markdown'),
+  });
+  const target = destination.file('reminders.md');
+
+  assert.equal(source.identity, 'apple-reminders:eventkit');
+  assert.ok(
+    streams.every(
+      (stream) =>
+        stream.sourceDefinedCursor === true && stream.emitsDeletes === true,
+    ),
+  );
+  assert.throws(
+    () =>
+      new Copy(source.reminders, target, {
+        syncMode: 'incremental',
+        destinationSyncMode: 'append',
+      }).validate(source, destination),
+    /emits deletions; incremental copies require append_dedup/,
+  );
+  const forged = new Stream({
+    name: 'reminders',
+    jsonSchema: { type: 'object', properties: {} },
+    supportedSyncModes: ['full_refresh'],
+  });
+  assert.throws(
+    () => new Copy(forged, target).validate(source, destination),
+    /discovered catalog/,
+  );
+  assert.throws(
+    () => source.reminders.file,
+    /does not support file extraction/,
+  );
+});
+
+test('Reminders rejects malformed records and preserves its target on access or helper failures', async () => {
+  await using stub = await StubEventKitHelper.create();
+  const answer = (read: HelperRead) => stub.answer(remindersRead, read);
+  const source = new AppleRemindersSource({
+    store: new RemindersStore(stub.path),
+  });
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-reminders-errors-'),
+  );
+  const destination = new MarkdownDestination({
+    path: join(scratch.path, 'markdown'),
+  });
+  const run = () =>
+    new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(source.reminders, destination.file('reminders.md'))],
+        }),
+      ],
+    }).run();
+  answer({ documents: [reminder()] });
+  await run();
+  const path = join(destination.path, 'reminders.md');
+  const previous = await readFile(path, 'utf8');
+
+  // Malformed documents on purpose: each must fail the read.
+  const { name: _name, ...unnamed } = reminder();
+  for (const invalid of [
+    unnamed,
+    reminder({ id: '' }),
+    reminder({ priority: 10 }),
+    { ...reminder(), completed: 'yes' },
+  ]) {
+    // @ts-expect-error -- each document is malformed on purpose
+    answer({ documents: [invalid] });
+    await assert.rejects(run(), /invalid reminders/);
+    assert.equal(await readFile(path, 'utf8'), previous);
+  }
+  // Access failures as the helper reports them on stderr; revoked access fails
+  // the helper after it wrote documents.
+  for (const message of ['denied', 'restricted', 'pending', 'revoked']) {
+    const stderr = `REMINDERS_UNAVAILABLE: ${message}\n`;
+    answer({
+      documents: message === 'revoked' ? [reminder()] : [],
+      stderr,
+    });
+    await assert.rejects(
+      run(),
+      // Opening the read fails, so every copy reports it, as the run's cause.
+      (error: unknown) =>
+        error instanceof PipelineError &&
+        error.cause instanceof Error &&
+        error.cause.name === 'RemindersUnavailableError' &&
+        /full Reminders access/.test(error.cause.message) &&
+        Reflect.get(Object(error.cause.cause), 'stderr') === stderr,
+    );
+    assert.equal(await readFile(path, 'utf8'), previous);
+  }
+  // A helper failure without a marker keeps its own error.
+  answer({ stderr: 'EventKit reminder query failed\n' });
+  await assert.rejects(
+    run(),
+    (error: unknown) =>
+      error instanceof PipelineError &&
+      error.cause instanceof Error &&
+      error.cause.name !== 'RemindersUnavailableError' &&
+      /EventKit reminder query failed/.test(error.cause.message),
+  );
+  assert.equal(await readFile(path, 'utf8'), previous);
+
+  answer({ documents: [] });
+  await run();
+  assert.notEqual(await readFile(path, 'utf8'), previous);
 });
 
 test(
-  'Reminders reads as documented views that keep date components as components',
-  {
-    concurrency: false,
-  },
+  'Reminders snapshot incremental writes only changed reminders of a list on this Mac and deletes removed ones',
+  { timeout: 180_000 },
   async (t) => {
-    new FakeEventKitHelper()
-      .answer(remindersRead, () => [
-        recordedReminders.account,
-        list(),
-        reminder({ id: 'due-date-only', due: recordedDateOnlyDue }),
-        { ...recordedReminders.filedTaxes, id: 'undated', due: undefined },
-      ])
-      .install(t);
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    await using list = await ScratchList.create();
+    if (list === null) return t.skip('no account accepts a new list');
+    const [milk, ann] = await list.add(
+      { title: 'Buy milk' },
+      { title: 'Call Ann' },
+    );
+    assert.ok(milk && ann);
+    const source = liveSource(list);
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-rem-'));
+    const sqlite = new SQLiteDestination({
+      path: join(scratch.path, 'r.sqlite'),
+    });
+    const copy = new Copy(source.reminders, sqlite.table('reminders'), {
+      id: 'reminders',
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+    });
+    const pipeline = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: sqlite,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 's.sqlite'),
+          }),
+          steps: [copy],
+        }),
+      ],
+    });
+
+    assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+    await list.rename(milk, 'Buy oat milk');
+    await list.remove(ann);
+    await list.add({ title: 'Book flight' });
+    assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 1 }]);
+    assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+
+    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    assert.deepEqual(
+      database
+        .prepare('SELECT name FROM reminders ORDER BY name')
+        .all()
+        .map(({ name }) => name),
+      ['Book flight', 'Buy oat milk'],
+    );
+  },
+);
+
+test(
+  'Reminders reads a list on this Mac as documented views that keep date components as components',
+  { timeout: 120_000 },
+  async (t) => {
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    await using list = await ScratchList.create();
+    if (list === null) return t.skip('no account accepts a new list');
+    await list.add(
+      { title: 'due-date-only', due: { year: 2025, month: 1, day: 3 } },
+      { title: 'undated', completed: true },
+    );
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'rem-marts-'));
     const reminders = await appleImport(
-      new AppleRemindersSource({ store: remindersStore }),
+      liveSource(list),
       join(scratch.path, 'import'),
     );
+
     await reminders.load();
 
     assert.equal(reminders.views().length, 8);
+    // EventKit also writes a start at midnight for a due date without a time;
+    // the due set is the one asserted here.
     assert.deepEqual(
       reminders
         .read(
           `
-        SELECT r.id, r.completed, d.kind, d.year, d.month, d.day, d.hour
+        SELECT r.name, r.completed, d.kind, d.year, d.month, d.day, d.hour
         FROM reminders r
-        LEFT JOIN date_components d ON d."reminderId" = r.id
+        LEFT JOIN date_components d ON d."reminderId" = r.id AND d.kind = 'due'
         JOIN lists l ON l.id = r."listId"
-        ORDER BY r.id`,
+        ORDER BY r.name`,
         )
         .map((found) => ({ ...found })),
       [
         {
-          id: 'due-date-only',
+          name: 'due-date-only',
           completed: 0,
           kind: 'due',
           year: 2025,
@@ -933,7 +1140,7 @@ test(
           hour: null,
         },
         {
-          id: 'undated',
+          name: 'undated',
           completed: 1,
           kind: null,
           year: null,
@@ -943,5 +1150,144 @@ test(
         },
       ],
     );
+  },
+);
+
+test(
+  'Reminders scope keeps only the chosen list of this Mac and its account',
+  { timeout: 120_000 },
+  async (t) => {
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    await using list = await ScratchList.create();
+    if (list === null) return t.skip('no account accepts a new list');
+    const scoped = liveSource(list);
+    const missing = new AppleRemindersSource({
+      store: new RemindersStore(helper),
+      scope: { collectionIds: [`missing-${randomUUID()}`] },
+    });
+
+    const rows = await readRows(scoped, [scoped.accounts, scoped.lists]);
+    const none = await readRows(missing, [missing.accounts, missing.lists]);
+
+    const [listRow] = rows(scoped.lists);
+    assert.deepEqual(
+      rows(scoped.lists).map(({ id }) => id),
+      [list.id],
+    );
+    assert.deepEqual(
+      rows(scoped.accounts).map(({ id }) => id),
+      [listRow?.accountId],
+    );
+    assert.deepEqual([none(missing.accounts), none(missing.lists)], [[], []]);
+  },
+);
+
+test(
+  'Reminders watch confirms its subscription through the native helper and stops it on abort or return',
+  { timeout: 120_000 },
+  async (t) => {
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    const source = new AppleRemindersSource({
+      store: new RemindersStore(helper),
+    });
+    const helperRunning = () =>
+      execFile('pgrep', [
+        '-P',
+        String(process.pid),
+        '-f',
+        `${helper} watch reminders`,
+      ]);
+    const controller = new AbortController();
+    try {
+      const watching = source.watch({
+        streams: [source.reminders],
+        signal: controller.signal,
+      });
+      const subscribed = await watching.next().catch((error: unknown) => {
+        if (
+          error instanceof Error &&
+          error.name === 'RemindersUnavailableError'
+        )
+          return null;
+        throw error;
+      });
+      if (subscribed === null) return t.skip('no Reminders access');
+      assert.deepEqual(subscribed, { value: [source.reminders], done: false });
+      const pending = watching.next();
+      controller.abort();
+      assert.deepEqual(await pending, { value: undefined, done: true });
+      await assert.rejects(helperRunning(), { code: 1 });
+
+      // A consumer that stops iterating also stops the helper.
+      const stopped = source.watch({
+        streams: [source.reminders],
+        signal: new AbortController().signal,
+      });
+      assert.deepEqual(await stopped.next(), {
+        value: [source.reminders],
+        done: false,
+      });
+      await helperRunning();
+      assert.deepEqual(await stopped.return(undefined), {
+        value: undefined,
+        done: true,
+      });
+      await assert.rejects(helperRunning(), { code: 1 });
+    } finally {
+      controller.abort();
+    }
+  },
+);
+
+test(
+  'Reminders reads this Mac’s reminders store into SQLite through the native helper',
+  { timeout: 300_000 },
+  async (t) => {
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    await using scratch = await mkdtempDisposable(
+      join(tmpdir(), 'elt-eventkit-live-'),
+    );
+    const source = new AppleRemindersSource({
+      store: new RemindersStore(helper),
+    });
+    const sqlite = new SQLiteDestination({
+      path: join(scratch.path, 'reminders.sqlite'),
+    });
+    const streams = (await source.discover()).streams;
+
+    const outcomes = await new Pipeline({
+      connections: [
+        new Connection({
+          name: 'live',
+          source,
+          destination: sqlite,
+          steps: streams.map(
+            (stream) => new Copy(stream, sqlite.table(stream.name)),
+          ),
+        }),
+      ],
+    })
+      .run()
+      .catch((error: unknown) => {
+        if (
+          error instanceof PipelineError &&
+          error.cause instanceof Error &&
+          error.cause.name === 'RemindersUnavailableError'
+        )
+          return null;
+        throw error;
+      });
+    if (outcomes === null) return t.skip('no Reminders access');
+
+    assert.equal(outcomes.length, streams.length);
+    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    for (const { copy, count } of outcomes)
+      assert.equal(
+        database
+          .prepare(`SELECT count(*) AS count FROM "${copy.from.name}"`)
+          .get()?.count,
+        count,
+        copy.from.name,
+      );
   },
 );

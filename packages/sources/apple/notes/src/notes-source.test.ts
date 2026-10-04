@@ -709,3 +709,16 @@ test('a Notes watch keeps Notes running and loads each commit while Notes keeps 
   // lsappinfo prints nothing for an app that is not running.
   assert.match(stdout, /pid/);
 });
+
+test('Notes declares the local Apple store as the coverage of every stream', async () => {
+  const notes = new AppleNotesSource();
+
+  const { streams } = await notes.discover();
+
+  for (const stream of streams)
+    assert.match(
+      notes.coverage(stream).description,
+      /local Apple store/,
+      stream.name,
+    );
+});
