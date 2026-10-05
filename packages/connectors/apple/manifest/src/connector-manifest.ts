@@ -31,6 +31,7 @@ type AppleConnectorClass = new (
 export class ConnectorManifest {
   readonly name: string;
   readonly title: string;
+  readonly folder: string;
   readonly entry: string;
 
   private constructor(
@@ -39,6 +40,7 @@ export class ConnectorManifest {
   ) {
     this.name = manifest.contextCompiler.name;
     this.title = manifest.contextCompiler.title;
+    this.folder = folder;
     this.entry = join(folder, manifest.exports);
   }
 
@@ -68,7 +70,11 @@ export class ConnectorManifest {
       throw new TypeError(
         `${this.entry} does not export an AppleConnector class by default.`,
       );
-    return new Connector(host, { name: this.name, title: this.title });
+    return new Connector(host, {
+      name: this.name,
+      title: this.title,
+      folder: this.folder,
+    });
   }
 }
 

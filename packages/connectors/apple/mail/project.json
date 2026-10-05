@@ -3,6 +3,10 @@
   "sourceRoot": "packages/connectors/apple/mail/src",
   "projectType": "library",
   "targets": {
-    "format": {}
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/connectors/apple/mail/dist/*.test.js\""
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -35,10 +35,19 @@ export type AppleHost = {
   google?(scopes: readonly string[]): Promise<GoogleRequester>;
 };
 
-// The connector's name and title, as its manifest declares them.
+// The connector's name and title, as its manifest declares them, and the
+// folder the manifest was read from.
 export type ConnectorIdentity = {
   readonly name: string;
   readonly title: string;
+  readonly folder: string;
+};
+
+// A view a reader can load before querying an import: a SQL file that creates
+// one temporary view named after the file, so nothing is stored in the import.
+export type Preset = {
+  readonly name: string;
+  readonly file: string;
 };
 
 export type ChoiceOptions = Choice & {
@@ -51,6 +60,9 @@ export type ChoiceOptions = Choice & {
 export abstract class AppleConnector {
   readonly name: string;
   readonly title: string;
+  // Where the connector keeps its presets, beside its manifest; it may not
+  // exist.
+  readonly presetsFolder: string;
   // What a date range selects, or null when this app's records have no date.
   abstract readonly datedBy: string | null;
   // Whether macOS keeps the app's store behind Full Disk Access, which it
@@ -78,6 +90,20 @@ export abstract class AppleConnector {
     this.host = host;
     this.name = identity.name;
     this.title = identity.title;
+    this.presetsFolder = join(identity.folder, 'presets');
+  }
+
+  // Read when asked, so a preset added to a user connector's folder is offered
+  // without a restart.
+  presets(): Preset[] {
+    if (!existsSync(this.presetsFolder)) return [];
+    return readdirSync(this.presetsFolder)
+      .filter((file) => file.endsWith('.sql'))
+      .sort()
+      .map((file) => ({
+        name: file.slice(0, -'.sql'.length),
+        file: join(this.presetsFolder, file),
+      }));
   }
 
   // What macOS needs granted to the grantee, besides Full Disk Access.

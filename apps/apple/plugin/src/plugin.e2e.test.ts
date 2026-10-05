@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -874,7 +874,7 @@ async function withConnectors(home: string) {
 }
 
 test(
-  'a connector the user adds while the server runs imports through it on its own elt and AppleConnector, an edit to it loads in the same chat, and a chat hears of one that does not load',
+  'a connector the user adds while the server runs imports through it on its own elt and AppleConnector, an edit to it and a preset added to it reach the same chat, and a chat hears of one that does not load',
   { timeout: 120_000 },
   async (t) => {
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
@@ -938,6 +938,30 @@ test(
         ),
       );
       const edited = await call('apple_options', { connector: 'photos' });
+      const presets = join(dirname(connector), 'presets');
+      mkdirSync(presets);
+      const preset = join(presets, 'titled_photos.sql');
+      writeFileSync(
+        preset,
+        [
+          '-- titled_photos: Each photo with its title in capitals.',
+          '-- id: The photo identifier.',
+          '-- title: The title in capitals.',
+          'CREATE TEMP VIEW titled_photos AS SELECT id, upper(title) AS title FROM photos;',
+        ].join('\n'),
+      );
+      const withPreset = await call('apple_context', {
+        event: 'UserPromptSubmit',
+      });
+      const [selected] = read(
+        settings,
+        "SELECT database FROM selected_connectors WHERE connector = 'photos'",
+      ).rows;
+      const titled = read(
+        selected.database,
+        'SELECT id, title FROM titled_photos ORDER BY id',
+        `.read "${preset}"`,
+      );
 
       assert.match(context, /^- Drafts could not be loaded: /m);
       assert.match(edited, /Open Pictures once\./);
@@ -945,6 +969,20 @@ test(
         { id: 'p1', title: 'Beach' },
         { id: 'p2', title: 'Snow' },
       ]);
+      assert.ok(
+        withPreset.includes(`  Presets in "${presets}": titled_photos`),
+        withPreset,
+      );
+      assert.deepEqual(titled.rows, [
+        { id: 'p1', title: 'BEACH' },
+        { id: 'p2', title: 'SNOW' },
+      ]);
+      assert.ok(
+        existsSync(
+          join(plugin, 'server/connectors/mail/presets/mail_messages.sql'),
+        ),
+        'the plugin ships the built-in Mail presets',
+      );
     } finally {
       await client.close();
       await transport.close();

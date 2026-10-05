@@ -4,7 +4,7 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunks/chunk-7XFLCHNF.mjs";
+} from "./chunks/chunk-BCEAKYBY.mjs";
 import {
   Pipeline
 } from "./chunks/chunk-C5AZWDBZ.mjs";
@@ -36492,10 +36492,12 @@ var manifestSchema = external_exports.object({
 var ConnectorManifest = class _ConnectorManifest {
   name;
   title;
+  folder;
   entry;
   constructor(folder, manifest) {
     this.name = manifest.contextCompiler.name;
     this.title = manifest.contextCompiler.title;
+    this.folder = folder;
     this.entry = join(folder, manifest.exports);
   }
   // The folder's manifest; undefined when the folder holds no package.json
@@ -36519,7 +36521,11 @@ var ConnectorManifest = class _ConnectorManifest {
     const { default: Connector } = await import(__rewriteRelativeImportExtension(entry.href));
     if (!isAppleConnectorClass(Connector))
       throw new TypeError(`${this.entry} does not export an AppleConnector class by default.`);
-    return new Connector(host, { name: this.name, title: this.title });
+    return new Connector(host, {
+      name: this.name,
+      title: this.title,
+      folder: this.folder
+    });
   }
 };
 function isAppleConnectorClass(value) {
@@ -37156,20 +37162,32 @@ function chatStatus(plugin2) {
         ...broken
       ].join("\n")
     };
+  const rows = selected.map((item) => {
+    const loaded = plugin2.connectors.find(
+      ({ name }) => name === item.connector
+    );
+    return { ...item, loaded, presets: loaded?.presets() ?? [] };
+  });
   return {
     state: state(
-      selected.map(({ connector, database, sync }) => [
+      rows.map(({ connector, database, sync, presets }) => [
         connector,
         database,
-        readiness(sync)
+        readiness(sync),
+        presets.map(({ file: file2 }) => file2)
       ])
     ),
     text: [
       `Apple connectors the user set up, each imported into its own SQLite file under "${plugin2.directory}". Read them as $query-apple describes.`,
-      ...selected.map(
-        ({ connector, title, database, sync, permissions }) => (
+      ...rows.map(
+        ({ title, database, sync, permissions, loaded, presets }) => (
           // A selected connector that is not loaded does not import.
-          plugin2.connectors.some(({ name }) => name === connector) ? `- ${title}: ${progress(sync, permissions)}. ${database === null ? "No database yet." : `Database: ${relative(plugin2.directory, database)}`}` : `- ${title}: ${permissions}`
+          loaded === void 0 ? `- ${title}: ${permissions}` : [
+            `- ${title}: ${progress(sync, permissions)}. ${database === null ? "No database yet." : `Database: ${relative(plugin2.directory, database)}`}`,
+            ...presets.length === 0 ? [] : [
+              `  Presets in "${loaded.presetsFolder}": ${presets.map(({ name }) => name).join(", ")}`
+            ]
+          ].join("\n")
         )
       ),
       ...broken

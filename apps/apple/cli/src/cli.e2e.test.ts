@@ -1452,9 +1452,23 @@ async function withConnectors(mac: string) {
   );
 }
 
-test('a connector the user added syncs and answers queries beside the built-in connectors, and one that does not load is reported while the rest work', async () => {
+test('a connector the user added syncs and answers queries beside the built-in connectors, through its presets too, and one that does not load is reported while the rest work', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withConnectors(mac.path);
+  const presets = join(
+    mac.path,
+    'Library/Application Support/Context Compiler/Connectors/photos/presets',
+  );
+  await mkdir(presets);
+  await writeFile(
+    join(presets, 'titled_photos.sql'),
+    [
+      '-- titled_photos: Each photo with its title in capitals.',
+      '-- id: The photo identifier.',
+      '-- title: The title in capitals.',
+      'CREATE TEMP VIEW titled_photos AS SELECT id, upper(title) AS title FROM photos;',
+    ].join('\n'),
+  );
 
   const setup = cli(mac.path, 'setup', '--connector', 'photos');
   const sync = cli(mac.path, 'sync');
@@ -1465,6 +1479,14 @@ test('a connector the user added syncs and answers queries beside the built-in c
     'SELECT id, title FROM photos ORDER BY id',
     '--json',
   );
+  const titled = cli(
+    mac.path,
+    'query',
+    'photos',
+    'SELECT id, title FROM titled_photos ORDER BY id',
+    '--json',
+  );
+  const tables = cli(mac.path, 'query', 'photos', '--tables', '--json');
 
   assert.equal(setup.status, 0, setup.stderr);
   assert.match(setup.stderr, /^Drafts could not be loaded: /m);
@@ -1474,6 +1496,17 @@ test('a connector the user added syncs and answers queries beside the built-in c
     { id: 'p1', title: 'Beach' },
     { id: 'p2', title: 'Snow' },
   ]);
+  assert.equal(titled.status, 0, titled.stderr);
+  assert.deepEqual(JSON.parse(titled.stdout), [
+    { id: 'p1', title: 'BEACH' },
+    { id: 'p2', title: 'SNOW' },
+  ]);
+  assert.equal(tables.status, 0, tables.stderr);
+  assert.deepEqual(JSON.parse(tables.stdout).at(-1), {
+    view: 'titled_photos',
+    rows: null,
+    coverage: 'Preset, loaded before each query',
+  });
 });
 
 test('a selected connector that was removed is reported by status, and sync still loads the other connectors', async () => {

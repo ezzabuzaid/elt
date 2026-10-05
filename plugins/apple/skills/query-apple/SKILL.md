@@ -5,21 +5,21 @@ description: Answer questions about Apple app content imported by the Apple plug
 
 # Query Apple apps
 
-The Apple plugin imports each selected connector's data into its own SQLite file once, in the background while Codex is open; an imported connector is not refreshed, so its `last_successful_sync_at` is how current it is. The settings file `"$HOME/Library/Application Support/Context Compiler/Apple/settings.sqlite"` has a `selected_connectors` view: each selected `connector`, its scope, the path of its `database`, a `connection_error` when its import could not start, and its macOS `permissions` guidance. Each connector's database describes itself through views: `catalog` has one row per view and per view column, with its type and meaning; `sync_status` has the connector's latest pass and last successful sync, `stream_status` the same per stream; `extraction_coverage` has what each pass covered. Query the views; `raw_*` tables are their storage. Read every file with `/usr/bin/sqlite3 -readonly`. To prepare for a meeting, use `$meeting-prep`.
+The Apple plugin imports each selected connector's data into its own SQLite file once, in the background while Codex is open; an imported connector is not refreshed, so its `last_successful_sync_at` is how current it is. The settings file `"$HOME/Library/Application Support/Context Compiler/Apple/settings.sqlite"` has a `selected_connectors` view: each selected `connector`, its scope, the path of its `database`, a `connection_error` when its import could not start, and its macOS `permissions` guidance. Each connector's database describes itself through views: `catalog` has one row per view and per view column, with its type and meaning; `sync_status` has the connector's latest pass and last successful sync, `stream_status` the same per stream; `extraction_coverage` has what each pass covered. Query the views; `raw_*` tables are their storage. A connector may also ship presets: SQL files in its `presets` folder, each creating one temporary view over its views, such as Mail's `mail_messages` (each message with its sender, recipients, subject, body and attachments). A preset is loaded for one command and stored nowhere, so `catalog` does not list it; the `--` comment lines at the top of its file describe the view and every column. Read every file with `/usr/bin/sqlite3 -readonly`. To prepare for a meeting, use `$meeting-prep`.
 
 ## Answer a question
 
-1. Find the selected connectors. The plugin adds an Apple status to this chat's context when the chat starts and whenever it changes: each selected connector, how its last sync went, and its `Database` path under the Apple folder it names. Use the latest one. When the context has none, or setup changed in this chat, read the selection instead:
+1. Find the selected connectors. The plugin adds an Apple status to this chat's context when the chat starts and whenever it changes: each selected connector, how its last sync went, its `Database` path under the Apple folder it names, and, under it, the folder and names of its presets. Use the latest one. When the context has none, or setup changed in this chat, read the selection instead:
 
    ```sh
    /usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' \
      "$HOME/Library/Application Support/Context Compiler/Apple/settings.sqlite" 'SELECT * FROM selected_connectors'
    ```
 
-   If the file or view does not exist, or a needed connector is not listed, use `$setup-apple` with the user's choice. Use only selected connectors.
+   If the file or view does not exist, or a needed connector is not listed, use `$setup-apple` with the user's choice. Use only selected connectors. Without a status, a built-in connector's presets are in `server/connectors/<connector>/presets` of this plugin, two folders above this skill's folder, and a connector the user added keeps them in `presets` of its folder under `$HOME/Library/Application Support/Context Compiler/Connectors`.
 
 2. For each connector the question needs: a failed sync or a `connection_error` means the connector is inaccessible; give its error and `permissions` guidance. A connector with no database or no data yet has not finished its first import: say it is still importing, and answer from the other connectors. Otherwise read right away, even while it is importing. Without a status in context, read `SELECT status, error, last_successful_sync_at FROM sync_status` from its `database`; there, a `running` pass may be one a closed chat left unfinished.
-3. Read the catalog of each connector you need:
+3. Read the catalog of each connector you need, and the header comments of its presets:
 
    ```sh
    /usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' -cmd 'PRAGMA temp_store = MEMORY' \
@@ -38,6 +38,14 @@ The Apple plugin imports each selected connector's data into its own SQLite file
    ```
 
    Tables of the opened file need no prefix. `ATTACH` another connector's file to join across connectors; attached files are read-only too.
+
+   Prefer a preset that covers the question over joining its views again. Load it with `-cmd` before the SQL, its path in double quotes, since it may hold spaces:
+
+   ```sh
+   /usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' -cmd 'PRAGMA temp_store = MEMORY' \
+     -cmd '.read "<presets folder>/mail_messages.sql"' \
+     '<mail database>' "SELECT received_at, sender, subject FROM mail_messages WHERE sender LIKE '%@example.com' LIMIT 50"
+   ```
 
 5. Answer plainly with the app, the record's title, name or date, and useful source links when present. Mention the connector's last sync when freshness matters; `stream_status` has it per stream.
 

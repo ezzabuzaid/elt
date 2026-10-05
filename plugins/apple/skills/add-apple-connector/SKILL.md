@@ -14,6 +14,7 @@ description: Adds a connector for an Apple app the Apple plugin does not import 
 - The plugin imports each stream into `raw_<stream>` in the connector's own `data.sqlite`, read through a view named after the stream in snake case (`photoAssets` reads as `photo_assets`). `$query-apple` reads it like any other connector.
 - The connector runs inside the plugin, with every macOS permission ChatGPT has, Full Disk Access included.
 - A connector that cannot load is listed in the Apple status of every chat as `- <Title> could not be loaded: <error>`.
+- A connector may also hold presets: SQL files in a `presets` folder beside `package.json`. Each `presets/<view>.sql` holds one `CREATE TEMP VIEW <view> AS …` over the connector's views, after comment lines `-- <view>: <what one row is>` and `-- <column>: <its meaning>` for every column, in order. A reader loads a preset for one query, so it changes nothing in the import, and the Apple status lists it as soon as the file exists.
 
 ## Writing the connector
 
@@ -106,12 +107,13 @@ description: Adds a connector for an Apple app the Apple plugin does not import 
    ```
 
 3. Let the user narrow the import only when the store can say which account, collection or date a record belongs to. Then list those streams in `choices` (built with `accounts` and `collections`), set `datedBy`, pass the `scope` that `source(scope)` receives into the source, and filter by its `accountIds`, `collectionIds`, `startAt` (inclusive) and `endAt` (exclusive). List streams whose rows belong to no account or collection in `unscoped`. When there are choices, remove `probe`: reading them shows the store opens.
+4. When answering a question about the app needs the same joins each time, write them once as a preset, the shape of the app's data rather than one question's answer.
 
 ## Setting it up
 
 1. Call `apple_options` with `connector` set to the connector's `name`. It loads the connector and opens the app's store. Read any `could not be loaded` line in the Apple status or the tool's error, fix the file, and call it again.
 2. Configure it with `apple_configure`, keeping every connector already selected, as `$setup-apple` describes. The import runs in the background.
-3. Read a few rows as `$query-apple` describes, and compare them with what the app shows.
+3. Read a few rows as `$query-apple` describes, through each preset too, and compare them with what the app shows.
 
 ## Gotchas
 

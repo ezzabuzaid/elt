@@ -3,8 +3,9 @@ import { relative } from 'node:path';
 import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
 
 // What a chat's hooks add to the model's context: each selected connector,
-// where its import lives and how its last pass went. A chat keeps it until it
-// changes, so times are instants, not "minutes ago".
+// where its import lives, how its last pass went and the presets a reader can
+// load. A chat keeps it until it changes, so times are instants, not "minutes
+// ago".
 
 const progress = (sync: ImportSync | null, guidance: string): string => {
   if (sync === null) return 'waiting for its first import';
@@ -38,7 +39,7 @@ const readiness = (sync: ImportSync | null) => {
 };
 
 // state changes only when the selection, an import's file, what a reader
-// can do with it, or the connectors that could not load change.
+// can do with it, its presets, or the connectors that could not load change.
 export function chatStatus(plugin: ApplePlugin): {
   state: string;
   text: string;
@@ -57,21 +58,35 @@ export function chatStatus(plugin: ApplePlugin): {
         ...broken,
       ].join('\n'),
     };
+  const rows = selected.map((item) => {
+    const loaded = plugin.connectors.find(
+      ({ name }) => name === item.connector,
+    );
+    return { ...item, loaded, presets: loaded?.presets() ?? [] };
+  });
   return {
     state: state(
-      selected.map(({ connector, database, sync }) => [
+      rows.map(({ connector, database, sync, presets }) => [
         connector,
         database,
         readiness(sync),
+        presets.map(({ file }) => file),
       ]),
     ),
     text: [
       `Apple connectors the user set up, each imported into its own SQLite file under "${plugin.directory}". Read them as $query-apple describes.`,
-      ...selected.map(({ connector, title, database, sync, permissions }) =>
+      ...rows.map(({ title, database, sync, permissions, loaded, presets }) =>
         // A selected connector that is not loaded does not import.
-        plugin.connectors.some(({ name }) => name === connector)
-          ? `- ${title}: ${progress(sync, permissions)}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`
-          : `- ${title}: ${permissions}`,
+        loaded === undefined
+          ? `- ${title}: ${permissions}`
+          : [
+              `- ${title}: ${progress(sync, permissions)}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`,
+              ...(presets.length === 0
+                ? []
+                : [
+                    `  Presets in "${loaded.presetsFolder}": ${presets.map(({ name }) => name).join(', ')}`,
+                  ]),
+            ].join('\n'),
       ),
       ...broken,
     ].join('\n'),

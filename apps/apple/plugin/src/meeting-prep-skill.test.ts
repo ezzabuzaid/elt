@@ -71,8 +71,8 @@ const reads = {
   contact: 'FROM email_addresses e JOIN contacts c',
   notes: 'FROM notes n JOIN folders f',
   messages: 'JOIN chat_handles ch',
-  mail: 'WITH person AS (SELECT id FROM addresses',
-  mailSubjects: "WHERE s.subject LIKE '%' || @term || '%'",
+  mail: 'OR EXISTS (SELECT 1 FROM json_each(m.recipients)',
+  mailSubjects: "WHERE m.subject LIKE '%' || @term || '%'",
 } as const;
 
 // Loads one built-in connector from its manifest, as the hosts do.
@@ -114,12 +114,13 @@ test('every SQL block in the meeting-prep skill is one of the queries this file 
 });
 
 // Runs one query as the skill tells the agent to: the macOS sqlite3 shell,
-// read-only, with parameters bound through -cmd. A failing query fails the
-// test rather than reading as no rows.
+// read-only, with the presets it reads loaded and parameters bound through
+// -cmd. A failing query fails the test rather than reading as no rows.
 function read(
   database: string,
   sql: string,
   parameters: Record<string, string | number> = {},
+  presets: readonly string[] = [],
 ): Record<string, unknown>[] {
   const bind = Object.entries(parameters).flatMap(([name, value]) => [
     '-cmd',
@@ -136,6 +137,7 @@ function read(
       '.timeout 30000',
       '-cmd',
       'PRAGMA temp_store = MEMORY',
+      ...presets.flatMap((file) => ['-cmd', `.read "${file}"`]),
       ...bind,
       database,
       sql,
@@ -1122,24 +1124,35 @@ test('meeting prep finds recent mail with an attendee whatever case Mail stored,
         (1, 1, 3, 0, 0), (2, 2, 2, 0, 0), (3, 3, 3, 0, 0), (4, 4, 3, 0, 0);
     `);
   }
-  const database = await withHome(scratch.path, async () => {
-    return importConnector(await builtIn('mail'), join(scratch.path, 'mail'));
+  const { database, presets } = await withHome(scratch.path, async () => {
+    const mail = await builtIn('mail');
+    return {
+      database: await importConnector(mail, join(scratch.path, 'mail')),
+      presets: mail
+        .presets()
+        .filter(({ name }) => name === 'mail_messages')
+        .map(({ file }) => file),
+    };
   });
 
-  const withAnn = read(database, query(reads.mail), {
-    '@email': 'ann@example.com',
-    '@days': 30,
-  });
-  const aboutStandup = read(database, query(reads.mailSubjects), {
-    '@term': 'Standup',
-    '@days': 30,
-  });
+  const withAnn = read(
+    database,
+    query(reads.mail),
+    { '@email': 'ann@example.com', '@days': 30 },
+    presets,
+  );
+  const aboutStandup = read(
+    database,
+    query(reads.mailSubjects),
+    { '@term': 'Standup', '@days': 30 },
+    presets,
+  );
 
   assert.deepEqual(
     withAnn.map(({ subject, sender, excerpt }) => [subject, sender, excerpt]),
     [
       [
-        'Budget numbers',
+        'Re: Budget numbers',
         'me@example.com',
         'Thanks, reviewing before standup.\r\n',
       ],

@@ -1,10 +1,17 @@
 // Bundles the plugin's MCP server into plugins/apple/server: main.mjs, one
 // folder per built-in connector (its package.json manifest beside its entry
-// point), the host modules a user's connector imports, and the chunks they all
-// share, so every connector runs on the same elt and AppleConnector as the
-// server. @nx/esbuild cannot name each entry's output, so this calls esbuild's
-// API.
-import { copyFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+// point and its presets), the host modules a user's connector imports, and the
+// chunks they all share, so every connector runs on the same elt and
+// AppleConnector as the server. @nx/esbuild cannot name each entry's output, so
+// this calls esbuild's API.
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -55,15 +62,20 @@ await build({
   },
 });
 
-for (const { manifest, out } of builtIns)
+for (const { manifest, out } of builtIns) {
+  const folder = join(outdir, 'connectors', manifest.name);
   writeFileSync(
-    join(outdir, 'connectors', manifest.name, 'package.json'),
+    join(folder, 'package.json'),
     JSON.stringify({
       type: 'module',
       exports: `./${basename(out)}.mjs`,
       contextCompiler: { name: manifest.name, title: manifest.title },
     }),
   );
+  const presets = join(manifest.folder, 'presets');
+  if (existsSync(presets))
+    cpSync(presets, join(folder, 'presets'), { recursive: true });
+}
 
 // main.ts hands this path to the Calendar and Reminders connectors.
 copyFileSync(eventkitHelper, join(outdir, 'eventkit-helper'));

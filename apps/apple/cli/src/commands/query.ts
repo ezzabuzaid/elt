@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 
 import { Argument, type Command as Declaration } from 'commander';
@@ -14,7 +15,8 @@ type QueryResult = {
 
 type ViewSummary = {
   readonly view: string;
-  readonly rows: number;
+  // Not counted for a preset, which can be as slow to read as a query.
+  readonly rows: number | null;
   readonly coverage: string;
 };
 
@@ -84,6 +86,17 @@ function views(
     }));
 }
 
+// The connector's presets, created as temporary views on this connection only,
+// so a statement reads them like any view and the import stays unchanged.
+function loadPresets(database: DatabaseSync, connector: AppleConnector): void {
+  for (const { file } of connector.presets())
+    try {
+      database.exec(readFileSync(file, 'utf8'));
+    } catch (error) {
+      throw new Error(`The preset ${file} does not load`, { cause: error });
+    }
+}
+
 export class QueryCommand extends Command {
   readonly name = 'query';
   readonly summary =
@@ -94,9 +107,12 @@ export class QueryCommand extends Command {
       .addArgument(new Argument('<connector>').choices(this.imports.names))
       .argument(
         '[sql]',
-        'one statement; the catalog view lists every view and column: SELECT name, data_type, description FROM catalog',
+        "one statement; the catalog view lists every view and column: SELECT name, data_type, description FROM catalog. The connector's presets are views too, described in their files",
       )
-      .option('--tables', "list each stream's view, its rows and coverage");
+      .option(
+        '--tables',
+        "list each stream's view, its rows and coverage, and the connector's presets",
+      );
   }
 
   protected async run(declaration: Declaration): Promise<Output> {
@@ -104,7 +120,15 @@ export class QueryCommand extends Command {
     const sql: string | undefined = declaration.processedArgs[1];
     if (declaration.opts().tables === true) {
       using database = this.imports.read(name);
-      const summaries = views(database, this.imports.connector(name));
+      const connector = this.imports.connector(name);
+      const summaries = [
+        ...views(database, connector),
+        ...connector.presets().map(({ name: view }) => ({
+          view,
+          rows: null,
+          coverage: 'Preset, loaded before each query',
+        })),
+      ];
       return {
         data: summaries,
         text: () =>
@@ -117,6 +141,7 @@ export class QueryCommand extends Command {
     if (sql === undefined)
       throw new Error('Give one SQL statement, or --tables');
     using database = this.imports.read(name);
+    loadPresets(database, this.imports.connector(name));
     const { columns, rows } = query(database, sql);
     return {
       data: rows.map((row) =>

@@ -30,7 +30,7 @@ import {
 } from "./chunk-ZGXE7NZW.mjs";
 
 // packages/connectors/apple/connector/dist/apple-connector.js
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // packages/destinations/sqlite/dist/sqlite-catalog.js
@@ -1162,6 +1162,9 @@ function message(error) {
 var AppleConnector = class {
   name;
   title;
+  // Where the connector keeps its presets, beside its manifest; it may not
+  // exist.
+  presetsFolder;
   // What to know before narrowing this connector, such as how the app's
   // collections nest.
   note;
@@ -1173,6 +1176,17 @@ var AppleConnector = class {
     this.host = host;
     this.name = identity.name;
     this.title = identity.title;
+    this.presetsFolder = join(identity.folder, "presets");
+  }
+  // Read when asked, so a preset added to a user connector's folder is offered
+  // without a restart.
+  presets() {
+    if (!existsSync(this.presetsFolder))
+      return [];
+    return readdirSync(this.presetsFolder).filter((file) => file.endsWith(".sql")).sort().map((file) => ({
+      name: file.slice(0, -".sql".length),
+      file: join(this.presetsFolder, file)
+    }));
   }
   // The source an import loads from; listing choices reads source(scope).
   importSource(scope) {
