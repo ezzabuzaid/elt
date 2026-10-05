@@ -154,7 +154,11 @@ var Stream = class {
   // The source reads the stream once per value of these primaryKey fields and
   // keeps each partition's state apart; every record carries its partition.
   partitionKey;
-  constructor({ name, jsonSchema, primaryKey = [], supportedSyncModes, supportsFileTransfer, sourceDefinedCursor, emitsDeletes, partitionKey }) {
+  // The upstream drops records once this timestamp field passes its retention,
+  // without a deletion: a record that vanished before the read's horizon
+  // expired, and its row stays loaded.
+  expiresBy;
+  constructor({ name, jsonSchema, primaryKey = [], supportedSyncModes, supportsFileTransfer, sourceDefinedCursor, emitsDeletes, partitionKey, expiresBy }) {
     if (!name || name.includes("\0"))
       throw new TypeError("Invalid stream name");
     if (!Array.isArray(supportedSyncModes) || supportedSyncModes.length === 0 || !supportedSyncModes.every((mode) => mode === "full_refresh" || mode === "incremental") || new Set(supportedSyncModes).size !== supportedSyncModes.length)
@@ -191,6 +195,12 @@ var Stream = class {
         throw new TypeError("partitionKey fields must be distinct members of primaryKey");
       this.partitionKey = Object.freeze([...partitionKey]);
       new Deduplication(this, this.partitionKey);
+    }
+    if (expiresBy !== void 0) {
+      const field = jsonSchema.properties?.[expiresBy];
+      if (!emitsDeletes || field === void 0 || field.type !== "string" || field.format !== "date-time")
+        throw new TypeError("expiresBy must name a non-null date-time property of a stream that emits deletions");
+      this.expiresBy = expiresBy;
     }
     Object.freeze(this);
   }
@@ -1344,8 +1354,9 @@ function assertRecord(record, fields, stream, source) {
 // packages/elt/dist/core/snapshot.js
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
-async function* diffSnapshot(stream, records, state) {
+async function* diffSnapshot(stream, records, state, horizon) {
   assertSnapshotStream(stream);
+  const expired = expiry(stream, horizon);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
   const current = /* @__PURE__ */ new Map();
@@ -1354,12 +1365,12 @@ async function* diffSnapshot(stream, records, state) {
     if (current.has(key))
       throw new TypeError(`Stream ${stream.name} returned key ${key} twice in one scan`);
     const fingerprint = fingerprintOf(stream, data);
-    current.set(key, fingerprint);
-    if (previous.get(key) !== fingerprint)
+    current.set(key, entryOf(stream, data, fingerprint));
+    if (fingerprintIn(previous.get(key)) !== fingerprint)
       yield { stream: stream.name, data };
   }
-  for (const key of previous.keys())
-    if (!current.has(key))
+  for (const [key, entry] of previous)
+    if (!current.has(key) && !expired(entry))
       yield {
         type: "DELETE",
         stream: stream.name,
@@ -1368,8 +1379,9 @@ async function* diffSnapshot(stream, records, state) {
   const snapshot = sortedObject(current);
   yield { type: "STATE", stream: stream.name, state: { snapshot } };
 }
-async function* diffGroupedSnapshot(stream, groups, state) {
+async function* diffGroupedSnapshot(stream, groups, state, horizon) {
   assertSnapshotStream(stream);
+  const expired = expiry(stream, horizon);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const saved = state;
   const previous = new Map(Object.entries(saved?.groups ?? {}));
@@ -1377,9 +1389,9 @@ async function* diffGroupedSnapshot(stream, groups, state) {
   const previousFingerprint = (group, key) => {
     const same = group?.snapshot[key];
     if (same !== void 0)
-      return same;
+      return fingerprintIn(same);
     everyPrevious ??= new Map([...previous.values()].flatMap(({ snapshot }) => Object.entries(snapshot)));
-    return everyPrevious.get(key);
+    return fingerprintIn(everyPrevious.get(key));
   };
   const seen = /* @__PURE__ */ new Set();
   const claim = (key) => {
@@ -1403,7 +1415,7 @@ async function* diffGroupedSnapshot(stream, groups, state) {
       const key = deduplication.key(data);
       claim(key);
       const fingerprint = fingerprintOf(stream, data);
-      snapshot.set(key, fingerprint);
+      snapshot.set(key, entryOf(stream, data, fingerprint));
       if (previousFingerprint(before, key) !== fingerprint)
         yield { stream: stream.name, data };
     }
@@ -1413,8 +1425,8 @@ async function* diffGroupedSnapshot(stream, groups, state) {
     });
   }
   for (const { snapshot } of previous.values())
-    for (const key of Object.keys(snapshot))
-      if (!seen.has(key))
+    for (const [key, entry] of Object.entries(snapshot))
+      if (!seen.has(key) && !expired(entry))
         yield {
           type: "DELETE",
           stream: stream.name,
@@ -1432,6 +1444,27 @@ function assertSnapshotStream(stream) {
 }
 function sortedObject(entries) {
   return Object.fromEntries([...entries].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
+function expiry(stream, horizon) {
+  if (stream.expiresBy === void 0) {
+    if (horizon !== void 0)
+      throw new TypeError(`Stream ${stream.name} declares no expiresBy, so its snapshot diff takes no horizon`);
+    return () => false;
+  }
+  if (!isTimestamp(horizon))
+    throw new TypeError(`Stream ${stream.name} expires by ${stream.expiresBy}, so its snapshot diff needs a horizon timestamp`);
+  return (entry) => typeof entry !== "string" && entry[1] < horizon;
+}
+function entryOf(stream, record, fingerprint) {
+  if (stream.expiresBy === void 0)
+    return fingerprint;
+  const expiresBy = record[stream.expiresBy];
+  if (!isTimestamp(expiresBy))
+    throw new TypeError(`Stream ${stream.name} records must carry ${stream.expiresBy} as a timestamp to expire`);
+  return [fingerprint, expiresBy];
+}
+function fingerprintIn(entry) {
+  return typeof entry === "string" ? entry : entry?.[0];
 }
 function readSnapshot(state) {
   const saved = state;

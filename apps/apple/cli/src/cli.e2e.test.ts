@@ -1368,8 +1368,8 @@ test('the setup wizard saves what the person picks and syncs it when asked', asy
   const wizard = terminal(mac.path, 'setup');
   try {
     await wizard.shows('Which connectors should be imported?');
-    // Connectors are listed by name; Notes is the sixth.
-    await wizard.type(down, down, down, down, down, space, enter);
+    // Connectors are listed by name; Notes is the seventh.
+    await wizard.type(down, down, down, down, down, down, space, enter);
     await wizard.shows('Narrow any connector?');
     await wizard.type(space, enter);
     await wizard.shows('Notes: accounts');

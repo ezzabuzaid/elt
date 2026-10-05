@@ -36,7 +36,7 @@ export class HistoryItemTagsStream extends SafariStream<
   } as const;
 
   protected rows(scan: SafariScan): readonly Row[] {
-    return scan.history.flatMap((history) => history.itemTags);
+    return scan.history.profiles.flatMap((history) => history.itemTags);
   }
 
   protected record(row: Row): RecordDraft<typeof properties> {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "apple",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "description": "Choose Apple connectors and ask Codex about the data they import on your Mac.",
   "author": { "name": "Ezz Abuzaid" },
   "repository": "https://github.com/ezzabuzaid/elt",
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Apple",
     "shortDescription": "Ask about your Apple apps",
-    "longDescription": "Connect Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari and Books, and add other Mac apps by asking Codex to write a connector for them. Choose connectors and accounts, folders, mailboxes, chats, calendars, lists or Safari profiles during setup. Apple imports the selected content into a private local copy while you use it and reports when it last synced. macOS controls access to your apps. Requires the ChatGPT desktop app on a Mac.",
+    "longDescription": "Connect Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books and your Mac's activity, and add other Mac apps by asking Codex to write a connector for them. Choose connectors and accounts, folders, mailboxes, chats, calendars, lists or Safari profiles during setup. Apple imports the selected content into a private local copy while you use it and reports when it last synced. macOS controls access to your apps. Requires the ChatGPT desktop app on a Mac.",
     "developerName": "Context Compiler",
     "websiteURL": "https://github.com/ezzabuzaid/elt",
     "category": "Productivity",

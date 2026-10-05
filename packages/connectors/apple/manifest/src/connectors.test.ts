@@ -23,6 +23,7 @@ test('every connector folder loads as its connector for the host, and one that c
   });
 
   assert.deepEqual(connectors.map(({ name }) => name).sort(), [
+    'activity',
     'books',
     'calendar',
     'contacts',

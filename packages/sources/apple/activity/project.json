@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-activity",
+  "sourceRoot": "packages/sources/apple/activity/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/activity/dist/*.test.js\""
+    }
+  }
+}

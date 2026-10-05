@@ -53,6 +53,9 @@
       "path": "../../../packages/connectors/apple/books"
     },
     {
+      "path": "../../../packages/connectors/apple/activity"
+    },
+    {
       "path": "../../../packages/connectors/apple/connector"
     }
   ]

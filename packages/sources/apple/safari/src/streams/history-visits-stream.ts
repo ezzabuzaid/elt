@@ -74,16 +74,21 @@ export class HistoryVisitsStream extends SafariStream<typeof properties, Row> {
   readonly name = 'historyVisits';
   readonly store = 'history';
   readonly primaryKey = ['profileId', 'id'];
+  readonly expiresBy = 'visitedAt';
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One source record per page visit in Safari history (History.db history_visits), from this Mac and from other devices synced through iCloud while Safari ran. Safari removes visits older than its history retention setting. Relationships name streams in this source, not physical destination tables.',
+      'One source record per page visit in Safari history (History.db history_visits), from this Mac and from other devices synced through iCloud while Safari ran. Safari removes visits older than its "Remove history items" setting without a deletion; their rows stay. Relationships name streams in this source, not physical destination tables.',
     properties,
     required: Object.keys(properties),
   } as const;
 
+  override horizon(scan: SafariScan): string {
+    return scan.history.horizon;
+  }
+
   protected rows(scan: SafariScan): readonly Row[] {
-    return scan.history.flatMap((history) => history.visits);
+    return scan.history.profiles.flatMap((history) => history.visits);
   }
 
   protected record(row: Row): RecordDraft<typeof properties> {

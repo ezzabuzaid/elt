@@ -2,32 +2,43 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import { Deduplication } from './deduplication.ts';
+import { isTimestamp } from './formats.ts';
 import type { DeleteMessage, KeyValue, StateMessage } from './source.ts';
 import type { Stream } from './stream.ts';
 
-// Each key (the JSON of its primaryKey values) mapped to a fingerprint of the
-// record it identified in the last committed scan.
+// What the last committed scan saw of one key: the fingerprint of its record,
+// or, when the stream declares expiresBy, the fingerprint and the record's
+// expiresBy timestamp.
+type SavedEntry = string | readonly [fingerprint: string, expiresBy: string];
+
+// Each key (the JSON of its primaryKey values) mapped to what the last
+// committed scan saw of the record it identified.
 export type SnapshotState = {
-  readonly snapshot: Readonly<Record<string, string>>;
+  readonly snapshot: Readonly<Record<string, SavedEntry>>;
 };
 
 // Incremental reads for a source without a change feed: compare one complete
 // scan with the previous snapshot, emit new or changed records, a DELETE for
 // every key that vanished, then the new snapshot as the only STATE.
 // An empty scan deletes everything, so a failed read must throw, never yield nothing.
+// A stream that declares expiresBy takes the horizon the upstream keeps
+// records from: a key that vanished with an expiresBy before it expired, so it
+// leaves the snapshot without a DELETE and its row stays loaded.
 export async function* diffSnapshot<Data extends Record<string, unknown>>(
   stream: Stream,
   records: AsyncIterable<Data> | Iterable<Data>,
   state: unknown,
+  horizon?: string,
 ): AsyncGenerator<
   | { readonly stream: string; readonly data: Data }
   | DeleteMessage
   | StateMessage
 > {
   assertSnapshotStream(stream);
+  const expired = expiry(stream, horizon);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
-  const current = new Map<string, string>();
+  const current = new Map<string, SavedEntry>();
   for await (const data of records) {
     const key = deduplication.key(data);
     if (current.has(key))
@@ -35,11 +46,12 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
         `Stream ${stream.name} returned key ${key} twice in one scan`,
       );
     const fingerprint = fingerprintOf(stream, data);
-    current.set(key, fingerprint);
-    if (previous.get(key) !== fingerprint) yield { stream: stream.name, data };
+    current.set(key, entryOf(stream, data, fingerprint));
+    if (fingerprintIn(previous.get(key)) !== fingerprint)
+      yield { stream: stream.name, data };
   }
-  for (const key of previous.keys())
-    if (!current.has(key))
+  for (const [key, entry] of previous)
+    if (!current.has(key) && !expired(entry))
       yield {
         type: 'DELETE',
         stream: stream.name,
@@ -60,7 +72,7 @@ export type SnapshotGroup<Data> = {
 
 type SavedGroup = {
   readonly fingerprint: string | null;
-  readonly snapshot: Readonly<Record<string, string>>;
+  readonly snapshot: Readonly<Record<string, SavedEntry>>;
 };
 
 // Each group's input fingerprint and the snapshot of the records it produced.
@@ -72,35 +84,38 @@ export type GroupedSnapshotState = {
 // fingerprint cheaply. A group whose fingerprint matches the last committed
 // scan keeps its records without reading them; every other group is read and
 // diffed record by record. Deletions still come from the complete scan: a key
-// no group produced, carried or read, is deleted.
+// no group produced, carried or read, is deleted, unless it expired before the
+// horizon, as in diffSnapshot.
 export async function* diffGroupedSnapshot<
   Data extends Record<string, unknown>,
 >(
   stream: Stream,
   groups: AsyncIterable<SnapshotGroup<Data>> | Iterable<SnapshotGroup<Data>>,
   state: unknown,
+  horizon?: string,
 ): AsyncGenerator<
   | { readonly stream: string; readonly data: Data }
   | DeleteMessage
   | StateMessage
 > {
   assertSnapshotStream(stream);
+  const expired = expiry(stream, horizon);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what diffGroupedSnapshot wrote; own state is not re-validated
   const saved = state as GroupedSnapshotState | null;
   const previous = new Map(Object.entries(saved?.groups ?? {}));
   // A record can move between groups; its previous fingerprint is then found
   // through every previous group, indexed only when a lookup misses.
-  let everyPrevious: Map<string, string> | null = null;
+  let everyPrevious: Map<string, SavedEntry> | null = null;
   const previousFingerprint = (group: SavedGroup | undefined, key: string) => {
     const same = group?.snapshot[key];
-    if (same !== undefined) return same;
+    if (same !== undefined) return fingerprintIn(same);
     everyPrevious ??= new Map(
       [...previous.values()].flatMap(({ snapshot }) =>
         Object.entries(snapshot),
       ),
     );
-    return everyPrevious.get(key);
+    return fingerprintIn(everyPrevious.get(key));
   };
   const seen = new Set<string>();
   const claim = (key: string) => {
@@ -125,12 +140,12 @@ export async function* diffGroupedSnapshot<
       current.set(group.key, before);
       continue;
     }
-    const snapshot = new Map<string, string>();
+    const snapshot = new Map<string, SavedEntry>();
     for await (const data of group.records()) {
       const key = deduplication.key(data);
       claim(key);
       const fingerprint = fingerprintOf(stream, data);
-      snapshot.set(key, fingerprint);
+      snapshot.set(key, entryOf(stream, data, fingerprint));
       if (previousFingerprint(before, key) !== fingerprint)
         yield { stream: stream.name, data };
     }
@@ -140,8 +155,8 @@ export async function* diffGroupedSnapshot<
     });
   }
   for (const { snapshot } of previous.values())
-    for (const key of Object.keys(snapshot))
-      if (!seen.has(key))
+    for (const [key, entry] of Object.entries(snapshot))
+      if (!seen.has(key) && !expired(entry))
         yield {
           type: 'DELETE',
           stream: stream.name,
@@ -170,8 +185,48 @@ function sortedObject<Value>(
   );
 }
 
+// Whether a vanished key expired upstream rather than being deleted: only a
+// stream that declares expiresBy expires keys, those whose saved expiresBy
+// falls before the horizon the upstream keeps records from.
+function expiry(
+  stream: Stream,
+  horizon: string | undefined,
+): (entry: SavedEntry) => boolean {
+  if (stream.expiresBy === undefined) {
+    if (horizon !== undefined)
+      throw new TypeError(
+        `Stream ${stream.name} declares no expiresBy, so its snapshot diff takes no horizon`,
+      );
+    return () => false;
+  }
+  if (!isTimestamp(horizon))
+    throw new TypeError(
+      `Stream ${stream.name} expires by ${stream.expiresBy}, so its snapshot diff needs a horizon timestamp`,
+    );
+  // Canonical UTC timestamps order as text.
+  return (entry) => typeof entry !== 'string' && entry[1] < horizon;
+}
+
+function entryOf(
+  stream: Stream,
+  record: Record<string, unknown>,
+  fingerprint: string,
+): SavedEntry {
+  if (stream.expiresBy === undefined) return fingerprint;
+  const expiresBy = record[stream.expiresBy];
+  if (!isTimestamp(expiresBy))
+    throw new TypeError(
+      `Stream ${stream.name} records must carry ${stream.expiresBy} as a timestamp to expire`,
+    );
+  return [fingerprint, expiresBy];
+}
+
+function fingerprintIn(entry: SavedEntry | undefined): string | undefined {
+  return typeof entry === 'string' ? entry : entry?.[0];
+}
+
 // The previous snapshot, as diffSnapshot wrote it.
-function readSnapshot(state: unknown): Map<string, string> {
+function readSnapshot(state: unknown): Map<string, SavedEntry> {
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what diffSnapshot wrote; own state is not re-validated
   const saved = state as SnapshotState | null;
   return new Map(Object.entries(saved?.snapshot ?? {}));

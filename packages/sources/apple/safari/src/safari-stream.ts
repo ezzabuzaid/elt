@@ -39,6 +39,7 @@ export type SafariReader = {
   readonly store: SafariStore;
   describe(): Stream;
   read(scan: SafariScan): Promise<Record<string, unknown>[]>;
+  horizon(scan: SafariScan): string | undefined;
   file(record: Record<string, unknown>, scan: SafariScan): string | null;
 };
 
@@ -76,6 +77,12 @@ export abstract class SafariStream<P extends Properties, Row> {
       this.rows(scan).map((row) => this.record(row, scan)),
       'Safari',
     );
+  }
+
+  // The instant Safari keeps the stream's records from, for streams Safari
+  // expires (see Stream.expiresBy).
+  horizon(_scan: SafariScan): string | undefined {
+    return undefined;
   }
 
   // The file a record carries, for streams that support file reads.

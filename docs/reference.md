@@ -192,6 +192,17 @@ When the records come from inputs the source can fingerprint without reading the
 - **Moves:** a row that moves to another group is compared with its previous fingerprint wherever it was, so it loads only if it changed. A key produced twice in one run, including by a carried group, and a group key repeated in one run are rejected.
 - **Airbyte:** the [file-based cursor](https://github.com/airbytehq/airbyte-python-cdk/blob/d5536bc78c261a5f7d89595cb811c8bad676e251/airbyte_cdk/sources/file_based/stream/cursor/default_file_based_cursor.py#L82-L111) also skips unchanged files, but by modification time alone, keeps at most 10,000 files before falling back to a time window, and never emits deletions. Groups keep every fingerprint, compare it for equality rather than recency, and delete from the complete listing.
 
+#### Expiring upstreams
+
+Some upstreams keep records only for a while and then drop them without any deletion, as macOS keeps activity for 28 days and Safari keeps history for its configured age. Without help, a snapshot diff would delete those rows too. A stream that declares `expiresBy`, the name of a non-null `date-time` property, keeps them: its source passes each diff the horizon the upstream keeps records from, `diffSnapshot(stream, records, state, horizon)` or `diffGroupedSnapshot(stream, groups, state, horizon)`.
+
+- **Expiry:** each snapshot entry also saves the record's `expiresBy` value (`[fingerprint, expiresBy]`). A key that vanished with a value before the horizon expired: it leaves the snapshot with no `DELETE`, and its row stays loaded. A key that vanished at or after the horizon is deleted as usual, so a deletion the upstream makes within its retention still reaches the destination.
+- **The horizon:** the source sets it on every read from the upstream's own retention rule, never from the oldest record it finds: a "clear all" leaves no old record, which would turn every deletion into an expiry. Erring toward an earlier horizon misses deletions of the oldest records; erring later deletes rows the upstream merely expired, so sources set it a margin inside the retention.
+- **Returns:** a key that turns up again after it expired, such as an event another device synced late, loads as new.
+- **Bounded state:** expired keys leave the state, so it grows with what the upstream keeps, not with everything ever loaded.
+- **Rows outlive the upstream:** clearing the copy, resetting its checkpoint, or a full-refresh overwrite loses every expired row for good, because no rerun can read it again. Nothing marks a loaded row as expired.
+- **Precedent:** [dlt's `delete-insert`](https://github.com/dlt-hub/dlt/blob/1.30.0/dlt/destinations/sql_jobs.py#L200-L234) and [`scd2` with a `merge_key`](https://github.com/dlt-hub/dlt/blob/1.30.0/dlt/destinations/sql_jobs.py#L969-L990) likewise retire only rows within what a load reloaded; Airbyte deletes only on change-data-capture markers, and its [refreshes guide](https://github.com/airbytehq/airbyte/blob/0eef98ff7f266392e6d1e1077e80d66971f2a378/docs/platform/operator-guides/refreshes.md#L36-L96) names a source that "does not retain all of its records" as the case where truncating loses data. Here the source scopes deletions by time instead, because it knows the upstream's retention.
+
 ### Partitioned streams
 
 One source can read a stream as several partitions, such as one per Search Console property or per account. The stream declares `partitionKey`, a subset of its `primaryKey`; the source lists the partitions from its configuration and receives each one in `extract`:
@@ -1180,7 +1191,7 @@ Left out: iCloud sync bookkeeping (`history_events`, `history_event_listeners`, 
 
 ### Changes and deletions
 
-Every stream diffs a whole read of its store against the previous one. Safari's own change records cannot replace that: it expires visits older than its history setting without a tombstone. When Safari launched on 2026-09-30 it removed every visit older than a year (the oldest moved from 2025-08-21 to 2025-09-30) and wrote no tombstone. A watch polls each database's `data_version` (including a profile's `History.db` created while watching) and each property list's inode, size and modification time every second, and wakes only the streams of the store that changed. It never launches Safari: history from other devices and iCloud Tabs arrive only while Safari runs.
+Every stream diffs a whole read of its store against the previous one. Safari's own change records cannot replace that: it expires visits older than its history setting without a tombstone. When Safari launched on 2026-09-30 it removed every visit older than a year (the oldest moved from 2025-08-21 to 2025-09-30) and wrote no tombstone. So `historyVisits` and `historyItems` [expire](#expiring-upstreams) by `visitedAt` and `lastVisitedAt`, the time of a URL's latest visit: a visit or URL that vanished before Safari's horizon keeps its row, and one removed within it is deleted. The horizon is the read's start less `HistoryAgeInDaysLimit` days, plus an hour for a daylight-saving shift. That key holds the day count of General › Remove history items (Safari's own settings menu tags 1, 7, 14, 30 and 365); while it is unset Safari keeps a year, and a limit of 0 or less, which Manually may store, keeps every visit. Tags and tombstones do not expire with the history setting (tags here date from 2025-03) and diff as before. A watch polls each database's `data_version` (including a profile's `History.db` created while watching) and each property list's inode, size and modification time every second, and wakes only the streams of the store that changed. It never launches Safari: history from other devices and iCloud Tabs arrive only while Safari runs.
 
 ### Safari export probe
 
@@ -1309,6 +1320,120 @@ Checked live on 2026-10-01 against macOS 27.0 and Books 8:
 - The 11 local EPUBs packaged to `.epub` files `unzip -t` accepts; a second load wrote nothing and kept the same copies.
 
 Unverified: content type and annotation type codes this library does not use; audiobooks, store purchases and reviews (none on the probed Mac).
+
+## Apple Activity
+
+```ts
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+import { AppleActivitySource } from '@workspace/source-apple-activity/apple-activity-source';
+
+const source = new AppleActivitySource(); // ~/Library/Biome and knowledgeC.db
+const destination = new SQLiteDestination({
+  path: './outputs/activity.sqlite',
+});
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'apple-activity',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/activity-state.sqlite',
+      }),
+      steps: [source.appFocus, source.webUsage, source.devices].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads what macOS records about the user's activity; no app needs to be open. `npx nx run apple-cli:start -- sync --connector activity` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views.
+
+| Store                              | Where                                         | Streams                                                          |
+| ---------------------------------- | --------------------------------------------- | ---------------------------------------------------------------- |
+| Biome streams (SEGB segment files) | `~/Library/Biome/streams/restricted/<Stream>` | the fifteen streams below named after a Biome stream             |
+| `knowledgeC.db` (Core Data, WAL)   | `~/Library/Application Support/Knowledge`     | `knowledgeIntents`, `displayBacklight`, `discoverabilitySignals` |
+| `sync.db` (SQLite, WAL)            | `~/Library/Biome/sync`                        | `devices`                                                        |
+
+A run opens only the stores its selected streams read, pins each database in one read transaction, and opens them read-only, never as `immutable`. A store that cannot be opened fails only its own streams.
+
+### Access
+
+Every store needs [Full Disk Access](#full-disk-access); with it, a terminal read all 818 Biome files on 2026-10-05. Reading Biome without it is unverified, since that needs the grant removed. The system Biome under `/private/var/db/biome` belongs to `_biome` and is not read.
+
+### Streams
+
+| Stream                   | Upstream                              | Kept     | One record per                                                               |
+| ------------------------ | ------------------------------------- | -------- | ---------------------------------------------------------------------------- |
+| `appFocus`               | Biome `App.InFocus`                   | 28 days  | app coming into or leaving the foreground, on this Mac and synced devices    |
+| `screenTimeAppUsage`     | Biome `ScreenTime.AppUsage`           | 28 days  | start or end of usage Screen Time counts, without system interface           |
+| `appMenuItems`           | Biome `App.MenuItem`                  | 28 days  | use of an app's menu bar (which app, not which item)                         |
+| `appIntents`             | Biome `App.Intent`                    | 28 days  | interaction an app donated, with its decoded `INInteraction`                 |
+| `webUsage`               | Biome `App.WebUsage`                  | 28 days  | change of a page's usage Screen Time counts                                  |
+| `safariNavigations`      | Biome `Safari.Navigations`            | 28 days  | navigation Safari reports, its time rounded up to the half hour              |
+| `documentInteractions`   | Biome `App.DocumentInteraction`       | 28 days  | document an app opened or used                                               |
+| `mediaUsage`             | Biome `App.MediaUsage`                | 28 days  | start or stop of media an app played                                         |
+| `nowPlaying`             | Biome `Media.NowPlaying`              | 28 days  | Now Playing change, on this Mac and synced devices                           |
+| `focusModes`             | Biome `UserFocus.ComputedMode`        | 28 days  | Focus turning on or off                                                      |
+| `focusSuggestions`       | Biome `UserFocus.InferredMode`        | 28 days  | start or end of a Focus the system suggested                                 |
+| `notificationUsage`      | Biome `Notification.Usage`            | 28 days  | notification event (no title or body)                                        |
+| `notificationDeliveries` | Biome `Notification.Delivery`         | 3 days   | notification delivered                                                       |
+| `bluetoothConnections`   | Biome `Device.Wireless.Bluetooth`     | 28 days  | Bluetooth device connecting or disconnecting, on this Mac and synced devices |
+| `screenshots`            | Biome `Screenshots.Screenshot`        | 1 day    | screenshot taken                                                             |
+| `knowledgeIntents`       | knowledgeC `/app/intents`             | 28 days  | app interaction; on a Mac they arrive from the iPhone through knowledge sync |
+| `displayBacklight`       | knowledgeC `/display/isBacklit`       | 28 days  | span the display stayed lit or dark                                          |
+| `discoverabilitySignals` | knowledgeC `/discoverability/signals` | 730 days | feature-discovery signal macOS times its tips by                             |
+| `devices`                | `sync.db` `DevicePeer`                | current  | device Biome syncs with, this Mac included                                   |
+
+The ages are each stream's maximum age, compiled into macOS's BiomeLibrary (`storeConfigurationFor<Stream>` builds a `BMPruningPolicy`); no file on disk states them. Biome streams carry `origin` (`local`, or the synced device's identifier), `segment`, `slot` and `recordedAt`, Biome's write time, plus the record's own time as `occurredAt` where it has one. A few payloads store Unix rather than Mac times, and `appIntents` stores the interaction's time, which can precede its write. Start and end are separate records; a session runs from a start to the next end of the same app and origin.
+
+Left out:
+
+- knowledgeC's `/app/usage`, `/app/mediaUsage`, `/notification/usage` and `/app/webUsage`: they copy Biome's streams (10,167 of 10,200 `/app/usage` end times match `ScreenTime.AppUsage`, 182 of 182 media and 4,731 of 4,782 notifications), and `/app/usage` loses rows unevenly before 28 days.
+- Biome's other streams: telemetry (Siri analytics, Lighthouse, IntelligenceFlow), content copies (ProactiveHarvesting, TextUnderstanding), and the user's choice to leave out Siri.Remembers (call and message history synced from an iPhone), Pasteboard, Wallet and Location. HomeKit, Messages.Read and Mail.Search are left out too.
+- Streams with no records on the probed Mac, whose fields cannot be typed: `Safari.PageLoad`, `Screen.Sharing`, `App.Activity`, `Audio.Route`, `App.WebApp.InFocus`.
+- Fields Biome leaves unnamed or the connector does not name, such as most of `Safari.Navigations`, file bookmark data and constant enums: `payload` holds every record's protobuf, base64, as Biome stored it.
+
+### Records and identity
+
+A Biome stream folder holds `local/` for this Mac and `remote/<device>/` for each synced device; `tombstone/` folders beside them hold Biome's deletion log. Each file is a preallocated SEGB v2 segment ([CCL's reader](https://github.com/cclgroupltd/ccl-segb/blob/23c3f7d3d969a79627b738ba0a2486c31d675753/ccl_segb/ccl_segb2.py) and Cellebrite's write-up describe it): a 32-byte header whose int32 at byte 4 counts the slots, the records from byte 32 each led by a CRC-32 and an int32, and 16-byte trailer slots counted back from the end of the file, slot k at `size − 16·(k+1)`, holding the record's end offset, state (1 written, 3 deleted, 4 empty) and write time. Biome never compacts a segment, so `(origin, segment, slot)` identifies a record. `packages/macos/segb` reads them. Only written slots whose CRC matches are records: Biome zero-fills a deleted record in place, and some slots marked written hold zeroes (240 of them across this Mac's files).
+
+### Changes, expiry and deletions
+
+Biome streams diff one [group](#snapshot-streams) per segment, fingerprinted by a hash of its trailer, so a run reads only the segments Biome appended to or deleted from. Size and modification time cannot serve: Biome writes preallocated files in place, and mtime trailed the newest record by up to 236 hours. The header's deletion counter cannot either: it drifted from the deleted slots in 9 of 417 files.
+
+Every stream [expires](#expiring-upstreams) by `recordedAt` (`startedAt` for knowledgeC) at its maximum age, less an hour. Biome prunes a record no sooner than that: each of the 18,305 age-pruning tombstones of the week before 2026-10-05 sat 28.000–29.03 days after a 28-day record. Biome's sync daemon also removes synced copies, with an explicit-deletion reason, 28.6–29.0 days after the record; those expire too. A record removed earlier is deleted: Safari history clearing and Screen Time's `delete-web-history` removed `webUsage` and `safariNavigations` records minutes old. `devices` diffs as a plain snapshot.
+
+- **Limits:** each stream also has an event-count and size cap (`App.InFocus` keeps at most 75,000 records, `Notification.Usage` 30,000, Bluetooth, Safari navigations and both Focus streams 10,000). A stream that reached its cap would prune records younger than its maximum age, and the connector would delete their rows. The probed Mac held 31,772 `App.InFocus` records. Biome's prune runs as a daily maintenance task, so records can outlive their maximum age until it runs.
+- **Rebuilding:** rows of records macOS dropped exist only in the import. Clearing a copy, rebuilding the import or turning the connector off loses them for good.
+- **Cost:** a first load of this Mac (about 100,000 records) took 4.4 s and a rerun with no new records 0.7 s; the checkpoint store held 12 MB of snapshot state.
+
+### Watching
+
+A watch polls every minute (`pollIntervalMs`): each selected Biome stream's segment listing and trailer hashes, and `data_version` of knowledgeC and `sync.db`. It wakes only the streams that changed. During a 64-second live check while records arrived, `stat` saw no change, FSEvents on the folder reported nothing, and kqueue reported 45 events for `App.InFocus` but none for `ScreenTime.AppUsage`.
+
+### Activity export probe
+
+Checked live on 2026-10-05 against macOS 27.0 (26A428):
+
+- All 818 Biome files were SEGB v2; `macos-segb` read the 280 segments of every stream with 447,013 intact, 216,461 deleted and 245 unreadable slots, matching an independent reader.
+- Field meanings follow each Biome event class's initializer in the dyld shared cache, whose argument order matched the protobuf field numbers wherever the data could check it; `App.MenuItem`, `App.DocumentInteraction`, `Safari.Navigations` and `Notification.Delivery` are named from the data.
+- Only the iPhone of 11 remote device folders wrote within the week; its records spanned 27.95 days. `sync.db` names no device.
+- `knowledgeIntents` rows all came from the iPhone through knowledge sync; `discoverabilitySignals` reached back to 2025-02.
+- A load through `apple-cli` read 19 streams in 6 s; a second load wrote nothing.
+
+Unverified: reading without Full Disk Access; what macOS stores for a device of platform 4; streams with no records here.
 
 ## Google Search Console
 

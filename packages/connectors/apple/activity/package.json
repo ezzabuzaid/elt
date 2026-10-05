@@ -1,0 +1,15 @@
+{
+  "name": "@workspace/connector-apple-activity",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/activity-connector.js",
+  "contextCompiler": {
+    "name": "activity",
+    "title": "Activity"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/source-apple-activity": "0.0.1"
+  }
+}

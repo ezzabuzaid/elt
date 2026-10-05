@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
@@ -6,8 +6,17 @@ import { BookmarksReader } from './bookmarks-reader.ts';
 import { ClosedTabsReader } from './closed-tabs-reader.ts';
 import { CloudTabsReader, cloudTabsColumns } from './cloud-tabs-reader.ts';
 import { DownloadsReader } from './downloads-reader.ts';
-import { HistoryReader, historyColumns } from './history-reader.ts';
-import { SafariDatabase, readSafariPlist } from './safari-store.ts';
+import {
+  HistoryReader,
+  type SafariHistory,
+  historyColumns,
+  historyHorizon,
+} from './history-reader.ts';
+import {
+  SafariDatabase,
+  readSafariPlist,
+  readSafariPreferences,
+} from './safari-store.ts';
 import { defaultProfile, text } from './safari-values.ts';
 import { TabsReader, tabsColumns } from './tabs-reader.ts';
 
@@ -35,6 +44,10 @@ export const storeFiles = ({ directory, container }: SafariLocation) =>
     downloads: join(directory, 'Downloads.plist'),
   }) satisfies Record<SafariStore, string>;
 
+// Safari's own preferences, beside its container's Safari folder.
+export const safariPreferences = ({ container }: SafariLocation) =>
+  join(dirname(container), 'Preferences/com.apple.Safari.plist');
+
 // The default profile keeps its history in ~/Library/Safari; every other
 // profile in the container's Profiles folder named by its server_id.
 export const profileHistory = (
@@ -52,7 +65,7 @@ export const databaseStores = new Set<SafariStore>([
 ]);
 
 type Readers = {
-  history: HistoryReader[];
+  history: SafariHistory;
   tabs: TabsReader;
   cloudTabs: CloudTabsReader;
   bookmarks: BookmarksReader;
@@ -84,6 +97,7 @@ export class SafariScan implements AsyncDisposable {
     scope: ImportScope,
   ): Promise<SafariScan> {
     const files = storeFiles(location);
+    const startedAt = new Date();
     await using resources = new AsyncDisposableStack();
     const database = async (
       path: string,
@@ -124,7 +138,13 @@ export class SafariScan implements AsyncDisposable {
             ),
           );
         }
-        return readers;
+        return {
+          profiles: readers,
+          horizon: historyHorizon(
+            await readSafariPreferences(safariPreferences(location)),
+            startedAt,
+          ),
+        };
       }),
       tabs: await open(
         'tabs',
@@ -156,7 +176,7 @@ export class SafariScan implements AsyncDisposable {
     return new SafariScan(resources.move(), opened);
   }
 
-  get history(): HistoryReader[] {
+  get history(): SafariHistory {
     return this.#reader('history');
   }
 

@@ -63,7 +63,7 @@ export class HistoryTombstonesStream extends SafariStream<
   } as const;
 
   protected rows(scan: SafariScan): readonly Row[] {
-    return scan.history.flatMap((history) => history.tombstones);
+    return scan.history.profiles.flatMap((history) => history.tombstones);
   }
 
   protected record(row: Row): RecordDraft<typeof properties> {

@@ -88,6 +88,16 @@ var ProtobufMessage = class _ProtobufMessage {
     view.setUint32(0, Number(field.value), true);
     return view.getFloat32(0, true);
   }
+  double(number) {
+    const field = this.#last(number);
+    if (field === void 0)
+      return void 0;
+    if (field.wire !== 1)
+      throw new TypeError(`Protobuf field ${number} is not a double`);
+    const view = new DataView(new ArrayBuffer(8));
+    view.setBigUint64(0, field.value, true);
+    return view.getFloat64(0, true);
+  }
   bytes(number) {
     const field = this.#last(number);
     return field === void 0 ? void 0 : this.#delimited(field, number);

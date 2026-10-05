@@ -1340,6 +1340,201 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
   );
 });
 
+test('an expiring stream keeps the rows its upstream expired and deletes only what vanished after the horizon', async () => {
+  type Row = { id: string; seenAt: string };
+  type Group = { key: string; fingerprint: string; rows: Row[] };
+  let scan: { horizon: string; groups: Group[] } = { horizon: '', groups: [] };
+  const fields = {
+    id: { type: 'string' },
+    seenAt: { type: 'string', format: 'date-time' },
+  } as const;
+  const declaration = {
+    jsonSchema: { type: 'object', properties: fields },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+    expiresBy: 'seenAt',
+  } as const;
+  const events = new Stream({ name: 'events', ...declaration });
+  const grouped = new Stream({ name: 'grouped', ...declaration });
+  class ExpiringSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'expiring-test';
+    protected readonly catalog = new Catalog([events, grouped]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      if (configuration.stream === events)
+        yield* diffSnapshot(
+          events,
+          scan.groups.flatMap(({ rows }) => rows),
+          state,
+          scan.horizon,
+        );
+      else
+        yield* diffGroupedSnapshot(
+          grouped,
+          scan.groups.map(({ key, fingerprint, rows }) => ({
+            key,
+            fingerprint,
+            records: () => rows,
+          })),
+          state,
+          scan.horizon,
+        );
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-expire-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const statePath = join(scratch.path, 'state.sqlite');
+  const copies = [events, grouped].map(
+    (stream) =>
+      new Copy(stream, destination.table(stream.name), {
+        id: stream.name,
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+      }),
+  );
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new ExpiringSource(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({ path: statePath }),
+        steps: copies,
+      }),
+    ],
+  });
+  const loaded = (table: string) => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare(`SELECT id FROM ${table} ORDER BY id`)
+      .all()
+      .map(({ id }) => id);
+  };
+  const remembered = () => {
+    using database = new DatabaseSync(statePath, { readOnly: true });
+    const states = database
+      .prepare('SELECT id, state FROM checkpoints ORDER BY id')
+      .all()
+      .map(({ state }) => JSON.parse(String(state)));
+    return [
+      Object.keys(states[0].snapshot),
+      Object.values<{ snapshot: object }>(states[1].groups).flatMap(
+        ({ snapshot }) => Object.keys(snapshot),
+      ),
+    ];
+  };
+  const run = async (horizon: string, groups: Group[]) => {
+    scan = { horizon, groups };
+    return (await pipeline.run()).map(({ count, deleted }) => ({
+      count,
+      deleted,
+    }));
+  };
+  const c = { id: 'c', seenAt: '2026-10-02T08:00:00.000Z' };
+  const old = {
+    key: 'old',
+    fingerprint: 'v1',
+    rows: [{ id: 'a', seenAt: '2026-09-01T08:00:00.000Z' }],
+  };
+  const recent = {
+    key: 'recent',
+    fingerprint: 'v1',
+    rows: [{ id: 'b', seenAt: '2026-10-01T08:00:00.000Z' }, c],
+  };
+
+  assert.deepEqual(await run('2026-09-01T00:00:00.000Z', [old, recent]), [
+    { count: 3, deleted: 0 },
+    { count: 3, deleted: 0 },
+  ]);
+
+  // a vanished before the horizon, so it expired: its row stays and the
+  // snapshot forgets it; b vanished after the horizon, so it was deleted.
+  const later = { ...recent, fingerprint: 'v2', rows: [c] };
+  assert.deepEqual(await run('2026-09-08T00:00:00.000Z', [later]), [
+    { count: 0, deleted: 1 },
+    { count: 0, deleted: 1 },
+  ]);
+  assert.deepEqual(loaded('events'), ['a', 'c']);
+  assert.deepEqual(loaded('grouped'), ['a', 'c']);
+  assert.deepEqual(remembered(), [['["c"]'], ['["c"]']]);
+
+  // An expired key that turns up again, such as an event another device
+  // synced late, loads as new.
+  assert.deepEqual(await run('2026-09-08T00:00:00.000Z', [old, later]), [
+    { count: 1, deleted: 0 },
+    { count: 1, deleted: 0 },
+  ]);
+  assert.deepEqual(loaded('events'), ['a', 'c']);
+
+  // A diff of an expiring stream needs a horizon and timestamps to expire by;
+  // any other stream takes no horizon.
+  const failing: [() => AsyncIterable<unknown>, RegExp][] = [
+    [
+      () => diffSnapshot(events, [], null),
+      /expires by seenAt, so its snapshot diff needs a horizon timestamp/,
+    ],
+    [
+      () =>
+        diffSnapshot(
+          events,
+          [{ id: 'x', seenAt: 'yesterday' }],
+          null,
+          scan.horizon,
+        ),
+      /must carry seenAt as a timestamp to expire/,
+    ],
+    [
+      () =>
+        diffSnapshot(
+          new Stream({ ...events, expiresBy: undefined }),
+          [],
+          null,
+          scan.horizon,
+        ),
+      /declares no expiresBy, so its snapshot diff takes no horizon/,
+    ],
+  ];
+  for (const [diff, message] of failing)
+    await assert.rejects(Array.fromAsync(diff()), message);
+  for (const invalid of [
+    { ...declaration, expiresBy: 'id' },
+    { ...declaration, expiresBy: 'missing' },
+    { ...declaration, emitsDeletes: undefined },
+    {
+      ...declaration,
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          ...fields,
+          seenAt: { type: ['string', 'null'], format: 'date-time' },
+        },
+      },
+    },
+  ] as const)
+    assert.throws(
+      () => new Stream({ name: 'invalid', ...invalid }),
+      /expiresBy must name a non-null date-time property of a stream that emits deletions/,
+    );
+});
+
 test('a target has one writer, even when another loads only its own partitions', async () => {
   class Records extends Source {
     override coverage() {

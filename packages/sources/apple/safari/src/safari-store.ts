@@ -144,3 +144,22 @@ export async function readSafariPlist(path: string): Promise<PlistValue> {
   }
   return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readPlist(path);
 }
+
+// Safari's preferences, or null before Safari has written any: every setting
+// then holds its default.
+export async function readSafariPreferences(
+  path: string,
+): Promise<PlistValue | null> {
+  try {
+    return await readSafariPlist(path);
+  } catch (error) {
+    if (
+      error instanceof SafariUnavailableError &&
+      error.cause instanceof Error &&
+      'code' in error.cause &&
+      error.cause.code === 'ENOENT'
+    )
+      return null;
+    throw error;
+  }
+}

@@ -7,25 +7,25 @@ import {
   readPlist
 } from "../../chunks/chunk-YLKLHO7E.mjs";
 import {
+  byId
+} from "../../chunks/chunk-FGFSL4M6.mjs";
+import {
   selected,
   withinDates
 } from "../../chunks/chunk-YM7ADF2O.mjs";
-import {
-  byId
-} from "../../chunks/chunk-FGFSL4M6.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-6QQOSPXB.mjs";
+} from "../../chunks/chunk-7XFLCHNF.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-OEQ4WCEQ.mjs";
+} from "../../chunks/chunk-C5AZWDBZ.mjs";
 import {
   __callDispose,
   __using
@@ -37,7 +37,7 @@ import { join as join3 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
 // packages/sources/apple/safari/dist/safari-scan.js
-import { join as join2 } from "node:path";
+import { dirname, join as join2 } from "node:path";
 
 // packages/sources/apple/safari/dist/safari-values.js
 var defaultProfile = "DefaultProfile";
@@ -251,6 +251,17 @@ var historyColumns = {
   history_items_to_tags: ["history_item", "tag_id", "timestamp"]
 };
 var select2 = (table, order) => `SELECT ${historyColumns[table].join(", ")} FROM ${table} ORDER BY ${order}`;
+var dayMs = 864e5;
+var defaultHistoryAgeInDays = 365;
+var forever = Date.UTC(1, 0, 1);
+var marginMs = 36e5;
+function historyHorizon(preferences, startedAt) {
+  const configured = isDictionary(preferences) ? preferences.HistoryAgeInDaysLimit : void 0;
+  const limit = configured ?? defaultHistoryAgeInDays;
+  if (typeof limit !== "number")
+    throw new TypeError("Safari HistoryAgeInDaysLimit is not a number");
+  return new Date(limit > 0 ? Math.max(forever, startedAt.getTime() - limit * dayMs + marginMs) : forever).toISOString();
+}
 var HistoryReader = class {
   database;
   profileId;
@@ -281,7 +292,10 @@ var HistoryReader = class {
     if (this.#items !== void 0)
       return this.#items;
     const visited = new Set(this.visits.map((visit) => visit.history_item));
-    this.#items = this.#included ? this.#all(select2("history_items", "id")).filter((row) => !this.#dated || visited.has(row.id)) : [];
+    this.#items = this.#included ? this.#all(`SELECT ${historyColumns.history_items.join(", ")},
+            (SELECT max(visit_time) FROM history_visits
+              WHERE history_item = history_items.id) AS last_visit_time
+            FROM history_items ORDER BY id`).filter((row) => !this.#dated || visited.has(row.id)) : [];
     return this.#items;
   }
   get itemTags() {
@@ -388,6 +402,15 @@ async function readSafariPlist(path) {
     throw new SafariUnavailableError(path, cause);
   }
   return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readPlist(path);
+}
+async function readSafariPreferences(path) {
+  try {
+    return await readSafariPlist(path);
+  } catch (error) {
+    if (error instanceof SafariUnavailableError && error.cause instanceof Error && "code" in error.cause && error.cause.code === "ENOENT")
+      return null;
+    throw error;
+  }
 }
 
 // packages/sources/apple/safari/dist/tabs-reader.js
@@ -597,6 +620,7 @@ var storeFiles = ({ directory, container }) => ({
   closedTabs: join2(directory, "RecentlyClosedTabs.plist"),
   downloads: join2(directory, "Downloads.plist")
 });
+var safariPreferences = ({ container }) => join2(dirname(container), "Preferences/com.apple.Safari.plist");
 var profileHistory = ({ directory, container }, serverId) => serverId === defaultProfile ? join2(directory, "History.db") : join2(container, "Profiles", serverId, "History.db");
 var databaseStores = /* @__PURE__ */ new Set([
   "history",
@@ -614,6 +638,7 @@ var SafariScan = class _SafariScan {
     var _stack = [];
     try {
       const files = storeFiles(location);
+      const startedAt = /* @__PURE__ */ new Date();
       const resources = __using(_stack, new AsyncDisposableStack(), true);
       const database = async (path, columns) => resources.use(await SafariDatabase.open(path, columns));
       const open2 = async (store, reader) => {
@@ -637,7 +662,10 @@ var SafariScan = class _SafariScan {
               throw new TypeError("A Safari profile has no identifier");
             readers2.push(new HistoryReader(await database(profileHistory(location, serverId), historyColumns), profileId5, scope));
           }
-          return readers2;
+          return {
+            profiles: readers2,
+            horizon: historyHorizon(await readSafariPreferences(safariPreferences(location)), startedAt)
+          };
         }),
         tabs: await open2("tabs", async () => new TabsReader(await database(files.tabs, tabsColumns), scope)),
         cloudTabs: await open2("cloudTabs", async () => new CloudTabsReader(await database(files.cloudTabs, cloudTabsColumns))),
@@ -722,6 +750,11 @@ var SafariStream = class {
   }
   async read(scan) {
     return validateRecords(this, this.rows(scan).map((row) => this.record(row, scan)), "Safari");
+  }
+  // The instant Safari keeps the stream's records from, for streams Safari
+  // expires (see Stream.expiresBy).
+  horizon(_scan) {
+    return void 0;
   }
   // The file a record carries, for streams that support file reads.
   file(_record, _scan) {
@@ -1372,7 +1405,7 @@ var HistoryItemTagsStream = class extends SafariStream {
     required: Object.keys(properties10)
   };
   rows(scan) {
-    return scan.history.flatMap((history) => history.itemTags);
+    return scan.history.profiles.flatMap((history) => history.itemTags);
   }
   record(row) {
     return {
@@ -1428,20 +1461,28 @@ var properties11 = {
   derivedCountsStale: {
     ...boolean6,
     description: "Whether Safari marked visitCountScore and the count lists for recomputation."
+  },
+  lastVisitedAt: {
+    ...safariFields.timestamp,
+    description: "The URL's latest visit in this profile's History.db. Safari removes the URL once that visit passes its history setting."
   }
 };
 var HistoryItemsStream = class extends SafariStream {
   name = "historyItems";
   store = "history";
   primaryKey = ["profileId", "id"];
+  expiresBy = "lastVisitedAt";
   jsonSchema = {
     type: "object",
-    description: "One source record per URL in Safari history (History.db history_items), with the visit counts Safari ranks it by. Relationships name streams in this source, not physical destination tables.",
+    description: "One source record per URL in Safari history (History.db history_items), with the visit counts Safari ranks it by. Safari removes a URL with its last visit, without a deletion; its row stays. Relationships name streams in this source, not physical destination tables.",
     properties: properties11,
     required: Object.keys(properties11)
   };
+  horizon(scan) {
+    return scan.history.horizon;
+  }
   rows(scan) {
-    return scan.history.flatMap((history) => history.items);
+    return scan.history.profiles.flatMap((history) => history.items);
   }
   record(row) {
     return {
@@ -1455,7 +1496,8 @@ var HistoryItemsStream = class extends SafariStream {
       weeklyVisitCounts: counts(row.weekly_visit_counts),
       autocompleteTriggers: triggers(row.autocomplete_triggers),
       statusCode: integer(row.status_code) || null,
-      derivedCountsStale: flag(row.should_recompute_derived_visit_counts)
+      derivedCountsStale: flag(row.should_recompute_derived_visit_counts),
+      lastVisitedAt: appleTime(row.last_visit_time)
     };
   }
 };
@@ -1501,7 +1543,7 @@ var HistoryTagsStream = class extends SafariStream {
     required: Object.keys(properties12)
   };
   rows(scan) {
-    return scan.history.flatMap((history) => history.tags);
+    return scan.history.profiles.flatMap((history) => history.tags);
   }
   record(row) {
     return {
@@ -1565,7 +1607,7 @@ var HistoryTombstonesStream = class extends SafariStream {
     required: Object.keys(properties13)
   };
   rows(scan) {
-    return scan.history.flatMap((history) => history.tombstones);
+    return scan.history.profiles.flatMap((history) => history.tombstones);
   }
   record(row) {
     return {
@@ -1643,14 +1685,18 @@ var HistoryVisitsStream = class extends SafariStream {
   name = "historyVisits";
   store = "history";
   primaryKey = ["profileId", "id"];
+  expiresBy = "visitedAt";
   jsonSchema = {
     type: "object",
-    description: "One source record per page visit in Safari history (History.db history_visits), from this Mac and from other devices synced through iCloud while Safari ran. Safari removes visits older than its history retention setting. Relationships name streams in this source, not physical destination tables.",
+    description: 'One source record per page visit in Safari history (History.db history_visits), from this Mac and from other devices synced through iCloud while Safari ran. Safari removes visits older than its "Remove history items" setting without a deletion; their rows stay. Relationships name streams in this source, not physical destination tables.',
     properties: properties14,
     required: Object.keys(properties14)
   };
+  horizon(scan) {
+    return scan.history.horizon;
+  }
   rows(scan) {
-    return scan.history.flatMap((history) => history.visits);
+    return scan.history.profiles.flatMap((history) => history.visits);
   }
   record(row) {
     return {
@@ -2523,7 +2569,7 @@ var AppleSafariSource = class extends Source {
     const { stream } = configuration;
     const reader = readerOf(stream);
     const records = await reader.read(scan);
-    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state) : records.map((data) => ({ stream: stream.name, data }));
+    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state, reader.horizon(scan)) : records.map((data) => ({ stream: stream.name, data }));
     for await (const message of messages) {
       if ("type" in message || configuration.fileReads.length === 0)
         yield message;

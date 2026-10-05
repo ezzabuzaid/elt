@@ -18,6 +18,10 @@ export class Stream {
   // The source reads the stream once per value of these primaryKey fields and
   // keeps each partition's state apart; every record carries its partition.
   readonly partitionKey?: readonly string[];
+  // The upstream drops records once this timestamp field passes its retention,
+  // without a deletion: a record that vanished before the read's horizon
+  // expired, and its row stays loaded.
+  readonly expiresBy?: string;
 
   constructor({
     name,
@@ -28,6 +32,7 @@ export class Stream {
     sourceDefinedCursor,
     emitsDeletes,
     partitionKey,
+    expiresBy,
   }: {
     name: string;
     jsonSchema: StreamSchema;
@@ -37,6 +42,7 @@ export class Stream {
     sourceDefinedCursor?: true;
     emitsDeletes?: true;
     partitionKey?: readonly string[];
+    expiresBy?: string;
   }) {
     if (!name || name.includes('\0'))
       throw new TypeError('Invalid stream name');
@@ -95,6 +101,19 @@ export class Stream {
         );
       this.partitionKey = Object.freeze([...partitionKey]);
       new Deduplication(this, this.partitionKey);
+    }
+    if (expiresBy !== undefined) {
+      const field = jsonSchema.properties?.[expiresBy];
+      if (
+        !emitsDeletes ||
+        field === undefined ||
+        field.type !== 'string' ||
+        field.format !== 'date-time'
+      )
+        throw new TypeError(
+          'expiresBy must name a non-null date-time property of a stream that emits deletions',
+        );
+      this.expiresBy = expiresBy;
     }
     Object.freeze(this);
   }

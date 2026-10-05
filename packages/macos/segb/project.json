@@ -1,0 +1,9 @@
+{
+  "name": "macos-segb",
+  "sourceRoot": "packages/macos/segb/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {}
+  }
+}

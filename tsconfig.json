@@ -112,6 +112,15 @@
     },
     {
       "path": "./packages/sdks/apple/app-database"
+    },
+    {
+      "path": "./packages/connectors/apple/activity"
+    },
+    {
+      "path": "./packages/sources/apple/activity"
+    },
+    {
+      "path": "./packages/macos/segb"
     }
   ]
 }

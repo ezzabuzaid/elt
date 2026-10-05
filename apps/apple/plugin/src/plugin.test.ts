@@ -405,6 +405,7 @@ test('the Settings page switches connectors on and off and describes each import
       reminders: false,
       safari: false,
       books: false,
+      activity: false,
     },
   );
   const [kept, mail] = plugin.status().connectors;

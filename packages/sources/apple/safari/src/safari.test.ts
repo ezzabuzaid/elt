@@ -612,6 +612,11 @@ async function safariFixture(root: string) {
     join(directory, 'RecentlyClosedTabs.plist'),
     closedTabsPlist,
   );
+  // Remove history items: Manually, so the fixed visit dates never expire.
+  await mkdir(join(root, 'Preferences'));
+  await writePlist(join(root, 'Preferences', 'com.apple.Safari.plist'), {
+    HistoryAgeInDaysLimit: 0,
+  });
   return { directory, container };
 }
 
@@ -1634,6 +1639,63 @@ test('Safari follows each store on its own: a rerun writes nothing, and edits an
     safari.read(`SELECT id FROM closed_tabs ORDER BY id`).map(({ id }) => id),
     ['CT-2', 'CT-3'],
   );
+});
+
+test('Safari history keeps the visits and URLs Safari expires under its history setting, and deletes what was removed within it', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  const location = await safariFixture(scratch.path);
+  await writePlist(
+    join(scratch.path, 'Preferences', 'com.apple.Safari.plist'),
+    { HistoryAgeInDaysLimit: 7 },
+  );
+  const daysAgo = (days: number) =>
+    appleSeconds(new Date(Date.now() - days * 86_400_000).toISOString());
+  {
+    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    history.exec(`INSERT INTO history_items (id, url, visit_count, daily_visit_counts, should_recompute_derived_visit_counts, visit_count_score)
+      VALUES (3, 'https://expired.example/', 1, x'', 0, 0), (4, 'https://removed.example/', 1, x'', 0, 0)`);
+    history
+      .prepare(
+        'INSERT INTO history_visits (id, history_item, visit_time) VALUES (?, ?, ?), (?, ?, ?)',
+      )
+      .run(30, 3, daysAgo(30), 31, 4, daysAgo(2));
+  }
+  const safari = await appleImport(
+    new AppleSafariSource(location),
+    join(scratch.path, 'import'),
+  );
+  const history = () =>
+    safari
+      .read(
+        `SELECT 'visit ' || id AS row FROM history_visits WHERE id >= 30
+         UNION ALL SELECT 'item ' || id FROM history_items WHERE id >= 3 ORDER BY row`,
+      )
+      .map(({ row }) => row);
+  await safari.load();
+  assert.deepEqual(history(), ['item 3', 'item 4', 'visit 30', 'visit 31']);
+
+  // Safari expires the month-old visit with its URL, past its week; the
+  // two-day-old visit was removed within it.
+  {
+    using database = new DatabaseSync(join(location.directory, 'History.db'));
+    database.exec(
+      'DELETE FROM history_visits WHERE id IN (30, 31); DELETE FROM history_items WHERE id IN (3, 4)',
+    );
+  }
+  const loaded = await safari.load();
+
+  assert.deepEqual(
+    loaded
+      .filter(({ copy }) =>
+        ['historyVisits', 'historyItems'].includes(copy.from.name),
+      )
+      .map(({ copy, deleted }) => [copy.from.name, deleted]),
+    [
+      ['historyItems', 1],
+      ['historyVisits', 1],
+    ],
+  );
+  assert.deepEqual(history(), ['item 3', 'visit 30']);
 });
 
 test('Safari scope keeps the chosen profiles and visit dates, and leaves unattributed data whole', async () => {

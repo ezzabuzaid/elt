@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/source-apple-activity",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-activity-source": {
+      "types": "./dist/apple-activity-source.d.ts",
+      "default": "./dist/apple-activity-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/macos-plist": "0.0.1",
+    "@workspace/macos-segb": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

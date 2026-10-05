@@ -102,6 +102,16 @@ export class ProtobufMessage {
     return view.getFloat32(0, true);
   }
 
+  double(number: number): number | undefined {
+    const field = this.#last(number);
+    if (field === undefined) return undefined;
+    if (field.wire !== 1)
+      throw new TypeError(`Protobuf field ${number} is not a double`);
+    const view = new DataView(new ArrayBuffer(8));
+    view.setBigUint64(0, field.value, true);
+    return view.getFloat64(0, true);
+  }
+
   bytes(number: number): Uint8Array | undefined {
     const field = this.#last(number);
     return field === undefined ? undefined : this.#delimited(field, number);

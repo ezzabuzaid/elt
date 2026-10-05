@@ -5,6 +5,7 @@
   "dependencies": {
     "@clack/prompts": "1.8.1",
     "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/connector-apple-activity": "0.0.1",
     "@workspace/connector-apple-books": "0.0.1",
     "@workspace/connector-apple-calendar": "0.0.1",
     "@workspace/connector-apple-contacts": "0.0.1",

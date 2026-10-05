@@ -3,7 +3,14 @@ import type { RecordDraft } from '@workspace/elt';
 import { triggers } from '../history-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { type Row, counts, flag, integer, text } from '../safari-values.ts';
+import {
+  type Row,
+  appleTime,
+  counts,
+  flag,
+  integer,
+  text,
+} from '../safari-values.ts';
 
 const { profileId, id, nullableText, ordinal, boolean } = safariFields;
 const countList = { type: 'integer', minimum: 0 } as const;
@@ -58,22 +65,32 @@ const properties = {
     description:
       'Whether Safari marked visitCountScore and the count lists for recomputation.',
   },
+  lastVisitedAt: {
+    ...safariFields.timestamp,
+    description:
+      "The URL's latest visit in this profile's History.db. Safari removes the URL once that visit passes its history setting.",
+  },
 } as const;
 
 export class HistoryItemsStream extends SafariStream<typeof properties, Row> {
   readonly name = 'historyItems';
   readonly store = 'history';
   readonly primaryKey = ['profileId', 'id'];
+  readonly expiresBy = 'lastVisitedAt';
   readonly jsonSchema = {
     type: 'object',
     description:
-      'One source record per URL in Safari history (History.db history_items), with the visit counts Safari ranks it by. Relationships name streams in this source, not physical destination tables.',
+      'One source record per URL in Safari history (History.db history_items), with the visit counts Safari ranks it by. Safari removes a URL with its last visit, without a deletion; its row stays. Relationships name streams in this source, not physical destination tables.',
     properties,
     required: Object.keys(properties),
   } as const;
 
+  override horizon(scan: SafariScan): string {
+    return scan.history.horizon;
+  }
+
   protected rows(scan: SafariScan): readonly Row[] {
-    return scan.history.flatMap((history) => history.items);
+    return scan.history.profiles.flatMap((history) => history.items);
   }
 
   protected record(row: Row): RecordDraft<typeof properties> {
@@ -89,6 +106,7 @@ export class HistoryItemsStream extends SafariStream<typeof properties, Row> {
       autocompleteTriggers: triggers(row.autocomplete_triggers),
       statusCode: integer(row.status_code) || null,
       derivedCountsStale: flag(row.should_recompute_derived_visit_counts),
+      lastVisitedAt: appleTime(row.last_visit_time),
     };
   }
 }

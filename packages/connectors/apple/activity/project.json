@@ -1,0 +1,8 @@
+{
+  "name": "connector-apple-activity",
+  "sourceRoot": "packages/connectors/apple/activity/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  }
+}

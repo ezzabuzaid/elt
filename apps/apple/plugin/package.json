@@ -5,6 +5,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.31.0",
     "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/connector-apple-activity": "0.0.1",
     "@workspace/connector-apple-books": "0.0.1",
     "@workspace/connector-apple-calendar": "0.0.1",
     "@workspace/connector-apple-contacts": "0.0.1",
