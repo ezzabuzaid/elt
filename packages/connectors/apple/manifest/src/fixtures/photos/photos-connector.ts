@@ -14,7 +14,9 @@ import {
 
 // A connector outside the library, as an agent writes one: TypeScript that
 // Node runs as written, on the host's elt and AppleConnector. It reads
-// ~/Pictures/photos.json, a list of { id, title }.
+// ~/Pictures/photos.json, a list of { id, title }, and checkpoints after each
+// photo, so an entry that is not a photo fails the stream after the photos
+// before it loaded.
 
 const photos = new Stream({
   name: 'photos',
@@ -52,8 +54,12 @@ class PhotosSource extends Source {
       await readFile(join(homedir(), 'Pictures/photos.json'), 'utf8'),
     );
     if (!Array.isArray(listed)) throw new TypeError('photos.json is a list');
-    for (const photo of listed) yield { stream: 'photos', data: photo };
-    yield { type: 'STATE' as const, stream: 'photos', state: {} };
+    for (const photo of listed) {
+      if (typeof photo !== 'object' || photo === null)
+        throw new TypeError('Each entry in photos.json is a photo');
+      yield { stream: 'photos', data: photo };
+      yield { type: 'STATE' as const, stream: 'photos', state: {} };
+    }
   }
 }
 

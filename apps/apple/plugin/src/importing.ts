@@ -4,28 +4,25 @@ import { ImportStore, type Selection, lease } from '@workspace/import-store';
 
 import type { ApplePlugin } from './apple-plugin.ts';
 
-// Whether the import's first pass ended: it loaded, at least in part, so it
-// stays as it is until its selection changes.
+// Whether some pass loaded every copy of the import completely; from then it
+// stays as it is until its selection changes. Until then each pass runs the
+// whole import again from its checkpoints, so rows a full disk or a busy app
+// cut short still arrive.
 function imported(store: ImportStore, selection: Selection): boolean {
   const pass = store.latestPass(selection);
-  return (
-    pass !== null &&
-    (pass.state === 'succeeded' ||
-      pass.state === 'partial' ||
-      pass.lastSucceededAt !== null)
-  );
+  return pass !== null && pass.lastSucceededAt !== null;
 }
 
-// Loads once every selected connector whose first pass has not ended, including
-// one a stopped server left running or that failed. Codex runs a server per
-// chat, so each import is locked for its pass, and one another server is
-// loading is skipped. A server whose plugin was updated loads nothing, so old
-// code never writes. Each pass is recorded in its connector's data.sqlite,
-// beside the catalog readers query; a connector whose connection cannot be
-// built has no pipeline to record it, so its failure is kept in the store's
-// settings until it builds. Never throws, so a failure such as a full disk
-// leaves the tools working, and the next server start or selection change tries
-// again.
+// Loads every selected connector no pass has loaded completely: one never
+// imported, one a stopped server left running, and one whose pass failed or
+// loaded only in part. Codex runs a server per chat, so each import is locked
+// for its pass, and one another server is loading is skipped. A server whose
+// plugin was updated loads nothing, so old code never writes. Each pass is
+// recorded in its connector's data.sqlite, beside the catalog readers query; a
+// connector whose connection cannot be built has no pipeline to record it, so
+// its failure is kept in the store's settings until it builds. Never throws, so
+// a failure such as a full disk leaves the tools working, and the next server
+// start or selection change tries again.
 export async function importPending(plugin: ApplePlugin): Promise<void> {
   if (plugin.updated()) return;
   try {

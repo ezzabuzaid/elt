@@ -37189,7 +37189,7 @@ function chatContext(plugin2) {
 // apps/apple/plugin/src/importing.ts
 function imported(store, selection) {
   const pass2 = store.latestPass(selection);
-  return pass2 !== null && (pass2.state === "succeeded" || pass2.state === "partial" || pass2.lastSucceededAt !== null);
+  return pass2 !== null && pass2.lastSucceededAt !== null;
 }
 async function importPending(plugin2) {
   if (plugin2.updated()) return;
