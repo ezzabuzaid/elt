@@ -3,7 +3,7 @@ import {
   isBinaryPlist,
   isDictionary,
   parseBinaryPlist
-} from "../../chunks/chunk-EGVP22HT.mjs";
+} from "../../chunks/chunk-YLKLHO7E.mjs";
 import {
   ProtobufMessage
 } from "../../chunks/chunk-46YHRHWG.mjs";

@@ -5,9 +5,9 @@ import type { Selection } from './selection.ts';
 
 // What a store holds: its settings file and each import directory. Changing
 // what is stored, such as a settings table or a table name a checkpoint binds
-// to, takes a new layout: every app imports afresh, the settings file is
+// to, takes a new layout: every connector imports afresh, the settings file is
 // rebuilt, and processes running older code stop writing.
-export const storeLayout = 3;
+export const storeLayout = 4;
 
 // Thrown by a process whose code predates the layout of the settings file.
 export class NewerLayoutError extends Error {
@@ -16,8 +16,8 @@ export class NewerLayoutError extends Error {
   }
 }
 
-// Where an app's import lives: one directory per selection and layout, so a
-// pass still writing an earlier one never touches the current one.
+// Where a connector's import lives: one directory per selection and layout, so
+// a pass still writing an earlier one never touches the current one.
 export function importDirectory(root: string, selection: Selection): string {
   const key = createHash('sha256')
     .update(
@@ -29,5 +29,5 @@ export function importDirectory(root: string, selection: Selection): string {
     )
     .digest('hex')
     .slice(0, 16);
-  return join(root, selection.app, key);
+  return join(root, selection.connector, key);
 }

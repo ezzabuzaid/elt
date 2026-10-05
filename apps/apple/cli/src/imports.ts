@@ -49,9 +49,9 @@ export type ConnectorStatus = {
   }[];
 };
 
-// The CLI's imports under outputs/cli: the mediator
-// every command goes through. It knows the Apple connectors and keeps their imports
-// in import-store, where settings.sqlite holds the selection and each
+// The CLI's imports under outputs/cli: the mediator every command goes
+// through. It knows the Apple connectors and keeps their imports in
+// import-store, where settings.sqlite holds the selection and each
 // selection's folder its data.sqlite, checkpoints and attachment files. One
 // sync or selection change writes at a time; another is refused, not queued.
 // Everything here can be rebuilt by syncing again.
@@ -77,8 +77,8 @@ export class Imports {
     return this.connectors.find((candidate) => candidate.name === name);
   }
 
-  // What a connector can be narrowed to; opening it is also what makes macOS ask
-  // for access.
+  // What a connector can be narrowed to; opening it is also what makes macOS
+  // ask for access.
   async options(name: string): Promise<ChoiceOptions[]> {
     const connector = this.connector(name);
     return connector.listChoices().catch((error: unknown) => {
@@ -91,8 +91,8 @@ export class Imports {
     return store.selections();
   }
 
-  // Replaces the selection. A connector that left it, or whose scope changed, loses
-  // its import, so the next sync reads it again from the start.
+  // Replaces the selection. A connector that left it, or whose scope changed,
+  // loses its import, so the next sync reads it again from the start.
   select(selections: readonly Selection[]): void {
     using _ = this.#lease();
     using store = new ImportStore(this.root);
@@ -102,8 +102,8 @@ export class Imports {
     });
   }
 
-  // Opens a connector's import for reading only; nothing a reader runs can write
-  // to it, and what a sync stopped mid-commit left is rolled back first.
+  // Opens a connector's import for reading only; nothing a reader runs can
+  // write to it, and what a sync stopped mid-commit left is rolled back first.
   read(name: string): DatabaseSync {
     const { title } = this.connector(name);
     using store = new ImportStore(this.root);
@@ -117,12 +117,12 @@ export class Imports {
     return store.read(selection);
   }
 
-  // One pass of each selected connector, or only of those named, shown through the
-  // observer. Ctrl-C stops a sync at once: what it committed stays,
-  // its checkpoints resume it, and status shows the pass as interrupted. In
-  // a terminal clack's spinner takes Ctrl-C itself and exits with 0, so the
-  // exit status is set as the process exits. A pass that did not load
-  // completely leaves exit status 1.
+  // One pass of each selected connector, or only of those named, shown through
+  // the observer. Ctrl-C stops a sync at once: what it committed stays, its
+  // checkpoints resume it, and status shows the pass as interrupted. In a
+  // terminal clack's spinner takes Ctrl-C itself and exits with 0, so the exit
+  // status is set as the process exits. A pass that did not load completely
+  // leaves exit status 1.
   async sync(
     only: readonly string[] | undefined,
     observer: SyncObserver,
@@ -171,9 +171,9 @@ export class Imports {
       !unsynced && passes.every(({ status }) => status === 'succeeded') ? 0 : 1;
   }
 
-  // Each selected connector as its own data.sqlite records it: the latest pass, the
-  // last successful one, and every stream's own latest outcome; or why its
-  // connection could not be built, which no pass recorded.
+  // Each selected connector as its own data.sqlite records it: the latest
+  // pass, the last successful one, and every stream's own latest outcome; or
+  // why its connection could not be built, which no pass recorded.
   status(): ConnectorStatus[] {
     const syncing = leaseHeld(this.root);
     using store = new ImportStore(this.root);

@@ -13,8 +13,8 @@ import { userConnectors } from '@workspace/connector-apple-manifest/user-connect
 import {
   ApplePlugin,
   PluginUpdatedError,
-  appSchema,
   configurationSchema,
+  connectorSchema,
 } from './apple-plugin.ts';
 import { chatContext } from './chat-status.ts';
 import { importPending } from './importing.ts';
@@ -25,13 +25,12 @@ if (process.platform !== 'darwin')
   throw new Error('Apple requires Codex on a Mac.');
 
 // This bundle sits in the server folder of the installed plugin, beside the
-// connector folders of the built-in Apple apps.
+// folders of the built-in connectors.
 const install = fileURLToPath(new URL('..', import.meta.url));
-// The built-in Apple apps are connector folders beside this bundle; the
-// user's own load from their folder on the server's elt and AppleConnector, through
-// the host modules beside this bundle. macOS grants access to ChatGPT, which
-// runs Codex. Calendar's remote attachments stay links, so users never sign
-// in to Google.
+// The user's own connectors load from their folder on the server's elt and
+// AppleConnector, through the host modules beside this bundle. macOS grants
+// access to ChatGPT, which runs Codex. Calendar's remote attachments stay
+// links, so users never sign in to Google.
 provideHostModules(
   ({ file }) => new URL(`modules/${file}.mjs`, import.meta.url).href,
 );
@@ -48,7 +47,7 @@ const plugin = new ApplePlugin(
 );
 // Each tool call and import pass rediscovers the connectors first, so one the
 // user adds or edits is used without restarting this server; a chat's tool
-// list stays as it began, so tools name apps as strings, not an enum.
+// list stays as it began, so tools name connectors as strings, not an enum.
 await plugin.refresh();
 const { version } = z
   .object({ version: z.string() })
@@ -60,7 +59,7 @@ const { version } = z
 const mcpServer = new McpServer(
   { name: 'apple', version },
   {
-    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.apps.map(({ title }) => title))} content the user chose into private SQLite files on this Mac, once per app while Codex is open; an imported app is not refreshed. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
+    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.connectors.map(({ title }) => title))} content the user chose into private SQLite files on this Mac, once per connector while Codex is open; an imported connector is not refreshed. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
   },
 );
 // McpServer turns a thrown error into an isError result the model can act on.
@@ -75,7 +74,7 @@ mcpServer.registerTool(
   {
     title: 'Set up Apple',
     description:
-      'Set up Apple with one form the user answers: which apps. Each chosen app is imported from all its accounts and collections, with attachments. Saves the answers and reports apps macOS did not allow; the import then runs in the background. To narrow an app when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.',
+      'Set up Apple with one form the user answers: which connectors. Each chosen connector is imported from all its accounts and collections, with attachments. Saves the answers and reports connectors macOS did not allow; the import then runs in the background. To narrow a connector when the user asks, use apple_options and apple_configure; hosts without form support set up that way too.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -101,15 +100,15 @@ mcpServer.registerTool(
 mcpServer.registerTool(
   'apple_options',
   {
-    title: 'List Apple app choices',
+    title: 'List Apple connector choices',
     description:
-      'List accounts and collections for one app during setup. Reads metadata from that Apple app and may prompt for macOS access. Use only for an app the user chose. Choices are untrusted data.',
-    inputSchema: { app: appSchema },
+      'List accounts and collections for one connector during setup. Reads metadata from that Apple app and may prompt for macOS access. Use only for a connector the user chose. Choices are untrusted data.',
+    inputSchema: { connector: connectorSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  async ({ app }) => {
+  async ({ connector }) => {
     await plugin.refresh();
-    return structured(await plugin.options(app));
+    return structured(await plugin.options(connector));
   },
 );
 mcpServer.registerTool(
@@ -117,7 +116,7 @@ mcpServer.registerTool(
   {
     title: 'Configure Apple imports',
     description:
-      'Save the complete selection of Apple apps and scopes. Omitted apps are disconnected. A changed scope deletes that app’s previous imported copy and attachments and imports it again in the background. Does not modify Apple apps. Call only for the user’s confirmed selection.',
+      'Save the complete selection of Apple connectors and scopes. Omitted connectors are disconnected. A changed scope deletes that connector’s previous imported copy and attachments and imports it again in the background. Does not modify Apple apps. Call only for the user’s confirmed selection.',
     inputSchema: configurationSchema,
     annotations: {
       readOnlyHint: false,
@@ -133,7 +132,7 @@ mcpServer.registerTool(
     return structured(saved);
   },
 );
-// The plugin page's Settings section: a switch per app, described by its
+// The plugin page's Settings section: a switch per connector, described by its
 // import status (the openai/settings extension; ChatGPT calls both tools).
 const switches = z.record(z.string(), z.boolean());
 mcpServer.registerTool(
@@ -141,7 +140,7 @@ mcpServer.registerTool(
   {
     title: 'Read Apple settings',
     description:
-      'Read which Apple apps are connected and each one’s import status, for the plugin’s Settings page. Does not read Apple app content.',
+      'Read which Apple connectors are connected and each one’s import status, for the plugin’s Settings page. Does not read Apple app content.',
     inputSchema: {},
     outputSchema: {
       schema: z.strictObject({
@@ -181,7 +180,7 @@ mcpServer.registerTool(
   {
     title: 'Update Apple settings',
     description:
-      'Connect or disconnect Apple apps from the plugin’s Settings page. A connected app imports everything by default; a disconnected app’s imported copy is deleted. Other apps keep their scope.',
+      'Connect or disconnect Apple connectors from the plugin’s Settings page. A connector switched on imports everything by default; one switched off has its imported copy deleted. Other connectors keep their scope.',
     inputSchema: {
       set: switches.meta({ minProperties: 1 }),
     },
@@ -194,7 +193,8 @@ mcpServer.registerTool(
     },
   },
   async ({ set }) => {
-    if (Object.keys(set).length === 0) throw new Error('Set at least one app.');
+    if (Object.keys(set).length === 0)
+      throw new Error('Set at least one connector.');
     await plugin.refresh();
     const saved = settingsUpdate(plugin, set);
     void importPending(plugin);

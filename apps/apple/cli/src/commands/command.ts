@@ -18,7 +18,8 @@ export abstract class Command {
   abstract readonly name: string;
   abstract readonly summary: string;
 
-  // Every command reaches the apps and their imports through the mediator.
+  // Every command reaches the connectors and their imports through the
+  // mediator.
   protected readonly imports: Imports;
 
   constructor(imports: Imports) {

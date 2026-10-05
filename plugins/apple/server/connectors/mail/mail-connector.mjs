@@ -1,10 +1,8 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
-  readMailPlist
-} from "../../chunks/chunk-HMG5B6SF.mjs";
-import {
-  isDictionary
-} from "../../chunks/chunk-EGVP22HT.mjs";
+  isDictionary,
+  readPlist
+} from "../../chunks/chunk-YLKLHO7E.mjs";
 import {
   selected,
   withinDates
@@ -25672,7 +25670,7 @@ function plistObject(value) {
   return value;
 }
 async function mailVersionDirectory(root) {
-  const info = plistObject(await readMailPlist(join(root, "PersistenceInfo.plist")));
+  const info = plistObject(await readPlist(join(root, "PersistenceInfo.plist")));
   const version = info.LastUsedVersionDirectoryName;
   if (typeof version !== "string" || !/^V\d+$/.test(version))
     throw new MailSchemaError("Mail has no valid current version directory");
@@ -25783,7 +25781,7 @@ var MailStore = class _MailStore {
     if (file === void 0)
       return null;
     await assertMailFile(file);
-    const value = await readMailPlist(file.path);
+    const value = await readPlist(file.path);
     await assertMailFile(file);
     return value;
   }

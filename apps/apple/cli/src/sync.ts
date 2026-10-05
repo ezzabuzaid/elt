@@ -41,8 +41,8 @@ export type PassObserver = {
   passed(connector: AppleConnector, summary: PassSummary): void;
 };
 
-// Records every pass in each connector's data.sqlite, as any SQLite load does, and
-// shows the observer each pass while it runs and once it ends.
+// Records every pass in each connector's data.sqlite, as any SQLite load
+// does, and shows the observer each pass while it runs and once it ends.
 class ObservedHistory extends SQLiteSyncHistory {
   readonly #connectors: readonly AppleConnector[];
   readonly #observer: PassObserver;
@@ -119,8 +119,8 @@ function failed(
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-// One pass of each connector's selected import. The caller holds the store's lease
-// throughout.
+// One pass of each connector's selected import. The caller holds the store's
+// lease throughout.
 export async function syncImports(
   store: ImportStore,
   imports: readonly { connector: AppleConnector; selection: Selection }[],

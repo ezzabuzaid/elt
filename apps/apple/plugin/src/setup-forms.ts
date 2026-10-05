@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import type { Selection } from '@workspace/import-store';
 
-import { type ApplePlugin, appSchema } from './apple-plugin.ts';
+import { type ApplePlugin, connectorSchema } from './apple-plugin.ts';
 import {
   hasFullDiskAccess,
   openFullDiskAccessSettings,
@@ -14,88 +14,97 @@ import {
 
 export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 
-// Setup asks in one form which apps. Each chosen app is imported from all its
-// accounts and collections with attachments (Calendar within its default
-// window), or keeps a narrower selection the user asked for earlier. Each is
-// opened first, so macOS asks for access now and a denied app is reported.
-// Full Disk Access has no macOS prompt, so apps behind it are reported
-// without opening them and a second form offers to open its Settings list.
-// Cancelling leaves setup unchanged. It returns once the answers are saved;
-// the server then imports them in the background.
+// Setup asks in one form which connectors. Each chosen connector is imported
+// from all its accounts and collections with attachments (Calendar within its
+// default window), or keeps a narrower selection the user asked for earlier.
+// Each is opened first, so macOS asks for access now and a denied connector is
+// reported. Full Disk Access has no macOS prompt, so connectors behind it are
+// reported without opening them and a second form offers to open its Settings
+// list. Cancelling leaves setup unchanged. It returns once the answers are
+// saved; the server then imports them in the background.
 export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   const previous = new Map(
     plugin
       .status()
-      .apps.map(({ app, scope, includeAttachments }) => [
-        app,
-        { app, scope, includeAttachments },
+      .connectors.map(({ connector, scope, includeAttachments }) => [
+        connector,
+        { connector, scope, includeAttachments },
       ]),
   );
   const picked = await ask({
     mode: 'form',
     message:
-      'Choose the Apple apps Codex can read on this Mac. Each app is imported in full; macOS may ask for access to each one.',
+      'Choose the Apple connectors Codex can read on this Mac. Each connector is imported in full; macOS may ask for access to each one.',
     requestedSchema: {
       type: 'object',
       properties: {
-        apps: {
+        connectors: {
           type: 'array',
-          title: 'Apps',
+          title: 'Connectors',
           items: {
-            anyOf: plugin.apps.map(({ name, title }) => ({
+            anyOf: plugin.connectors.map(({ name, title }) => ({
               const: name,
               title,
             })),
           },
-          default: plugin.apps
+          default: plugin.connectors
             .map(({ name }) => name)
             .filter((name) => previous.has(name)),
         },
       },
-      required: ['apps'],
+      required: ['connectors'],
     },
   });
   if (picked.action !== 'accept') return { changed: false, ...plugin.status() };
-  const chosen = z.array(appSchema).parse(picked.content?.apps);
+  const chosen = z.array(connectorSchema).parse(picked.content?.connectors);
   const behindFullDiskAccess = chosen.filter(
-    (app) => plugin.app(app).fullDiskAccess,
+    (name) => plugin.connector(name).fullDiskAccess,
   );
   const blocked =
     behindFullDiskAccess.length > 0 && !(await hasFullDiskAccess())
       ? behindFullDiskAccess
       : [];
-  // A selected app whose connector is not loaded is not in the form; it
-  // keeps its selection rather than losing its import.
+  // A selected connector that is not loaded is not in the form; it keeps its
+  // selection rather than losing its import.
   const configuration: Selection[] = [...previous.values()].filter(
-    ({ app }) => !plugin.apps.some(({ name }) => name === app),
+    ({ connector }) =>
+      !plugin.connectors.some(({ name }) => name === connector),
   );
-  const unavailable: { app: string; error: string; permissions: string }[] = [];
-  for (const app of chosen) {
+  const unavailable: {
+    connector: string;
+    error: string;
+    permissions: string;
+  }[] = [];
+  for (const connector of chosen) {
     try {
-      if (blocked.includes(app))
+      if (blocked.includes(connector))
         throw new Error('ChatGPT does not have Full Disk Access.');
-      await plugin.options(app);
+      await plugin.options(connector);
       configuration.push(
-        previous.get(app) ?? { app, scope: {}, includeAttachments: true },
+        previous.get(connector) ?? {
+          connector,
+          scope: {},
+          includeAttachments: true,
+        },
       );
     } catch (error) {
       unavailable.push({
-        app,
+        connector,
         error: error instanceof Error ? error.message : String(error),
-        permissions: plugin.app(app).guidance(),
+        permissions: plugin.connector(connector).guidance(),
       });
-      const kept = previous.get(app);
+      const kept = previous.get(connector);
       if (kept !== undefined) configuration.push(kept);
     }
   }
-  const saved = plugin.configure({ apps: configuration });
+  const saved = plugin.configure({ connectors: configuration });
   if (blocked.length === 0) return { changed: true, unavailable, ...saved };
   return {
     changed: true,
     unavailable,
     openedFullDiskAccess: await offerFullDiskAccess(
       ask,
-      blocked.map((app) => plugin.app(app).title),
+      blocked.map((name) => plugin.connector(name).title),
     ),
     ...saved,
   };

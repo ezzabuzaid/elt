@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import {
-  type AppFacts,
+  type ConnectorFacts,
   ImportStore,
   NewerLayoutError,
   type Selection,
@@ -19,12 +19,16 @@ import {
 
 // Notes narrows by account and folder and is dated; Contacts narrows by
 // container only and has no dates; Books cannot be narrowed.
-const facts = (app: string): AppFacts => ({
+const facts = (connector: string): ConnectorFacts => ({
   narrowsBy: (kind) =>
-    app === 'notes' || (app === 'contacts' && kind === 'collectionIds'),
-  datedBy: app === 'notes' ? 'last modified' : null,
+    connector === 'notes' ||
+    (connector === 'contacts' && kind === 'collectionIds'),
+  datedBy: connector === 'notes' ? 'last modified' : null,
 });
-const options = { facts, permissions: ({ app }: Selection) => `Allow ${app}.` };
+const options = {
+  facts,
+  permissions: ({ connector }: Selection) => `Allow ${connector}.`,
+};
 
 // The sqlite3 shell agents read with, refused writes and untrusted schemas.
 function shell(database: string, sql: string) {
@@ -36,14 +40,14 @@ function shell(database: string, sql: string) {
   return { rows: JSON.parse(stdout || '[]'), stderr };
 }
 
-test('a selection is checked against what each app can be narrowed by', () => {
+test('a selection is checked against what each connector can be narrowed by', () => {
   assert.deepEqual(
     selectionProblems(
       [
-        { app: 'notes', scope: {}, includeAttachments: true },
-        { app: 'notes', scope: {}, includeAttachments: false },
+        { connector: 'notes', scope: {}, includeAttachments: true },
+        { connector: 'notes', scope: {}, includeAttachments: false },
         {
-          app: 'contacts',
+          connector: 'contacts',
           scope: {
             accountIds: ['a'],
             collectionIds: ['c', 'c'],
@@ -52,12 +56,12 @@ test('a selection is checked against what each app can be narrowed by', () => {
           includeAttachments: true,
         },
         {
-          app: 'books',
+          connector: 'books',
           scope: { collectionIds: [] },
           includeAttachments: true,
         },
         {
-          app: 'notes',
+          connector: 'notes',
           scope: {
             startAt: '2025-02-01T00:00:00.000Z',
             endAt: '2025-01-01T00:00:00.000Z',
@@ -68,13 +72,13 @@ test('a selection is checked against what each app can be narrowed by', () => {
       facts,
     ),
     [
-      'notes: choose each app once',
+      'notes: choose each connector once',
       'contacts: cannot be narrowed by account IDs',
       'contacts: choose each collection once',
       'contacts: date filtering is unavailable',
       'books: cannot be narrowed by collection IDs',
       'books: choose at least one collection',
-      'notes: choose each app once',
+      'notes: choose each connector once',
       'notes: start must precede end',
     ],
   );
@@ -82,7 +86,7 @@ test('a selection is checked against what each app can be narrowed by', () => {
     selectionProblems(
       [
         {
-          app: 'notes',
+          connector: 'notes',
           scope: { accountIds: ['a'], startAt: '2025-01-01T00:00:00.000Z' },
           includeAttachments: true,
         },
@@ -93,17 +97,17 @@ test('a selection is checked against what each app can be narrowed by', () => {
   );
 });
 
-test('readers find each selected import, where it lives and what access it needs in selected_apps with the sqlite3 shell', async () => {
+test('readers find each selected import, where it lives and what access it needs in selected_connectors with the sqlite3 shell', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
   const notes = {
-    app: 'notes',
+    connector: 'notes',
     scope: { collectionIds: ['folder-1'] },
     includeAttachments: false,
   };
   {
     using store = new ImportStore(scratch.path);
     store.select(
-      [notes, { app: 'books', scope: {}, includeAttachments: true }],
+      [notes, { connector: 'books', scope: {}, includeAttachments: true }],
       options,
     );
     store.saveConnectionFailure(notes, 'Notes could not be opened.');
@@ -111,14 +115,14 @@ test('readers find each selected import, where it lives and what access it needs
 
   const { rows, stderr } = shell(
     join(scratch.path, 'settings.sqlite'),
-    'SELECT app, scope, include_attachments, database, connection_error, permissions FROM selected_apps',
+    'SELECT connector, scope, include_attachments, database, connection_error, permissions FROM selected_connectors',
   );
 
   assert.equal(stderr, '');
   using store = new ImportStore(scratch.path);
   assert.deepEqual(rows, [
     {
-      app: 'notes',
+      connector: 'notes',
       scope: '{"collectionIds":["folder-1"]}',
       include_attachments: 0,
       database: store.database(notes),
@@ -126,11 +130,11 @@ test('readers find each selected import, where it lives and what access it needs
       permissions: 'Allow notes.',
     },
     {
-      app: 'books',
+      connector: 'books',
       scope: '{}',
       include_attachments: 1,
       database: store.database({
-        app: 'books',
+        connector: 'books',
         scope: {},
         includeAttachments: true,
       }),
@@ -141,16 +145,20 @@ test('readers find each selected import, where it lives and what access it needs
   assert.deepEqual(
     shell(
       join(scratch.path, 'settings.sqlite'),
-      "SELECT name FROM catalog WHERE name = 'selected_apps.database'",
+      "SELECT name FROM catalog WHERE name = 'selected_connectors.database'",
     ).rows,
-    [{ name: 'selected_apps.database' }],
+    [{ name: 'selected_connectors.database' }],
   );
 });
 
 test('a changed selection replaces its import, and a selection with problems changes nothing', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
   using store = new ImportStore(scratch.path);
-  const everything = { app: 'notes', scope: {}, includeAttachments: true };
+  const everything = {
+    connector: 'notes',
+    scope: {},
+    includeAttachments: true,
+  };
   store.select([everything], options);
   mkdirSync(store.directory(everything), { recursive: true });
 
@@ -159,7 +167,7 @@ test('a changed selection replaces its import, and a selection with problems cha
       store.select(
         [
           {
-            app: 'books',
+            connector: 'books',
             scope: { accountIds: ['a'] },
             includeAttachments: true,
           },
@@ -181,7 +189,7 @@ test('a changed selection replaces its import, and a selection with problems cha
 
 test('a store refuses a settings file a newer layout wrote, and empties one an older layout wrote', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
-  const notes = { app: 'notes', scope: {}, includeAttachments: true };
+  const notes = { connector: 'notes', scope: {}, includeAttachments: true };
   {
     using store = new ImportStore(scratch.path);
     store.select([notes], options);
@@ -216,7 +224,7 @@ test('one process at a time holds a store lease', async () => {
 
 test('a read rolls back the hot journal a pass killed mid-commit left, so the sqlite3 shell can open the import again', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
-  const notes = { app: 'notes', scope: {}, includeAttachments: true };
+  const notes = { connector: 'notes', scope: {}, includeAttachments: true };
   using store = new ImportStore(scratch.path);
   store.select([notes], options);
   mkdirSync(store.directory(notes), { recursive: true });

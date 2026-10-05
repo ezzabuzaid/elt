@@ -1,5 +1,5 @@
 interface:
-  display_name: 'Add an Apple app'
+  display_name: 'Add an Apple connector'
   short_description: 'Write a connector so Apple imports a Mac app it does not list yet'
   icon_small: '../../assets/composer-icon.png'
   icon_large: '../../assets/logo.png'

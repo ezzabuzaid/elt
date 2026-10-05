@@ -10,7 +10,7 @@ import {
 } from '@workspace/elt-sqlite';
 
 import {
-  type AppFacts,
+  type ConnectorFacts,
   type Selection,
   selectionProblems,
 } from './selection.ts';
@@ -20,8 +20,8 @@ import {
   storeLayout,
 } from './store-layout.ts';
 
-// Why an app's import could not start: its pipeline never existed, so its sync
-// history in data.sqlite cannot say.
+// Why a connector's import could not start: its pipeline never existed, so its
+// sync history in data.sqlite cannot say.
 export type ConnectionFailure = { error: string; failedAt: string };
 
 // One row of the sync_status view an import's history keeps in data.sqlite:
@@ -91,14 +91,14 @@ const streamStatusSchema = z
   }));
 export type StreamStatus = z.infer<typeof streamStatusSchema>;
 
-// What readers of the settings file see: one row per selected app, with where
-// its import lives and why it could not start, if it could not.
-const selectedApps = {
-  name: 'selected_apps',
+// What readers of the settings file see: one row per selected connector, with
+// where its import lives and why it could not start, if it could not.
+const selectedConnectors = {
+  name: 'selected_connectors',
   description:
-    'The Apple apps the user chose to import, in the order chosen. An app missing here is not imported. Each import is its own SQLite file: open database to read its records, catalog and sync_status.',
+    'The connectors the user chose to import, in the order chosen. A connector missing here is not imported. Each import is its own SQLite file: open database to read its records, catalog and sync_status.',
   columns: {
-    app: 'Apple app, such as mail, notes or messages.',
+    connector: 'Connector name, such as mail, notes or messages.',
     scope:
       'JSON of the chosen accounts (accountIds), collections (collectionIds) and dates (startAt inclusive, endAt exclusive); an absent key means all.',
     include_attachments:
@@ -106,12 +106,12 @@ const selectedApps = {
     database:
       'Path of the SQLite file the import loads. It may not exist yet while the first import starts.',
     connection_error:
-      'Why the import could not start, such as missing macOS access; NULL when it started. An app with an error is inaccessible, not empty.',
+      'Why the import could not start, such as missing macOS access; NULL when it started. A connector with an error is inaccessible, not empty.',
     connection_failed_at:
       'When the import last failed to start, as an ISO 8601 UTC timestamp; NULL when it started.',
     permissions: 'What the user can do in macOS to give access to this app.',
   },
-  query: `SELECT s."app", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",
+  query: `SELECT s."connector", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",
       f."error" AS "connection_error", f."failed_at" AS "connection_failed_at", s."permissions"
     FROM "selections" s LEFT JOIN "connection_failures" f ON f."directory" = s."directory"
     ORDER BY s."position"`,
@@ -119,8 +119,8 @@ const selectedApps = {
 
 // One host's imports under root: settings.sqlite holds the selection and each
 // import's connection failure, stamped with the store layout, and readers find
-// the imports through its selected_apps view; each import lives in its own
-// directory beside it.
+// the imports through its selected_connectors view; each import lives in its
+// own directory beside it.
 export class ImportStore implements Disposable {
   readonly root: string;
   private readonly settings: DatabaseSync;
@@ -135,7 +135,7 @@ export class ImportStore implements Disposable {
       chmodSync(path, 0o600);
       if (this.layout() !== storeLayout) this.rebuild();
       this.settings.exec(
-        'CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, app TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL);',
+        'CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL);',
       );
     } catch (error) {
       this.settings.close();
@@ -177,18 +177,18 @@ export class ImportStore implements Disposable {
   selections(): Selection[] {
     return this.settings
       .prepare(
-        'SELECT app, scope, include_attachments FROM selections ORDER BY position',
+        'SELECT connector, scope, include_attachments FROM selections ORDER BY position',
       )
       .all()
       .map((row) => ({
-        app: String(row.app),
+        connector: String(row.connector),
         scope: JSON.parse(String(row.scope)),
         includeAttachments: row.include_attachments === 1,
       }));
   }
 
   // Saves a selection that has no problems, with what macOS needs granted for
-  // each app, forgets the failures of every other import, removes those
+  // each connector, forgets the failures of every other import, removes those
   // imports and publishes what readers see.
   select<Selected extends Selection>(
     selections: readonly Selected[],
@@ -196,7 +196,7 @@ export class ImportStore implements Disposable {
       facts,
       permissions,
     }: {
-      facts: (app: string) => AppFacts;
+      facts: (connector: string) => ConnectorFacts;
       permissions: (selection: Selected) => string;
     },
   ) {
@@ -211,7 +211,7 @@ export class ImportStore implements Disposable {
       for (const [position, selection] of selections.entries())
         insert.run(
           position,
-          selection.app,
+          selection.connector,
           JSON.stringify(selection.scope),
           selection.includeAttachments ? 1 : 0,
           this.directory(selection),
@@ -229,25 +229,25 @@ export class ImportStore implements Disposable {
     this.publish();
   }
 
-  // Removes every import directory but the selected one of each app,
-  // including those of apps no longer selected.
+  // Removes every import directory but the selected one of each connector,
+  // including those of connectors no longer selected.
   removeStaleImports() {
     const kept = new Set(
       this.selections().map((selection) => this.directory(selection)),
     );
-    for (const app of readdirSync(this.root, { withFileTypes: true }))
-      if (app.isDirectory())
-        for (const entry of readdirSync(join(this.root, app.name)))
-          if (!kept.has(join(this.root, app.name, entry)))
-            rmSync(join(this.root, app.name, entry), {
+    for (const connector of readdirSync(this.root, { withFileTypes: true }))
+      if (connector.isDirectory())
+        for (const entry of readdirSync(join(this.root, connector.name)))
+          if (!kept.has(join(this.root, connector.name, entry)))
+            rmSync(join(this.root, connector.name, entry), {
               recursive: true,
               force: true,
             });
   }
 
-  // Publishes selected_apps and the catalog that lists it; safe to repeat.
+  // Publishes selected_connectors and the catalog listing it; safe to repeat.
   publish() {
-    publishSQLiteViews(this.settings, { views: [selectedApps] });
+    publishSQLiteViews(this.settings, { views: [selectedConnectors] });
     installSQLiteCatalog({ path: join(this.root, 'settings.sqlite') });
   }
 

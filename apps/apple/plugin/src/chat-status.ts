@@ -2,9 +2,9 @@ import { relative } from 'node:path';
 
 import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
 
-// What a chat's hooks add to the model's context: each selected app, where its
-// import lives and how its last pass went. A chat keeps it until it changes,
-// so times are instants, not "minutes ago".
+// What a chat's hooks add to the model's context: each selected connector,
+// where its import lives and how its last pass went. A chat keeps it until it
+// changes, so times are instants, not "minutes ago".
 
 const progress = (sync: ImportSync | null, guidance: string): string => {
   if (sync === null) return 'waiting for its first import';
@@ -26,7 +26,7 @@ const progress = (sync: ImportSync | null, guidance: string): string => {
   }
 };
 
-// What a reader can do with an app: wait for its first import, read it, or
+// What a reader can do with a connector: wait for its first import, read it, or
 // not reach it. A pass starting or finishing over data already there changes
 // nothing a reader does.
 const readiness = (sync: ImportSync | null) => {
@@ -43,33 +43,33 @@ export function chatStatus(plugin: ApplePlugin): {
   state: string;
   text: string;
 } {
-  const selected = plugin.status().apps;
+  const selected = plugin.status().connectors;
   const broken = plugin.broken.map(
     ({ title, error }) => `- ${title} could not be loaded: ${error}`,
   );
-  const state = (apps: unknown) =>
-    JSON.stringify({ apps, broken: plugin.broken });
+  const state = (connectors: unknown) =>
+    JSON.stringify({ connectors, broken: plugin.broken });
   if (selected.length === 0)
     return {
       state: state([]),
       text: [
-        'Apple: no apps are set up. Use $setup-apple when the user asks about their Apple apps.',
+        'Apple: no connectors are set up. Use $setup-apple when the user asks about their Apple apps.',
         ...broken,
       ].join('\n'),
     };
   return {
     state: state(
-      selected.map(({ app, database, sync }) => [
-        app,
+      selected.map(({ connector, database, sync }) => [
+        connector,
         database,
         readiness(sync),
       ]),
     ),
     text: [
-      `Apple apps the user connected, each imported into its own SQLite file under "${plugin.directory}". Read them as $query-apple describes.`,
-      ...selected.map(({ app, title, database, sync, permissions }) =>
-        // A selected app whose connector is not loaded does not import.
-        plugin.apps.some(({ name }) => name === app)
+      `Apple connectors the user set up, each imported into its own SQLite file under "${plugin.directory}". Read them as $query-apple describes.`,
+      ...selected.map(({ connector, title, database, sync, permissions }) =>
+        // A selected connector that is not loaded does not import.
+        plugin.connectors.some(({ name }) => name === connector)
           ? `- ${title}: ${progress(sync, permissions)}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`
           : `- ${title}: ${permissions}`,
       ),

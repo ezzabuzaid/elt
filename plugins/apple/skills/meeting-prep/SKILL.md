@@ -10,9 +10,9 @@ description: Prepare the user for a meeting from their Apple Calendar, Mail, Mes
 - A meeting is a timed, not canceled occurrence in one of the user's own calendars (`calendars.subscribed = 0` and `type` 0 local, 1 CalDAV or 2 Exchange), or any event that lists attendees. Subscribed calendars such as prayer times and holidays, all-day events and birthdays are not meetings.
 - Calendar's `events` has one row per occurrence. `startAt`/`endAt` are UTC instants; say times to the user in their local time. `name` is the title. `location`, `url` and `body` may each hold the meeting link. `externalId` is shared by every occurrence of a series.
 - `attendees` lists who was invited, the organizer included (`kind`). The email is `url` without `mailto:`. Most events list nobody, often all of today's, so the title, `body` and `location` are what you prepare from.
-- Each app is its own SQLite file. Find the files and which apps are connected from the Apple status in context or `selected_apps`, as `$query-apple` describes. Use only connected apps and say which ones a brief could not use.
+- Each connector imports into its own SQLite file. Find the files and which connectors are set up from the Apple status in context or `selected_connectors`, as `$query-apple` describes. Use only connectors that are set up and say which ones a brief could not use.
 - Run every query below with `$query-apple`'s read command, `/usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' -cmd 'PRAGMA temp_store = MEMORY'`, passing parameters with `-cmd`: numbers as `-cmd '.parameter set @minutes 20'`, text as `-cmd ".parameter set @email \"'ann@example.com'\""`, doubling any single quote inside a value.
-- These queries are complete as written. Read an app's `catalog` only to go beyond them.
+- These queries are complete as written. Read a connector's `catalog` only to go beyond them.
 
 ## Prepare
 
@@ -31,7 +31,7 @@ description: Prepare the user for a meeting from their Apple Calendar, Mail, Mes
      ```
    - Today's remaining ones: the same query with the `startAt <` line replaced by `AND e.startAt < strftime('%Y-%m-%dT%H:%M:%fZ', date('now', 'localtime', '+1 day'), 'utc')` and no `@minutes`.
    - A meeting the user names: the same query with `AND e.name LIKE '%' || @title || '%'` added and the window set to the days they mean.
-2. For each meeting, gather from the connected apps. Look back 30 days (`@days`) unless the user asks otherwise.
+2. For each meeting, gather from the connectors that are set up. Look back 30 days (`@days`) unless the user asks otherwise.
    - The previous occurrence, when `externalId` is set (Calendar), with `@series` set to it:
      ```sql
      SELECT e.name, e.startAt, e.location, e.body FROM events e
@@ -115,6 +115,6 @@ description: Prepare the user for a meeting from their Apple Calendar, Mail, Mes
 
 ## Done when
 
-- Each brief rests on rows you read and names which connected apps had nothing and which apps are not connected.
+- Each brief rests on rows you read and names which connectors had nothing and which are not set up.
 - Times are the user's local time, and no meeting outside the requested window or already prepared in this thread is repeated.
 - A heartbeat run ends with exactly one `<heartbeat>` block whose `<decision>` is `NOTIFY` or `DONT_NOTIFY`.

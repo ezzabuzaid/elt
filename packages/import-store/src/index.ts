@@ -5,7 +5,7 @@ export {
 } from './import-store.ts';
 export { lease, leaseHeld } from './lease.ts';
 export {
-  type AppFacts,
+  type ConnectorFacts,
   type Selection,
   selectionProblems,
 } from './selection.ts';

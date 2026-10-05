@@ -26,7 +26,7 @@ import { settingsRead, settingsUpdate } from './native-settings.ts';
 // The committed plugin, as Codex installs it.
 const install = resolve('plugins/apple');
 
-// The host the plugin's server passes its apps, with the helper this
+// The host the plugin's server passes its connectors, with the helper this
 // workspace compiled instead of the bundled copy.
 const host = {
   grantee: 'ChatGPT',
@@ -50,7 +50,7 @@ async function applePlugin(install: string, directory: string) {
   return plugin;
 }
 
-// Stands in for a server's import of one app selection.
+// Stands in for a server's import of one connector selection.
 function imported(directory: string, item: Selection) {
   const path = importDirectory(directory, item);
   mkdirSync(path, { recursive: true });
@@ -59,11 +59,11 @@ function imported(directory: string, item: Selection) {
   return join(path, 'data.sqlite');
 }
 
-// Begins passes of one app selection's import, recorded in its data.sqlite as
-// a server's history records them.
+// Begins passes of one connector selection's import, recorded in its
+// data.sqlite as a server's history records them.
 async function passes(plugin: ApplePlugin, item: Selection) {
   const { connection, destination } = await plugin
-    .app(item.app)
+    .connector(item.connector)
     .connection(importDirectory(plugin.directory, item), item);
   const history = new SQLiteSyncHistory();
   await history.install([destination]);
@@ -75,12 +75,12 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = await applePlugin(install, scratch.path);
-  assert.deepEqual(plugin.status().apps, []);
+  assert.deepEqual(plugin.status().connectors, []);
   for (const [selection, message] of [
     [
       [
         {
-          app: 'contacts',
+          connector: 'contacts',
           scope: { startAt: '2025-01-01T00:00:00.000Z' },
           includeAttachments: true,
         },
@@ -90,7 +90,7 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
     [
       [
         {
-          app: 'messages',
+          connector: 'messages',
           scope: { accountIds: ['a'] },
           includeAttachments: true,
         },
@@ -100,7 +100,7 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
     [
       [
         {
-          app: 'notes',
+          connector: 'notes',
           scope: { collectionIds: [] },
           includeAttachments: true,
         },
@@ -109,34 +109,39 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
     ],
     [
       [
-        { app: 'notes', scope: {}, includeAttachments: true },
-        { app: 'notes', scope: {}, includeAttachments: true },
+        { connector: 'notes', scope: {}, includeAttachments: true },
+        { connector: 'notes', scope: {}, includeAttachments: true },
       ],
       /once/,
     ],
   ] as const)
-    assert.throws(() => plugin.configure({ apps: selection }), message);
-  assert.deepEqual(plugin.status().apps, []);
+    assert.throws(() => plugin.configure({ connectors: selection }), message);
+  assert.deepEqual(plugin.status().connectors, []);
   const [calendar] = plugin.configure({
-    apps: [{ app: 'calendar', scope: {}, includeAttachments: true }],
-  }).apps;
+    connectors: [
+      { connector: 'calendar', scope: {}, includeAttachments: true },
+    ],
+  }).connectors;
   assert.ok(calendar?.scope.startAt);
   assert.ok(calendar.scope.endAt);
   assert.ok(calendar.scope.startAt < calendar.scope.endAt);
 });
 
-test('agents read the selected apps, where each import lives and what macOS access it needs from the settings file with the sqlite3 shell', async () => {
+test('agents read the selected connectors, where each import lives and what macOS access it needs from the settings file with the sqlite3 shell', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = await applePlugin(install, scratch.path);
   const notes = {
-    app: 'notes' as const,
+    connector: 'notes' as const,
     scope: { collectionIds: ['folder-1'] },
     includeAttachments: false,
   };
   plugin.configure({
-    apps: [notes, { app: 'mail', scope: {}, includeAttachments: true }],
+    connectors: [
+      notes,
+      { connector: 'mail', scope: {}, includeAttachments: true },
+    ],
   });
   const { stdout, stderr } = spawnSync(
     '/usr/bin/sqlite3',
@@ -144,34 +149,34 @@ test('agents read the selected apps, where each import lives and what macOS acce
       '-readonly',
       '-json',
       join(scratch.path, 'settings.sqlite'),
-      'SELECT app, scope, include_attachments, database, connection_error, permissions FROM selected_apps',
+      'SELECT connector, scope, include_attachments, database, connection_error, permissions FROM selected_connectors',
     ],
     { encoding: 'utf8' },
   );
   assert.equal(stderr, '');
   assert.deepEqual(JSON.parse(stdout), [
     {
-      app: 'notes',
+      connector: 'notes',
       scope: JSON.stringify(notes.scope),
       include_attachments: 0,
       database: join(importDirectory(scratch.path, notes), 'data.sqlite'),
       connection_error: null,
-      permissions: plugin.app('notes').guidance(),
+      permissions: plugin.connector('notes').guidance(),
     },
     {
-      app: 'mail',
+      connector: 'mail',
       scope: '{}',
       include_attachments: 1,
       database: join(
         importDirectory(scratch.path, {
-          app: 'mail',
+          connector: 'mail',
           scope: {},
           includeAttachments: true,
         }),
         'data.sqlite',
       ),
       connection_error: null,
-      permissions: plugin.app('mail').guidance(),
+      permissions: plugin.connector('mail').guidance(),
     },
   ]);
 });
@@ -182,40 +187,43 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   );
   const plugin = await applePlugin(install, scratch.path);
   const notes = {
-    app: 'notes' as const,
+    connector: 'notes' as const,
     scope: { collectionIds: ['folder-1'] },
     includeAttachments: true,
   };
-  assert.equal(plugin.configure({ apps: [notes] }).apps[0]?.database, null);
+  assert.equal(
+    plugin.configure({ connectors: [notes] }).connectors[0]?.database,
+    null,
+  );
   const database = imported(scratch.path, notes);
   assert.equal(
-    (await applePlugin(install, scratch.path)).status().apps[0]?.database,
+    (await applePlugin(install, scratch.path)).status().connectors[0]?.database,
     database,
   );
-  plugin.configure({ apps: [notes] });
+  plugin.configure({ connectors: [notes] });
   assert.equal(existsSync(database), true);
 
   // A pass left running by a server that exited is reported as interrupted.
   const begin = await passes(plugin, notes);
   await begin();
-  assert.equal(plugin.status().apps[0]?.sync?.state, 'interrupted');
+  assert.equal(plugin.status().connectors[0]?.sync?.state, 'interrupted');
   {
     // A server importing it holds the import's lock.
     using lease = new DatabaseSync(
       join(importDirectory(scratch.path, notes), 'lease.sqlite'),
     );
     lease.exec('BEGIN IMMEDIATE');
-    assert.equal(plugin.status().apps[0]?.sync?.state, 'running');
+    assert.equal(plugin.status().connectors[0]?.sync?.state, 'running');
   }
 
   const changed = { ...notes, scope: { collectionIds: ['folder-2'] } };
-  plugin.configure({ apps: [changed] });
+  plugin.configure({ connectors: [changed] });
   assert.equal(existsSync(database), false);
-  const [current] = plugin.status().apps;
+  const [current] = plugin.status().connectors;
   assert.equal(current?.database, null);
   assert.equal(current?.sync, null);
   imported(scratch.path, changed);
-  plugin.configure({ apps: [] });
+  plugin.configure({ connectors: [] });
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
 });
 
@@ -230,17 +238,17 @@ test('importing settles when the settings cannot be read, so the server keeps se
   await assert.doesNotReject(importPending(plugin));
 });
 
-test('a chat hears of a pass only when it changes what a reader can do with the app', async () => {
+test('a chat hears of a pass only when it changes what a reader can do with the connector', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = await applePlugin(install, scratch.path);
   const notes = {
-    app: 'notes' as const,
+    connector: 'notes' as const,
     scope: {},
     includeAttachments: true,
   };
-  plugin.configure({ apps: [notes] });
+  plugin.configure({ connectors: [notes] });
   // The importing server holds the import's lock while its passes run.
   mkdirSync(importDirectory(scratch.path, notes), { recursive: true });
   using lease = new DatabaseSync(
@@ -280,7 +288,7 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
   assert.notEqual(failed.state, synced.state);
 });
 
-test('a selected app whose connector is no longer loaded is reported, keeps its import through other changes, and can be disconnected', async () => {
+test('a selected connector that is no longer loaded is reported, keeps its import through other changes, and can be disconnected', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
@@ -294,17 +302,22 @@ test('a selected app whose connector is no longer loaded is reported, keeps its 
     scratch.path,
   );
   await withPhotos.refresh();
-  const photos = { app: 'photos', scope: {}, includeAttachments: true };
-  withPhotos.configure({ apps: [photos] });
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  withPhotos.configure({ connectors: [photos] });
   const plugin = await applePlugin(install, scratch.path);
 
-  const [reported] = plugin.status().apps;
+  const [reported] = plugin.status().connectors;
   const context = chatStatus(plugin).text;
   const kept = plugin.configure({
-    apps: [photos, { app: 'notes', scope: {}, includeAttachments: true }],
+    connectors: [
+      photos,
+      { connector: 'notes', scope: {}, includeAttachments: true },
+    ],
   });
   const changed = () =>
-    plugin.configure({ apps: [{ ...photos, includeAttachments: false }] });
+    plugin.configure({
+      connectors: [{ ...photos, includeAttachments: false }],
+    });
   const switches = settingsRead(plugin).values;
   const { values } = settingsUpdate(plugin, { photos: false });
 
@@ -315,7 +328,7 @@ test('a selected app whose connector is no longer loaded is reported, keeps its 
   );
   assert.match(context, /^- photos: No connector named photos is loaded/m);
   assert.deepEqual(
-    kept.apps.map(({ app }) => app),
+    kept.connectors.map(({ connector }) => connector),
     ['photos', 'notes'],
   );
   assert.throws(
@@ -325,12 +338,12 @@ test('a selected app whose connector is no longer loaded is reported, keeps its 
   assert.equal(switches.photos, true);
   assert.equal(values.photos, undefined);
   assert.deepEqual(
-    plugin.status().apps.map(({ app }) => app),
+    plugin.status().connectors.map(({ connector }) => connector),
     ['notes'],
   );
 });
 
-test('the Settings page switches apps on and off and describes each import as OpenAI’s settings schema requires', async () => {
+test('the Settings page switches connectors on and off and describes each import as OpenAI’s settings schema requires', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
@@ -339,8 +352,8 @@ test('the Settings page switches apps on and off and describes each import as Op
     const result = settingsRead(plugin);
     OpenAISettingsReadResultSchema.parse(result);
     return Object.fromEntries(
-      Object.entries(result.schema.properties).map(([app, field]) => [
-        app,
+      Object.entries(result.schema.properties).map(([name, field]) => [
+        name,
         field.description,
       ]),
     );
@@ -348,20 +361,20 @@ test('the Settings page switches apps on and off and describes each import as Op
   assert.equal(described().notes, 'Not connected.');
 
   const notes = {
-    app: 'notes' as const,
+    connector: 'notes' as const,
     scope: { collectionIds: ['FOLDER-NOTES'] },
     includeAttachments: true,
   };
-  plugin.configure({ apps: [notes] });
+  plugin.configure({ connectors: [notes] });
   assert.equal(described().notes, 'Waiting to import.');
   const begin = await passes(plugin, notes);
   await (await begin()).finish([]);
   assert.equal(described().notes, 'Synced just now · 1 folder.');
-  // The page adds the app's permissions guidance to the error once.
+  // The page adds the connector's permissions guidance to the error once.
   await (await begin()).fail(new Error('Notes could not be opened.'));
   assert.equal(
     described().notes,
-    `Last sync failed: Notes could not be opened. ${plugin.app('notes').guidance()}`,
+    `Last sync failed: Notes could not be opened. ${plugin.connector('notes').guidance()}`,
   );
   await begin();
   assert.equal(
@@ -394,20 +407,20 @@ test('the Settings page switches apps on and off and describes each import as Op
       books: false,
     },
   );
-  const [kept, mail] = plugin.status().apps;
+  const [kept, mail] = plugin.status().connectors;
   assert.deepEqual(kept?.scope, notes.scope);
   assert.deepEqual(mail?.scope, {});
   assert.equal(mail?.includeAttachments, true);
   assert.equal(described().mail, 'Waiting to import.');
   settingsUpdate(plugin, { notes: false });
   assert.deepEqual(
-    plugin.status().apps.map(({ app }) => app),
+    plugin.status().connectors.map(({ connector }) => connector),
     ['mail'],
   );
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
 });
 
-test('once another plugin version replaces this one, its server refuses to change apps and imports nothing', async () => {
+test('once another plugin version replaces this one, its server refuses to change connectors and imports nothing', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
@@ -418,8 +431,8 @@ test('once another plugin version replaces this one, its server refuses to chang
   });
   const store = join(scratch.path, 'store');
   const plugin = await applePlugin(replaced, store);
-  const notes = { app: 'notes', scope: {}, includeAttachments: true };
-  plugin.configure({ apps: [notes] });
+  const notes = { connector: 'notes', scope: {}, includeAttachments: true };
+  plugin.configure({ connectors: [notes] });
   // An import the newer version's selection no longer names.
   const unselected = imported(store, { ...notes, includeAttachments: false });
   assert.equal(plugin.updated(), false);
@@ -428,7 +441,9 @@ test('once another plugin version replaces this one, its server refuses to chang
   assert.throws(
     () =>
       plugin.configure({
-        apps: [{ app: 'mail', scope: {}, includeAttachments: true }],
+        connectors: [
+          { connector: 'mail', scope: {}, includeAttachments: true },
+        ],
       }),
     /open a new chat/,
   );
@@ -444,13 +459,13 @@ test('once another plugin version replaces this one, its server refuses to chang
   assert.equal(existsSync(importDirectory(store, notes)), false);
 });
 
-test('a server whose code predates the settings file refuses to change apps and imports nothing', async () => {
+test('a server whose code predates the settings file refuses to change connectors and imports nothing', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = await applePlugin(install, scratch.path);
-  const notes = { app: 'notes', scope: {}, includeAttachments: true };
-  plugin.configure({ apps: [notes] });
+  const notes = { connector: 'notes', scope: {}, includeAttachments: true };
+  plugin.configure({ connectors: [notes] });
   const unselected = imported(scratch.path, {
     ...notes,
     includeAttachments: false,
@@ -466,7 +481,9 @@ test('a server whose code predates the settings file refuses to change apps and 
   assert.throws(
     () =>
       plugin.configure({
-        apps: [{ app: 'mail', scope: {}, includeAttachments: true }],
+        connectors: [
+          { connector: 'mail', scope: {}, includeAttachments: true },
+        ],
       }),
     /open a new chat/,
   );
@@ -489,7 +506,7 @@ test('settings an older layout wrote are discarded, so the user sets up again', 
     );
   }
   const plugin = await applePlugin(install, scratch.path);
-  assert.deepEqual(plugin.status().apps, []);
+  assert.deepEqual(plugin.status().connectors, []);
   using database = new DatabaseSync(join(scratch.path, 'settings.sqlite'), {
     readOnly: true,
   });
@@ -501,8 +518,8 @@ test('settings an older layout wrote are discarded, so the user sets up again', 
   );
   assert.equal(
     plugin.configure({
-      apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
-    }).apps.length,
+      connectors: [{ connector: 'notes', scope: {}, includeAttachments: true }],
+    }).connectors.length,
     1,
   );
 });

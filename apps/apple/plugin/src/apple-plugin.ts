@@ -14,7 +14,7 @@ import type {
 } from '@workspace/connector-apple-manifest/connectors';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
 import {
-  type AppFacts,
+  type ConnectorFacts,
   ImportStore,
   NewerLayoutError,
   type Pass,
@@ -25,22 +25,22 @@ import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 const ids = z.array(z.string().min(1).max(1024)).max(1000);
 
-// An app by its connector's name. Connectors are rediscovered on use, so the
-// name is checked when a tool runs, not by an enum fixed when the chat began.
-export const appSchema = z
+// A connector by its name. Connectors are rediscovered on use, so the name
+// is checked when a tool runs, not by an enum fixed when the chat began.
+export const connectorSchema = z
   .string()
   .min(1)
   .describe(
-    'An Apple app the user chose, by the name the Apple status or apple_options uses.',
+    'A connector the user chose, by the name the Apple status or apple_options uses.',
   );
 
 // The shape of a selection as tools receive it; ImportStore.select checks it
-// against what each app can be narrowed by.
+// against what each connector can be narrowed by.
 export const configurationSchema = z.strictObject({
-  apps: z
+  connectors: z
     .array(
       z.strictObject({
-        app: appSchema,
+        connector: connectorSchema,
         scope: z
           .strictObject({
             accountIds: ids
@@ -56,7 +56,7 @@ export const configurationSchema = z.strictObject({
             startAt: z.iso
               .datetime({ precision: 3 })
               .describe(
-                'Inclusive UTC start with milliseconds, such as 2026-01-01T00:00:00.000Z. Only for an app whose apple_options datedBy is not null.',
+                'Inclusive UTC start with milliseconds, such as 2026-01-01T00:00:00.000Z. Only for a connector whose apple_options datedBy is not null.',
               )
               .optional(),
             endAt: z.iso
@@ -74,7 +74,7 @@ export const configurationSchema = z.strictObject({
       }),
     )
     .describe(
-      'The complete selection. An app left out is disconnected and its imported copy deleted.',
+      'The complete selection. A connector left out is disconnected and its imported copy deleted.',
     ),
 });
 
@@ -97,19 +97,19 @@ export type ImportSync =
       state: 'interrupted';
     });
 
-// Setup and status for the Codex plugin. importPending writes each app's
-// data.sqlite; agents read those files directly.
+// Setup and status for the Codex plugin. importPending writes each
+// connector's data.sqlite; agents read those files directly.
 export class ApplePlugin {
   // The installed plugin's folder. Installing another version deletes it.
   readonly install: string;
   readonly directory: string;
-  readonly #connectors: Connectors;
+  readonly #discovery: Connectors;
   readonly #host: AppleHost;
-  #apps: readonly AppleConnector[] = [];
+  #connectors: readonly AppleConnector[] = [];
   #broken: readonly BrokenConnector[] = [];
 
   constructor(
-    connectors: Connectors,
+    discovery: Connectors,
     host: AppleHost,
     install: string,
     directory = join(
@@ -117,14 +117,14 @@ export class ApplePlugin {
       'Library/Application Support/Context Compiler/Apple',
     ),
   ) {
-    this.#connectors = connectors;
+    this.#discovery = discovery;
     this.#host = host;
     this.install = install;
     this.directory = directory;
   }
 
-  get apps(): readonly AppleConnector[] {
-    return this.#apps;
+  get connectors(): readonly AppleConnector[] {
+    return this.#connectors;
   }
 
   // Connectors that were found but could not load, for chats to hear of.
@@ -135,26 +135,26 @@ export class ApplePlugin {
   // Discovers the connectors again, so one added or edited since the last
   // refresh loads, and one removed is gone.
   async refresh(): Promise<void> {
-    const { connectors, broken } = await this.#connectors.load(this.#host);
-    this.#apps = connectors;
+    const { connectors, broken } = await this.#discovery.load(this.#host);
+    this.#connectors = connectors;
     this.#broken = broken;
   }
 
-  app(name: string): AppleConnector {
-    const app = this.#loaded(name);
-    if (app === undefined)
+  connector(name: string): AppleConnector {
+    const connector = this.#loaded(name);
+    if (connector === undefined)
       throw new TypeError(
-        `No Apple app is named ${name}. The apps are ${this.#apps.map((candidate) => candidate.name).join(', ')}.`,
+        `No connector is named ${name}. The connectors are ${this.#connectors.map((candidate) => candidate.name).join(', ')}.`,
       );
-    return app;
+    return connector;
   }
 
   #loaded(name: string): AppleConnector | undefined {
-    return this.#apps.find((candidate) => candidate.name === name);
+    return this.#connectors.find((candidate) => candidate.name === name);
   }
 
-  // What macOS needs granted for an app, or how to bring back a selected app
-  // whose connector is not loaded.
+  // What macOS needs granted for a connector, or how to bring back a selected
+  // connector that is not loaded.
   #permissions(name: string): string {
     return (
       this.#loaded(name)?.guidance() ??
@@ -190,7 +190,7 @@ export class ApplePlugin {
   status() {
     using store = this.#open();
     return {
-      apps: store.selections().map((item) => {
+      connectors: store.selections().map((item) => {
         const database = store.database(item);
         const pass = store.latestPass(item);
         const failure = store.connectionFailure(item);
@@ -208,10 +208,10 @@ export class ApplePlugin {
               : pass;
         return {
           ...item,
-          title: this.#loaded(item.app)?.title ?? item.app,
+          title: this.#loaded(item.connector)?.title ?? item.connector,
           database: existsSync(database) ? database : null,
           sync,
-          permissions: this.#permissions(item.app),
+          permissions: this.#permissions(item.connector),
         };
       }),
     };
@@ -219,23 +219,26 @@ export class ApplePlugin {
 
   // A changed scope is a new import: importPending loads it, and the
   // previous one is removed, so nothing reads an import that is not selected.
-  // An app whose connector is not loaded keeps only the selection it has, so
-  // a connector broken while it is edited loses nothing.
-  configure(requested: { readonly apps: readonly Selection[] }) {
+  // A selected connector that is not loaded keeps only the selection it has,
+  // so a connector broken while it is edited loses nothing.
+  configure(requested: { readonly connectors: readonly Selection[] }) {
     {
       using store = this.#open();
       const stored = store.selections();
       store.select(
-        requested.apps.map((item) => {
-          const app = this.#loaded(item.app);
-          return app === undefined
+        requested.connectors.map((item) => {
+          const connector = this.#loaded(item.connector);
+          return connector === undefined
             ? item
-            : { ...item, scope: { ...app.defaultScope(), ...item.scope } };
+            : {
+                ...item,
+                scope: { ...connector.defaultScope(), ...item.scope },
+              };
         }),
         {
           facts: (name) =>
-            this.#loaded(name) ?? unchanged(name, stored, requested.apps),
-          permissions: ({ app }) => this.#permissions(app),
+            this.#loaded(name) ?? unchanged(name, stored, requested.connectors),
+          permissions: ({ connector }) => this.#permissions(connector),
         },
       );
     }
@@ -243,29 +246,29 @@ export class ApplePlugin {
   }
 
   async options(name: string) {
-    const app = this.app(name);
-    const defaultScope = app.defaultScope();
+    const connector = this.connector(name);
+    const defaultScope = connector.defaultScope();
     return {
-      app: name,
-      choices: Object.fromEntries(await app.choiceRows()),
-      permissions: app.guidance(),
-      datedBy: app.datedBy,
+      connector: name,
+      choices: Object.fromEntries(await connector.choiceRows()),
+      permissions: connector.guidance(),
+      datedBy: connector.datedBy,
       defaultScope:
         Object.keys(defaultScope).length > 0 ? defaultScope : undefined,
-      note: app.note,
+      note: connector.note,
     };
   }
 }
 
-// What an unloaded app's selection can be narrowed by: exactly what it is
-// narrowed by now, so only the selection it already has passes.
+// What an unloaded connector's selection can be narrowed by: exactly what it
+// is narrowed by now, so only the selection it already has passes.
 function unchanged(
   name: string,
   stored: readonly Selection[],
   requested: readonly Selection[],
-): AppFacts {
-  const before = stored.find(({ app }) => app === name);
-  const after = requested.find(({ app }) => app === name);
+): ConnectorFacts {
+  const before = stored.find(({ connector }) => connector === name);
+  const after = requested.find(({ connector }) => connector === name);
   if (
     before === undefined ||
     after === undefined ||

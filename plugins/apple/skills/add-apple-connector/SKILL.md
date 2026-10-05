@@ -1,6 +1,6 @@
 ---
 name: add-apple-connector
-description: Adds an Apple app the Apple plugin does not import yet, such as Photos, Music, Podcasts or Stickies, by writing a connector into the user's connectors folder. Use when the user asks to connect or import a Mac app the plugin does not list, or to fix a connector the Apple status reports as not loading.
+description: Adds a connector for an Apple app the Apple plugin does not import yet, such as Photos, Music, Podcasts or Stickies, by writing it into the user's connectors folder. Use when the user asks to connect or import a Mac app the plugin does not list, or to fix a connector the Apple status reports as not loading.
 ---
 
 # Add an Apple connector
@@ -8,10 +8,10 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
 ## What you need to know
 
 - A connector is a folder in `~/Library/Application Support/Context Compiler/Connectors/<name>/` holding two files: a `package.json` and the entry point it names. The plugin reads that folder on every tool call, so a connector you add or edit is used in this chat; nothing restarts.
-- `package.json` is `{ "type": "module", "exports": "./<name>-connector.ts", "contextCompiler": { "name": "<name>", "title": "<Title>" } }`. `name` is lowercase letters, digits and dashes, and must not repeat an app the plugin already has. `title` is what the user sees. The app class takes both from here; it does not declare them.
+- `package.json` is `{ "type": "module", "exports": "./<name>-connector.ts", "contextCompiler": { "name": "<name>", "title": "<Title>" } }`. `name` is lowercase letters, digits and dashes, and must not repeat a connector the plugin already has. `title` is what the user sees. The connector class takes both from here; it does not declare them.
 - The entry is TypeScript that Node runs as written, without a compiler. Its default export is a class that extends `AppleConnector`. Its `source()` returns an elt `Source` that reads the app's own data on this Mac.
 - The entry may import only Node built-ins (`node:fs`, `node:sqlite`, `node:child_process`, ...) and three modules the plugin provides: `@workspace/elt` (`Source`, `Stream`, `Catalog` and their types), `@workspace/connector-apple-connector/apple-connector` (`AppleConnector`) and `@workspace/connector-apple-connector/choice` (`accounts`, `collections`, `byId`, `name`, `Choice`). There is no `node_modules`, so no npm package resolves.
-- The plugin imports each stream into `raw_<stream>` in the app's own `data.sqlite`, read through a view named after the stream in snake case (`photoAssets` reads as `photo_assets`). `$query-apple` reads it like any other app.
+- The plugin imports each stream into `raw_<stream>` in the connector's own `data.sqlite`, read through a view named after the stream in snake case (`photoAssets` reads as `photo_assets`). `$query-apple` reads it like any other connector.
 - The connector runs inside the plugin, with every macOS permission ChatGPT has, Full Disk Access included.
 - A connector that cannot load is listed in the Apple status of every chat as `- <Title> could not be loaded: <error>`.
 
@@ -109,8 +109,8 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
 
 ## Setting it up
 
-1. Call `apple_options` with the connector's `name`. It loads the connector and opens the app's store. Read any `could not be loaded` line in the Apple status or the tool's error, fix the file, and call it again.
-2. Configure it with `apple_configure`, keeping every app already selected, as `$setup-apple` describes. The import runs in the background.
+1. Call `apple_options` with `connector` set to the connector's `name`. It loads the connector and opens the app's store. Read any `could not be loaded` line in the Apple status or the tool's error, fix the file, and call it again.
+2. Configure it with `apple_configure`, keeping every connector already selected, as `$setup-apple` describes. The import runs in the background.
 3. Read a few rows as `$query-apple` describes, and compare them with what the app shows.
 
 ## Gotchas
@@ -120,10 +120,10 @@ description: Adds an Apple app the Apple plugin does not import yet, such as Pho
 - When a record's fields do not match its stream's JSON Schema, such as a `null` where the schema says `string`, the pass fails. Allow `null` (`type: ['string', 'null']`) for any column that can be empty.
 - When a connector imports a second file of its own, an edit to that file loads only in a new chat. Keep the connector in its entry.
 - When the code writes to the app's store or runs a command that changes the app, it changes the user's data with ChatGPT's permissions. Open stores read-only and only read.
-- When `name` repeats an app the plugin has, the connector is reported as not loading. Pick a new lowercase name.
+- When `name` repeats a connector the plugin has, the connector is reported as not loading. Pick a new lowercase name.
 
 ## Done when
 
 - `apple_options` with the connector's name succeeds, and the Apple status lists no `could not be loaded` line for it.
-- The app is configured, its import has synced, and rows read through `$query-apple` match the app.
+- The connector is configured, its import has synced, and rows read through `$query-apple` match the app.
 - You told the user the connector's folder, what it imports and that it runs with ChatGPT's permissions on their Mac.

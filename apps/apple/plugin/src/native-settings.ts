@@ -3,8 +3,9 @@ import type { Selection } from '@workspace/import-store';
 import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
 
 // The plugin page's native Settings section (the openai/settings MCP
-// extension): one switch per app, described by that app's import status.
-// Scopes other than an app's default are chosen in the setup forms.
+// extension): one switch per connector, described by that connector's import
+// status. Scopes other than a connector's default are chosen in the setup
+// forms.
 
 export type SettingsValues = Record<string, boolean>;
 
@@ -38,7 +39,7 @@ function describe(
     case 'interrupted':
       return 'Paused: resumes the next time Codex runs the Apple plugin.';
     case 'succeeded':
-      return `Synced ${ago(sync.completedAt, now)} · ${plugin.apps.find(({ name }) => name === item.app)?.describe(item.scope) ?? 'its saved selection'}.`;
+      return `Synced ${ago(sync.completedAt, now)} · ${plugin.connectors.find(({ name }) => name === item.connector)?.describe(item.scope) ?? 'its saved selection'}.`;
     case 'partial':
       return `Partly synced ${ago(sync.completedAt, now)}: ${sync.error} ${permissions}`;
     case 'failed':
@@ -47,15 +48,18 @@ function describe(
 }
 
 export function settingsRead(plugin: ApplePlugin, now = new Date()) {
-  const selected = plugin.status().apps;
-  const connected = new Map(selected.map((item) => [item.app, item]));
-  // Every loaded app, then each selected app whose connector is not loaded,
+  const selected = plugin.status().connectors;
+  const connected = new Map(selected.map((item) => [item.connector, item]));
+  // Every loaded connector, then each selected connector that is not loaded,
   // so it can still be switched off.
   const switches = [
-    ...plugin.apps.map(({ name, title }) => ({ name, title })),
+    ...plugin.connectors.map(({ name, title }) => ({ name, title })),
     ...selected
-      .filter(({ app }) => !plugin.apps.some(({ name }) => name === app))
-      .map(({ app, title }) => ({ name: app, title })),
+      .filter(
+        ({ connector }) =>
+          !plugin.connectors.some(({ name }) => name === connector),
+      )
+      .map(({ connector, title }) => ({ name: connector, title })),
   ];
   const names = switches.map(({ name }) => name);
   return {
@@ -84,7 +88,7 @@ export function settingsRead(plugin: ApplePlugin, now = new Date()) {
     layout: [
       {
         kind: 'group' as const,
-        title: 'Apps',
+        title: 'Connectors',
         items: names.map((name) => ({
           kind: 'property' as const,
           property: name,
@@ -94,26 +98,28 @@ export function settingsRead(plugin: ApplePlugin, now = new Date()) {
   };
 }
 
-// Connects each app switched on with its default scope, disconnects each
-// app switched off, and keeps every other app's scope as it was.
+// Connects each connector switched on with its default scope, disconnects
+// each one switched off, and keeps every other connector's scope as it was.
 export function settingsUpdate(
   plugin: ApplePlugin,
   set: Partial<SettingsValues>,
 ) {
-  const current = plugin.status().apps;
+  const current = plugin.status().connectors;
   const kept = current
-    .filter(({ app }) => set[app] !== false)
-    .map(({ app, scope, includeAttachments }) => ({
-      app,
+    .filter(({ connector }) => set[connector] !== false)
+    .map(({ connector, scope, includeAttachments }) => ({
+      connector,
       scope,
       includeAttachments,
     }));
-  const added = plugin.apps
+  const added = plugin.connectors
     .map(({ name }) => name)
     .filter(
-      (app) => set[app] === true && !current.some((item) => item.app === app),
+      (connector) =>
+        set[connector] === true &&
+        !current.some((item) => item.connector === connector),
     )
-    .map((app) => ({ app, scope: {}, includeAttachments: true }));
-  plugin.configure({ apps: [...kept, ...added] });
+    .map((connector) => ({ connector, scope: {}, includeAttachments: true }));
+  plugin.configure({ connectors: [...kept, ...added] });
   return { values: settingsRead(plugin).values };
 }

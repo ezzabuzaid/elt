@@ -26,7 +26,7 @@ import {
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import osa from '@workspace/source-apple-macos/osa';
 
-// The host the plugin's server passes its apps, with the helper this
+// The host the plugin's server passes its connectors, with the helper this
 // workspace compiled instead of the bundled copy.
 const host = {
   grantee: 'Codex',
@@ -38,10 +38,11 @@ const host = {
   ),
 };
 
-// The Apple plugin's meeting-prep skill tells the agent to read each app's
-// import with these SQL blocks. Each test below imports an app the way the
-// plugin does and runs the skill's own text, so a connector change that breaks
-// a query fails here instead of in a user's meeting brief.
+// The Apple plugin's meeting-prep skill tells the agent to read each
+// connector's import with these SQL blocks. Each test below imports a
+// connector the way the plugin does and runs the skill's own text, so a
+// connector change that breaks a query fails here instead of in a user's
+// meeting brief.
 const skill = readFileSync(
   resolve(
     import.meta.dirname,
@@ -78,17 +79,18 @@ const reads = {
 // Loads one built-in connector from its manifest, as the hosts do.
 async function builtIn(
   name: string,
-  appHost: typeof host = host,
+  connectorHost: typeof host = host,
 ): Promise<AppleConnector> {
   const manifest = ConnectorManifest.read(join(builtInConnectors, name));
   assert.ok(manifest, `${name} is not a built-in connector.`);
-  return manifest.load(appHost);
+  return manifest.load(connectorHost);
 }
 
-// Imports an app whose store lives under the user's home: the app reads its
-// path when its module loads, so HOME points at the test's own folder first.
-// node --test runs this file in its own process and each test imports a
-// different app, so every app module loads once, under its test's HOME.
+// Imports a connector whose Apple app keeps its store under the user's home:
+// the connector reads that path when its module loads, so HOME points at the
+// test's own folder first. node --test runs this file in its own process and
+// each test imports a different connector, so every connector module loads
+// once, under its test's HOME.
 async function withHome<T>(home: string, work: () => Promise<T>): Promise<T> {
   const previous = process.env.HOME;
   process.env.HOME = home;
@@ -146,18 +148,18 @@ function read(
   return JSON.parse(result.stdout || '[]');
 }
 
-// An app's import as the plugin builds one: its connection into a directory
-// with the app's default scope, sync history and catalog installed, then one
-// pass. The plugin keeps it current with watch(); run() is that first pass,
-// and it fails on any copy error, so a broken import cannot read as an empty
-// one.
-async function importApp(
-  app: AppleConnector,
+// A connector's import as the plugin builds one: its connection into a
+// directory with the connector's default scope, sync history and catalog
+// installed, then one pass. The plugin keeps it current with watch(); run() is
+// that first pass, and it fails on any copy error, so a broken import cannot
+// read as an empty one.
+async function importConnector(
+  connector: AppleConnector,
   directory: string,
-  scope: ImportScope = app.defaultScope(),
+  scope: ImportScope = connector.defaultScope(),
 ): Promise<string> {
-  const { connection, destination } = await app.connection(directory, {
-    app: app.name,
+  const { connection, destination } = await connector.connection(directory, {
+    connector: connector.name,
     scope,
     includeAttachments: false,
   });
@@ -260,8 +262,11 @@ test('meeting prep finds the next meetings in own calendars, with who is coming,
   // EventKit cannot create attendees, cancel an event or subscribe to a
   // calendar, so recorded documents reach the app through a stub helper.
   await using stub = await StubEventKitHelper.create();
-  const app = await builtIn('calendar', { ...host, eventKitHelper: stub.path });
-  const scope = app.defaultScope();
+  const connector = await builtIn('calendar', {
+    ...host,
+    eventKitHelper: stub.path,
+  });
+  const scope = connector.defaultScope();
   const { startAt, endAt } = scope;
   stub.answer(
     { entity: 'events', startAt, endAt, ics: true },
@@ -348,7 +353,11 @@ test('meeting prep finds the next meetings in own calendars, with who is coming,
       ],
     },
   );
-  const database = await importApp(app, join(scratch.path, 'calendar'), scope);
+  const database = await importConnector(
+    connector,
+    join(scratch.path, 'calendar'),
+    scope,
+  );
 
   const meetings = read(database, query(reads.meetings), { '@minutes': 20 });
 
@@ -554,7 +563,10 @@ test('meeting prep finds who an attendee is in Contacts by their email, whatever
     ],
   });
   const database = await withHome(scratch.path, async () => {
-    return importApp(await builtIn('contacts'), join(scratch.path, 'contacts'));
+    return importConnector(
+      await builtIn('contacts'),
+      join(scratch.path, 'contacts'),
+    );
   });
 
   const cards = read(database, query(reads.contact), {
@@ -660,7 +672,7 @@ test('meeting prep finds notes that mention a meeting, leaving out Recently Dele
     data.run(3, 6, noteBody('Groceries\nMilk\n'));
   }
   const database = await withHome(scratch.path, async () => {
-    return importApp(await builtIn('notes'), join(scratch.path, 'notes'));
+    return importConnector(await builtIn('notes'), join(scratch.path, 'notes'));
   });
 
   const byTitle = read(database, query(reads.notes), { '@term': 'standup' });
@@ -776,7 +788,10 @@ test('meeting prep finds recent messages with an attendee by email, or by their 
     `);
   }
   const database = await withHome(scratch.path, async () => {
-    return importApp(await builtIn('messages'), join(scratch.path, 'messages'));
+    return importConnector(
+      await builtIn('messages'),
+      join(scratch.path, 'messages'),
+    );
   });
 
   const byPhone = read(database, query(reads.messages), {
@@ -1114,7 +1129,7 @@ test('meeting prep finds recent mail with an attendee whatever case Mail stored,
     `);
   }
   const database = await withHome(scratch.path, async () => {
-    return importApp(await builtIn('mail'), join(scratch.path, 'mail'));
+    return importConnector(await builtIn('mail'), join(scratch.path, 'mail'));
   });
 
   const withAnn = read(database, query(reads.mail), {

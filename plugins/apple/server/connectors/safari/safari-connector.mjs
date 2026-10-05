@@ -1,13 +1,11 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
-  readMailPlist
-} from "../../chunks/chunk-HMG5B6SF.mjs";
-import {
   decodeArchive,
   isBinaryPlist,
   isDictionary,
-  parseBinaryPlist
-} from "../../chunks/chunk-EGVP22HT.mjs";
+  parseBinaryPlist,
+  readPlist
+} from "../../chunks/chunk-YLKLHO7E.mjs";
 import {
   selected,
   withinDates
@@ -389,7 +387,7 @@ async function readSafariPlist(path) {
   } catch (cause) {
     throw new SafariUnavailableError(path, cause);
   }
-  return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readMailPlist(path);
+  return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readPlist(path);
 }
 
 // packages/sources/apple/safari/dist/tabs-reader.js

@@ -32,9 +32,10 @@ type Narrowed = {
   includeAttachments: boolean;
 };
 
-// setup --connector notes --collection <id> --since 2025-01-01 --connector mail: commander
-// reads flags in order, so each narrowing flag applies to the --connector before
-// it. Without --connector, a person at a terminal answers prompts instead.
+// setup --connector notes --collection <id> --since 2025-01-01 --connector
+// mail: commander reads flags in order, so each narrowing flag applies to the
+// --connector before it. Without --connector, a person at a terminal answers
+// prompts instead.
 export class SetupCommand extends Command {
   readonly name = 'setup';
   readonly summary =
@@ -152,9 +153,9 @@ export class SetupCommand extends Command {
     };
   }
 
-  // Which connectors, then which of them to narrow and how. Each chosen connector is
-  // opened first, so macOS asks for access now and a refusal is named.
-  // Cancelling saves nothing; once saved, declining only skips the sync.
+  // Which connectors, then which of them to narrow and how. Each chosen
+  // connector is opened first, so macOS asks for access now and a refusal is
+  // named. Cancelling saves nothing; once saved, declining only skips the sync.
   async #fromPrompts(): Promise<void> {
     const previous = new Map(
       this.imports

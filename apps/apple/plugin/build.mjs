@@ -1,9 +1,9 @@
 // Bundles the plugin's MCP server into plugins/apple/server: main.mjs, one
-// connector folder per built-in Apple app (its package.json manifest beside
-// its entry point), the host modules a user's connector imports, and the chunks
-// they all share, so every connector runs on the same elt and AppleConnector as the
-// server. @nx/esbuild cannot name each entry's output, so this calls
-// esbuild's API.
+// folder per built-in connector (its package.json manifest beside its entry
+// point), the host modules a user's connector imports, and the chunks they all
+// share, so every connector runs on the same elt and AppleConnector as the
+// server. @nx/esbuild cannot name each entry's output, so this calls esbuild's
+// API.
 import { copyFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,5 +65,5 @@ for (const { manifest, out } of builtIns)
     }),
   );
 
-// main.ts hands this path to the Calendar and Reminders apps.
+// main.ts hands this path to the Calendar and Reminders connectors.
 copyFileSync(eventkitHelper, join(outdir, 'eventkit-helper'));

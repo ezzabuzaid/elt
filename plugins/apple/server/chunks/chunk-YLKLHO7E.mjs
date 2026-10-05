@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
-// packages/sources/apple/macos/dist/plist.js
+// packages/macos/plist/dist/plist.js
 var PlistUid = class {
   value;
   constructor(value) {
@@ -207,10 +207,20 @@ function classNameOf(value) {
   return isDictionary(value) && typeof value.$classname === "string" ? value.$classname : void 0;
 }
 
+// packages/macos/plist/dist/plutil.js
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execute = promisify(execFile);
+async function readPlist(path) {
+  const { stdout } = await execute("/usr/bin/plutil", ["-convert", "binary1", "-o", "-", path], { encoding: "buffer" });
+  return parseBinaryPlist(stdout);
+}
+
 export {
   isBinaryPlist,
   parseBinaryPlist,
   plistJSON,
   decodeArchive,
-  isDictionary
+  isDictionary,
+  readPlist
 };

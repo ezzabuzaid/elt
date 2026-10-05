@@ -16,15 +16,16 @@ function imported(store: ImportStore, selection: Selection): boolean {
   );
 }
 
-// Loads once every selected app whose first pass has not ended, including
+// Loads once every selected connector whose first pass has not ended, including
 // one a stopped server left running or that failed. Codex runs a server per
 // chat, so each import is locked for its pass, and one another server is
 // loading is skipped. A server whose plugin was updated loads nothing, so old
-// code never writes. Each pass is recorded in its app's data.sqlite, beside
-// the catalog readers query; an app whose connection cannot be built has no
-// pipeline to record it, so its failure is kept in the store's settings until
-// it builds. Never throws, so a failure such as a full disk leaves the tools
-// working, and the next server start or selection change tries again.
+// code never writes. Each pass is recorded in its connector's data.sqlite,
+// beside the catalog readers query; a connector whose connection cannot be
+// built has no pipeline to record it, so its failure is kept in the store's
+// settings until it builds. Never throws, so a failure such as a full disk
+// leaves the tools working, and the next server start or selection change tries
+// again.
 export async function importPending(plugin: ApplePlugin): Promise<void> {
   if (plugin.updated()) return;
   try {
@@ -44,7 +45,9 @@ export async function importPending(plugin: ApplePlugin): Promise<void> {
       // write can open the import.
       store.recover(item);
       try {
-        imports.push(await plugin.app(item.app).connection(directory, item));
+        imports.push(
+          await plugin.connector(item.connector).connection(directory, item),
+        );
         store.clearConnectionFailure(item);
       } catch (error) {
         store.saveConnectionFailure(
@@ -63,6 +66,6 @@ export async function importPending(plugin: ApplePlugin): Promise<void> {
       history,
     }).run();
   } catch {
-    // Every failed pass is recorded against its app by the history.
+    // Every failed pass is recorded against its connector by the history.
   }
 }

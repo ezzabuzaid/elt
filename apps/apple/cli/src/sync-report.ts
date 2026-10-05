@@ -11,7 +11,7 @@ import { json } from './table.ts';
 const count = new Intl.NumberFormat('en');
 
 // Shows a sync as it runs: one spinner naming every stream still reading with
-// what it has read so far and a line per app as each pass ends. Without a
+// what it has read so far and a line per connector as each pass ends. Without a
 // terminal, one JSON line per pass.
 export class SyncReport implements SyncObserver {
   readonly interactive: boolean;
@@ -31,15 +31,15 @@ export class SyncReport implements SyncObserver {
   }
 
   progress(
-    app: AppleConnector,
+    connector: AppleConnector,
     { copy, status, emitted }: CopyProgress<SQLiteTable>,
   ) {
     if (!this.interactive) return;
-    const key = `${app.name}:${copy.from.name}`;
+    const key = `${connector.name}:${copy.from.name}`;
     if (status === 'running')
       this.#reading.set(
         key,
-        `${app.title} ${copy.from.name} ${count.format(emitted.count + emitted.deleted)}`,
+        `${connector.title} ${copy.from.name} ${count.format(emitted.count + emitted.deleted)}`,
       );
     else this.#reading.delete(key);
     if (performance.now() - this.#shownAt > 100) this.#show();
@@ -68,8 +68,8 @@ export class SyncReport implements SyncObserver {
     this.#spinner?.clear();
     outro(
       this.#incomplete
-        ? 'Some apps did not load completely.'
-        : 'All apps current.',
+        ? 'Some connectors did not load completely.'
+        : 'All connectors current.',
     );
   }
 

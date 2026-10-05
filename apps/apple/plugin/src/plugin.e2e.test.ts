@@ -238,10 +238,10 @@ const noteStoreFixture = async (directory: string) => {
 
 const root = resolve(import.meta.dirname, '../../../..');
 
-// A selected_apps row with its import's latest pass from sync_status, as the
-// query-apple skill reads them.
-type SelectedApp = {
-  app: string;
+// A selected_connectors row with its import's latest pass from sync_status, as
+// the query-apple skill reads them.
+type SelectedConnector = {
+  connector: string;
   scope: string;
   include_attachments: 0 | 1;
   database: string;
@@ -386,36 +386,36 @@ test(
       scratch.path,
       'Library/Application Support/Context Compiler/Apple/settings.sqlite',
     );
-    const selected = (): SelectedApp[] =>
+    const selected = (): SelectedConnector[] =>
       read(
         settingsFile,
-        'SELECT app, scope, include_attachments, database, connection_error FROM selected_apps',
-      ).rows.map((app: Omit<SelectedApp, 'sync'>) => ({
-        ...app,
+        'SELECT connector, scope, include_attachments, database, connection_error FROM selected_connectors',
+      ).rows.map((row: Omit<SelectedConnector, 'sync'>) => ({
+        ...row,
         sync: read(
-          app.database,
+          row.database,
           'SELECT status, error, last_successful_sync_at FROM sync_status',
         ).rows[0],
       }));
-    // Waits for the leading server until the selected apps reach the state done
-    // looks for.
+    // Waits for the leading server until the selected connectors reach the
+    // state done looks for.
     const settled = async (
       what: string,
-      done: (apps: SelectedApp[]) => boolean,
-    ): Promise<SelectedApp[]> => {
+      done: (connectors: SelectedConnector[]) => boolean,
+    ): Promise<SelectedConnector[]> => {
       for (let attempt = 0; attempt < 60; attempt++) {
-        const apps = selected();
-        if (done(apps)) return apps;
+        const connectors = selected();
+        if (done(connectors)) return connectors;
         await sleep(500);
       }
       assert.fail(`The import never ${what}`);
     };
-    const notesOf = (apps: SelectedApp[]) =>
-      apps.find(({ app }) => app === 'notes');
+    const notesOf = (connectors: SelectedConnector[]) =>
+      connectors.find(({ connector }) => connector === 'notes');
     const imported = async (title: string) => {
       const notes = notesOf(
-        await settled(`showed ${title}`, (apps) => {
-          const notes = notesOf(apps);
+        await settled(`showed ${title}`, (connectors) => {
+          const notes = notesOf(connectors);
           return (
             notes?.sync?.status === 'succeeded' &&
             read(
@@ -439,7 +439,7 @@ test(
       forms.push(params.message);
       // A person reads the form for longer than the SDK's 60 s request default.
       await sleep(61_000);
-      return { action: 'accept', content: { apps: ['notes'] } };
+      return { action: 'accept', content: { connectors: ['notes'] } };
     });
     const other = new Client({ name: 'another-chat', version: '1.0.0' });
     const transport = await connect(client);
@@ -480,7 +480,7 @@ test(
       assert.deepEqual(selected(), []);
       assert.match(
         await context(client, 'SessionStart'),
-        /no apps are set up\. Use \$setup-apple/,
+        /no connectors are set up\. Use \$setup-apple/,
       );
       assert.equal(await context(client, 'UserPromptSubmit'), '');
       assert.deepEqual((await call(other, 'apple_setup')).content, [
@@ -492,12 +492,15 @@ test(
 
       // Setup returns once the answers are saved; the import runs apart from it.
       const setUp = await invoke(client, 'apple_setup');
-      // One form: the apps. Notes is imported in full without further questions.
+      // One form: the connectors. Notes is imported in full without further
+      // questions.
       assert.equal(forms.length, 1);
-      assert.match(forms[0] ?? '', /Choose the Apple apps/);
+      assert.match(forms[0] ?? '', /Choose the Apple connectors/);
       assert.deepEqual(setUp.unavailable, []);
       assert.deepEqual(
-        setUp.apps.map(({ app }: { app: string }) => app),
+        setUp.connectors.map(
+          ({ connector }: { connector: string }) => connector,
+        ),
         ['notes'],
       );
       const synced = await imported('Groceries');
@@ -574,15 +577,15 @@ test(
         'attached words',
       );
 
-      // An app macOS does not allow fails alone, and Notes keeps its import.
+      // A connector macOS does not allow fails alone, and Notes keeps its import.
       await invoke(client, 'apple_configure', {
-        apps: [
+        connectors: [
           {
-            app: 'notes',
+            connector: 'notes',
             scope: JSON.parse(synced.scope),
             includeAttachments: synced.include_attachments === 1,
           },
-          { app: 'messages' },
+          { connector: 'messages' },
         ],
       });
       const [kept, messages] = await settled(
@@ -599,17 +602,23 @@ test(
         /^- Messages: last sync failed at .*Full Disk Access.*; no data yet\. Database: messages\//m,
       );
 
-      assert.equal(
-        (await call(client, 'apple_options', { app: 'invalid' })).isError,
-        true,
+      // An unknown connector fails in the tool, which names it, not in the
+      // schema.
+      const unknownOptions = await call(client, 'apple_options', {
+        connector: 'invalid',
+      });
+      assert.equal(unknownOptions.isError, true);
+      assert.match(
+        JSON.stringify(unknownOptions.content),
+        /No connector is named invalid\./,
       );
-      assert.equal(
-        (
-          await call(client, 'apple_configure', {
-            apps: [{ app: 'invalid' }],
-          })
-        ).isError,
-        true,
+      const unknownConfigure = await call(client, 'apple_configure', {
+        connectors: [{ connector: 'invalid' }],
+      });
+      assert.equal(unknownConfigure.isError, true);
+      assert.match(
+        JSON.stringify(unknownConfigure.content),
+        /No connector named invalid is loaded/,
       );
 
       // When the leading chat closes, another chat's server leads.
@@ -627,7 +636,7 @@ test(
       assert.equal(switched.values.messages, true);
       assert.equal(existsSync(synced.database), false);
       assert.deepEqual(
-        selected().map(({ app }) => app),
+        selected().map(({ connector }) => connector),
         ['messages'],
       );
       // A chat that never got the start-of-chat status gets it on its next prompt.
@@ -635,8 +644,8 @@ test(
         await context(other, 'UserPromptSubmit'),
         /^- Messages: last sync failed/m,
       );
-      // An imported app is not refreshed; switched on again, Notes imports
-      // afresh, with the change made since, through the new leader.
+      // An imported connector is not refreshed; switched on again, Notes
+      // imports afresh, with the change made since, through the new leader.
       await call(other, 'apple_settings_update', { set: { notes: true } });
       assert.equal(
         (await imported('Groceries (edited)')).database,
@@ -662,7 +671,7 @@ test(
 );
 
 test(
-  'Apple setup asks only which apps, imports each in full or as narrowed before, reports an app macOS denied, and changes nothing when cancelled',
+  'Apple setup asks only which connectors, imports each in full or as narrowed before, reports a connector macOS denied, and changes nothing when cancelled',
   {
     timeout: 120_000,
   },
@@ -745,27 +754,33 @@ test(
       return result;
     };
     try {
-      // One form, the apps: each chosen app is imported in full.
+      // One form, the connectors: each chosen connector is imported in full.
       const connected = await setUp({
         action: 'accept',
-        content: { apps: ['notes', 'messages', 'books'] },
+        content: { connectors: ['notes', 'messages', 'books'] },
       });
-      assert.deepEqual(forms, [['apps']]);
+      assert.deepEqual(forms, [['connectors']]);
       assert.equal(connected.changed, true);
       assert.deepEqual(
-        connected.unavailable.map(({ app }: { app: string }) => app),
+        connected.unavailable.map(
+          ({ connector }: { connector: string }) => connector,
+        ),
         ['messages', 'books'],
       );
       assert.match(connected.unavailable[0].error, /Full Disk Access/);
       assert.deepEqual(
-        connected.apps.map(
-          ({ app, scope, includeAttachments }: Record<string, unknown>) => ({
-            app,
+        connected.connectors.map(
+          ({
+            connector,
+            scope,
+            includeAttachments,
+          }: Record<string, unknown>) => ({
+            connector,
             scope,
             includeAttachments,
           }),
         ),
-        [{ app: 'notes', scope: {}, includeAttachments: true }],
+        [{ connector: 'notes', scope: {}, includeAttachments: true }],
       );
       // Notes is read for real: its background import loads the store's notes.
       const settings = join(
@@ -776,7 +791,7 @@ test(
       for (let attempt = 0; attempt < 60 && !loaded; attempt++) {
         const [notes] = read(
           settings,
-          "SELECT database FROM selected_apps WHERE app = 'notes'",
+          "SELECT database FROM selected_connectors WHERE connector = 'notes'",
         ).rows;
         loaded =
           notes !== undefined &&
@@ -788,18 +803,20 @@ test(
       // A selection the user narrowed in chat survives setting up again.
       const narrowed = { collectionIds: ['FOLDER-NOTES'] };
       await invoke('apple_configure', {
-        apps: [{ app: 'notes', scope: narrowed, includeAttachments: false }],
+        connectors: [
+          { connector: 'notes', scope: narrowed, includeAttachments: false },
+        ],
       });
       const kept = await setUp({
         action: 'accept',
-        content: { apps: ['notes'] },
+        content: { connectors: ['notes'] },
       });
-      assert.deepEqual(kept.apps[0]?.scope, narrowed);
-      assert.equal(kept.apps[0]?.includeAttachments, false);
+      assert.deepEqual(kept.connectors[0]?.scope, narrowed);
+      assert.equal(kept.connectors[0]?.includeAttachments, false);
 
       const cancelled = await setUp({ action: 'cancel' });
       assert.equal(cancelled.changed, false);
-      assert.deepEqual(cancelled.apps, kept.apps);
+      assert.deepEqual(cancelled.connectors, kept.connectors);
     } finally {
       await client.close();
       await transport.close();
@@ -891,7 +908,7 @@ test(
       // The server started before the user's connectors existed.
       await withConnectors(scratch.path);
       const context = await call('apple_context', { event: 'SessionStart' });
-      await call('apple_configure', { apps: [{ app: 'photos' }] });
+      await call('apple_configure', { connectors: [{ connector: 'photos' }] });
       const settings = join(
         scratch.path,
         'Library/Application Support/Context Compiler/Apple/settings.sqlite',
@@ -901,7 +918,7 @@ test(
         await sleep(500);
         const [selected] = read(
           settings,
-          "SELECT database FROM selected_apps WHERE app = 'photos'",
+          "SELECT database FROM selected_connectors WHERE connector = 'photos'",
         ).rows;
         if (selected !== undefined && existsSync(selected.database))
           photos = read(
@@ -920,7 +937,7 @@ test(
           "'Open Pictures once.'",
         ),
       );
-      const edited = await call('apple_options', { app: 'photos' });
+      const edited = await call('apple_options', { connector: 'photos' });
 
       assert.match(context, /^- Drafts could not be loaded: /m);
       assert.match(edited, /Open Pictures once\./);

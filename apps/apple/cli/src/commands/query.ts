@@ -44,8 +44,8 @@ function holdsStatement(database: DatabaseSync, rest: string): boolean {
   }
 }
 
-// What a connector's file holds for readers: each stream's view, how many rows it
-// has, and what the latest pass declared it covers.
+// What a connector's file holds for readers: each stream's view, how many
+// rows it has, and what the latest pass declared it covers.
 function views(
   database: DatabaseSync,
   connector: AppleConnector,
