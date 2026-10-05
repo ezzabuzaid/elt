@@ -1,6 +1,6 @@
-import { lstat, mkdtempDisposable, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
 
 import type {
   CopyConfiguration,
@@ -9,23 +9,26 @@ import type {
   SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
+import { Catalog, Source, diffSnapshot, isTimestamp } from '@workspace/elt';
 import {
-  Source,
-  diffSnapshot,
-  isTimestamp,
-  validateRecords,
-} from '@workspace/elt';
-import {
-  type CalendarQuery,
   type CalendarStore,
   IcsExportUnavailableError,
 } from '@workspace/macos-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
-import { catalog } from './calendar-catalog.ts';
-import { calendarRows } from './calendar-rows.ts';
-import { CalendarSnapshot } from './calendar-snapshot.ts';
-import { isIcsStream } from './ics-records.ts';
+import { CalendarScan } from './calendar-scan.ts';
+import type { CalendarReader } from './calendar-stream.ts';
+import { AccountsStream } from './streams/accounts-stream.ts';
+import { AlarmsStream } from './streams/alarms-stream.ts';
+import { AttendeesStream } from './streams/attendees-stream.ts';
+import { CalendarsStream } from './streams/calendars-stream.ts';
+import { EventsStream } from './streams/events-stream.ts';
+import { IcsAttachmentsStream } from './streams/ics-attachments-stream.ts';
+import { IcsComponentsStream } from './streams/ics-components-stream.ts';
+import { IcsParametersStream } from './streams/ics-parameters-stream.ts';
+import { IcsPropertiesStream } from './streams/ics-properties-stream.ts';
+import { RecurrenceRuleValuesStream } from './streams/recurrence-rule-values-stream.ts';
+import { RecurrenceRulesStream } from './streams/recurrence-rules-stream.ts';
 
 export type CalendarAttachment = {
   readonly uri: string;
@@ -54,7 +57,33 @@ export class CalendarIcsUnavailableError extends Error {
   }
 }
 
-export class AppleCalendarSource extends Source<CalendarSnapshot> {
+const readers = {
+  accounts: new AccountsStream(),
+  calendars: new CalendarsStream(),
+  events: new EventsStream(),
+  icsComponents: new IcsComponentsStream(),
+  icsProperties: new IcsPropertiesStream(),
+  icsAttachments: new IcsAttachmentsStream(),
+  icsParameters: new IcsParametersStream(),
+  attendees: new AttendeesStream(),
+  alarms: new AlarmsStream(),
+  recurrenceRules: new RecurrenceRulesStream(),
+  recurrenceRuleValues: new RecurrenceRuleValuesStream(),
+} satisfies Record<string, CalendarReader>;
+const catalog = new Catalog(
+  Object.values(readers).map((reader) => reader.describe()),
+);
+const readersByName = new Map<string, CalendarReader>(
+  Object.values(readers).map((reader) => [reader.name, reader]),
+);
+const readerOf = (stream: Stream): CalendarReader => {
+  const reader = readersByName.get(stream.name);
+  if (reader === undefined)
+    throw new Error(`Apple Calendar has no stream ${stream.name}`);
+  return reader;
+};
+
+export class AppleCalendarSource extends Source<CalendarScan> {
   readonly #store: CalendarStore;
   // The window is not part of the identity: moving it keeps one checkpoint, and
   // incremental copies delete the occurrences that left it.
@@ -63,17 +92,17 @@ export class AppleCalendarSource extends Source<CalendarSnapshot> {
   readonly startAt: string;
   readonly endAt: string;
   readonly scope: ImportScope;
-  readonly accounts = catalog.get('accounts');
-  readonly calendars = catalog.get('calendars');
-  readonly events = catalog.get('events');
-  readonly attendees = catalog.get('attendees');
-  readonly alarms = catalog.get('alarms');
-  readonly recurrenceRules = catalog.get('recurrenceRules');
-  readonly recurrenceRuleValues = catalog.get('recurrenceRuleValues');
-  readonly icsComponents = catalog.get('icsComponents');
-  readonly icsProperties = catalog.get('icsProperties');
-  readonly icsParameters = catalog.get('icsParameters');
-  readonly icsAttachments = catalog.get('icsAttachments');
+  readonly accounts = readers.accounts.describe();
+  readonly calendars = readers.calendars.describe();
+  readonly events = readers.events.describe();
+  readonly attendees = readers.attendees.describe();
+  readonly alarms = readers.alarms.describe();
+  readonly recurrenceRules = readers.recurrenceRules.describe();
+  readonly recurrenceRuleValues = readers.recurrenceRuleValues.describe();
+  readonly icsComponents = readers.icsComponents.describe();
+  readonly icsProperties = readers.icsProperties.describe();
+  readonly icsParameters = readers.icsParameters.describe();
+  readonly icsAttachments = readers.icsAttachments.describe();
 
   readonly #attachments?: CalendarAttachmentFetcher;
 
@@ -105,7 +134,7 @@ export class AppleCalendarSource extends Source<CalendarSnapshot> {
   }
 
   override coverage(stream: Stream): ExtractionCoverage {
-    if (stream === this.accounts || stream === this.calendars)
+    if (!readerOf(stream).dated)
       return {
         description:
           'All Calendar accounts or calendars visible through EventKit on this Mac. No date filter; the event window does not restrict these listings.',
@@ -125,38 +154,21 @@ export class AppleCalendarSource extends Source<CalendarSnapshot> {
     for await (const _ of this.#store.watch(signal)) yield streams;
   }
 
-  // Every selected stream from one change-free read, so occurrences match
-  // their calendars and ICS rows their items.
+  // Every selected stream reads from one change-free EventKit read, so
+  // occurrences match their calendars and ICS rows their items. The private
+  // ICS export is asked for only when an ICS stream is selected.
   protected override async open(
     streams: readonly Stream[],
-  ): Promise<CalendarSnapshot> {
-    const rows = calendarRows(
-      await this.#read({
+  ): Promise<CalendarScan> {
+    try {
+      const contents = await this.#store.read({
         startAt: this.startAt,
         endAt: this.endAt,
-        ics: streams.some((stream) => isIcsStream(stream.name)),
+        ics: streams.some((stream) => readerOf(stream).requiresIcs),
         accountIds: this.scope.accountIds,
         calendarIds: this.scope.collectionIds,
-      }),
-    );
-    return new CalendarSnapshot(
-      new Map(
-        streams.map((stream) => {
-          const records = validateRecords(
-            stream,
-            rows.get(stream.name),
-            'EventKit',
-          );
-          if (stream.name === 'events') records.forEach(checkEventDates);
-          return [stream.name, records];
-        }),
-      ),
-    );
-  }
-
-  async #read(query: CalendarQuery) {
-    try {
-      return await this.#store.read(query);
+      });
+      return new CalendarScan(contents, this.#attachments);
     } catch (error) {
       if (error instanceof IcsExportUnavailableError)
         throw new CalendarIcsUnavailableError(error);
@@ -168,71 +180,31 @@ export class AppleCalendarSource extends Source<CalendarSnapshot> {
     configuration: CopyConfiguration,
     state: unknown,
     _partition: null,
-    snapshot: CalendarSnapshot,
+    scan: CalendarScan,
   ): AsyncGenerator<SourceMessage> {
-    const { stream, syncMode } = configuration;
-    const records = snapshot.of(stream.name);
-    if (syncMode === 'incremental') {
-      for await (const message of diffSnapshot(stream, records, state))
-        if ('type' in message) yield message;
-        else yield* this.withFile(configuration, message.data);
+    const { stream } = configuration;
+    const reader = readerOf(stream);
+    const records = await reader.read(scan);
+    const messages =
+      configuration.syncMode === 'incremental'
+        ? diffSnapshot(stream, records, state)
+        : records.map((data) => ({ stream: stream.name, data }));
+    if (configuration.fileReads.length === 0) {
+      yield* messages;
       return;
     }
-    for (const data of records) yield* this.withFile(configuration, data);
-  }
-
-  // Stages an attachment's bytes when the copy reads them, like Notes attachments.
-  private async *withFile(
-    configuration: CopyConfiguration,
-    data: Record<string, unknown>,
-  ): AsyncGenerator<SourceMessage> {
-    const stream = configuration.stream.name;
-    if (stream !== 'icsAttachments' || configuration.fileReads.length === 0) {
-      yield { stream, data };
-      return;
-    }
-    const attachment = {
-      uri: String(data.uri),
-      // Validated against the icsAttachments schema: nullable text.
-      filename: data.filename === null ? null : String(data.filename),
-      formatType: data.formatType === null ? null : String(data.formatType),
-      calendarId: String(data.calendarId),
-      calendarItemId: String(data.calendarItemId),
-    };
-    await using scratch = await mkdtempDisposable(
+    // Only records the diff emits are staged, one at a time.
+    await using staging = await mkdtempDisposable(
       join(tmpdir(), 'context-compiler-calendar-attachment-'),
     );
-    const extension =
-      attachment.filename === null ? '' : extname(attachment.filename);
-    const path = join(scratch.path, `content${extension}`);
-    let saved: boolean;
-    if (data.inline === true) {
-      await writeFile(path, Buffer.from(attachment.uri, 'base64'));
-      saved = true;
-    } else {
-      if (this.#attachments === undefined)
-        throw new TypeError(
-          'Reading Calendar attachment files requires an attachments fetcher: new AppleCalendarSource({ ..., attachments })',
-        );
-      saved = await this.#attachments(attachment, path);
+    for await (const message of messages) {
+      if ('type' in message) {
+        yield message;
+        continue;
+      }
+      const file = await reader.file(message.data, scan, staging.path);
+      yield { ...message, file };
+      if (file !== null) await rm(file, { force: true });
     }
-    if (saved && !(await lstat(path)).isFile())
-      throw new TypeError(
-        'The attachment fetcher did not write a regular file',
-      );
-    yield { stream, data, file: saved ? path : null };
   }
-}
-
-function checkEventDates(event: Record<string, unknown>): void {
-  const endsBeforeStart = String(event.endAt) < String(event.startAt);
-  let datesInconsistent: boolean;
-  if (event.allDay)
-    datesInconsistent =
-      event.startDate === null ||
-      event.endDate === null ||
-      String(event.endDate) < String(event.startDate);
-  else datesInconsistent = event.startDate !== null || event.endDate !== null;
-  if (endsBeforeStart || datesInconsistent)
-    throw new TypeError('Calendar returned inconsistent event dates');
 }
