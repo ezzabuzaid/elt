@@ -413,6 +413,10 @@ test('mail_messages reads each message with its body, recipients, subject, Messa
   const presets = connector.presets();
   const mailMessages = presets.find(({ name }) => name === 'mail_messages');
   assert.ok(mailMessages, 'Mail has the mail_messages preset');
+  assert.ok(
+    presets.some(({ name }) => name === 'mail_subscription_evidence'),
+    'Mail discovers the subscription evidence preset without registration',
+  );
   const rows = read(
     database,
     presets,
@@ -431,6 +435,15 @@ test('mail_messages reads each message with its body, recipients, subject, Messa
       `${preset.file} describes its view and every column, in order`,
     );
   }
+  assert.deepEqual(
+    read(
+      database,
+      presets,
+      'SELECT record_id, matched_terms FROM mail_subscription_evidence ORDER BY record_id',
+    ),
+    [{ record_id: '3', matched_terms: '["invoice"]' }],
+    'the evidence preset reads the actual imported Mail projection',
+  );
   const timestamp = (seconds: number) => new Date(seconds * 1000).toISOString();
   const recipient = (address: string, name: string | null, kind: string) => ({
     address,

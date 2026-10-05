@@ -41,11 +41,15 @@ The Apple plugin imports each selected connector's data into its own SQLite file
 
    Prefer a preset that covers the question over joining its views again. Load it with `-cmd` before the SQL, its path in double quotes, since it may hold spaces:
 
+   Read its header for dependencies and load those first. In particular, `mail_subscription_evidence` needs `mail_messages` loaded on the same connection. Subscription evidence presets return candidates, including offers, trials, cancellations and one-off payments; interpret their text and source context before claiming an active subscription. `occurred_at` is qualified by `date_kind`, and Notes' modification date is never a renewal date. Attachment bytes still need reading separately.
+
    ```sh
    /usr/bin/sqlite3 -readonly -json -cmd '.timeout 30000' -cmd 'PRAGMA temp_store = MEMORY' \
      -cmd '.read "<presets folder>/mail_messages.sql"' \
      '<mail database>' "SELECT received_at, sender, subject FROM mail_messages WHERE sender LIKE '%@example.com' LIMIT 50"
    ```
+
+   To combine subscription evidence in one statement, open Mail as the main database and attach Messages and Notes as `sms` and `note_store`. Load Mail's two presets, then read Messages' and Notes' preset SQL and replace their explicit `main.` qualifiers with `sms.` and `note_store.` before loading those SQL statements on the same connection. This avoids confusing different connectors' identically named `messages` and `attachments` views. Query `mail_subscription_evidence UNION ALL message_subscription_evidence UNION ALL note_subscription_evidence` with a `SELECT * FROM` before each view; all three have the same documented columns. Include only selected, readable connectors, and report coverage gaps.
 
 5. Answer plainly with the app, the record's title, name or date, and useful source links when present. Mention the connector's last sync when freshness matters; `stream_status` has it per stream.
 
