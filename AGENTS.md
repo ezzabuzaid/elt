@@ -48,6 +48,15 @@ An agnostic package is designed as if it were published to npm: anyone could cop
 - **Stored shapes carry their own guards.** Anything the host persists and reads back is parsed by a static the package exports (`GoogleGrant.parse`).
 - **Tests reach no network.** Stub below the dependency's transport with msw (`packages/google-auth/src/grant-opener.test.ts`). A test that needs Postgres gets its server from the caller and creates its own database on it (`scratchDatabase` in `packages/destinations/postgresql/src/index.test.ts`).
 
+## SDKs
+
+An SDK is the agnostic package that speaks one vendor store or API, such as `~/Library/Accounts/Accounts4.sqlite` or Google's OAuth, and knows nothing of `elt`. Every store a source reads gets one, even when only one source reads it.
+
+- **The SDK owns the store:** its location (`accountsStorePath`), opening it read-only, decoding it into typed objects, what its keys mean (an account's TLS setting resolved through its parent account), errors that name the grant (`AccountsUnavailableError`), and its change signal (`AccountsStore.version()`, the EventKit helper's `watch`).
+- **The source owns the pipeline:** streams, field names, JSON Schema, descriptions, scope, checkpoints, and which streams `observe()` refreshes when an SDK reports a change.
+- **Enforced by the `layer:sdk` tag:** `eslint.config.mjs` stops a `layer:sdk` project from reaching `layer:elt` (`packages/elt`), directly or through a source, destination or connector. An SDK is also an island.
+- **Named** `packages/sdks/<platform>/<surface>`, `@workspace/sdk-<platform>-<name>`, so `sdk-apple-mail`, `source-apple-mail` and `connector-apple-mail` read as one stack. The first SDKs keep their names until they move there: `packages/macos/*` (`macos-*`) and `packages/google-auth`.
+
 ## Fake only what cannot run for real
 
 Test against the real dependency: a real `Pipeline`, real SQLite or Postgres, a synthetic app database on disk. A test that needs data in a live store writes it there and deletes it, as the EventKit tests do with a temporary calendar. Fake a boundary only when the real one cannot produce the case, say why beside the fake, and make the fake a real stand-in outside the code under test, never a mock of a module: `StubEventKitHelper` is an executable the EventKit stores run instead of the compiled helper, because EventKit cannot create attendees and a test cannot deny access or remove the ICS export. A package that owns such a boundary exports its fake as a class under a `./test` subpath. Every other test helper lives in the test file that uses it; packages export no shared testing modules.

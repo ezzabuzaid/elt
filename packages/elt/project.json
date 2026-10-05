@@ -2,7 +2,7 @@
   "name": "elt",
   "sourceRoot": "packages/elt/src",
   "projectType": "library",
-  "tags": ["layer:island"],
+  "tags": ["layer:island", "layer:elt"],
   "targets": {
     "format": {},
     "test": {

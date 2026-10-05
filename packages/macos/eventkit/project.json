@@ -2,7 +2,7 @@
   "name": "macos-eventkit",
   "sourceRoot": "packages/macos/eventkit/src",
   "projectType": "library",
-  "tags": ["layer:island"],
+  "tags": ["layer:island", "layer:sdk"],
   "targets": {
     "format": {},
     "helper": {

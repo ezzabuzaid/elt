@@ -2,7 +2,7 @@
   "name": "google-auth",
   "sourceRoot": "packages/google-auth/src",
   "projectType": "library",
-  "tags": ["layer:island"],
+  "tags": ["layer:island", "layer:sdk"],
   "targets": {
     "format": {},
     "test": {

@@ -70,6 +70,10 @@ export default [
               'commander',
               '@clack/prompts',
             ]),
+            // An SDK speaks one vendor store or API and knows nothing of the
+            // pipeline: no path from it may reach elt, so no source,
+            // destination or connector either (Nx checks this transitively).
+            { sourceTag: 'layer:sdk', notDependOnLibsWithTags: ['layer:elt'] },
           ],
         },
       ],

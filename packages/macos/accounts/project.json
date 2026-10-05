@@ -2,7 +2,7 @@
   "name": "macos-accounts",
   "sourceRoot": "packages/macos/accounts/src",
   "projectType": "library",
-  "tags": ["layer:island"],
+  "tags": ["layer:island", "layer:sdk"],
   "targets": {
     "format": {},
     "test": {
