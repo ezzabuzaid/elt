@@ -21,7 +21,7 @@ function ago(instant: string | null): string {
 export class StatusCommand extends Command {
   readonly name = 'status';
   readonly summary =
-    "Show each selected app's latest pass, last success and database";
+    "Show each selected connector's latest pass, last success and database";
 
   protected configure(): void {}
 
@@ -30,20 +30,21 @@ export class StatusCommand extends Command {
     return {
       data: statuses,
       text: () => {
-        if (statuses.length === 0) return 'No apps are set up. Run: setup';
+        if (statuses.length === 0)
+          return 'No connectors are set up. Run: setup';
         const failures = statuses
           .filter(({ error }) => error !== null)
-          .map(({ app, title, error }) => {
-            // A selected app whose connector is not loaded has no guidance;
+          .map(({ connector, title, error }) => {
+            // A selected connector that is not loaded has no guidance;
             // its error says what to do.
-            const guidance = this.imports.apps
-              .find(({ name }) => name === app)
+            const guidance = this.imports.connectors
+              .find(({ name }) => name === connector)
               ?.guidance();
             return `\n${title}: ${error}${guidance === undefined ? '' : `\n${guidance}`}`;
           });
         return [
           table(
-            ['App', 'State', 'Last success', 'Scope', 'Database'],
+            ['Connector', 'State', 'Last success', 'Scope', 'Database'],
             statuses.map((status) => [
               status.title,
               status.state,

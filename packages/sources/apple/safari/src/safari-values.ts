@@ -1,9 +1,6 @@
 import type { SQLOutputValue } from 'node:sqlite';
 
-import {
-  type PlistValue,
-  isDictionary,
-} from '@workspace/source-apple-macos/plist';
+import { type PlistValue, isDictionary } from '@workspace/macos-plist';
 
 export type Row = Record<string, SQLOutputValue>;
 export type Dictionary = Readonly<Record<string, PlistValue>>;

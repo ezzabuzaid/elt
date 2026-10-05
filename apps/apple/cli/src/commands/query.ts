@@ -44,16 +44,19 @@ function holdsStatement(database: DatabaseSync, rest: string): boolean {
   }
 }
 
-// What an app's file holds for readers: each stream's view, how many rows it
+// What a connector's file holds for readers: each stream's view, how many rows it
 // has, and what the latest pass declared it covers.
-function views(database: DatabaseSync, app: AppleConnector): ViewSummary[] {
+function views(
+  database: DatabaseSync,
+  connector: AppleConnector,
+): ViewSummary[] {
   const streams = database
     .prepare(
       `SELECT s.stream, c.description FROM stream_status s
        JOIN extraction_coverage c ON c.attempt_id = s.latest_attempt_id AND c.stream = s.stream
        WHERE s.connector = ? ORDER BY s.stream`,
     )
-    .all(app.name)
+    .all(connector.name)
     .map((row) => ({
       stream: String(row.stream),
       description: String(row.description),
@@ -68,7 +71,7 @@ function views(database: DatabaseSync, app: AppleConnector): ViewSummary[] {
   );
   return streams
     .map(({ stream, description }) => ({
-      view: app.view(stream),
+      view: connector.view(stream),
       coverage: description,
     }))
     .filter(({ view }) => readable.has(view))
@@ -84,11 +87,11 @@ function views(database: DatabaseSync, app: AppleConnector): ViewSummary[] {
 export class QueryCommand extends Command {
   readonly name = 'query';
   readonly summary =
-    "Run one read-only SQL statement on an app's data, or list its views with --tables";
+    "Run one read-only SQL statement on a connector's data, or list its views with --tables";
 
   protected configure(declaration: Declaration): void {
     declaration
-      .addArgument(new Argument('<app>').choices(this.imports.names))
+      .addArgument(new Argument('<connector>').choices(this.imports.names))
       .argument(
         '[sql]',
         'one statement; the catalog view lists every view and column: SELECT name, data_type, description FROM catalog',
@@ -101,7 +104,7 @@ export class QueryCommand extends Command {
     const sql: string | undefined = declaration.processedArgs[1];
     if (declaration.opts().tables === true) {
       using database = this.imports.read(name);
-      const summaries = views(database, this.imports.app(name));
+      const summaries = views(database, this.imports.connector(name));
       return {
         data: summaries,
         text: () =>

@@ -3,6 +3,9 @@
   "files": [],
   "references": [
     {
+      "path": "./packages/macos/plist"
+    },
+    {
       "path": "./packages/destinations/postgresql"
     },
     {

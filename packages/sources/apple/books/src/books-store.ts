@@ -11,7 +11,7 @@ import {
   type PlistValue,
   isBinaryPlist,
   parseBinaryPlist,
-} from '@workspace/source-apple-macos/plist';
+} from '@workspace/macos-plist';
 
 // Books.app's own container: the library, annotations, themes and its
 // preferences.

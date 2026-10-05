@@ -1,8 +1,8 @@
+import type { PlistValue } from '@workspace/macos-plist';
 import {
   type ImportScope,
   selected,
 } from '@workspace/source-apple-macos/import-scope';
-import type { PlistValue } from '@workspace/source-apple-macos/plist';
 
 import { type Dictionary, dictionary, list } from './safari-values.ts';
 

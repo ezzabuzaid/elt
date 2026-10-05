@@ -9,10 +9,12 @@ const flag = (scope: 'accountIds' | 'collectionIds') =>
 export class OptionsCommand extends Command {
   readonly name = 'options';
   readonly summary =
-    "List an app's accounts and collections, for setup's narrowing flags";
+    "List a connector's accounts and collections, for setup's narrowing flags";
 
   protected configure(declaration: Declaration): void {
-    declaration.addArgument(new Argument('<app>').choices(this.imports.names));
+    declaration.addArgument(
+      new Argument('<connector>').choices(this.imports.names),
+    );
   }
 
   protected async run(declaration: Declaration): Promise<Output> {

@@ -8,8 +8,8 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   type PlistValue,
   isDictionary,
-} from '@workspace/source-apple-macos/plist';
-import { readMailPlist } from '@workspace/source-apple-macos/plutil';
+  readPlist,
+} from '@workspace/macos-plist';
 
 export const mailDirectory = join(homedir(), 'Library/Mail');
 
@@ -49,7 +49,7 @@ export function plistObject(value: PlistValue): Record<string, PlistValue> {
 
 export async function mailVersionDirectory(root: string): Promise<string> {
   const info = plistObject(
-    await readMailPlist(join(root, 'PersistenceInfo.plist')),
+    await readPlist(join(root, 'PersistenceInfo.plist')),
   );
   const version = info.LastUsedVersionDirectoryName;
   if (typeof version !== 'string' || !/^V\d+$/.test(version))
@@ -197,7 +197,7 @@ export class MailStore implements AsyncDisposable {
     // a file that disappears or fails parsing after open is an error.
     if (file === undefined) return null;
     await assertMailFile(file);
-    const value = await readMailPlist(file.path);
+    const value = await readPlist(file.path);
     await assertMailFile(file);
     return value;
   }

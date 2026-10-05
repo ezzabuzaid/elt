@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
+    "@workspace/macos-plist": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
     "@zone-eu/mailsplit": "5.4.19",
     "libmime": "5.4.6"

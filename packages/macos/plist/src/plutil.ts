@@ -5,9 +5,9 @@ import { type PlistValue, parseBinaryPlist } from './plist.ts';
 
 const execute = promisify(execFile);
 
-export async function readMailPlist(path: string): Promise<PlistValue> {
-  // plutil owns XML parsing and converts every plist kind, including dates/data;
-  // our existing binary decoder already preserves those native value types.
+export async function readPlist(path: string): Promise<PlistValue> {
+  // plutil reads any plist format (XML or binary) and rewrites it
+  // as binary1, which parseBinaryPlist decodes with dates and data kept native.
   const { stdout } = await execute(
     '/usr/bin/plutil',
     ['-convert', 'binary1', '-o', '-', path],

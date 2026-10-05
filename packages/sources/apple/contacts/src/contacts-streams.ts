@@ -1,10 +1,10 @@
 import { Catalog, type FieldSchema, Stream } from '@workspace/elt';
-import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 import {
   decodeArchive,
   isBinaryPlist,
   plistJSON,
-} from '@workspace/source-apple-macos/plist';
+} from '@workspace/macos-plist';
+import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 
 import type { AddressBookSchema } from './address-book.ts';
 

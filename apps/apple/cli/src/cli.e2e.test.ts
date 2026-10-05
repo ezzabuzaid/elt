@@ -1020,7 +1020,7 @@ function cli(mac: string, ...args: string[]) {
 }
 
 // The user's Notes, where Notes keeps them under HOME. Only Notes has a store
-// here; every other app finds nothing, as on a Mac that denies access.
+// here; every other connector finds nothing, as on a Mac that denies access.
 const withNotes = (mac: string) =>
   noteStoreFixture(join(mac, 'Library/Group Containers/group.com.apple.notes'));
 
@@ -1074,11 +1074,12 @@ const lines = (stdout: string) =>
     .split('\n')
     .map((line) => JSON.parse(line));
 
-test('an app macOS will not open fails alone, named with the access to grant, while the others load', async () => {
+test('a connector whose app macOS will not open fails alone, named with the access to grant, while the others load', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
   assert.equal(
-    cli(mac.path, 'setup', '--app', 'notes', '--app', 'messages').status,
+    cli(mac.path, 'setup', '--connector', 'notes', '--connector', 'messages')
+      .status,
     0,
   );
 
@@ -1086,15 +1087,15 @@ test('an app macOS will not open fails alone, named with the access to grant, wh
 
   assert.equal(synced.status, 1);
   const passes = Object.fromEntries(
-    lines(synced.stdout).map((pass) => [pass.app, pass]),
+    lines(synced.stdout).map((pass) => [pass.connector, pass]),
   );
   assert.equal(passes.notes.status, 'succeeded');
   assert.equal(passes.messages.status, 'failed');
   assert.match(passes.messages.error, /Full Disk Access/);
   const status = JSON.parse(cli(mac.path, 'status', '--json').stdout);
   assert.deepEqual(
-    status.map(({ app, state }: { app: string; state: string }) => [
-      app,
+    status.map(({ connector, state }: { connector: string; state: string }) => [
+      connector,
       state,
     ]),
     [
@@ -1107,7 +1108,7 @@ test('an app macOS will not open fails alone, named with the access to grant, wh
 test('a second sync is refused while another holds the store, and nothing it imported is touched', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
-  cli(mac.path, 'setup', '--app', 'notes');
+  cli(mac.path, 'setup', '--connector', 'notes');
   cli(mac.path, 'sync');
   // Stands in for a running sync, which holds this lock for its whole run.
   mkdirSync(join(mac.path, 'outputs/cli'), { recursive: true });
@@ -1118,7 +1119,7 @@ test('a second sync is refused while another holds the store, and nothing it imp
   const rescoped = cli(
     mac.path,
     'setup',
-    '--app',
+    '--connector',
     'notes',
     '--collection',
     'FOLDER-NOTES',
@@ -1141,7 +1142,7 @@ test('setup, sync, status and query read the Notes this Mac holds through docume
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
 
-  const setup = cli(mac.path, 'setup', '--app', 'notes', '--json');
+  const setup = cli(mac.path, 'setup', '--connector', 'notes', '--json');
   const synced = cli(mac.path, 'sync');
   const status = cli(mac.path, 'status', '--json');
   const views = cli(mac.path, 'query', 'notes', '--tables', '--json');
@@ -1155,7 +1156,7 @@ test('setup, sync, status and query read the Notes this Mac holds through docume
 
   assert.equal(setup.status, 0, setup.stderr);
   assert.deepEqual(JSON.parse(setup.stdout), {
-    apps: [{ app: 'notes', scope: {}, includeAttachments: true }],
+    connectors: [{ connector: 'notes', scope: {}, includeAttachments: true }],
   });
   assert.equal(synced.status, 0, synced.stderr);
   assert.equal(lines(synced.stdout)[0].status, 'succeeded');
@@ -1175,14 +1176,14 @@ test('setup, sync, status and query read the Notes this Mac holds through docume
       '-readonly',
       '-json',
       join(mac.path, 'outputs/cli/settings.sqlite'),
-      'SELECT app, database FROM selected_apps',
+      'SELECT connector, database FROM selected_connectors',
     ],
     { encoding: 'utf8' },
   );
   assert.deepEqual(
     JSON.parse(selected.stdout).map(
-      ({ app, database }: { app: string; database: string }) => [
-        app,
+      ({ connector, database }: { connector: string; database: string }) => [
+        connector,
         realpathSync(database),
       ],
     ),
@@ -1207,10 +1208,10 @@ test('setup, sync, status and query read the Notes this Mac holds through docume
   );
 });
 
-test('changing what an app imports, down to its attachments, loads the new selection completely on the next sync', async () => {
+test('changing what a connector imports, down to its attachments, loads the new selection completely on the next sync', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
-  cli(mac.path, 'setup', '--app', 'notes');
+  cli(mac.path, 'setup', '--connector', 'notes');
   cli(mac.path, 'sync');
   const options = JSON.parse(
     cli(mac.path, 'options', 'notes', '--json').stdout,
@@ -1223,13 +1224,13 @@ test('changing what an app imports, down to its attachments, loads the new selec
       ({ label }: { label: string }) => label === 'iCloud / Recently Deleted',
     );
 
-  // Narrowing flags bind to the --app before them, here the second one.
+  // Narrowing flags bind to the --connector before them, here the second one.
   const rescoped = cli(
     mac.path,
     'setup',
-    '--app',
+    '--connector',
     'messages',
-    '--app',
+    '--connector',
     'notes',
     '--collection',
     trash.id,
@@ -1245,7 +1246,9 @@ test('changing what an app imports, down to its attachments, loads the new selec
   );
 
   assert.equal(rescoped.status, 0, rescoped.stderr);
-  const notesPass = lines(synced.stdout).find(({ app }) => app === 'notes');
+  const notesPass = lines(synced.stdout).find(
+    ({ connector }) => connector === 'notes',
+  );
   assert.equal(notesPass.status, 'succeeded', synced.stdout);
   assert.deepEqual(
     JSON.parse(titles.stdout).map(({ title }: { title: string }) => title),
@@ -1264,7 +1267,7 @@ test('changing what an app imports, down to its attachments, loads the new selec
 test('a command a script cannot run fails and says why, changing nothing', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
-  cli(mac.path, 'setup', '--app', 'notes');
+  cli(mac.path, 'setup', '--connector', 'notes');
   cli(mac.path, 'sync');
 
   const unnamed = cli(mac.path, 'setup');
@@ -1273,13 +1276,13 @@ test('a command a script cannot run fails and says why, changing nothing', async
     'setup',
     '--collection',
     'FOLDER-NOTES',
-    '--app',
+    '--connector',
     'notes',
   );
   const undated = cli(
     mac.path,
     'setup',
-    '--app',
+    '--connector',
     'contacts',
     '--since',
     '2025-01-01',
@@ -1292,7 +1295,7 @@ test('a command a script cannot run fails and says why, changing nothing', async
   );
   // Indented further than the second statement is long, the way an editor
   // or an agent might send it.
-  const unselected = cli(mac.path, 'sync', '--app', 'calendar');
+  const unselected = cli(mac.path, 'sync', '--connector', 'calendar');
   const indented = cli(
     mac.path,
     'query',
@@ -1310,13 +1313,13 @@ test('a command a script cannot run fails and says why, changing nothing', async
   ])
     assert.equal(run.status, 1, run.stderr);
   assert.match(unselected.stderr, /calendar is not set up/);
-  assert.match(unnamed.stderr, /--app/);
-  assert.match(misplaced.stderr, /must follow the --app/);
+  assert.match(unnamed.stderr, /--connector/);
+  assert.match(misplaced.stderr, /must follow the --connector/);
   assert.match(undated.stderr, /date filtering is unavailable/);
   assert.match(twoStatements.stderr, /one SQL statement/);
   const status = JSON.parse(cli(mac.path, 'status', '--json').stdout);
   assert.deepEqual(
-    status.map(({ app }: { app: string }) => app),
+    status.map(({ connector }: { connector: string }) => connector),
     ['notes'],
   );
 });
@@ -1326,10 +1329,10 @@ test('the setup wizard saves what the person picks and syncs it when asked', asy
   await withNotes(mac.path);
   const wizard = terminal(mac.path, 'setup');
   try {
-    await wizard.shows('Which apps should be imported?');
-    // Apps are listed by name; Notes is the sixth.
+    await wizard.shows('Which connectors should be imported?');
+    // Connectors are listed by name; Notes is the sixth.
     await wizard.type(down, down, down, down, down, space, enter);
-    await wizard.shows('Narrow any app?');
+    await wizard.shows('Narrow any connector?');
     await wizard.type(space, enter);
     await wizard.shows('Notes: accounts');
     await wizard.type(enter);
@@ -1411,11 +1414,11 @@ async function withConnectors(mac: string) {
   );
 }
 
-test('a connector the user added syncs and answers queries beside the built-in apps, and one that does not load is reported while the rest work', async () => {
+test('a connector the user added syncs and answers queries beside the built-in connectors, and one that does not load is reported while the rest work', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withConnectors(mac.path);
 
-  const setup = cli(mac.path, 'setup', '--app', 'photos');
+  const setup = cli(mac.path, 'setup', '--connector', 'photos');
   const sync = cli(mac.path, 'sync');
   const photos = cli(
     mac.path,
@@ -1435,11 +1438,11 @@ test('a connector the user added syncs and answers queries beside the built-in a
   ]);
 });
 
-test('a selected app whose connector was removed is reported by status, and sync still loads the other apps', async () => {
+test('a selected connector that was removed is reported by status, and sync still loads the other connectors', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
   await withConnectors(mac.path);
-  cli(mac.path, 'setup', '--app', 'notes', '--app', 'photos');
+  cli(mac.path, 'setup', '--connector', 'notes', '--connector', 'photos');
   await rm(
     join(
       mac.path,
@@ -1466,7 +1469,7 @@ test('--until takes in the day it names, and a day that is not on the calendar i
   const impossible = cli(
     mac.path,
     'setup',
-    '--app',
+    '--connector',
     'notes',
     '--until',
     '2025-02-30',
@@ -1474,7 +1477,7 @@ test('--until takes in the day it names, and a day that is not on the calendar i
   const setup = cli(
     mac.path,
     'setup',
-    '--app',
+    '--connector',
     'notes',
     '--until',
     '2025-02-03',
@@ -1500,7 +1503,7 @@ test('--until takes in the day it names, and a day that is not on the calendar i
 test('one SQL statement runs however it is spaced or commented', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
-  cli(mac.path, 'setup', '--app', 'notes');
+  cli(mac.path, 'setup', '--connector', 'notes');
   cli(mac.path, 'sync');
 
   const commented = cli(
@@ -1536,7 +1539,7 @@ test('sync loads Safari history from its library and tabs from where Safari keep
       )
       .run(appleSeconds('2026-04-01T00:00:00Z'));
   }
-  cli(mac.path, 'setup', '--app', 'safari');
+  cli(mac.path, 'setup', '--connector', 'safari');
 
   const synced = cli(mac.path, 'sync');
 

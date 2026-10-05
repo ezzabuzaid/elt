@@ -1,0 +1,9 @@
+{
+  "name": "macos-plist",
+  "sourceRoot": "packages/macos/plist/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {}
+  }
+}

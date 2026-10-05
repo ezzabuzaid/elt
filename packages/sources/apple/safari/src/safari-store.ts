@@ -11,8 +11,8 @@ import {
   type PlistValue,
   isBinaryPlist,
   parseBinaryPlist,
-} from '@workspace/source-apple-macos/plist';
-import { readMailPlist } from '@workspace/source-apple-macos/plutil';
+  readPlist,
+} from '@workspace/macos-plist';
 
 // History, bookmarks, closed tabs and downloads.
 export const safariDirectory = join(homedir(), 'Library/Safari');
@@ -142,5 +142,5 @@ export async function readSafariPlist(path: string): Promise<PlistValue> {
   } catch (cause) {
     throw new SafariUnavailableError(path, cause);
   }
-  return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readMailPlist(path);
+  return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readPlist(path);
 }

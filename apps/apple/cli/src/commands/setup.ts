@@ -27,18 +27,18 @@ import { SyncReport } from '../sync-report.ts';
 import { Command, type Output } from './command.ts';
 
 type Narrowed = {
-  app: AppleConnector;
+  connector: AppleConnector;
   scope: { -readonly [K in keyof ImportScope]: ImportScope[K] };
   includeAttachments: boolean;
 };
 
-// setup --app notes --collection <id> --since 2025-01-01 --app mail: commander
-// reads flags in order, so each narrowing flag applies to the --app before
-// it. Without --app, a person at a terminal answers prompts instead.
+// setup --connector notes --collection <id> --since 2025-01-01 --connector mail: commander
+// reads flags in order, so each narrowing flag applies to the --connector before
+// it. Without --connector, a person at a terminal answers prompts instead.
 export class SetupCommand extends Command {
   readonly name = 'setup';
   readonly summary =
-    'Choose the apps to import, and narrow any of them; prompts when no --app is given';
+    'Choose the connectors to import, and narrow any of them; prompts when no --connector is given';
   readonly #flagged: Narrowed[] = [];
 
   protected configure(declaration: Declaration): void {
@@ -46,7 +46,7 @@ export class SetupCommand extends Command {
       const selection = this.#flagged.at(-1);
       if (selection === undefined)
         throw new InvalidArgumentError(
-          `--${flag} must follow the --app it narrows`,
+          `--${flag} must follow the --connector it narrows`,
         );
       return selection;
     };
@@ -70,42 +70,43 @@ export class SetupCommand extends Command {
       };
     declaration
       .addOption(
-        new Option('--app <app>', 'an app to import; repeat for more').choices(
-          this.imports.names,
-        ),
+        new Option(
+          '--connector <connector>',
+          'a connector to import; repeat for more',
+        ).choices(this.imports.names),
       )
       .addOption(
         new Option(
           '--account <id>',
-          'import only this account of the --app before it',
+          'import only this account of the --connector before it',
         ).argParser(narrow('account')),
       )
       .addOption(
         new Option(
           '--collection <id>',
-          'import only this folder, mailbox, chat, calendar, list or profile of the --app before it',
+          'import only this folder, mailbox, chat, calendar, list or profile of the --connector before it',
         ).argParser(narrow('collection')),
       )
       .addOption(
         new Option(
           '--since <date>',
-          'import records of the --app before it from this date',
+          'import records of the --connector before it from this date',
         ).argParser(date('since')),
       )
       .addOption(
         new Option(
           '--until <date>',
-          'import records of the --app before it through this date',
+          'import records of the --connector before it through this date',
         ).argParser(date('until')),
       )
       .option(
         '--no-attachments',
-        'import the --app before it without attachment files',
+        'import the --connector before it without attachment files',
       )
       .option('--sync', 'sync right after saving');
-    declaration.on('option:app', (name: string) => {
+    declaration.on('option:connector', (name: string) => {
       this.#flagged.push({
-        app: this.imports.app(name),
+        connector: this.imports.connector(name),
         scope: {},
         includeAttachments: true,
       });
@@ -121,7 +122,8 @@ export class SetupCommand extends Command {
   ): Promise<Output | undefined> {
     if (this.#flagged.length > 0)
       return this.#fromFlags(declaration.opts().sync === true, interactive);
-    if (!interactive) throw new Error('Name the apps to import with --app');
+    if (!interactive)
+      throw new Error('Name the connectors to import with --connector');
     await this.#fromPrompts();
     return undefined;
   }
@@ -131,8 +133,8 @@ export class SetupCommand extends Command {
     interactive: boolean,
   ): Promise<Output | undefined> {
     const selections = this.#flagged.map(
-      ({ app, scope, includeAttachments }) => ({
-        app: app.name,
+      ({ connector, scope, includeAttachments }) => ({
+        connector: connector.name,
         scope,
         includeAttachments,
       }),
@@ -144,27 +146,31 @@ export class SetupCommand extends Command {
       return undefined;
     }
     return {
-      data: { apps: selections },
+      data: { connectors: selections },
       text: () =>
-        `Saved ${this.#flagged.map(({ app, scope }) => app.titled(scope)).join(', ')}.`,
+        `Saved ${this.#flagged.map(({ connector, scope }) => connector.titled(scope)).join(', ')}.`,
     };
   }
 
-  // Which apps, then which of them to narrow and how. Each chosen app is
+  // Which connectors, then which of them to narrow and how. Each chosen connector is
   // opened first, so macOS asks for access now and a refusal is named.
   // Cancelling saves nothing; once saved, declining only skips the sync.
   async #fromPrompts(): Promise<void> {
     const previous = new Map(
-      this.imports.selections().map((selection) => [selection.app, selection]),
+      this.imports
+        .selections()
+        .map((selection) => [selection.connector, selection]),
     );
     intro('Apple setup');
     const chosen = await multiselect<AppleConnector>({
-      message: 'Which apps should be imported?',
-      options: this.imports.apps.map((app) => ({
-        value: app,
-        label: app.title,
+      message: 'Which connectors should be imported?',
+      options: this.imports.connectors.map((connector) => ({
+        value: connector,
+        label: connector.title,
       })),
-      initialValues: this.imports.apps.filter(({ name }) => previous.has(name)),
+      initialValues: this.imports.connectors.filter(({ name }) =>
+        previous.has(name),
+      ),
       required: true,
     });
     if (isCancel(chosen)) return cancelled();
@@ -173,11 +179,11 @@ export class SetupCommand extends Command {
     checking.start('Checking access');
     const choices = new Map<AppleConnector, ChoiceOptions[]>();
     const denied: string[] = [];
-    for (const app of chosen)
+    for (const connector of chosen)
       try {
-        choices.set(app, await app.listChoices());
+        choices.set(connector, await connector.listChoices());
       } catch (error) {
-        denied.push(`${app.title}: ${app.failure(error)}`);
+        denied.push(`${connector.title}: ${connector.failure(error)}`);
       }
     checking.stop(
       `Checked access to ${chosen.map(({ title }) => title).join(', ')}`,
@@ -185,18 +191,18 @@ export class SetupCommand extends Command {
     for (const warning of denied) log.warn(warning);
 
     const narrowable = chosen.filter(
-      (app) =>
-        choices.get(app)?.some(({ options }) => options.length > 0) ||
-        app.datedBy !== null,
+      (connector) =>
+        choices.get(connector)?.some(({ options }) => options.length > 0) ||
+        connector.datedBy !== null,
     );
     const narrowing =
       narrowable.length === 0
         ? []
         : await multiselect<AppleConnector>({
-            message: 'Narrow any app? (leave empty to import everything)',
-            options: narrowable.map((app) => ({
-              value: app,
-              label: app.title,
+            message: 'Narrow any connector? (leave empty to import everything)',
+            options: narrowable.map((connector) => ({
+              value: connector,
+              label: connector.title,
             })),
             initialValues: narrowable.filter(
               ({ name }) =>
@@ -207,36 +213,40 @@ export class SetupCommand extends Command {
     if (isCancel(narrowing)) return cancelled();
 
     const selections: Selection[] = [];
-    for (const app of chosen) {
+    for (const connector of chosen) {
       const includeAttachments =
-        previous.get(app.name)?.includeAttachments ?? true;
-      if (!narrowing.includes(app)) {
-        selections.push({ app: app.name, scope: {}, includeAttachments });
+        previous.get(connector.name)?.includeAttachments ?? true;
+      if (!narrowing.includes(connector)) {
+        selections.push({
+          connector: connector.name,
+          scope: {},
+          includeAttachments,
+        });
         continue;
       }
       const scope = await this.#narrow(
-        app,
-        choices.get(app) ?? [],
-        previous.get(app.name)?.scope ?? {},
+        connector,
+        choices.get(connector) ?? [],
+        previous.get(connector.name)?.scope ?? {},
       );
       if (scope === null) return cancelled();
-      selections.push({ app: app.name, scope, includeAttachments });
+      selections.push({ connector: connector.name, scope, includeAttachments });
     }
     this.imports.select(selections);
 
     const sync = await confirm({ message: 'Sync now?' });
     outro(
-      `Saved ${selections.map(({ app, scope }) => this.imports.app(app).titled(scope)).join(', ')}.`,
+      `Saved ${selections.map(({ connector, scope }) => this.imports.connector(connector).titled(scope)).join(', ')}.`,
     );
     if (sync === true) await this.imports.sync(undefined, new SyncReport(true));
   }
 
   async #narrow(
-    app: AppleConnector,
+    connector: AppleConnector,
     choices: readonly ChoiceOptions[],
     previous: ImportScope,
   ): Promise<ImportScope | null> {
-    const { title, datedBy } = app;
+    const { title, datedBy } = connector;
     const scope: Narrowed['scope'] = {};
     for (const choice of choices) {
       if (choice.options.length === 0) continue;
@@ -271,12 +281,12 @@ export class SetupCommand extends Command {
         if (instant !== null) scope[bound] = instant;
       }
     const [problem] = selectionProblems(
-      [{ app: app.name, scope, includeAttachments: true }],
-      () => app,
+      [{ connector: connector.name, scope, includeAttachments: true }],
+      () => connector,
     );
     if (problem !== undefined) {
       log.warn(`${problem}; try again.`);
-      return this.#narrow(app, choices, previous);
+      return this.#narrow(connector, choices, previous);
     }
     return scope;
   }

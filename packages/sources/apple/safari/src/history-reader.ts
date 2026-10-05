@@ -1,9 +1,9 @@
+import { parseBinaryPlist } from '@workspace/macos-plist';
 import {
   type ImportScope,
   selected,
   withinDates,
 } from '@workspace/source-apple-macos/import-scope';
-import { parseBinaryPlist } from '@workspace/source-apple-macos/plist';
 
 import type { SafariDatabase } from './safari-store.ts';
 import { type Row, appleTime } from './safari-values.ts';

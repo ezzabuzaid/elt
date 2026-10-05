@@ -23,6 +23,7 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
+import type { PlistValue } from '@workspace/macos-plist';
 import {
   type ImportScope,
   selected,
@@ -30,7 +31,6 @@ import {
 } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 import osa from '@workspace/source-apple-macos/osa';
-import type { PlistValue } from '@workspace/source-apple-macos/plist';
 
 import { readMailMime } from './mail-mime.ts';
 import {

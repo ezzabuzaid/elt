@@ -5,13 +5,14 @@ import { Command, type Output } from './command.ts';
 
 export class SyncCommand extends Command {
   readonly name = 'sync';
-  readonly summary = 'Load every selected app once';
+  readonly summary = 'Load every selected connector once';
 
   protected configure(declaration: Declaration): void {
     declaration.addOption(
-      new Option('--app <app...>', 'sync only these apps').choices(
-        this.imports.names,
-      ),
+      new Option(
+        '--connector <connector...>',
+        'sync only these connectors',
+      ).choices(this.imports.names),
     );
   }
 
@@ -19,8 +20,8 @@ export class SyncCommand extends Command {
     declaration: Declaration,
     interactive: boolean,
   ): Promise<Output | undefined> {
-    const { app } = declaration.opts<{ app?: string[] }>();
-    await this.imports.sync(app, new SyncReport(interactive));
+    const { connector } = declaration.opts<{ connector?: string[] }>();
+    await this.imports.sync(connector, new SyncReport(interactive));
     return undefined;
   }
 }

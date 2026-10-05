@@ -24,14 +24,6 @@
       "types": "./dist/osa.d.ts",
       "default": "./dist/osa.js"
     },
-    "./plist": {
-      "types": "./dist/plist.d.ts",
-      "default": "./dist/plist.js"
-    },
-    "./plutil": {
-      "types": "./dist/plutil.d.ts",
-      "default": "./dist/plutil.js"
-    },
     "./protobuf": {
       "types": "./dist/protobuf.d.ts",
       "default": "./dist/protobuf.js"
