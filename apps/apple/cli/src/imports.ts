@@ -9,6 +9,7 @@ import type {
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
 import {
   ImportStore,
+  type Pass,
   type Selection,
   lease,
   leaseHeld,
@@ -31,20 +32,23 @@ export class StoreBusyError extends Error {
   }
 }
 
+// Where a pass or one of its streams got to; interrupted: it was running when
+// its sync stopped.
+type Progress = Pass['state'] | 'interrupted';
+
 export type ConnectorStatus = {
   readonly connector: string;
   readonly title: string;
   readonly selection: string;
   readonly database: string | null;
-  // never: not synced yet; interrupted: a pass was running when its sync stopped.
-  readonly state:
-    'never' | 'running' | 'interrupted' | 'succeeded' | 'partial' | 'failed';
+  // never: not synced yet.
+  readonly state: 'never' | Progress;
   readonly completedAt: string | null;
   readonly lastSuccessAt: string | null;
   readonly error: string | null;
   readonly streams: readonly {
     readonly stream: string;
-    readonly state: string;
+    readonly state: Progress;
     readonly lastSuccessAt: string | null;
   }[];
 };
@@ -212,10 +216,11 @@ export class Imports {
       const latest = store.latestPass(selection);
       // Not synced yet, or no pass began.
       if (latest === null) return never;
+      const progress = (state: Pass['state']): Progress =>
+        state === 'running' && !syncing ? 'interrupted' : state;
       return {
         ...base,
-        state:
-          latest.state === 'running' && !syncing ? 'interrupted' : latest.state,
+        state: progress(latest.state),
         completedAt: latest.completedAt,
         lastSuccessAt: latest.lastSucceededAt,
         error: latest.error,
@@ -223,7 +228,7 @@ export class Imports {
           .streamStatuses(selection)
           .map(({ stream, state, lastSucceededAt }) => ({
             stream,
-            state,
+            state: progress(state),
             lastSuccessAt: lastSucceededAt,
           })),
       };

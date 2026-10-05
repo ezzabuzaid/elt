@@ -1138,6 +1138,44 @@ test('a second sync is refused while another holds the store, and nothing it imp
   assert.ok(JSON.parse(notes.stdout)[0].n > 0);
 });
 
+test('status reports a pass a killed sync left running, and each stream in it, as interrupted', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+  // A pipe no one writes to: the Photos read waits on it, so the pass is
+  // still running when the sync is killed.
+  const pictures = join(mac.path, 'Pictures/photos.json');
+  await rm(pictures);
+  spawnSync('/usr/bin/mkfifo', [pictures]);
+  cli(mac.path, 'setup', '--connector', 'photos');
+  const sync = spawn(process.execPath, [entry, 'sync', '--json'], {
+    cwd: mac.path,
+    env: { ...process.env, HOME: mac.path },
+  });
+  const exited = new Promise((resolve) => sync.once('close', resolve));
+  try {
+    const running = () =>
+      JSON.parse(cli(mac.path, 'status', '--json').stdout)[0]?.state ===
+      'running';
+    for (let tries = 0; !running(); tries++) {
+      if (tries > 100) assert.fail('the sync never started its pass');
+      await sleep(100);
+    }
+  } finally {
+    sync.kill('SIGKILL');
+    await exited;
+  }
+
+  const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
+
+  assert.equal(photos.state, 'interrupted');
+  assert.deepEqual(
+    photos.streams.map(
+      ({ stream, state }: { stream: string; state: string }) => [stream, state],
+    ),
+    [['photos', 'interrupted']],
+  );
+});
+
 test('setup, sync, status and query read the Notes this Mac holds through documented views', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
