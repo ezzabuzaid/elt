@@ -8,6 +8,12 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
+      "path": "../../../destinations/sqlite"
+    },
+    {
+      "path": "../../../elt"
+    },
+    {
       "path": "../../../sources/apple/activity"
     },
     {
