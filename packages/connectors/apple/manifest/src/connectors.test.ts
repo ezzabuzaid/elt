@@ -7,8 +7,8 @@ import { Connectors } from './connectors.ts';
 
 const fixtures = fileURLToPath(new URL('./fixtures/', import.meta.url));
 
-test('every connector folder loads as its app for the host, and one that cannot load is reported by its title while the rest still load', async () => {
-  const { apps, broken } = await new Connectors([
+test('every connector folder loads as its connector for the host, and one that cannot load is reported by its title while the rest still load', async () => {
+  const { connectors, broken } = await new Connectors([
     builtInConnectors,
     fixtures,
     fileURLToPath(new URL('./missing/', import.meta.url)),
@@ -22,7 +22,7 @@ test('every connector folder loads as its app for the host, and one that cannot 
     ),
   });
 
-  assert.deepEqual(apps.map(({ name }) => name).sort(), [
+  assert.deepEqual(connectors.map(({ name }) => name).sort(), [
     'books',
     'calendar',
     'contacts',
@@ -33,7 +33,7 @@ test('every connector folder loads as its app for the host, and one that cannot 
     'reminders',
     'safari',
   ]);
-  const photos = apps.find(({ name }) => name === 'photos');
+  const photos = connectors.find(({ name }) => name === 'photos');
   assert.equal(
     photos?.guidance(),
     'Turn on Terminal in System Settings › Privacy & Security › Full Disk Access, then quit and reopen Terminal. macOS does not ask for this access. Open Photos once.',
@@ -46,8 +46,8 @@ test('every connector folder loads as its app for the host, and one that cannot 
         error: 'The broken fixture fails while loading.',
       },
       {
-        title: 'Not an app',
-        error: `${fixtures}not-an-app/not-an-app-app.js does not export an AppleApp class by default.`,
+        title: 'Not a connector',
+        error: `${fixtures}not-a-connector/not-a-connector-connector.js does not export an AppleConnector class by default.`,
       },
       { title: 'Notes again', error: 'Another connector is named notes.' },
     ],

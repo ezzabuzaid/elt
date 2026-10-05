@@ -75,9 +75,6 @@
       "path": "./packages/macos/eventkit"
     },
     {
-      "path": "./packages/connectors/apple/app"
-    },
-    {
       "path": "./packages/connectors/apple/manifest"
     },
     {
@@ -103,6 +100,9 @@
     },
     {
       "path": "./packages/connectors/apple/mail"
+    },
+    {
+      "path": "./packages/connectors/apple/connector"
     }
   ]
 }

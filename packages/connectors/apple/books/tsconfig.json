@@ -11,7 +11,7 @@
       "path": "../../../sources/apple/books"
     },
     {
-      "path": "../app"
+      "path": "../connector"
     }
   ]
 }

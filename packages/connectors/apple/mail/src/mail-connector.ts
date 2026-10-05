@@ -1,10 +1,10 @@
-import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 import {
   type Choice,
   type Row,
   accounts,
   byId,
-} from '@workspace/connector-apple-app/choice';
+} from '@workspace/connector-apple-connector/choice';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import {
   AppleMailSource,
@@ -15,7 +15,7 @@ import { mailDirectory } from '@workspace/source-apple-mail/mail-store';
 const accountName = (row: Row) =>
   String(JSON.parse(String(row.properties)).name);
 
-export default class MailApp extends AppleApp {
+export default class MailConnector extends AppleConnector {
   readonly datedBy = 'date received (date sent if missing)';
   readonly fullDiskAccess = true;
   protected readonly choices: readonly Choice[] = [

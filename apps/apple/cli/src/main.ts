@@ -16,10 +16,10 @@ import { TerminalHost } from './terminal-host.ts';
 if (process.platform !== 'darwin')
   throw new Error('The Apple connectors read apps on a Mac.');
 
-// The user's own connectors import elt and AppleApp from this CLI's copies.
+// The user's own connectors import elt and AppleConnector from this CLI's copies.
 provideHostModules(({ specifier }) => import.meta.resolve(specifier));
 
-const { apps, broken } = await new Connectors([
+const { connectors, broken } = await new Connectors([
   builtInConnectors,
   userConnectors,
 ]).load(new TerminalHost());
@@ -27,7 +27,7 @@ const { apps, broken } = await new Connectors([
 for (const { title, error } of broken)
   process.stderr.write(`${title} could not be loaded: ${error}\n`);
 
-const imports = new Imports(apps);
+const imports = new Imports(connectors);
 
 const program = new Program('apple-cli')
   .description('Import Apple apps on this Mac into outputs/cli and query them.')

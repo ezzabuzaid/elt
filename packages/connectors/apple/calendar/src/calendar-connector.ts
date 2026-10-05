@@ -1,10 +1,10 @@
-import { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 import {
   type Choice,
   accounts,
   collections,
   name,
-} from '@workspace/connector-apple-app/choice';
+} from '@workspace/connector-apple-connector/choice';
 import {
   GMAIL_READONLY_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE,
@@ -16,7 +16,7 @@ import {
 } from '@workspace/source-apple-calendar/apple-calendar-source';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
-export default class CalendarApp extends AppleApp {
+export default class CalendarConnector extends AppleConnector {
   readonly datedBy = 'event dates (events that overlap the range)';
   readonly fullDiskAccess = false;
   protected readonly choices: readonly Choice[] = [

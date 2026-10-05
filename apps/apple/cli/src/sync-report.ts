@@ -1,6 +1,6 @@
 import { type SpinnerResult, intro, log, outro, spinner } from '@clack/prompts';
 
-import type { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import type { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 import type { CopyProgress } from '@workspace/elt';
 import type { SQLiteTable } from '@workspace/elt-sqlite';
 
@@ -31,7 +31,7 @@ export class SyncReport implements SyncObserver {
   }
 
   progress(
-    app: AppleApp,
+    app: AppleConnector,
     { copy, status, emitted }: CopyProgress<SQLiteTable>,
   ) {
     if (!this.interactive) return;
@@ -45,7 +45,7 @@ export class SyncReport implements SyncObserver {
     if (performance.now() - this.#shownAt > 100) this.#show();
   }
 
-  passed({ title }: AppleApp, summary: PassSummary): void {
+  passed({ title }: AppleConnector, summary: PassSummary): void {
     if (summary.status !== 'succeeded') this.#incomplete = true;
     if (!this.interactive) {
       process.stdout.write(`${json(summary, 0)}\n`);

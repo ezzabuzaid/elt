@@ -16,9 +16,9 @@ import {
 } from 'commander';
 
 import type {
-  AppleApp,
+  AppleConnector,
   ChoiceOptions,
-} from '@workspace/connector-apple-app/apple-app';
+} from '@workspace/connector-apple-connector/apple-connector';
 import { selectionProblems } from '@workspace/import-store';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
@@ -27,7 +27,7 @@ import { SyncReport } from '../sync-report.ts';
 import { Command, type Output } from './command.ts';
 
 type Narrowed = {
-  app: AppleApp;
+  app: AppleConnector;
   scope: { -readonly [K in keyof ImportScope]: ImportScope[K] };
   includeAttachments: boolean;
 };
@@ -158,7 +158,7 @@ export class SetupCommand extends Command {
       this.imports.selections().map((selection) => [selection.app, selection]),
     );
     intro('Apple setup');
-    const chosen = await multiselect<AppleApp>({
+    const chosen = await multiselect<AppleConnector>({
       message: 'Which apps should be imported?',
       options: this.imports.apps.map((app) => ({
         value: app,
@@ -171,7 +171,7 @@ export class SetupCommand extends Command {
 
     const checking = spinner();
     checking.start('Checking access');
-    const choices = new Map<AppleApp, ChoiceOptions[]>();
+    const choices = new Map<AppleConnector, ChoiceOptions[]>();
     const denied: string[] = [];
     for (const app of chosen)
       try {
@@ -192,7 +192,7 @@ export class SetupCommand extends Command {
     const narrowing =
       narrowable.length === 0
         ? []
-        : await multiselect<AppleApp>({
+        : await multiselect<AppleConnector>({
             message: 'Narrow any app? (leave empty to import everything)',
             options: narrowable.map((app) => ({
               value: app,
@@ -232,7 +232,7 @@ export class SetupCommand extends Command {
   }
 
   async #narrow(
-    app: AppleApp,
+    app: AppleConnector,
     choices: readonly ChoiceOptions[],
     previous: ImportScope,
   ): Promise<ImportScope | null> {

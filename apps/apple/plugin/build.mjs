@@ -1,7 +1,7 @@
 // Bundles the plugin's MCP server into plugins/apple/server: main.mjs, one
 // connector folder per built-in Apple app (its package.json manifest beside
 // its entry point), the host modules a user's connector imports, and the chunks
-// they all share, so every connector runs on the same elt and AppleApp as the
+// they all share, so every connector runs on the same elt and AppleConnector as the
 // server. @nx/esbuild cannot name each entry's output, so this calls
 // esbuild's API.
 import { copyFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';

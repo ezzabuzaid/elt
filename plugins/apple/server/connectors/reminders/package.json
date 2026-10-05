@@ -1,1 +1,1 @@
-{"type":"module","exports":"./reminders-app.mjs","contextCompiler":{"name":"reminders","title":"Reminders"}}
+{"type":"module","exports":"./reminders-connector.mjs","contextCompiler":{"name":"reminders","title":"Reminders"}}

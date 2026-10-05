@@ -1,9 +1,9 @@
-import { AppleApp } from '@workspace/connector-apple-app/apple-app';
-import type { Choice } from '@workspace/connector-apple-app/choice';
+import { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
+import type { Choice } from '@workspace/connector-apple-connector/choice';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
 
-export default class MessagesApp extends AppleApp {
+export default class MessagesConnector extends AppleConnector {
   readonly datedBy = 'message date';
   readonly fullDiskAccess = true;
   protected readonly choices: readonly Choice[] = [

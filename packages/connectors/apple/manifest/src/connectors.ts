@@ -2,9 +2,9 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type {
-  AppleApp,
+  AppleConnector,
   AppleHost,
-} from '@workspace/connector-apple-app/apple-app';
+} from '@workspace/connector-apple-connector/apple-connector';
 
 import { ConnectorManifest } from './connector-manifest.ts';
 
@@ -15,7 +15,7 @@ export type BrokenConnector = {
   readonly error: string;
 };
 
-// The Apple apps found in the folders a host reads: each subfolder whose
+// The connectors found in the folders a host reads: each subfolder whose
 // package.json declares a connector. A connector that cannot be read or
 // loaded is reported with its error, and the others still load.
 export class Connectors {
@@ -27,8 +27,8 @@ export class Connectors {
 
   async load(
     host: AppleHost,
-  ): Promise<{ apps: AppleApp[]; broken: BrokenConnector[] }> {
-    const apps: AppleApp[] = [];
+  ): Promise<{ connectors: AppleConnector[]; broken: BrokenConnector[] }> {
+    const connectors: AppleConnector[] = [];
     const broken: BrokenConnector[] = [];
     for (const folder of this.#folders()) {
       const failed = (title: string, error: unknown) =>
@@ -44,17 +44,17 @@ export class Connectors {
         continue;
       }
       if (manifest === undefined) continue;
-      if (apps.some(({ name }) => name === manifest.name)) {
+      if (connectors.some(({ name }) => name === manifest.name)) {
         failed(manifest.title, `Another connector is named ${manifest.name}.`);
         continue;
       }
       try {
-        apps.push(await manifest.load(host));
+        connectors.push(await manifest.load(host));
       } catch (error) {
         failed(manifest.title, error);
       }
     }
-    return { apps, broken };
+    return { connectors, broken };
   }
 
   // What each root holds, root by root and by name within a root, for

@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 import type {
-  AppleApp,
+  AppleConnector,
   AppleHost,
-} from '@workspace/connector-apple-app/apple-app';
+} from '@workspace/connector-apple-connector/apple-connector';
 import type {
   BrokenConnector,
   Connectors,
@@ -105,7 +105,7 @@ export class ApplePlugin {
   readonly directory: string;
   readonly #connectors: Connectors;
   readonly #host: AppleHost;
-  #apps: readonly AppleApp[] = [];
+  #apps: readonly AppleConnector[] = [];
   #broken: readonly BrokenConnector[] = [];
 
   constructor(
@@ -123,7 +123,7 @@ export class ApplePlugin {
     this.directory = directory;
   }
 
-  get apps(): readonly AppleApp[] {
+  get apps(): readonly AppleConnector[] {
     return this.#apps;
   }
 
@@ -135,12 +135,12 @@ export class ApplePlugin {
   // Discovers the connectors again, so one added or edited since the last
   // refresh loads, and one removed is gone.
   async refresh(): Promise<void> {
-    const { apps, broken } = await this.#connectors.load(this.#host);
-    this.#apps = apps;
+    const { connectors, broken } = await this.#connectors.load(this.#host);
+    this.#apps = connectors;
     this.#broken = broken;
   }
 
-  app(name: string): AppleApp {
+  app(name: string): AppleConnector {
     const app = this.#loaded(name);
     if (app === undefined)
       throw new TypeError(
@@ -149,7 +149,7 @@ export class ApplePlugin {
     return app;
   }
 
-  #loaded(name: string): AppleApp | undefined {
+  #loaded(name: string): AppleConnector | undefined {
     return this.#apps.find((candidate) => candidate.name === name);
   }
 

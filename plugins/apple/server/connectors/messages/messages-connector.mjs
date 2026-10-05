@@ -16,8 +16,8 @@ import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
-  AppleApp
-} from "../../chunks/chunk-JO462M2I.mjs";
+  AppleConnector
+} from "../../chunks/chunk-W6HR6UKA.mjs";
 import {
   Catalog,
   Source,
@@ -735,8 +735,8 @@ function messageSelection(database, scope) {
   };
 }
 
-// packages/connectors/apple/messages/dist/messages-app.js
-var MessagesApp = class extends AppleApp {
+// packages/connectors/apple/messages/dist/messages-connector.js
+var MessagesConnector = class extends AppleConnector {
   datedBy = "message date";
   fullDiskAccess = true;
   choices = [
@@ -758,5 +758,5 @@ var MessagesApp = class extends AppleApp {
   }
 };
 export {
-  MessagesApp as default
+  MessagesConnector as default
 };

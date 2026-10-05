@@ -1,1 +1,1 @@
-{"type":"module","exports":"./calendar-app.mjs","contextCompiler":{"name":"calendar","title":"Calendar"}}
+{"type":"module","exports":"./calendar-connector.mjs","contextCompiler":{"name":"calendar","title":"Calendar"}}

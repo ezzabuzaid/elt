@@ -3,13 +3,13 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "exports": "./dist/reminders-app.js",
+  "exports": "./dist/reminders-connector.js",
   "contextCompiler": {
     "name": "reminders",
     "title": "Reminders"
   },
   "dependencies": {
-    "@workspace/connector-apple-app": "0.0.1",
+    "@workspace/connector-apple-connector": "0.0.1",
     "@workspace/macos-eventkit": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
     "@workspace/source-apple-reminders": "0.0.1"

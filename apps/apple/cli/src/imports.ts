@@ -3,9 +3,9 @@ import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 
 import type {
-  AppleApp,
+  AppleConnector,
   ChoiceOptions,
-} from '@workspace/connector-apple-app/apple-app';
+} from '@workspace/connector-apple-connector/apple-connector';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
 import {
   ImportStore,
@@ -57,9 +57,9 @@ export type AppStatus = {
 // Everything here can be rebuilt by syncing again.
 export class Imports {
   readonly root = resolve('outputs/cli');
-  readonly apps: readonly AppleApp[];
+  readonly apps: readonly AppleConnector[];
 
-  constructor(apps: readonly AppleApp[]) {
+  constructor(apps: readonly AppleConnector[]) {
     this.apps = apps;
   }
 
@@ -67,13 +67,13 @@ export class Imports {
     return this.apps.map(({ name }) => name);
   }
 
-  app(name: string): AppleApp {
+  app(name: string): AppleConnector {
     const app = this.#loaded(name);
     if (app === undefined) throw new Error(`Unknown app ${name}`);
     return app;
   }
 
-  #loaded(name: string): AppleApp | undefined {
+  #loaded(name: string): AppleConnector | undefined {
     return this.apps.find((candidate) => candidate.name === name);
   }
 

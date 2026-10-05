@@ -1,12 +1,12 @@
 {
-  "name": "@workspace/connector-apple-app",
+  "name": "@workspace/connector-apple-connector",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "exports": {
-    "./apple-app": {
-      "types": "./dist/apple-app.d.ts",
-      "default": "./dist/apple-app.js"
+    "./apple-connector": {
+      "types": "./dist/apple-connector.d.ts",
+      "default": "./dist/apple-connector.js"
     },
     "./choice": {
       "types": "./dist/choice.d.ts",

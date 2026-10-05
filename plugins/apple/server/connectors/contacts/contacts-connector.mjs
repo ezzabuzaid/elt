@@ -10,7 +10,7 @@ import {
 import {
   byId,
   name
-} from "../../chunks/chunk-WAJDD7QK.mjs";
+} from "../../chunks/chunk-FGFSL4M6.mjs";
 import {
   eventKitFields
 } from "../../chunks/chunk-YUEL2AIL.mjs";
@@ -18,8 +18,8 @@ import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
-  AppleApp
-} from "../../chunks/chunk-JO462M2I.mjs";
+  AppleConnector
+} from "../../chunks/chunk-W6HR6UKA.mjs";
 import {
   Catalog,
   Source,
@@ -808,8 +808,8 @@ function contactSelection(store, scope) {
   };
 }
 
-// packages/connectors/apple/contacts/dist/contacts-app.js
-var ContactsApp = class extends AppleApp {
+// packages/connectors/apple/contacts/dist/contacts-connector.js
+var ContactsConnector = class extends AppleConnector {
   datedBy = null;
   fullDiskAccess = false;
   choices = [
@@ -831,5 +831,5 @@ var ContactsApp = class extends AppleApp {
   }
 };
 export {
-  ContactsApp as default
+  ContactsConnector as default
 };

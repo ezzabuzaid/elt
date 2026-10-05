@@ -12,13 +12,13 @@ import {
 import {
   accounts,
   byId
-} from "../../chunks/chunk-WAJDD7QK.mjs";
+} from "../../chunks/chunk-FGFSL4M6.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
-  AppleApp
-} from "../../chunks/chunk-JO462M2I.mjs";
+  AppleConnector
+} from "../../chunks/chunk-W6HR6UKA.mjs";
 import {
   Catalog,
   Source,
@@ -27056,9 +27056,9 @@ var AppleMailSource = class extends Source {
   }
 };
 
-// packages/connectors/apple/mail/dist/mail-app.js
+// packages/connectors/apple/mail/dist/mail-connector.js
 var accountName = (row) => String(JSON.parse(String(row.properties)).name);
-var MailApp = class extends AppleApp {
+var MailConnector = class extends AppleConnector {
   datedBy = "date received (date sent if missing)";
   fullDiskAccess = true;
   choices = [
@@ -27088,5 +27088,5 @@ var MailApp = class extends AppleApp {
   }
 };
 export {
-  MailApp as default
+  MailConnector as default
 };

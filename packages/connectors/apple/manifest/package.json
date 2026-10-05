@@ -10,7 +10,7 @@
     }
   },
   "dependencies": {
-    "@workspace/connector-apple-app": "0.0.1",
+    "@workspace/connector-apple-connector": "0.0.1",
     "@workspace/elt": "0.0.1",
     "zod": "4.6.5"
   },

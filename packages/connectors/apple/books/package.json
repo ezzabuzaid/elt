@@ -3,13 +3,13 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "exports": "./dist/books-app.js",
+  "exports": "./dist/books-connector.js",
   "contextCompiler": {
     "name": "books",
     "title": "Books"
   },
   "dependencies": {
-    "@workspace/connector-apple-app": "0.0.1",
+    "@workspace/connector-apple-connector": "0.0.1",
     "@workspace/source-apple-books": "0.0.1"
   }
 }

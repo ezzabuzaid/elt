@@ -5,14 +5,14 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 import {
-  type AppIdentity,
-  AppleApp,
+  AppleConnector,
   type AppleHost,
-} from '@workspace/connector-apple-app/apple-app';
+  type ConnectorIdentity,
+} from '@workspace/connector-apple-connector/apple-connector';
 
 // A connector package's package.json: an ES module package whose exports
 // names the entry point, relative to the folder, and whose contextCompiler
-// field holds the app's name and title. npm's other fields are its own.
+// field holds the connector's name and title. npm's other fields are its own.
 const manifestSchema = z.object({
   type: z.literal('module'),
   exports: z.string().startsWith('./'),
@@ -22,7 +22,10 @@ const manifestSchema = z.object({
   }),
 });
 
-type AppleAppClass = new (host: AppleHost, identity: AppIdentity) => AppleApp;
+type AppleConnectorClass = new (
+  host: AppleHost,
+  identity: ConnectorIdentity,
+) => AppleConnector;
 
 // What a connector package says it is, read without running its code.
 export class ConnectorManifest {
@@ -51,22 +54,26 @@ export class ConnectorManifest {
     return new ConnectorManifest(folder, manifestSchema.parse(json));
   }
 
-  // Runs the entry point and creates its app for the host, named and titled
-  // by this manifest. Node keeps a module it loaded, so the entry's URL
+  // Runs the entry point and creates its connector for the host, named and
+  // titled by this manifest. Node keeps a module it loaded, so the entry's URL
   // carries its modification time: an edited entry loads again. Files it
   // imports load once.
-  async load(host: AppleHost): Promise<AppleApp> {
+  async load(host: AppleHost): Promise<AppleConnector> {
     const entry = pathToFileURL(this.entry);
     entry.searchParams.set('modified', String(statSync(this.entry).mtimeMs));
-    const { default: App }: { default?: unknown } = await import(entry.href);
-    if (!isAppleAppClass(App))
+    const { default: Connector }: { default?: unknown } = await import(
+      entry.href
+    );
+    if (!isAppleConnectorClass(Connector))
       throw new TypeError(
-        `${this.entry} does not export an AppleApp class by default.`,
+        `${this.entry} does not export an AppleConnector class by default.`,
       );
-    return new App(host, { name: this.name, title: this.title });
+    return new Connector(host, { name: this.name, title: this.title });
   }
 }
 
-function isAppleAppClass(value: unknown): value is AppleAppClass {
-  return typeof value === 'function' && value.prototype instanceof AppleApp;
+function isAppleConnectorClass(value: unknown): value is AppleConnectorClass {
+  return (
+    typeof value === 'function' && value.prototype instanceof AppleConnector
+  );
 }

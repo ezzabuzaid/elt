@@ -17,7 +17,7 @@
       "path": "../../../macos/eventkit"
     },
     {
-      "path": "../app"
+      "path": "../connector"
     }
   ]
 }

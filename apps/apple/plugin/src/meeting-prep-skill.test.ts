@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
-import type { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import type { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
 import { ConnectorManifest } from '@workspace/connector-apple-manifest/connector-manifest';
 import { Pipeline } from '@workspace/elt';
@@ -79,7 +79,7 @@ const reads = {
 async function builtIn(
   name: string,
   appHost: typeof host = host,
-): Promise<AppleApp> {
+): Promise<AppleConnector> {
   const manifest = ConnectorManifest.read(join(builtInConnectors, name));
   assert.ok(manifest, `${name} is not a built-in connector.`);
   return manifest.load(appHost);
@@ -152,7 +152,7 @@ function read(
 // and it fails on any copy error, so a broken import cannot read as an empty
 // one.
 async function importApp(
-  app: AppleApp,
+  app: AppleConnector,
   directory: string,
   scope: ImportScope = app.defaultScope(),
 ): Promise<string> {

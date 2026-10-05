@@ -20,7 +20,7 @@
       "path": "../../../google-auth"
     },
     {
-      "path": "../app"
+      "path": "../connector"
     }
   ]
 }

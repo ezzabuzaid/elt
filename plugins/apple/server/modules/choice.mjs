@@ -4,7 +4,7 @@ import {
   byId,
   collections,
   name
-} from "../chunks/chunk-WAJDD7QK.mjs";
+} from "../chunks/chunk-FGFSL4M6.mjs";
 import "../chunks/chunk-ZGXE7NZW.mjs";
 export {
   accounts,

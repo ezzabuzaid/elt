@@ -1,8 +1,0 @@
-{
-  "type": "module",
-  "exports": "./not-an-app-app.js",
-  "contextCompiler": {
-    "name": "not-an-app",
-    "title": "Not an app"
-  }
-}

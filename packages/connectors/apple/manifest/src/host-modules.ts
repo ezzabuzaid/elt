@@ -2,13 +2,16 @@ import { registerHooks } from 'node:module';
 
 // The modules a connector imports from its host, by specifier, with the file
 // name a bundled host gives each one. The host resolves them to its own
-// copies, so a connector's classes are the host's: the AppleApp it exports
+// copies, so a connector's classes are the host's: the AppleConnector it exports
 // passes the host's checks, and its streams and records are the ones the
 // host's elt runs.
 export const hostModules = [
   { specifier: '@workspace/elt', file: 'elt' },
-  { specifier: '@workspace/connector-apple-app/apple-app', file: 'apple-app' },
-  { specifier: '@workspace/connector-apple-app/choice', file: 'choice' },
+  {
+    specifier: '@workspace/connector-apple-connector/apple-connector',
+    file: 'apple-connector',
+  },
+  { specifier: '@workspace/connector-apple-connector/choice', file: 'choice' },
 ] as const;
 
 export type HostModule = (typeof hostModules)[number];

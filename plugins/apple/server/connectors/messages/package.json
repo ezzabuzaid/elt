@@ -1,1 +1,1 @@
-{"type":"module","exports":"./messages-app.mjs","contextCompiler":{"name":"messages","title":"Messages"}}
+{"type":"module","exports":"./messages-connector.mjs","contextCompiler":{"name":"messages","title":"Messages"}}

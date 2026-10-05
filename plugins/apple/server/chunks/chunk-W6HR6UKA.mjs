@@ -29,7 +29,7 @@ import {
   __using
 } from "./chunk-ZGXE7NZW.mjs";
 
-// packages/connectors/apple/app/dist/apple-app.js
+// packages/connectors/apple/connector/dist/apple-connector.js
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -1158,13 +1158,15 @@ function message(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-// packages/connectors/apple/app/dist/apple-app.js
-var AppleApp = class {
+// packages/connectors/apple/connector/dist/apple-connector.js
+var AppleConnector = class {
   name;
   title;
-  // What to know before narrowing this app, such as how its collections nest.
+  // What to know before narrowing this connector, such as how the app's
+  // collections nest.
   note;
-  // For an app with no choices: a stream read only to show its store opens.
+  // For a connector with no choices: a stream read only to show the app's store
+  // opens.
   probe;
   host;
   constructor(host, identity) {
@@ -1196,7 +1198,7 @@ var AppleApp = class {
   failure(error) {
     return `${error instanceof Error ? error.message : String(error)} \u2014 ${this.guidance()}`;
   }
-  // What a selection of this app covers, in a person's words.
+  // What a selection of this connector covers, in a person's words.
   describe(scope) {
     const parts = [
       ...this.choices.flatMap(({ scope: ids, title }) => {
@@ -1215,7 +1217,7 @@ var AppleApp = class {
     ];
     return parts.length === 0 ? "everything" : parts.join(", ");
   }
-  // The app and what a selection of it covers, as one phrase.
+  // The connector's title and what a selection of it covers, as one phrase.
   titled(scope) {
     const covers = this.describe(scope);
     return covers === "everything" ? this.title : `${this.title} (${covers})`;
@@ -1225,8 +1227,8 @@ var AppleApp = class {
   view(stream) {
     return stream.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
   }
-  // The rows of the streams this app can be narrowed by. Opening the app's
-  // store is also what makes macOS ask for access, so a denied app fails
+  // The rows of the streams this connector can be narrowed by. Opening the
+  // app's store is also what makes macOS ask for access, so a denial fails
   // here, before anything is selected.
   async choiceRows() {
     const source = this.source(this.defaultScope());
@@ -1261,8 +1263,8 @@ var AppleApp = class {
       }))
     }));
   }
-  // The app's streams, loaded incrementally into raw_<stream> tables of the
-  // import directory's data.sqlite and read through documented views, with
+  // The connector's streams, loaded incrementally into raw_<stream> tables of
+  // the import directory's data.sqlite and read through documented views, with
   // checkpoints.sqlite and attachment copies in files/ beside it.
   async connection(directory, selection) {
     const { scope, includeAttachments } = selection;
@@ -1299,5 +1301,5 @@ export {
   publishSQLiteViews,
   installSQLiteCatalog,
   SQLiteSyncHistory,
-  AppleApp
+  AppleConnector
 };

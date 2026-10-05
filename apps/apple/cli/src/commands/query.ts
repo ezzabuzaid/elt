@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 
 import { Argument, type Command as Declaration } from 'commander';
 
-import type { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import type { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 
 import { table } from '../table.ts';
 import { Command, type Output } from './command.ts';
@@ -46,7 +46,7 @@ function holdsStatement(database: DatabaseSync, rest: string): boolean {
 
 // What an app's file holds for readers: each stream's view, how many rows it
 // has, and what the latest pass declared it covers.
-function views(database: DatabaseSync, app: AppleApp): ViewSummary[] {
+function views(database: DatabaseSync, app: AppleConnector): ViewSummary[] {
   const streams = database
     .prepare(
       `SELECT s.stream, c.description FROM stream_status s

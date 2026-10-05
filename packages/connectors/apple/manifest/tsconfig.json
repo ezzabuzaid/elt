@@ -12,7 +12,7 @@
       "path": "../../../elt"
     },
     {
-      "path": "../app"
+      "path": "../connector"
     },
     {
       "path": "../../../macos/eventkit"

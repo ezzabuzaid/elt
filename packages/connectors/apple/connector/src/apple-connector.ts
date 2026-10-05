@@ -22,7 +22,7 @@ import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import type { Choice, Row, Rows } from './choice.ts';
 
-// What the host running an app offers it.
+// What the host running a connector offers it.
 export type AppleHost = {
   // The app macOS grants access to: ChatGPT for the plugin, the terminal
   // that launched the CLI.
@@ -35,8 +35,8 @@ export type AppleHost = {
   google?(scopes: readonly string[]): Promise<GoogleRequester>;
 };
 
-// The app's name and title, as its connector's manifest declares them.
-export type AppIdentity = {
+// The connector's name and title, as its manifest declares them.
+export type ConnectorIdentity = {
   readonly name: string;
   readonly title: string;
 };
@@ -45,10 +45,10 @@ export type ChoiceOptions = Choice & {
   readonly options: readonly { readonly id: string; readonly label: string }[];
 };
 
-// One Apple app a host imports. Each app declares its facts and its source;
-// this class lists what it can be narrowed by, builds its load and words its
-// selection and failures the same way for every app and host.
-export abstract class AppleApp {
+// The connector for one Apple app. A subclass declares the app's facts and its
+// source; this class lists what it can be narrowed by, builds its load and
+// words its selection and failures the same way for every connector and host.
+export abstract class AppleConnector {
   readonly name: string;
   readonly title: string;
   // What a date range selects, or null when this app's records have no date.
@@ -56,12 +56,14 @@ export abstract class AppleApp {
   // Whether macOS keeps the app's store behind Full Disk Access, which it
   // never asks for.
   abstract readonly fullDiskAccess: boolean;
-  // What to know before narrowing this app, such as how its collections nest.
+  // What to know before narrowing this connector, such as how the app's
+  // collections nest.
   readonly note?: string;
   // The streams listing the accounts or collections an import can be
   // narrowed to.
   protected abstract readonly choices: readonly Choice[];
-  // For an app with no choices: a stream read only to show its store opens.
+  // For a connector with no choices: a stream read only to show the app's store
+  // opens.
   protected readonly probe?: string;
   // Streams whose rows belong to no account or collection: a narrowed import
   // cannot attribute them, so it leaves them out.
@@ -72,7 +74,7 @@ export abstract class AppleApp {
 
   protected readonly host: AppleHost;
 
-  constructor(host: AppleHost, identity: AppIdentity) {
+  constructor(host: AppleHost, identity: ConnectorIdentity) {
     this.host = host;
     this.name = identity.name;
     this.title = identity.title;
@@ -114,7 +116,7 @@ export abstract class AppleApp {
     return `${error instanceof Error ? error.message : String(error)} — ${this.guidance()}`;
   }
 
-  // What a selection of this app covers, in a person's words.
+  // What a selection of this connector covers, in a person's words.
   describe(scope: ImportScope): string {
     const parts = [
       ...this.choices.flatMap(({ scope: ids, title }) => {
@@ -135,7 +137,7 @@ export abstract class AppleApp {
     return parts.length === 0 ? 'everything' : parts.join(', ');
   }
 
-  // The app and what a selection of it covers, as one phrase.
+  // The connector's title and what a selection of it covers, as one phrase.
   titled(scope: ImportScope): string {
     const covers = this.describe(scope);
     return covers === 'everything' ? this.title : `${this.title} (${covers})`;
@@ -147,8 +149,8 @@ export abstract class AppleApp {
     return stream.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
   }
 
-  // The rows of the streams this app can be narrowed by. Opening the app's
-  // store is also what makes macOS ask for access, so a denied app fails
+  // The rows of the streams this connector can be narrowed by. Opening the
+  // app's store is also what makes macOS ask for access, so a denial fails
   // here, before anything is selected.
   async choiceRows(): Promise<Rows> {
     const source = this.source(this.defaultScope());
@@ -193,8 +195,8 @@ export abstract class AppleApp {
     }));
   }
 
-  // The app's streams, loaded incrementally into raw_<stream> tables of the
-  // import directory's data.sqlite and read through documented views, with
+  // The connector's streams, loaded incrementally into raw_<stream> tables of
+  // the import directory's data.sqlite and read through documented views, with
   // checkpoints.sqlite and attachment copies in files/ beside it.
   async connection(
     directory: string,

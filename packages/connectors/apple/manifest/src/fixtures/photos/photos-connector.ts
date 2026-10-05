@@ -2,8 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { AppleApp } from '@workspace/connector-apple-app/apple-app';
-import type { Choice } from '@workspace/connector-apple-app/choice';
+import { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
+import type { Choice } from '@workspace/connector-apple-connector/choice';
 import {
   Catalog,
   type ExtractionCoverage,
@@ -13,7 +13,7 @@ import {
 } from '@workspace/elt';
 
 // A connector outside the library, as an agent writes one: TypeScript that
-// Node runs as written, on the host's elt and AppleApp. It reads
+// Node runs as written, on the host's elt and AppleConnector. It reads
 // ~/Pictures/photos.json, a list of { id, title }.
 
 const photos = new Stream({
@@ -57,7 +57,7 @@ class PhotosSource extends Source {
   }
 }
 
-export default class PhotosApp extends AppleApp {
+export default class PhotosConnector extends AppleConnector {
   readonly datedBy = null;
   readonly fullDiskAccess = true;
   protected readonly choices: readonly Choice[] = [];

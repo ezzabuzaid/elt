@@ -44,7 +44,7 @@
       "path": "../../../packages/connectors/apple/books"
     },
     {
-      "path": "../../../packages/connectors/apple/app"
+      "path": "../../../packages/connectors/apple/connector"
     },
     {
       "path": "../../../packages/macos/eventkit"

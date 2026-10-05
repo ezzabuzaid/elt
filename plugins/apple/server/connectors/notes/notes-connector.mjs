@@ -10,7 +10,7 @@ import {
   accounts,
   collections,
   name
-} from "../../chunks/chunk-WAJDD7QK.mjs";
+} from "../../chunks/chunk-FGFSL4M6.mjs";
 import {
   eventKitFields
 } from "../../chunks/chunk-YUEL2AIL.mjs";
@@ -18,8 +18,8 @@ import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
-  AppleApp
-} from "../../chunks/chunk-JO462M2I.mjs";
+  AppleConnector
+} from "../../chunks/chunk-W6HR6UKA.mjs";
 import {
   Catalog,
   Source,
@@ -1052,8 +1052,8 @@ var AppleNotesSource = class extends Source {
   }
 };
 
-// packages/connectors/apple/notes/dist/notes-app.js
-var NotesApp = class extends AppleApp {
+// packages/connectors/apple/notes/dist/notes-connector.js
+var NotesConnector = class extends AppleConnector {
   datedBy = "date last edited";
   fullDiskAccess = true;
   note = "Exact containing folders; select descendants separately. Smart folders are saved searches and cannot be selected as containing folders.";
@@ -1071,5 +1071,5 @@ var NotesApp = class extends AppleApp {
   }
 };
 export {
-  NotesApp as default
+  NotesConnector as default
 };

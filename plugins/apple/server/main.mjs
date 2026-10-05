@@ -1,10 +1,10 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
-  AppleApp,
+  AppleConnector,
   SQLiteSyncHistory,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunks/chunk-JO462M2I.mjs";
+} from "./chunks/chunk-W6HR6UKA.mjs";
 import {
   Pipeline
 } from "./chunks/chunk-OEQ4WCEQ.mjs";
@@ -36509,21 +36509,21 @@ var ConnectorManifest = class _ConnectorManifest {
       return void 0;
     return new _ConnectorManifest(folder, manifestSchema.parse(json2));
   }
-  // Runs the entry point and creates its app for the host, named and titled
-  // by this manifest. Node keeps a module it loaded, so the entry's URL
+  // Runs the entry point and creates its connector for the host, named and
+  // titled by this manifest. Node keeps a module it loaded, so the entry's URL
   // carries its modification time: an edited entry loads again. Files it
   // imports load once.
   async load(host) {
     const entry = pathToFileURL(this.entry);
     entry.searchParams.set("modified", String(statSync(this.entry).mtimeMs));
-    const { default: App } = await import(__rewriteRelativeImportExtension(entry.href));
-    if (!isAppleAppClass(App))
-      throw new TypeError(`${this.entry} does not export an AppleApp class by default.`);
-    return new App(host, { name: this.name, title: this.title });
+    const { default: Connector } = await import(__rewriteRelativeImportExtension(entry.href));
+    if (!isAppleConnectorClass(Connector))
+      throw new TypeError(`${this.entry} does not export an AppleConnector class by default.`);
+    return new Connector(host, { name: this.name, title: this.title });
   }
 };
-function isAppleAppClass(value) {
-  return typeof value === "function" && value.prototype instanceof AppleApp;
+function isAppleConnectorClass(value) {
+  return typeof value === "function" && value.prototype instanceof AppleConnector;
 }
 
 // packages/connectors/apple/manifest/dist/connectors.js
@@ -36533,7 +36533,7 @@ var Connectors = class {
     this.#roots = roots;
   }
   async load(host) {
-    const apps = [];
+    const connectors = [];
     const broken = [];
     for (const folder of this.#folders()) {
       const failed = (title, error62) => broken.push({
@@ -36549,17 +36549,17 @@ var Connectors = class {
       }
       if (manifest === void 0)
         continue;
-      if (apps.some(({ name }) => name === manifest.name)) {
+      if (connectors.some(({ name }) => name === manifest.name)) {
         failed(manifest.title, `Another connector is named ${manifest.name}.`);
         continue;
       }
       try {
-        apps.push(await manifest.load(host));
+        connectors.push(await manifest.load(host));
       } catch (error62) {
         failed(manifest.title, error62);
       }
     }
-    return { apps, broken };
+    return { connectors, broken };
   }
   // What each root holds, root by root and by name within a root, for
   // ConnectorManifest.read to tell connector folders from the rest; a root
@@ -36578,8 +36578,11 @@ var Connectors = class {
 import { registerHooks } from "node:module";
 var hostModules = [
   { specifier: "@workspace/elt", file: "elt" },
-  { specifier: "@workspace/connector-apple-app/apple-app", file: "apple-app" },
-  { specifier: "@workspace/connector-apple-app/choice", file: "choice" }
+  {
+    specifier: "@workspace/connector-apple-connector/apple-connector",
+    file: "apple-connector"
+  },
+  { specifier: "@workspace/connector-apple-connector/choice", file: "choice" }
 ];
 function provideHostModules(url2) {
   const urls = new Map(hostModules.map((module) => [module.specifier, url2(module)]));
@@ -36975,8 +36978,8 @@ var ApplePlugin = class {
   // Discovers the connectors again, so one added or edited since the last
   // refresh loads, and one removed is gone.
   async refresh() {
-    const { apps, broken } = await this.#connectors.load(this.#host);
-    this.#apps = apps;
+    const { connectors, broken } = await this.#connectors.load(this.#host);
+    this.#apps = connectors;
     this.#broken = broken;
   }
   app(name) {

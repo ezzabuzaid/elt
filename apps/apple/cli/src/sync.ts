@@ -1,4 +1,4 @@
-import type { AppleApp } from '@workspace/connector-apple-app/apple-app';
+import type { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 import {
   type Connection,
   type CopyOutcome,
@@ -34,17 +34,17 @@ export type PassSummary = {
 
 // Sees each pass of a sync while it runs and once it ends.
 export type PassObserver = {
-  progress(app: AppleApp, progress: CopyProgress<SQLiteTable>): void;
-  passed(app: AppleApp, summary: PassSummary): void;
+  progress(app: AppleConnector, progress: CopyProgress<SQLiteTable>): void;
+  passed(app: AppleConnector, summary: PassSummary): void;
 };
 
 // Records every pass in each app's data.sqlite, as any SQLite load does, and
 // shows the observer each pass while it runs and once it ends.
 class ObservedHistory extends SQLiteSyncHistory {
-  readonly #apps: readonly AppleApp[];
+  readonly #apps: readonly AppleConnector[];
   readonly #observer: PassObserver;
 
-  constructor(apps: readonly AppleApp[], observer: PassObserver) {
+  constructor(apps: readonly AppleConnector[], observer: PassObserver) {
     super();
     this.#apps = apps;
     this.#observer = observer;
@@ -75,7 +75,7 @@ class ObservedHistory extends SQLiteSyncHistory {
 }
 
 function summarize(
-  app: AppleApp,
+  app: AppleConnector,
   outcomes: readonly CopyOutcome<SQLiteTable>[],
   seconds: number,
 ): PassSummary {
@@ -94,7 +94,11 @@ function summarize(
   };
 }
 
-function failed(app: AppleApp, error: unknown, seconds: number): PassSummary {
+function failed(
+  app: AppleConnector,
+  error: unknown,
+  seconds: number,
+): PassSummary {
   return {
     app: app.name,
     status: 'failed',
@@ -111,7 +115,7 @@ const message = (error: unknown) =>
 // throughout.
 export async function syncImports(
   store: ImportStore,
-  imports: readonly { app: AppleApp; selection: Selection }[],
+  imports: readonly { app: AppleConnector; selection: Selection }[],
   observer: PassObserver,
 ): Promise<void> {
   const connections: Connection<SQLiteTable>[] = [];

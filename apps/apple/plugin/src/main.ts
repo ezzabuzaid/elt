@@ -28,7 +28,7 @@ if (process.platform !== 'darwin')
 // connector folders of the built-in Apple apps.
 const install = fileURLToPath(new URL('..', import.meta.url));
 // The built-in Apple apps are connector folders beside this bundle; the
-// user's own load from their folder on the server's elt and AppleApp, through
+// user's own load from their folder on the server's elt and AppleConnector, through
 // the host modules beside this bundle. macOS grants access to ChatGPT, which
 // runs Codex. Calendar's remote attachments stay links, so users never sign
 // in to Google.

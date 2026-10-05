@@ -820,16 +820,16 @@ async function withConnectors(home: string) {
     join(connectors, 'photos/package.json'),
     JSON.stringify({
       type: 'module',
-      exports: './photos-app.ts',
+      exports: './photos-connector.ts',
       contextCompiler: { name: 'photos', title: 'Photos' },
     }),
   );
   await writeFile(
-    join(connectors, 'photos/photos-app.ts'),
+    join(connectors, 'photos/photos-connector.ts'),
     readFileSync(
       join(
         root,
-        'packages/connectors/apple/manifest/src/fixtures/photos/photos-app.ts',
+        'packages/connectors/apple/manifest/src/fixtures/photos/photos-connector.ts',
       ),
     ),
   );
@@ -838,11 +838,14 @@ async function withConnectors(home: string) {
     join(connectors, 'drafts/package.json'),
     JSON.stringify({
       type: 'module',
-      exports: './drafts-app.ts',
+      exports: './drafts-connector.ts',
       contextCompiler: { name: 'drafts', title: 'Drafts' },
     }),
   );
-  await writeFile(join(connectors, 'drafts/drafts-app.ts'), 'export default {');
+  await writeFile(
+    join(connectors, 'drafts/drafts-connector.ts'),
+    'export default {',
+  );
   mkdirSync(join(home, 'Pictures'));
   await writeFile(
     join(home, 'Pictures/photos.json'),
@@ -854,7 +857,7 @@ async function withConnectors(home: string) {
 }
 
 test(
-  'a connector the user adds while the server runs imports through it on its own elt and AppleApp, an edit to it loads in the same chat, and a chat hears of one that does not load',
+  'a connector the user adds while the server runs imports through it on its own elt and AppleConnector, an edit to it loads in the same chat, and a chat hears of one that does not load',
   { timeout: 120_000 },
   async (t) => {
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
@@ -908,7 +911,7 @@ test(
       }
       const connector = join(
         scratch.path,
-        'Library/Application Support/Context Compiler/Connectors/photos/photos-app.ts',
+        'Library/Application Support/Context Compiler/Connectors/photos/photos-connector.ts',
       );
       writeFileSync(
         connector,

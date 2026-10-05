@@ -1,1 +1,1 @@
-{"type":"module","exports":"./mail-app.mjs","contextCompiler":{"name":"mail","title":"Mail"}}
+{"type":"module","exports":"./mail-connector.mjs","contextCompiler":{"name":"mail","title":"Mail"}}

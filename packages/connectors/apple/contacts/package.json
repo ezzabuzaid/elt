@@ -3,13 +3,13 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "exports": "./dist/contacts-app.js",
+  "exports": "./dist/contacts-connector.js",
   "contextCompiler": {
     "name": "contacts",
     "title": "Contacts"
   },
   "dependencies": {
-    "@workspace/connector-apple-app": "0.0.1",
+    "@workspace/connector-apple-connector": "0.0.1",
     "@workspace/source-apple-contacts": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1"
   }

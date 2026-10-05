@@ -1376,15 +1376,15 @@ async function withConnectors(mac: string) {
     join(connectors, 'photos/package.json'),
     JSON.stringify({
       type: 'module',
-      exports: './photos-app.ts',
+      exports: './photos-connector.ts',
       contextCompiler: { name: 'photos', title: 'Photos' },
     }),
   );
   await writeFile(
-    join(connectors, 'photos/photos-app.ts'),
+    join(connectors, 'photos/photos-connector.ts'),
     await readFile(
       resolve(
-        'packages/connectors/apple/manifest/src/fixtures/photos/photos-app.ts',
+        'packages/connectors/apple/manifest/src/fixtures/photos/photos-connector.ts',
       ),
     ),
   );
@@ -1393,11 +1393,14 @@ async function withConnectors(mac: string) {
     join(connectors, 'drafts/package.json'),
     JSON.stringify({
       type: 'module',
-      exports: './drafts-app.ts',
+      exports: './drafts-connector.ts',
       contextCompiler: { name: 'drafts', title: 'Drafts' },
     }),
   );
-  await writeFile(join(connectors, 'drafts/drafts-app.ts'), 'export default {');
+  await writeFile(
+    join(connectors, 'drafts/drafts-connector.ts'),
+    'export default {',
+  );
   await mkdir(join(mac, 'Pictures'));
   await writeFile(
     join(mac, 'Pictures/photos.json'),

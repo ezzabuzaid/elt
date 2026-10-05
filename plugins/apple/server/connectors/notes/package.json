@@ -1,1 +1,1 @@
-{"type":"module","exports":"./notes-app.mjs","contextCompiler":{"name":"notes","title":"Notes"}}
+{"type":"module","exports":"./notes-connector.mjs","contextCompiler":{"name":"notes","title":"Notes"}}

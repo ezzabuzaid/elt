@@ -1,9 +1,9 @@
-import { AppleApp } from '@workspace/connector-apple-app/apple-app';
-import type { Choice } from '@workspace/connector-apple-app/choice';
+import { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
+import type { Choice } from '@workspace/connector-apple-connector/choice';
 import type { Source } from '@workspace/elt';
 
 // A second connector named notes.
-export default class NotesAgainApp extends AppleApp {
+export default class NotesAgainConnector extends AppleConnector {
   readonly datedBy = 'date taken';
   readonly fullDiskAccess = true;
   protected readonly choices: readonly Choice[] = [];

@@ -14,13 +14,13 @@ import {
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
   byId
-} from "../../chunks/chunk-WAJDD7QK.mjs";
+} from "../../chunks/chunk-FGFSL4M6.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
-  AppleApp
-} from "../../chunks/chunk-JO462M2I.mjs";
+  AppleConnector
+} from "../../chunks/chunk-W6HR6UKA.mjs";
 import {
   Catalog,
   Source,
@@ -2558,8 +2558,8 @@ async function fingerprint(path) {
   }
 }
 
-// packages/connectors/apple/safari/dist/safari-app.js
-var SafariApp = class extends AppleApp {
+// packages/connectors/apple/safari/dist/safari-connector.js
+var SafariConnector = class extends AppleConnector {
   datedBy = "visit time";
   fullDiskAccess = true;
   note = "Profiles select history, windows, tab groups, tabs, recently closed tabs and downloads. Dates select history visits, and the pages and topics those visits reach.";
@@ -2591,5 +2591,5 @@ var SafariApp = class extends AppleApp {
   }
 };
 export {
-  SafariApp as default
+  SafariConnector as default
 };

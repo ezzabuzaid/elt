@@ -11,8 +11,8 @@ import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
-  AppleApp
-} from "../../chunks/chunk-JO462M2I.mjs";
+  AppleConnector
+} from "../../chunks/chunk-W6HR6UKA.mjs";
 import {
   Catalog,
   Source,
@@ -2174,8 +2174,8 @@ async function fingerprint(path) {
   }
 }
 
-// packages/connectors/apple/books/dist/books-app.js
-var BooksApp = class extends AppleApp {
+// packages/connectors/apple/books/dist/books-connector.js
+var BooksConnector = class extends AppleConnector {
   datedBy = null;
   fullDiskAccess = true;
   // Books' collections are built-in lists; everything is imported.
@@ -2192,5 +2192,5 @@ var BooksApp = class extends AppleApp {
   }
 };
 export {
-  BooksApp as default
+  BooksConnector as default
 };
