@@ -3,6 +3,9 @@
   "files": [],
   "references": [
     {
+      "path": "./packages/macos/accounts"
+    },
+    {
       "path": "./packages/macos/plist"
     },
     {
