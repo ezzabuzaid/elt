@@ -1476,7 +1476,7 @@ The source reads the system Accounts store, `~/Library/Accounts/Accounts4.sqlite
 
 ### Access
 
-The store needs [Full Disk Access](#full-disk-access); with it, a terminal read it on 2026-10-05. A store the process cannot open fails every stream with `AccountsUnavailableError`, which names the grant. Reading without the grant is unverified, since that needs it removed.
+The store needs [Full Disk Access](#full-disk-access). On 2026-10-05 a terminal with the grant read it, and a launchd job without it got SQLite's CANTOPEN (14), as it did for `~/Library/Messages/chat.db`, while listing `~/Library/Mail` failed with `EPERM`. A store the process cannot open fails every stream with `AccountsUnavailableError`, which names the grant.
 
 ### Streams
 
@@ -1514,7 +1514,9 @@ Checked live on 2026-10-05 against macOS 27.0:
 - A load through `apple-cli` took 0.4 s and wrote 33 accounts, 408 properties (the 3 authentication-material properties left out), 67 account data classes, 56 account types, 52 data classes and 7 access option keys; a second load wrote nothing.
 - Every account's type, every data class an account or type names, and every account type an access key names resolved within the same snapshot.
 
-Unverified: `authorizations` and `credentialItems` values, since this Mac has none (their columns are read as the schema declares them, options as a keyed archive); reading without Full Disk Access.
+- `authorizations` and `credentialItems` read their columns as AccountsDaemon's Core Data model (`accounts30.mom`) declares them: `Authorization.options` is transformable through `NSSecureUnarchiveFromData`, so it is decoded as a keyed archive, and `CredentialItem.expirationDate` is a Core Data date.
+
+Unverified: values of `authorizations` and `credentialItems`. Neither this Mac's store nor its `VerifiedBackup` copy holds a row, and accountsd writes them only for an app that holds Accounts framework entitlements and asks for access to an account type, which no tool here can do.
 
 ## Google Search Console
 
