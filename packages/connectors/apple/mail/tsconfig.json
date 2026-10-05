@@ -8,6 +8,9 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
+      "path": "../../../macos/accounts"
+    },
+    {
       "path": "../../../sources/apple/mail"
     },
     {

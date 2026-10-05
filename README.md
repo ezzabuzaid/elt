@@ -196,10 +196,14 @@ Keep the copy ID and both SQLite files between runs. The checkpoint store must u
 ### Mail: local messages and attachments
 
 ```ts
+import { AccountsStore, accountsStorePath } from '@workspace/macos-accounts';
 import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
 import { mailDirectory } from '@workspace/source-apple-mail/mail-store';
 
-const mail = new AppleMailSource(mailDirectory);
+const mail = new AppleMailSource({
+  path: mailDirectory,
+  accounts: new AccountsStore(accountsStorePath),
+});
 await new Pipeline({
   connections: [
     new Connection({
@@ -374,7 +378,7 @@ Permissions apply to the process running the export, and a sandbox can still res
 
 | Operation                    | Required access                                                                                                |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Read or watch Apple Mail     | Full Disk Access; account settings additionally require Automation access to Mail                              |
+| Read or watch Apple Mail     | Full Disk Access (Mail's store and the system Accounts store, which holds account settings)                    |
 | Read or watch Apple Notes    | Full Disk Access; Notes does not need to be open                                                               |
 | Read or watch Apple Contacts | Contacts access or Full Disk Access; Contacts does not need to be open                                         |
 | Read or watch Apple Safari   | Full Disk Access; Safari does not need to be open, but only Safari fetches history and tabs from other devices |

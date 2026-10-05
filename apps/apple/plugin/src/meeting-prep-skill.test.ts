@@ -24,7 +24,6 @@ import {
   StubEventKitHelper,
 } from '@workspace/macos-eventkit/test';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-import osa from '@workspace/source-apple-macos/osa';
 
 // The host the plugin's server passes its connectors, with the helper this
 // workspace compiled instead of the bundled copy.
@@ -1016,35 +1015,30 @@ const emlx = (headers: Record<string, string>, body: string) => {
   return `${Buffer.byteLength(mime)}      \n${mime}${plist('<dict><key>flags</key><integer>1</integer></dict>')}`;
 };
 
-test('meeting prep finds recent mail with an attendee whatever case Mail stored, and mail about a meeting by subject', async (t) => {
-  // Mail's account metadata comes from scripting Mail; only that request is
-  // answered.
-  t.mock.method(osa, 'execute', async (script: string) => {
-    assert.match(script, /\/\/ apple-mail:account-metadata/);
-    return JSON.stringify({
-      accounts: [
-        {
-          id: 'ACCOUNT',
-          name: 'Work',
-          type: 'imap',
-          enabled: true,
-          emailAddresses: ['me@example.com'],
-          fullName: 'Me',
-          userName: 'me@example.com',
-          serverName: 'imap.example.com',
-          port: 993,
-          usesSsl: true,
-          directory: '/Users/tester/Library/Mail/V10/ACCOUNT',
-        },
-      ],
-      smtpServers: [],
-    });
-  });
+test('meeting prep finds recent mail with an attendee whatever case Mail stored, and mail about a meeting by subject', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'meeting-prep-mail-'),
   );
   const root = join(scratch.path, 'Library/Mail');
   const mailbox = join(root, 'V10/ACCOUNT/Inbox.mbox');
+  // Mail's account settings come from the system Accounts store under HOME:
+  // the IMAP account its mailboxes name, with the tables the store keeps.
+  mkdirSync(join(scratch.path, 'Library/Accounts'), { recursive: true });
+  const accounts = new DatabaseSync(
+    join(scratch.path, 'Library/Accounts/Accounts4.sqlite'),
+  );
+  accounts.exec(`
+    CREATE TABLE ZACCOUNTTYPE (Z_PK INTEGER PRIMARY KEY, ZIDENTIFIER VARCHAR);
+    CREATE TABLE ZACCOUNT (Z_PK INTEGER PRIMARY KEY, ZACTIVE INTEGER, ZACCOUNTTYPE INTEGER,
+      ZPARENTACCOUNT INTEGER, ZACCOUNTDESCRIPTION VARCHAR, ZIDENTIFIER VARCHAR,
+      ZUSERNAME VARCHAR, ZDATACLASSPROPERTIES BLOB);
+    CREATE TABLE ZACCOUNTPROPERTY (Z_PK INTEGER PRIMARY KEY, ZOWNER INTEGER, ZKEY VARCHAR, ZVALUE BLOB);
+    CREATE TABLE ZDATACLASS (Z_PK INTEGER PRIMARY KEY, ZNAME BLOB);
+    CREATE TABLE Z_2ENABLEDDATACLASSES (Z_2ENABLEDACCOUNTS INTEGER, Z_7ENABLEDDATACLASSES INTEGER);
+    INSERT INTO ZACCOUNTTYPE VALUES (1, 'com.apple.account.IMAP');
+    INSERT INTO ZACCOUNT VALUES (1, 1, 1, NULL, 'Work', 'ACCOUNT', 'me@example.com', NULL);
+  `);
+  accounts.close();
   mkdirSync(join(mailbox, 'UUID/Data/Messages'), { recursive: true });
   mkdirSync(join(root, 'V10/MailData'), { recursive: true });
   writeFileSync(

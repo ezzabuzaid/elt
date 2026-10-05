@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
-import { AccountsStore, AccountsUnavailableError } from './index.ts';
+import {
+  AccountsStore,
+  AccountsUnavailableError,
+  accountsStorePath,
+} from './index.ts';
 
 type Archivable =
   | string
@@ -286,9 +290,7 @@ test('a store that cannot be opened fails with AccountsUnavailableError', async 
 
 test('this Mac’s Accounts store reads as accounts whose parents exist', (t) => {
   if (process.platform !== 'darwin') return t.skip('Accounts requires macOS');
-  const store = new AccountsStore(
-    join(homedir(), 'Library/Accounts/Accounts4.sqlite'),
-  );
+  const store = new AccountsStore(accountsStorePath);
 
   let accounts;
   try {

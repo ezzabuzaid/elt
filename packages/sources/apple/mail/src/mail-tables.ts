@@ -173,7 +173,7 @@ export const mailTables = {
     {
       ROWID:
         'Local mailbox identifier. messageMailboxes.mailboxId, messages.mailbox, messages.remoteMailbox, serverMessages.mailbox and serverMessageMailboxes.label refer to it within this source.',
-      url: 'Mailbox URL, unique in the captured index schema. Its host matches accounts.id within this source; accounts adds an On My Mac row for each local:// host that Mail scripting does not list.',
+      url: 'Mailbox URL, unique in the captured index schema. Its host matches accounts.id within this source.',
     },
   ),
   addresses: table(

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import {
@@ -32,10 +33,19 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
+import {
+  AccountsStore,
+  AccountsUnavailableError,
+  accountsStorePath,
+} from '@workspace/macos-accounts';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-import osa from '@workspace/source-apple-macos/osa';
 
 import { AppleMailSource } from './apple-mail-source.ts';
+import {
+  MailUnavailableError,
+  mailDirectory,
+  mailVersionDirectory,
+} from './mail-store.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -93,78 +103,281 @@ async function appleImport(source: Source, directory: string) {
   };
 }
 
-// Output of the source's account-metadata script against Mail on macOS 27.0,
-// scrubbed to synthetic values with every field kept. The first account's id is
-// renamed to ACCOUNT, the host of the fixture's imap://ACCOUNT/INBOX mailbox.
-const recordedAccountMetadata = {
-  accounts: [
+type Archivable =
+  | string
+  | number
+  | boolean
+  | readonly Archivable[]
+  | { readonly [key: string]: Archivable };
+
+// A synthetic Accounts4.sqlite with the Core Data tables the Accounts
+// framework writes, its values stored as real NSKeyedArchiver archives.
+class ScratchAccountsStore implements Disposable {
+  readonly #database: DatabaseSync;
+
+  constructor(path: string) {
+    this.#database = new DatabaseSync(path);
+    this.#database.exec(`
+      CREATE TABLE ZACCOUNTTYPE (Z_PK INTEGER PRIMARY KEY, ZIDENTIFIER VARCHAR);
+      CREATE TABLE ZACCOUNT (Z_PK INTEGER PRIMARY KEY, ZACTIVE INTEGER, ZACCOUNTTYPE INTEGER,
+        ZPARENTACCOUNT INTEGER, ZACCOUNTDESCRIPTION VARCHAR, ZIDENTIFIER VARCHAR,
+        ZUSERNAME VARCHAR, ZDATACLASSPROPERTIES BLOB);
+      CREATE TABLE ZACCOUNTPROPERTY (Z_PK INTEGER PRIMARY KEY, ZOWNER INTEGER, ZKEY VARCHAR, ZVALUE BLOB);
+      CREATE TABLE ZDATACLASS (Z_PK INTEGER PRIMARY KEY, ZNAME BLOB);
+      CREATE TABLE Z_2ENABLEDDATACLASSES (Z_2ENABLEDACCOUNTS INTEGER, Z_7ENABLEDDATACLASSES INTEGER);
+    `);
+  }
+
+  account(account: {
+    readonly pk: number;
+    readonly identifier: string;
+    readonly type: string;
+    readonly parent?: number;
+    readonly description?: string;
+    readonly username?: string;
+    readonly enabled?: readonly string[];
+    readonly properties?: { readonly [key: string]: Archivable };
+    readonly dataclassProperties?: { readonly [key: string]: Archivable };
+  }): void {
+    this.#database
+      .prepare(
+        `INSERT INTO ZACCOUNT (Z_PK, ZACTIVE, ZACCOUNTTYPE, ZPARENTACCOUNT,
+           ZACCOUNTDESCRIPTION, ZIDENTIFIER, ZUSERNAME, ZDATACLASSPROPERTIES)
+         VALUES (?, 1, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        account.pk,
+        this.#row('ZACCOUNTTYPE', 'ZIDENTIFIER', account.type),
+        account.parent ?? null,
+        account.description ?? null,
+        account.identifier,
+        account.username ?? null,
+        account.dataclassProperties === undefined
+          ? null
+          : this.#archive(account.dataclassProperties),
+      );
+    for (const [key, value] of Object.entries(account.properties ?? {}))
+      this.#database
+        .prepare(
+          'INSERT INTO ZACCOUNTPROPERTY (ZOWNER, ZKEY, ZVALUE) VALUES (?, ?, ?)',
+        )
+        .run(account.pk, key, this.#archive(value));
+    for (const name of account.enabled ?? [])
+      this.#database
+        .prepare('INSERT INTO Z_2ENABLEDDATACLASSES VALUES (?, ?)')
+        .run(account.pk, this.#row('ZDATACLASS', 'ZNAME', this.#archive(name)));
+  }
+
+  [Symbol.dispose](): void {
+    this.#database.close();
+  }
+
+  // The primary key of the account type or data class row holding value,
+  // inserted on first use.
+  #row(table: string, column: string, value: string | Buffer): number {
+    const found = this.#database
+      .prepare(`SELECT Z_PK FROM ${table} WHERE ${column} = ?`)
+      .get(value)?.Z_PK;
+    if (found !== undefined) return Number(found);
+    return Number(
+      this.#database
+        .prepare(`INSERT INTO ${table} (${column}) VALUES (?)`)
+        .run(value).lastInsertRowid,
+    );
+  }
+
+  // Writes value as an NSKeyedArchiver XML plist and lets plutil turn it into
+  // the binary archive the Accounts framework stores.
+  #archive(value: Archivable): Buffer {
+    const objects: string[] = ['<string>$null</string>'];
+    const classes = new Map<string, number>();
+    const uid = (index: number) =>
+      `<dict><key>CF$UID</key><integer>${index}</integer></dict>`;
+    const escape = (text: string) =>
+      text.replaceAll('&', '&amp;').replaceAll('<', '&lt;');
+    const classOf = (name: string) => {
+      const known = classes.get(name);
+      if (known !== undefined) return known;
+      objects.push(
+        `<dict><key>$classname</key><string>${name}</string><key>$classes</key><array><string>${name}</string><string>NSObject</string></array></dict>`,
+      );
+      classes.set(name, objects.length - 1);
+      return objects.length - 1;
+    };
+    const add = (item: Archivable): number => {
+      const index = objects.push('') - 1;
+      if (typeof item === 'string')
+        objects[index] = `<string>${escape(item)}</string>`;
+      else if (typeof item === 'boolean')
+        objects[index] = item ? '<true/>' : '<false/>';
+      else if (typeof item === 'number')
+        objects[index] = Number.isInteger(item)
+          ? `<integer>${item}</integer>`
+          : `<real>${item}</real>`;
+      else if (Array.isArray(item)) {
+        const members = item.map(add);
+        objects[index] =
+          `<dict><key>NS.objects</key><array>${members.map(uid).join('')}</array><key>$class</key>${uid(classOf('NSArray'))}</dict>`;
+      } else {
+        const entries = Object.entries(item);
+        const keys = entries.map(([key]) => add(key));
+        const values = entries.map(([, member]) => add(member));
+        objects[index] =
+          `<dict><key>NS.keys</key><array>${keys.map(uid).join('')}</array><key>NS.objects</key><array>${values.map(uid).join('')}</array><key>$class</key>${uid(classOf('NSDictionary'))}</dict>`;
+      }
+      return index;
+    };
+    const root = add(value);
+    return execFileSync(
+      '/usr/bin/plutil',
+      ['-convert', 'binary1', '-o', '-', '-'],
+      {
+        input: `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>$archiver</key><string>NSKeyedArchiver</string>
+<key>$version</key><integer>100000</integer>
+<key>$top</key><dict><key>root</key>${uid(root)}</dict>
+<key>$objects</key><array>${objects.join('')}</array></dict></plist>`,
+      },
+    );
+  }
+}
+
+// The system Accounts store behind the fixture's imap://ACCOUNT mailbox, laid
+// out as on macOS 27: an iCloud account whose IMAP and SMTP children hold
+// Mail's own settings, and a calendar account under it that owns no mailbox.
+// LOCAL, the On My Mac host, has no account here, so its URL describes it.
+function scratchAccounts(path: string): AccountsStore {
+  using store = new ScratchAccountsStore(path);
+  store.account({
+    pk: 1,
+    identifier: 'ICLOUD',
+    type: 'com.apple.account.AppleAccount',
+    description: 'iCloud',
+    username: 'user1@example.com',
+    enabled: ['com.apple.Dataclass.Mail', 'com.apple.Dataclass.Calendars'],
+    properties: {
+      ACPropertyFullName: 'Synthetic User',
+      appleIDAliases: ['user1@example.com', 'alias1@example.com'],
+    },
+    dataclassProperties: {
+      'com.apple.Dataclass.Mail': {
+        EmailAddress: 'user1@icloud.example',
+        imapHostname: 'imap1.example.com',
+        imapPort: 143,
+        imapRequiresSSL: false,
+        smtpHostname: 'smtp1.example.com',
+        smtpPort: 587,
+        smtpRequiresSSL: true,
+      },
+    },
+  });
+  // Its own port and TLS setting win over the parent's IMAP settings.
+  store.account({
+    pk: 2,
+    identifier: 'ACCOUNT',
+    type: 'com.apple.account.IMAP',
+    parent: 1,
+    properties: {
+      SendingAccountIdentifier: 'SMTP',
+      PortNumber: 993,
+      SSLIsDirect: true,
+      EmailAliases: [
+        {
+          DisplayName: 'Synthetic User',
+          IsEnabled: true,
+          EmailAddresses: ['user1@icloud.example', 'user1@alias.example'],
+          IsPrimary: true,
+        },
+      ],
+    },
+  });
+  store.account({
+    pk: 3,
+    identifier: 'SMTP',
+    type: 'com.apple.account.SMTP',
+    parent: 1,
+    properties: {
+      IdentityEmailAddress: 'user1@icloud.example',
+      SSLIsDirect: false,
+    },
+  });
+  store.account({
+    pk: 4,
+    identifier: 'CALENDAR',
+    type: 'com.apple.account.CalDAV',
+    parent: 1,
+    description: 'Synthetic calendars',
+    enabled: ['com.apple.Dataclass.Calendars'],
+  });
+  return new AccountsStore(path);
+}
+
+const byId = (a: { id: unknown }, b: { id: unknown }) =>
+  String(a.id) < String(b.id) ? -1 : 1;
+// What a reader sees for the fixture under root: the IMAP account named and
+// addressed through its iCloud parent, and the On My Mac host. The calendar
+// account owns no mailbox, so it is not a Mail account.
+function expectedAccounts(root: string) {
+  return [
     {
       id: 'ACCOUNT',
-      name: 'Synthetic iCloud account',
-      type: 'iCloud',
-      enabled: true,
-      emailAddresses: ['user1@example.com'],
-      fullName: 'Synthetic User',
-      userName: 'user1@example.com',
-      serverName: 'imap1.example.com',
-      port: 993,
-      usesSsl: true,
-      directory: '/Users/tester/Library/Mail/V10/mail-account-1',
+      properties: {
+        id: 'ACCOUNT',
+        name: 'iCloud',
+        type: 'com.apple.account.IMAP',
+        parentType: 'com.apple.account.AppleAccount',
+        enabled: true,
+        emailAddresses: [
+          'user1@icloud.example',
+          'user1@alias.example',
+          'user1@example.com',
+          'alias1@example.com',
+        ],
+        fullName: 'Synthetic User',
+        userName: 'user1@example.com',
+        serverName: 'imap1.example.com',
+        port: 993,
+        usesSsl: true,
+        directory: join(root, 'V10/ACCOUNT'),
+        sendingServerId: 'SMTP',
+      },
     },
     {
-      id: 'mail-account-2',
-      name: 'Synthetic imap account',
-      type: 'imap',
-      enabled: true,
-      emailAddresses: ['user2@example.com'],
-      fullName: 'Synthetic User',
-      userName: 'user2@example.com',
-      serverName: 'imap2.example.com',
-      port: 993,
-      usesSsl: true,
-      directory: '/Users/tester/Library/Mail/V10/mail-account-2',
+      id: 'LOCAL',
+      properties: {
+        id: 'LOCAL',
+        name: 'On My Mac',
+        type: 'local',
+        parentType: null,
+        enabled: null,
+        emailAddresses: [],
+        fullName: null,
+        userName: null,
+        serverName: null,
+        port: null,
+        usesSsl: null,
+        directory: join(root, 'V10/LOCAL'),
+        sendingServerId: null,
+      },
     },
-  ],
-  smtpServers: [
-    {
-      name: 'Synthetic SMTP 1',
-      userName: 'user1@example.com',
+  ];
+}
+// iCloud's SMTP server takes its host, port and TLS from the parent's Mail
+// settings; its own SSLIsDirect false means STARTTLS, not that TLS is off.
+const expectedSmtpServers = [
+  {
+    id: 'SMTP',
+    properties: {
+      id: 'SMTP',
+      name: 'iCloud',
+      userName: 'user1@icloud.example',
       serverName: 'smtp1.example.com',
       port: 587,
       usesSsl: true,
       enabled: true,
     },
-    {
-      name: 'Synthetic SMTP 2',
-      userName: 'user2@example.com',
-      serverName: 'smtp2.example.com',
-      port: 587,
-      usesSsl: true,
-      enabled: true,
-    },
-  ],
-};
-// Mail scripting answers only the account-metadata request; any other script
-// reaching osascript fails the test instead of receiving account JSON.
-async function mailScripting(script: string) {
-  if (!script.includes('// apple-mail:account-metadata'))
-    throw new Error(`Unexpected osascript request: ${script.slice(0, 120)}`);
-  return JSON.stringify(recordedAccountMetadata);
-}
-const byId = (a: { id: unknown }, b: { id: unknown }) =>
-  String(a.id) < String(b.id) ? -1 : 1;
-// What a reader sees for the recorded metadata: every Mail account, plus the
-// On My Mac account for the fixture's local://LOCAL mailbox, and every server.
-const expectedAccounts = [
-  ...recordedAccountMetadata.accounts.map((account) => ({
-    id: account.id,
-    properties: account,
-  })),
-  { id: 'LOCAL', properties: { type: 'local', name: 'On My Mac' } },
-].sort(byId);
-const expectedSmtpServers = recordedAccountMetadata.smtpServers
-  .map((server) => ({ id: server.name, properties: server }))
-  .sort(byId);
+  },
+];
 // Account and SMTP rows as a consumer reads them: properties parsed from JSON.
 function parsedProperties(found: Record<string, unknown>[]) {
   return found
@@ -490,7 +703,12 @@ async function fixture(root: string) {
     INSERT INTO server_messages VALUES(1,1,1,1,0,0,0,0,0,0,0,0,0,0,42);
     INSERT INTO server_labels VALUES(1,1);
   `);
-  return { data, root, index: join(root, 'V10/MailData/Envelope Index') };
+  return {
+    data,
+    root,
+    index: join(root, 'V10/MailData/Envelope Index'),
+    accounts: scratchAccounts(join(root, 'Accounts4.sqlite')),
+  };
 }
 
 function rows(path: string, sql: string) {
@@ -547,14 +765,17 @@ async function pipeline(source: AppleMailSource, directory: string) {
   });
 }
 
-test('Mail scope filters dates, message ownership and MIME before copying files and checkpoints', async (t) => {
-  t.mock.method(osa, 'execute', mailScripting);
+test('Mail scope filters dates, message ownership and MIME before copying files and checkpoints', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'mail-scope-'));
   const input = await fixture(scratch.path);
-  const source = new AppleMailSource(scratch.path, {
-    collectionIds: ['1'],
-    startAt: '2025-01-01T00:00:00.000Z',
-    endAt: '2025-02-01T00:00:00.000Z',
+  const source = new AppleMailSource({
+    path: scratch.path,
+    accounts: input.accounts,
+    scope: {
+      collectionIds: ['1'],
+      startAt: '2025-01-01T00:00:00.000Z',
+      endAt: '2025-02-01T00:00:00.000Z',
+    },
   });
   const run = await pipeline(source, scratch.path);
   await run.run();
@@ -580,7 +801,7 @@ test('Mail scope filters dates, message ownership and MIME before copying files 
   // owner, so Mail's servers stay out of a scoped import.
   assert.deepEqual(
     parsedProperties(rows(output, 'SELECT id, properties FROM accounts')),
-    expectedAccounts,
+    expectedAccounts(scratch.path),
   );
   assert.deepEqual(rows(output, 'SELECT * FROM smtpServers'), []);
   const saved = JSON.stringify(
@@ -596,11 +817,13 @@ test('Mail scope filters dates, message ownership and MIME before copying files 
   assert.deepEqual(rows(output, 'SELECT messageId FROM messageHeaders'), []);
 });
 
-test('Mail exports the native store, MIME, detached files and unavailable metadata; snapshots update and delete', async (t) => {
-  t.mock.method(osa, 'execute', mailScripting);
+test('Mail exports the native store, MIME, detached files and unavailable metadata; snapshots update and delete', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
   const store = await fixture(join(dir.path, 'Mail'));
-  const source = new AppleMailSource(store.root);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
   const run = await pipeline(source, dir.path);
   const out = join(dir.path, 'out.sqlite');
   const first = await run.run();
@@ -647,7 +870,7 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
   );
   assert.deepEqual(
     parsedProperties(rows(out, 'SELECT id, properties FROM accounts')),
-    expectedAccounts,
+    expectedAccounts(store.root),
   );
   assert.deepEqual(
     parsedProperties(rows(out, 'SELECT id, properties FROM smtpServers')),
@@ -771,11 +994,13 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
   );
 });
 
-test('Mail message streams re-read only messages whose files or index attachment rows changed', async (t) => {
-  t.mock.method(osa, 'execute', mailScripting);
+test('Mail message streams re-read only messages whose files or index attachment rows changed', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-groups-'));
   const store = await fixture(join(dir.path, 'Mail'));
-  const source = new AppleMailSource(store.root);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
   const run = await pipeline(source, dir.path);
   const out = join(dir.path, 'out.sqlite');
   const changed = async () =>
@@ -859,11 +1084,13 @@ test('Mail message streams re-read only messages whose files or index attachment
   assert.deepEqual(await changed(), {});
 });
 
-test('Mail failures keep stored rows and checkpoints; absent stores and unknown schemas fail explicitly', async (t) => {
-  t.mock.method(osa, 'execute', mailScripting);
+test('Mail failures keep stored rows and checkpoints; absent stores and unknown schemas fail explicitly', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-errors-'));
   const store = await fixture(join(dir.path, 'Mail'));
-  const source = new AppleMailSource(store.root);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
   const run = await pipeline(source, dir.path);
   await run.run();
   const before = rows(
@@ -917,11 +1144,14 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
     parsedProperties(
       rows(join(dir.path, 'out.sqlite'), 'SELECT id, properties FROM accounts'),
     ),
-    expectedAccounts,
+    expectedAccounts(store.root),
   );
   await mkdir(join(dir.path, 'missing-output'));
   const missing = await pipeline(
-    new AppleMailSource(join(dir.path, 'absent')),
+    new AppleMailSource({
+      path: join(dir.path, 'absent'),
+      accounts: store.accounts,
+    }),
     join(dir.path, 'missing-output'),
   );
   await assert.rejects(
@@ -934,80 +1164,43 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
   );
 });
 
-test('Mail account metadata fails explicitly when Mail scripting is denied or returns an unknown shape', async (t) => {
-  // Deliberate fault injection: these hand-built answers stand in for an
-  // osascript failure and a payload Mail has never been seen to send.
-  const execute = t.mock.method(osa, 'execute', async () => {
-    throw new Error('Not authorized to send Apple events to Mail.');
-  });
-  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-osa-'));
+test('An unreadable Accounts store fails only accounts and smtpServers, naming Full Disk Access', async () => {
+  await using dir = await mkdtempDisposable(
+    join(tmpdir(), 'elt-mail-accounts-'),
+  );
   const store = await fixture(join(dir.path, 'Mail'));
-  const failed = (error: unknown) =>
-    error instanceof PipelineError
-      ? error.results
-          .filter((result) => result.failures.length > 0)
-          .map((result) => ({
-            stream: result.copy.from.name,
-            errors: result.failures.map(({ error }) => error),
-          }))
-      : [];
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: new AccountsStore(join(dir.path, 'missing/Accounts4.sqlite')),
+  });
 
-  await mkdir(join(dir.path, 'denied'));
-  await assert.rejects(
-    (
-      await pipeline(new AppleMailSource(store.root), join(dir.path, 'denied'))
-    ).run(),
-    (error) => {
-      const streams = failed(error);
-      assert.deepEqual(
-        streams.map(({ stream }) => stream),
-        ['accounts', 'smtpServers'],
-      );
-      for (const { errors } of streams)
-        assert.ok(
-          errors.every((cause) =>
-            /requires Automation access to Mail/.test(String(cause)),
-          ),
-        );
-      return true;
-    },
-  );
-
-  execute.mock.mockImplementation(async () =>
-    JSON.stringify({ accounts: {}, smtpServers: [] }),
-  );
-  await mkdir(join(dir.path, 'unknown'));
-  await assert.rejects(
-    (
-      await pipeline(new AppleMailSource(store.root), join(dir.path, 'unknown'))
-    ).run(),
-    (error) => {
-      const streams = failed(error);
-      assert.deepEqual(
-        streams.map(({ stream }) => stream),
-        ['accounts', 'smtpServers'],
-      );
-      for (const { errors } of streams)
-        assert.ok(
-          errors.every(
-            (cause) =>
-              cause instanceof Error && cause.name === 'MailSchemaError',
-          ),
-        );
-      return true;
-    },
-  );
+  await assert.rejects((await pipeline(source, dir.path)).run(), (error) => {
+    assert.ok(error instanceof PipelineError);
+    const failed = error.results.filter(({ failures }) => failures.length > 0);
+    assert.deepEqual(
+      failed.map(({ copy }) => copy.from.name),
+      ['accounts', 'smtpServers'],
+    );
+    for (const { error: cause } of failed.flatMap(({ failures }) => failures)) {
+      assert.ok(cause instanceof AccountsUnavailableError);
+      assert.match(cause.message, /Full Disk Access/);
+    }
+    const loaded = error.results.filter(
+      ({ failures }) => failures.length === 0,
+    );
+    assert.equal(loaded.length, 40);
+    assert.ok(loaded.every(({ count }) => count > 0));
+    return true;
+  });
 });
 
-test('Mail watches index commits and file-only downloads, cancels, and exports readable Markdown', async (t) => {
-  // Watching and exporting message streams never scripts Mail; any osascript
-  // request here fails the test.
-  t.mock.method(osa, 'execute', async (script: string) => {
-    throw new Error(`Unexpected osascript request: ${script.slice(0, 120)}`);
-  });
+test('Mail watches index commits and file-only downloads, cancels, and exports readable Markdown', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-watch-'));
   const store = await fixture(join(dir.path, 'Mail'));
-  const source = new AppleMailSource(store.root);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
   const abort = new AbortController();
   const watch = source.watch({
     streams: [source.messages, source.attachments],
@@ -1154,7 +1347,10 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
   );
   using upstream = new DatabaseSync(store.index);
   upstream.exec('DELETE FROM attachments');
-  const source = new AppleMailSource(store.root);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
   const destination = new SQLiteDestination({
     path: join(dir.path, 'images.sqlite'),
   });
@@ -1196,11 +1392,13 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
   }
 });
 
-test('Mail reads as documented views whose MIME, rule and subject joins hold, with raw dates and missing files explicit', async (t) => {
-  t.mock.method(osa, 'execute', mailScripting);
+test('Mail reads as documented views whose MIME, rule and subject joins hold, with raw dates and missing files explicit', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'mail-marts-'));
   const store = await fixture(join(dir.path, 'Mail'));
-  const source = new AppleMailSource(store.root);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
   const mail = await appleImport(source, join(dir.path, 'import'));
   await mail.load();
 
@@ -1234,7 +1432,7 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
   );
   assert.deepEqual(
     parsedProperties(mail.read('SELECT id, properties FROM accounts')),
-    expectedAccounts,
+    expectedAccounts(store.root),
   );
   assert.deepEqual(
     parsedProperties(mail.read('SELECT id, properties FROM smtp_servers')),
@@ -1252,7 +1450,7 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
       )
       .map((found) => ({ ...found })),
     [
-      { url: 'imap://ACCOUNT/INBOX', type: 'iCloud' },
+      { url: 'imap://ACCOUNT/INBOX', type: 'com.apple.account.IMAP' },
       { url: 'local://LOCAL/Archive', type: 'local' },
     ],
   );
@@ -1308,4 +1506,95 @@ test('Mail reads as documented views whose MIME, rule and subject joins hold, wi
       { messageId: '2', availableLocally: 0 },
     ],
   );
+});
+
+test('this Mac’s Mail accounts and SMTP servers read from the Accounts store with every documented property', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('Mail requires macOS');
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-live-'));
+  const source = new AppleMailSource({
+    path: mailDirectory,
+    accounts: new AccountsStore(accountsStorePath),
+  });
+  const destination = new SQLiteDestination({
+    path: join(dir.path, 'out.sqlite'),
+  });
+
+  try {
+    await new Pipeline({
+      connections: [
+        new Connection({
+          name: 'live',
+          source,
+          destination,
+          steps: [source.accounts, source.smtpServers].map(
+            (stream) => new Copy(stream, destination.table(stream.name)),
+          ),
+        }),
+      ],
+    }).run();
+  } catch (error) {
+    if (
+      error instanceof PipelineError &&
+      error.errors.every(
+        (cause: unknown) =>
+          cause instanceof MailUnavailableError ||
+          cause instanceof AccountsUnavailableError,
+      )
+    )
+      return t.skip('no access to Mail or the Accounts store');
+    throw error;
+  }
+
+  // Checked without printing a value: these are the user's own accounts.
+  using index = new DatabaseSync(
+    join(await mailVersionDirectory(mailDirectory), 'MailData/Envelope Index'),
+    { readOnly: true },
+  );
+  const hosts = new Set(
+    index
+      .prepare('SELECT url FROM mailboxes')
+      .all()
+      .map(({ url }) => new URL(String(url)).hostname),
+  );
+  const accounts = parsedProperties(
+    rows(destination.path, 'SELECT id, properties FROM accounts'),
+  );
+  assert.equal(accounts.length, hosts.size);
+  for (const { id, properties } of accounts) {
+    assert.ok(hosts.has(String(id)), 'an account id is not a mailbox host');
+    // A host the store does not know keeps its URL scheme as its type; only
+    // On My Mac hosts have no account there.
+    assert.ok(
+      properties.type === 'local' ||
+        String(properties.type).startsWith('com.apple.account.'),
+      'a mailbox host has no account in the Accounts store',
+    );
+    assert.deepEqual(Object.keys(properties).sort(), [
+      'directory',
+      'emailAddresses',
+      'enabled',
+      'fullName',
+      'id',
+      'name',
+      'parentType',
+      'port',
+      'sendingServerId',
+      'serverName',
+      'type',
+      'userName',
+      'usesSsl',
+    ]);
+  }
+  for (const { properties } of parsedProperties(
+    rows(destination.path, 'SELECT id, properties FROM smtpServers'),
+  ))
+    assert.deepEqual(Object.keys(properties).sort(), [
+      'enabled',
+      'id',
+      'name',
+      'port',
+      'serverName',
+      'userName',
+      'usesSsl',
+    ]);
 });

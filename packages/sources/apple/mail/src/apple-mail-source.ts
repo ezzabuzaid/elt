@@ -23,6 +23,7 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
+import type { AccountsStore } from '@workspace/macos-accounts';
 import type { PlistValue } from '@workspace/macos-plist';
 import {
   type ImportScope,
@@ -30,8 +31,8 @@ import {
   withinDates,
 } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
-import osa from '@workspace/source-apple-macos/osa';
 
+import { type AccountRecord, MailAccounts } from './mail-accounts.ts';
 import { readMailMime } from './mail-mime.ts';
 import {
   type MailFile,
@@ -114,25 +115,25 @@ const partId =
   'Dotted MIME part number, such as 1 or 1.2. The root of a multipart message is TEXT; a single-part message is 1, as in the index. Equals indexedAttachments.attachmentId for attachments Mail indexes.';
 const sha256 = 'SHA-256 of the bytes as lowercase hexadecimal';
 
-const scriptingStreams = {
+const accountStreams = {
   accounts: mailStream(
     'accounts',
-    'One record per Mail account reported by Mail scripting, plus one On My Mac record for each local:// mailbox host that scripting does not list. Primary key id. The host of mailboxes.url matches id. properties is JSON data; no password or authentication property is read.',
+    'One record per Mail account that owns mailboxes: each host of mailboxes.url, read from the system Accounts store (~/Library/Accounts/Accounts4.sqlite) without Mail scripting or Automation access. A host the store does not know, such as an On My Mac account, keeps only what its URL says. Primary key id. properties is JSON data; no password or authentication property is read.',
     described(metadata, {
-      id: 'Account id returned by Mail scripting, or the host of a local:// mailbox URL for an added On My Mac account. The host of mailboxes.url matches it within this source.',
+      id: 'The Accounts store identifier of the account, which Mail uses as the host of its mailbox URLs and as its folder name; the host of mailboxes.url matches it within this source.',
       properties:
-        'JSON object of the account properties read through Mail scripting: id, name, type, enabled, emailAddresses, fullName, userName, serverName, port, usesSsl and directory. An added On My Mac account has only type local and name On My Mac. Kept as data without interpretation.',
+        "JSON object: id; name (the account description, else its parent account's, such as iCloud or Google); type (the Accounts store account type, such as com.apple.account.IMAP, or the URL scheme for a host the store does not know); parentType (the type of the account it belongs to, such as com.apple.account.AppleAccount for iCloud, else null); enabled (active with Mail turned on for it or its parent, null when unknown); emailAddresses (its own and its parent's identity address and aliases, and for iCloud the Apple ID aliases and the iCloud Mail address); fullName; userName; serverName, port and usesSsl of its incoming server (the Exchange EWS host); directory (its folder in the Mail store); sendingServerId (the account it sends through: an smtpServers.id, or its own id for an Exchange account, which sends through EWS; else null). A value the store does not hold is null. Kept as data without interpretation.",
     }),
     ['id'],
     false,
   ),
   smtpServers: mailStream(
     'smtpServers',
-    'One record per SMTP server reported by Mail scripting. Primary key id, the server name. No link to accounts is proven, so no join is stated and scoped imports omit this stream.',
+    'One record per SMTP server account in the system Accounts store (~/Library/Accounts/Accounts4.sqlite), read without Mail scripting or Automation access. Primary key id. accounts.properties.sendingServerId refers to id for an account that sends through SMTP; scoped imports still omit this stream, because a server can serve accounts outside the scope.',
     described(metadata, {
-      id: 'Server name returned by Mail scripting.',
+      id: 'The Accounts store identifier of the SMTP account.',
       properties:
-        'JSON object of the server properties read through Mail scripting: name, userName, serverName, port, usesSsl and enabled. No password is read. Kept as data without interpretation.',
+        "JSON object: id; name (its parent account's description, such as iCloud or Google); userName; serverName; port; usesSsl; enabled. For iCloud the server settings come from the parent account's Mail settings. A value the store does not hold is null; no password is read. Kept as data without interpretation.",
     }),
     ['id'],
     false,
@@ -350,17 +351,17 @@ const fileStreams = {
   ),
 };
 const catalog = new Catalog([
-  ...Object.values(scriptingStreams),
+  ...Object.values(accountStreams),
   ...tableStreams,
   ...Object.values(fileStreams),
 ]);
 type TableName = keyof typeof mailTables;
 type StreamName =
-  keyof typeof scriptingStreams | TableName | keyof typeof fileStreams;
+  keyof typeof accountStreams | TableName | keyof typeof fileStreams;
 const isTableName = (name: string): name is TableName =>
   Object.hasOwn(mailTables, name);
 const isStreamName = (name: string): name is StreamName =>
-  Object.hasOwn(scriptingStreams, name) ||
+  Object.hasOwn(accountStreams, name) ||
   isTableName(name) ||
   Object.hasOwn(fileStreams, name);
 
@@ -401,14 +402,6 @@ function list(value: PlistValue): PlistValue[] {
     throw new MailSchemaError('Mail configuration is not a list');
   return value;
 }
-
-const accountsScript = `
-  // apple-mail:account-metadata
-  const mail = Application('/System/Applications/Mail.app');
-  const accounts = mail.accounts().map(a => ({ id: a.id(), name: a.name(), type: String(a.accountType()), enabled: a.enabled(), emailAddresses: a.emailAddresses(), fullName: a.fullName(), userName: a.userName(), serverName: a.serverName(), port: a.port(), usesSsl: a.usesSsl(), directory: String(a.accountDirectory()) }));
-  const smtpServers = mail.smtpServers().map(s => ({ name: s.name(), userName: s.userName(), serverName: s.serverName(), port: s.port(), usesSsl: s.usesSsl(), enabled: s.enabled() }));
-  JSON.stringify({ accounts, smtpServers });
-`;
 
 // These native records have no proven account/message ownership. A restricted
 // import omits them rather than copying unrelated settings or guessing joins.
@@ -568,16 +561,18 @@ function mailSelection(store: MailStore, scope: ImportScope) {
 
 class MailScan implements AsyncDisposable {
   readonly accepts: (name: StreamName, row: Record<string, unknown>) => boolean;
-  #accounts: Promise<{
-    accounts: SchemaRecord<typeof metadata>[];
-    smtpServers: SchemaRecord<typeof metadata>[];
-  }> | null = null;
+  readonly #accountsStore: AccountsStore;
+  #accounts: {
+    accounts: AccountRecord[];
+    smtpServers: AccountRecord[];
+  } | null = null;
   #inputs: MessageInputs | null = null;
 
   readonly store: MailStore;
 
-  constructor(store: MailStore, scope: ImportScope = {}) {
+  constructor(store: MailStore, accounts: AccountsStore, scope: ImportScope) {
     this.store = store;
+    this.#accountsStore = accounts;
     this.accepts = mailSelection(store, scope);
   }
 
@@ -785,66 +780,25 @@ class MailScan implements AsyncDisposable {
     }
   }
 
-  async #accountMetadata() {
-    let value: unknown;
-    try {
-      value = JSON.parse(await osa.execute(accountsScript));
-    } catch (cause) {
-      throw new Error(
-        'Mail account metadata requires Automation access to Mail for the exporting process.',
-        { cause },
-      );
-    }
-    if (
-      value === null ||
-      typeof value !== 'object' ||
-      !('accounts' in value) ||
-      !('smtpServers' in value) ||
-      !Array.isArray(value.accounts) ||
-      !Array.isArray(value.smtpServers)
-    )
-      throw new MailSchemaError(
-        'Mail scripting returned invalid account metadata',
-      );
-    const accounts = value.accounts.map((account: unknown) => {
-      if (
-        account === null ||
-        typeof account !== 'object' ||
-        !('id' in account) ||
-        typeof account.id !== 'string'
-      )
-        throw new MailSchemaError(
-          'Mail scripting returned an account without an ID',
-        );
-      return { id: account.id, properties: JSON.stringify(account) };
-    });
+  // Read once per scan, and only by the two account streams: a store this
+  // process cannot open fails those copies, not the rest of Mail.
+  #accountRecords() {
+    if (this.#accounts !== null) return this.#accounts;
+    const hosts = new Map<string, string>();
     for (const row of this.store.database
       .prepare('SELECT url FROM mailboxes ORDER BY ROWID')
       .iterate()) {
       // mailboxes.url is NOT NULL in the index.
       const url = new URL(String(row.url));
-      if (
-        url.protocol === 'local:' &&
-        !accounts.some((account) => account.id === url.hostname)
-      )
-        accounts.push({
-          id: url.hostname,
-          properties: JSON.stringify({ type: 'local', name: 'On My Mac' }),
-        });
+      if (!hosts.has(url.hostname))
+        hosts.set(url.hostname, url.protocol.slice(0, -1));
     }
-    const smtpServers = value.smtpServers.map((server: unknown) => {
-      if (
-        server === null ||
-        typeof server !== 'object' ||
-        !('name' in server) ||
-        typeof server.name !== 'string'
-      )
-        throw new MailSchemaError(
-          'Mail scripting returned an SMTP server without a name',
-        );
-      return { id: server.name, properties: JSON.stringify(server) };
-    });
-    return { accounts, smtpServers };
+    const accounts = new MailAccounts(this.#accountsStore.read());
+    this.#accounts = {
+      accounts: accounts.accounts(hosts, this.store.path),
+      smtpServers: accounts.smtpServers(),
+    };
+    return this.#accounts;
   }
 
   async *read(name: StreamName): AsyncGenerator<Entry> {
@@ -860,8 +814,7 @@ class MailScan implements AsyncDisposable {
       return;
     }
     if (name === 'accounts' || name === 'smtpServers') {
-      this.#accounts ??= this.#accountMetadata();
-      for (const data of (await this.#accounts)[name])
+      for (const data of this.#accountRecords()[name])
         if (this.accepts(name, data)) yield { data, file: null };
       return;
     }
@@ -1015,10 +968,22 @@ export class AppleMailSource extends Source<MailScan> {
 
   readonly path: string;
   readonly scope: ImportScope;
+  readonly #accounts: AccountsStore;
 
-  constructor(path: string, scope: ImportScope = {}) {
+  constructor({
+    path,
+    accounts,
+    scope = {},
+  }: {
+    // The Mail store root, such as ~/Library/Mail.
+    path: string;
+    // The system Accounts store, which holds Mail's account settings.
+    accounts: AccountsStore;
+    scope?: ImportScope;
+  }) {
     super();
     this.path = path;
+    this.#accounts = accounts;
     this.scope = scope;
     this.identity = `apple-mail:${path}`;
     Object.freeze(this);
@@ -1032,6 +997,7 @@ export class AppleMailSource extends Source<MailScan> {
           Object.values(mailTables).map((table) => [table.name, table.columns]),
         ),
       ),
+      this.#accounts,
       this.scope,
     );
   }

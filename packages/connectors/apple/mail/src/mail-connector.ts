@@ -5,6 +5,7 @@ import {
   accounts,
   byId,
 } from '@workspace/connector-apple-connector/choice';
+import { AccountsStore, accountsStorePath } from '@workspace/macos-accounts';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import {
   AppleMailSource,
@@ -42,11 +43,15 @@ export default class MailConnector extends AppleConnector {
   // Each message's raw .emlx; messageParts already holds its decoded text.
   protected readonly storeCopies = ['messageFiles'];
 
-  protected access(grantee: string): string {
-    return `Allow ${grantee} to control Mail when macOS asks.`;
+  protected access(): string {
+    return 'Mail does not need to be open: messages come from its store, and accounts and their servers from the macOS Accounts store.';
   }
 
   protected source(scope: ImportScope) {
-    return new AppleMailSource(mailDirectory, scope);
+    return new AppleMailSource({
+      path: mailDirectory,
+      accounts: new AccountsStore(accountsStorePath),
+      scope,
+    });
   }
 }

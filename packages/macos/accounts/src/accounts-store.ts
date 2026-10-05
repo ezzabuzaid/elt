@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
@@ -5,6 +7,12 @@ import {
   decodeArchive,
   isDictionary,
 } from '@workspace/macos-plist';
+
+// Where macOS keeps this user's Accounts store.
+export const accountsStorePath = join(
+  homedir(),
+  'Library/Accounts/Accounts4.sqlite',
+);
 
 // One account in the system Accounts store, as the Accounts framework keeps
 // it: Mail, Calendar, Contacts and Notes accounts all live here, often as a

@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
+  decodeArchive,
   isDictionary,
   readPlist
 } from "../../chunks/chunk-YLKLHO7E.mjs";
@@ -17875,13 +17876,13 @@ var require_config = __commonJS({
     var EncodingAliases = {};
     exports.EncodingAliases = EncodingAliases;
     exports.EncodingOrders = (function() {
-      var aliases = EncodingAliases;
+      var aliases2 = EncodingAliases;
       var names = util.objectKeys(EncodingNames);
       var orders = [];
       var name, encoding, j, l;
       for (var i = 0, len = names.length; i < len; i++) {
         name = names[i];
-        aliases[name] = name;
+        aliases2[name] = name;
         encoding = EncodingNames[name];
         if (encoding != null) {
           if (encoding.order != null) {
@@ -17889,7 +17890,7 @@ var require_config = __commonJS({
           }
           if (encoding.alias) {
             for (j = 0, l = encoding.alias.length; j < l; j++) {
-              aliases[encoding.alias[j]] = name;
+              aliases2[encoding.alias[j]] = name;
             }
           }
         }
@@ -23478,7 +23479,7 @@ var require_libmime = __commonJS({
             return left + "__\0JOIN\0__";
           }
           return match;
-        }).replace(/(\?=)?__\x00JOIN\x00__(=\?([^?]+)\?[QqBb]\?)?/g, "").replace(/(=\?[^?]+\?[QqBb]\?[^?]*\?=)\s+(?==\?[^?]+\?[QqBb]\?[^?]*\?=)/g, "$1").replace(/=\?([\w_\-*]+)\?([QqBb])\?([^?]*)\?=/g, (m, charset, encoding, text2) => this.decodeWord(charset, encoding, text2));
+        }).replace(/(\?=)?__\x00JOIN\x00__(=\?([^?]+)\?[QqBb]\?)?/g, "").replace(/(=\?[^?]+\?[QqBb]\?[^?]*\?=)\s+(?==\?[^?]+\?[QqBb]\?[^?]*\?=)/g, "$1").replace(/=\?([\w_\-*]+)\?([QqBb])\?([^?]*)\?=/g, (m, charset, encoding, text3) => this.decodeWord(charset, encoding, text3));
       }
       getHex(c) {
         if (c >= 48 && c <= 57 || c >= 97 && c <= 102 || c >= 65 && c <= 70) {
@@ -23706,7 +23707,7 @@ var require_libmime = __commonJS({
        * @return {Array} A list of encoded keys and headers
        */
       buildHeaderParam(key, data, maxLength, fromCharset) {
-        let list2 = [];
+        let list3 = [];
         if (typeof data !== "string" && !Buffer2.isBuffer(data)) {
           data = data === null || data === void 0 ? "" : data.toString();
         }
@@ -23728,13 +23729,13 @@ var require_libmime = __commonJS({
             ];
           }
           encodedStr = encodedStr.replace(new RegExp(".{" + maxLength + "}", "g"), (str) => {
-            list2.push({
+            list3.push({
               line: str
             });
             return "";
           });
           if (encodedStr) {
-            list2.push({
+            list3.push({
               line: encodedStr
             });
           }
@@ -23765,7 +23766,7 @@ var require_libmime = __commonJS({
               chr = chr === " " ? chr : this.safeEncodeURIComponent(chr);
               if (chr !== encodedStr[i]) {
                 if ((this.safeEncodeURIComponent(line) + chr).length >= maxLength) {
-                  list2.push({
+                  list3.push({
                     line,
                     encoded: isEncoded
                   });
@@ -23780,7 +23781,7 @@ var require_libmime = __commonJS({
               }
             }
             if ((line + chr).length >= maxLength) {
-              list2.push({
+              list3.push({
                 line,
                 encoded: isEncoded
               });
@@ -23796,13 +23797,13 @@ var require_libmime = __commonJS({
             }
           }
           if (line) {
-            list2.push({
+            list3.push({
               line,
               encoded: isEncoded
             });
           }
         }
-        return list2.map((item, i2) => ({
+        return list3.map((item, i2) => ({
           // encoded lines: {name}*{part}*
           // unencoded lines: {name}*{part}
           // if any line needs to be encoded then the first line (part==0) is always encoded
@@ -25611,25 +25612,236 @@ var require_mailsplit = __commonJS({
   }
 });
 
+// packages/macos/accounts/dist/accounts-store.js
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+var accountsStorePath = join(homedir(), "Library/Accounts/Accounts4.sqlite");
+var AccountsUnavailableError = class extends Error {
+  name = "AccountsUnavailableError";
+  constructor(path, cause) {
+    super(`The system Accounts store at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security.`, { cause });
+  }
+};
+var AccountsStore = class {
+  #path;
+  constructor(path) {
+    this.#path = path;
+  }
+  read() {
+    var _stack = [];
+    try {
+      const database = __using(_stack, this.#open());
+      const properties = accountProperties(database);
+      const enabled = enabledDataclasses(database);
+      const rows = database.prepare(`SELECT account.Z_PK AS pk, account.ZIDENTIFIER AS identifier,
+                type.ZIDENTIFIER AS type, account.ZPARENTACCOUNT AS parent,
+                account.ZACCOUNTDESCRIPTION AS description,
+                account.ZUSERNAME AS username, account.ZACTIVE AS active,
+                account.ZDATACLASSPROPERTIES AS dataclassProperties
+         FROM ZACCOUNT AS account
+         JOIN ZACCOUNTTYPE AS type ON type.Z_PK = account.ZACCOUNTTYPE
+         ORDER BY account.Z_PK`).all().map(accountRow);
+      const identifiers = new Map(rows.map((row) => [row.pk, row.identifier]));
+      return rows.map((row) => {
+        const dataclassProperties = decoded(row.dataclassProperties);
+        return {
+          identifier: row.identifier,
+          type: row.type,
+          parent: row.parent === null ? null : identifiers.get(row.parent) ?? null,
+          description: row.description,
+          username: row.username,
+          active: row.active === 1,
+          enabledDataclasses: enabled.get(row.pk) ?? [],
+          properties: properties.get(row.pk) ?? {},
+          dataclassProperties: isDictionary(dataclassProperties) ? dataclassProperties : {}
+        };
+      });
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  }
+  #open() {
+    try {
+      return new DatabaseSync(this.#path, { readOnly: true });
+    } catch (error) {
+      throw new AccountsUnavailableError(this.#path, error);
+    }
+  }
+};
+function accountRow(row) {
+  const text3 = (value) => typeof value === "string" ? value : null;
+  const identifier = text3(row.identifier);
+  const type = text3(row.type);
+  if (identifier === null || type === null)
+    throw new TypeError("An Accounts store account has no identifier or type");
+  return {
+    pk: Number(row.pk),
+    identifier,
+    type,
+    parent: row.parent === null ? null : Number(row.parent),
+    description: text3(row.description),
+    username: text3(row.username),
+    active: row.active === null ? null : Number(row.active),
+    dataclassProperties: row.dataclassProperties instanceof Uint8Array ? row.dataclassProperties : null
+  };
+}
+function accountProperties(database) {
+  const byAccount = /* @__PURE__ */ new Map();
+  const rows = database.prepare("SELECT ZOWNER AS owner, ZKEY AS key, ZVALUE AS value FROM ZACCOUNTPROPERTY").all();
+  for (const { owner, key, value } of rows) {
+    const account = Number(owner);
+    const properties = byAccount.get(account) ?? {};
+    properties[String(key)] = decoded(value);
+    byAccount.set(account, properties);
+  }
+  return byAccount;
+}
+function decoded(value) {
+  return value instanceof Uint8Array ? decodeArchive(value) : null;
+}
+function enabledDataclasses(database) {
+  const table2 = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'Z_*ENABLEDDATACLASSES'").get()?.name;
+  if (typeof table2 !== "string")
+    throw new TypeError("The Accounts store has no enabled data class table");
+  const columns = database.prepare(`SELECT name FROM pragma_table_info('${table2}')`).all().map(({ name }) => String(name));
+  const account = columns.find((name) => name.endsWith("ENABLEDACCOUNTS"));
+  const dataclass2 = columns.find((name) => name.endsWith("ENABLEDDATACLASSES"));
+  if (account === void 0 || dataclass2 === void 0)
+    throw new TypeError(`The Accounts store table ${table2} has another shape`);
+  const names = new Map(database.prepare("SELECT Z_PK AS pk, ZNAME AS name FROM ZDATACLASS").all().map(({ pk, name }) => [Number(pk), String(decoded(name))]));
+  const enabled = /* @__PURE__ */ new Map();
+  for (const row of database.prepare(`SELECT "${account}" AS account, "${dataclass2}" AS dataclass FROM "${table2}"`).all()) {
+    const name = names.get(Number(row.dataclass));
+    if (name === void 0)
+      continue;
+    const account2 = Number(row.account);
+    enabled.set(account2, [...enabled.get(account2) ?? [], name]);
+  }
+  return enabled;
+}
+
 // packages/sources/apple/mail/dist/apple-mail-source.js
 import { createHash as createHash3 } from "node:crypto";
 import { watch } from "node:fs";
 import { copyFile as copyFile2, rm as rm2 } from "node:fs/promises";
-import { extname as extname2, join as join3, relative as relative2 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { extname as extname2, join as join5, relative as relative2 } from "node:path";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 import { setInterval } from "node:timers/promises";
 
-// packages/sources/apple/macos/dist/osa.js
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-var execute = promisify(execFile);
-var OSA = class {
-  async execute(script) {
-    const { stdout } = await execute("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 12e4 });
-    return stdout;
+// packages/sources/apple/mail/dist/mail-accounts.js
+import { join as join2 } from "node:path";
+var mailDataclass = "com.apple.Dataclass.Mail";
+var MailAccounts = class {
+  #byIdentifier;
+  constructor(accounts2) {
+    this.#byIdentifier = new Map(accounts2.map((account) => [account.identifier, account]));
+  }
+  // One record per account that owns mailboxes: hosts is each mailbox URL's
+  // scheme and host, directory the current Mail version folder. A host the
+  // store does not know (an On My Mac account) keeps what its URL says.
+  accounts(hosts, directory) {
+    return [...hosts].map(([host, scheme]) => {
+      const account = this.#byIdentifier.get(host);
+      return {
+        id: host,
+        properties: JSON.stringify(account === void 0 ? unknownAccount(host, scheme, directory) : this.#account(account, directory))
+      };
+    });
+  }
+  smtpServers() {
+    return [...this.#byIdentifier.values()].filter(({ type }) => type === "com.apple.account.SMTP").map((server) => {
+      const parent = this.#parent(server);
+      const mail = dataclass(parent, mailDataclass);
+      return {
+        id: server.identifier,
+        properties: JSON.stringify({
+          id: server.identifier,
+          name: parent?.description ?? null,
+          userName: text(server.properties.IdentityEmailAddress) ?? server.username ?? parent?.username ?? null,
+          serverName: text(server.properties.Hostname) ?? text(mail.smtpHostname),
+          port: number(server.properties.PortNumber) ?? number(mail.smtpPort),
+          usesSsl: usesSsl(server, mail.smtpRequiresSSL),
+          enabled: server.active
+        })
+      };
+    });
+  }
+  #account(account, directory) {
+    const parent = this.#parent(account);
+    const mail = dataclass(parent, mailDataclass);
+    const ews = text(account.properties.EWSExternalURL);
+    const exchange = ews === null ? null : URL.parse(ews);
+    return {
+      id: account.identifier,
+      name: account.description ?? parent?.description ?? null,
+      type: account.type,
+      parentType: parent?.type ?? null,
+      enabled: account.active && [account, parent].some((owner) => owner?.enabledDataclasses.includes(mailDataclass) ?? false),
+      emailAddresses: [
+        ...new Set([
+          account.properties.IdentityEmailAddress,
+          parent?.properties.IdentityEmailAddress,
+          ...aliases(account.properties.EmailAliases),
+          ...aliases(parent?.properties.EmailAliases),
+          ...list(parent?.properties.appleIDAliases),
+          mail.EmailAddress
+        ].flatMap((address) => text(address) ?? []))
+      ],
+      fullName: text(account.properties.ACPropertyFullName) ?? text(parent?.properties.ACPropertyFullName),
+      userName: account.username ?? parent?.username ?? null,
+      serverName: text(account.properties.Hostname) ?? text(mail.imapHostname) ?? exchange?.hostname ?? null,
+      port: number(account.properties.PortNumber) ?? number(mail.imapPort),
+      usesSsl: usesSsl(account, mail.imapRequiresSSL) ?? (exchange === null ? null : exchange.protocol === "https:"),
+      directory: join2(directory, account.identifier),
+      sendingServerId: text(account.properties.SendingAccountIdentifier)
+    };
+  }
+  #parent(account) {
+    return account.parent === null ? void 0 : this.#byIdentifier.get(account.parent);
   }
 };
-var osa_default = new OSA();
+function unknownAccount(host, scheme, directory) {
+  return {
+    id: host,
+    name: scheme === "local" ? "On My Mac" : null,
+    type: scheme,
+    parentType: null,
+    enabled: null,
+    emailAddresses: [],
+    fullName: null,
+    userName: null,
+    serverName: null,
+    port: null,
+    usesSsl: null,
+    directory: join2(directory, host),
+    sendingServerId: null
+  };
+}
+function usesSsl(account, requiresSsl) {
+  return flag(account.properties.SSLEnabled) ?? (account.properties.SSLIsDirect === true ? true : null) ?? flag(requiresSsl);
+}
+function dataclass(account, name) {
+  const settings = account?.dataclassProperties[name];
+  return isDictionary(settings) ? settings : {};
+}
+function aliases(value) {
+  return list(value).flatMap((entry) => isDictionary(entry) ? list(entry.EmailAddresses) : []);
+}
+function list(value) {
+  return Array.isArray(value) ? value : [];
+}
+function text(value) {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+function number(value) {
+  return typeof value === "number" ? value : null;
+}
+function flag(value) {
+  return typeof value === "boolean" ? value : null;
+}
 
 // packages/sources/apple/mail/dist/mail-mime.js
 var import_mailsplit = __toESM(require_mailsplit(), 1);
@@ -25638,17 +25850,17 @@ import { createHash as createHash2 } from "node:crypto";
 import { once } from "node:events";
 import { createReadStream as createReadStream2, createWriteStream } from "node:fs";
 import { copyFile, open, rm } from "node:fs/promises";
-import { basename as basename2, extname, join as join2 } from "node:path";
+import { basename as basename2, extname, join as join4 } from "node:path";
 import { pipeline, finished as streamFinished } from "node:stream/promises";
 
 // packages/sources/apple/mail/dist/mail-store.js
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdtempDisposable, readFile, readdir, stat } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { basename, join, relative, sep } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-var mailDirectory = join(homedir(), "Library/Mail");
+import { homedir as homedir2, tmpdir } from "node:os";
+import { basename, join as join3, relative, sep } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+var mailDirectory = join3(homedir2(), "Library/Mail");
 var MailUnavailableError = class extends Error {
   name = "MailUnavailableError";
   constructor(path, cause) {
@@ -25670,11 +25882,11 @@ function plistObject(value) {
   return value;
 }
 async function mailVersionDirectory(root) {
-  const info = plistObject(await readPlist(join(root, "PersistenceInfo.plist")));
+  const info = plistObject(await readPlist(join3(root, "PersistenceInfo.plist")));
   const version = info.LastUsedVersionDirectoryName;
   if (typeof version !== "string" || !/^V\d+$/.test(version))
     throw new MailSchemaError("Mail has no valid current version directory");
-  return join(root, version);
+  return join3(root, version);
 }
 async function inspectMailFile(path) {
   const info = await stat(path, { bigint: true });
@@ -25721,7 +25933,7 @@ var MailStore = class _MailStore {
     let database;
     try {
       path = await mailVersionDirectory(root);
-      database = new DatabaseSync(join(path, "MailData/Envelope Index"), {
+      database = new DatabaseSync2(join3(path, "MailData/Envelope Index"), {
         readOnly: true
       });
     } catch (cause) {
@@ -25739,7 +25951,7 @@ var MailStore = class _MailStore {
       });
       if (missing.length)
         throw new MailSchemaError(`Unsupported Mail index schema: missing ${missing.join(", ")}`);
-      const scratch = resources.use(await mkdtempDisposable(join(tmpdir(), "apple-mail-")));
+      const scratch = resources.use(await mkdtempDisposable(join3(tmpdir(), "apple-mail-")));
       const store = new _MailStore(path, database, scratch, resources);
       const entries = await readdir(path, {
         recursive: true,
@@ -25748,7 +25960,7 @@ var MailStore = class _MailStore {
       for (const entry of entries) {
         if (!entry.isFile())
           continue;
-        const filePath = join(entry.parentPath, entry.name);
+        const filePath = join3(entry.parentPath, entry.name);
         const segments = relative(path, filePath).split(sep);
         const attachment = segments.indexOf("Attachments");
         if (/^\d+(\.partial)?\.emlx$/.test(entry.name)) {
@@ -25879,13 +26091,13 @@ async function readMailMime(store, messageId, file, readHeaders, stageFiles, dec
           const id = partId(node);
           if (readHeaders)
             for (const [position, header] of node.headers.getList().entries()) {
-              const decoded = import_libmime.default.decodeHeader(Buffer.from(header.line, "latin1").toString("utf8"));
+              const decoded2 = import_libmime.default.decodeHeader(Buffer.from(header.line, "latin1").toString("utf8"));
               headers.push({
                 messageId,
                 partId: id,
                 position,
                 name: header.key,
-                value: import_libmime.default.decodeWords(decoded.value),
+                value: import_libmime.default.decodeWords(decoded2.value),
                 rawLineBase64: Buffer.from(header.line, "latin1").toString("base64")
               });
             }
@@ -25918,7 +26130,7 @@ async function readMailMime(store, messageId, file, readHeaders, stageFiles, dec
             continue;
           const extension = node.filename === false ? node.contentType === "text/html" ? ".html" : node.contentType !== false && node.contentType.startsWith("text/") ? ".txt" : "" : extname(node.filename);
           if (stageFiles)
-            part.path = join2(store.scratch.path, `${messageId}-${id}${extension}`);
+            part.path = join4(store.scratch.path, `${messageId}-${id}${extension}`);
           const decoder = node.getDecoder();
           const hash = createHash2("sha256");
           const textDecoder = !stageFiles && record.contentType !== null && record.contentType.startsWith("text/") ? new TextDecoder(record.charset === null ? void 0 : record.charset) : null;
@@ -25964,10 +26176,10 @@ async function readMailMime(store, messageId, file, readHeaders, stageFiles, dec
   }
 }
 async function mailPartText(path, decoder) {
-  let text2 = "";
+  let text3 = "";
   for await (const bytes of createReadStream2(path))
-    text2 += decoder.decode(bytes, { stream: true });
-  return text2 + decoder.decode();
+    text3 += decoder.decode(bytes, { stream: true });
+  return text3 + decoder.decode();
 }
 
 // packages/sources/apple/mail/dist/mail-tables.js
@@ -26088,7 +26300,7 @@ var mailTables = {
     alleged_change_identifier: "text"
   }, {
     ROWID: "Local mailbox identifier. messageMailboxes.mailboxId, messages.mailbox, messages.remoteMailbox, serverMessages.mailbox and serverMessageMailboxes.label refer to it within this source.",
-    url: "Mailbox URL, unique in the captured index schema. Its host matches accounts.id within this source; accounts adds an On My Mac row for each local:// host that Mail scripting does not list."
+    url: "Mailbox URL, unique in the captured index schema. Its host matches accounts.id within this source."
   }),
   addresses: table("addresses", "One record per distinct address and comment pair in the local Mail index; the captured index schema keeps each pair once. Primary key id. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to id; addressMetadata matches on the address text instead.", ["ROWID"], { ROWID: "id", address: "text", comment: "text" }, {
     ROWID: "Local address identifier. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to it within this source.",
@@ -26323,13 +26535,13 @@ function mailStream(name, description, properties, primaryKey, files) {
 var tableStreams = Object.entries(mailTables).map(([name, definition]) => mailStream(name, definition.description, definition.properties, definition.primaryKey, false));
 
 // packages/sources/apple/mail/dist/apple-mail-source.js
-var text = { type: "string" };
+var text2 = { type: "string" };
 var nullableText = { type: ["string", "null"] };
 var nullableNumber = { type: ["number", "null"] };
-var flag = { type: "boolean" };
+var flag2 = { type: "boolean" };
 var partFields = {
-  messageId: text,
-  partId: text,
+  messageId: text2,
+  partId: text2,
   parentPartId: nullableText,
   contentType: nullableText,
   charset: nullableText,
@@ -26337,33 +26549,33 @@ var partFields = {
   disposition: nullableText,
   filename: nullableText,
   contentId: nullableText,
-  isMultipart: flag,
-  isAttachment: flag,
+  isMultipart: flag2,
+  isAttachment: flag2,
   declaredBytes: nullableNumber,
   decodedBytes: nullableNumber,
-  availableLocally: flag,
+  availableLocally: flag2,
   sha256: nullableText
 };
-var metadata = { id: text, properties: text };
-var scopedMetadata = { scope: text, ...metadata };
+var metadata = { id: text2, properties: text2 };
+var scopedMetadata = { scope: text2, ...metadata };
 var conditionFields = {
-  scope: text,
-  ownerId: text,
+  scope: text2,
+  ownerId: text2,
   position: { type: "integer" },
-  properties: text
+  properties: text2
 };
 var headersFields = {
-  messageId: text,
-  partId: text,
+  messageId: text2,
+  partId: text2,
   position: { type: "integer" },
-  name: text,
-  value: text,
-  rawLineBase64: text
+  name: text2,
+  value: text2,
+  rawLineBase64: text2
 };
 var fileFields = {
-  messageId: text,
+  messageId: text2,
   relativePath: nullableText,
-  availableLocally: flag,
+  availableLocally: flag2,
   partial: { type: ["boolean", "null"] },
   size: nullableNumber,
   sha256: nullableText
@@ -26379,18 +26591,18 @@ var plistProperties = "The property list converted to JSON: data values become B
 var localMessageId = "Refers to messages.id within this source (the local id, not the Message-ID hash in messages.messageId).";
 var partId2 = "Dotted MIME part number, such as 1 or 1.2. The root of a multipart message is TEXT; a single-part message is 1, as in the index. Equals indexedAttachments.attachmentId for attachments Mail indexes.";
 var sha256 = "SHA-256 of the bytes as lowercase hexadecimal";
-var scriptingStreams = {
-  accounts: mailStream("accounts", "One record per Mail account reported by Mail scripting, plus one On My Mac record for each local:// mailbox host that scripting does not list. Primary key id. The host of mailboxes.url matches id. properties is JSON data; no password or authentication property is read.", described(metadata, {
-    id: "Account id returned by Mail scripting, or the host of a local:// mailbox URL for an added On My Mac account. The host of mailboxes.url matches it within this source.",
-    properties: "JSON object of the account properties read through Mail scripting: id, name, type, enabled, emailAddresses, fullName, userName, serverName, port, usesSsl and directory. An added On My Mac account has only type local and name On My Mac. Kept as data without interpretation."
+var accountStreams = {
+  accounts: mailStream("accounts", "One record per Mail account that owns mailboxes: each host of mailboxes.url, read from the system Accounts store (~/Library/Accounts/Accounts4.sqlite) without Mail scripting or Automation access. A host the store does not know, such as an On My Mac account, keeps only what its URL says. Primary key id. properties is JSON data; no password or authentication property is read.", described(metadata, {
+    id: "The Accounts store identifier of the account, which Mail uses as the host of its mailbox URLs and as its folder name; the host of mailboxes.url matches it within this source.",
+    properties: "JSON object: id; name (the account description, else its parent account's, such as iCloud or Google); type (the Accounts store account type, such as com.apple.account.IMAP, or the URL scheme for a host the store does not know); parentType (the type of the account it belongs to, such as com.apple.account.AppleAccount for iCloud, else null); enabled (active with Mail turned on for it or its parent, null when unknown); emailAddresses (its own and its parent's identity address and aliases, and for iCloud the Apple ID aliases and the iCloud Mail address); fullName; userName; serverName, port and usesSsl of its incoming server (the Exchange EWS host); directory (its folder in the Mail store); sendingServerId (the account it sends through: an smtpServers.id, or its own id for an Exchange account, which sends through EWS; else null). A value the store does not hold is null. Kept as data without interpretation."
   }), ["id"], false),
-  smtpServers: mailStream("smtpServers", "One record per SMTP server reported by Mail scripting. Primary key id, the server name. No link to accounts is proven, so no join is stated and scoped imports omit this stream.", described(metadata, {
-    id: "Server name returned by Mail scripting.",
-    properties: "JSON object of the server properties read through Mail scripting: name, userName, serverName, port, usesSsl and enabled. No password is read. Kept as data without interpretation."
+  smtpServers: mailStream("smtpServers", "One record per SMTP server account in the system Accounts store (~/Library/Accounts/Accounts4.sqlite), read without Mail scripting or Automation access. Primary key id. accounts.properties.sendingServerId refers to id for an account that sends through SMTP; scoped imports still omit this stream, because a server can serve accounts outside the scope.", described(metadata, {
+    id: "The Accounts store identifier of the SMTP account.",
+    properties: "JSON object: id; name (its parent account's description, such as iCloud or Google); userName; serverName; port; usesSsl; enabled. For iCloud the server settings come from the parent account's Mail settings. A value the store does not hold is null; no password is read. Kept as data without interpretation."
   }), ["id"], false)
 };
 var fileStreams = {
-  mailboxProperties: mailStream("mailboxProperties", "One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.", described({ relativePath: text, properties: text }, {
+  mailboxProperties: mailStream("mailboxProperties", "One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.", described({ relativePath: text2, properties: text2 }, {
     relativePath: "Path of the Info.plist file relative to the current Mail version directory.",
     properties: plistProperties
   }), ["relativePath"], false),
@@ -26417,11 +26629,11 @@ var fileStreams = {
     position: "Zero-based position of the condition in the smart mailbox's MailboxCriteria list.",
     properties: `The condition dictionary. ${plistProperties}`
   }), ["scope", "ownerId", "position"], false),
-  signatures: mailStream("signatures", "One record per .mailsignature file in the current Mail store. Primary key id. No link to accounts is stated; scoped imports omit this stream.", described({ id: text, content: text }, {
+  signatures: mailStream("signatures", "One record per .mailsignature file in the current Mail store. Primary key id. No link to accounts is stated; scoped imports omit this stream.", described({ id: text2, content: text2 }, {
     id: "File name of the .mailsignature file without its extension.",
     content: "The whole file read as UTF-8 text, including its MIME headers; not parsed."
   }), ["id"], false),
-  configuration: mailStream("configuration", "One record per property list file under a MailData or Signatures directory of the current Mail store, except files under RemoteContentURLCache or BiomeStream. Primary key relativePath. It includes the rule and smart mailbox files that rules and smartMailboxes also read. Scoped imports omit this stream.", described({ relativePath: text, properties: text }, {
+  configuration: mailStream("configuration", "One record per property list file under a MailData or Signatures directory of the current Mail store, except files under RemoteContentURLCache or BiomeStream. Primary key relativePath. It includes the rule and smart mailbox files that rules and smartMailboxes also read. Scoped imports omit this stream.", described({ relativePath: text2, properties: text2 }, {
     relativePath: "Path of the property list file relative to the current Mail version directory.",
     properties: plistProperties
   }), ["relativePath"], false),
@@ -26478,12 +26690,12 @@ var fileStreams = {
   }), ["messageId", "partId"], true)
 };
 var catalog = new Catalog([
-  ...Object.values(scriptingStreams),
+  ...Object.values(accountStreams),
   ...tableStreams,
   ...Object.values(fileStreams)
 ]);
 var isTableName = (name) => Object.hasOwn(mailTables, name);
-var isStreamName = (name) => Object.hasOwn(scriptingStreams, name) || isTableName(name) || Object.hasOwn(fileStreams, name);
+var isStreamName = (name) => Object.hasOwn(accountStreams, name) || isTableName(name) || Object.hasOwn(fileStreams, name);
 var messageStreams = [
   "messageFiles",
   "messageHeaders",
@@ -26498,18 +26710,11 @@ function requiredString(object, key) {
     throw new MailSchemaError(`Mail configuration has no ${key}`);
   return value;
 }
-function list(value) {
+function list2(value) {
   if (!Array.isArray(value))
     throw new MailSchemaError("Mail configuration is not a list");
   return value;
 }
-var accountsScript = `
-  // apple-mail:account-metadata
-  const mail = Application('/System/Applications/Mail.app');
-  const accounts = mail.accounts().map(a => ({ id: a.id(), name: a.name(), type: String(a.accountType()), enabled: a.enabled(), emailAddresses: a.emailAddresses(), fullName: a.fullName(), userName: a.userName(), serverName: a.serverName(), port: a.port(), usesSsl: a.usesSsl(), directory: String(a.accountDirectory()) }));
-  const smtpServers = mail.smtpServers().map(s => ({ name: s.name(), userName: s.userName(), serverName: s.serverName(), port: s.port(), usesSsl: s.usesSsl(), enabled: s.enabled() }));
-  JSON.stringify({ accounts, smtpServers });
-`;
 var restrictedMailStreams = [
   "messageMetadata",
   "dataDetectionResults",
@@ -26616,11 +26821,13 @@ function mailSelection(store, scope) {
 }
 var MailScan = class {
   accepts;
+  #accountsStore;
   #accounts = null;
   #inputs = null;
   store;
-  constructor(store, scope = {}) {
+  constructor(store, accounts2, scope) {
     this.store = store;
+    this.#accountsStore = accounts2;
     this.accepts = mailSelection(store, scope);
   }
   // Each message's inputs besides its .emlx, gathered once per scan: detached
@@ -26768,7 +26975,7 @@ var MailScan = class {
       };
       let path = null;
       if (file !== void 0) {
-        path = join3(this.store.scratch.path, `indexed-${row.message}-${row.attachment_id}${extname2(file.path)}`);
+        path = join5(this.store.scratch.path, `indexed-${row.message}-${row.attachment_id}${extname2(file.path)}`);
         await assertMailFile(file);
         await copyFile2(file.path, path);
         await assertMailFile(file);
@@ -26781,34 +26988,23 @@ var MailScan = class {
       }
     }
   }
-  async #accountMetadata() {
-    let value;
-    try {
-      value = JSON.parse(await osa_default.execute(accountsScript));
-    } catch (cause) {
-      throw new Error("Mail account metadata requires Automation access to Mail for the exporting process.", { cause });
-    }
-    if (value === null || typeof value !== "object" || !("accounts" in value) || !("smtpServers" in value) || !Array.isArray(value.accounts) || !Array.isArray(value.smtpServers))
-      throw new MailSchemaError("Mail scripting returned invalid account metadata");
-    const accounts2 = value.accounts.map((account) => {
-      if (account === null || typeof account !== "object" || !("id" in account) || typeof account.id !== "string")
-        throw new MailSchemaError("Mail scripting returned an account without an ID");
-      return { id: account.id, properties: JSON.stringify(account) };
-    });
+  // Read once per scan, and only by the two account streams: a store this
+  // process cannot open fails those copies, not the rest of Mail.
+  #accountRecords() {
+    if (this.#accounts !== null)
+      return this.#accounts;
+    const hosts = /* @__PURE__ */ new Map();
     for (const row of this.store.database.prepare("SELECT url FROM mailboxes ORDER BY ROWID").iterate()) {
       const url = new URL(String(row.url));
-      if (url.protocol === "local:" && !accounts2.some((account) => account.id === url.hostname))
-        accounts2.push({
-          id: url.hostname,
-          properties: JSON.stringify({ type: "local", name: "On My Mac" })
-        });
+      if (!hosts.has(url.hostname))
+        hosts.set(url.hostname, url.protocol.slice(0, -1));
     }
-    const smtpServers = value.smtpServers.map((server) => {
-      if (server === null || typeof server !== "object" || !("name" in server) || typeof server.name !== "string")
-        throw new MailSchemaError("Mail scripting returned an SMTP server without a name");
-      return { id: server.name, properties: JSON.stringify(server) };
-    });
-    return { accounts: accounts2, smtpServers };
+    const accounts2 = new MailAccounts(this.#accountsStore.read());
+    this.#accounts = {
+      accounts: accounts2.accounts(hosts, this.store.path),
+      smtpServers: accounts2.smtpServers()
+    };
+    return this.#accounts;
   }
   async *read(name) {
     if (isTableName(name)) {
@@ -26824,8 +27020,7 @@ var MailScan = class {
       return;
     }
     if (name === "accounts" || name === "smtpServers") {
-      this.#accounts ??= this.#accountMetadata();
-      for (const data of (await this.#accounts)[name])
+      for (const data of this.#accountRecords()[name])
         if (this.accepts(name, data))
           yield { data, file: null };
       return;
@@ -26863,7 +27058,7 @@ var MailScan = class {
         const value2 = await this.store.plist(`MailData/${scope}Rules.plist`);
         if (value2 === null)
           continue;
-        for (const entry of list(value2)) {
+        for (const entry of list2(value2)) {
           const rule = plistObject(entry);
           const id = requiredString(rule, "RuleId");
           const enabled = active === null ? void 0 : active[id];
@@ -26878,7 +27073,7 @@ var MailScan = class {
               file: null
             };
           else if (rule.Criteria !== void 0)
-            for (const [position, condition] of list(rule.Criteria).entries())
+            for (const [position, condition] of list2(rule.Criteria).entries())
               yield {
                 data: {
                   scope,
@@ -26902,7 +27097,7 @@ var MailScan = class {
         if (name === "smartMailboxes")
           yield { id, parentId, properties: plistJSON(mailbox) };
         else if (mailbox.MailboxCriteria !== void 0)
-          for (const [position, criterion] of list(mailbox.MailboxCriteria).entries())
+          for (const [position, criterion] of list2(mailbox.MailboxCriteria).entries())
             yield {
               scope: "Synced",
               ownerId: id,
@@ -26910,10 +27105,10 @@ var MailScan = class {
               properties: plistJSON(criterion)
             };
         if (mailbox.MailboxChildren !== void 0)
-          yield* smart(list(mailbox.MailboxChildren), id);
+          yield* smart(list2(mailbox.MailboxChildren), id);
       }
     }
-    for (const data of smart(list(value), null))
+    for (const data of smart(list2(value), null))
       yield { data, file: null };
   }
   async [Symbol.asyncDispose]() {
@@ -26967,15 +27162,17 @@ var AppleMailSource = class extends Source {
   signatures = catalog.get("signatures");
   path;
   scope;
-  constructor(path, scope = {}) {
+  #accounts;
+  constructor({ path, accounts: accounts2, scope = {} }) {
     super();
     this.path = path;
+    this.#accounts = accounts2;
     this.scope = scope;
     this.identity = `apple-mail:${path}`;
     Object.freeze(this);
   }
   async open() {
-    return new MailScan(await MailStore.open(this.path, Object.fromEntries(Object.values(mailTables).map((table2) => [table2.name, table2.columns]))), this.scope);
+    return new MailScan(await MailStore.open(this.path, Object.fromEntries(Object.values(mailTables).map((table2) => [table2.name, table2.columns]))), this.#accounts, this.scope);
   }
   async *extract(configuration, state, _partition, scan) {
     const { stream } = configuration;
@@ -27015,7 +27212,7 @@ var AppleMailSource = class extends Source {
       if (signal.aborted)
         return;
       const path = await mailVersionDirectory(this.path);
-      const database = __using(_stack, new DatabaseSync2(join3(path, "MailData/Envelope Index"), {
+      const database = __using(_stack, new DatabaseSync3(join5(path, "MailData/Envelope Index"), {
         readOnly: true
       }));
       const version = database.prepare("PRAGMA data_version");
@@ -27078,11 +27275,15 @@ var MailConnector = class extends AppleConnector {
   unscoped = restrictedMailStreams;
   // Each message's raw .emlx; messageParts already holds its decoded text.
   storeCopies = ["messageFiles"];
-  access(grantee) {
-    return `Allow ${grantee} to control Mail when macOS asks.`;
+  access() {
+    return "Mail does not need to be open: messages come from its store, and accounts and their servers from the macOS Accounts store.";
   }
   source(scope) {
-    return new AppleMailSource(mailDirectory, scope);
+    return new AppleMailSource({
+      path: mailDirectory,
+      accounts: new AccountsStore(accountsStorePath),
+      scope
+    });
   }
 };
 export {
