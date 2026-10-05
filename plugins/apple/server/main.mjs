@@ -4,7 +4,7 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunks/chunk-W6HR6UKA.mjs";
+} from "./chunks/chunk-6QQOSPXB.mjs";
 import {
   Pipeline
 } from "./chunks/chunk-OEQ4WCEQ.mjs";

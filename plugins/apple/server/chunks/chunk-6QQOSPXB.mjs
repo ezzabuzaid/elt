@@ -615,7 +615,7 @@ var SQLiteWriter = class extends Writer {
     var _stack = [];
     try {
       const _lock = __using(_stack, lockWriter(this.path));
-      const database = __using(_stack, new DatabaseSync3(this.path));
+      const database = __using(_stack, new DatabaseSync3(this.path, { timeout: 3e4 }));
       database.exec("BEGIN IMMEDIATE");
       try {
         this.writers(database);

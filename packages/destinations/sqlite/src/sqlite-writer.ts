@@ -199,7 +199,8 @@ export abstract class SQLiteWriter extends Writer {
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
     using _lock = lockWriter(this.path);
-    using database = new DatabaseSync(this.path);
+    // Waits for readers to finish, as a load's commit does.
+    using database = new DatabaseSync(this.path, { timeout: 30_000 });
     database.exec('BEGIN IMMEDIATE');
     try {
       this.writers(database);

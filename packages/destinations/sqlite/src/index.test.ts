@@ -2513,6 +2513,28 @@ test('the SQLite writer lock spans commits, permits readers and releases after d
   await using next = await destination.load();
 });
 
+// A reader such as an agent's sqlite3 -readonly query, holding the file
+// mid-read in another process until it finishes 300 ms after it started.
+const readerInAnotherProcess = async (path: string) => {
+  const reader = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { DatabaseSync } from 'node:sqlite';
+      const database = new DatabaseSync(process.argv[1], { readOnly: true });
+      database.exec('BEGIN');
+      database.prepare('SELECT count(*) FROM sqlite_schema').get();
+      process.stdout.write('reading');
+      setTimeout(() => database.exec('COMMIT'), 300);`,
+      path,
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  await once(reader.stdout, 'data');
+  return { [Symbol.dispose]: () => reader.kill() };
+};
+
 test('a commit waits for a reader in another process instead of failing', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-busy-reader-'),
@@ -2526,34 +2548,42 @@ test('a commit waits for a reader in another process instead of failing', async 
     writer: 'writer',
     resuming: false,
   });
-  // A reader such as an agent's sqlite3 -readonly query, mid-read.
-  const reader = spawn(
-    process.execPath,
-    [
-      '--input-type=module',
-      '-e',
-      `import { DatabaseSync } from 'node:sqlite';
-      const database = new DatabaseSync(process.argv[1], { readOnly: true });
-      database.exec('BEGIN');
-      database.prepare('SELECT count(*) FROM sqlite_schema').get();
-      process.stdout.write('reading');
-      setTimeout(() => database.exec('COMMIT'), 300);`,
-      destination.path,
-    ],
-    { stdio: ['ignore', 'pipe', 'inherit'] },
-  );
   try {
     await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
-    await once(reader.stdout, 'data');
+    using _reader = await readerInAnotherProcess(destination.path);
 
     await stage.commit();
 
     using after = new DatabaseSync(destination.path, { readOnly: true });
     assert.equal(after.prepare('SELECT count(*) AS n FROM docs').get()?.n, 1);
   } finally {
-    reader.kill();
     await stage[Symbol.asyncDispose]();
   }
+});
+
+test('a clear waits for a reader in another process instead of failing', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-busy-reader-'),
+  );
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const copy = new Copy(scripted('docs'), destination.table('docs'));
+  {
+    await using load = await destination.load();
+    await using stage = await load.prepare(copy.configuration, copy.to, {
+      writer: 'writer',
+      resuming: false,
+    });
+    await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
+    await stage.commit();
+  }
+  using _reader = await readerInAnotherProcess(destination.path);
+
+  await destination.clear(copy.configuration, copy.to, 'writer');
+
+  using after = new DatabaseSync(destination.path, { readOnly: true });
+  assert.equal(after.prepare('SELECT count(*) AS n FROM docs').get()?.n, 0);
 });
 
 test('stored file references follow committed SQLite rows, including rejected updates, failures, deletions and clear', async () => {
