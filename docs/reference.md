@@ -712,7 +712,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads Messages' own `chat.db` read-only through `node:sqlite`; Messages.app need not be open. A missing file or a denied grant raises `MessagesUnavailableError` before any copy runs, with the SQLite error as `cause`. `npx nx run apple-cli:start -- sync --connector messages` loads every stream incrementally into the import's `data.sqlite`; each attachment file is saved in its `files` folder and referenced by `attachmentRef`.
+The source reads Messages' own `chat.db` read-only through its SDK, `@workspace/sdk-apple-messages`; Messages.app need not be open. A missing file or a denied grant raises `MessagesUnavailableError` before any copy runs, with the SQLite error as `cause`. A `chat.db` without a column the source reads, as after a macOS release changes its layout, raises `MessagesSchemaError` naming each missing `table.column`, and no stream of that read loads. `npx nx run apple-cli:start -- sync --connector messages` loads every stream incrementally into the import's `data.sqlite`; each attachment file is saved in its `files` folder and referenced by `attachmentRef`.
 
 ### Full Disk Access
 

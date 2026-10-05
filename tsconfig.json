@@ -130,6 +130,9 @@
     },
     {
       "path": "./packages/codecs/protobuf"
+    },
+    {
+      "path": "./packages/sdks/apple/messages"
     }
   ]
 }

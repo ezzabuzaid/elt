@@ -1,0 +1,13 @@
+{
+  "name": "sdk-apple-messages",
+  "sourceRoot": "packages/sdks/apple/messages/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/apple/messages/dist/*.test.js\""
+    }
+  }
+}

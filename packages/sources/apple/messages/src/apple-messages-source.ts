@@ -1,6 +1,3 @@
-import { access } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 
 import type {
@@ -10,74 +7,83 @@ import type {
   SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
-import { Source, diffSnapshot, validateRecords } from '@workspace/elt';
-import {
-  type ImportScope,
-  selected,
-  withinDates,
-} from '@workspace/source-apple-macos/import-scope';
+import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+import { MessagesStore, chatDatabasePath } from '@workspace/sdk-apple-messages';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
-import {
-  ChatDatabase,
-  ChatDatabaseVersion,
-  messagesDirectory,
-} from './chat-database.ts';
-import {
-  type StreamName,
-  catalog,
-  definitions,
-  recordFrom,
-} from './messages-streams.ts';
-import { attributedText } from './typedstream.ts';
+import type { MessagesReader } from './apple-messages-stream.ts';
+import { MessagesScan } from './messages-scan.ts';
+import { AttachmentsStream } from './streams/attachments-stream.ts';
+import { ChatHandlesStream } from './streams/chat-handles-stream.ts';
+import { ChatLookupsStream } from './streams/chat-lookups-stream.ts';
+import { ChatMessagesStream } from './streams/chat-messages-stream.ts';
+import { ChatServicesStream } from './streams/chat-services-stream.ts';
+import { ChatsStream } from './streams/chats-stream.ts';
+import { HandlesStream } from './streams/handles-stream.ts';
+import { LinkPreviewsStream } from './streams/link-previews-stream.ts';
+import { MessageAttachmentsStream } from './streams/message-attachments-stream.ts';
+import { MessageEditsStream } from './streams/message-edits-stream.ts';
+import { MessagesStream } from './streams/messages-stream.ts';
+import { RecoverableMessagePartsStream } from './streams/recoverable-message-parts-stream.ts';
+import { RecoverableMessagesStream } from './streams/recoverable-messages-stream.ts';
 
-const isStreamName = (name: string): name is StreamName =>
-  Object.hasOwn(definitions, name);
-
+const readers = {
+  chats: new ChatsStream(),
+  handles: new HandlesStream(),
+  chatLookups: new ChatLookupsStream(),
+  chatServices: new ChatServicesStream(),
+  chatHandles: new ChatHandlesStream(),
+  messages: new MessagesStream(),
+  chatMessages: new ChatMessagesStream(),
+  linkPreviews: new LinkPreviewsStream(),
+  messageEdits: new MessageEditsStream(),
+  recoverableMessages: new RecoverableMessagesStream(),
+  recoverableMessageParts: new RecoverableMessagePartsStream(),
+  attachments: new AttachmentsStream(),
+  messageAttachments: new MessageAttachmentsStream(),
+} satisfies Record<string, MessagesReader>;
+const catalog = new Catalog(
+  Object.values(readers).map((reader) => reader.describe()),
+);
+const readersByName = new Map<string, MessagesReader>(
+  Object.values(readers).map((reader) => [reader.name, reader]),
+);
 // How often a watch checks chat.db for commits.
 const pollIntervalMs = 1000;
 
-// Attachment paths are stored home-relative, as ~/Library/Messages/Attachments/…
-const attachmentPath = (filename: string) =>
-  filename.startsWith('~/') ? join(homedir(), filename.slice(2)) : filename;
-
-export class AppleMessagesSource extends Source<ChatDatabase> {
+export class AppleMessagesSource extends Source<MessagesScan> {
   readonly identity: string;
   protected readonly catalog = catalog;
-  readonly chats = catalog.get('chats');
-  readonly handles = catalog.get('handles');
-  readonly chatLookups = catalog.get('chatLookups');
-  readonly chatServices = catalog.get('chatServices');
-  readonly chatHandles = catalog.get('chatHandles');
-  readonly messages = catalog.get('messages');
-  readonly chatMessages = catalog.get('chatMessages');
-  readonly linkPreviews = catalog.get('linkPreviews');
-  readonly messageEdits = catalog.get('messageEdits');
-  readonly recoverableMessages = catalog.get('recoverableMessages');
-  readonly recoverableMessageParts = catalog.get('recoverableMessageParts');
-  readonly attachments = catalog.get('attachments');
-  readonly messageAttachments = catalog.get('messageAttachments');
-  readonly #scopes = new WeakMap<
-    ChatDatabase,
-    (name: StreamName, row: Record<string, unknown>) => boolean
-  >();
+  readonly chats = readers.chats.describe();
+  readonly handles = readers.handles.describe();
+  readonly chatLookups = readers.chatLookups.describe();
+  readonly chatServices = readers.chatServices.describe();
+  readonly chatHandles = readers.chatHandles.describe();
+  readonly messages = readers.messages.describe();
+  readonly chatMessages = readers.chatMessages.describe();
+  readonly linkPreviews = readers.linkPreviews.describe();
+  readonly messageEdits = readers.messageEdits.describe();
+  readonly recoverableMessages = readers.recoverableMessages.describe();
+  readonly recoverableMessageParts = readers.recoverableMessageParts.describe();
+  readonly attachments = readers.attachments.describe();
+  readonly messageAttachments = readers.messageAttachments.describe();
 
   readonly path: string;
   readonly scope: ImportScope;
+  readonly #store: MessagesStore;
 
-  constructor(
-    path = join(messagesDirectory, 'chat.db'),
-    scope: ImportScope = {},
-  ) {
+  constructor(path = chatDatabasePath, scope: ImportScope = {}) {
     super();
     this.path = path;
     this.scope = scope;
+    this.#store = new MessagesStore(path);
     this.identity = `apple-messages:${path}`;
     Object.freeze(this);
   }
 
-  protected override async open(): Promise<ChatDatabase> {
-    return new ChatDatabase(this.path);
+  protected override async open(): Promise<MessagesScan> {
+    return new MessagesScan(this.#store.open(), this.scope);
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {
@@ -89,7 +95,7 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
-    using version = new ChatDatabaseVersion(this.path);
+    using version = this.#store.version();
     let seen = version.current;
     yield streams;
     try {
@@ -110,136 +116,21 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
     configuration: CopyConfiguration,
     state: unknown,
     _partition: null,
-    database: ChatDatabase,
+    scan: MessagesScan,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
-    const { name } = stream;
-    if (!isStreamName(name))
-      throw new TypeError(`Messages has no stream ${name}`);
-    const records = validateRecords(
-      stream,
-      await this.#scan(name, database),
-      'Messages',
-    );
+    const reader = readersByName.get(stream.name);
+    if (reader === undefined)
+      throw new TypeError(`Messages has no stream ${stream.name}`);
+    const records = await reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
         ? diffSnapshot(stream, records, state)
         : records.map((data) => ({ stream: stream.name, data }));
     for await (const message of messages) {
-      if ('type' in message || configuration.fileReads.length === 0) {
+      if ('type' in message || configuration.fileReads.length === 0)
         yield message;
-        continue;
-      }
-      const { filename, availableLocally } = message.data;
-      // The original file, not a staged copy: attachments reach gigabytes and
-      // readers only read it.
-      yield {
-        ...message,
-        file:
-          availableLocally === true && typeof filename === 'string'
-            ? attachmentPath(filename)
-            : null,
-      };
+      else yield { ...message, file: reader.file(message.data) };
     }
   }
-
-  async #scan(
-    name: StreamName,
-    database: ChatDatabase,
-  ): Promise<Record<string, unknown>[]> {
-    const definition: {
-      expand?: (row: Record<string, unknown>) => Record<string, unknown>[];
-    } = definitions[name];
-    let accepts = this.#scopes.get(database);
-    if (accepts === undefined) {
-      accepts = messageSelection(database, this.scope);
-      this.#scopes.set(database, accepts);
-    }
-    const rows = database
-      .all(definitions[name].sql)
-      .filter((row) => accepts(name, row));
-    if (definition.expand !== undefined) return rows.flatMap(definition.expand);
-    return Promise.all(
-      rows.map(async (row) => {
-        const record = recordFrom(name, row);
-        if (name === 'messages' && record.text === null)
-          record.text =
-            row.attributedBody instanceof Uint8Array
-              ? attributedText(row.attributedBody)
-              : null;
-        if (name === 'attachments')
-          record.availableLocally =
-            typeof row.filename === 'string' &&
-            (await access(attachmentPath(row.filename)).then(
-              () => true,
-              () => false,
-            ));
-        return record;
-      }),
-    );
-  }
-}
-
-function messageSelection(database: ChatDatabase, scope: ImportScope) {
-  if (Object.keys(scope).length === 0) return () => true;
-  const chats = new Set<unknown>(
-    database
-      .all(definitions.chats.sql)
-      .filter(
-        (row) =>
-          selected(scope.collectionIds, row.guid) &&
-          selected(scope.accountIds, row.accountId),
-      )
-      .map((row) => row.guid),
-  );
-  const memberships = [
-    ...database.all(definitions.chatMessages.sql),
-    ...database.all(definitions.recoverableMessages.sql),
-  ];
-  const linked = new Set<unknown>(
-    memberships
-      .filter((row) => chats.has(row.chatGuid))
-      .map((row) => row.messageGuid),
-  );
-  const messages = database
-    .all(definitions.messages.sql)
-    .filter(
-      (row) =>
-        ((scope.collectionIds === undefined &&
-          scope.accountIds === undefined) ||
-          linked.has(row.guid)) &&
-        withinDates(
-          scope,
-          typeof row.date === 'number'
-            ? new Date(Date.UTC(2001, 0, 1) + row.date).toISOString()
-            : null,
-        ),
-    );
-  const messageIds = new Set<unknown>(messages.map((row) => row.guid));
-  const attachmentIds = new Set<unknown>(
-    database
-      .all(definitions.messageAttachments.sql)
-      .filter((row) => messageIds.has(row.messageGuid))
-      .map((row) => row.attachmentGuid),
-  );
-  const handles = new Set<unknown>(
-    messages.flatMap((row) => [
-      JSON.stringify([row.handle, row.handleService]),
-      JSON.stringify([row.otherHandle, row.otherHandleService]),
-    ]),
-  );
-  for (const row of database.all(definitions.chatHandles.sql))
-    if (chats.has(row.chatGuid))
-      handles.add(JSON.stringify([row.handleId, row.handleService]));
-  return (name: StreamName, row: Record<string, unknown>): boolean => {
-    if (name === 'chats') return chats.has(row.guid);
-    if (name === 'messages') return messageIds.has(row.guid);
-    if (name === 'attachments') return attachmentIds.has(row.guid);
-    if (name === 'handles')
-      return handles.has(JSON.stringify([row.id, row.service]));
-    return (
-      (!('chatGuid' in row) || chats.has(row.chatGuid)) &&
-      (!('messageGuid' in row) || messageIds.has(row.messageGuid))
-    );
-  };
 }

@@ -8,19 +8,10 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../macos"
+      "path": "../app-database"
     },
     {
-      "path": "../../../sdks/apple/messages"
-    },
-    {
-      "path": "../../../sdks/apple/plist"
-    },
-    {
-      "path": "../../../elt"
-    },
-    {
-      "path": "../../../destinations/sqlite"
+      "path": "../plist"
     }
   ]
 }
