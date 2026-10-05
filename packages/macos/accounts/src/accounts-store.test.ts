@@ -10,6 +10,7 @@ import {
   AccountsStore,
   AccountsUnavailableError,
   accountsStorePath,
+  mailDataclass,
 } from './index.ts';
 
 type Archivable =
@@ -220,57 +221,174 @@ test('accounts come with their type, parent, enabled data classes and decoded pr
 
   const accounts = new AccountsStore(store.path).read();
 
-  assert.deepEqual(accounts, [
-    {
-      identifier: 'GOOGLE',
-      type: 'com.apple.account.Google',
-      parent: null,
-      description: 'Work',
-      username: 'ann@example.com',
-      active: true,
-      enabledDataclasses: [
-        'com.apple.Dataclass.Mail',
-        'com.apple.Dataclass.Calendars',
-      ],
-      properties: { ACPropertyFullName: 'Ann Example' },
-      dataclassProperties: {},
-    },
-    {
-      identifier: 'IMAP-1',
-      type: 'com.apple.account.IMAP',
-      parent: 'GOOGLE',
-      description: null,
-      username: null,
-      active: true,
-      enabledDataclasses: [],
-      properties: {
-        Hostname: 'imap.example.com',
-        PortNumber: 993,
-        SSLEnabled: true,
-        EmailAliases: [
-          {
-            DisplayName: 'Ann',
-            EmailAddresses: ['ann@example.com', 'a@example.com'],
-            IsPrimary: true,
-          },
+  assert.equal(accounts[1]?.parent, accounts[0]);
+  assert.deepEqual(
+    accounts.map((account) => ({
+      identifier: account.identifier,
+      type: account.type,
+      parent: account.parent?.identifier ?? null,
+      description: account.description,
+      username: account.username,
+      active: account.active,
+      enabledDataclasses: account.enabledDataclasses,
+      properties: account.properties,
+      dataclassProperties: account.dataclassProperties,
+    })),
+    [
+      {
+        identifier: 'GOOGLE',
+        type: 'com.apple.account.Google',
+        parent: null,
+        description: 'Work',
+        username: 'ann@example.com',
+        active: true,
+        enabledDataclasses: [
+          'com.apple.Dataclass.Mail',
+          'com.apple.Dataclass.Calendars',
         ],
+        properties: { ACPropertyFullName: 'Ann Example' },
+        dataclassProperties: {},
       },
-      dataclassProperties: {
-        'com.apple.Dataclass.Mail': { StoreSentMessagesOnServer: true },
+      {
+        identifier: 'IMAP-1',
+        type: 'com.apple.account.IMAP',
+        parent: 'GOOGLE',
+        description: null,
+        username: null,
+        active: true,
+        enabledDataclasses: [],
+        properties: {
+          Hostname: 'imap.example.com',
+          PortNumber: 993,
+          SSLEnabled: true,
+          EmailAliases: [
+            {
+              DisplayName: 'Ann',
+              EmailAddresses: ['ann@example.com', 'a@example.com'],
+              IsPrimary: true,
+            },
+          ],
+        },
+        dataclassProperties: {
+          'com.apple.Dataclass.Mail': { StoreSentMessagesOnServer: true },
+        },
+      },
+      {
+        identifier: 'IDLE',
+        type: 'com.apple.account.IMAP',
+        parent: null,
+        description: null,
+        username: null,
+        active: false,
+        enabledDataclasses: [],
+        properties: {},
+        dataclassProperties: {},
+      },
+    ],
+  );
+});
+
+test('an account answers its name, user, addresses and mail servers, through its parent where the store keeps them there', async () => {
+  await using store = await ScratchAccountsStore.create();
+  // iCloud as macOS 27 keeps it: the parent holds the name, the user and the
+  // Mail servers; the IMAP and SMTP children hold only their own settings.
+  await store.account({
+    pk: 1,
+    identifier: 'ICLOUD',
+    type: 'com.apple.account.AppleAccount',
+    description: 'iCloud',
+    username: 'ann@example.com',
+    enabled: [mailDataclass],
+    properties: {
+      ACPropertyFullName: 'Ann Example',
+      appleIDAliases: ['ann@example.com', 'ann.alias@example.com'],
+    },
+    dataclassProperties: {
+      [mailDataclass]: {
+        EmailAddress: 'ann@icloud.example',
+        imapHostname: 'imap.icloud.example',
+        imapPort: 143,
+        imapRequiresSSL: false,
+        smtpHostname: 'smtp.icloud.example',
+        smtpPort: 587,
+        smtpRequiresSSL: true,
       },
     },
-    {
-      identifier: 'IDLE',
-      type: 'com.apple.account.IMAP',
-      parent: null,
-      description: null,
-      username: null,
-      active: false,
-      enabledDataclasses: [],
-      properties: {},
-      dataclassProperties: {},
+  });
+  await store.account({
+    pk: 2,
+    identifier: 'IMAP',
+    type: 'com.apple.account.IMAP',
+    parent: 1,
+    properties: {
+      PortNumber: 993,
+      SSLIsDirect: true,
+      SendingAccountIdentifier: 'SMTP',
+      EmailAliases: [
+        { EmailAddresses: ['ann@icloud.example', 'ann@alias.example'] },
+      ],
     },
+  });
+  // STARTTLS on 587: SSLIsDirect false is not TLS off.
+  await store.account({
+    pk: 3,
+    identifier: 'SMTP',
+    type: 'com.apple.account.SMTP',
+    parent: 1,
+    properties: {
+      IdentityEmailAddress: 'ann@icloud.example',
+      SSLIsDirect: false,
+    },
+  });
+  // Exchange holds no server settings, only its web service URL.
+  await store.account({
+    pk: 4,
+    identifier: 'EXCHANGE',
+    type: 'com.apple.account.Exchange',
+    description: 'Work',
+    username: 'ann@work.example',
+    enabled: [mailDataclass],
+    properties: {
+      EWSExternalURL: 'https://mail.work.example/EWS/Exchange.asmx',
+      IdentityEmailAddress: 'ann@work.example',
+      SendingAccountIdentifier: 'EXCHANGE',
+    },
+  });
+
+  const [, imap, smtp, exchange] = new AccountsStore(store.path).read();
+
+  assert.ok(imap && smtp && exchange);
+  assert.equal(imap.name, 'iCloud');
+  assert.equal(imap.fullName, 'Ann Example');
+  assert.equal(imap.userName, 'ann@example.com');
+  assert.deepEqual(imap.emailAddresses, [
+    'ann@icloud.example',
+    'ann@alias.example',
+    'ann@example.com',
+    'ann.alias@example.com',
   ]);
+  assert.equal(imap.enabledFor(mailDataclass), true);
+  assert.equal(imap.sendingAccountIdentifier, 'SMTP');
+  assert.deepEqual(imap.incomingMailServer, {
+    host: 'imap.icloud.example',
+    port: 993,
+    usesTls: true,
+    userName: 'ann@example.com',
+  });
+  assert.equal(smtp.name, 'iCloud');
+  assert.deepEqual(smtp.outgoingMailServer, {
+    host: 'smtp.icloud.example',
+    port: 587,
+    usesTls: true,
+    userName: 'ann@icloud.example',
+  });
+  assert.deepEqual(exchange.incomingMailServer, {
+    host: 'mail.work.example',
+    port: null,
+    usesTls: true,
+    userName: 'ann@work.example',
+  });
+  assert.equal(exchange.sendingAccountIdentifier, 'EXCHANGE');
 });
 
 test('a store that cannot be opened fails with AccountsUnavailableError', async () => {
@@ -319,10 +437,9 @@ test('this Mac’s Accounts store reads as accounts whose parents exist', (t) =>
     throw error;
   }
 
-  const identifiers = new Set(accounts.map(({ identifier }) => identifier));
   for (const account of accounts) {
     assert.match(account.type, /^com\.apple\.account\./);
-    assert.ok(account.parent === null || identifiers.has(account.parent));
+    assert.ok(account.parent === null || accounts.includes(account.parent));
     for (const dataclass of account.enabledDataclasses)
       assert.match(dataclass, /^com\.apple\.Dataclass\./);
   }

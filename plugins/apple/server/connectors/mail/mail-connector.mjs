@@ -25620,6 +25620,105 @@ var require_mailsplit = __commonJS({
 import { homedir } from "node:os";
 import { join } from "node:path";
 var accountsStorePath = join(homedir(), "Library/Accounts/Accounts4.sqlite");
+var mailDataclass = "com.apple.Dataclass.Mail";
+var Account = class {
+  // ACAccount.identifier; Mail names its account folders after it.
+  identifier;
+  // ACAccountType.identifier, such as com.apple.account.IMAP.
+  type;
+  parent;
+  description;
+  username;
+  active;
+  // Data classes enabled on this account, such as com.apple.Dataclass.Mail.
+  enabledDataclasses;
+  // The account's properties, decoded from their keyed archives.
+  properties;
+  // Per data class settings, such as the iCloud mail servers.
+  dataclassProperties;
+  constructor(fields) {
+    this.identifier = fields.identifier;
+    this.type = fields.type;
+    this.parent = fields.parent;
+    this.description = fields.description;
+    this.username = fields.username;
+    this.active = fields.active;
+    this.enabledDataclasses = fields.enabledDataclasses;
+    this.properties = fields.properties;
+    this.dataclassProperties = fields.dataclassProperties;
+  }
+  // Its own description, else its parent's, such as iCloud or Google. The
+  // SMTP accounts this was matched on had no description of their own, so
+  // they take their parent's.
+  get name() {
+    return this.description ?? this.parent?.description ?? null;
+  }
+  get fullName() {
+    return text(this.properties.ACPropertyFullName) ?? text(this.parent?.properties.ACPropertyFullName);
+  }
+  get userName() {
+    return this.username ?? this.parent?.username ?? null;
+  }
+  // Its own and its parent's identity address, their aliases, the Apple ID
+  // aliases and the iCloud Mail address, in that order and each once.
+  get emailAddresses() {
+    return [
+      ...new Set([
+        this.properties.IdentityEmailAddress,
+        this.parent?.properties.IdentityEmailAddress,
+        ...aliases(this.properties.EmailAliases),
+        ...aliases(this.parent?.properties.EmailAliases),
+        ...list(this.parent?.properties.appleIDAliases),
+        this.#parentMail().EmailAddress
+      ].flatMap((address) => text(address) ?? []))
+    ];
+  }
+  // Active, with the data class turned on for it or its parent.
+  enabledFor(dataclass) {
+    return this.active && [this, this.parent].some((owner) => owner?.enabledDataclasses.includes(dataclass) ?? false);
+  }
+  // The account this one sends through: an SMTP account, or itself for an
+  // Exchange account, which sends through its web service.
+  get sendingAccountIdentifier() {
+    return text(this.properties.SendingAccountIdentifier);
+  }
+  // Where an IMAP or Exchange account fetches mail: its own server settings,
+  // else its parent's Mail settings (iCloud), else its Exchange web service.
+  get incomingMailServer() {
+    const mail = this.#parentMail();
+    const ews = text(this.properties.EWSExternalURL);
+    const exchange = ews === null ? null : URL.parse(ews);
+    return {
+      host: text(this.properties.Hostname) ?? text(mail.imapHostname) ?? exchange?.hostname ?? null,
+      port: number(this.properties.PortNumber) ?? number(mail.imapPort),
+      usesTls: this.#usesTls(mail.imapRequiresSSL) ?? (exchange === null ? null : exchange.protocol === "https:"),
+      userName: this.userName
+    };
+  }
+  // Where an SMTP account sends mail: its own settings, else its parent's
+  // Mail settings (iCloud). It signs in with its identity address when it
+  // has one.
+  get outgoingMailServer() {
+    const mail = this.#parentMail();
+    return {
+      host: text(this.properties.Hostname) ?? text(mail.smtpHostname),
+      port: number(this.properties.PortNumber) ?? number(mail.smtpPort),
+      usesTls: this.#usesTls(mail.smtpRequiresSSL),
+      userName: text(this.properties.IdentityEmailAddress) ?? this.userName
+    };
+  }
+  // SSLEnabled is Mail's Use TLS/SSL setting. SSLIsDirect says only whether
+  // TLS starts on connecting or through STARTTLS, so false leaves the
+  // question to requiresSsl, the parent's setting that iCloud keeps instead
+  // of SSLEnabled.
+  #usesTls(requiresSsl) {
+    return flag(this.properties.SSLEnabled) ?? (this.properties.SSLIsDirect === true ? true : null) ?? flag(requiresSsl);
+  }
+  #parentMail() {
+    const settings = this.parent?.dataclassProperties[mailDataclass];
+    return isDictionary(settings) ? settings : {};
+  }
+};
 var AccountsUnavailableError = class extends Error {
   name = "AccountsUnavailableError";
   constructor(path, cause) {
@@ -25669,21 +25768,29 @@ var AccountsStore = class {
          FROM ZACCOUNT AS account
          JOIN ZACCOUNTTYPE AS type ON type.Z_PK = account.ZACCOUNTTYPE
          ORDER BY account.Z_PK`).map(accountRow);
-      const identifiers = new Map(rows.map((row) => [row.pk, row.identifier]));
-      return rows.map((row) => {
+      const byKey = new Map(rows.map((row) => [row.pk, row]));
+      const accounts2 = /* @__PURE__ */ new Map();
+      const account = (row) => {
+        const built = accounts2.get(row.pk);
+        if (built !== void 0)
+          return built;
+        const parent = row.parent === null ? void 0 : byKey.get(row.parent);
         const dataclassProperties = decoded(row.dataclassProperties);
-        return {
+        const created = new Account({
           identifier: row.identifier,
           type: row.type,
-          parent: row.parent === null ? null : identifiers.get(row.parent) ?? null,
+          parent: parent === void 0 ? null : account(parent),
           description: row.description,
           username: row.username,
           active: row.active === 1,
           enabledDataclasses: enabled.get(row.pk) ?? [],
           properties: properties.get(row.pk) ?? {},
           dataclassProperties: isDictionary(dataclassProperties) ? dataclassProperties : {}
-        };
-      });
+        });
+        accounts2.set(row.pk, created);
+        return created;
+      };
+      return rows.map(account);
     } catch (_) {
       var _error = _, _hasError = true;
     } finally {
@@ -25697,9 +25804,9 @@ var AccountsStore = class {
   }
 };
 function accountRow(row) {
-  const text3 = (value) => typeof value === "string" ? value : null;
-  const identifier = text3(row.identifier);
-  const type = text3(row.type);
+  const string = (value) => typeof value === "string" ? value : null;
+  const identifier = string(row.identifier);
+  const type = string(row.type);
   if (identifier === null || type === null)
     throw new TypeError("An Accounts store account has no identifier or type");
   return {
@@ -25707,8 +25814,8 @@ function accountRow(row) {
     identifier,
     type,
     parent: row.parent === null ? null : Number(row.parent),
-    description: text3(row.description),
-    username: text3(row.username),
+    description: string(row.description),
+    username: string(row.username),
     active: row.active === null ? null : Number(row.active),
     dataclassProperties: row.dataclassProperties instanceof Uint8Array ? row.dataclassProperties : null
   };
@@ -25733,15 +25840,15 @@ function enabledDataclasses(database) {
     throw new AccountsSchemaError(database.path, ["Z_*ENABLEDDATACLASSES"]);
   const names = database.all("SELECT name FROM pragma_table_info(?)", table2).map(({ name }) => String(name));
   const account = names.find((name) => name.endsWith("ENABLEDACCOUNTS"));
-  const dataclass2 = names.find((name) => name.endsWith("ENABLEDDATACLASSES"));
-  if (account === void 0 || dataclass2 === void 0)
+  const dataclass = names.find((name) => name.endsWith("ENABLEDDATACLASSES"));
+  if (account === void 0 || dataclass === void 0)
     throw new AccountsSchemaError(database.path, [
       `${table2}.Z_*ENABLEDACCOUNTS`,
       `${table2}.Z_*ENABLEDDATACLASSES`
     ]);
   const dataclasses = new Map(database.all("SELECT Z_PK AS pk, ZNAME AS name FROM ZDATACLASS").map(({ pk, name }) => [Number(pk), String(decoded(name))]));
   const enabled = /* @__PURE__ */ new Map();
-  for (const row of database.all(`SELECT "${account}" AS account, "${dataclass2}" AS dataclass FROM "${table2}"`)) {
+  for (const row of database.all(`SELECT "${account}" AS account, "${dataclass}" AS dataclass FROM "${table2}"`)) {
     const name = dataclasses.get(Number(row.dataclass));
     if (name === void 0)
       continue;
@@ -25749,6 +25856,21 @@ function enabledDataclasses(database) {
     enabled.set(account2, [...enabled.get(account2) ?? [], name]);
   }
   return enabled;
+}
+function aliases(value) {
+  return list(value).flatMap((entry) => isDictionary(entry) ? list(entry.EmailAddresses) : []);
+}
+function list(value) {
+  return Array.isArray(value) ? value : [];
+}
+function text(value) {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+function number(value) {
+  return typeof value === "number" ? value : null;
+}
+function flag(value) {
+  return typeof value === "boolean" ? value : null;
 }
 
 // packages/sources/apple/mail/dist/apple-mail-source.js
@@ -25761,7 +25883,6 @@ import { setInterval } from "node:timers/promises";
 
 // packages/sources/apple/mail/dist/mail-accounts.js
 import { join as join2 } from "node:path";
-var mailDataclass = "com.apple.Dataclass.Mail";
 var MailAccounts = class {
   #byIdentifier;
   constructor(accounts2) {
@@ -25775,62 +25896,46 @@ var MailAccounts = class {
       const account = this.#byIdentifier.get(host);
       return {
         id: host,
-        properties: JSON.stringify(account === void 0 ? unknownAccount(host, scheme, directory) : this.#account(account, directory))
+        properties: JSON.stringify(account === void 0 ? unknownAccount(host, scheme, directory) : mailAccount(account, directory))
       };
     });
   }
   smtpServers() {
     return [...this.#byIdentifier.values()].filter(({ type }) => type === "com.apple.account.SMTP").map((server) => {
-      const parent = this.#parent(server);
-      const mail = dataclass(parent, mailDataclass);
+      const outgoing = server.outgoingMailServer;
       return {
         id: server.identifier,
         properties: JSON.stringify({
           id: server.identifier,
-          name: parent?.description ?? null,
-          userName: text(server.properties.IdentityEmailAddress) ?? server.username ?? parent?.username ?? null,
-          serverName: text(server.properties.Hostname) ?? text(mail.smtpHostname),
-          port: number(server.properties.PortNumber) ?? number(mail.smtpPort),
-          usesSsl: usesSsl(server, mail.smtpRequiresSSL),
+          name: server.name,
+          userName: outgoing.userName,
+          serverName: outgoing.host,
+          port: outgoing.port,
+          usesSsl: outgoing.usesTls,
           enabled: server.active
         })
       };
     });
   }
-  #account(account, directory) {
-    const parent = this.#parent(account);
-    const mail = dataclass(parent, mailDataclass);
-    const ews = text(account.properties.EWSExternalURL);
-    const exchange = ews === null ? null : URL.parse(ews);
-    return {
-      id: account.identifier,
-      name: account.description ?? parent?.description ?? null,
-      type: account.type,
-      parentType: parent?.type ?? null,
-      enabled: account.active && [account, parent].some((owner) => owner?.enabledDataclasses.includes(mailDataclass) ?? false),
-      emailAddresses: [
-        ...new Set([
-          account.properties.IdentityEmailAddress,
-          parent?.properties.IdentityEmailAddress,
-          ...aliases(account.properties.EmailAliases),
-          ...aliases(parent?.properties.EmailAliases),
-          ...list(parent?.properties.appleIDAliases),
-          mail.EmailAddress
-        ].flatMap((address) => text(address) ?? []))
-      ],
-      fullName: text(account.properties.ACPropertyFullName) ?? text(parent?.properties.ACPropertyFullName),
-      userName: account.username ?? parent?.username ?? null,
-      serverName: text(account.properties.Hostname) ?? text(mail.imapHostname) ?? exchange?.hostname ?? null,
-      port: number(account.properties.PortNumber) ?? number(mail.imapPort),
-      usesSsl: usesSsl(account, mail.imapRequiresSSL) ?? (exchange === null ? null : exchange.protocol === "https:"),
-      directory: join2(directory, account.identifier),
-      sendingServerId: text(account.properties.SendingAccountIdentifier)
-    };
-  }
-  #parent(account) {
-    return account.parent === null ? void 0 : this.#byIdentifier.get(account.parent);
-  }
 };
+function mailAccount(account, directory) {
+  const incoming = account.incomingMailServer;
+  return {
+    id: account.identifier,
+    name: account.name,
+    type: account.type,
+    parentType: account.parent?.type ?? null,
+    enabled: account.enabledFor(mailDataclass),
+    emailAddresses: account.emailAddresses,
+    fullName: account.fullName,
+    userName: account.userName,
+    serverName: incoming.host,
+    port: incoming.port,
+    usesSsl: incoming.usesTls,
+    directory: join2(directory, account.identifier),
+    sendingServerId: account.sendingAccountIdentifier
+  };
+}
 function unknownAccount(host, scheme, directory) {
   return {
     id: host,
@@ -25847,28 +25952,6 @@ function unknownAccount(host, scheme, directory) {
     directory: join2(directory, host),
     sendingServerId: null
   };
-}
-function usesSsl(account, requiresSsl) {
-  return flag(account.properties.SSLEnabled) ?? (account.properties.SSLIsDirect === true ? true : null) ?? flag(requiresSsl);
-}
-function dataclass(account, name) {
-  const settings = account?.dataclassProperties[name];
-  return isDictionary(settings) ? settings : {};
-}
-function aliases(value) {
-  return list(value).flatMap((entry) => isDictionary(entry) ? list(entry.EmailAddresses) : []);
-}
-function list(value) {
-  return Array.isArray(value) ? value : [];
-}
-function text(value) {
-  return typeof value === "string" && value !== "" ? value : null;
-}
-function number(value) {
-  return typeof value === "number" ? value : null;
-}
-function flag(value) {
-  return typeof value === "boolean" ? value : null;
 }
 
 // packages/sources/apple/mail/dist/mail-mime.js

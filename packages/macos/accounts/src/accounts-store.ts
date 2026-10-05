@@ -17,17 +17,32 @@ export const accountsStorePath = join(
   'Library/Accounts/Accounts4.sqlite',
 );
 
+// Mail's data class. On a parent account (iCloud) its settings hold the mail
+// servers the child accounts use.
+export const mailDataclass = 'com.apple.Dataclass.Mail';
+
+// Where an account fetches or sends mail. A value the store does not hold is
+// null.
+export type MailServer = {
+  readonly host: string | null;
+  readonly port: number | null;
+  readonly usesTls: boolean | null;
+  readonly userName: string | null;
+};
+
 // One account in the system Accounts store, as the Accounts framework keeps
 // it: Mail, Calendar, Contacts and Notes accounts all live here, often as a
 // child of the account the user signed in with (an IMAP account under its
-// iCloud or Google account).
-export type Account = {
+// iCloud or Google account). The child carries its own server settings; its
+// parent carries the name, the user and, for iCloud, the mail servers. Which
+// stored key answers each question was matched against Mail scripting on
+// macOS 27, with Exchange, iCloud and Google accounts.
+export class Account {
   // ACAccount.identifier; Mail names its account folders after it.
   readonly identifier: string;
   // ACAccountType.identifier, such as com.apple.account.IMAP.
   readonly type: string;
-  // The parent account's identifier.
-  readonly parent: string | null;
+  readonly parent: Account | null;
   readonly description: string | null;
   readonly username: string | null;
   readonly active: boolean;
@@ -37,7 +52,130 @@ export type Account = {
   readonly properties: Readonly<Record<string, PlistValue>>;
   // Per data class settings, such as the iCloud mail servers.
   readonly dataclassProperties: Readonly<Record<string, PlistValue>>;
-};
+
+  constructor(fields: {
+    readonly identifier: string;
+    readonly type: string;
+    readonly parent: Account | null;
+    readonly description: string | null;
+    readonly username: string | null;
+    readonly active: boolean;
+    readonly enabledDataclasses: readonly string[];
+    readonly properties: Readonly<Record<string, PlistValue>>;
+    readonly dataclassProperties: Readonly<Record<string, PlistValue>>;
+  }) {
+    this.identifier = fields.identifier;
+    this.type = fields.type;
+    this.parent = fields.parent;
+    this.description = fields.description;
+    this.username = fields.username;
+    this.active = fields.active;
+    this.enabledDataclasses = fields.enabledDataclasses;
+    this.properties = fields.properties;
+    this.dataclassProperties = fields.dataclassProperties;
+  }
+
+  // Its own description, else its parent's, such as iCloud or Google. The
+  // SMTP accounts this was matched on had no description of their own, so
+  // they take their parent's.
+  get name(): string | null {
+    return this.description ?? this.parent?.description ?? null;
+  }
+
+  get fullName(): string | null {
+    return (
+      text(this.properties.ACPropertyFullName) ??
+      text(this.parent?.properties.ACPropertyFullName)
+    );
+  }
+
+  get userName(): string | null {
+    return this.username ?? this.parent?.username ?? null;
+  }
+
+  // Its own and its parent's identity address, their aliases, the Apple ID
+  // aliases and the iCloud Mail address, in that order and each once.
+  get emailAddresses(): string[] {
+    return [
+      ...new Set(
+        [
+          this.properties.IdentityEmailAddress,
+          this.parent?.properties.IdentityEmailAddress,
+          ...aliases(this.properties.EmailAliases),
+          ...aliases(this.parent?.properties.EmailAliases),
+          ...list(this.parent?.properties.appleIDAliases),
+          this.#parentMail().EmailAddress,
+        ].flatMap((address) => text(address) ?? []),
+      ),
+    ];
+  }
+
+  // Active, with the data class turned on for it or its parent.
+  enabledFor(dataclass: string): boolean {
+    return (
+      this.active &&
+      [this, this.parent].some(
+        (owner) => owner?.enabledDataclasses.includes(dataclass) ?? false,
+      )
+    );
+  }
+
+  // The account this one sends through: an SMTP account, or itself for an
+  // Exchange account, which sends through its web service.
+  get sendingAccountIdentifier(): string | null {
+    return text(this.properties.SendingAccountIdentifier);
+  }
+
+  // Where an IMAP or Exchange account fetches mail: its own server settings,
+  // else its parent's Mail settings (iCloud), else its Exchange web service.
+  get incomingMailServer(): MailServer {
+    const mail = this.#parentMail();
+    const ews = text(this.properties.EWSExternalURL);
+    const exchange = ews === null ? null : URL.parse(ews);
+    return {
+      host:
+        text(this.properties.Hostname) ??
+        text(mail.imapHostname) ??
+        exchange?.hostname ??
+        null,
+      port: number(this.properties.PortNumber) ?? number(mail.imapPort),
+      usesTls:
+        this.#usesTls(mail.imapRequiresSSL) ??
+        (exchange === null ? null : exchange.protocol === 'https:'),
+      userName: this.userName,
+    };
+  }
+
+  // Where an SMTP account sends mail: its own settings, else its parent's
+  // Mail settings (iCloud). It signs in with its identity address when it
+  // has one.
+  get outgoingMailServer(): MailServer {
+    const mail = this.#parentMail();
+    return {
+      host: text(this.properties.Hostname) ?? text(mail.smtpHostname),
+      port: number(this.properties.PortNumber) ?? number(mail.smtpPort),
+      usesTls: this.#usesTls(mail.smtpRequiresSSL),
+      userName: text(this.properties.IdentityEmailAddress) ?? this.userName,
+    };
+  }
+
+  // SSLEnabled is Mail's Use TLS/SSL setting. SSLIsDirect says only whether
+  // TLS starts on connecting or through STARTTLS, so false leaves the
+  // question to requiresSsl, the parent's setting that iCloud keeps instead
+  // of SSLEnabled.
+  #usesTls(requiresSsl: PlistValue | undefined): boolean | null {
+    return (
+      flag(this.properties.SSLEnabled) ??
+      (this.properties.SSLIsDirect === true ? true : null) ??
+      flag(requiresSsl)
+    );
+  }
+
+  #parentMail(): Readonly<Record<string, PlistValue>> {
+    const settings = this.parent?.dataclassProperties[mailDataclass];
+    return isDictionary(settings) ? settings : {};
+  }
+}
 
 export class AccountsUnavailableError extends Error {
   override name = 'AccountsUnavailableError';
@@ -117,14 +255,19 @@ export class AccountsStore {
          ORDER BY account.Z_PK`,
       )
       .map(accountRow);
-    const identifiers = new Map(rows.map((row) => [row.pk, row.identifier]));
-    return rows.map((row) => {
+    const byKey = new Map(rows.map((row) => [row.pk, row]));
+    const accounts = new Map<number, Account>();
+    // A parent can sort after its child, so each account is built after its
+    // parent, once.
+    const account = (row: AccountRow): Account => {
+      const built = accounts.get(row.pk);
+      if (built !== undefined) return built;
+      const parent = row.parent === null ? undefined : byKey.get(row.parent);
       const dataclassProperties = decoded(row.dataclassProperties);
-      return {
+      const created = new Account({
         identifier: row.identifier,
         type: row.type,
-        parent:
-          row.parent === null ? null : (identifiers.get(row.parent) ?? null),
+        parent: parent === undefined ? null : account(parent),
         description: row.description,
         username: row.username,
         active: row.active === 1,
@@ -133,8 +276,11 @@ export class AccountsStore {
         dataclassProperties: isDictionary(dataclassProperties)
           ? dataclassProperties
           : {},
-      };
-    });
+      });
+      accounts.set(row.pk, created);
+      return created;
+    };
+    return rows.map(account);
   }
 
   // A probe whose current value changes with each commit to the store, such
@@ -145,9 +291,9 @@ export class AccountsStore {
 }
 
 function accountRow(row: Record<string, unknown>): AccountRow {
-  const text = (value: unknown) => (typeof value === 'string' ? value : null);
-  const identifier = text(row.identifier);
-  const type = text(row.type);
+  const string = (value: unknown) => (typeof value === 'string' ? value : null);
+  const identifier = string(row.identifier);
+  const type = string(row.type);
   if (identifier === null || type === null)
     throw new TypeError('An Accounts store account has no identifier or type');
   return {
@@ -155,8 +301,8 @@ function accountRow(row: Record<string, unknown>): AccountRow {
     identifier,
     type,
     parent: row.parent === null ? null : Number(row.parent),
-    description: text(row.description),
-    username: text(row.username),
+    description: string(row.description),
+    username: string(row.username),
     active: row.active === null ? null : Number(row.active),
     dataclassProperties:
       row.dataclassProperties instanceof Uint8Array
@@ -219,4 +365,28 @@ function enabledDataclasses(database: AppDatabase): Map<number, string[]> {
     enabled.set(account, [...(enabled.get(account) ?? []), name]);
   }
   return enabled;
+}
+
+// Exchange and Google aliases: entries of {DisplayName, IsEnabled,
+// EmailAddresses, IsPrimary}.
+function aliases(value: PlistValue | undefined): PlistValue[] {
+  return list(value).flatMap((entry) =>
+    isDictionary(entry) ? list(entry.EmailAddresses) : [],
+  );
+}
+
+function list(value: PlistValue | undefined): PlistValue[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function text(value: PlistValue | undefined): string | null {
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+function number(value: PlistValue | undefined): number | null {
+  return typeof value === 'number' ? value : null;
+}
+
+function flag(value: PlistValue | undefined): boolean | null {
+  return typeof value === 'boolean' ? value : null;
 }

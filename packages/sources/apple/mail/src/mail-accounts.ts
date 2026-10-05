@@ -1,18 +1,12 @@
 import { join } from 'node:path';
 
-import type { Account } from '@workspace/macos-accounts';
-import { type PlistValue, isDictionary } from '@workspace/macos-plist';
-
-const mailDataclass = 'com.apple.Dataclass.Mail';
+import { type Account, mailDataclass } from '@workspace/macos-accounts';
 
 export type AccountRecord = { id: string; properties: string };
 
 // Mail's accounts and SMTP servers as the system Accounts store keeps them.
 // Mail names an account's folder, and the host of each of its mailbox URLs,
-// after the store's account identifier. A child account (IMAP under iCloud or
-// Google) carries its server settings; its parent carries the name, the user
-// and, for iCloud, the mail servers. Which stored key holds each value was
-// matched against Mail scripting on macOS 27.
+// after the store's account identifier.
 export class MailAccounts {
   readonly #byIdentifier: ReadonlyMap<string, Account>;
 
@@ -36,7 +30,7 @@ export class MailAccounts {
         properties: JSON.stringify(
           account === undefined
             ? unknownAccount(host, scheme, directory)
-            : this.#account(account, directory),
+            : mailAccount(account, directory),
         ),
       };
     });
@@ -46,78 +40,40 @@ export class MailAccounts {
     return [...this.#byIdentifier.values()]
       .filter(({ type }) => type === 'com.apple.account.SMTP')
       .map((server) => {
-        const parent = this.#parent(server);
-        const mail = dataclass(parent, mailDataclass);
+        const outgoing = server.outgoingMailServer;
         return {
           id: server.identifier,
           properties: JSON.stringify({
             id: server.identifier,
-            name: parent?.description ?? null,
-            userName:
-              text(server.properties.IdentityEmailAddress) ??
-              server.username ??
-              parent?.username ??
-              null,
-            serverName:
-              text(server.properties.Hostname) ?? text(mail.smtpHostname),
-            port: number(server.properties.PortNumber) ?? number(mail.smtpPort),
-            usesSsl: usesSsl(server, mail.smtpRequiresSSL),
+            name: server.name,
+            userName: outgoing.userName,
+            serverName: outgoing.host,
+            port: outgoing.port,
+            usesSsl: outgoing.usesTls,
             enabled: server.active,
           }),
         };
       });
   }
+}
 
-  #account(account: Account, directory: string) {
-    const parent = this.#parent(account);
-    const mail = dataclass(parent, mailDataclass);
-    const ews = text(account.properties.EWSExternalURL);
-    const exchange = ews === null ? null : URL.parse(ews);
-    return {
-      id: account.identifier,
-      name: account.description ?? parent?.description ?? null,
-      type: account.type,
-      parentType: parent?.type ?? null,
-      enabled:
-        account.active &&
-        [account, parent].some(
-          (owner) => owner?.enabledDataclasses.includes(mailDataclass) ?? false,
-        ),
-      emailAddresses: [
-        ...new Set(
-          [
-            account.properties.IdentityEmailAddress,
-            parent?.properties.IdentityEmailAddress,
-            ...aliases(account.properties.EmailAliases),
-            ...aliases(parent?.properties.EmailAliases),
-            ...list(parent?.properties.appleIDAliases),
-            mail.EmailAddress,
-          ].flatMap((address) => text(address) ?? []),
-        ),
-      ],
-      fullName:
-        text(account.properties.ACPropertyFullName) ??
-        text(parent?.properties.ACPropertyFullName),
-      userName: account.username ?? parent?.username ?? null,
-      serverName:
-        text(account.properties.Hostname) ??
-        text(mail.imapHostname) ??
-        exchange?.hostname ??
-        null,
-      port: number(account.properties.PortNumber) ?? number(mail.imapPort),
-      usesSsl:
-        usesSsl(account, mail.imapRequiresSSL) ??
-        (exchange === null ? null : exchange.protocol === 'https:'),
-      directory: join(directory, account.identifier),
-      sendingServerId: text(account.properties.SendingAccountIdentifier),
-    };
-  }
-
-  #parent(account: Account): Account | undefined {
-    return account.parent === null
-      ? undefined
-      : this.#byIdentifier.get(account.parent);
-  }
+function mailAccount(account: Account, directory: string) {
+  const incoming = account.incomingMailServer;
+  return {
+    id: account.identifier,
+    name: account.name,
+    type: account.type,
+    parentType: account.parent?.type ?? null,
+    enabled: account.enabledFor(mailDataclass),
+    emailAddresses: account.emailAddresses,
+    fullName: account.fullName,
+    userName: account.userName,
+    serverName: incoming.host,
+    port: incoming.port,
+    usesSsl: incoming.usesTls,
+    directory: join(directory, account.identifier),
+    sendingServerId: account.sendingAccountIdentifier,
+  };
 }
 
 // A mailbox host with no account in the store: On My Mac mailboxes use
@@ -138,50 +94,4 @@ function unknownAccount(host: string, scheme: string, directory: string) {
     directory: join(directory, host),
     sendingServerId: null,
   };
-}
-
-// SSLEnabled is Mail's Use TLS/SSL setting. SSLIsDirect says only whether TLS
-// starts on connecting or through STARTTLS, so false leaves the question to
-// requiresSsl, the parent's setting that iCloud keeps instead of SSLEnabled.
-function usesSsl(
-  account: Account,
-  requiresSsl: PlistValue | undefined,
-): boolean | null {
-  return (
-    flag(account.properties.SSLEnabled) ??
-    (account.properties.SSLIsDirect === true ? true : null) ??
-    flag(requiresSsl)
-  );
-}
-
-function dataclass(
-  account: Account | undefined,
-  name: string,
-): Record<string, PlistValue> {
-  const settings = account?.dataclassProperties[name];
-  return isDictionary(settings) ? settings : {};
-}
-
-// Exchange and Google aliases: entries of {DisplayName, IsEnabled,
-// EmailAddresses, IsPrimary}.
-function aliases(value: PlistValue | undefined): PlistValue[] {
-  return list(value).flatMap((entry) =>
-    isDictionary(entry) ? list(entry.EmailAddresses) : [],
-  );
-}
-
-function list(value: PlistValue | undefined): PlistValue[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function text(value: PlistValue | undefined): string | null {
-  return typeof value === 'string' && value !== '' ? value : null;
-}
-
-function number(value: PlistValue | undefined): number | null {
-  return typeof value === 'number' ? value : null;
-}
-
-function flag(value: PlistValue | undefined): boolean | null {
-  return typeof value === 'boolean' ? value : null;
 }
