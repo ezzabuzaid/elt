@@ -2,7 +2,7 @@ import type { RecordDraft } from '@workspace/elt';
 import type {
   AlarmDocument,
   LocationDocument,
-} from '@workspace/macos-eventkit';
+} from '@workspace/sdk-apple-eventkit';
 
 import {
   AppleRemindersStream,

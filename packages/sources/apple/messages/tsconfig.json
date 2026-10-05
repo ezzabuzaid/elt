@@ -14,7 +14,7 @@
       "path": "../../../sdks/apple/app-database"
     },
     {
-      "path": "../../../macos/plist"
+      "path": "../../../sdks/apple/plist"
     },
     {
       "path": "../../../elt"

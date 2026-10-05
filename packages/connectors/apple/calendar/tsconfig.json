@@ -14,7 +14,7 @@
       "path": "../../../sources/apple/calendar"
     },
     {
-      "path": "../../../macos/eventkit"
+      "path": "../../../sdks/apple/eventkit"
     },
     {
       "path": "../../../google-auth"

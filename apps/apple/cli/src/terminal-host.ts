@@ -10,11 +10,11 @@ import { type GoogleRequester, googleSession } from '@workspace/google-auth';
 // terminal that launched it, and Google content is read with the user's own
 // OAuth client.
 export class TerminalHost implements AppleHost {
-  // The helper @workspace/macos-eventkit compiles into its dist.
+  // The helper @workspace/sdk-apple-eventkit compiles into its dist.
   readonly eventKitHelper = fileURLToPath(
     new URL(
       'eventkit-helper',
-      import.meta.resolve('@workspace/macos-eventkit'),
+      import.meta.resolve('@workspace/sdk-apple-eventkit'),
     ),
   );
 

@@ -11,7 +11,7 @@
       "path": "../macos"
     },
     {
-      "path": "../../../macos/eventkit"
+      "path": "../../../sdks/apple/eventkit"
     },
     {
       "path": "../../../google-auth"

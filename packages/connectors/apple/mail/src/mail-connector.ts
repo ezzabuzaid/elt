@@ -5,7 +5,10 @@ import {
   accounts,
   byId,
 } from '@workspace/connector-apple-connector/choice';
-import { AccountsStore, accountsStorePath } from '@workspace/macos-accounts';
+import {
+  AccountsStore,
+  accountsStorePath,
+} from '@workspace/sdk-apple-accounts';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import {
   AppleMailSource,

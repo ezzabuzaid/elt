@@ -1,12 +1,12 @@
 {
-  "name": "macos-eventkit",
-  "sourceRoot": "packages/macos/eventkit/src",
+  "name": "sdk-apple-eventkit",
+  "sourceRoot": "packages/sdks/apple/eventkit/src",
   "projectType": "library",
   "tags": ["layer:island", "layer:sdk"],
   "targets": {
     "format": {},
     "helper": {
-      "command": "sh packages/macos/eventkit/src/helper/build.sh packages/macos/eventkit/dist/eventkit-helper",
+      "command": "sh packages/sdks/apple/eventkit/src/helper/build.sh packages/sdks/apple/eventkit/dist/eventkit-helper",
       "cache": true,
       "inputs": ["{projectRoot}/src/helper/*"],
       "outputs": ["{projectRoot}/dist/eventkit-helper"]
@@ -16,7 +16,7 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test \"packages/macos/eventkit/dist/*.test.js\""
+      "command": "node --test \"packages/sdks/apple/eventkit/dist/*.test.js\""
     }
   }
 }

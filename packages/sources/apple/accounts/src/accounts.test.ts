@@ -14,7 +14,7 @@ import {
 import {
   AccountsUnavailableError,
   accountsStorePath,
-} from '@workspace/macos-accounts';
+} from '@workspace/sdk-apple-accounts';
 
 import { AppleAccountsSource } from './apple-accounts-source.ts';
 

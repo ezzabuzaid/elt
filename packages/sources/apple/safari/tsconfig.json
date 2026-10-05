@@ -8,10 +8,10 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../../../macos/plist"
+      "path": "../macos"
     },
     {
-      "path": "../macos"
+      "path": "../../../sdks/apple/plist"
     },
     {
       "path": "../../../elt"

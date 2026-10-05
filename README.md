@@ -198,7 +198,10 @@ Keep the copy ID and both SQLite files between runs. The checkpoint store must u
 ### Mail: local messages and attachments
 
 ```ts
-import { AccountsStore, accountsStorePath } from '@workspace/macos-accounts';
+import {
+  AccountsStore,
+  accountsStorePath,
+} from '@workspace/sdk-apple-accounts';
 import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
 import { mailDirectory } from '@workspace/source-apple-mail/mail-store';
 
@@ -400,8 +403,8 @@ packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-s
 packages/destinations/markdown/   Markdown destination (elt-markdown)
 packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
-packages/sdks/apple/      SDKs, one per Apple store (sdk-apple-<name>): app-database
-packages/macos/           SDKs not yet under packages/sdks: accounts, eventkit, plist, segb (macos-<name>)
+packages/sdks/apple/      SDKs, one per Apple store or format (sdk-apple-<name>): accounts,
+                          app-database, eventkit, plist, segb
 packages/codecs/          Formats several SDKs decode: protobuf (codec-protobuf)
 packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared
                           source-apple-macos (readers, document parser)
@@ -423,7 +426,7 @@ npx nx run-many -t typecheck
 npx nx run-many -t test
 ```
 
-`build` and `typecheck` are inferred by the `@nx/js/typescript` plugin from each project's `tsconfig.json`, which extends `tsconfig.base.json` and references the workspace packages it imports; Nx keeps those references current before it runs either target. Typecheck first runs the project's `lint` target (ESLint, inferred by `@nx/eslint/plugin` from the root `eslint.config.mjs`), which runs its `format` target (Prettier, which rewrites files and sorts imports) first; each project opts in with `"format": {}` in its `project.json`. A pre-commit hook runs `nx sync` and formats staged files that no project covers. Test targets build first and use Node's test runner. The EventKit package compiles the Swift `eventkit` helper (`macos-eventkit:helper`), which needs the Xcode Command Line Tools. The `elt-postgresql` and `source-google-search-console` tests need Postgres: start it with `npx nx run infra:up`, or point `TEST_DATABASE_URL` at a server where the user can create databases and roles. Each test creates a database of its own on that server (`scratchDatabase`, or `scratchWarehouse` provisioned by `infra/init/marts/contract.sql` for reading as `agent_reader`). Apple tests require macOS and an environment that permits native filesystem notifications. Calendar and Reminders tests create a temporary calendar or reminders list through EventKit, in the first account that accepts one, read it through the real helper and delete it; the account syncs it to its server until then. Where EventKit cannot produce a case (attendees, malformed documents, denied access, a missing ICS export), `StubEventKitHelper` (`@workspace/macos-eventkit/test`), a real executable, runs in place of the helper. One live test per store also reads this Mac's Calendar or Reminders read-only into a temporary SQLite database, skipped without access.
+`build` and `typecheck` are inferred by the `@nx/js/typescript` plugin from each project's `tsconfig.json`, which extends `tsconfig.base.json` and references the workspace packages it imports; Nx keeps those references current before it runs either target. Typecheck first runs the project's `lint` target (ESLint, inferred by `@nx/eslint/plugin` from the root `eslint.config.mjs`), which runs its `format` target (Prettier, which rewrites files and sorts imports) first; each project opts in with `"format": {}` in its `project.json`. A pre-commit hook runs `nx sync` and formats staged files that no project covers. Test targets build first and use Node's test runner. The EventKit package compiles the Swift `eventkit` helper (`sdk-apple-eventkit:helper`), which needs the Xcode Command Line Tools. The `elt-postgresql` and `source-google-search-console` tests need Postgres: start it with `npx nx run infra:up`, or point `TEST_DATABASE_URL` at a server where the user can create databases and roles. Each test creates a database of its own on that server (`scratchDatabase`, or `scratchWarehouse` provisioned by `infra/init/marts/contract.sql` for reading as `agent_reader`). Apple tests require macOS and an environment that permits native filesystem notifications. Calendar and Reminders tests create a temporary calendar or reminders list through EventKit, in the first account that accepts one, read it through the real helper and delete it; the account syncs it to its server until then. Where EventKit cannot produce a case (attendees, malformed documents, denied access, a missing ICS export), `StubEventKitHelper` (`@workspace/sdk-apple-eventkit/test`), a real executable, runs in place of the helper. One live test per store also reads this Mac's Calendar or Reminders read-only into a temporary SQLite database, skipped without access.
 
 Put `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in the workspace `.env` (gitignored), then run the Search Console example with `npx nx run google:start`. It loads `sc-domain:ezz.sh` into the warehouse (`npx nx run infra:up`), checkpoints included, writes no local files, and installs the [agent-facing marts](docs/reference.md#warehouse-marts); an explicitly invoked consumer reads them directly through PostgreSQL as `agent_reader` (MCP is optional). Sync status and declared coverage are discoverable through `marts.catalog`; reading never starts a refresh. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup.
 

@@ -14,7 +14,7 @@ import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-
 import { ConnectorManifest } from '@workspace/connector-apple-manifest/connector-manifest';
 import { hostModules } from '@workspace/connector-apple-manifest/host-modules';
 
-const eventkitHelper = 'packages/macos/eventkit/dist/eventkit-helper';
+const eventkitHelper = 'packages/sdks/apple/eventkit/dist/eventkit-helper';
 const outdir = 'plugins/apple/server';
 
 const builtIns = readdirSync(builtInConnectors)

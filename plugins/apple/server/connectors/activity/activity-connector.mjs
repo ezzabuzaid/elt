@@ -5,7 +5,7 @@ import {
 import {
   decodeArchive,
   plistJSON
-} from "../../chunks/chunk-YLKLHO7E.mjs";
+} from "../../chunks/chunk-2VSN4436.mjs";
 import {
   AppleConnector
 } from "../../chunks/chunk-7XFLCHNF.mjs";
@@ -221,7 +221,7 @@ var ActivityScan = class _ActivityScan {
 import { readdir as readdir2 } from "node:fs/promises";
 import { join as join2 } from "node:path";
 
-// packages/macos/segb/dist/segb.js
+// packages/sdks/apple/segb/dist/segb.js
 import { createHash } from "node:crypto";
 import { open as open2, readFile } from "node:fs/promises";
 import { crc32 } from "node:zlib";

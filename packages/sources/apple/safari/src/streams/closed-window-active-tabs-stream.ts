@@ -1,5 +1,5 @@
 import type { RecordDraft } from '@workspace/elt';
-import type { PlistValue } from '@workspace/macos-plist';
+import type { PlistValue } from '@workspace/sdk-apple-plist';
 
 import type { ClosedWindow } from '../closed-tabs-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';

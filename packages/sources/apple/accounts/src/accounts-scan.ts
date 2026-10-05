@@ -6,7 +6,7 @@ import type {
   Authorization,
   CredentialItem,
   Dataclass,
-} from '@workspace/macos-accounts';
+} from '@workspace/sdk-apple-accounts';
 
 // One run's read of the Accounts store: every stream reads the same snapshot,
 // and each kind of record is read from it once.

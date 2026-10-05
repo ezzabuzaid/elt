@@ -46,13 +46,13 @@ import {
   type OccurrenceDocument,
   type ParticipantDocument,
   type RecurrenceRuleDocument,
-} from '@workspace/macos-eventkit';
+} from '@workspace/sdk-apple-eventkit';
 import {
   type HelperCalendarDocument,
   type HelperRead,
   type HelperRequest,
   StubEventKitHelper,
-} from '@workspace/macos-eventkit/test';
+} from '@workspace/sdk-apple-eventkit/test';
 
 import {
   AppleCalendarSource,
@@ -62,10 +62,13 @@ import { googleCalendarAttachments } from './google-calendar-attachments.ts';
 
 const execFile = promisify(execFileCallback);
 
-// The helper @workspace/macos-eventkit compiles, which the live tests read
+// The helper @workspace/sdk-apple-eventkit compiles, which the live tests read
 // this Mac's calendars through.
 const helper = fileURLToPath(
-  new URL('eventkit-helper', import.meta.resolve('@workspace/macos-eventkit')),
+  new URL(
+    'eventkit-helper',
+    import.meta.resolve('@workspace/sdk-apple-eventkit'),
+  ),
 );
 
 const snake = (name: string) =>

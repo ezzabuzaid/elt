@@ -26,8 +26,8 @@ import {
 import {
   type AccountsStore,
   AccountsUnavailableError,
-} from '@workspace/macos-accounts';
-import type { PlistValue } from '@workspace/macos-plist';
+} from '@workspace/sdk-apple-accounts';
+import type { PlistValue } from '@workspace/sdk-apple-plist';
 import {
   type ImportScope,
   selected,

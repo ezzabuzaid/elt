@@ -3,7 +3,7 @@ import {
   decodeArchive,
   isBinaryPlist,
   plistJSON,
-} from '@workspace/macos-plist';
+} from '@workspace/sdk-apple-plist';
 import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 
 import type { AddressBookSchema } from './address-book.ts';

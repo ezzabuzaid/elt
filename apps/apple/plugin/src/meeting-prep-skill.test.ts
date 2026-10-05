@@ -18,11 +18,11 @@ import type {
   AccountDocument,
   OccurrenceDocument,
   ParticipantDocument,
-} from '@workspace/macos-eventkit';
+} from '@workspace/sdk-apple-eventkit';
 import {
   type HelperCalendarDocument,
   StubEventKitHelper,
-} from '@workspace/macos-eventkit/test';
+} from '@workspace/sdk-apple-eventkit/test';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 // The host the plugin's server passes its connectors, with the helper this
@@ -32,7 +32,7 @@ const host = {
   eventKitHelper: fileURLToPath(
     new URL(
       'eventkit-helper',
-      import.meta.resolve('@workspace/macos-eventkit'),
+      import.meta.resolve('@workspace/sdk-apple-eventkit'),
     ),
   ),
 };

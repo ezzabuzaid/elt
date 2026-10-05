@@ -53,7 +53,7 @@
       "path": "../../../packages/connectors/apple/accounts"
     },
     {
-      "path": "../../../packages/macos/eventkit"
+      "path": "../../../packages/sdks/apple/eventkit"
     },
     {
       "path": "../../../packages/connectors/apple/manifest"

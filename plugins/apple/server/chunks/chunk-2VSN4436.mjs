@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
-// packages/macos/plist/dist/plist.js
+// packages/sdks/apple/plist/dist/plist.js
 var PlistUid = class {
   value;
   constructor(value) {
@@ -207,7 +207,7 @@ function classNameOf(value) {
   return isDictionary(value) && typeof value.$classname === "string" ? value.$classname : void 0;
 }
 
-// packages/macos/plist/dist/plutil.js
+// packages/sdks/apple/plist/dist/plutil.js
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 var execute = promisify(execFile);

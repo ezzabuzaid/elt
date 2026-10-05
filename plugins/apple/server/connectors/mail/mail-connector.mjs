@@ -4,7 +4,7 @@ import {
   AccountsUnavailableError,
   accountsStorePath,
   mailDataclass
-} from "../../chunks/chunk-TUIARM52.mjs";
+} from "../../chunks/chunk-7KL5742R.mjs";
 import {
   accounts,
   byId
@@ -20,7 +20,7 @@ import {
 import {
   isDictionary,
   readPlist
-} from "../../chunks/chunk-YLKLHO7E.mjs";
+} from "../../chunks/chunk-2VSN4436.mjs";
 import {
   AppleConnector
 } from "../../chunks/chunk-7XFLCHNF.mjs";

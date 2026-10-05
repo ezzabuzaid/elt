@@ -11,7 +11,7 @@
       "path": "../../../packages/sources/apple/macos"
     },
     {
-      "path": "../../../packages/macos/eventkit"
+      "path": "../../../packages/sdks/apple/eventkit"
     },
     {
       "path": "../../../packages/import-store"

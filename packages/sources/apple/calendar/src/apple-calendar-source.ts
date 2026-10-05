@@ -13,7 +13,7 @@ import { Catalog, Source, diffSnapshot, isTimestamp } from '@workspace/elt';
 import {
   type CalendarStore,
   IcsExportUnavailableError,
-} from '@workspace/macos-eventkit';
+} from '@workspace/sdk-apple-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { CalendarScan } from './calendar-scan.ts';

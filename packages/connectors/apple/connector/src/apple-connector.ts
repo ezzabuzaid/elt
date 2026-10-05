@@ -28,7 +28,7 @@ export type AppleHost = {
   // that launched the CLI.
   readonly grantee: string;
   // The compiled EventKit helper Calendar and Reminders read through: beside
-  // the plugin's bundled server, or in @workspace/macos-eventkit's dist.
+  // the plugin's bundled server, or in @workspace/sdk-apple-eventkit's dist.
   readonly eventKitHelper: string;
   // A Google session for content an Apple app keeps in Google, such as
   // Calendar attachments in Drive and Gmail. Without one, it stays a link.

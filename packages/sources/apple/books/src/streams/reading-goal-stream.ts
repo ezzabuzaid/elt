@@ -1,5 +1,5 @@
 import type { RecordDraft } from '@workspace/elt';
-import { type PlistValue, isDictionary } from '@workspace/macos-plist';
+import { type PlistValue, isDictionary } from '@workspace/sdk-apple-plist';
 
 import type { BooksScan, Preferences } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';

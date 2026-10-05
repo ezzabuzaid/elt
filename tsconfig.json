@@ -3,10 +3,10 @@
   "files": [],
   "references": [
     {
-      "path": "./packages/macos/accounts"
+      "path": "./packages/sdks/apple/accounts"
     },
     {
-      "path": "./packages/macos/plist"
+      "path": "./packages/sdks/apple/plist"
     },
     {
       "path": "./packages/destinations/postgresql"
@@ -78,7 +78,7 @@
       "path": "./packages/sources/google/search-console"
     },
     {
-      "path": "./packages/macos/eventkit"
+      "path": "./packages/sdks/apple/eventkit"
     },
     {
       "path": "./packages/connectors/apple/manifest"
@@ -120,7 +120,7 @@
       "path": "./packages/sources/apple/activity"
     },
     {
-      "path": "./packages/macos/segb"
+      "path": "./packages/sdks/apple/segb"
     },
     {
       "path": "./packages/connectors/apple/accounts"

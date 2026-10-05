@@ -5,7 +5,7 @@ import {
   collections,
   name,
 } from '@workspace/connector-apple-connector/choice';
-import { RemindersStore } from '@workspace/macos-eventkit';
+import { RemindersStore } from '@workspace/sdk-apple-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
 

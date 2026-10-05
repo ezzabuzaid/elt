@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { type Account, mailDataclass } from '@workspace/macos-accounts';
+import { type Account, mailDataclass } from '@workspace/sdk-apple-accounts';
 
 export type AccountRecord = { id: string; properties: string };
 

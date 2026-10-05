@@ -15,7 +15,7 @@
       "path": "../connector"
     },
     {
-      "path": "../../../macos/eventkit"
+      "path": "../../../sdks/apple/eventkit"
     },
     {
       "path": "../safari"

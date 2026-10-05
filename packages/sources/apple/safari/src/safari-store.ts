@@ -12,7 +12,7 @@ import {
   isBinaryPlist,
   parseBinaryPlist,
   readPlist,
-} from '@workspace/macos-plist';
+} from '@workspace/sdk-apple-plist';
 
 // History, bookmarks, closed tabs and downloads.
 export const safariDirectory = join(homedir(), 'Library/Safari');

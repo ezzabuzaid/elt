@@ -33,7 +33,7 @@ const host = {
   eventKitHelper: fileURLToPath(
     new URL(
       'eventkit-helper',
-      import.meta.resolve('@workspace/macos-eventkit'),
+      import.meta.resolve('@workspace/sdk-apple-eventkit'),
     ),
   ),
 };

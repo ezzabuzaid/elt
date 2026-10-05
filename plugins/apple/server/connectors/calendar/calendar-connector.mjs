@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 import {
   CalendarStore,
   IcsExportUnavailableError
-} from "../../chunks/chunk-R6L4WQ3V.mjs";
+} from "../../chunks/chunk-TWJG64VL.mjs";
 import {
   accounts,
   collections,

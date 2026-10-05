@@ -13,7 +13,7 @@ import {
   diffGroupedSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import { readSegb, segbFingerprint } from '@workspace/macos-segb';
+import { readSegb, segbFingerprint } from '@workspace/sdk-apple-segb';
 
 import type { ActivityScan } from './activity-scan.ts';
 import { ActivityUnavailableError } from './activity-store.ts';

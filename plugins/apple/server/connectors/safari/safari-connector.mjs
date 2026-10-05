@@ -15,7 +15,7 @@ import {
   isDictionary,
   parseBinaryPlist,
   readPlist
-} from "../../chunks/chunk-YLKLHO7E.mjs";
+} from "../../chunks/chunk-2VSN4436.mjs";
 import {
   AppleConnector
 } from "../../chunks/chunk-7XFLCHNF.mjs";
@@ -253,14 +253,14 @@ var historyColumns = {
 var select2 = (table, order) => `SELECT ${historyColumns[table].join(", ")} FROM ${table} ORDER BY ${order}`;
 var dayMs = 864e5;
 var defaultHistoryAgeInDays = 365;
-var forever = Date.UTC(1, 0, 1);
+var firstYear = Date.parse("0001-01-01T00:00:00.000Z");
 var marginMs = 36e5;
 function historyHorizon(preferences, startedAt) {
   const configured = isDictionary(preferences) ? preferences.HistoryAgeInDaysLimit : void 0;
   const limit = configured ?? defaultHistoryAgeInDays;
   if (typeof limit !== "number")
     throw new TypeError("Safari HistoryAgeInDaysLimit is not a number");
-  return new Date(limit > 0 ? Math.max(forever, startedAt.getTime() - limit * dayMs + marginMs) : forever).toISOString();
+  return new Date(Math.max(firstYear, startedAt.getTime() - Math.max(1, limit) * dayMs + marginMs)).toISOString();
 }
 var HistoryReader = class {
   database;

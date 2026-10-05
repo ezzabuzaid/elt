@@ -1,6 +1,6 @@
 import type { SQLOutputValue } from 'node:sqlite';
 
-import { decodeArchive, plistJSON } from '@workspace/macos-plist';
+import { decodeArchive, plistJSON } from '@workspace/sdk-apple-plist';
 
 export type Row = Record<string, SQLOutputValue>;
 

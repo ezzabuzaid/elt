@@ -5,7 +5,7 @@ import type {
   LocationDocument,
   OccurrenceDocument,
   RecurrenceRuleDocument,
-} from '@workspace/macos-eventkit';
+} from '@workspace/sdk-apple-eventkit';
 
 import type {
   CalendarAttachment,

@@ -6,7 +6,7 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
-import type { RemindersStore } from '@workspace/macos-eventkit';
+import type { RemindersStore } from '@workspace/sdk-apple-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 

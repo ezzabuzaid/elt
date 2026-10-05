@@ -1,5 +1,5 @@
 import type { RecordDraft } from '@workspace/elt';
-import type { AccountDocument } from '@workspace/macos-eventkit';
+import type { AccountDocument } from '@workspace/sdk-apple-eventkit';
 
 import type { CalendarScan } from '../calendar-scan.ts';
 import { CalendarStream, calendarFields } from '../calendar-stream.ts';

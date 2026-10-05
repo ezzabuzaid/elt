@@ -2,7 +2,7 @@ import {
   type PlistValue,
   isDictionary,
   parseBinaryPlist,
-} from '@workspace/macos-plist';
+} from '@workspace/sdk-apple-plist';
 import {
   type ImportScope,
   selected,

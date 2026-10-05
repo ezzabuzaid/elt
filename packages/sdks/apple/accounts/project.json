@@ -1,0 +1,13 @@
+{
+  "name": "sdk-apple-accounts",
+  "sourceRoot": "packages/sdks/apple/accounts/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/apple/accounts/dist/*.test.js\""
+    }
+  }
+}

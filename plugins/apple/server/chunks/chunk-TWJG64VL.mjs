@@ -4,7 +4,7 @@ import {
   __using
 } from "./chunk-ZGXE7NZW.mjs";
 
-// packages/macos/eventkit/dist/errors.js
+// packages/sdks/apple/eventkit/dist/errors.js
 var CalendarUnavailableError = class extends Error {
   name = "CalendarUnavailableError";
   constructor(cause) {
@@ -30,10 +30,10 @@ var EventKitChangingError = class extends Error {
   }
 };
 
-// packages/macos/eventkit/dist/eventkit-store.js
+// packages/sdks/apple/eventkit/dist/eventkit-store.js
 import { setTimeout as sleep } from "node:timers/promises";
 
-// packages/macos/eventkit/dist/native-process.js
+// packages/sdks/apple/eventkit/dist/native-process.js
 import { spawn } from "node:child_process";
 import { addAbortListener } from "node:events";
 import { createInterface } from "node:readline";
@@ -84,7 +84,7 @@ var NativeProcess = class {
 };
 var native_process_default = new NativeProcess();
 
-// packages/macos/eventkit/dist/eventkit-store.js
+// packages/sdks/apple/eventkit/dist/eventkit-store.js
 var settleMs = 250;
 var attempts = 5;
 var EventKitStore = class {
@@ -215,7 +215,7 @@ function sorted(values, key) {
   }).map(([, value]) => value);
 }
 
-// packages/macos/eventkit/dist/calendar-store.js
+// packages/sdks/apple/eventkit/dist/calendar-store.js
 var CalendarStore = class extends EventKitStore {
   entity = "events";
   accessMarker = "CALENDAR_UNAVAILABLE";
@@ -237,7 +237,7 @@ var CalendarStore = class extends EventKitStore {
   }
 };
 
-// packages/macos/eventkit/dist/reminders-store.js
+// packages/sdks/apple/eventkit/dist/reminders-store.js
 var RemindersStore = class extends EventKitStore {
   entity = "reminders";
   accessMarker = "REMINDERS_UNAVAILABLE";

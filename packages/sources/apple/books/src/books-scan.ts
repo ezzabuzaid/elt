@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { PlistValue } from '@workspace/macos-plist';
+import type { PlistValue } from '@workspace/sdk-apple-plist';
 
 import {
   BooksDatabase,

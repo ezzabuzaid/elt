@@ -1,6 +1,6 @@
 {
-  "name": "macos-plist",
-  "sourceRoot": "packages/macos/plist/src",
+  "name": "sdk-apple-plist",
+  "sourceRoot": "packages/sdks/apple/plist/src",
   "projectType": "library",
   "tags": ["layer:island", "layer:sdk"],
   "targets": {

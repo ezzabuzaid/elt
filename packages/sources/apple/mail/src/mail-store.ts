@@ -9,7 +9,7 @@ import {
   type PlistValue,
   isDictionary,
   readPlist,
-} from '@workspace/macos-plist';
+} from '@workspace/sdk-apple-plist';
 
 export const mailDirectory = join(homedir(), 'Library/Mail');
 

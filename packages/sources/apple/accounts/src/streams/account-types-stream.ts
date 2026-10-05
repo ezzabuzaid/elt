@@ -1,5 +1,5 @@
 import type { RecordDraft } from '@workspace/elt';
-import type { AccountType } from '@workspace/macos-accounts';
+import type { AccountType } from '@workspace/sdk-apple-accounts';
 
 import type { AccountsScan } from '../accounts-scan.ts';
 import {

@@ -1,4 +1,4 @@
-import { decodeArchive, parseBinaryPlist } from '@workspace/macos-plist';
+import { decodeArchive, parseBinaryPlist } from '@workspace/sdk-apple-plist';
 import {
   type ImportScope,
   selected,

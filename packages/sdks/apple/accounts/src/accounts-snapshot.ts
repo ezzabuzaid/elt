@@ -1,12 +1,12 @@
 import {
-  type PlistValue,
-  decodeArchive,
-  isDictionary,
-} from '@workspace/macos-plist';
-import {
   AppDatabase,
   type AppDatabaseColumns,
 } from '@workspace/sdk-apple-app-database';
+import {
+  type PlistValue,
+  decodeArchive,
+  isDictionary,
+} from '@workspace/sdk-apple-plist';
 
 import { Account } from './account.ts';
 import { AccountsSchemaError, AccountsUnavailableError } from './errors.ts';

@@ -4,7 +4,7 @@ import type {
   RecurrenceRuleDocument,
   ReminderDocument,
   RemindersContents,
-} from '@workspace/macos-eventkit';
+} from '@workspace/sdk-apple-eventkit';
 
 // The helper's epoch milliseconds as a UTC timestamp.
 export const timestamp = (ms: number | undefined): string | null =>

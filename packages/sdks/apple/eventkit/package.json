@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/macos-plist",
+  "name": "@workspace/sdk-apple-eventkit",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./test": {
+      "types": "./dist/stub-eventkit-helper.d.ts",
+      "default": "./dist/stub-eventkit-helper.js"
     }
   }
 }

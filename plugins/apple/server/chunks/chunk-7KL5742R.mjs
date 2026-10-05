@@ -6,13 +6,13 @@ import {
 import {
   decodeArchive,
   isDictionary
-} from "./chunk-YLKLHO7E.mjs";
+} from "./chunk-2VSN4436.mjs";
 
-// packages/macos/accounts/dist/accounts-store.js
+// packages/sdks/apple/accounts/dist/accounts-store.js
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// packages/macos/accounts/dist/account.js
+// packages/sdks/apple/accounts/dist/account.js
 var mailDataclass = "com.apple.Dataclass.Mail";
 var authenticationProperties = /* @__PURE__ */ new Set([
   "lastAuthenticationServerResponse",
@@ -178,7 +178,7 @@ function flag(value) {
   return typeof value === "boolean" ? value : null;
 }
 
-// packages/macos/accounts/dist/errors.js
+// packages/sdks/apple/accounts/dist/errors.js
 var AccountsUnavailableError = class extends Error {
   name = "AccountsUnavailableError";
   constructor(path, cause) {
@@ -192,7 +192,7 @@ var AccountsSchemaError = class extends Error {
   }
 };
 
-// packages/macos/accounts/dist/accounts-snapshot.js
+// packages/sdks/apple/accounts/dist/accounts-snapshot.js
 var accountColumns = {
   ZACCOUNT: [
     "Z_PK",
@@ -474,7 +474,7 @@ function date(value) {
   return typeof value === "string" ? new Date(value) : null;
 }
 
-// packages/macos/accounts/dist/accounts-store.js
+// packages/sdks/apple/accounts/dist/accounts-store.js
 var accountsStorePath = join(homedir(), "Library/Accounts/Accounts4.sqlite");
 var AccountsStore = class {
   #path;

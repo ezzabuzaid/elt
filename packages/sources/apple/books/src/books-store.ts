@@ -3,15 +3,15 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  type PlistValue,
-  isBinaryPlist,
-  parseBinaryPlist,
-} from '@workspace/macos-plist';
-import {
   AppDatabase,
   type AppDatabaseColumns,
   AppDatabaseVersion,
 } from '@workspace/sdk-apple-app-database';
+import {
+  type PlistValue,
+  isBinaryPlist,
+  parseBinaryPlist,
+} from '@workspace/sdk-apple-plist';
 
 // Books.app's own container: the library, annotations, themes and its
 // preferences.

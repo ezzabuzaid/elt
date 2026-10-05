@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/macos-eventkit",
+  "name": "@workspace/sdk-apple-accounts",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -7,10 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./test": {
-      "types": "./dist/stub-eventkit-helper.d.ts",
-      "default": "./dist/stub-eventkit-helper.js"
     }
+  },
+  "dependencies": {
+    "@workspace/sdk-apple-plist": "0.0.1",
+    "@workspace/sdk-apple-app-database": "0.0.1"
   }
 }

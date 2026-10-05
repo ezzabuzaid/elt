@@ -1,4 +1,4 @@
-import { type PlistValue, isDictionary } from '@workspace/macos-plist';
+import { type PlistValue, isDictionary } from '@workspace/sdk-apple-plist';
 
 // Mail's data class. On a parent account (iCloud) its settings hold the mail
 // servers the child accounts use.

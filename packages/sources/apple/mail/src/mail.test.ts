@@ -37,7 +37,7 @@ import {
   AccountsStore,
   AccountsUnavailableError,
   accountsStorePath,
-} from '@workspace/macos-accounts';
+} from '@workspace/sdk-apple-accounts';
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 import { AppleMailSource } from './apple-mail-source.ts';

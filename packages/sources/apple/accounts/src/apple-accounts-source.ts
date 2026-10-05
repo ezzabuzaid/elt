@@ -8,7 +8,10 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
-import { AccountsStore, accountsStorePath } from '@workspace/macos-accounts';
+import {
+  AccountsStore,
+  accountsStorePath,
+} from '@workspace/sdk-apple-accounts';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import { AccountsScan } from './accounts-scan.ts';

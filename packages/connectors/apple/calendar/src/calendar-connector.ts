@@ -9,7 +9,7 @@ import {
   GMAIL_READONLY_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE,
 } from '@workspace/google-auth/scopes';
-import { CalendarStore } from '@workspace/macos-eventkit';
+import { CalendarStore } from '@workspace/sdk-apple-eventkit';
 import {
   AppleCalendarSource,
   type CalendarAttachmentFetcher,

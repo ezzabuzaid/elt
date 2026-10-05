@@ -24,6 +24,6 @@
   },
   "devDependencies": {
     "@openai/mcp-extensions": "0.1.0",
-    "@workspace/macos-eventkit": "0.0.1"
+    "@workspace/sdk-apple-eventkit": "0.0.1"
   }
 }

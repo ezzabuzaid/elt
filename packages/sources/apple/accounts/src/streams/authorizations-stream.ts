@@ -1,6 +1,6 @@
 import type { RecordDraft } from '@workspace/elt';
-import type { Authorization } from '@workspace/macos-accounts';
-import { plistJSON } from '@workspace/macos-plist';
+import type { Authorization } from '@workspace/sdk-apple-accounts';
+import { plistJSON } from '@workspace/sdk-apple-plist';
 
 import type { AccountsScan } from '../accounts-scan.ts';
 import {

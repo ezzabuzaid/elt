@@ -5,7 +5,7 @@ import {
   isBinaryPlist,
   isDictionary,
   plistJSON,
-} from '@workspace/macos-plist';
+} from '@workspace/sdk-apple-plist';
 import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 
 import { attributedText } from './typedstream.ts';
