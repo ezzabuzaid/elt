@@ -121,6 +121,12 @@
     },
     {
       "path": "./packages/macos/segb"
+    },
+    {
+      "path": "./packages/connectors/apple/accounts"
+    },
+    {
+      "path": "./packages/sources/apple/accounts"
     }
   ]
 }

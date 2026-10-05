@@ -20,8 +20,9 @@ type Archivable =
   | readonly Archivable[]
   | { readonly [key: string]: Archivable };
 
-// A synthetic Accounts4.sqlite with the Core Data tables the Accounts
-// framework writes, its values stored as real NSKeyedArchiver archives.
+// A synthetic Accounts4.sqlite with the tables macOS 27's Accounts framework
+// writes, as its schema declares them, and values stored as real
+// NSKeyedArchiver archives.
 class ScratchAccountsStore implements AsyncDisposable {
   readonly path: string;
   readonly #directory: AsyncDisposable & { readonly path: string };
@@ -32,13 +33,18 @@ class ScratchAccountsStore implements AsyncDisposable {
     this.path = join(directory.path, 'Accounts4.sqlite');
     this.#database = new DatabaseSync(this.path);
     this.#database.exec(`
-      CREATE TABLE ZACCOUNTTYPE (Z_PK INTEGER PRIMARY KEY, ZIDENTIFIER VARCHAR);
-      CREATE TABLE ZACCOUNT (Z_PK INTEGER PRIMARY KEY, ZACTIVE INTEGER, ZACCOUNTTYPE INTEGER,
-        ZPARENTACCOUNT INTEGER, ZACCOUNTDESCRIPTION VARCHAR, ZIDENTIFIER VARCHAR,
-        ZUSERNAME VARCHAR, ZDATACLASSPROPERTIES BLOB);
-      CREATE TABLE ZACCOUNTPROPERTY (Z_PK INTEGER PRIMARY KEY, ZOWNER INTEGER, ZKEY VARCHAR, ZVALUE BLOB);
-      CREATE TABLE ZDATACLASS (Z_PK INTEGER PRIMARY KEY, ZNAME BLOB);
-      CREATE TABLE Z_2ENABLEDDATACLASSES (Z_2ENABLEDACCOUNTS INTEGER, Z_7ENABLEDDATACLASSES INTEGER);
+      CREATE TABLE ZACCESSOPTIONSKEY ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZNAME VARCHAR , ZENUMVALUE INTEGER);
+      CREATE TABLE Z_1OWNINGACCOUNTTYPES ( Z_1ACCESSKEYS INTEGER, Z_4OWNINGACCOUNTTYPES INTEGER, PRIMARY KEY (Z_1ACCESSKEYS, Z_4OWNINGACCOUNTTYPES) );
+      CREATE TABLE ZACCOUNT ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZACTIVE INTEGER, ZAUTHENTICATED INTEGER, ZSUPPORTSAUTHENTICATION INTEGER, ZVISIBLE INTEGER, ZWARMINGUP INTEGER, ZACCOUNTTYPE INTEGER, ZPARENTACCOUNT INTEGER, ZDATE TIMESTAMP, ZLASTCREDENTIALRENEWALREJECTIONDATE TIMESTAMP, ZACCOUNTDESCRIPTION VARCHAR, ZAUTHENTICATIONTYPE VARCHAR, ZCREDENTIALTYPE VARCHAR, ZIDENTIFIER VARCHAR, ZMODIFICATIONID VARCHAR, ZOWNINGBUNDLEID VARCHAR, ZUSERNAME VARCHAR, ZDATACLASSPROPERTIES BLOB );
+      CREATE TABLE Z_2ENABLEDDATACLASSES ( Z_2ENABLEDACCOUNTS INTEGER, Z_7ENABLEDDATACLASSES INTEGER, PRIMARY KEY (Z_2ENABLEDACCOUNTS, Z_7ENABLEDDATACLASSES) );
+      CREATE TABLE Z_2PROVISIONEDDATACLASSES ( Z_2PROVISIONEDACCOUNTS INTEGER, Z_7PROVISIONEDDATACLASSES INTEGER, PRIMARY KEY (Z_2PROVISIONEDACCOUNTS, Z_7PROVISIONEDDATACLASSES) );
+      CREATE TABLE ZACCOUNTPROPERTY ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZOWNER INTEGER, ZKEY VARCHAR, ZVALUE BLOB );
+      CREATE TABLE ZACCOUNTTYPE ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZOBSOLETE INTEGER, ZSUPPORTSAUTHENTICATION INTEGER, ZSUPPORTSMULTIPLEACCOUNTS INTEGER, ZVISIBILITY INTEGER, ZACCOUNTTYPEDESCRIPTION VARCHAR, ZCREDENTIALPROTECTIONPOLICY VARCHAR, ZCREDENTIALTYPE VARCHAR, ZIDENTIFIER VARCHAR, ZOWNINGBUNDLEID VARCHAR );
+      CREATE TABLE Z_4SUPPORTEDDATACLASSES ( Z_4SUPPORTEDTYPES INTEGER, Z_7SUPPORTEDDATACLASSES INTEGER, PRIMARY KEY (Z_4SUPPORTEDTYPES, Z_7SUPPORTEDDATACLASSES) );
+      CREATE TABLE Z_4SYNCABLEDATACLASSES ( Z_4SYNCABLETYPES INTEGER, Z_7SYNCABLEDATACLASSES INTEGER, PRIMARY KEY (Z_4SYNCABLETYPES, Z_7SYNCABLEDATACLASSES) );
+      CREATE TABLE ZAUTHORIZATION ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZACCOUNTTYPE INTEGER, ZBUNDLEID VARCHAR, ZGRANTEDPERMISSIONS VARCHAR, ZOPTIONS BLOB );
+      CREATE TABLE ZCREDENTIALITEM ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZPERSISTENT INTEGER, ZEXPIRATIONDATE TIMESTAMP, ZACCOUNTIDENTIFIER VARCHAR, ZSERVICENAME VARCHAR );
+      CREATE TABLE ZDATACLASS ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZNAME BLOB , ZENUMVALUE INTEGER);
     `);
   }
 
@@ -219,7 +225,8 @@ test('accounts come with their type, parent, enabled data classes and decoded pr
     active: false,
   });
 
-  const accounts = new AccountsStore(store.path).read();
+  using snapshot = new AccountsStore(store.path).open();
+  const accounts = snapshot.accounts();
 
   assert.equal(accounts[1]?.parent, accounts[0]);
   assert.deepEqual(
@@ -355,7 +362,8 @@ test('an account answers its name, user, addresses and mail servers, through its
     },
   });
 
-  const [, imap, smtp, exchange] = new AccountsStore(store.path).read();
+  using snapshot = new AccountsStore(store.path).open();
+  const [, imap, smtp, exchange] = snapshot.accounts();
 
   assert.ok(imap && smtp && exchange);
   assert.equal(imap.name, 'iCloud');
@@ -396,7 +404,7 @@ test('a store that cannot be opened fails with AccountsUnavailableError', async 
   const path = join(scratch.path, 'missing', 'Accounts4.sqlite');
 
   assert.throws(
-    () => new AccountsStore(path).read(),
+    () => new AccountsStore(path).open(),
     (error: unknown) => {
       assert.ok(error instanceof AccountsUnavailableError);
       assert.match(error.message, /Full Disk Access/);
@@ -424,23 +432,48 @@ test('the store version changes when another connection commits', async () => {
   assert.notEqual(version.current, before);
 });
 
-test('this Mac’s Accounts store reads as accounts whose parents exist', (t) => {
+test('this Mac’s Accounts store reads as one consistent snapshot: accounts, their types and data classes, and access keys', (t) => {
   if (process.platform !== 'darwin') return t.skip('Accounts requires macOS');
   const store = new AccountsStore(accountsStorePath);
 
-  let accounts;
+  let read;
   try {
-    accounts = store.read();
+    using snapshot = store.open();
+    read = {
+      accounts: snapshot.accounts(),
+      accountTypes: snapshot.accountTypes(),
+      dataclasses: snapshot.dataclasses(),
+      accessOptionKeys: snapshot.accessOptionKeys(),
+      authorizations: snapshot.authorizations(),
+      credentialItems: snapshot.credentialItems(),
+    };
   } catch (error) {
     if (error instanceof AccountsUnavailableError)
       return t.skip('no access to the Accounts store');
     throw error;
   }
 
+  // Checked without printing a value: these are the user's own accounts.
+  const { accounts, accountTypes, dataclasses, accessOptionKeys } = read;
+  const types = new Set(accountTypes.map(({ identifier }) => identifier));
+  const dataclassNames = new Set(dataclasses.map(({ name }) => name));
+  assert.equal(types.size, accountTypes.length);
+  assert.equal(dataclassNames.size, dataclasses.length);
   for (const account of accounts) {
-    assert.match(account.type, /^com\.apple\.account\./);
+    assert.ok(types.has(account.type));
     assert.ok(account.parent === null || accounts.includes(account.parent));
-    for (const dataclass of account.enabledDataclasses)
-      assert.match(dataclass, /^com\.apple\.Dataclass\./);
+    for (const dataclass of [
+      ...account.enabledDataclasses,
+      ...account.provisionedDataclasses,
+    ])
+      assert.ok(dataclassNames.has(dataclass));
   }
+  for (const type of accountTypes)
+    for (const dataclass of [
+      ...type.supportedDataclasses,
+      ...type.syncableDataclasses,
+    ])
+      assert.ok(dataclassNames.has(dataclass));
+  for (const key of accessOptionKeys)
+    for (const type of key.accountTypes) assert.ok(types.has(type));
 });

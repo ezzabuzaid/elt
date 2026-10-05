@@ -1,0 +1,15 @@
+{
+  "name": "@workspace/connector-apple-accounts",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/accounts-connector.js",
+  "contextCompiler": {
+    "name": "accounts",
+    "title": "Accounts"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/source-apple-accounts": "0.0.1"
+  }
+}

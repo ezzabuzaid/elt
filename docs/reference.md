@@ -1435,6 +1435,87 @@ Checked live on 2026-10-05 against macOS 27.0 (26A428):
 
 Unverified: reading without Full Disk Access; what macOS stores for a device of platform 4; streams with no records here.
 
+## Apple Accounts
+
+```ts
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+import { AppleAccountsSource } from '@workspace/source-apple-accounts/apple-accounts-source';
+
+const source = new AppleAccountsSource(); // ~/Library/Accounts/Accounts4.sqlite
+const destination = new SQLiteDestination({
+  path: './outputs/accounts.sqlite',
+});
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'apple-accounts',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/accounts-state.sqlite',
+      }),
+      steps: [source.accounts, source.accountDataclasses].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads the system Accounts store, `~/Library/Accounts/Accounts4.sqlite`, where macOS keeps every account its apps sync through, with the `@workspace/macos-accounts` SDK; no app needs to be open, and neither the Accounts framework nor any app's scripting is used. `npx nx run apple-cli:start -- sync --connector accounts` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views. Every stream of a run reads one snapshot of the store, a read transaction on a read-only connection, never `immutable`, since accountsd keeps a write-ahead log.
+
+### Access
+
+The store needs [Full Disk Access](#full-disk-access); with it, a terminal read it on 2026-10-05. A store the process cannot open fails every stream with `AccountsUnavailableError`, which names the grant. Reading without the grant is unverified, since that needs it removed.
+
+### Streams
+
+| Stream               | Upstream                                                            | One record per                                                                                       |
+| -------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `accounts`           | `ZACCOUNT`                                                          | account: parent, type, sign-in state, when it was added, owning app, per data class settings as JSON |
+| `accountProperties`  | `ZACCOUNTPROPERTY`                                                  | property of an account, its keyed archive decoded to JSON                                            |
+| `accountDataclasses` | `Z_*ENABLEDDATACLASSES`, `Z_*PROVISIONEDDATACLASSES`                | data class an account offers or has turned on                                                        |
+| `accountTypes`       | `ZACCOUNTTYPE`, `Z_*SUPPORTEDDATACLASSES`, `Z_*SYNCABLEDATACLASSES` | kind of account, with the data classes it can offer and sync as arrays                               |
+| `dataclasses`        | `ZDATACLASS`                                                        | kind of data accounts sync, such as mail or calendars                                                |
+| `accessOptionKeys`   | `ZACCESSOPTIONSKEY`, `Z_*OWNINGACCOUNTTYPES`                        | option key an app passes to ask for access to a kind of account                                      |
+| `authorizations`     | `ZAUTHORIZATION`                                                    | app granted access to a kind of account                                                              |
+| `credentialItems`    | `ZCREDENTIALITEM`                                                   | stored credential's expiry; the credential itself lives in the keychain and is not read              |
+
+Core Data names the join tables after entity numbers that change between model versions (`Z_2ENABLEDDATACLASSES` on macOS 27), so the SDK finds each by its name's end. `accounts` also carries `name`, `fullName` and `emailAddresses`, resolved through the parent account as Mail resolves them: its own description, else the parent's (iCloud, Google); its own and the parent's identity address, aliases, Apple ID aliases and iCloud Mail address, in that order and each once. Dates are Core Data seconds since 2001-01-01, converted by SQLite and rounded to the millisecond; a boolean the store does not hold is null.
+
+Left out:
+
+- Authentication material among the properties: the iTunes Store's encrypted last sign-in response (`lastAuthenticationServerResponse`), the Apple ID's next liveness nonce (`nextLivenessNonce`) and Game Center's opaque player record (`GKPlayerInternal`), whole, and `AuthID` inside the identity service's `account-info`. The store holds no passwords.
+- Core Data's own bookkeeping: `Z_METADATA`, `Z_MODELCACHE` and `Z_PRIMARYKEY`.
+
+### Changes and deletions
+
+Every stream is a [snapshot stream](#snapshot-streams): a run reads the whole store, an unchanged record writes nothing, and a vanished key deletes its row. The store is small, so a run reads it whole in well under a second.
+
+### Watching
+
+A watch polls the store's `data_version` every second through `AccountsStore.version()` and wakes every selected stream on a commit. accountsd commits on its own: a read-only connection saw five commits in five minutes with no account edited on 2026-10-05, so a watch wakes about once a minute, and a pass with nothing changed writes nothing.
+
+### Accounts export probe
+
+Checked live on 2026-10-05 against macOS 27.0:
+
+- The store held 33 accounts of 19 types (31 active), 411 properties under 234 keys, 56 account types, 52 data classes and 7 access option keys (Facebook, LinkedIn, Tencent Weibo and Liverpool), and no authorizations or credential items.
+- A load through `apple-cli` took 0.4 s and wrote 33 accounts, 408 properties (the 3 authentication-material properties left out), 67 account data classes, 56 account types, 52 data classes and 7 access option keys; a second load wrote nothing.
+- Every account's type, every data class an account or type names, and every account type an access key names resolved within the same snapshot.
+
+Unverified: `authorizations` and `credentialItems` values, since this Mac has none (their columns are read as the schema declares them, options as a keyed archive); reading without Full Disk Access.
+
 ## Google Search Console
 
 `SearchConsoleSource` reads one property through the `searchconsole:v1` API. `sites`, `sitemaps` and `searchAnalytics` are served under the original `webmasters/v3` path prefix; URL inspection is served from `v1` on the same host.

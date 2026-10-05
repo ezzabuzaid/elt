@@ -796,7 +796,8 @@ class MailScan implements AsyncDisposable {
       if (!hosts.has(url.hostname))
         hosts.set(url.hostname, url.protocol.slice(0, -1));
     }
-    const accounts = new MailAccounts(this.#accountsStore.read());
+    using snapshot = this.#accountsStore.open();
+    const accounts = new MailAccounts(snapshot.accounts());
     this.#accounts = {
       accounts: accounts.accounts(hosts, this.store.path),
       smtpServers: accounts.smtpServers(),

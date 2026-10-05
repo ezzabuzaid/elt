@@ -1,6 +1,6 @@
 ---
 name: setup-apple
-description: Connect or reconfigure Apple Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books and Mac activity for the Apple plugin on a Mac.
+description: Connect or reconfigure Apple Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, Mac accounts and Mac activity for the Apple plugin on a Mac.
 ---
 
 # Set up Apple
@@ -33,6 +33,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
    - Reminders: accounts and lists, including completed and undated reminders.
    - Safari: profiles and visit dates. A narrowed Safari import leaves out bookmarks, the Reading List and iCloud Tabs, which belong to no profile. History and tabs from the user's other devices arrive only while Safari is open.
    - Books: everything; it has no accounts, collections or dates to choose. Books kept only in iCloud are listed without their files until the user opens them in Books.
+   - Accounts: everything; it is one small store with nothing to choose.
    - Activity: everything; it has no accounts, collections or dates to choose. macOS keeps most activity for 28 days; the import keeps what it loaded after macOS drops it, so tell the user that history builds up from the first import, and that removing Activity or rebuilding its import loses whatever macOS has dropped since.
 4. Translate plain dates using the user's timezone into canonical UTC timestamps with milliseconds. `startAt` is inclusive and `endAt` exclusive; use the following midnight to include an end date. Do not invent account or collection IDs. Unspecified ID lists mean all; leave a connector out of `apple_configure`'s `connectors` to disconnect it. Attachments are copied by default; offer metadata only if the user prefers.
 5. Show a concise selection summary before `apple_configure` if any scope was inferred. Existing explicit choices are authorization to configure and sync; do not request a redundant confirmation. Configure the complete selection, then report as described in "Report the result". A changed scope rebuilds that connector's imported copy; tell the user when reconfiguration will discard it.

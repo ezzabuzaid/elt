@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/source-apple-accounts",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-accounts-source": {
+      "types": "./dist/apple-accounts-source.d.ts",
+      "default": "./dist/apple-accounts-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/macos-accounts": "0.0.1",
+    "@workspace/macos-plist": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

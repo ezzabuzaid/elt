@@ -38,6 +38,9 @@
       "path": "../../../packages/connectors/apple/contacts"
     },
     {
+      "path": "../../../packages/connectors/apple/connector"
+    },
+    {
       "path": "../../../packages/connectors/apple/calendar"
     },
     {
@@ -47,7 +50,7 @@
       "path": "../../../packages/connectors/apple/activity"
     },
     {
-      "path": "../../../packages/connectors/apple/connector"
+      "path": "../../../packages/connectors/apple/accounts"
     },
     {
       "path": "../../../packages/macos/eventkit"

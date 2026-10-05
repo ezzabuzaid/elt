@@ -1358,7 +1358,7 @@ var CalendarConnector = class extends AppleConnector {
       GOOGLE_DRIVE_READONLY_SCOPE,
       GMAIL_READONLY_SCOPE
     ]);
-    const { googleCalendarAttachments } = await import("../../chunks/google-calendar-attachments-OZZRMXLH.mjs");
+    const { googleCalendarAttachments } = await import("../../chunks/google-calendar-attachments-G4BHT6DQ.mjs");
     return this.#calendar(scope, googleCalendarAttachments(google));
   }
   #calendar(scope, attachments) {

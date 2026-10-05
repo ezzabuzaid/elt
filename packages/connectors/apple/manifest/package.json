@@ -15,6 +15,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@workspace/connector-apple-accounts": "0.0.1",
     "@workspace/connector-apple-activity": "0.0.1",
     "@workspace/connector-apple-books": "0.0.1",
     "@workspace/connector-apple-calendar": "0.0.1",

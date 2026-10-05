@@ -1,10 +1,5 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
-  isBinaryPlist,
-  isDictionary,
-  parseBinaryPlist
-} from "../../chunks/chunk-YLKLHO7E.mjs";
-import {
   ProtobufMessage
 } from "../../chunks/chunk-YYZPWRZX.mjs";
 import {
@@ -14,6 +9,11 @@ import {
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
+import {
+  isBinaryPlist,
+  isDictionary,
+  parseBinaryPlist
+} from "../../chunks/chunk-YLKLHO7E.mjs";
 import {
   AppleConnector
 } from "../../chunks/chunk-7XFLCHNF.mjs";

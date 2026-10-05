@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-accounts",
+  "sourceRoot": "packages/sources/apple/accounts/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/accounts/dist/*.test.js\""
+    }
+  }
+}
