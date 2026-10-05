@@ -9,6 +9,10 @@ import {
   withinDates
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
+  AppDatabase,
+  AppDatabaseVersion
+} from "../../chunks/chunk-NHBH24IB.mjs";
+import {
   accounts,
   byId
 } from "../../chunks/chunk-FGFSL4M6.mjs";
@@ -25615,7 +25619,6 @@ var require_mailsplit = __commonJS({
 // packages/macos/accounts/dist/accounts-store.js
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 var accountsStorePath = join(homedir(), "Library/Accounts/Accounts4.sqlite");
 var AccountsUnavailableError = class extends Error {
   name = "AccountsUnavailableError";
@@ -25623,25 +25626,49 @@ var AccountsUnavailableError = class extends Error {
     super(`The system Accounts store at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security.`, { cause });
   }
 };
+var AccountsSchemaError = class extends Error {
+  name = "AccountsSchemaError";
+  constructor(path, missing) {
+    super(`The system Accounts store at ${path} has a layout this reader does not read (missing ${missing.join(", ")}).`);
+  }
+};
+var columns = {
+  ZACCOUNT: [
+    "Z_PK",
+    "ZIDENTIFIER",
+    "ZACCOUNTTYPE",
+    "ZPARENTACCOUNT",
+    "ZACCOUNTDESCRIPTION",
+    "ZUSERNAME",
+    "ZACTIVE",
+    "ZDATACLASSPROPERTIES"
+  ],
+  ZACCOUNTTYPE: ["Z_PK", "ZIDENTIFIER"],
+  ZACCOUNTPROPERTY: ["ZOWNER", "ZKEY", "ZVALUE"],
+  ZDATACLASS: ["Z_PK", "ZNAME"]
+};
 var AccountsStore = class {
   #path;
   constructor(path) {
     this.#path = path;
   }
+  // Every account as of one moment: accountsd commits about once a minute, so
+  // accounts, properties and data classes are read in one snapshot.
   read() {
     var _stack = [];
     try {
-      const database = __using(_stack, this.#open());
+      const database = __using(_stack, new AppDatabase(this.#path, AccountsUnavailableError));
+      database.requireColumns(columns, AccountsSchemaError);
       const properties = accountProperties(database);
       const enabled = enabledDataclasses(database);
-      const rows = database.prepare(`SELECT account.Z_PK AS pk, account.ZIDENTIFIER AS identifier,
+      const rows = database.all(`SELECT account.Z_PK AS pk, account.ZIDENTIFIER AS identifier,
                 type.ZIDENTIFIER AS type, account.ZPARENTACCOUNT AS parent,
                 account.ZACCOUNTDESCRIPTION AS description,
                 account.ZUSERNAME AS username, account.ZACTIVE AS active,
                 account.ZDATACLASSPROPERTIES AS dataclassProperties
          FROM ZACCOUNT AS account
          JOIN ZACCOUNTTYPE AS type ON type.Z_PK = account.ZACCOUNTTYPE
-         ORDER BY account.Z_PK`).all().map(accountRow);
+         ORDER BY account.Z_PK`).map(accountRow);
       const identifiers = new Map(rows.map((row) => [row.pk, row.identifier]));
       return rows.map((row) => {
         const dataclassProperties = decoded(row.dataclassProperties);
@@ -25666,28 +25693,7 @@ var AccountsStore = class {
   // A probe whose current value changes with each commit to the store, such
   // as accountsd saving an account.
   version() {
-    return new AccountsStoreVersion(this.#open());
-  }
-  #open() {
-    try {
-      return new DatabaseSync(this.#path, { readOnly: true });
-    } catch (error) {
-      throw new AccountsUnavailableError(this.#path, error);
-    }
-  }
-};
-var AccountsStoreVersion = class {
-  #database;
-  #version;
-  constructor(database) {
-    this.#database = database;
-    this.#version = database.prepare("PRAGMA data_version");
-  }
-  get current() {
-    return Number(this.#version.get()?.data_version);
-  }
-  [Symbol.dispose]() {
-    this.#database.close();
+    return new AppDatabaseVersion(this.#path, AccountsUnavailableError);
   }
 };
 function accountRow(row) {
@@ -25709,7 +25715,7 @@ function accountRow(row) {
 }
 function accountProperties(database) {
   const byAccount = /* @__PURE__ */ new Map();
-  const rows = database.prepare("SELECT ZOWNER AS owner, ZKEY AS key, ZVALUE AS value FROM ZACCOUNTPROPERTY").all();
+  const rows = database.all("SELECT ZOWNER AS owner, ZKEY AS key, ZVALUE AS value FROM ZACCOUNTPROPERTY");
   for (const { owner, key, value } of rows) {
     const account = Number(owner);
     const properties = byAccount.get(account) ?? {};
@@ -25722,18 +25728,21 @@ function decoded(value) {
   return value instanceof Uint8Array ? decodeArchive(value) : null;
 }
 function enabledDataclasses(database) {
-  const table2 = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'Z_*ENABLEDDATACLASSES'").get()?.name;
+  const table2 = database.all("SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'Z_*ENABLEDDATACLASSES'")[0]?.name;
   if (typeof table2 !== "string")
-    throw new TypeError("The Accounts store has no enabled data class table");
-  const columns = database.prepare(`SELECT name FROM pragma_table_info('${table2}')`).all().map(({ name }) => String(name));
-  const account = columns.find((name) => name.endsWith("ENABLEDACCOUNTS"));
-  const dataclass2 = columns.find((name) => name.endsWith("ENABLEDDATACLASSES"));
+    throw new AccountsSchemaError(database.path, ["Z_*ENABLEDDATACLASSES"]);
+  const names = database.all("SELECT name FROM pragma_table_info(?)", table2).map(({ name }) => String(name));
+  const account = names.find((name) => name.endsWith("ENABLEDACCOUNTS"));
+  const dataclass2 = names.find((name) => name.endsWith("ENABLEDDATACLASSES"));
   if (account === void 0 || dataclass2 === void 0)
-    throw new TypeError(`The Accounts store table ${table2} has another shape`);
-  const names = new Map(database.prepare("SELECT Z_PK AS pk, ZNAME AS name FROM ZDATACLASS").all().map(({ pk, name }) => [Number(pk), String(decoded(name))]));
+    throw new AccountsSchemaError(database.path, [
+      `${table2}.Z_*ENABLEDACCOUNTS`,
+      `${table2}.Z_*ENABLEDDATACLASSES`
+    ]);
+  const dataclasses = new Map(database.all("SELECT Z_PK AS pk, ZNAME AS name FROM ZDATACLASS").map(({ pk, name }) => [Number(pk), String(decoded(name))]));
   const enabled = /* @__PURE__ */ new Map();
-  for (const row of database.prepare(`SELECT "${account}" AS account, "${dataclass2}" AS dataclass FROM "${table2}"`).all()) {
-    const name = names.get(Number(row.dataclass));
+  for (const row of database.all(`SELECT "${account}" AS account, "${dataclass2}" AS dataclass FROM "${table2}"`)) {
+    const name = dataclasses.get(Number(row.dataclass));
     if (name === void 0)
       continue;
     const account2 = Number(row.account);
@@ -25747,7 +25756,7 @@ import { createHash as createHash3 } from "node:crypto";
 import { watch } from "node:fs";
 import { copyFile as copyFile2, rm as rm2 } from "node:fs/promises";
 import { extname as extname2, join as join5, relative as relative2 } from "node:path";
-import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 import { setInterval } from "node:timers/promises";
 
 // packages/sources/apple/mail/dist/mail-accounts.js
@@ -25878,7 +25887,7 @@ import { createReadStream } from "node:fs";
 import { mkdtempDisposable, readFile, readdir, stat } from "node:fs/promises";
 import { homedir as homedir2, tmpdir } from "node:os";
 import { basename, join as join3, relative, sep } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 var mailDirectory = join3(homedir2(), "Library/Mail");
 var MailUnavailableError = class extends Error {
   name = "MailUnavailableError";
@@ -25952,7 +25961,7 @@ var MailStore = class _MailStore {
     let database;
     try {
       path = await mailVersionDirectory(root);
-      database = new DatabaseSync2(join3(path, "MailData/Envelope Index"), {
+      database = new DatabaseSync(join3(path, "MailData/Envelope Index"), {
         readOnly: true
       });
     } catch (cause) {
@@ -25964,9 +25973,9 @@ var MailStore = class _MailStore {
     resources.use(database);
     try {
       database.exec("BEGIN");
-      const missing = Object.entries(required).flatMap(([table2, columns]) => {
+      const missing = Object.entries(required).flatMap(([table2, columns2]) => {
         const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((row) => row.name));
-        return columns.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
+        return columns2.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
       });
       if (missing.length)
         throw new MailSchemaError(`Unsupported Mail index schema: missing ${missing.join(", ")}`);
@@ -26226,12 +26235,12 @@ function provenance(name, column, kind, key) {
   }[kind];
   return `Envelope Index ${name}.${column}, ${value}${key ? "" : "; NULL when the index stores no value"}.`;
 }
-function table(name, description, keys, columns, meanings) {
+function table(name, description, keys, columns2, meanings) {
   const meaning = meanings;
   const properties = {};
   const select = [];
   const blobs = [];
-  for (const [column, kind] of Object.entries(columns)) {
+  for (const [column, kind] of Object.entries(columns2)) {
     const field = fieldName(column, kind);
     const key = keys.includes(column);
     const scalar = kind === "number" ? key ? "integer" : "number" : "string";
@@ -26248,10 +26257,10 @@ function table(name, description, keys, columns, meanings) {
   return {
     name,
     description: `${description} Read from the Envelope Index ${name} table; index row identifiers are local to this Mac. Relationships name source streams within this source, not destination tables.`,
-    columns: Object.keys(columns),
+    columns: Object.keys(columns2),
     properties,
     primaryKey: keys.map((key) => {
-      const kind = columns[key];
+      const kind = columns2[key];
       if (kind === void 0)
         throw new TypeError(`Mail table ${name} has no key column ${key}`);
       return fieldName(key, kind);
@@ -27231,7 +27240,7 @@ var AppleMailSource = class extends Source {
       if (signal.aborted)
         return;
       const path = await mailVersionDirectory(this.path);
-      const database = __using(_stack, new DatabaseSync3(join5(path, "MailData/Envelope Index"), {
+      const database = __using(_stack, new DatabaseSync2(join5(path, "MailData/Envelope Index"), {
         readOnly: true
       }));
       const version = database.prepare("PRAGMA data_version");

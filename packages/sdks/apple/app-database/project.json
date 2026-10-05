@@ -1,0 +1,13 @@
+{
+  "name": "sdk-apple-app-database",
+  "sourceRoot": "packages/sdks/apple/app-database/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/apple/app-database/dist/*.test.js\""
+    }
+  }
+}

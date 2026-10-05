@@ -76,8 +76,8 @@ export class AppleMessagesSource extends Source<ChatDatabase> {
     Object.freeze(this);
   }
 
-  protected override open(): Promise<ChatDatabase> {
-    return ChatDatabase.open(this.path);
+  protected override async open(): Promise<ChatDatabase> {
+    return new ChatDatabase(this.path);
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

@@ -109,6 +109,9 @@
     },
     {
       "path": "./packages/connectors/apple/connector"
+    },
+    {
+      "path": "./packages/sdks/apple/app-database"
     }
   ]
 }

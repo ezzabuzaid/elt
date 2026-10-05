@@ -8,6 +8,10 @@ import {
   ProtobufMessage
 } from "../../chunks/chunk-46YHRHWG.mjs";
 import {
+  AppDatabase,
+  AppDatabaseVersion
+} from "../../chunks/chunk-NHBH24IB.mjs";
+import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
@@ -38,7 +42,6 @@ import { join as join2 } from "node:path";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 var booksContainer = join(homedir(), "Library/Containers/com.apple.iBooksX/Data");
 var booksGroupContainer = join(homedir(), "Library/Group Containers/group.com.apple.iBooks");
 var BooksUnavailableError = class extends Error {
@@ -53,60 +56,15 @@ var BooksSchemaError = class extends Error {
     super(`The Books store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
   }
 };
-var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
-var open = (path) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
-      throw new BooksUnavailableError(path, cause);
-    throw cause;
-  }
-};
-var BooksDatabaseVersion = class {
-  #database;
-  #version;
+var BooksDatabaseVersion = class extends AppDatabaseVersion {
   constructor(path) {
-    this.#database = open(path);
-    this.#version = this.#database.prepare("PRAGMA data_version");
-  }
-  get current() {
-    return Number(this.#version.get()?.data_version);
-  }
-  [Symbol.dispose]() {
-    this.#database.close();
+    super(path, BooksUnavailableError);
   }
 };
-var BooksDatabase = class _BooksDatabase {
-  path;
-  #database;
-  constructor(path, database) {
-    this.path = path;
-    this.#database = database;
-  }
-  static async open(path, required) {
-    const database = open(path);
-    try {
-      database.exec("BEGIN");
-      const missing = Object.entries(required).flatMap(([table, columns2]) => {
-        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table).map((column) => column.name));
-        return columns2.filter((column) => !present.has(column)).map((column) => `${table}.${column}`);
-      });
-      if (missing.length > 0)
-        throw new BooksSchemaError(path, missing);
-      return new _BooksDatabase(path, database);
-    } catch (cause) {
-      database.close();
-      throw cause;
-    }
-  }
-  all(sql) {
-    return this.#database.prepare(sql).all();
-  }
-  async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction)
-      this.#database.exec("COMMIT");
-    this.#database.close();
+var BooksDatabase = class extends AppDatabase {
+  constructor(path, columns2) {
+    super(path, BooksUnavailableError);
+    this.requireColumns(columns2, BooksSchemaError);
   }
 };
 async function readBooksPlist(path) {
@@ -481,8 +439,8 @@ var BooksScan = class _BooksScan {
     try {
       const files = storeFiles(location);
       const resources = __using(_stack, new AsyncDisposableStack(), true);
-      const database = async (store) => resources.use(await BooksDatabase.open(files[store], columns[store]));
-      const open3 = async (store, value) => {
+      const database = async (store) => resources.use(new BooksDatabase(files[store], columns[store]));
+      const open2 = async (store, value) => {
         if (!stores.has(store))
           return void 0;
         try {
@@ -492,14 +450,14 @@ var BooksScan = class _BooksScan {
         }
       };
       const opened = {
-        library: await open3("library", () => database("library")),
-        annotations: await open3("annotations", () => database("annotations")),
-        assetData: await open3("assetData", () => database("assetData")),
+        library: await open2("library", () => database("library")),
+        annotations: await open2("annotations", () => database("annotations")),
+        assetData: await open2("assetData", () => database("assetData")),
         // Decoded whole while the read transaction pins it, then released.
-        readingHistory: await open3("readingHistory", async () => {
+        readingHistory: await open2("readingHistory", async () => {
           var _stack2 = [];
           try {
-            const store = __using(_stack2, await BooksDatabase.open(files.readingHistory, columns.readingHistory), true);
+            const store = __using(_stack2, new BooksDatabase(files.readingHistory, columns.readingHistory));
             const rows = store.all("SELECT ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel' AND coalesce(ZDELETEDFLAG, 0) = 0");
             const bytes = rows[0]?.ZPROTODATA;
             if (rows.length !== 1 || !(bytes instanceof Uint8Array))
@@ -508,13 +466,12 @@ var BooksScan = class _BooksScan {
           } catch (_2) {
             var _error2 = _2, _hasError2 = true;
           } finally {
-            var _promise2 = __callDispose(_stack2, _error2, _hasError2);
-            _promise2 && await _promise2;
+            __callDispose(_stack2, _error2, _hasError2);
           }
         }),
-        purchases: await open3("purchases", () => database("purchases")),
-        themes: await open3("themes", () => database("themes")),
-        preferences: await open3("preferences", async () => ({
+        purchases: await open2("purchases", () => database("purchases")),
+        themes: await open2("themes", () => database("themes")),
+        preferences: await open2("preferences", async () => ({
           app: await readBooksPlist(files.preferences),
           shared: await readBooksPlist(sharedPreferences(location))
         }))
@@ -884,7 +841,7 @@ var AssetDetailsStream = class extends BooksStream {
 import { join as join4 } from "node:path";
 
 // packages/sources/apple/books/dist/epub-package.js
-import { open as open2 } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { crc32 } from "node:zlib";
 
 // packages/sources/apple/books/dist/icloud-files.js
@@ -975,7 +932,7 @@ var utf8Names = 2048;
 async function checksum(path) {
   var _stack = [];
   try {
-    const file = __using(_stack, await open2(path), true);
+    const file = __using(_stack, await open(path), true);
     let value = 0;
     const buffer = Buffer.allocUnsafe(chunkSize);
     for (; ; ) {
@@ -1041,7 +998,7 @@ async function writeEpub(files, target) {
         file,
         crc: await checksum(file.path)
       });
-    const output = __using(_stack2, await open2(target, "wx", 384), true);
+    const output = __using(_stack2, await open(target, "wx", 384), true);
     let offset = 0;
     const write = async (bytes) => {
       await output.write(bytes);
@@ -1054,7 +1011,7 @@ async function writeEpub(files, target) {
       try {
         written.push({ entry, offset });
         await write(localHeader(entry));
-        const input = __using(_stack, await open2(entry.file.path), true);
+        const input = __using(_stack, await open(entry.file.path), true);
         let remaining = entry.file.size;
         while (remaining > 0) {
           const { bytesRead } = await input.read(buffer, 0, Math.min(chunkSize, remaining), null);

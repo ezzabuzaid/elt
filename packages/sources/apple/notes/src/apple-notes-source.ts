@@ -71,10 +71,7 @@ export class AppleNotesSource extends Source<NotesScan> {
   }
 
   protected override async open(): Promise<NotesScan> {
-    return new NotesScan(
-      await NoteStore.open(this.path, requiredColumns),
-      this.scope,
-    );
+    return new NotesScan(new NoteStore(this.path, requiredColumns), this.scope);
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

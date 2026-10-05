@@ -7,6 +7,10 @@ import {
   withinDates
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
+  AppDatabase,
+  AppDatabaseVersion
+} from "../../chunks/chunk-NHBH24IB.mjs";
+import {
   accounts,
   collections,
   name
@@ -468,8 +472,8 @@ var NotesScan = class {
     this.store = store;
     this.scope = scope;
   }
-  [Symbol.asyncDispose]() {
-    return this.store[Symbol.asyncDispose]();
+  async [Symbol.asyncDispose]() {
+    this.store[Symbol.dispose]();
   }
   get accounts() {
     this.#accounts ??= this.store.all(accountsSql).filter((row) => selected(this.scope.accountIds, row.ZIDENTIFIER) && (this.scope.collectionIds === void 0 || this.folders.some((folder) => folder.account === row.ZIDENTIFIER)));
@@ -787,7 +791,6 @@ var InlineAttachmentsStream = class extends AppleNotesStream {
 // packages/sources/apple/notes/dist/note-store.js
 import { homedir } from "node:os";
 import { join as join2 } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 var notesContainer = join2(homedir(), "Library/Group Containers/group.com.apple.notes");
 var NotesUnavailableError = class extends Error {
   name = "NotesUnavailableError";
@@ -801,60 +804,15 @@ var NotesSchemaError = class extends Error {
     super(`The Notes store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
   }
 };
-var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
-var open = (path) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
-      throw new NotesUnavailableError(path, cause);
-    throw cause;
-  }
-};
-var NoteStoreVersion = class {
-  #database;
-  #version;
+var NoteStoreVersion = class extends AppDatabaseVersion {
   constructor(path) {
-    this.#database = open(path);
-    this.#version = this.#database.prepare("PRAGMA data_version");
-  }
-  get current() {
-    return Number(this.#version.get()?.data_version);
-  }
-  [Symbol.dispose]() {
-    this.#database.close();
+    super(path, NotesUnavailableError);
   }
 };
-var NoteStore = class _NoteStore {
-  path;
-  #database;
-  constructor(path, database) {
-    this.path = path;
-    this.#database = database;
-  }
-  static async open(path, required) {
-    const database = open(path);
-    try {
-      database.exec("BEGIN");
-      const missing = Object.entries(required).flatMap(([table, columns]) => {
-        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table).map((column) => column.name));
-        return columns.filter((column) => !present.has(column)).map((column) => `${table}.${column}`);
-      });
-      if (missing.length > 0)
-        throw new NotesSchemaError(path, missing);
-      return new _NoteStore(path, database);
-    } catch (cause) {
-      database.close();
-      throw cause;
-    }
-  }
-  all(sql, ...parameters) {
-    return this.#database.prepare(sql).all(...parameters);
-  }
-  async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction)
-      this.#database.exec("COMMIT");
-    this.#database.close();
+var NoteStore = class extends AppDatabase {
+  constructor(path, columns) {
+    super(path, NotesUnavailableError);
+    this.requireColumns(columns, NotesSchemaError);
   }
 };
 
@@ -994,7 +952,7 @@ var AppleNotesSource = class extends Source {
     Object.freeze(this);
   }
   async open() {
-    return new NotesScan(await NoteStore.open(this.path, requiredColumns), this.scope);
+    return new NotesScan(new NoteStore(this.path, requiredColumns), this.scope);
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };

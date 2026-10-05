@@ -8,6 +8,9 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
+      "path": "../../sdks/apple/app-database"
+    },
+    {
       "path": "../plist"
     }
   ]

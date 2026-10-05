@@ -1,5 +1,6 @@
 export {
   type Account,
+  AccountsSchemaError,
   AccountsStore,
   AccountsUnavailableError,
   accountsStorePath,

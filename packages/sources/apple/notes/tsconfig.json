@@ -11,6 +11,9 @@
       "path": "../macos"
     },
     {
+      "path": "../../../sdks/apple/app-database"
+    },
+    {
       "path": "../../../elt"
     },
     {

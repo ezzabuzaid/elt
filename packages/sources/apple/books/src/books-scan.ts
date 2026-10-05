@@ -338,7 +338,7 @@ export class BooksScan implements AsyncDisposable {
     await using resources = new AsyncDisposableStack();
     const database = async (
       store: Exclude<BooksStore, 'readingHistory' | 'preferences'>,
-    ) => resources.use(await BooksDatabase.open(files[store], columns[store]));
+    ) => resources.use(new BooksDatabase(files[store], columns[store]));
     const open = async <S extends BooksStore>(
       store: S,
       value: () => Promise<Opened[S]>,
@@ -356,7 +356,7 @@ export class BooksScan implements AsyncDisposable {
       assetData: await open('assetData', () => database('assetData')),
       // Decoded whole while the read transaction pins it, then released.
       readingHistory: await open('readingHistory', async () => {
-        await using store = await BooksDatabase.open(
+        using store = new BooksDatabase(
           files.readingHistory,
           columns.readingHistory,
         );

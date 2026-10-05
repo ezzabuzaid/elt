@@ -1,12 +1,15 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 import {
   type PlistValue,
   decodeArchive,
   isDictionary,
 } from '@workspace/macos-plist';
+import {
+  AppDatabase,
+  AppDatabaseVersion,
+} from '@workspace/sdk-apple-app-database';
 
 // Where macOS keeps this user's Accounts store.
 export const accountsStorePath = join(
@@ -47,6 +50,34 @@ export class AccountsUnavailableError extends Error {
   }
 }
 
+// Core Data's layout changes between macOS versions; reading one we have not
+// verified would misplace accounts and their settings.
+export class AccountsSchemaError extends Error {
+  override name = 'AccountsSchemaError';
+
+  constructor(path: string, missing: readonly string[]) {
+    super(
+      `The system Accounts store at ${path} has a layout this reader does not read (missing ${missing.join(', ')}).`,
+    );
+  }
+}
+
+const columns = {
+  ZACCOUNT: [
+    'Z_PK',
+    'ZIDENTIFIER',
+    'ZACCOUNTTYPE',
+    'ZPARENTACCOUNT',
+    'ZACCOUNTDESCRIPTION',
+    'ZUSERNAME',
+    'ZACTIVE',
+    'ZDATACLASSPROPERTIES',
+  ],
+  ZACCOUNTTYPE: ['Z_PK', 'ZIDENTIFIER'],
+  ZACCOUNTPROPERTY: ['ZOWNER', 'ZKEY', 'ZVALUE'],
+  ZDATACLASS: ['Z_PK', 'ZNAME'],
+};
+
 type AccountRow = {
   readonly pk: number;
   readonly identifier: string;
@@ -67,12 +98,15 @@ export class AccountsStore {
     this.#path = path;
   }
 
+  // Every account as of one moment: accountsd commits about once a minute, so
+  // accounts, properties and data classes are read in one snapshot.
   read(): Account[] {
-    using database = this.#open();
+    using database = new AppDatabase(this.#path, AccountsUnavailableError);
+    database.requireColumns(columns, AccountsSchemaError);
     const properties = accountProperties(database);
     const enabled = enabledDataclasses(database);
     const rows = database
-      .prepare(
+      .all(
         `SELECT account.Z_PK AS pk, account.ZIDENTIFIER AS identifier,
                 type.ZIDENTIFIER AS type, account.ZPARENTACCOUNT AS parent,
                 account.ZACCOUNTDESCRIPTION AS description,
@@ -82,7 +116,6 @@ export class AccountsStore {
          JOIN ZACCOUNTTYPE AS type ON type.Z_PK = account.ZACCOUNTTYPE
          ORDER BY account.Z_PK`,
       )
-      .all()
       .map(accountRow);
     const identifiers = new Map(rows.map((row) => [row.pk, row.identifier]));
     return rows.map((row) => {
@@ -106,37 +139,8 @@ export class AccountsStore {
 
   // A probe whose current value changes with each commit to the store, such
   // as accountsd saving an account.
-  version(): AccountsStoreVersion {
-    return new AccountsStoreVersion(this.#open());
-  }
-
-  #open(): DatabaseSync {
-    try {
-      return new DatabaseSync(this.#path, { readOnly: true });
-    } catch (error) {
-      throw new AccountsUnavailableError(this.#path, error);
-    }
-  }
-}
-
-// accountsd commits through a WAL. SQLite's data_version changes on every
-// commit by another connection, so polling current sees each one without
-// watching files.
-export class AccountsStoreVersion implements Disposable {
-  readonly #database: DatabaseSync;
-  readonly #version: StatementSync;
-
-  constructor(database: DatabaseSync) {
-    this.#database = database;
-    this.#version = database.prepare('PRAGMA data_version');
-  }
-
-  get current(): number {
-    return Number(this.#version.get()?.data_version);
-  }
-
-  [Symbol.dispose](): void {
-    this.#database.close();
+  version(): AppDatabaseVersion {
+    return new AppDatabaseVersion(this.#path, AccountsUnavailableError);
   }
 }
 
@@ -162,14 +166,12 @@ function accountRow(row: Record<string, unknown>): AccountRow {
 }
 
 function accountProperties(
-  database: DatabaseSync,
+  database: AppDatabase,
 ): Map<number, Record<string, PlistValue>> {
   const byAccount = new Map<number, Record<string, PlistValue>>();
-  const rows = database
-    .prepare(
-      'SELECT ZOWNER AS owner, ZKEY AS key, ZVALUE AS value FROM ZACCOUNTPROPERTY',
-    )
-    .all();
+  const rows = database.all(
+    'SELECT ZOWNER AS owner, ZKEY AS key, ZVALUE AS value FROM ZACCOUNTPROPERTY',
+  );
   for (const { owner, key, value } of rows) {
     const account = Number(owner);
     const properties = byAccount.get(account) ?? {};
@@ -186,35 +188,32 @@ function decoded(value: unknown): PlistValue {
 // Core Data names the join table and its columns after entity numbers that
 // can change between macOS versions (Z_2ENABLEDDATACLASSES today), so the
 // table is found by its shape.
-function enabledDataclasses(database: DatabaseSync): Map<number, string[]> {
-  const table = database
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'Z_*ENABLEDDATACLASSES'",
-    )
-    .get()?.name;
+function enabledDataclasses(database: AppDatabase): Map<number, string[]> {
+  const table = database.all(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'Z_*ENABLEDDATACLASSES'",
+  )[0]?.name;
   if (typeof table !== 'string')
-    throw new TypeError('The Accounts store has no enabled data class table');
-  const columns = database
-    .prepare(`SELECT name FROM pragma_table_info('${table}')`)
-    .all()
+    throw new AccountsSchemaError(database.path, ['Z_*ENABLEDDATACLASSES']);
+  const names = database
+    .all('SELECT name FROM pragma_table_info(?)', table)
     .map(({ name }) => String(name));
-  const account = columns.find((name) => name.endsWith('ENABLEDACCOUNTS'));
-  const dataclass = columns.find((name) => name.endsWith('ENABLEDDATACLASSES'));
+  const account = names.find((name) => name.endsWith('ENABLEDACCOUNTS'));
+  const dataclass = names.find((name) => name.endsWith('ENABLEDDATACLASSES'));
   if (account === undefined || dataclass === undefined)
-    throw new TypeError(`The Accounts store table ${table} has another shape`);
-  const names = new Map(
+    throw new AccountsSchemaError(database.path, [
+      `${table}.Z_*ENABLEDACCOUNTS`,
+      `${table}.Z_*ENABLEDDATACLASSES`,
+    ]);
+  const dataclasses = new Map(
     database
-      .prepare('SELECT Z_PK AS pk, ZNAME AS name FROM ZDATACLASS')
-      .all()
+      .all('SELECT Z_PK AS pk, ZNAME AS name FROM ZDATACLASS')
       .map(({ pk, name }) => [Number(pk), String(decoded(name))]),
   );
   const enabled = new Map<number, string[]>();
-  for (const row of database
-    .prepare(
-      `SELECT "${account}" AS account, "${dataclass}" AS dataclass FROM "${table}"`,
-    )
-    .all()) {
-    const name = names.get(Number(row.dataclass));
+  for (const row of database.all(
+    `SELECT "${account}" AS account, "${dataclass}" AS dataclass FROM "${table}"`,
+  )) {
+    const name = dataclasses.get(Number(row.dataclass));
     if (name === undefined) continue;
     const account = Number(row.account);
     enabled.set(account, [...(enabled.get(account) ?? []), name]);

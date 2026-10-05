@@ -1,17 +1,17 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  DatabaseSync,
-  type SQLOutputValue,
-  type StatementSync,
-} from 'node:sqlite';
 
 import {
   type PlistValue,
   isBinaryPlist,
   parseBinaryPlist,
 } from '@workspace/macos-plist';
+import {
+  AppDatabase,
+  type AppDatabaseColumns,
+  AppDatabaseVersion,
+} from '@workspace/sdk-apple-app-database';
 
 // Books.app's own container: the library, annotations, themes and its
 // preferences.
@@ -49,91 +49,21 @@ export class BooksSchemaError extends Error {
   }
 }
 
-// SQLite's CANTOPEN and AUTH: a missing file or a Full Disk Access denial.
-const unavailableCodes = new Set([14, 23]);
-
-// Read-only, never immutable: Books keeps Core Data's persistent WAL, and most
-// current rows live only there.
-const open = (path: string) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (
-      cause instanceof Error &&
-      'errcode' in cause &&
-      unavailableCodes.has(Number(cause.errcode))
-    )
-      throw new BooksUnavailableError(path, cause);
-    throw cause;
-  }
-};
-
-// Books and bookdatastored commit through WALs they keep open, and FSEvents
-// reports a write only when the file closes. SQLite's data_version changes on
-// every commit by another connection, so polling it sees each one.
-export class BooksDatabaseVersion implements Disposable {
-  readonly #database: DatabaseSync;
-  readonly #version: StatementSync;
-
+// Books and bookdatastored commit through WALs they keep open; this probe
+// changes with each commit to one database.
+export class BooksDatabaseVersion extends AppDatabaseVersion {
   constructor(path: string) {
-    this.#database = open(path);
-    this.#version = this.#database.prepare('PRAGMA data_version');
-  }
-
-  get current(): number {
-    return Number(this.#version.get()?.data_version);
-  }
-
-  [Symbol.dispose](): void {
-    this.#database.close();
+    super(path, BooksUnavailableError);
   }
 }
 
 // A read-only view of one Books database pinned to one moment, so its tables
-// agree. Hold it only while reading: an open read stops Books checkpointing
-// its WAL.
-export class BooksDatabase implements AsyncDisposable {
-  readonly path: string;
-  readonly #database: DatabaseSync;
-
-  private constructor(path: string, database: DatabaseSync) {
-    this.path = path;
-    this.#database = database;
-  }
-
-  static async open(
-    path: string,
-    required: Readonly<Record<string, readonly string[]>>,
-  ): Promise<BooksDatabase> {
-    const database = open(path);
-    try {
-      database.exec('BEGIN');
-      const missing = Object.entries(required).flatMap(([table, columns]) => {
-        const present = new Set(
-          database
-            .prepare('SELECT name FROM pragma_table_info(?)')
-            .all(table)
-            .map((column) => column.name),
-        );
-        return columns
-          .filter((column) => !present.has(column))
-          .map((column) => `${table}.${column}`);
-      });
-      if (missing.length > 0) throw new BooksSchemaError(path, missing);
-      return new BooksDatabase(path, database);
-    } catch (cause) {
-      database.close();
-      throw cause;
-    }
-  }
-
-  all(sql: string): Record<string, SQLOutputValue>[] {
-    return this.#database.prepare(sql).all();
-  }
-
-  async [Symbol.asyncDispose](): Promise<void> {
-    if (this.#database.isTransaction) this.#database.exec('COMMIT');
-    this.#database.close();
+// agree. Never immutable: Books keeps Core Data's persistent WAL, and most
+// current rows live only there.
+export class BooksDatabase extends AppDatabase {
+  constructor(path: string, columns: AppDatabaseColumns) {
+    super(path, BooksUnavailableError);
+    this.requireColumns(columns, BooksSchemaError);
   }
 }
 

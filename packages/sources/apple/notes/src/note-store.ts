@@ -1,11 +1,11 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
 import {
-  DatabaseSync,
-  type SQLInputValue,
-  type SQLOutputValue,
-  type StatementSync,
-} from 'node:sqlite';
+  AppDatabase,
+  type AppDatabaseColumns,
+  AppDatabaseVersion,
+} from '@workspace/sdk-apple-app-database';
 
 export const notesContainer = join(
   homedir(),
@@ -35,91 +35,19 @@ export class NotesSchemaError extends Error {
   }
 }
 
-// SQLite's CANTOPEN and AUTH: a missing file or a Full Disk Access denial.
-const unavailableCodes = new Set([14, 23]);
-
-const open = (path: string) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (
-      cause instanceof Error &&
-      'errcode' in cause &&
-      unavailableCodes.has(Number(cause.errcode))
-    )
-      throw new NotesUnavailableError(path, cause);
-    throw cause;
-  }
-};
-
-// Notes keeps NoteStore.sqlite and its WAL open while it runs, and FSEvents
-// reports a write only when the file closes. SQLite's data_version changes on
-// every commit by another connection, so polling it sees each one.
-export class NoteStoreVersion implements Disposable {
-  readonly #database: DatabaseSync;
-  readonly #version: StatementSync;
-
+// Notes keeps NoteStore.sqlite and its WAL open while it runs; this probe
+// changes with each commit Notes makes.
+export class NoteStoreVersion extends AppDatabaseVersion {
   constructor(path: string) {
-    this.#database = open(path);
-    this.#version = this.#database.prepare('PRAGMA data_version');
-  }
-
-  get current(): number {
-    return Number(this.#version.get()?.data_version);
-  }
-
-  [Symbol.dispose](): void {
-    this.#database.close();
+    super(path, NotesUnavailableError);
   }
 }
 
 // A read-only view of NoteStore.sqlite pinned to one moment, so notes, their
-// attachments and folders agree. Hold it only while reading: an open read
-// stops Notes checkpointing its WAL.
-export class NoteStore implements AsyncDisposable {
-  readonly path: string;
-  readonly #database: DatabaseSync;
-
-  private constructor(path: string, database: DatabaseSync) {
-    this.path = path;
-    this.#database = database;
-  }
-
-  static async open(
-    path: string,
-    required: Readonly<Record<string, readonly string[]>>,
-  ): Promise<NoteStore> {
-    const database = open(path);
-    try {
-      database.exec('BEGIN');
-      const missing = Object.entries(required).flatMap(([table, columns]) => {
-        const present = new Set(
-          database
-            .prepare('SELECT name FROM pragma_table_info(?)')
-            .all(table)
-            .map((column) => column.name),
-        );
-        return columns
-          .filter((column) => !present.has(column))
-          .map((column) => `${table}.${column}`);
-      });
-      if (missing.length > 0) throw new NotesSchemaError(path, missing);
-      return new NoteStore(path, database);
-    } catch (cause) {
-      database.close();
-      throw cause;
-    }
-  }
-
-  all(
-    sql: string,
-    ...parameters: SQLInputValue[]
-  ): Record<string, SQLOutputValue>[] {
-    return this.#database.prepare(sql).all(...parameters);
-  }
-
-  async [Symbol.asyncDispose](): Promise<void> {
-    if (this.#database.isTransaction) this.#database.exec('COMMIT');
-    this.#database.close();
+// attachments and folders agree.
+export class NoteStore extends AppDatabase {
+  constructor(path: string, columns: AppDatabaseColumns) {
+    super(path, NotesUnavailableError);
+    this.requireColumns(columns, NotesSchemaError);
   }
 }

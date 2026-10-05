@@ -8,6 +8,10 @@ import {
   selected
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
+  AppDatabase,
+  AppDatabaseVersion
+} from "../../chunks/chunk-NHBH24IB.mjs";
+import {
   byId,
   name
 } from "../../chunks/chunk-FGFSL4M6.mjs";
@@ -44,7 +48,6 @@ import { setInterval } from "node:timers/promises";
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 var addressBookDirectory = join(homedir(), "Library/Application Support/AddressBook");
 var storeFile = "AddressBook-v22.abcddb";
 var ContactsUnavailableError = class extends Error {
@@ -57,16 +60,6 @@ var ContactsSchemaError = class extends Error {
   name = "ContactsSchemaError";
   constructor(path, missing) {
     super(`The Contacts store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
-  }
-};
-var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
-var open = (path) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
-      throw new ContactsUnavailableError(path, cause);
-    throw cause;
   }
 };
 function storeDirectories(directory) {
@@ -82,21 +75,14 @@ function storeDirectories(directory) {
     ...entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().map((source) => ({ source, directory: join(sources, source) }))
   ];
 }
-var AddressBookStore = class {
+var AddressBookStore = class extends AppDatabase {
   // The Sources directory name, or null for the On My Mac store.
   source;
   directory;
-  #database;
-  constructor(source, directory, database) {
+  constructor(source, directory) {
+    super(join(directory, storeFile), ContactsUnavailableError);
     this.source = source;
     this.directory = directory;
-    this.#database = database;
-  }
-  get path() {
-    return join(this.directory, storeFile);
-  }
-  all(sql) {
-    return this.#database.prepare(sql).all();
   }
   storedData(value) {
     if (value[0] === 1)
@@ -112,13 +98,6 @@ var AddressBookStore = class {
     }
     throw new TypeError(`Contacts store ${this.path} holds data in an unknown encoding (first byte ${value[0]})`);
   }
-  close() {
-    if (this.#database.isOpen) {
-      if (this.#database.isTransaction)
-        this.#database.exec("COMMIT");
-      this.#database.close();
-    }
-  }
 };
 var AddressBook = class _AddressBook {
   stores;
@@ -128,34 +107,25 @@ var AddressBook = class _AddressBook {
   static async open(directory, required2) {
     const stores = [];
     try {
-      for (const store of storeDirectories(directory)) {
-        const path = join(store.directory, storeFile);
-        const database = open(path);
-        stores.push(new AddressBookStore(store.source, store.directory, database));
-        database.exec("BEGIN");
-        const missing = Object.entries(required2.columns).flatMap(([table, columns]) => {
-          const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table).map((column) => column.name));
-          return columns.filter((column) => !present.has(column)).map((column) => `${table}.${column}`);
-        });
-        if (missing.length === 0) {
-          const entities2 = new Set(database.prepare("SELECT Z_NAME FROM Z_PRIMARYKEY").all().map((entity) => entity.Z_NAME));
-          for (const entity of required2.entities)
-            if (!entities2.has(entity))
-              missing.push(`entity ${entity}`);
-        }
+      for (const found of storeDirectories(directory)) {
+        const store = new AddressBookStore(found.source, found.directory);
+        stores.push(store);
+        store.requireColumns(required2.columns, ContactsSchemaError);
+        const entities2 = new Set(store.all("SELECT Z_NAME FROM Z_PRIMARYKEY").map((entity) => entity.Z_NAME));
+        const missing = required2.entities.filter((entity) => !entities2.has(entity)).map((entity) => `entity ${entity}`);
         if (missing.length > 0)
-          throw new ContactsSchemaError(path, missing);
+          throw new ContactsSchemaError(store.path, missing);
       }
       return new _AddressBook(stores);
     } catch (cause) {
       for (const store of stores)
-        store.close();
+        store[Symbol.dispose]();
       throw cause;
     }
   }
   async [Symbol.asyncDispose]() {
     for (const store of this.stores)
-      store.close();
+      store[Symbol.dispose]();
   }
 };
 var AddressBookVersion = class {
@@ -166,27 +136,23 @@ var AddressBookVersion = class {
   }
   get current() {
     const paths = storeDirectories(this.directory).map(({ directory }) => join(directory, storeFile));
-    for (const [path, { database }] of this.#stores)
+    for (const [path, version] of this.#stores)
       if (!paths.includes(path)) {
-        database.close();
+        version[Symbol.dispose]();
         this.#stores.delete(path);
       }
     return JSON.stringify(paths.map((path) => {
-      let store = this.#stores.get(path);
-      if (store === void 0) {
-        const database = open(path);
-        store = {
-          database,
-          version: database.prepare("PRAGMA data_version")
-        };
-        this.#stores.set(path, store);
+      let version = this.#stores.get(path);
+      if (version === void 0) {
+        version = new AppDatabaseVersion(path, ContactsUnavailableError);
+        this.#stores.set(path, version);
       }
-      return [path, Number(store.version.get()?.data_version)];
+      return [path, version.current];
     }));
   }
   [Symbol.dispose]() {
-    for (const { database } of this.#stores.values())
-      database.close();
+    for (const version of this.#stores.values())
+      version[Symbol.dispose]();
     this.#stores.clear();
   }
 };

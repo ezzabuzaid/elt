@@ -7,6 +7,7 @@
     "packages/destinations/*",
     "packages/queue/*",
     "packages/macos/*",
+    "packages/sdks/*/*",
     "packages/connectors/*/*",
     "packages/sources/*/*",
     "apps/*",

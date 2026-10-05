@@ -10,6 +10,10 @@ import {
   withinDates
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
+  AppDatabase,
+  AppDatabaseVersion
+} from "../../chunks/chunk-NHBH24IB.mjs";
+import {
   eventKitFields
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
@@ -39,7 +43,6 @@ import { setInterval } from "node:timers/promises";
 // packages/sources/apple/messages/dist/chat-database.js
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 var messagesDirectory = join(homedir(), "Library/Messages");
 var MessagesUnavailableError = class extends Error {
   name = "MessagesUnavailableError";
@@ -47,53 +50,17 @@ var MessagesUnavailableError = class extends Error {
     super(`Messages history at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Messages.app does not need to be open.`, { cause });
   }
 };
-var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
-var open = (path) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
-      throw new MessagesUnavailableError(path, cause);
-    throw cause;
-  }
-};
-var ChatDatabaseVersion = class {
-  #database;
-  #version;
+var ChatDatabaseVersion = class extends AppDatabaseVersion {
   constructor(path) {
-    this.#database = open(path);
-    this.#version = this.#database.prepare("PRAGMA data_version");
-  }
-  get current() {
-    return Number(this.#version.get()?.data_version);
-  }
-  [Symbol.dispose]() {
-    this.#database.close();
+    super(path, MessagesUnavailableError);
   }
 };
-var ChatDatabase = class _ChatDatabase {
-  #database;
-  constructor(database) {
-    this.#database = database;
-  }
-  static async open(path = join(messagesDirectory, "chat.db")) {
-    const database = open(path);
-    try {
-      database.exec("BEGIN");
-      database.prepare("SELECT 1 FROM sqlite_schema LIMIT 1").get();
-      return new _ChatDatabase(database);
-    } catch (cause) {
-      database.close();
-      throw cause;
-    }
-  }
-  all(sql) {
-    return this.#database.prepare(sql).all();
+var ChatDatabase = class extends AppDatabase {
+  constructor(path) {
+    super(path, MessagesUnavailableError);
   }
   async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction)
-      this.#database.exec("COMMIT");
-    this.#database.close();
+    this[Symbol.dispose]();
   }
 };
 
@@ -630,8 +597,8 @@ var AppleMessagesSource = class extends Source {
     this.identity = `apple-messages:${path}`;
     Object.freeze(this);
   }
-  open() {
-    return ChatDatabase.open(this.path);
+  async open() {
+    return new ChatDatabase(this.path);
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };

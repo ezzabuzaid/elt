@@ -17,8 +17,8 @@ import type { NoteStore } from './note-store.ts';
 
 // Every Notes object lives in one Core Data table; Z_ENT names its entity, and
 // each entity's relationships sit in their own numbered columns. These are the
-// macOS 26 columns, checked against a live store; NoteStore.open refuses a
-// store without them.
+// macOS 26 columns, checked against a live store; NoteStore refuses a store
+// without them.
 export const requiredColumns = {
   Z_PRIMARYKEY: ['Z_ENT', 'Z_NAME'],
   ZICNOTEDATA: ['Z_PK', 'ZDATA'],
@@ -164,8 +164,8 @@ export class NotesScan implements AsyncDisposable {
     this.scope = scope;
   }
 
-  [Symbol.asyncDispose](): Promise<void> {
-    return this.store[Symbol.asyncDispose]();
+  async [Symbol.asyncDispose](): Promise<void> {
+    this.store[Symbol.dispose]();
   }
 
   get accounts(): Row[] {
