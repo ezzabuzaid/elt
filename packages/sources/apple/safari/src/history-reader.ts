@@ -74,12 +74,13 @@ export type SafariHistory = {
 };
 
 const dayMs = 86_400_000;
-// "Remove history items" in Safari's General settings. Its menu stores 1, 7,
-// 14, 30 or 365 days as HistoryAgeInDaysLimit, and Safari keeps a year while
-// the key is unset. Manually stores no positive limit: Safari then keeps
-// visits until they are removed.
+// "Remove history items" in Safari's General settings, as HistoryAgeInDaysLimit:
+// its menu stores 1, 7, 14, 30 or 365 days, and Manually 365000. Safari's own
+// defaults hold 365 while the key is unset, and it reads any value below 1 as
+// one day (+[History ageLimitInterval]).
 const defaultHistoryAgeInDays = 365;
-const forever = Date.UTC(1, 0, 1);
+// Manually's 365000 days reach back past the first year a timestamp can name.
+const firstYear = Date.parse('0001-01-01T00:00:00.000Z');
 // Safari prunes by its own clock before a read sees the result; an hour inside
 // the limit absorbs a daylight-saving shift.
 const marginMs = 3_600_000;
@@ -96,9 +97,10 @@ export function historyHorizon(
   if (typeof limit !== 'number')
     throw new TypeError('Safari HistoryAgeInDaysLimit is not a number');
   return new Date(
-    limit > 0
-      ? Math.max(forever, startedAt.getTime() - limit * dayMs + marginMs)
-      : forever,
+    Math.max(
+      firstYear,
+      startedAt.getTime() - Math.max(1, limit) * dayMs + marginMs,
+    ),
   ).toISOString();
 }
 

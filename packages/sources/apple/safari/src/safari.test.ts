@@ -612,10 +612,11 @@ async function safariFixture(root: string) {
     join(directory, 'RecentlyClosedTabs.plist'),
     closedTabsPlist,
   );
-  // Remove history items: Manually, so the fixed visit dates never expire.
+  // Remove history items: Manually, 365000 days, so the fixed visit dates
+  // never expire.
   await mkdir(join(root, 'Preferences'));
   await writePlist(join(root, 'Preferences', 'com.apple.Safari.plist'), {
-    HistoryAgeInDaysLimit: 0,
+    HistoryAgeInDaysLimit: 365_000,
   });
   return { directory, container };
 }
@@ -1696,6 +1697,44 @@ test('Safari history keeps the visits and URLs Safari expires under its history 
     ],
   );
   assert.deepEqual(history(), ['item 3', 'visit 30']);
+
+  // Safari reads a stored limit below 1 as one day, so a two-day-old visit it
+  // drops has expired.
+  await writePlist(
+    join(scratch.path, 'Preferences', 'com.apple.Safari.plist'),
+    { HistoryAgeInDaysLimit: 0 },
+  );
+  {
+    using database = new DatabaseSync(join(location.directory, 'History.db'));
+    database.exec(`INSERT INTO history_items (id, url, visit_count, daily_visit_counts, should_recompute_derived_visit_counts, visit_count_score)
+      VALUES (5, 'https://yesterday.example/', 1, x'', 0, 0)`);
+    database
+      .prepare(
+        'INSERT INTO history_visits (id, history_item, visit_time) VALUES (?, ?, ?)',
+      )
+      .run(32, 5, daysAgo(2));
+  }
+  await safari.load();
+  {
+    using database = new DatabaseSync(join(location.directory, 'History.db'));
+    database.exec(
+      'DELETE FROM history_visits WHERE id = 32; DELETE FROM history_items WHERE id = 5',
+    );
+  }
+  const clamped = await safari.load();
+
+  assert.deepEqual(
+    clamped
+      .filter(({ copy }) =>
+        ['historyVisits', 'historyItems'].includes(copy.from.name),
+      )
+      .map(({ copy, deleted }) => [copy.from.name, deleted]),
+    [
+      ['historyItems', 0],
+      ['historyVisits', 0],
+    ],
+  );
+  assert.deepEqual(history(), ['item 3', 'item 5', 'visit 30', 'visit 32']);
 });
 
 test('Safari scope keeps the chosen profiles and visit dates, and leaves unattributed data whole', async () => {
