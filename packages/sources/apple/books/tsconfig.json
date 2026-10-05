@@ -20,6 +20,9 @@
       "path": "../../../elt"
     },
     {
+      "path": "../../../codecs/protobuf"
+    },
+    {
       "path": "../../../destinations/sqlite"
     }
   ]

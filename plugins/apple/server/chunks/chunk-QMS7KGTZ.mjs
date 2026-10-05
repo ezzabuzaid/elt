@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
-// packages/sources/apple/macos/dist/protobuf.js
+// packages/codecs/protobuf/dist/protobuf.js
 var ProtobufMessage = class _ProtobufMessage {
   #fields = [];
   constructor(bytes) {

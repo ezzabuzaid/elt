@@ -1,4 +1,4 @@
-import { ProtobufMessage } from '@workspace/source-apple-macos/protobuf';
+import { ProtobufMessage } from '@workspace/codec-protobuf';
 
 import { BooksSchemaError } from './books-store.ts';
 

@@ -1,5 +1,5 @@
+import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-import type { ProtobufMessage } from '@workspace/source-apple-macos/protobuf';
 
 import {
   activityFields,

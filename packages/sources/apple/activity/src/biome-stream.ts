@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { ProtobufMessage } from '@workspace/codec-protobuf';
 import {
   type CopyConfiguration,
   type Properties,
@@ -13,7 +14,6 @@ import {
   validateRecords,
 } from '@workspace/elt';
 import { readSegb, segbFingerprint } from '@workspace/macos-segb';
-import { ProtobufMessage } from '@workspace/source-apple-macos/protobuf';
 
 import type { ActivityScan } from './activity-scan.ts';
 import { ActivityUnavailableError } from './activity-store.ts';

@@ -23,10 +23,6 @@
     "./osa": {
       "types": "./dist/osa.d.ts",
       "default": "./dist/osa.js"
-    },
-    "./protobuf": {
-      "types": "./dist/protobuf.d.ts",
-      "default": "./dist/protobuf.js"
     }
   },
   "dependencies": {

@@ -1,0 +1,12 @@
+{
+  "name": "@workspace/codec-protobuf",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/protobuf.d.ts",
+      "default": "./dist/protobuf.js"
+    }
+  }
+}

@@ -400,7 +400,9 @@ packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-s
 packages/destinations/markdown/   Markdown destination (elt-markdown)
 packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
-packages/macos/           One package per macOS capability: eventkit (macos-eventkit)
+packages/sdks/apple/      SDKs, one per Apple store (sdk-apple-<name>): app-database
+packages/macos/           SDKs not yet under packages/sdks: accounts, eventkit, plist, segb (macos-<name>)
+packages/codecs/          Formats several SDKs decode: protobuf (codec-protobuf)
 packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared
                           source-apple-macos (readers, document parser)
 packages/sources/google/  The Search Console source (source-google-search-console)
