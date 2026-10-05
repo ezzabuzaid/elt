@@ -1194,6 +1194,83 @@ test('An unreadable Accounts store fails only accounts and smtpServers, naming F
   });
 });
 
+test('An unreadable Accounts store leaves Mail’s watch running', async () => {
+  await using dir = await mkdtempDisposable(
+    join(tmpdir(), 'elt-mail-accounts-watch-'),
+  );
+  const store = await fixture(join(dir.path, 'Mail'));
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: new AccountsStore(join(dir.path, 'missing/Accounts4.sqlite')),
+  });
+  const abort = new AbortController();
+  const watch = source.watch({
+    streams: [source.accounts, source.messages],
+    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+  });
+  assert.deepEqual((await watch.next()).value, [
+    source.accounts,
+    source.messages,
+  ]);
+
+  using upstream = new DatabaseSync(store.index);
+  upstream.exec('UPDATE messages SET flagged=1 WHERE ROWID=1');
+
+  assert.deepEqual((await watch.next()).value, [
+    source.accounts,
+    source.messages,
+  ]);
+  abort.abort();
+  assert.equal((await watch.next()).done, true);
+});
+
+test('Mail’s watch refreshes only accounts and smtpServers when only the Accounts store commits', async () => {
+  await using dir = await mkdtempDisposable(
+    join(tmpdir(), 'elt-mail-accounts-watch-'),
+  );
+  const store = await fixture(join(dir.path, 'Mail'));
+  // Outside the Mail directory, as ~/Library/Accounts is, so only the store's
+  // own commits reach the watch.
+  const accountsPath = join(dir.path, 'Accounts4.sqlite');
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: scratchAccounts(accountsPath),
+  });
+  const abort = new AbortController();
+  const watch = source.watch({
+    streams: [source.accounts, source.smtpServers, source.messages],
+    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+  });
+  assert.deepEqual((await watch.next()).value, [
+    source.accounts,
+    source.smtpServers,
+    source.messages,
+  ]);
+
+  // A Mail change can add a mailbox host, so it refreshes the account streams
+  // too. It also absorbs the fixture's last writes, which FSEvents can report
+  // just after the watch starts.
+  using upstream = new DatabaseSync(store.index);
+  upstream.exec('UPDATE messages SET flagged=1 WHERE ROWID=1');
+  assert.deepEqual((await watch.next()).value, [
+    source.accounts,
+    source.smtpServers,
+    source.messages,
+  ]);
+
+  using accounts = new DatabaseSync(accountsPath);
+  accounts.exec(
+    "UPDATE ZACCOUNT SET ZACCOUNTDESCRIPTION = 'Renamed' WHERE ZIDENTIFIER = 'ICLOUD'",
+  );
+
+  assert.deepEqual((await watch.next()).value, [
+    source.accounts,
+    source.smtpServers,
+  ]);
+  abort.abort();
+  assert.equal((await watch.next()).done, true);
+});
+
 test('Mail watches index commits and file-only downloads, cancels, and exports readable Markdown', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-watch-'));
   const store = await fixture(join(dir.path, 'Mail'));

@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 import {
   type PlistValue,
@@ -104,12 +104,39 @@ export class AccountsStore {
     });
   }
 
+  // A probe whose current value changes with each commit to the store, such
+  // as accountsd saving an account.
+  version(): AccountsStoreVersion {
+    return new AccountsStoreVersion(this.#open());
+  }
+
   #open(): DatabaseSync {
     try {
       return new DatabaseSync(this.#path, { readOnly: true });
     } catch (error) {
       throw new AccountsUnavailableError(this.#path, error);
     }
+  }
+}
+
+// accountsd commits through a WAL. SQLite's data_version changes on every
+// commit by another connection, so polling current sees each one without
+// watching files.
+export class AccountsStoreVersion implements Disposable {
+  readonly #database: DatabaseSync;
+  readonly #version: StatementSync;
+
+  constructor(database: DatabaseSync) {
+    this.#database = database;
+    this.#version = database.prepare('PRAGMA data_version');
+  }
+
+  get current(): number {
+    return Number(this.#version.get()?.data_version);
+  }
+
+  [Symbol.dispose](): void {
+    this.#database.close();
   }
 }
 

@@ -25663,12 +25663,31 @@ var AccountsStore = class {
       __callDispose(_stack, _error, _hasError);
     }
   }
+  // A probe whose current value changes with each commit to the store, such
+  // as accountsd saving an account.
+  version() {
+    return new AccountsStoreVersion(this.#open());
+  }
   #open() {
     try {
       return new DatabaseSync(this.#path, { readOnly: true });
     } catch (error) {
       throw new AccountsUnavailableError(this.#path, error);
     }
+  }
+};
+var AccountsStoreVersion = class {
+  #database;
+  #version;
+  constructor(database) {
+    this.#database = database;
+    this.#version = database.prepare("PRAGMA data_version");
+  }
+  get current() {
+    return Number(this.#version.get()?.data_version);
+  }
+  [Symbol.dispose]() {
+    this.#database.close();
   }
 };
 function accountRow(row) {
@@ -27217,6 +27236,9 @@ var AppleMailSource = class extends Source {
       }));
       const version = database.prepare("PRAGMA data_version");
       let seen = version.get()?.data_version;
+      const accountsSelected = selected2.filter(({ name }) => Object.hasOwn(accountStreams, name));
+      const accounts2 = __using(_stack, accountsSelected.length === 0 ? null : this.#accountsVersion());
+      let accountsSeen = accounts2?.current;
       let changed = false;
       let failure2 = null;
       const resources = __using(_stack, new DisposableStack());
@@ -27233,11 +27255,16 @@ var AppleMailSource = class extends Source {
           if (failure2 !== null)
             throw failure2;
           const current = version.get()?.data_version;
-          if (!changed && current === seen)
-            continue;
-          changed = false;
-          seen = current;
-          yield selected2;
+          const accountsCurrent = accounts2?.current;
+          if (changed || current !== seen) {
+            changed = false;
+            seen = current;
+            accountsSeen = accountsCurrent;
+            yield selected2;
+          } else if (accountsCurrent !== accountsSeen) {
+            accountsSeen = accountsCurrent;
+            yield accountsSelected;
+          }
         }
       } catch (error) {
         if (!(signal.aborted && error instanceof Error && error.name === "AbortError"))
@@ -27247,6 +27274,17 @@ var AppleMailSource = class extends Source {
       var _error = _, _hasError = true;
     } finally {
       __callDispose(_stack, _error, _hasError);
+    }
+  }
+  // A store this process cannot open fails the account streams on every run;
+  // it does not end the watch over the rest of Mail.
+  #accountsVersion() {
+    try {
+      return this.#accounts.version();
+    } catch (error) {
+      if (error instanceof AccountsUnavailableError)
+        return null;
+      throw error;
     }
   }
 };

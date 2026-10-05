@@ -286,6 +286,24 @@ test('a store that cannot be opened fails with AccountsUnavailableError', async 
       return true;
     },
   );
+  assert.throws(
+    () => new AccountsStore(path).version(),
+    AccountsUnavailableError,
+  );
+});
+
+test('the store version changes when another connection commits', async () => {
+  await using scratch = await ScratchAccountsStore.create();
+  using version = new AccountsStore(scratch.path).version();
+  const before = version.current;
+
+  await scratch.account({
+    pk: 1,
+    identifier: 'ACCOUNT',
+    type: 'com.apple.account.IMAP',
+  });
+
+  assert.notEqual(version.current, before);
 });
 
 test('this Mac’s Accounts store reads as accounts whose parents exist', (t) => {

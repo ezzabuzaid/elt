@@ -23,7 +23,10 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
-import type { AccountsStore } from '@workspace/macos-accounts';
+import {
+  type AccountsStore,
+  AccountsUnavailableError,
+} from '@workspace/macos-accounts';
 import type { PlistValue } from '@workspace/macos-plist';
 import {
   type ImportScope,
@@ -1059,6 +1062,14 @@ export class AppleMailSource extends Source<MailScan> {
     });
     const version = database.prepare('PRAGMA data_version');
     let seen = version.get()?.data_version;
+    // The Accounts store commits apart from Mail, and only the account
+    // streams read it.
+    const accountsSelected = selected.filter(({ name }) =>
+      Object.hasOwn(accountStreams, name),
+    );
+    using accounts =
+      accountsSelected.length === 0 ? null : this.#accountsVersion();
+    let accountsSeen = accounts?.current;
     let changed = false;
     let failure: Error | null = null;
     using resources = new DisposableStack();
@@ -1074,10 +1085,16 @@ export class AppleMailSource extends Source<MailScan> {
       for await (const _ of setInterval(1000, undefined, { signal })) {
         if (failure !== null) throw failure;
         const current = version.get()?.data_version;
-        if (!changed && current === seen) continue;
-        changed = false;
-        seen = current;
-        yield selected;
+        const accountsCurrent = accounts?.current;
+        if (changed || current !== seen) {
+          changed = false;
+          seen = current;
+          accountsSeen = accountsCurrent;
+          yield selected;
+        } else if (accountsCurrent !== accountsSeen) {
+          accountsSeen = accountsCurrent;
+          yield accountsSelected;
+        }
       }
     } catch (error) {
       if (!(
@@ -1086,6 +1103,17 @@ export class AppleMailSource extends Source<MailScan> {
         error.name === 'AbortError'
       ))
         throw error;
+    }
+  }
+
+  // A store this process cannot open fails the account streams on every run;
+  // it does not end the watch over the rest of Mail.
+  #accountsVersion() {
+    try {
+      return this.#accounts.version();
+    } catch (error) {
+      if (error instanceof AccountsUnavailableError) return null;
+      throw error;
     }
   }
 }
