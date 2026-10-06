@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import {
+  chmod,
   mkdir,
   mkdtempDisposable,
   readFile,
@@ -1499,7 +1500,7 @@ test('A malformed rule or smart mailbox fails exactly the streams that read the 
   });
 });
 
-test('Mail’s store fails to open as unavailable without a readable version file or index, and as itself for a bad version name or an index that is not a database', async () => {
+test('Mail’s store fails to open as unavailable only when its version file or index cannot be read, and as itself for a version file or index this reader does not read', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
   const persistence = (version: string) => (store: { root: string }) =>
     writeFile(
@@ -1514,13 +1515,30 @@ test('Mail’s store fails to open as unavailable without a readable version fil
   };
 
   await assert.rejects(
+    readAfter(join(dir.path, 'absent'), ({ root }) =>
+      rm(join(root, 'PersistenceInfo.plist')),
+    ),
+    unavailable,
+  );
+  // A file mode that refuses this process, as macOS does without Full Disk
+  // Access.
+  await assert.rejects(
+    readAfter(join(dir.path, 'denied'), ({ root }) =>
+      chmod(join(root, 'PersistenceInfo.plist'), 0o000),
+    ),
+    unavailable,
+  );
+  await assert.rejects(
     readAfter(join(dir.path, 'truncated'), ({ root }) =>
       writeFile(
         join(root, 'PersistenceInfo.plist'),
         '<?xml version="1.0"?><plist version="1.0"><dict>',
       ),
     ),
-    unavailable,
+    (error) =>
+      error instanceof Error &&
+      error.name !== 'MailUnavailableError' &&
+      /unexpected EOF/.test(error.message),
   );
   // plutil reads a bare word as an old-style property list string.
   await assert.rejects(
@@ -2109,6 +2127,48 @@ test('An unreadable Accounts store leaves Mail’s watch running', async () => {
   ]);
   abort.abort();
   assert.equal((await watch.next()).done, true);
+});
+
+test('Mail’s watch fails as unavailable when its version file or index cannot be read, and as itself for an index that is not a database', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-watch-'));
+  const watchAfter = async (
+    root: string,
+    change: (store: Awaited<ReturnType<typeof fixture>>) => Promise<void>,
+  ) => {
+    const store = await fixture(root);
+    await change(store);
+    const source = new AppleMailSource({
+      path: store.root,
+      accounts: store.accounts,
+    });
+    return source
+      .watch({ streams: [source.messages], signal: AbortSignal.timeout(10000) })
+      .next();
+  };
+  const unavailable = {
+    name: 'MailUnavailableError',
+    message: /Full Disk Access/,
+  };
+
+  await assert.rejects(
+    watchAfter(join(dir.path, 'version'), ({ root }) =>
+      rm(join(root, 'PersistenceInfo.plist')),
+    ),
+    unavailable,
+  );
+  await assert.rejects(
+    watchAfter(join(dir.path, 'index'), ({ index }) => rm(index)),
+    unavailable,
+  );
+  await assert.rejects(
+    watchAfter(join(dir.path, 'text'), ({ index }) =>
+      writeFile(index, 'not a database'),
+    ),
+    (error) =>
+      error instanceof Error &&
+      error.name !== 'MailUnavailableError' &&
+      /not a database/.test(error.message),
+  );
 });
 
 test('Mail’s watch refreshes only accounts and smtpServers when only the Accounts store commits', async () => {

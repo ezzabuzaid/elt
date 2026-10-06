@@ -1,5 +1,5 @@
 import { EnvelopeIndex } from './envelope-index.ts';
-import { MailSchemaError, MailUnavailableError } from './errors.ts';
+import { MailUnavailableError } from './errors.ts';
 import { MailFiles } from './mail-files.ts';
 import {
   envelopeIndexPath,
@@ -37,8 +37,10 @@ export class MailStore {
   }
 
   async open(): Promise<MailSnapshot> {
-    const directory = await this.#versionDirectory();
-    const index = this.#index(directory);
+    const directory = await mailVersionDirectory(this.root);
+    const index = this.#atRoot(
+      () => new EnvelopeIndex(envelopeIndexPath(directory)),
+    );
     try {
       return new MailSnapshot(
         directory,
@@ -53,25 +55,15 @@ export class MailStore {
 
   // A probe whose current value changes when the store does.
   async version(): Promise<MailVersion> {
-    return new MailVersion(this.root, await mailVersionDirectory(this.root));
-  }
-
-  // Any failure to find the current version folder is the store's grant,
-  // except a folder name Mail no longer writes.
-  async #versionDirectory(): Promise<string> {
-    try {
-      return await mailVersionDirectory(this.root);
-    } catch (cause) {
-      if (cause instanceof MailSchemaError) throw cause;
-      throw new MailUnavailableError(this.root, cause);
-    }
+    const directory = await mailVersionDirectory(this.root);
+    return this.#atRoot(() => new MailVersion(this.root, directory));
   }
 
   // Full Disk Access covers the whole store, so an index this process cannot
   // open names the store's root.
-  #index(directory: string): EnvelopeIndex {
+  #atRoot<T>(open: () => T): T {
     try {
-      return new EnvelopeIndex(envelopeIndexPath(directory));
+      return open();
     } catch (error) {
       if (error instanceof MailUnavailableError)
         throw new MailUnavailableError(this.root, error.cause);

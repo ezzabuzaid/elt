@@ -1,6 +1,8 @@
 import { watch } from 'node:fs';
-import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
+import { AppDatabaseVersion } from '@workspace/sdk-apple-app-database';
+
+import { MailUnavailableError } from './errors.ts';
 import { envelopeIndexPath } from './mail-location.ts';
 
 // What changes when Mail's store does: Mail commits to its index through a
@@ -9,16 +11,18 @@ import { envelopeIndexPath } from './mail-location.ts';
 // of the whole store sees. A failed watch fails the next read of current.
 export class MailVersion implements Disposable {
   readonly #resources: DisposableStack;
-  readonly #version: StatementSync;
+  readonly #index: AppDatabaseVersion;
   #events = 0;
   #failure: Error | null = null;
 
   constructor(root: string, directory: string) {
     using resources = new DisposableStack();
-    const database = resources.use(
-      new DatabaseSync(envelopeIndexPath(directory), { readOnly: true }),
+    this.#index = resources.use(
+      new AppDatabaseVersion(
+        envelopeIndexPath(directory),
+        MailUnavailableError,
+      ),
     );
-    this.#version = database.prepare('PRAGMA data_version');
     const watcher = watch(root, { recursive: true }, () => {
       this.#events += 1;
     });
@@ -31,7 +35,7 @@ export class MailVersion implements Disposable {
 
   get current(): string {
     if (this.#failure !== null) throw this.#failure;
-    return `${this.#version.get()?.data_version}:${this.#events}`;
+    return `${this.#index.current}:${this.#events}`;
   }
 
   [Symbol.dispose](): void {
