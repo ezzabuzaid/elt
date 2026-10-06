@@ -29,8 +29,14 @@ export type CheckpointRun = {
   state(id: string): unknown;
   // Whether the stream's shape changed since the checkpoint was saved.
   restart(id: string): boolean;
-  save(id: string, state: unknown): Promise<void>;
+  // Whether the checkpoint was saved inside a reload that has not completed.
+  reloading(id: string): boolean;
+  save(id: string, state: unknown, reloading: boolean): Promise<void>;
 };
+
+// What a store keeps as a checkpoint's state: the source's own state, and
+// whether it was saved inside a reload the destination has not swapped in.
+type SavedState = { readonly state: unknown; readonly reloading: boolean };
 
 // Checkpoints belong to a replication ID, not to a shared Stream or warehouse
 // table. As Airbyte's platform keeps state apart from any destination, the
@@ -48,7 +54,7 @@ export abstract class CheckpointStore {
         string,
         {
           binding: string;
-          state: unknown;
+          saved: SavedState;
           changed: boolean;
           restart: boolean;
         }
@@ -67,9 +73,9 @@ export abstract class CheckpointStore {
           !isDeepStrictEqual(savedShape, currentShape);
         checkpoints.set(id, {
           binding,
-          state:
+          saved:
             saved === undefined || changed || restart
-              ? null
+              ? { state: null, reloading: false }
               : JSON.parse(saved.state),
           changed,
           restart,
@@ -87,12 +93,14 @@ export abstract class CheckpointStore {
       };
       return work({
         // A source may mutate its input state, but only an acknowledged message may advance it.
-        state: (id) => structuredClone(checkpoint(id).state),
+        state: (id) => structuredClone(checkpoint(id).saved.state),
         restart: (id) => checkpoint(id).restart,
-        save: async (id, state) => {
+        reloading: (id) => checkpoint(id).saved.reloading,
+        save: async (id, state, reloading) => {
           const { binding } = checkpoint(id);
+          const saved: SavedState = { state, reloading };
           try {
-            await session.save(id, { binding, state: JSON.stringify(state) });
+            await session.save(id, { binding, state: JSON.stringify(saved) });
           } catch (cause) {
             throw new Error(
               `Checkpoint ${id} was not saved after the destination committed; the next run replays from the last saved checkpoint`,

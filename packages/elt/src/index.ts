@@ -30,6 +30,11 @@ export type { Partition, PartitionState } from './core/partition.ts';
 export { type Pass, Pipeline, PipelineError } from './core/pipeline.ts';
 export { type ReaderRelation, readerCatalog } from './core/reader-relation.ts';
 export {
+  type ReloadMode,
+  type StoredFit,
+  reloadMode,
+} from './core/reload-mode.ts';
+export {
   type FieldSchema,
   type Properties,
   type RecordDraft,

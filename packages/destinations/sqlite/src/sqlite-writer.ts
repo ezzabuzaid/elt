@@ -6,7 +6,9 @@ import type {
   FieldValues,
   KeyValue,
   Partition,
+  ReloadMode,
   Stage,
+  StoredFit,
   TargetDescription,
 } from '@workspace/elt';
 import {
@@ -14,6 +16,7 @@ import {
   TargetOwnedError,
   Writer,
   describeTarget,
+  reloadMode,
   undescribed,
 } from '@workspace/elt';
 
@@ -82,22 +85,30 @@ export abstract class SQLiteWriter extends Writer {
     replacing: boolean,
   ): void;
 
-  // Moves the staged operations into the target.
+  // Moves the staged operations into the target, or the hidden target of a
+  // reload.
   protected abstract merge(
     database: DatabaseSync,
     stage: string,
     loadedAt: string,
+    into: string,
   ): void;
+
+  // What a reload's hidden target needs once it is created, before the first
+  // merge fills it, and once it takes the target's name.
+  protected build(_database: DatabaseSync, _into: string): void {}
+  protected adopt(_database: DatabaseSync): void {}
 
   // Inserts each staged record, in order.
   protected append(
     database: DatabaseSync,
     stage: string,
     loadedAt: string,
+    into: string,
   ): void {
     database
       .prepare(
-        `INSERT INTO ${this.table.quotedName} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, ? FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
+        `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, ? FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
       )
       .run(loadedAt);
   }
@@ -174,27 +185,32 @@ export abstract class SQLiteWriter extends Writer {
     );
   }
 
-  private values(database: DatabaseSync): FieldValues {
+  // The field's values in each of the tables, which while a reload is open
+  // are the target and its hidden target: both rows still refer to files.
+  private values(
+    database: DatabaseSync,
+    tables: () => readonly string[],
+  ): FieldValues {
     const { table } = this;
     return async function* (field) {
       const column = table.columns.find((column) => column.name === field);
       if (column === undefined)
         throw new TypeError(`Unknown target field: ${field}`);
-      // clear also accepts a target or a declared column that was never loaded.
-      if (
-        !database
-          .prepare(
-            'SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE',
-          )
-          .get(table.name, field)
-      )
-        return;
-      for (const row of database
-        .prepare(
-          `SELECT ${column.quotedName} AS value FROM ${table.quotedName}`,
+      for (const name of tables()) {
+        // clear also accepts a target or a declared column that was never loaded.
+        if (
+          !database
+            .prepare(
+              'SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE',
+            )
+            .get(name, field)
         )
-        .iterate())
-        yield row.value;
+          continue;
+        for (const row of database
+          .prepare(`SELECT ${column.quotedName} AS value FROM ${quote(name)}`)
+          .iterate())
+          yield row.value;
+      }
     };
   }
 
@@ -218,6 +234,8 @@ export abstract class SQLiteWriter extends Writer {
       // stream left behind that the file triggers never see.
       if (this.exists(database, this.table.location)) {
         database.exec(`DELETE FROM ${this.table.quotedName}`);
+        // Clearing a copy also abandons the reload it left open.
+        database.exec(`DROP TABLE IF EXISTS ${quote(this.#hiddenName)}`);
         // A file column declared after the table's last load has no chunks.
         for (const column of this.table.columns) {
           const chunks = SQLiteFileStore.tableName(this.table, column);
@@ -230,7 +248,7 @@ export abstract class SQLiteWriter extends Writer {
         .run(this.table.location);
       database.exec('COMMIT');
       database.exec('BEGIN IMMEDIATE');
-      await committed?.(this.values(database));
+      await committed?.(this.values(database, () => [this.table.name]));
       database.exec('ROLLBACK');
     } catch (error) {
       if (database.isTransaction) database.exec('ROLLBACK');
@@ -301,68 +319,92 @@ export abstract class SQLiteWriter extends Writer {
     ];
   }
 
-  // Drops a target whose stored table no longer fits the stream, with the
-  // reader view of it, so prepare creates both anew. Says whether the target
-  // holds none of the copy's rows. Inside the load's transaction, readers keep
-  // the old table until the load commits.
-  #renew(database: DatabaseSync): boolean {
+  // A reload's hidden target, beside the target and invisible to readers.
+  get #hiddenName(): string {
+    return `_elt_next_${this.hash}`;
+  }
+
+  // Whether a stored table is the one the stream needs, by the text SQLite
+  // keeps of its CREATE TABLE, which a CHECK alone can change.
+  #fit(database: DatabaseSync, name: string): StoredFit {
     const stored = database
       .prepare(
-        `SELECT "sql" FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`,
+        `SELECT "sql" FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = lower(?)`,
       )
-      .get(this.table.location)?.sql;
-    if (stored === undefined) return true;
-    if (
-      stored ===
-      this.table.createTableSQL.replace(
-        'CREATE TABLE IF NOT EXISTS ',
-        'CREATE TABLE ',
-      )
-    )
-      return false;
-    if (this.table.readerView !== undefined)
-      database.exec(`DROP VIEW IF EXISTS ${quote(this.table.readerView)}`);
-    database.exec(`DROP TABLE ${this.table.quotedName}`);
-    return true;
+      .get(name)?.sql;
+    if (stored === undefined) return 'missing';
+    return stored === `CREATE TABLE ${this.table.definition(quote(name))}`
+      ? 'fits'
+      : 'stale';
   }
 
   // Refuses a target another writer owns and prepares it inside a savepoint,
-  // so a refused target leaves the shared transaction as it was.
+  // so a refused target leaves the shared transaction as it was. A load into
+  // the target creates or adopts it here; a reload leaves it to readers as it
+  // is, merges into a hidden target from its first commit, and swaps that in
+  // at complete().
   prepare(
     database: DatabaseSync,
-    { writer, restart }: { writer: string; restart: boolean },
+    {
+      writer,
+      restart,
+      reloading,
+    }: { writer: string; restart: boolean; reloading: boolean },
     loadedAt: string,
   ): Stage {
     const name = quote(`_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
+    const hidden = quote(this.#hiddenName);
     const files = this.table.columns.filter((column) => column.storesFile);
     database.exec('SAVEPOINT prepare');
     let stores: { column: SQLiteColumn; store: SQLiteFileStore }[] = [];
-    // Drops the chunks of files no row of the target refers to.
+    let mode: ReloadMode;
+    const open = () => mode === 'reload' || mode === 'continue';
+    const into = () => (open() ? hidden : this.table.quotedName);
+    const tables = () =>
+      [this.table.name, ...(open() ? [this.#hiddenName] : [])].filter((table) =>
+        this.exists(database, table.toLowerCase()),
+      );
+    // Every stored file a row of the tables refers to.
+    const referenced = (column: SQLiteColumn) =>
+      tables()
+        .map(
+          (table) =>
+            `SELECT ${column.quotedName} FROM ${quote(table)} WHERE ${column.quotedName} IS NOT NULL`,
+        )
+        .join(' UNION ') || 'SELECT NULL WHERE 0';
+    // Drops the chunks of files no row of the tables refers to.
     const prune = () => {
       for (const { column, store } of stores)
         database.exec(
-          `DELETE FROM ${quote(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`,
+          `DELETE FROM ${quote(store.name)} WHERE "file" NOT IN (${referenced(column)})`,
         );
     };
-    const replacing = this.replaces || restart;
-    let fresh: boolean;
     try {
       this.own(database, writer);
-      fresh = this.#renew(database);
-      // Only this library-owned mode index is replaced; explicit SQL constraints remain authoritative.
-      database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
-      database.exec(this.table.createTableSQL);
+      mode = reloadMode({
+        reloading,
+        restart,
+        target: this.#fit(database, this.table.name),
+        hidden: this.#fit(database, this.#hiddenName),
+      });
+      // A hidden target no reload continues is a leftover readers never saw.
+      if (mode !== 'continue') database.exec(`DROP TABLE IF EXISTS ${hidden}`);
+      if (!open()) {
+        // Only this library-owned mode index is replaced; explicit SQL constraints remain authoritative.
+        database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
+        database.exec(this.table.createTableSQL);
+        this.initialize(database, this.replaces);
+        if (this.table.readerView !== undefined)
+          this.installReaderView(database, this.table.readerView);
+        this.describe(database);
+      }
       stores = files.map((column) => ({
         column,
         store: new SQLiteFileStore(database, this.table, column),
       }));
       // Chunks of a stream that failed after another stream committed them.
       prune();
-      this.initialize(database, replacing);
-      if (this.table.readerView !== undefined)
-        this.installReaderView(database, this.table.readerView);
-      this.describe(database);
       database.exec(`DROP TABLE IF EXISTS ${stage}`);
       database.exec(
         `CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
@@ -373,32 +415,66 @@ export abstract class SQLiteWriter extends Writer {
       database.exec('RELEASE prepare');
       throw error;
     }
+    const fresh = mode === 'create' || mode === 'reload';
+    // The hidden target of a reload exists once its first commit made it.
+    let opened = mode === 'continue';
     const columns = this.table.columns.map((column) => column.quotedName);
     const record = database.prepare(
       `INSERT INTO ${stage} (${op}, ${columns.join(', ')}) VALUES ('R', ${columns.map(() => '?').join(', ')})`,
     );
     const staged = (column: SQLiteColumn) =>
       `SELECT ${column.quotedName} FROM ${stage} WHERE ${column.quotedName} IS NOT NULL`;
-    // Scopes the stage dropped, which the next commit empties in the target.
-    let resets: (Partition | null)[] = [];
+    // Partitions the stage dropped, which the next commit empties in the
+    // table it merges into.
+    let resets: Partition[] = [];
     // Files staged but never merged, and files a merge did not keep.
     const drop = () => {
       for (const { column, store } of stores)
         database.exec(
-          `DELETE FROM ${quote(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`,
+          `DELETE FROM ${quote(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (${referenced(column)})`,
         );
       database.exec(`DELETE FROM ${stage}`);
       resets = [];
     };
+    // Runs work in a savepoint, then commits and takes the lock back in one
+    // synchronous step.
+    const commit = (work: () => void) => {
+      database.exec('SAVEPOINT merge');
+      try {
+        work();
+        database.exec('RELEASE merge');
+      } catch (error) {
+        // SQLITE_FULL/IOERR can roll back the transaction and its savepoints.
+        // Keep that original error instead of masking it with a rollback error.
+        if (database.isTransaction) {
+          database.exec('ROLLBACK TO merge');
+          database.exec('RELEASE merge');
+        }
+        throw error;
+      }
+      database.exec('COMMIT');
+      database.exec('BEGIN IMMEDIATE');
+    };
     let replaced = false;
     return {
       fresh,
-      values: this.values(database),
+      get reloading() {
+        return open();
+      },
+      values: this.values(database, tables),
       apply: async (operation) => {
         if (operation.type === 'RESET') {
-          const [rows, values] = this.#scope(operation.partition);
+          const { partition } = operation;
+          if (partition === null) {
+            // The whole stream starts over in a new hidden target.
+            drop();
+            mode = 'reload';
+            opened = false;
+            return;
+          }
+          const [rows, values] = this.#scope(partition);
           database.prepare(`DELETE FROM ${stage}${rows}`).run(...values);
-          resets.push(operation.partition);
+          resets.push(partition);
           return;
         }
         if (operation.type === 'DELETE') {
@@ -423,33 +499,44 @@ export abstract class SQLiteWriter extends Writer {
         record.run(...this.encode(data));
       },
       commit: async () => {
-        database.exec('SAVEPOINT merge');
-        try {
-          if (replacing && !replaced) this.replace(database);
+        commit(() => {
+          if (open() && !opened) {
+            database.exec(`DROP TABLE IF EXISTS ${hidden}`);
+            database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
+            this.build(database, hidden);
+          }
+          if (!open() && this.replaces && !replaced) this.replace(database);
           for (const partition of resets) {
             const [rows, values] = this.#scope(partition);
-            database
-              .prepare(`DELETE FROM ${this.table.quotedName}${rows}`)
-              .run(...values);
+            database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
           }
-          this.merge(database, stage, loadedAt);
+          this.merge(database, stage, loadedAt, into());
           // Files of the rows a reset emptied, and of staged rows it dropped.
           if (resets.length > 0) prune();
           drop();
-          database.exec('RELEASE merge');
-        } catch (error) {
-          // SQLITE_FULL/IOERR can roll back the transaction and its savepoints.
-          // Keep that original error instead of masking it with a rollback error.
-          if (database.isTransaction) {
-            database.exec('ROLLBACK TO merge');
-            database.exec('RELEASE merge');
-          }
-          throw error;
-        }
+        });
+        opened = open();
         replaced = true;
-        // Commits and takes the lock back in one synchronous step.
-        database.exec('COMMIT');
-        database.exec('BEGIN IMMEDIATE');
+      },
+      complete: async () => {
+        if (!open()) return;
+        commit(() => {
+          if (this.table.readerView !== undefined)
+            database.exec(
+              `DROP VIEW IF EXISTS ${quote(this.table.readerView)}`,
+            );
+          database.exec(`DROP TABLE IF EXISTS ${this.table.quotedName}`);
+          database.exec(
+            `ALTER TABLE ${hidden} RENAME TO ${this.table.quotedName}`,
+          );
+          this.adopt(database);
+          if (this.table.readerView !== undefined)
+            this.installReaderView(database, this.table.readerView);
+          this.describe(database);
+          mode = 'load';
+          prune();
+        });
+        opened = false;
       },
       discard: async () => drop(),
       [Symbol.asyncDispose]: async () => {

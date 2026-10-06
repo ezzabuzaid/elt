@@ -25,7 +25,8 @@ export class SQLiteOverwriteWriter extends SQLiteWriter {
     database: DatabaseSync,
     stage: string,
     loadedAt: string,
+    into: string,
   ): void {
-    this.append(database, stage, loadedAt);
+    this.append(database, stage, loadedAt, into);
   }
 }

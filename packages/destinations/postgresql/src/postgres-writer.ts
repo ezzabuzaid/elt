@@ -8,10 +8,13 @@ import {
   FileContent,
   type KeyValue,
   type Partition,
+  type ReloadMode,
   type Stage,
+  type StoredFit,
   TargetOwnedError,
   Writer,
   describeTarget,
+  reloadMode,
   undescribed,
 } from '@workspace/elt';
 
@@ -151,8 +154,8 @@ export abstract class PostgresWriter extends Writer {
     return `${name} (${this.table.columns.map((column) => column.definition).join(', ')}, "loaded_at" TIMESTAMPTZ NOT NULL)`;
   }
 
-  // What a rebuilt target, still empty under its temporary name into, needs
-  // before the merge fills it, and once it takes the target's name.
+  // What a reload's hidden target needs once it is created, before the first
+  // merge fills it, and once it takes the target's name.
   protected async build(_sql: Transaction, _into: string): Promise<void> {}
   protected async adopt(_sql: Transaction): Promise<void> {}
 
@@ -258,21 +261,30 @@ export abstract class PostgresWriter extends Writer {
     await this.#describeReaderView(sql);
   }
 
-  private values(sql: Transaction): FieldValues {
-    const { table, schema, qualifiedName } = this;
+  // The field's values in each of the tables, which while a reload is open
+  // are the target and its hidden target: both rows still refer to files.
+  private values(
+    sql: Transaction,
+    tables: () => readonly string[],
+  ): FieldValues {
+    const { table, schema } = this;
     return async function* (field) {
       const column = table.columns.find((column) => column.name === field);
       if (column === undefined)
         throw new TypeError(`Unknown target field: ${field}`);
-      const present = await sql.unsafe(
-        'SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3',
-        [schema, table.name, field],
-      );
-      if (present.length === 0) return;
-      for await (const rows of sql
-        .unsafe(`SELECT ${column.quotedName} AS value FROM ${qualifiedName}`)
-        .cursor(batchSize))
-        for (const row of rows) yield row.value;
+      for (const name of tables()) {
+        const present = await sql.unsafe(
+          'SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3',
+          [schema, name, field],
+        );
+        if (present.length === 0) continue;
+        for await (const rows of sql
+          .unsafe(
+            `SELECT ${column.quotedName} AS value FROM ${quote(schema)}.${quote(name)}`,
+          )
+          .cursor(batchSize))
+          for (const row of rows) yield row.value;
+      }
     };
   }
 
@@ -310,6 +322,8 @@ export abstract class PostgresWriter extends Writer {
       );
       if (table?.exists === true)
         await transaction.unsafe(`DELETE FROM ${this.qualifiedName}`);
+      // Clearing a copy also abandons the reload it left open.
+      await transaction.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
       for (const column of this.table.columns.filter(
         (column) => column.storesFile,
       )) {
@@ -325,7 +339,7 @@ export abstract class PostgresWriter extends Writer {
         this.table.name,
       ]);
     });
-    await committed?.(this.values(connection.sql));
+    await committed?.(this.values(connection.sql, () => [this.table.name]));
   }
 
   // COMMENT does not accept bind parameters. Let Postgres quote identifiers
@@ -409,19 +423,29 @@ export abstract class PostgresWriter extends Writer {
       .slice(0, 40);
   }
 
-  // Whether the stored target has the columns, types and NOT NULL the stream
+  // A reload's hidden target, beside the target and invisible to readers.
+  get #hiddenName(): string {
+    return `_elt_next_${this.#hash}`;
+  }
+
+  get #hidden(): string {
+    return `${quote(this.schema)}.${quote(this.#hiddenName)}`;
+  }
+
+  // Whether a stored table has the columns, types and NOT NULL the stream
   // needs. The stage is built from the same column declarations, so Postgres
   // spells both alike.
   async #fit(
     sql: Transaction,
+    table: string,
     stage: string,
-  ): Promise<'missing' | 'stale' | 'fits'> {
+  ): Promise<StoredFit> {
     const columns = (relation: string) =>
       sql.unsafe<{ name: string; type: string; required: boolean }[]>(
         'SELECT attname AS name, format_type(atttypid, atttypmod) AS type, attnotnull AS required FROM pg_attribute WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped',
         [relation],
       );
-    const stored = await columns(this.qualifiedName);
+    const stored = await columns(table);
     if (stored.length === 0) return 'missing';
     const types = new Map(
       (await columns(`pg_temp.${stage}`)).map(({ name, type }) => [name, type]),
@@ -441,21 +465,18 @@ export abstract class PostgresWriter extends Writer {
       : 'stale';
   }
 
-  // Builds the target in its new shape under another name and swaps it in
-  // last, so readers of the stored table wait only for the swap, not the
-  // load. A reader that holds it past the timeout fails the copy for this
-  // run. Whatever else depends on the target, such as marts, refuses the swap.
-  async #rebuild(sql: Transaction, stage: string, loadedAt: string) {
-    const into = `${quote(this.schema)}.${quote(`_elt_next_${this.#hash}`)}`;
-    await sql.unsafe(`DROP TABLE IF EXISTS ${into}`);
-    await sql.unsafe(`CREATE TABLE ${this.#tableSQL(into)}`);
-    await this.build(sql, into);
-    await this.merge(sql, stage, loadedAt, into);
+  // Swaps a completed reload's hidden target in last, so readers of the
+  // stored table wait only for the swap, not the reload. A reader that holds
+  // it past the timeout fails the copy until the next run. Whatever else
+  // depends on the target, such as marts, refuses the swap.
+  async #swap(sql: Transaction): Promise<void> {
     await sql.unsafe(`SET LOCAL lock_timeout = '${swapTimeout}'`);
     const view = this.#readerViewName;
     if (view !== undefined) await sql.unsafe(`DROP VIEW IF EXISTS ${view}`);
-    await sql.unsafe(`DROP TABLE ${this.qualifiedName}`);
-    await sql.unsafe(`ALTER TABLE ${into} RENAME TO ${this.table.quotedName}`);
+    await sql.unsafe(`DROP TABLE IF EXISTS ${this.qualifiedName}`);
+    await sql.unsafe(
+      `ALTER TABLE ${this.#hidden} RENAME TO ${this.table.quotedName}`,
+    );
     await this.adopt(sql);
     await this.#comment(sql, 'TABLE', this.schema, this.table.name);
     await this.#describeReaderView(sql);
@@ -482,31 +503,47 @@ export abstract class PostgresWriter extends Writer {
   // One stream's load. Operations wait in a session-private TEMP stage, so no
   // other session sees them and a crash leaves nothing behind. prepare only
   // refuses and stages, so a run that fails before a commit leaves nothing.
-  // Each commit is one transaction: the first also creates the target, or
-  // swaps in its rebuild, and every one merges the stage with the result of
-  // applying its operations one at a time.
+  // Each commit is one transaction that merges the stage, with the result of
+  // applying its operations one at a time, into the target, or into a
+  // reload's hidden target until complete() swaps it in. The first commit
+  // also creates the target, or the hidden target of a new reload.
   async prepare(
     load: PostgresLoad,
-    { writer, restart }: { writer: string; restart: boolean },
+    {
+      writer,
+      restart,
+      reloading,
+    }: { writer: string; restart: boolean; reloading: boolean },
   ): Promise<Stage> {
     const { sql } = load;
     const stage = quote(`_elt_stage_${this.#hash}`);
     const stores = this.table.columns
       .filter((column) => column.storesFile)
       .map((column) => new PostgresFileStore(this.schema, this.table, column));
-    const replacing = this.replaces || restart;
-    const fit = await load.transaction(async (sql) => {
+    let mode: ReloadMode = await load.transaction(async (sql) => {
       await this.#refuse(sql, writer);
       await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${stage}`);
       await sql.unsafe(
         `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
       );
       for (const store of stores) await store.stage(sql);
-      const stored = await this.#fit(sql, stage);
-      await this.#refuseReaderView(sql, stored === 'stale');
-      if (stored === 'fits' && !replacing) await this.inspect(sql);
-      return stored;
+      const target = await this.#fit(sql, this.qualifiedName, stage);
+      const hidden = await this.#fit(sql, this.#hidden, stage);
+      const decided = reloadMode({ reloading, restart, target, hidden });
+      // A hidden target no reload continues is a leftover readers never saw.
+      if (decided !== 'continue')
+        await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
+      await this.#refuseReaderView(sql, target === 'stale');
+      if (decided === 'load' && !this.replaces) await this.inspect(sql);
+      return decided;
     });
+    const fresh = mode === 'create' || mode === 'reload';
+    // The hidden target of a reload exists once its first commit made it.
+    let opened = mode === 'continue';
+    const open = () => mode === 'reload' || mode === 'continue';
+    const into = () => (open() ? this.#hidden : this.qualifiedName);
+    const tables = () =>
+      open() ? [this.qualifiedName, this.#hidden] : [this.qualifiedName];
     const { columns } = this.table;
     // One JSON parameter per batch, cast back per column: no bind-parameter
     // limit. Declared text so the driver sends it as given.
@@ -519,8 +556,9 @@ export abstract class PostgresWriter extends Writer {
       pending = [];
       await sql.unsafe(insert, [JSON.stringify(rows)]);
     };
-    // Scopes the stage dropped, which the next commit empties in the target.
-    let resets: (Partition | null)[] = [];
+    // Partitions the stage dropped, which the next commit empties in the
+    // table it merges into.
+    let resets: Partition[] = [];
     const drop = async () => {
       pending = [];
       resets = [];
@@ -529,14 +567,27 @@ export abstract class PostgresWriter extends Writer {
     };
     let committed = false;
     return {
-      fresh: fit !== 'fits',
-      values: this.values(sql),
+      fresh,
+      get reloading() {
+        return open();
+      },
+      values: this.values(sql, () =>
+        open() ? [this.table.name, this.#hiddenName] : [this.table.name],
+      ),
       apply: async (operation) => {
         if (operation.type === 'RESET') {
           await flush();
-          const [rows, values] = this.#scope(operation.partition);
+          const { partition } = operation;
+          if (partition === null) {
+            // The whole stream starts over in a new hidden target.
+            await drop();
+            mode = 'reload';
+            opened = false;
+            return;
+          }
+          const [rows, values] = this.#scope(partition);
           await sql.unsafe(`DELETE FROM ${stage}${rows}`, values);
-          resets.push(operation.partition);
+          resets.push(partition);
           return;
         }
         let data = operation.type === 'RECORD' ? operation.data : undefined;
@@ -558,28 +609,39 @@ export abstract class PostgresWriter extends Writer {
       commit: async () => {
         await flush();
         await load.transaction(async (sql) => {
-          if (fit === 'stale' && !committed) {
-            await this.#own(sql, writer);
-            for (const store of stores) await store.publish(sql);
-            await this.#rebuild(sql, stage, load.loadedAt);
-          } else {
-            if (!committed) await this.#create(sql, writer, replacing);
-            if (replacing && !committed) await this.replace(sql);
-            for (const partition of resets) {
-              const [rows, values] = this.#scope(partition);
-              await sql.unsafe(
-                `DELETE FROM ${this.qualifiedName}${rows}`,
-                values,
-              );
+          if (open()) {
+            if (!opened) {
+              await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
+              await sql.unsafe(`CREATE TABLE ${this.#tableSQL(this.#hidden)}`);
+              await this.build(sql, this.#hidden);
             }
-            for (const store of stores) await store.publish(sql);
-            await this.merge(sql, stage, load.loadedAt);
+            if (!committed) await this.#own(sql, writer);
+          } else if (!committed) {
+            await this.#create(sql, writer, this.replaces);
+            if (this.replaces) await this.replace(sql);
           }
+          for (const partition of resets) {
+            const [rows, values] = this.#scope(partition);
+            await sql.unsafe(`DELETE FROM ${into()}${rows}`, values);
+          }
+          for (const store of stores) await store.publish(sql);
+          await this.merge(sql, stage, load.loadedAt, into());
           await sql.unsafe(`TRUNCATE ${stage}`);
-          for (const store of stores) await store.prune(sql);
+          for (const store of stores) await store.prune(sql, tables());
         });
+        opened = open();
         committed = true;
         resets = [];
+      },
+      complete: async () => {
+        if (!open()) return;
+        await load.transaction(async (sql) => {
+          await this.#swap(sql);
+          for (const store of stores)
+            await store.prune(sql, [this.qualifiedName]);
+        });
+        mode = 'load';
+        opened = false;
       },
       discard: drop,
       [Symbol.asyncDispose]: async () => {

@@ -971,3 +971,151 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
 
   assert.deepEqual(await ids(), ['1', '2']);
 });
+
+test('a reset reloads into a hidden file or folder: readers keep the old records until the stream ends, a failed reload resumes, and a new reset discards it', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reload-'));
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    primaryKey: ['id'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  // A function step holds the read between two checkpoints.
+  let script: (SourceMessage | Error | (() => Promise<void>))[] = [];
+  const received: unknown[] = [];
+  class Scripted extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'scripted';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      received.push(state);
+      for (const step of script) {
+        if (step instanceof Error) throw step;
+        if (typeof step === 'function') await step();
+        else yield step;
+      }
+    }
+  }
+  const row = (id: string) => ({ stream: 'items', data: { id } });
+  const reset = { type: 'RESET' as const, stream: 'items' };
+  const state = (at: string) => ({
+    type: 'STATE' as const,
+    stream: 'items',
+    state: { at },
+  });
+  const destination = new MarkdownDestination({
+    path: join(scratch.path, 'md'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const decode = (document: string) =>
+    Array.from(
+      document.matchAll(/^<!-- elt-record:([A-Za-z0-9+/=]+) -->$/gm),
+      ([, encoded]) =>
+        JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8')).id,
+    );
+  const layouts = [
+    {
+      target: destination.file('items.md'),
+      visible: async () =>
+        decode(
+          await readFile(join(destination.path, 'items.md'), 'utf8'),
+        ).sort(),
+    },
+    {
+      target: destination.folder('items'),
+      visible: async () => {
+        const folder = join(destination.path, 'items');
+        return (
+          await Promise.all(
+            (await readdir(folder)).map(async (file) =>
+              decode(await readFile(join(folder, file), 'utf8')),
+            ),
+          )
+        )
+          .flat()
+          .sort();
+      },
+    },
+  ];
+
+  for (const { target, visible } of layouts) {
+    received.length = 0;
+    const pipeline = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new Scripted(),
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(items, target, {
+              id: target.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
+        }),
+      ],
+    });
+    script = [row('a1'), row('a2'), state('a')];
+    await pipeline.run();
+
+    // Chunk 1 of the reload committed; a reader still sees the previous records.
+    const reached = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const pause = async () => {
+      reached.resolve();
+      await gate.promise;
+    };
+    script = [reset, row('b1'), state('b1'), pause, row('b2'), state('b')];
+    const reloading = pipeline.run();
+    await reached.promise;
+    const during = await visible();
+    gate.resolve();
+    await reloading;
+    assert.deepEqual(during, ['a1', 'a2'], target.name);
+    assert.deepEqual(await visible(), ['b1', 'b2'], target.name);
+
+    // A reload that fails keeps the previous records visible and resumes.
+    script = [reset, row('c1'), state('c1'), new Error('gone')];
+    await assert.rejects(pipeline.run(), PipelineError);
+    assert.deepEqual(await visible(), ['b1', 'b2'], target.name);
+    script = [row('c2'), state('c')];
+    await pipeline.run();
+    assert.deepEqual(await visible(), ['c1', 'c2'], target.name);
+
+    // A reset while a reload is open starts it over without the stale records.
+    script = [reset, row('d1'), state('d1'), new Error('gone')];
+    await assert.rejects(pipeline.run(), PipelineError);
+    script = [reset, row('e1'), state('e')];
+    await pipeline.run();
+    assert.deepEqual(await visible(), ['e1'], target.name);
+    assert.deepEqual(
+      received.slice(1),
+      [{ at: 'a' }, { at: 'b' }, { at: 'c1' }, { at: 'c' }, { at: 'd1' }],
+      target.name,
+    );
+  }
+  // Each completed reload took its hidden target's place.
+  assert.deepEqual(
+    (await readdir(destination.path)).filter((name) => name.endsWith('.next')),
+    [],
+  );
+});

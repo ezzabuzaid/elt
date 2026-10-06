@@ -1020,7 +1020,7 @@ test('Mail message streams re-read only messages whose files or index attachment
       rows(
         join(dir.path, 'state.sqlite'),
         "SELECT id, state FROM checkpoints WHERE id IN ('messageFiles','messageHeaders','messageParts','attachments') ORDER BY id",
-      ).map(({ id, state }) => [id, JSON.parse(String(state)).groups]),
+      ).map(({ id, state }) => [id, JSON.parse(String(state)).state.groups]),
     );
   await run.run();
   const saved = groups();

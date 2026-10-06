@@ -985,6 +985,10 @@ var Replicated = class {
   started = false;
   ended = false;
   restart = false;
+  // The copy's last run left a reload open.
+  reloading = false;
+  // The state last saved, which completing a reload saves again.
+  saved = null;
   settled = false;
   copy;
   observe;
@@ -1069,7 +1073,9 @@ async function transfer(source, destination, run, replications) {
       try {
         const { run: run2, id } = checkpoint(replication);
         states.set(replication.stream.name, run2.state(id));
+        replication.saved = run2.state(id);
         replication.restart = run2.restart(id);
+        replication.reloading = run2.reloading(id);
         reading.push(replication);
       } catch (error) {
         fail(replication, error);
@@ -1083,10 +1089,13 @@ async function transfer(source, destination, run, replications) {
       try {
         replication.stage = await load.prepare(replication.copy.configuration, replication.copy.to, {
           writer: replication.copy.writer(source),
-          restart: replication.restart
+          restart: replication.restart,
+          reloading: replication.reloading
         });
-        if (replication.stage.fresh)
+        if (replication.stage.fresh) {
           states.set(replication.stream.name, null);
+          replication.saved = null;
+        }
         await replication.files.reconcile(replication.stage.values);
         prepared.push(replication);
       } catch (error) {
@@ -1133,6 +1142,13 @@ async function transfer(source, destination, run, replications) {
               const stage = started(replication);
               if (!replication.failed && !replication.clean)
                 await commit(replication);
+              if (replication.failures.length === 0 && stage.reloading) {
+                await stage.complete();
+                if (incremental(replication)) {
+                  const { run: run2, id } = checkpoint(replication);
+                  await run2.save(id, replication.saved, false);
+                }
+              }
               replication.stage = void 0;
               await stage[Symbol.asyncDispose]();
               replication.settle();
@@ -1147,7 +1163,8 @@ async function transfer(source, destination, run, replications) {
               throw new TypeError(`Full refresh stream ${message2.stream} emitted a checkpoint`);
             await commit(replication);
             const { run: run2, id } = checkpoint(replication);
-            await run2.save(id, operation.state);
+            await run2.save(id, operation.state, started(replication).reloading);
+            replication.saved = operation.state;
           } else {
             await started(replication).apply(operation.type === "RECORD" ? {
               ...operation,
@@ -1536,6 +1553,17 @@ var readerCatalog = Object.freeze({
   })
 });
 
+// packages/elt/dist/core/reload-mode.js
+function reloadMode({ reloading, restart, target, hidden }) {
+  if (reloading)
+    return hidden === "fits" ? "continue" : "reload";
+  if (target === "missing")
+    return "create";
+  if (restart || target === "stale")
+    return "reload";
+  return "load";
+}
+
 // packages/elt/dist/core/record-validation.js
 var itemTypes = /* @__PURE__ */ new Set(["string", "integer", "number", "boolean"]);
 var scalarTypes = /* @__PURE__ */ new Set([...itemTypes, "null"]);
@@ -1813,7 +1841,7 @@ var CheckpointStore = class {
         const restart = saved !== void 0 && !changed && !isDeepStrictEqual4(savedShape, currentShape);
         checkpoints.set(id, {
           binding,
-          state: saved === void 0 || changed || restart ? null : JSON.parse(saved.state),
+          saved: saved === void 0 || changed || restart ? { state: null, reloading: false } : JSON.parse(saved.state),
           changed,
           restart
         });
@@ -1828,12 +1856,14 @@ var CheckpointStore = class {
       };
       return work({
         // A source may mutate its input state, but only an acknowledged message may advance it.
-        state: (id) => structuredClone(checkpoint(id).state),
+        state: (id) => structuredClone(checkpoint(id).saved.state),
         restart: (id) => checkpoint(id).restart,
-        save: async (id, state) => {
+        reloading: (id) => checkpoint(id).saved.reloading,
+        save: async (id, state, reloading) => {
           const { binding } = checkpoint(id);
+          const saved = { state, reloading };
           try {
-            await session.save(id, { binding, state: JSON.stringify(state) });
+            await session.save(id, { binding, state: JSON.stringify(saved) });
           } catch (cause) {
             throw new Error(`Checkpoint ${id} was not saved after the destination committed; the next run replays from the last saved checkpoint`, { cause });
           }
@@ -2099,6 +2129,7 @@ export {
   PipelineError,
   Pipeline,
   readerCatalog,
+  reloadMode,
   validateRecords,
   diffSnapshot,
   diffGroupedSnapshot,

@@ -73,13 +73,29 @@ export class PostgresFileStore {
     await sql.unsafe(`DROP TABLE pg_temp.${this.#staged}`);
   }
 
-  // Called inside each commit, after the merge: chunks no row refers to,
-  // such as a deduplication loser's, go. This store belongs to just one
-  // target column and one writer.
+  // Called inside each commit, after the merge: chunks no row of the tables
+  // refers to, such as a deduplication loser's, go. The tables are the target
+  // and, while a reload is open, its hidden target. This store belongs to
+  // just one target column and one writer.
   // ponytail: scans this column's chunks; use targeted cleanup if checkpoint cost grows.
-  async prune(sql: postgres.Sql): Promise<void> {
+  async prune(sql: postgres.Sql, tables: readonly string[]): Promise<void> {
+    const referring: string[] = [];
+    for (const table of tables) {
+      const [column] = await sql.unsafe(
+        'SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = $2 AND NOT attisdropped',
+        [table, this.column.name],
+      );
+      if (column !== undefined) referring.push(table);
+    }
     await sql.unsafe(
-      `DELETE FROM ${this.qualifiedName} AS chunks WHERE NOT EXISTS (SELECT 1 FROM ${quote(this.schema)}.${this.table.quotedName} AS target WHERE target.${this.column.quotedName} = chunks."file")`,
+      `DELETE FROM ${this.qualifiedName} AS chunks WHERE ${
+        referring
+          .map(
+            (table) =>
+              `NOT EXISTS (SELECT 1 FROM ${table} AS kept WHERE kept.${this.column.quotedName} = chunks."file")`,
+          )
+          .join(' AND ') || 'true'
+      }`,
     );
   }
 }

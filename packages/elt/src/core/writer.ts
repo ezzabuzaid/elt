@@ -27,8 +27,9 @@ export type LoadFailure = {
   readonly error: unknown;
 };
 
-// What a stage applies, in source order. A RESET drops what the stage holds
-// in its scope, and its next commit first empties that scope of the target.
+// What a stage applies, in source order. A RESET of the whole stream opens a
+// reload (see Stage.reloading). A RESET of one partition drops what the stage
+// holds of it, and the next commit first empties that partition of the target.
 export type WriteOperation =
   | { readonly type: 'RECORD'; readonly data: unknown }
   | {
@@ -44,9 +45,16 @@ export type FieldValues = (field: string) => AsyncIterable<unknown>;
 // becomes durable and visible together, or not at all.
 export type Stage = AsyncDisposable & {
   // The target holds none of the copy's earlier rows: this load creates it,
-  // or rebuilds it because its stored shape no longer fits the stream, so
-  // the copy reloads from no checkpoint.
+  // or reloads it from scratch, so the copy reloads from no checkpoint.
   readonly fresh: boolean;
+  // A reload is open: commits go to a hidden target that readers cannot see
+  // until complete() swaps it in, so a reload that fails resumes from its
+  // checkpoints. It opens at prepare, for a restart, a resumed reload or a
+  // stored target that no longer fits, or when a RESET of the whole stream
+  // arrives.
+  readonly reloading: boolean;
+  // The stream ended without a failure: an open reload replaces the target.
+  complete(): Promise<void>;
   // Current target values, excluding pending stage operations. Read while
   // holding the target's write lock, including after commit reacquires it.
   values: FieldValues;

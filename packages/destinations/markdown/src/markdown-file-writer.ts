@@ -24,8 +24,8 @@ export class MarkdownFileWriter extends MarkdownWriter {
     return this.target.name;
   }
 
-  protected override async read() {
-    const path = join(this.path, this.target.name);
+  protected override async read(name: string) {
+    const path = join(this.path, name);
     if (!(await this.assertManagedFile(path))) return { rows: [] };
     const existing = await readFile(path, 'utf8');
     return {
@@ -35,11 +35,11 @@ export class MarkdownFileWriter extends MarkdownWriter {
   }
 
   protected override async publish(
+    into: string,
     rows: readonly unknown[],
     writer: string,
   ): Promise<void> {
     const { stream, target } = this;
-    const path = join(this.path, target.name);
     await using staging = await mkdtempDisposable(
       join(this.path, '.markdown-'),
     );
@@ -50,7 +50,11 @@ export class MarkdownFileWriter extends MarkdownWriter {
       for (const [index, record] of rows.entries())
         await file.writeFile(target.document.render(record, index + 1));
     }
-    await this.assertManagedFile(path);
-    await rename(stagedPath, path);
+    await this.replace(stagedPath, join(this.path, into));
+  }
+
+  protected override async replace(from: string, to: string): Promise<void> {
+    await this.assertManagedFile(to);
+    await rename(from, to);
   }
 }

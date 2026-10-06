@@ -109,8 +109,13 @@ export class SQLiteTable extends Target {
   }
 
   get createTableSQL(): string {
+    return `CREATE TABLE IF NOT EXISTS ${this.definition(this.quotedName)}`;
+  }
+
+  // A table named name with these columns, as CREATE TABLE spells it.
+  definition(name: string): string {
     if (this.columns.length === 0)
       throw new TypeError('Resolve inferred columns before creating a table');
-    return `CREATE TABLE IF NOT EXISTS ${this.quotedName} (${this.columns.map((column) => column.definition).join(', ')}, "loaded_at" TEXT NOT NULL${canonical('timestamp', '"loaded_at"')}) STRICT`;
+    return `${name} (${this.columns.map((column) => column.definition).join(', ')}, "loaded_at" TEXT NOT NULL${canonical('timestamp', '"loaded_at"')}) STRICT`;
   }
 }

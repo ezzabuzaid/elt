@@ -5,9 +5,11 @@ import type {
   CopyConfiguration,
   Deduplication,
   FieldValues,
+  ReloadMode,
   Stage,
+  StoredFit,
 } from '@workspace/elt';
-import { TargetOwnedError, Writer } from '@workspace/elt';
+import { TargetOwnedError, Writer, reloadMode } from '@workspace/elt';
 
 import { MarkdownDocument } from './markdown-document.ts';
 
@@ -35,36 +37,59 @@ export abstract class MarkdownWriter extends Writer {
   // The target's name, which also names its lock.
   protected abstract readonly name: string;
 
-  // The owner and records the target holds now; none when it does not exist.
-  protected abstract read(): Promise<{
+  // The owner and records the target named name holds now; none when it does
+  // not exist.
+  protected abstract read(name: string): Promise<{
     readonly owner?: string;
     readonly rows: readonly unknown[];
   }>;
 
-  // Replaces the whole target with rows, owned by writer, in one step.
+  // Replaces the whole target named into with rows, owned by writer, in one
+  // step.
   protected abstract publish(
+    into: string,
     rows: readonly unknown[],
     writer: string,
   ): Promise<void>;
 
-  private readonly values: FieldValues = async function* (
-    this: MarkdownWriter,
-    field: string,
-  ) {
-    for (const row of (await this.read()).rows)
-      yield Reflect.get(Object(row), field);
-  }.bind(this);
+  // Puts the target at path from in place of the one at path to.
+  protected abstract replace(from: string, to: string): Promise<void>;
+
+  // A reload's hidden target, beside the target and invisible to readers.
+  private get hiddenName(): string {
+    return `.markdown-${this.name}.next`;
+  }
+
+  private removeHidden(): Promise<void> {
+    return rm(join(this.path, this.hiddenName), {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  // The field's values in each of the targets named, which while a reload is
+  // open are the target and its hidden target.
+  private values(names: () => readonly string[]): FieldValues {
+    const read = (name: string) => this.read(name);
+    return async function* (field) {
+      for (const name of names())
+        for (const row of (await read(name)).rows)
+          yield Reflect.get(Object(row), field);
+    };
+  }
 
   override async clear(
     writer: string,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
     await using _ = await this.lock();
-    const { owner } = await this.read();
+    const { owner } = await this.read(this.name);
     if (owner !== undefined && owner !== writer)
       throw new TargetOwnedError(this.name, owner, writer);
     await rm(join(this.path, this.name), { recursive: true, force: true });
-    await committed?.(this.values);
+    // Clearing a copy also abandons the reload it left open.
+    await this.removeHidden();
+    await committed?.(this.values(() => [this.name]));
   }
 
   // An exclusive directory prevents two cooperating writers from publishing the same target.
@@ -76,30 +101,54 @@ export abstract class MarkdownWriter extends Writer {
   }
 
   // Each target is its own file or folder, so its in-memory rows are already
-  // this stream's stage: a commit publishes only this target.
-  // A restart keeps none of the target's rows, so its first commit replaces
-  // them, as an overwrite does.
+  // this stream's stage: a commit publishes only this target, or while a
+  // reload is open its hidden target, which complete() puts in its place.
   async prepare({
     writer,
     restart,
+    reloading,
   }: {
     writer: string;
     restart: boolean;
+    reloading: boolean;
   }): Promise<Stage> {
     const lock = await this.lock();
     try {
-      const { owner, rows } = await this.read();
-      if (owner !== undefined && owner !== writer)
-        throw new TargetOwnedError(this.name, owner, writer);
-      const mode = this.configuration.destinationSyncMode;
+      const target = await this.read(this.name);
+      if (target.owner !== undefined && target.owner !== writer)
+        throw new TargetOwnedError(this.name, target.owner, writer);
+      const hidden = await this.read(this.hiddenName);
+      // Markdown stores no shape, so a stored target always fits the stream.
+      const fit = ({ owner }: { readonly owner?: string }): StoredFit =>
+        owner === undefined ? 'missing' : 'fits';
+      let mode: ReloadMode = reloadMode({
+        reloading,
+        restart,
+        target: fit(target),
+        hidden: fit(hidden),
+      });
+      // A hidden target no reload continues is a leftover readers never saw.
+      if (mode !== 'continue') await this.removeHidden();
+      const open = () => mode === 'reload' || mode === 'continue';
+      const sync = this.configuration.destinationSyncMode;
       // ponytail: Markdown reconciliation holds the target in memory; use an on-disk index if exports outgrow memory.
       let published = new Map<string, unknown>();
-      if (!restart && (mode === 'append' || mode === 'append_dedup'))
-        for (const row of rows) this.add(published, row);
+      // A reload keeps none of the target's rows; one it continues keeps the
+      // hidden target's.
+      let kept: readonly unknown[] = [];
+      if (mode === 'continue') kept = hidden.rows;
+      else if (mode === 'load') kept = target.rows;
+      if (sync === 'append' || sync === 'append_dedup')
+        for (const row of kept) this.add(published, row);
       let working = new Map(published);
       return {
-        fresh: owner === undefined,
-        values: this.values,
+        fresh: mode === 'create' || mode === 'reload',
+        get reloading() {
+          return open();
+        },
+        values: this.values(() =>
+          open() ? [this.name, this.hiddenName] : [this.name],
+        ),
         apply: async (operation) => {
           if (operation.type === 'RECORD') {
             // Validate every observation, including deduplication losers.
@@ -109,9 +158,15 @@ export abstract class MarkdownWriter extends Writer {
           }
           if (operation.type === 'RESET') {
             const { partition } = operation;
+            if (partition === null) {
+              // The whole stream starts over in a new hidden target.
+              mode = 'reload';
+              published = new Map();
+              working = new Map();
+              return;
+            }
             for (const [key, row] of working)
               if (
-                partition === null ||
                 Object.entries(partition).every(
                   ([field, value]) => Reflect.get(Object(row), field) === value,
                 )
@@ -124,8 +179,20 @@ export abstract class MarkdownWriter extends Writer {
           working.delete(this.deduplication.key(operation.key));
         },
         commit: async () => {
-          await this.publish([...working.values()], writer);
+          await this.publish(
+            open() ? this.hiddenName : this.name,
+            [...working.values()],
+            writer,
+          );
           published = new Map(working);
+        },
+        complete: async () => {
+          if (!open()) return;
+          await this.replace(
+            join(this.path, this.hiddenName),
+            join(this.path, this.name),
+          );
+          mode = 'load';
         },
         discard: async () => {
           working = new Map(published);

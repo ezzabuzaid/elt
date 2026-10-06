@@ -26,12 +26,22 @@ export class SQLiteFileStore {
     database.exec(
       `CREATE TABLE IF NOT EXISTS ${chunks} ("file" INTEGER NOT NULL, "n" INTEGER NOT NULL, "bytes" BLOB NOT NULL, PRIMARY KEY ("file", "n")) STRICT`,
     );
-    database.exec(
-      `CREATE TRIGGER IF NOT EXISTS ${quote(`${this.name}_delete`)} AFTER DELETE ON ${table.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`,
-    );
-    database.exec(
-      `CREATE TRIGGER IF NOT EXISTS ${quote(`${this.name}_update`)} AFTER UPDATE OF ${column.quotedName} ON ${table.quotedName} WHEN old.${column.quotedName} IS NOT new.${column.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`,
-    );
+    // A reload can stage files before its target exists; the next load builds
+    // the store again, which attaches the triggers to the table swapped in.
+    if (
+      database
+        .prepare(
+          `SELECT 1 FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`,
+        )
+        .get(table.location)
+    ) {
+      database.exec(
+        `CREATE TRIGGER IF NOT EXISTS ${quote(`${this.name}_delete`)} AFTER DELETE ON ${table.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`,
+      );
+      database.exec(
+        `CREATE TRIGGER IF NOT EXISTS ${quote(`${this.name}_update`)} AFTER UPDATE OF ${column.quotedName} ON ${table.quotedName} WHEN old.${column.quotedName} IS NOT new.${column.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`,
+      );
+    }
     this.#next = database.prepare(
       `SELECT coalesce(max("file"), 0) + 1 AS "file" FROM ${chunks}`,
     );

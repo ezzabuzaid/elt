@@ -38,6 +38,10 @@ class Replicated<Target extends DestinationTarget> {
   started = false;
   ended = false;
   restart = false;
+  // The copy's last run left a reload open.
+  reloading = false;
+  // The state last saved, which completing a reload saves again.
+  saved: unknown = null;
   settled = false;
 
   readonly copy: Copy<Target>;
@@ -159,7 +163,9 @@ async function transfer<Target extends DestinationTarget>(
     try {
       const { run, id } = checkpoint(replication);
       states.set(replication.stream.name, run.state(id));
+      replication.saved = run.state(id);
       replication.restart = run.restart(id);
+      replication.reloading = run.reloading(id);
       reading.push(replication);
     } catch (error) {
       fail(replication, error);
@@ -178,10 +184,14 @@ async function transfer<Target extends DestinationTarget>(
         {
           writer: replication.copy.writer(source),
           restart: replication.restart,
+          reloading: replication.reloading,
         },
       );
-      // A target this load creates or rebuilds holds nothing to resume from.
-      if (replication.stage.fresh) states.set(replication.stream.name, null);
+      // A target this load creates or reloads holds nothing to resume from.
+      if (replication.stage.fresh) {
+        states.set(replication.stream.name, null);
+        replication.saved = null;
+      }
       await replication.files.reconcile(replication.stage.values);
       prepared.push(replication);
     } catch (error) {
@@ -231,6 +241,14 @@ async function transfer<Target extends DestinationTarget>(
             // so an empty overwrite still clears it.
             if (!replication.failed && !replication.clean)
               await commit(replication);
+            // A reload replaces the target only once every partition read.
+            if (replication.failures.length === 0 && stage.reloading) {
+              await stage.complete();
+              if (incremental(replication)) {
+                const { run, id } = checkpoint(replication);
+                await run.save(id, replication.saved, false);
+              }
+            }
             replication.stage = undefined;
             await stage[Symbol.asyncDispose]();
             replication.settle();
@@ -246,7 +264,8 @@ async function transfer<Target extends DestinationTarget>(
             );
           await commit(replication);
           const { run, id } = checkpoint(replication);
-          await run.save(id, operation.state);
+          await run.save(id, operation.state, started(replication).reloading);
+          replication.saved = operation.state;
         } else {
           await started(replication).apply(
             operation.type === 'RECORD'

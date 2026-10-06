@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  mkdtempDisposable,
   readFile,
   readdir,
   rename,
@@ -35,8 +36,8 @@ export class MarkdownFolderWriter extends MarkdownWriter {
     return this.target.name;
   }
 
-  protected override async read() {
-    const path = join(this.path, this.target.name);
+  protected override async read(name: string) {
+    const path = join(this.path, name);
     if (!(await this.assertManagedFolder(path))) return { rows: [] };
     const rows: unknown[] = [];
     for (const name of (await readdir(path)).sort()) {
@@ -54,46 +55,53 @@ export class MarkdownFolderWriter extends MarkdownWriter {
   }
 
   protected override async publish(
+    into: string,
     rows: readonly unknown[],
     writer: string,
   ): Promise<void> {
     const { stream, target, deduplication } = this;
-    const path = join(this.path, target.name);
+    await using staging = await mkdtempDisposable(
+      join(this.path, '.markdown-'),
+    );
+    const next = join(staging.path, 'next');
+    await mkdir(next, { mode: 0o700 });
+    await writeFile(
+      join(next, MarkdownFolder.markerName),
+      MarkdownFolder.markerFor(writer),
+      { flag: 'wx', mode: 0o600 },
+    );
+    for (const [index, record] of rows.entries()) {
+      const document =
+        target.document.header(stream) + target.document.render(record, 1);
+      // Plain modes identify occurrences; deduplication identifies logical keys.
+      const identity =
+        deduplication !== undefined
+          ? createHash('sha256').update(deduplication.key(record)).digest('hex')
+          : index.toString(16).padStart(64, '0');
+      await writeFile(join(next, `${identity}.md`), document, {
+        flag: 'wx',
+        mode: 0o600,
+      });
+    }
+    await this.replace(next, join(this.path, into));
+  }
+
+  // Moves the folder at to into a backup before moving from in its place, and
+  // restores the backup if that fails.
+  protected override async replace(from: string, to: string): Promise<void> {
+    const exists = await this.assertManagedFolder(to);
     const staging = await mkdtemp(join(this.path, '.markdown-'));
-    const next = join(staging, 'next');
     const previous = join(staging, 'previous');
     let preserveBackup = false;
     try {
-      await mkdir(next, { mode: 0o700 });
-      await writeFile(
-        join(next, MarkdownFolder.markerName),
-        MarkdownFolder.markerFor(writer),
-        { flag: 'wx', mode: 0o600 },
-      );
-      for (const [index, record] of rows.entries()) {
-        const document =
-          target.document.header(stream) + target.document.render(record, 1);
-        // Plain modes identify occurrences; deduplication identifies logical keys.
-        const identity =
-          deduplication !== undefined
-            ? createHash('sha256')
-                .update(deduplication.key(record))
-                .digest('hex')
-            : index.toString(16).padStart(64, '0');
-        await writeFile(join(next, `${identity}.md`), document, {
-          flag: 'wx',
-          mode: 0o600,
-        });
-      }
-      const exists = await this.assertManagedFolder(path);
       // ponytail: two renames leave a brief path gap; use generation pointers if readers need an atomic folder switch.
-      if (exists) await rename(path, previous);
+      if (exists) await rename(to, previous);
       try {
-        await rename(next, path);
+        await rename(from, to);
       } catch (error) {
         if (exists) {
           try {
-            await rename(previous, path);
+            await rename(previous, to);
           } catch (restoreError) {
             preserveBackup = true;
             throw new AggregateError(

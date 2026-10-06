@@ -445,6 +445,10 @@ class RecordingWriter extends Writer {
     log.push('open');
     return {
       fresh: false,
+      reloading: false,
+      complete: async () => {
+        log.push('complete');
+      },
       values: async function* () {},
       apply: async (operation: WriteOperation) => {
         log.push(
@@ -744,12 +748,12 @@ test('each checkpoint commits its partition, and a failing partition keeps its l
     'open',
     'apply {"site":"a","run":1}',
     'commit',
-    `save ${JSON.stringify({ partitions: [a] })}`,
+    `save ${JSON.stringify({ state: { partitions: [a] }, reloading: false })}`,
     'apply {"site":"b","run":1}',
     'discard',
     'apply {"site":"c","run":1}',
     'commit',
-    `save ${JSON.stringify({ partitions: [a, c] })}`,
+    `save ${JSON.stringify({ state: { partitions: [a, c] }, reloading: false })}`,
     'close',
   ]);
 
@@ -764,10 +768,13 @@ test('each checkpoint commits its partition, and a failing partition keeps its l
     ['c', { run: 1 }],
   ]);
   assert.deepEqual(JSON.parse(checkpoints.saved.get('pages')?.state ?? ''), {
-    partitions: ['a', 'b', 'c'].map((site) => ({
-      partition: { site },
-      state: { run: 2 },
-    })),
+    state: {
+      partitions: ['a', 'b', 'c'].map((site) => ({
+        partition: { site },
+        state: { run: 2 },
+      })),
+    },
+    reloading: false,
   });
 });
 
@@ -983,7 +990,7 @@ test('a stage that fails to commit fails only its stream: its later messages are
     'close',
     'apply {"id":"right-1"}',
     'commit',
-    'save {"at":1}',
+    'save {"state":{"at":1},"reloading":false}',
     'close',
   ]);
   assert.deepEqual([...checkpoints.saved.keys()], ['right']);
@@ -1027,7 +1034,7 @@ test('a checkpoint that fails to save fails only its stream, which keeps what it
     'close',
     'apply {"id":"right-1"}',
     'commit',
-    'save {"at":1}',
+    'save {"state":{"at":1},"reloading":false}',
     'close',
   ]);
   assert.deepEqual([...checkpoints.saved.keys()], ['right']);
@@ -1071,8 +1078,8 @@ test('a checkpoint whose state has a lone surrogate fails its stream before anyt
   assert.deepEqual(
     [...checkpoints.saved].map(([id, { state }]) => [id, state]),
     [
-      ['left', '{"at":1}'],
-      ['right', '{"at":1}'],
+      ['left', '{"state":{"at":1},"reloading":false}'],
+      ['right', '{"state":{"at":1},"reloading":false}'],
     ],
   );
 });

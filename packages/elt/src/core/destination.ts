@@ -13,13 +13,18 @@ export type DestinationSyncMode =
 // commits only its own stream's operations, so a failed stream never publishes
 // rows. prepare refuses a target another writer owns (writer names the copy
 // across runs) before anything is read, and publishes nothing: a target
-// appears no later than its first commit. restart replaces the copy's rows at
-// its first commit, as the stream's shape changed since its checkpoint.
+// appears no later than its first commit. restart opens a reload, as the
+// stream's shape changed since its checkpoint; reloading continues the reload
+// the copy's last run left open.
 export type Load<Target extends DestinationTarget> = AsyncDisposable & {
   prepare(
     configuration: CopyConfiguration,
     target: Target,
-    binding: { readonly writer: string; readonly restart: boolean },
+    binding: {
+      readonly writer: string;
+      readonly restart: boolean;
+      readonly reloading: boolean;
+    },
   ): Promise<Stage>;
 };
 

@@ -267,6 +267,7 @@ test("a competing load cannot reconcile pending files between another load's com
     const stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
       restart: false,
+      reloading: false,
     });
     try {
       await stage.apply({ type: 'RECORD', data: { id: 'a' } });
@@ -1445,7 +1446,7 @@ test('a Postgres checkpoint store resumes from the last acknowledged state in th
       received.push(structuredClone(state));
       if (state !== null && typeof state === 'object')
         Reflect.set(state, 'mutated', true);
-      for (const next of states) await checkpoints.save('copy', next);
+      for (const next of states) await checkpoints.save('copy', next, false);
       if (fail) throw new Error('source broke');
     });
 
@@ -1460,7 +1461,7 @@ test('a Postgres checkpoint store resumes from the last acknowledged state in th
     [
       ...(await database.sql`SELECT id, state::text FROM raw._elt_checkpoints`),
     ].map((row) => ({ ...row })),
-    [{ id: 'copy', state: '{"page":3}' }],
+    [{ id: 'copy', state: '{"state":{"page":3},"reloading":false}' }],
   );
 });
 
@@ -1472,7 +1473,7 @@ test('a changed binding is refused until the Postgres checkpoint is reset', asyn
   });
   const save = (target: string) =>
     store.run(only('copy', { target }), async (checkpoints) =>
-      checkpoints.save('copy', { from: checkpoints.state('copy') }),
+      checkpoints.save('copy', { from: checkpoints.state('copy') }, false),
     );
 
   await save('a');
@@ -1622,7 +1623,7 @@ test('a copy commits at each checkpoint, its rows share one loaded_at, and no ch
 
   assert.deepEqual(midway, {
     rows: ['1'],
-    state: ['{"page":1}'],
+    state: ['{"state":{"page":1},"reloading":false}'],
     checkpoints: ['idle'],
   });
   assert.deepEqual(
@@ -1646,7 +1647,7 @@ test('replications checkpoint in parallel, and one already running is refused', 
     store.run(only(id), async (checkpoints) => {
       if (++started === 2) release();
       await bothStarted;
-      await checkpoints.save(id, { done: true });
+      await checkpoints.save(id, { done: true }, false);
     });
 
   // Both runs wait until the other has started, so both locks are held at once.
@@ -1681,7 +1682,7 @@ test('checkpoint state keeps text JSONB would refuse, and the store holds no cre
   const state = { nul: 'a\u0000b', lone: '\ud800' };
 
   await store.run(only('copy'), (checkpoints) =>
-    checkpoints.save('copy', state),
+    checkpoints.save('copy', state, false),
   );
   const resumed = await store.run(only('copy'), async (checkpoints) =>
     checkpoints.state('copy'),
@@ -1951,7 +1952,9 @@ test('a stream that fails publishes none of its staged rows while its sibling co
   assert.deepEqual(await loaded(database, 'broken'), []);
   assert.deepEqual(await loaded(database, 'good'), ['g1:1']);
   assert.deepEqual(await loaded(database, 'snapshot'), ['old:1']);
-  assert.deepEqual(await savedStates(database), ['good={"page":1}']);
+  assert.deepEqual(await savedStates(database), [
+    'good={"state":{"page":1},"reloading":false}',
+  ]);
 });
 
 test("a failing partition's flushed rows are discarded while the next partition commits", async () => {
@@ -2046,7 +2049,7 @@ test("a failing partition's flushed rows are discarded while the next partition 
     ['b/1'],
   );
   assert.deepEqual(await savedStates(database), [
-    'pages={"partitions":[{"partition":{"site":"b"},"state":{"page":1}}]}',
+    'pages={"state":{"partitions":[{"partition":{"site":"b"},"state":{"page":1}}]},"reloading":false}',
   ]);
 });
 
@@ -2438,8 +2441,8 @@ test("a statement that fails in one stream's merge does not erase a sibling's st
     [{ id: 'a' }],
   );
   assert.deepEqual(await savedStates(database), [
-    'dated={"page":0}',
-    'staged={"page":1}',
+    'dated={"state":{"page":0},"reloading":false}',
+    'staged={"state":{"page":1},"reloading":false}',
   ]);
   assert.match(
     String(error.results[1]?.failures[0]?.error),
@@ -3111,6 +3114,7 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
       await using stage = await load.prepare(copy.configuration, copy.to, {
         writer: copy.writer(source),
         restart: false,
+        reloading: false,
       });
       assert.ok(stage);
       const blocking = await sql`SELECT mode FROM pg_locks
@@ -3546,7 +3550,8 @@ test('a stream whose shape changes reloads into a table rebuilt and swapped in u
   assert.deepEqual(await loaded(), [{ id: '1', name: 'one', size: 'L' }]);
   assert.ok((await shape()).includes('size text Size.'));
 
-  // A reader that holds the view outlasts the swap's wait; the next run swaps.
+  // A reader that holds the view outlasts the swap's wait; the reload stays
+  // hidden, and the next run continues it from its checkpoint and swaps.
   const reader = postgres(database.url, { max: 1, onnotice: () => {} });
   try {
     await reader.begin(async (sql) => {
@@ -3562,7 +3567,7 @@ test('a stream whose shape changes reloads into a table rebuilt and swapped in u
   assert.deepEqual(await loaded(), [{ id: '1', name: 'one', size: 'L' }]);
   await run({ id, name }, [{ id: '1', name: 'one' }]);
   assert.deepEqual(await loaded(), [{ id: '1', name: 'one' }]);
-  assert.deepEqual(received.splice(0), [null, null]);
+  assert.deepEqual(received.splice(0), [null, {}]);
 });
 
 test('a load holds no transaction while the source reads, so a run over many tables holds none of their locks', async () => {
@@ -3646,4 +3651,123 @@ test('a load holds no transaction while the source reads, so a run over many tab
     ),
     [1],
   );
+});
+
+test('a reset reloads into a hidden table: readers keep the old rows until the stream ends, a failed reload resumes, and a new reset discards it', async () => {
+  await using database = await scratchDatabase(server);
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    primaryKey: ['id'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  // A step that holds the read between two checkpoints until the test lets it go.
+  const pause = Symbol('pause');
+  let script: (SourceMessage | Error | typeof pause)[] = [];
+  const received: unknown[] = [];
+  const reached = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+  class Scripted extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'scripted';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      received.push(state);
+      for (const step of script) {
+        if (step instanceof Error) throw step;
+        if (step === pause) {
+          reached.resolve();
+          await gate.promise;
+          continue;
+        }
+        yield step;
+      }
+    }
+  }
+  const row = (id: string) => ({ stream: 'items', data: { id } });
+  const reset = { type: 'RESET' as const, stream: 'items' };
+  const state = (at: string) => ({
+    type: 'STATE' as const,
+    stream: 'items',
+    state: { at },
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Scripted(),
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(items, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+  const visible = async () =>
+    (await database.sql`SELECT id FROM raw.items ORDER BY id`).map(
+      ({ id }) => id,
+    );
+
+  script = [row('a1'), row('a2'), state('a')];
+  await pipeline.run();
+
+  // Chunk 1 of the reload committed; readers on another connection still
+  // see the previous rows.
+  script = [reset, row('b1'), state('b1'), pause, row('b2'), state('b')];
+  const reloading = pipeline.run();
+  await reached.promise;
+  const during = await visible();
+  gate.resolve();
+  await reloading;
+  assert.deepEqual(during, ['a1', 'a2']);
+  assert.deepEqual(await visible(), ['b1', 'b2']);
+
+  // A reload that fails keeps the previous rows visible and resumes.
+  script = [reset, row('c1'), state('c1'), new Error('gone')];
+  await assert.rejects(pipeline.run(), PipelineError);
+  assert.deepEqual(await visible(), ['b1', 'b2']);
+  script = [row('c2'), state('c')];
+  await pipeline.run();
+  assert.deepEqual(await visible(), ['c1', 'c2']);
+
+  // A reset while a reload is open starts it over without the stale rows.
+  script = [reset, row('d1'), state('d1'), new Error('gone')];
+  await assert.rejects(pipeline.run(), PipelineError);
+  script = [reset, row('e1'), state('e')];
+  await pipeline.run();
+  assert.deepEqual(await visible(), ['e1']);
+  assert.deepEqual(received.slice(1), [
+    { at: 'a' },
+    { at: 'b' },
+    { at: 'c1' },
+    { at: 'c' },
+    { at: 'd1' },
+  ]);
 });

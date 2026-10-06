@@ -5,11 +5,14 @@
     "up": {
       "command": "docker compose -f infra/docker-compose.yml up -d --wait"
     },
+    "up-sqlserver": {
+      "command": "docker compose -f infra/docker-compose.yml --profile sqlserver up -d --wait sqlserver"
+    },
     "down": {
-      "command": "docker compose -f infra/docker-compose.yml down"
+      "command": "docker compose -f infra/docker-compose.yml --profile sqlserver down"
     },
     "reset": {
-      "command": "docker compose -f infra/docker-compose.yml down --volumes && docker compose -f infra/docker-compose.yml up -d --wait"
+      "command": "docker compose -f infra/docker-compose.yml --profile sqlserver down --volumes && docker compose -f infra/docker-compose.yml up -d --wait"
     }
   }
 }

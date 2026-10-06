@@ -90,10 +90,29 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     this.index(database);
   }
 
-  private index(database: DatabaseSync): void {
+  private index(
+    database: DatabaseSync,
+    name = this.dedupIndex,
+    on = this.table.quotedName,
+  ): void {
     database.exec(
-      `CREATE UNIQUE INDEX ${this.dedupIndex} ON ${this.table.quotedName} (${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')})`,
+      `CREATE UNIQUE INDEX ${name} ON ${on} (${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')})`,
     );
+  }
+
+  // A reload's hidden target merges on its key from its first commit; SQLite
+  // cannot rename an index, so the target's own is built once it is swapped in.
+  get #provisionalIndex(): string {
+    return `${this.dedupIndex.slice(0, -1)}_next"`;
+  }
+
+  protected override build(database: DatabaseSync, into: string): void {
+    this.index(database, this.#provisionalIndex, into);
+  }
+
+  protected override adopt(database: DatabaseSync): void {
+    database.exec(`DROP INDEX IF EXISTS ${this.#provisionalIndex}`);
+    this.index(database);
   }
 
   // The result of applying the staged operations one at a time: a staged
@@ -105,12 +124,13 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     database: DatabaseSync,
     stage: string,
     loadedAt: string,
+    into: string,
   ): void {
     const keys = this.keys.map((column) => column.quotedName);
     const same = (left: string, right: string) =>
       keys.map((key) => `${left}.${key} = ${right}.${key}`).join(' AND ');
     database.exec(
-      `DELETE FROM ${this.table.quotedName} WHERE (${keys.join(', ')}) IN (SELECT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D')`,
+      `DELETE FROM ${into} WHERE (${keys.join(', ')}) IN (SELECT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D')`,
     );
     const { cursor } = this;
     const guarded =
@@ -123,7 +143,7 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     database
       .prepare(
         `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) ` +
-          `INSERT INTO ${this.table.quotedName} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1) ORDER BY ${seq} ` +
+          `INSERT INTO ${into} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1) ORDER BY ${seq} ` +
           `ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_elt_target".${cursor.quotedName}` : ''}`,
       )
       .run(loadedAt);

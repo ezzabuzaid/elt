@@ -462,7 +462,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
           .prepare('SELECT state FROM checkpoints WHERE id = ?')
           .get('records')?.state,
       ),
-    );
+    ).state;
   assert.equal(loadedVersion(), 1);
   assert.deepEqual(savedVersion(), { version: 1 });
   assert.deepEqual((await watching.next()).value?.outcomes, [
@@ -1090,7 +1090,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     using database = new DatabaseSync(statePath, { readOnly: true });
     return JSON.parse(
       String(database.prepare('SELECT state FROM checkpoints').get()?.state),
-    );
+    ).state;
   };
   const names = () => table().map(({ id, name }) => `${id}:${name}`);
 
@@ -1434,7 +1434,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
     const states = database
       .prepare('SELECT id, state FROM checkpoints ORDER BY id')
       .all()
-      .map(({ state }) => JSON.parse(String(state)));
+      .map(({ state }) => JSON.parse(String(state)).state);
     return [
       Object.keys(states[0].snapshot),
       Object.values<{ snapshot: object }>(states[1].groups).flatMap(
@@ -1987,7 +1987,7 @@ test('a partitioned stream resumes each partition from its own state', async () 
   using state = new DatabaseSync(checkpoints.path, { readOnly: true });
   const saved = state.prepare('SELECT state FROM checkpoints').get();
   assert.deepEqual(
-    JSON.parse(String(saved?.state)).partitions.map(
+    JSON.parse(String(saved?.state)).state.partitions.map(
       (entry: { partition: Partition }) => entry.partition,
     ),
     [{ site: 'a' }, { site: 'c' }],
@@ -2039,7 +2039,7 @@ test('a failing partition loads nothing and keeps its checkpoint, while the othe
     using state = new DatabaseSync(checkpoints.path, { readOnly: true });
     const { partitions } = JSON.parse(
       String(state.prepare('SELECT state FROM checkpoints').get()?.state),
-    );
+    ).state;
     return new Map<string, unknown>(
       partitions.map((entry: { partition: Partition; state: unknown }) => [
         entry.partition.site,
@@ -2515,7 +2515,7 @@ test('a checkpoint store keeps each acknowledged state, durable at once, and hol
       received.push(structuredClone(state));
       if (state !== null && typeof state === 'object')
         Reflect.set(state, 'mutated', true);
-      for (const next of states) await checkpoints.save('copy', next);
+      for (const next of states) await checkpoints.save('copy', next, false);
       if (fail) throw new Error('source broke');
     });
   const saved = () => {
@@ -2532,8 +2532,11 @@ test('a checkpoint store keeps each acknowledged state, durable at once, and hol
   await assert.rejects(run([{ page: 3 }], true), /source broke/);
   await store.run(bindings, async (checkpoints) => {
     assert.deepEqual(checkpoints.state('copy'), { page: 3 });
-    await checkpoints.save('copy', { page: 4 });
-    assert.equal(saved(), JSON.stringify({ page: 4 }));
+    await checkpoints.save('copy', { page: 4 }, false);
+    assert.equal(
+      saved(),
+      JSON.stringify({ state: { page: 4 }, reloading: false }),
+    );
     await assert.rejects(
       store.run(bindings, async () => {}),
       /database is locked/,
@@ -2555,8 +2558,8 @@ test('one checkpoint run holds every copy of a run, each with its own state', as
   ]);
 
   await store.run(bindings, async (checkpoints) => {
-    await checkpoints.save('left', { page: 1 });
-    await checkpoints.save('right', { page: 7 });
+    await checkpoints.save('left', { page: 1 }, false);
+    await checkpoints.save('right', { page: 7 }, false);
   });
   const states = await store.run(bindings, async (checkpoints) => [
     checkpoints.state('left'),
@@ -2578,7 +2581,7 @@ test('a changed binding is refused for its copy until the checkpoint is reset', 
   const save = (bindings: ReturnType<typeof bound>) =>
     store.run(bindings, async (checkpoints) => {
       for (const id of bindings.keys())
-        await checkpoints.save(id, { from: checkpoints.state(id) });
+        await checkpoints.save(id, { from: checkpoints.state(id) }, false);
     });
 
   await save(
@@ -2687,6 +2690,7 @@ test('the SQLite writer lock spans commits, permits readers and releases after d
     const stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
       restart: false,
+      reloading: false,
     });
     try {
       await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
@@ -2745,6 +2749,7 @@ test('a commit waits for a reader in another process instead of failing', async 
   const stage = await load.prepare(copy.configuration, copy.to, {
     writer: 'writer',
     restart: false,
+    reloading: false,
   });
   try {
     await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
@@ -2772,6 +2777,7 @@ test('a clear waits for a reader in another process instead of failing', async (
     await using stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
       restart: false,
+      reloading: false,
     });
     await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
     await stage.commit();
@@ -2984,7 +2990,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     rejectCleanup = false;
     await pipeline.run();
     assert.equal(loaded('docs'), original);
-    assert.equal(saved(), '{"at":1}');
+    assert.equal(saved(), '{"state":{"at":1},"reloading":false}');
 
     rejectSave = true;
     source.scripts = {
@@ -2995,7 +3001,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     };
     await assert.rejects(pipeline.run(), PipelineError);
     assert.equal(loaded('docs'), original);
-    assert.equal(saved(), '{"at":1}');
+    assert.equal(saved(), '{"state":{"at":1},"reloading":false}');
     assert.deepEqual(await readFile(original), content);
     rejectSave = false;
 
@@ -3121,7 +3127,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
   assert.deepEqual(rows('broken'), []);
   assert.deepEqual(rows('good'), ['g1:1']);
   assert.deepEqual(rows('snapshot'), ['old:1']);
-  assert.deepEqual(saved(), ['good={"page":1}']);
+  assert.deepEqual(saved(), ['good={"state":{"page":1},"reloading":false}']);
 });
 
 test('a staged unit merges like its operations applied one at a time, under replace and cursor_newer', async () => {
@@ -4071,4 +4077,172 @@ test('a stream whose shape changes reloads into a rebuilt table, even when only 
   assert.deepEqual(loaded(), [
     { id: '1', at: '2025-01-02T03:04:05.1234567Z', note: 'n' },
   ]);
+});
+
+test('a reset reloads into a hidden table: readers keep the old rows until the stream ends, a failed reload resumes, and a new reset discards it', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reload-'));
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    primaryKey: ['id'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  // A step that holds the read between two checkpoints until the test lets it go.
+  const pause = Symbol('pause');
+  let script: (SourceMessage | Error | typeof pause)[] = [];
+  const received: unknown[] = [];
+  const reached = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+  class Scripted extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'scripted';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      received.push(state);
+      for (const step of script) {
+        if (step instanceof Error) throw step;
+        if (step === pause) {
+          reached.resolve();
+          await gate.promise;
+          continue;
+        }
+        yield step;
+      }
+    }
+  }
+  const row = (id: string) => ({ stream: 'items', data: { id } });
+  const reset = { type: 'RESET' as const, stream: 'items' };
+  const state = (at: string) => ({
+    type: 'STATE' as const,
+    stream: 'items',
+    state: { at },
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'items.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Scripted(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(items, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+  const visible = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT id FROM items ORDER BY id')
+      .all()
+      .map(({ id }) => id);
+  };
+
+  script = [row('a1'), row('a2'), state('a')];
+  await pipeline.run();
+
+  // Chunk 1 of the reload committed; a reader still sees the previous rows.
+  script = [reset, row('b1'), state('b1'), pause, row('b2'), state('b')];
+  const reloading = pipeline.run();
+  await reached.promise;
+  const during = visible();
+  gate.resolve();
+  await reloading;
+  assert.deepEqual(during, ['a1', 'a2']);
+  assert.deepEqual(visible(), ['b1', 'b2']);
+
+  // A reload that fails keeps the previous rows visible and resumes.
+  script = [reset, row('c1'), state('c1'), new Error('gone')];
+  await assert.rejects(pipeline.run(), PipelineError);
+  assert.deepEqual(visible(), ['b1', 'b2']);
+  script = [row('c2'), state('c')];
+  await pipeline.run();
+  assert.deepEqual(visible(), ['c1', 'c2']);
+
+  // A reset while a reload is open starts it over without the stale rows.
+  script = [reset, row('d1'), state('d1'), new Error('gone')];
+  await assert.rejects(pipeline.run(), PipelineError);
+  script = [reset, row('e1'), state('e')];
+  await pipeline.run();
+  assert.deepEqual(visible(), ['e1']);
+  assert.deepEqual(received.slice(1), [
+    { at: 'a' },
+    { at: 'b' },
+    { at: 'c1' },
+    { at: 'c' },
+    { at: 'd1' },
+  ]);
+});
+
+test('a reload keeps every file its rows refer to, and the swapped-in table drops a row with its file', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+  const source = new FileSource(scratch.path, {
+    a: { version: 1, bytes: Buffer.from('aye') },
+    b: { version: 1, bytes: Buffer.from('bee') },
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'files.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.files, fileTable(destination, source), {
+            id: 'files',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+  await pipeline.run();
+  const loaded = storedFiles(destination.path);
+  // A column added by hand makes the stored table stale, so the next run
+  // reloads it into a hidden table and swaps that in.
+  {
+    using database = new DatabaseSync(destination.path);
+    database.exec('ALTER TABLE files ADD COLUMN extra TEXT');
+  }
+
+  await pipeline.run();
+  const reloaded = storedFiles(destination.path);
+  source.contents = { a: { version: 1, bytes: Buffer.from('aye') } };
+  await pipeline.run();
+
+  assert.deepEqual(reloaded, loaded);
+  assert.deepEqual(storedFiles(destination.path), {
+    files: { a: loaded.files.a },
+    orphans: 0,
+  });
 });

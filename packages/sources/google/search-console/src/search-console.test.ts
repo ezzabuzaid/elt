@@ -181,7 +181,7 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
   const saved = async () => {
     const [row] =
       await sql`SELECT state FROM _elt_checkpoints WHERE id = ${'search-analytics'}`;
-    return row?.state;
+    return row?.state.state;
   };
   // The 21st is still being collected, and its row says so.
   assert.deepEqual(await loaded(), [
@@ -1333,10 +1333,14 @@ test('a property without permission is reported by name while the others load an
   const saved = async () =>
     (
       await sql<
-        { state: { partitions: { partition: { siteUrl: string } }[] } }[]
+        {
+          state: {
+            state: { partitions: { partition: { siteUrl: string } }[] };
+          };
+        }[]
       >`SELECT state FROM _elt_checkpoints`
     ).flatMap(({ state }) =>
-      state.partitions.map(({ partition }) => partition.siteUrl),
+      state.state.partitions.map(({ partition }) => partition.siteUrl),
     );
 
   const error = await pipeline.run().then(

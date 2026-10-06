@@ -6,7 +6,7 @@ import {
 import {
   AppDatabase,
   AppDatabaseVersion
-} from "./chunk-NHBH24IB.mjs";
+} from "./chunk-ZN2QKR65.mjs";
 
 // packages/sdks/apple/accounts/dist/accounts-store.js
 import { homedir } from "node:os";
@@ -405,8 +405,12 @@ var AccountsSnapshot = class {
   [Symbol.dispose]() {
     this.#database[Symbol.dispose]();
   }
+  // Mail reads only accounts, so a table it does not read fails only the
+  // reads of that table, and the snapshot stays open for the rest.
   #require(columns) {
-    this.#database.requireColumns(columns, AccountsSchemaError);
+    const missing = this.#database.missingColumns(columns);
+    if (missing.length > 0)
+      throw new AccountsSchemaError(this.#database.path, missing);
   }
   #dataclassNames() {
     return new Map(this.#database.all("SELECT Z_PK AS pk, ZNAME AS name FROM ZDATACLASS").map(({ pk, name }) => [Number(pk), String(decoded(name))]));
