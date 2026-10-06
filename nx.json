@@ -19,10 +19,7 @@
       "options": {
         "targetName": "lint"
       },
-      "exclude": [
-        "packages/connectors/apple/manifest/src/fixtures/**",
-        "plugins/apple/server/**"
-      ]
+      "exclude": ["packages/connectors/apple/manifest/src/fixtures/**"]
     }
   ],
   "targetDefaults": {

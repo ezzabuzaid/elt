@@ -1,7 +1,8 @@
-# Codex installs the Apple plugin from main, so plugins/apple/server is
-# committed there, and only this workflow writes it. A local
-# apple-plugin:bundle builds into dist instead.
-name: Apple plugin bundle
+# Codex installs a plugin by copying its folder from a git ref, with no
+# install or build step, so it needs the bundled server beside the skills.
+# Main keeps only source; this workflow publishes the runnable marketplace to
+# the release branch, which Codex installs from (--ref release).
+name: Apple plugin release
 
 on:
   push:
@@ -9,34 +10,31 @@ on:
 
 permissions:
   contents: write
-  # nx-set-shas reads this workflow's runs to find the last successful one.
-  actions: read
 
-# A rejected push fails the run. nx-set-shas then keeps the last successful
-# run as the base, so the next run still sees the change and rebuilds it.
 concurrency:
-  group: apple-plugin-bundle
+  group: apple-plugin-release
   cancel-in-progress: true
 
 jobs:
-  bundle:
+  release:
     # The EventKit helper compiles against the macOS 27 SDK.
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version: 26
           cache: npm
       - run: npm ci
-      - uses: nrwl/nx-set-shas@v5
-      - run: npx nx affected -t bundle -c release
-      - uses: stefanzweifel/git-auto-commit-action@v7
+      # Every push, not nx affected: skills and hooks under plugins/apple
+      # belong to no project, and an unchanged build publishes no commit.
+      - run: npx nx run apple-plugin:marketplace
+      - uses: peaceiris/actions-gh-pages@v4
         with:
-          file_pattern: plugins/apple/server
-          commit_message: 'build(apple-plugin): bundle ${{ github.sha }}'
-          # npm ci points core.hooksPath at .husky, whose pre-commit runs nx
-          # sync and lint-staged; this commit holds only the bundle.
-          commit_options: --no-verify
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: release
+          publish_dir: dist/apple-plugin-marketplace
+          user_name: github-actions[bot]
+          user_email: 41898282+github-actions[bot]@users.noreply.github.com
+          full_commit_message: 'apple plugin from ${{ github.sha }}'
+          disable_nojekyll: true

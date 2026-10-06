@@ -147,3 +147,8 @@ outputs/
 
 # Test reporter output
 test-results.xml
+
+# The Apple plugin's server, built by `nx run apple-plugin:bundle`. CI
+# publishes it with the rest of plugins/apple to the release branch, which
+# Codex installs from.
+/plugins/apple/server

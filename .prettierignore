@@ -8,7 +8,5 @@ package-lock.json
 # Pipeline exports and rendered videos, rebuilt by their own tools
 /outputs
 /videos
-# Bundled by `nx run apple-plugin:bundle`; esbuild owns its formatting
-plugins/apple/server
 # Written by VS Code
 .vscode/sessions.json

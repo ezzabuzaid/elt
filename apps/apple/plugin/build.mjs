@@ -1,9 +1,9 @@
-// Bundles the plugin's MCP server into --outdir: main.mjs, one folder per
-// built-in connector (its package.json manifest beside its entry point and its
-// presets), the host modules a user's connector imports, and the chunks they
-// all share, so every connector runs on the same elt and AppleConnector as the
-// server. @nx/esbuild cannot name each entry's output, so this calls esbuild's
-// API.
+// Bundles the plugin's MCP server into plugins/apple/server: main.mjs, one
+// folder per built-in connector (its package.json manifest beside its entry
+// point and its presets), the host modules a user's connector imports, and the
+// chunks they all share, so every connector runs on the same elt and
+// AppleConnector as the server. @nx/esbuild cannot name each entry's output, so
+// this calls esbuild's API.
 import {
   copyFileSync,
   cpSync,
@@ -14,7 +14,6 @@ import {
 } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArgs } from 'node:util';
 
 import { build } from 'esbuild';
 
@@ -23,13 +22,7 @@ import { ConnectorManifest } from '@workspace/connector-apple-manifest/connector
 import { hostModules } from '@workspace/connector-apple-manifest/host-modules';
 
 const eventkitHelper = 'packages/sdks/apple/eventkit/dist/eventkit-helper';
-// apple-plugin:bundle passes it: a local build goes to dist, and the release
-// configuration, which only CI runs, writes plugins/apple/server, the server
-// Codex installs from main.
-const {
-  values: { outdir },
-} = parseArgs({ options: { outdir: { type: 'string' } } });
-if (outdir === undefined) throw new Error('build.mjs needs --outdir');
+const outdir = 'plugins/apple/server';
 
 const builtIns = readdirSync(builtInConnectors)
   .map((name) => ConnectorManifest.read(join(builtInConnectors, name)))

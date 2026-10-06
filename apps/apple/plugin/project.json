@@ -6,14 +6,14 @@
     "format": {},
     "bundle": {
       "command": "node apps/apple/plugin/build.mjs",
-      "options": { "outdir": "dist/apps/apple/plugin/server" },
-      "configurations": {
-        "release": { "outdir": "plugins/apple/server" }
-      },
       "dependsOn": ["^build"],
       "cache": true,
       "inputs": ["default", "^default"],
-      "outputs": ["{options.outdir}"]
+      "outputs": ["{workspaceRoot}/plugins/apple/server"]
+    },
+    "marketplace": {
+      "dependsOn": ["bundle"],
+      "command": "rm -rf dist/apple-plugin-marketplace && mkdir -p dist/apple-plugin-marketplace/.agents/plugins dist/apple-plugin-marketplace/plugins && cp .agents/plugins/marketplace.json dist/apple-plugin-marketplace/.agents/plugins/ && cp -R plugins/apple dist/apple-plugin-marketplace/plugins/"
     },
     "test": {
       "dependsOn": ["build", "bundle"],
