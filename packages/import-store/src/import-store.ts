@@ -20,6 +20,10 @@ import {
   storeLayout,
 } from './store-layout.ts';
 
+// How long a connection waits out another process writing the same file: a
+// pass commits as it goes, and setup and sync rewrite the settings.
+const writerWaitMs = 30_000;
+
 // Why a connector's import could not start: its pipeline never existed, so its
 // sync history in data.sqlite cannot say.
 export type ConnectionFailure = { error: string; failedAt: string };
@@ -130,7 +134,7 @@ export class ImportStore implements Disposable {
     mkdirSync(root, { recursive: true, mode: 0o700 });
     chmodSync(root, 0o700);
     const path = join(root, 'settings.sqlite');
-    this.settings = new DatabaseSync(path);
+    this.settings = new DatabaseSync(path, { timeout: writerWaitMs });
     try {
       chmodSync(path, 0o600);
       if (this.layout() !== storeLayout) this.rebuild();
@@ -267,7 +271,7 @@ export class ImportStore implements Disposable {
     this.recover(selection);
     return new DatabaseSync(this.database(selection), {
       readOnly: true,
-      timeout: 30_000,
+      timeout: writerWaitMs,
     });
   }
 
@@ -277,7 +281,7 @@ export class ImportStore implements Disposable {
   recover(selection: Selection) {
     if (!existsSync(this.database(selection))) return;
     using recovery = new DatabaseSync(this.database(selection), {
-      timeout: 30_000,
+      timeout: writerWaitMs,
     });
     recovery.prepare('SELECT count(*) FROM sqlite_schema').get();
   }

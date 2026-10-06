@@ -25,6 +25,11 @@ export type SyncObserver = PassObserver & {
 
 export type { Selection };
 
+// How long a sync or setup waits for the store's lease: longer than a status
+// check holds it to look, while a running sync, which holds it for its whole
+// pass, still refuses a second one.
+const leaseWaitMs = 5_000;
+
 export class StoreBusyError extends Error {
   override name = 'StoreBusyError';
   constructor() {
@@ -238,7 +243,7 @@ export class Imports {
   // The one writer of this store; the operating system releases it when this
   // process exits.
   #lease(): Disposable {
-    const held = lease(this.root);
+    const held = lease(this.root, leaseWaitMs);
     if (held === null) throw new StoreBusyError();
     return held;
   }

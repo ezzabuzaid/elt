@@ -36663,6 +36663,7 @@ function importDirectory(root, selection) {
 }
 
 // packages/import-store/dist/import-store.js
+var writerWaitMs = 3e4;
 var passFields = {
   started_at: external_exports.string(),
   last_successful_sync_at: external_exports.string().nullable()
@@ -36728,7 +36729,7 @@ var ImportStore = class {
     mkdirSync(root, { recursive: true, mode: 448 });
     chmodSync(root, 448);
     const path = join5(root, "settings.sqlite");
-    this.settings = new DatabaseSync(path);
+    this.settings = new DatabaseSync(path, { timeout: writerWaitMs });
     try {
       chmodSync(path, 384);
       if (this.layout() !== storeLayout)
@@ -36823,7 +36824,7 @@ var ImportStore = class {
     this.recover(selection);
     return new DatabaseSync(this.database(selection), {
       readOnly: true,
-      timeout: 3e4
+      timeout: writerWaitMs
     });
   }
   // Rolls back a hot journal a stopped pass left in an import, so readers that
@@ -36835,7 +36836,7 @@ var ImportStore = class {
       if (!existsSync3(this.database(selection)))
         return;
       const recovery = __using(_stack, new DatabaseSync(this.database(selection), {
-        timeout: 3e4
+        timeout: writerWaitMs
       }));
       recovery.prepare("SELECT count(*) FROM sqlite_schema").get();
     } catch (_) {
@@ -36902,11 +36903,13 @@ var ImportStore = class {
 import { mkdirSync as mkdirSync2 } from "node:fs";
 import { join as join6 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
-function lease(root) {
+function lease(root, waitMs) {
   let database;
   try {
     mkdirSync2(root, { recursive: true, mode: 448 });
-    database = new DatabaseSync2(join6(root, "lease.sqlite"));
+    database = new DatabaseSync2(join6(root, "lease.sqlite"), {
+      timeout: waitMs
+    });
     database.exec("BEGIN IMMEDIATE");
     return database;
   } catch {
@@ -36915,7 +36918,7 @@ function lease(root) {
   }
 }
 function leaseHeld(root) {
-  const held = lease(root);
+  const held = lease(root, 0);
   held?.[Symbol.dispose]();
   return held === null;
 }
@@ -37222,7 +37225,7 @@ async function importPending(plugin2) {
       for (const item of store.selections()) {
         if (imported(store, item)) continue;
         const directory = store.directory(item);
-        const held = lease(directory);
+        const held = lease(directory, 0);
         if (held === null) continue;
         locks.use(held);
         store.recover(item);

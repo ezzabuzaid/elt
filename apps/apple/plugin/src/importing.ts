@@ -35,7 +35,9 @@ export async function importPending(plugin: ApplePlugin): Promise<void> {
     for (const item of store.selections()) {
       if (imported(store, item)) continue;
       const directory = store.directory(item);
-      const held = lease(directory);
+      // Another server imports it, or a check holds it for a moment: the
+      // next pass tries again.
+      const held = lease(directory, 0);
       if (held === null) continue;
       locks.use(held);
       // Rolls back what a stopped pass left mid-commit, so readers that cannot

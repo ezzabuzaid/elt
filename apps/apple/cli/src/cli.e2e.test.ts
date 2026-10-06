@@ -1011,12 +1011,37 @@ const entry = join(import.meta.dirname, 'main.js');
 // The CLI as a script runs it: no terminal, HOME pointing at a Mac whose
 // apps' stores the test wrote, and the working directory holding outputs/.
 function cli(mac: string, ...args: string[]) {
-  const { status, stdout, stderr } = spawnSync(
+  const { status, signal, stdout, stderr } = spawnSync(
     process.execPath,
     [entry, ...args],
     { cwd: mac, env: { ...process.env, HOME: mac }, encoding: 'utf8' },
   );
-  return { status, stdout, stderr };
+  return { status, signal, stdout, stderr };
+}
+
+// The CLI started alongside the test, as a second process a person or script
+// runs while another works; exited settles with how it ended.
+function started(mac: string, ...args: string[]) {
+  const child = spawn(process.execPath, [entry, ...args], {
+    cwd: mac,
+    env: { ...process.env, HOME: mac },
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+  const exited = new Promise<{
+    status: number | null;
+    stderr: string;
+    stdout: string;
+  }>((resolve) =>
+    child.once('close', (status) => resolve({ status, stdout, stderr })),
+  );
+  return { child, exited };
 }
 
 // The user's Notes, where Notes keeps them under HOME. Only Notes has a store
@@ -1147,22 +1172,31 @@ test('status reports a pass a killed sync left running, and each stream in it, a
   await rm(pictures);
   spawnSync('/usr/bin/mkfifo', [pictures]);
   cli(mac.path, 'setup', '--connector', 'photos');
-  const sync = spawn(process.execPath, [entry, 'sync', '--json'], {
-    cwd: mac.path,
-    env: { ...process.env, HOME: mac.path },
-  });
-  const exited = new Promise((resolve) => sync.once('close', resolve));
+  const sync = started(mac.path, 'sync', '--json');
   try {
-    const running = () =>
-      JSON.parse(cli(mac.path, 'status', '--json').stdout)[0]?.state ===
-      'running';
-    for (let tries = 0; !running(); tries++) {
-      if (tries > 100) assert.fail('the sync never started its pass');
-      await sleep(100);
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+      const status = cli(mac.path, 'status', '--json');
+      assert.equal(
+        status.status,
+        0,
+        `status failed (${status.signal ?? 'no signal'}): ${status.stderr}`,
+      );
+      if (JSON.parse(status.stdout)[0]?.state === 'running') break;
+      const ended = await Promise.race([
+        sync.exited,
+        sleep(100).then(() => null),
+      ]);
+      if (ended !== null)
+        assert.fail(
+          `the sync exited with ${ended.status} before its pass started: ${ended.stderr}`,
+        );
+      if (Date.now() > deadline)
+        assert.fail('the sync did not start its pass within a minute');
     }
   } finally {
-    sync.kill('SIGKILL');
-    await exited;
+    sync.child.kill('SIGKILL');
+    await sync.exited;
   }
 
   const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
@@ -1173,6 +1207,59 @@ test('status reports a pass a killed sync left running, and each stream in it, a
       ({ stream, state }: { stream: string; state: string }) => [stream, state],
     ),
     [['photos', 'interrupted']],
+  );
+});
+
+test('a sync that starts while status checks the store waits for the check, then loads', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withNotes(mac.path);
+  cli(mac.path, 'setup', '--connector', 'notes');
+  // Stands in for a status check, which takes the store's lease for a moment
+  // to learn whether a sync holds it.
+  mkdirSync(join(mac.path, 'outputs/cli'), { recursive: true });
+  const check = new DatabaseSync(join(mac.path, 'outputs/cli/lease.sqlite'));
+  check.exec('BEGIN EXCLUSIVE');
+
+  const sync = started(mac.path, 'sync', '--json');
+  try {
+    await Promise.race([sync.exited, sleep(3_000)]);
+  } finally {
+    check.close();
+  }
+  const synced = await sync.exited;
+
+  assert.equal(synced.status, 0, synced.stderr);
+  assert.equal(lines(synced.stdout)[0].status, 'succeeded');
+});
+
+test("status waits out a write to the store's settings instead of printing nothing", async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withNotes(mac.path);
+  cli(mac.path, 'setup', '--connector', 'notes');
+  // Stands in for a setup or a sync writing the store's settings.
+  const writer = new DatabaseSync(
+    join(mac.path, 'outputs/cli/settings.sqlite'),
+  );
+  writer.exec('BEGIN EXCLUSIVE');
+
+  const status = started(mac.path, 'status', '--json');
+  try {
+    await Promise.race([status.exited, sleep(3_000)]);
+  } finally {
+    writer.exec('ROLLBACK');
+    writer.close();
+  }
+  const reported = await status.exited;
+
+  assert.equal(reported.status, 0, reported.stderr);
+  assert.deepEqual(
+    JSON.parse(reported.stdout).map(
+      ({ connector, state }: { connector: string; state: string }) => [
+        connector,
+        state,
+      ],
+    ),
+    [['notes', 'never']],
   );
 });
 

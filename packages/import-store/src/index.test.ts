@@ -214,9 +214,9 @@ test('one process at a time holds a store lease', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
   assert.equal(leaseHeld(scratch.path), false);
   {
-    using held = lease(scratch.path);
+    using held = lease(scratch.path, 0);
     assert.ok(held);
-    assert.equal(lease(scratch.path), null);
+    assert.equal(lease(scratch.path, 0), null);
     assert.equal(leaseHeld(scratch.path), true);
   }
   assert.equal(leaseHeld(scratch.path), false);
