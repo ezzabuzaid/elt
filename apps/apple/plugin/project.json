@@ -6,10 +6,14 @@
     "format": {},
     "bundle": {
       "command": "node apps/apple/plugin/build.mjs",
+      "options": { "outdir": "dist/apps/apple/plugin/server" },
+      "configurations": {
+        "release": { "outdir": "plugins/apple/server" }
+      },
       "dependsOn": ["^build"],
       "cache": true,
       "inputs": ["default", "^default"],
-      "outputs": ["{workspaceRoot}/plugins/apple/server"]
+      "outputs": ["{options.outdir}"]
     },
     "test": {
       "dependsOn": ["build", "bundle"],

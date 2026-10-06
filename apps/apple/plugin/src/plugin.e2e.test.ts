@@ -238,6 +238,19 @@ const noteStoreFixture = async (directory: string) => {
 
 const root = resolve(import.meta.dirname, '../../../..');
 
+// Copies a plugin folder the way Codex copies it into its cache, but with the
+// server that apple-plugin:bundle built from this checkout instead of the one
+// committed in it. CI commits that same build after the push.
+function install(source: string, destination: string) {
+  cpSync(source, destination, { recursive: true });
+  rmSync(join(destination, 'server'), { recursive: true });
+  cpSync(
+    join(root, 'dist/apps/apple/plugin/server'),
+    join(destination, 'server'),
+    { recursive: true },
+  );
+}
+
 // A selected_connectors row with its import's latest pass from sync_status, as
 // the query-apple skill reads them.
 type SelectedConnector = {
@@ -288,7 +301,7 @@ test(
     assert.equal(entry.name, 'apple');
     // Codex copies the plugin directory into its cache and runs it from there.
     const plugin = join(scratch.path, 'plugin');
-    cpSync(join(root, entry.source.path), plugin, { recursive: true });
+    install(join(root, entry.source.path), plugin);
     for (const path of readdirSync(plugin, {
       recursive: true,
       encoding: 'utf8',
@@ -684,7 +697,7 @@ test(
     const [entry] = JSON.parse(
       readFileSync(join(root, '.agents/plugins/marketplace.json'), 'utf8'),
     ).plugins;
-    cpSync(join(root, entry.source.path), plugin, { recursive: true });
+    install(join(root, entry.source.path), plugin);
     const manifest = JSON.parse(
       readFileSync(join(plugin, '.codex-plugin/plugin.json'), 'utf8'),
     );
@@ -879,7 +892,7 @@ test(
   async (t) => {
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
     const plugin = join(scratch.path, 'plugin');
-    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    install(join(root, 'plugins/apple'), plugin);
     const runtime =
       process.env.CODEX_MCP_NODE_PATH ??
       join(
@@ -996,7 +1009,7 @@ test(
   async (t) => {
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
     const plugin = join(scratch.path, 'plugin');
-    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    install(join(root, 'plugins/apple'), plugin);
     const runtime =
       process.env.CODEX_MCP_NODE_PATH ??
       join(

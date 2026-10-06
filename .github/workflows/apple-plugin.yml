@@ -1,0 +1,42 @@
+# Codex installs the Apple plugin from main, so plugins/apple/server is
+# committed there, and only this workflow writes it. A local
+# apple-plugin:bundle builds into dist instead.
+name: Apple plugin bundle
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  # nx-set-shas reads this workflow's runs to find the last successful one.
+  actions: read
+
+# A rejected push fails the run. nx-set-shas then keeps the last successful
+# run as the base, so the next run still sees the change and rebuilds it.
+concurrency:
+  group: apple-plugin-bundle
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    # The EventKit helper compiles against the macOS 27 SDK.
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - uses: nrwl/nx-set-shas@v5
+      - run: npx nx affected -t bundle -c release
+      - uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          file_pattern: plugins/apple/server
+          commit_message: 'build(apple-plugin): bundle ${{ github.sha }}'
+          # npm ci points core.hooksPath at .husky, whose pre-commit runs nx
+          # sync and lint-staged; this commit holds only the bundle.
+          commit_options: --no-verify
