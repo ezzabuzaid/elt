@@ -79,11 +79,16 @@ function kindOf(table: ChatTable, column: string): ChatColumnKind {
 export const provenance = (table: ChatTable, column: string) =>
   `chat.db ${table.name}.${column}: ${kinds[kindOf(table, column)].loads}.`;
 
-// One chat.db column as a field, described by its provenance.
-export function columnField(table: ChatTable, column: string): FieldSchema {
+// One chat.db column as a field, described by its provenance, or by meaning
+// where the code proves what the column holds.
+export function columnField(
+  table: ChatTable,
+  column: string,
+  meaning?: string,
+): FieldSchema {
   return {
     ...kinds[kindOf(table, column)].schema,
-    description: `${provenance(table, column)} ${unverified}`,
+    description: meaning ?? `${provenance(table, column)} ${unverified}`,
   };
 }
 
@@ -103,14 +108,10 @@ export function tableFields(
       `Meanings for columns ${table.name} does not list: ${unknown.join(', ')}`,
     );
   return Object.fromEntries(
-    columns.map((column) => {
-      const field = columnField(table, column);
-      const meaning = meanings[column];
-      return [
-        camel(column),
-        meaning === undefined ? field : { ...field, description: meaning },
-      ];
-    }),
+    columns.map((column) => [
+      camel(column),
+      columnField(table, column, meanings[column]),
+    ]),
   );
 }
 

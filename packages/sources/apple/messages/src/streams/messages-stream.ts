@@ -49,6 +49,9 @@ const properties = {
     attributedBody: `${provenance(messageTable, 'attributedBody')} Messages archives the message body here as an NSAttributedString in NeXT typedstream form, which is not a property list and so loads as Base64; text is decoded from it when message.text is NULL. Its other attributes are not decoded.`,
     payload_data: `${provenance(messageTable, 'payload_data')} A richLinkMetadata object in it is decoded into the linkPreviews stream; the meaning of its other contents is not documented by Apple.`,
     message_summary_info: `${provenance(messageTable, 'message_summary_info')} Its "ec" entry is decoded into the messageEdits stream; the meaning of its other keys is not documented by Apple.`,
+    filter_action: `${provenance(messageTable, 'filter_action')} The message-filter action Messages recorded for the message, as Messages' own code names it; Messages indexes it, and chatMessages.filterAction copies it. Which value means which action is not documented by Apple.`,
+    filter_sub_action: `${provenance(messageTable, 'filter_sub_action')} The sub-action of that filter. Messages' own code names SMS sub-actions such as Transactional, Promotional, Finance, Orders and Reminder; which value means which is not documented by Apple.`,
+    retry_count: `${provenance(messageTable, 'retry_count')} How many times Messages has retried sending the message, as its name and Messages' own retry count say; Messages' code picks unsent messages to send again while their count is below a maximum. Not documented by Apple.`,
   }),
 };
 

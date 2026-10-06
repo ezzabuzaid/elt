@@ -548,10 +548,10 @@ function kindOf(table2, column) {
   return kind;
 }
 var provenance = (table2, column) => `chat.db ${table2.name}.${column}: ${kinds[kindOf(table2, column)].loads}.`;
-function columnField(table2, column) {
+function columnField(table2, column, meaning) {
   return {
     ...kinds[kindOf(table2, column)].schema,
-    description: `${provenance(table2, column)} ${unverified}`
+    description: meaning ?? `${provenance(table2, column)} ${unverified}`
   };
 }
 function tableFields(table2, meanings = {}) {
@@ -559,14 +559,10 @@ function tableFields(table2, meanings = {}) {
   const unknown = Object.keys(meanings).filter((column) => !columns.includes(column));
   if (unknown.length > 0)
     throw new TypeError(`Meanings for columns ${table2.name} does not list: ${unknown.join(", ")}`);
-  return Object.fromEntries(columns.map((column) => {
-    const field = columnField(table2, column);
-    const meaning = meanings[column];
-    return [
-      camel(column),
-      meaning === void 0 ? field : { ...field, description: meaning }
-    ];
-  }));
+  return Object.fromEntries(columns.map((column) => [
+    camel(column),
+    columnField(table2, column, meanings[column])
+  ]));
 }
 function encode(value2) {
   if (value2 instanceof Date)
@@ -589,7 +585,8 @@ var properties = {
     description: "chat.db attachment.guid; this stream's primary key. messageAttachments.attachmentGuid refers to it within this source."
   },
   ...tableFields(attachmentTable, {
-    filename: `${provenance(attachmentTable, "filename")} The path Messages stores for the attachment's file, absolute or home-relative as ~/\u2026; the file is exported from this path. A path does not prove the file exists: see availableLocally.`
+    filename: `${provenance(attachmentTable, "filename")} The path Messages stores for the attachment's file, absolute or home-relative as ~/\u2026; the file is exported from this path. A path does not prove the file exists: see availableLocally.`,
+    sensitivity_analysis: `${provenance(attachmentTable, "sensitivity_analysis")} Communication Safety's sensitivity analysis of the attachment, as Messages' own code records it beside whether the content is sensitive. Which value means what is not documented by Apple.`
   }),
   // Changes when an offloaded file downloads, so the diff reloads its bytes.
   availableLocally: {
@@ -707,8 +704,8 @@ var properties4 = {
   messageGuid,
   messageDate: columnField(chatMessageTable, "message_date"),
   indexState: columnField(chatMessageTable, "index_state"),
-  filterAction: columnField(chatMessageTable, "filter_action"),
-  filterSubAction: columnField(chatMessageTable, "filter_sub_action")
+  filterAction: columnField(chatMessageTable, "filter_action", `${provenance(chatMessageTable, "filter_action")} A copy of the message's message.filter_action (messages.filterAction), which Messages keeps in step.`),
+  filterSubAction: columnField(chatMessageTable, "filter_sub_action", `${provenance(chatMessageTable, "filter_sub_action")} A copy of the message's message.filter_sub_action (messages.filterSubAction), which Messages keeps in step.`)
 };
 var ChatMessagesStream = class extends AppleMessagesStream {
   name = "chatMessages";
@@ -1003,7 +1000,10 @@ var properties11 = {
     date: `${provenance(messageTable, "date")} An import date scope selects messages by this time; which moment Messages records is not documented by Apple.`,
     attributedBody: `${provenance(messageTable, "attributedBody")} Messages archives the message body here as an NSAttributedString in NeXT typedstream form, which is not a property list and so loads as Base64; text is decoded from it when message.text is NULL. Its other attributes are not decoded.`,
     payload_data: `${provenance(messageTable, "payload_data")} A richLinkMetadata object in it is decoded into the linkPreviews stream; the meaning of its other contents is not documented by Apple.`,
-    message_summary_info: `${provenance(messageTable, "message_summary_info")} Its "ec" entry is decoded into the messageEdits stream; the meaning of its other keys is not documented by Apple.`
+    message_summary_info: `${provenance(messageTable, "message_summary_info")} Its "ec" entry is decoded into the messageEdits stream; the meaning of its other keys is not documented by Apple.`,
+    filter_action: `${provenance(messageTable, "filter_action")} The message-filter action Messages recorded for the message, as Messages' own code names it; Messages indexes it, and chatMessages.filterAction copies it. Which value means which action is not documented by Apple.`,
+    filter_sub_action: `${provenance(messageTable, "filter_sub_action")} The sub-action of that filter. Messages' own code names SMS sub-actions such as Transactional, Promotional, Finance, Orders and Reminder; which value means which is not documented by Apple.`,
+    retry_count: `${provenance(messageTable, "retry_count")} How many times Messages has retried sending the message, as its name and Messages' own retry count say; Messages' code picks unsent messages to send again while their count is below a maximum. Not documented by Apple.`
   })
 };
 var MessagesStream = class extends AppleMessagesStream {

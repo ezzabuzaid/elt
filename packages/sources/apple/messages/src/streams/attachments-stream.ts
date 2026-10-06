@@ -23,6 +23,7 @@ const properties = {
   },
   ...tableFields(attachmentTable, {
     filename: `${provenance(attachmentTable, 'filename')} The path Messages stores for the attachment's file, absolute or home-relative as ~/…; the file is exported from this path. A path does not prove the file exists: see availableLocally.`,
+    sensitivity_analysis: `${provenance(attachmentTable, 'sensitivity_analysis')} Communication Safety's sensitivity analysis of the attachment, as Messages' own code records it beside whether the content is sensitive. Which value means what is not documented by Apple.`,
   }),
   // Changes when an offloaded file downloads, so the diff reloads its bytes.
   availableLocally: {

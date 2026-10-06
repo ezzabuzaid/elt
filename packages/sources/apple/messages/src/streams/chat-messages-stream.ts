@@ -12,6 +12,7 @@ import {
   encode,
   localStore,
   messageGuid,
+  provenance,
 } from '../messages-fields.ts';
 import type { MessageSelection } from '../messages-scan.ts';
 
@@ -20,8 +21,16 @@ const properties = {
   messageGuid,
   messageDate: columnField(chatMessageTable, 'message_date'),
   indexState: columnField(chatMessageTable, 'index_state'),
-  filterAction: columnField(chatMessageTable, 'filter_action'),
-  filterSubAction: columnField(chatMessageTable, 'filter_sub_action'),
+  filterAction: columnField(
+    chatMessageTable,
+    'filter_action',
+    `${provenance(chatMessageTable, 'filter_action')} A copy of the message's message.filter_action (messages.filterAction), which Messages keeps in step.`,
+  ),
+  filterSubAction: columnField(
+    chatMessageTable,
+    'filter_sub_action',
+    `${provenance(chatMessageTable, 'filter_sub_action')} A copy of the message's message.filter_sub_action (messages.filterSubAction), which Messages keeps in step.`,
+  ),
 };
 
 export class ChatMessagesStream extends AppleMessagesStream<ChatMessageRow> {
