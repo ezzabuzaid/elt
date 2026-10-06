@@ -59,9 +59,9 @@ function table(name, joins, lists) {
 }
 var messageTable = table("message", ["ROWID", "guid", "handle_id", "other_handle"], {
   nullableText: "text subject service_center country service account account_guid cache_roomnames group_title associated_message_guid balloon_bundle_id expressive_send_style_id ck_record_id ck_record_change_tag destination_caller_id reply_to_guid thread_originator_guid thread_originator_part syndication_ranges synced_syndication_ranges bia_reference_id fallback_hash associated_message_emoji ck_chat_id",
-  integer: "replace version type error item_type group_action_type share_status share_direction expire_state message_action_type message_source associated_message_type associated_message_range_location associated_message_range_length ck_sync_state sort_id part_count schedule_type schedule_state index_state",
-  flag: "is_delivered is_finished is_emote is_from_me is_empty is_delayed is_auto_reply is_prepared is_read is_system_message is_sent has_dd_results is_service_message is_forward was_downgraded is_archive cache_has_attachments was_data_detected was_deduplicated is_audio_message is_played is_expirable is_corrupt is_spam has_unseen_mention was_delivered_quietly did_notify_recipient was_detonated is_stewie is_sos is_critical is_kt_verified is_pending_satellite_send needs_relay sent_or_received_off_grid is_time_sensitive",
-  time: "date date_read date_delivered date_played time_expressive_send_played date_retracted date_edited date_recovered",
+  integer: "replace version type error item_type group_action_type share_status share_direction expire_state message_action_type message_source associated_message_type associated_message_range_location associated_message_range_length ck_sync_state sort_id part_count schedule_type schedule_state index_state filter_action filter_sub_action retry_count",
+  flag: "is_delivered is_finished is_emote is_from_me is_empty is_delayed is_auto_reply is_prepared is_read is_system_message is_sent has_dd_results is_service_message is_forward was_downgraded is_archive cache_has_attachments was_data_detected was_deduplicated is_audio_message is_played is_expirable is_corrupt is_spam has_unseen_mention was_delivered_quietly did_notify_recipient was_detonated is_stewie is_sos is_critical is_kt_verified is_pending_satellite_send needs_relay sent_or_received_off_grid is_time_sensitive is_preview_sent is_preview_delivered",
+  time: "date date_read date_delivered date_played time_expressive_send_played date_retracted date_edited date_recovered date_preview_sent date_preview_delivered date_updated",
   data: "attributedBody payload_data message_summary_info"
 });
 var chatTable = table("chat", ["ROWID", "guid"], {
@@ -78,10 +78,10 @@ var handleTable = table("handle", ["ROWID"], {
 var attachmentTable = table("attachment", ["ROWID", "guid"], {
   text: "original_guid",
   nullableText: "filename uti mime_type transfer_name ck_record_id emoji_image_content_identifier emoji_image_short_description",
-  integer: "transfer_state total_bytes ck_sync_state preview_generation_state",
+  integer: "transfer_state total_bytes ck_sync_state preview_generation_state sensitivity_analysis",
   flag: "is_outgoing is_sticker hide_attachment is_commsafety_sensitive",
   time: "created_date start_date",
-  data: "user_info sticker_user_info attribution_info ck_server_change_token_blob"
+  data: "user_info sticker_user_info attribution_info ck_server_change_token_blob preflight_info"
 });
 var chatLookupTable = table("chat_lookup", ["chat"], {
   text: "identifier domain",
@@ -91,7 +91,10 @@ var chatServiceTable = table("chat_service", ["chat"], {
   text: "service"
 });
 var chatHandleTable = table("chat_handle_join", ["chat_id", "handle_id"], {});
-var chatMessageTable = table("chat_message_join", ["chat_id", "message_id"], { integer: "index_state", time: "message_date" });
+var chatMessageTable = table("chat_message_join", ["chat_id", "message_id"], {
+  integer: "index_state filter_action filter_sub_action",
+  time: "message_date"
+});
 var recoverableMessageTable = table("chat_recoverable_message_join", ["chat_id", "message_id"], { integer: "ck_sync_state", time: "delete_date" });
 var recoverablePartTable = table("recoverable_message_part", ["chat_id", "message_id", "part_index"], { integer: "ck_sync_state", time: "delete_date", data: "part_text" });
 var messageAttachmentTable = table("message_attachment_join", ["message_id", "attachment_id"], {});
@@ -703,7 +706,9 @@ var properties4 = {
   chatGuid,
   messageGuid,
   messageDate: columnField(chatMessageTable, "message_date"),
-  indexState: columnField(chatMessageTable, "index_state")
+  indexState: columnField(chatMessageTable, "index_state"),
+  filterAction: columnField(chatMessageTable, "filter_action"),
+  filterSubAction: columnField(chatMessageTable, "filter_sub_action")
 };
 var ChatMessagesStream = class extends AppleMessagesStream {
   name = "chatMessages";
@@ -726,7 +731,9 @@ var ChatMessagesStream = class extends AppleMessagesStream {
         chatGuid: row.chatGuid,
         messageGuid: row.messageGuid,
         messageDate: encode(row.values.message_date ?? null),
-        indexState: encode(row.values.index_state ?? null)
+        indexState: encode(row.values.index_state ?? null),
+        filterAction: encode(row.values.filter_action ?? null),
+        filterSubAction: encode(row.values.filter_sub_action ?? null)
       }
     ];
   }

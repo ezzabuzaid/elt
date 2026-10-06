@@ -20,6 +20,8 @@ const properties = {
   messageGuid,
   messageDate: columnField(chatMessageTable, 'message_date'),
   indexState: columnField(chatMessageTable, 'index_state'),
+  filterAction: columnField(chatMessageTable, 'filter_action'),
+  filterSubAction: columnField(chatMessageTable, 'filter_sub_action'),
 };
 
 export class ChatMessagesStream extends AppleMessagesStream<ChatMessageRow> {
@@ -47,6 +49,8 @@ export class ChatMessagesStream extends AppleMessagesStream<ChatMessageRow> {
         messageGuid: row.messageGuid,
         messageDate: encode(row.values.message_date ?? null),
         indexState: encode(row.values.index_state ?? null),
+        filterAction: encode(row.values.filter_action ?? null),
+        filterSubAction: encode(row.values.filter_sub_action ?? null),
       },
     ];
   }
