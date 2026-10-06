@@ -868,7 +868,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads Contacts' own Core Data stores read-only through `node:sqlite`: `AddressBook-v22.abcddb` at the root of `~/Library/Application Support/AddressBook` (On My Mac) and one `Sources/<id>/AddressBook-v22.abcddb` per account. Contacts.app need not be open. A store or the `Sources` folder that cannot be opened (missing, or no permission) raises `ContactsUnavailableError`, and a store without a column the connector reads raises `ContactsSchemaError` naming the columns, both before any copy runs. `npx nx run apple-cli:start -- sync --connector contacts` loads every stream incrementally into the import's `data.sqlite`; each photo is saved in its `files` folder and referenced by `attachmentRef`.
+The source reads Contacts' own Core Data stores read-only through its SDK, `@workspace/sdk-apple-contacts`: `AddressBook-v22.abcddb` at the root of `~/Library/Application Support/AddressBook` (On My Mac) and one `Sources/<id>/AddressBook-v22.abcddb` per account. Contacts.app need not be open. A store or the `Sources` folder that cannot be opened (missing, or no permission) raises `ContactsUnavailableError`, and a store without a column or Core Data entity the source reads raises `ContactsSchemaError` naming each, both before any copy runs. `npx nx run apple-cli:start -- sync --connector contacts` loads every stream incrementally into the import's `data.sqlite`; each photo is saved in its `files` folder and referenced by `attachmentRef`.
 
 ### Access
 

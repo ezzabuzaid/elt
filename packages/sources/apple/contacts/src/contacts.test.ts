@@ -23,6 +23,7 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
+import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { AppleContactsSource } from './apple-contacts-source.ts';
 
@@ -218,7 +219,9 @@ function createStore(
 }
 
 const contact = 22;
+const subscribedContact = 23;
 const group = 19;
+const subscribedGroup = 20;
 const smartGroup = 21;
 const info = 24;
 const container = 25;
@@ -602,6 +605,185 @@ test('Contacts scope keeps only one container and its related records and images
   assert.ok(
     !saved.includes('BOB:ABPerson') && !saved.includes('FRIENDS:ABGroup'),
   );
+});
+
+test('a Contacts container scope keeps every stream to what belongs to that container', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'contacts-scope-'),
+  );
+  const source = new AppleContactsSource(
+    addressBookFixture(join(scratch.path, 'AddressBook')),
+    { collectionIds: ['A:ABContainer'] },
+  );
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+
+  const results = await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'scope',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: await copies(source, destination),
+      }),
+    ],
+  }).run();
+
+  // Account A holds its container's groups, contacts and their details; the
+  // On My Mac note and account B's image stay out.
+  assert.deepEqual(
+    results.map(({ copy, count }) => [copy.from.name, count]),
+    [
+      ['containers', 1],
+      ['groups', 2],
+      ['groupMembers', 2],
+      ['groupSubgroups', 1],
+      ['contacts', 2],
+      ['notes', 0],
+      ['alternateBirthdays', 1],
+      ['phoneNumbers', 2],
+      ['emailAddresses', 1],
+      ['postalAddresses', 1],
+      ['urlAddresses', 1],
+      ['socialProfiles', 1],
+      ['messagingAddresses', 1],
+      ['relatedNames', 1],
+      ['contactDates', 2],
+      ['calendarUris', 1],
+      ['addressingGrammars', 1],
+      ['likenesses', 1],
+      ['alertTones', 1],
+      ['customPropertyValues', 1],
+      ['remoteLocations', 1],
+      ['unknownProperties', 2],
+      ['distributionListConfigs', 1],
+      ['images', 1],
+    ],
+  );
+});
+
+test('Contacts reads subscribed records, every custom value type, archived vCard lines and values whose owner is gone', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'contacts-rare-'),
+  );
+  const directory = join(scratch.path, 'AddressBook');
+  createStore(directory, {
+    ZABCDRECORD: [
+      { Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'ROOT:ABContainer' },
+      {
+        Z_PK: 2,
+        Z_ENT: subscribedContact,
+        ZUNIQUEID: 'SUBSCRIBED:ABPerson',
+        ZCONTAINER1: 1,
+        // Text in a column that usually holds bytes passes through.
+        ZIMAGEHASH: 'stored as text',
+      },
+      {
+        Z_PK: 3,
+        Z_ENT: subscribedGroup,
+        ZUNIQUEID: 'SUBSCRIBED:ABGroup',
+        ZCONTAINER: 1,
+      },
+    ],
+    ZABCDCUSTOMPROPERTY: [
+      { Z_PK: 1, ZPROPERTYNAME: 'X-MEASURE', ZVALUETYPE: 2 },
+    ],
+    ZABCDCUSTOMPROPERTYVALUE: [
+      {
+        ZOWNER: 2,
+        ZCUSTOMPROPERTY: 1,
+        ZUNIQUEID: 'CUSTOM-ALL',
+        ZNUMBERVALUE: 2.5,
+        ZDATEVALUE: appleSeconds('2024-02-29T12:34:56.789Z'),
+        ZDATAVALUE: binaryPlist('<array><integer>1</integer></array>'),
+      },
+    ],
+    ZABCDUNKNOWNPROPERTY: [
+      {
+        ZOWNER: 2,
+        ZPROPERTYNAME: 'X-ARCHIVED',
+        ZORIGINALLINE: binaryPlist('<string>X-ARCHIVED:1</string>'),
+      },
+    ],
+    ZABCDPHONENUMBER: [
+      { Z_PK: 1, ZOWNER: null, ZUNIQUEID: 'PHONE-NO-OWNER', ZFULLNUMBER: '1' },
+      { Z_PK: 2, ZOWNER: 99, ZUNIQUEID: 'PHONE-GONE-OWNER', ZFULLNUMBER: '2' },
+    ],
+  });
+  mkdirSync(join(directory, 'Sources'));
+  const load = async (name: string, scope: ImportScope) => {
+    const source = new AppleContactsSource(directory, scope);
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, `${name}.sqlite`),
+    });
+    await new Pipeline({
+      connections: [
+        new Connection({
+          name,
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, `${name}-state.sqlite`),
+          }),
+          steps: await copies(source, destination),
+        }),
+      ],
+    }).run();
+    return destination.path;
+  };
+
+  const all = await load('all', {});
+  const scoped = await load('scoped', { collectionIds: ['ROOT:ABContainer'] });
+
+  assert.deepEqual(rows(all, 'SELECT id, kind, imageHash FROM contacts'), [
+    {
+      id: 'SUBSCRIBED:ABPerson',
+      kind: 'subscribedContact',
+      imageHash: 'stored as text',
+    },
+  ]);
+  assert.deepEqual(rows(all, 'SELECT id, kind FROM groups'), [
+    { id: 'SUBSCRIBED:ABGroup', kind: 'subscribedGroup' },
+  ]);
+  assert.deepEqual(
+    rows(
+      all,
+      'SELECT id, recordId, propertyName, valueType, numberValue, dateValue, dataValue FROM customPropertyValues',
+    ),
+    [
+      {
+        id: 'CUSTOM-ALL',
+        recordId: 'SUBSCRIBED:ABPerson',
+        propertyName: 'X-MEASURE',
+        valueType: 2,
+        numberValue: 2.5,
+        dateValue: '2024-02-29T12:34:56.789Z',
+        dataValue: '[1]',
+      },
+    ],
+  );
+  // An archived line loads as JSON, like other property lists.
+  assert.deepEqual(
+    rows(all, 'SELECT recordId, originalLine FROM unknownProperties'),
+    [{ recordId: 'SUBSCRIBED:ABPerson', originalLine: '"X-ARCHIVED:1"' }],
+  );
+  // A value whose owner is unset or gone has no contact, so a container
+  // scope cannot place it.
+  assert.deepEqual(
+    rows(all, 'SELECT id, contactId FROM phoneNumbers ORDER BY id'),
+    [
+      { id: 'PHONE-GONE-OWNER', contactId: null },
+      { id: 'PHONE-NO-OWNER', contactId: null },
+    ],
+  );
+  assert.deepEqual(rows(scoped, 'SELECT id FROM phoneNumbers'), []);
+  assert.deepEqual(rows(scoped, 'SELECT id FROM contacts'), [
+    { id: 'SUBSCRIBED:ABPerson' },
+  ]);
 });
 
 test('Contacts exports every stream of every account store by identifier', async () => {

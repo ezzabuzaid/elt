@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
+    "@workspace/sdk-apple-contacts": "0.0.1",
     "@workspace/sdk-apple-plist": "0.0.1",
-    "@workspace/sdk-apple-app-database": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1"
   },
   "devDependencies": {

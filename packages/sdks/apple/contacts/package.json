@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/sdk-apple-contacts",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/sdk-apple-app-database": "0.0.1",
+    "@workspace/sdk-apple-plist": "0.0.1"
+  }
+}
