@@ -89,7 +89,9 @@ function table<const Columns extends Readonly<Record<string, Kind>>>(
       return fieldName(key, kind);
     }),
     blobs,
-    sql: `SELECT ${select.join(', ')} FROM "${name}" ORDER BY ${keys.map((key) => `"${key}"`).join(', ')}`,
+    // Qualified, since SQLite would otherwise sort a key by a result column
+    // that shares its name: the text copy, so 10 before 2.
+    sql: `SELECT ${select.join(', ')} FROM "${name}" ORDER BY ${keys.map((key) => `"${name}"."${key}"`).join(', ')}`,
   };
 }
 

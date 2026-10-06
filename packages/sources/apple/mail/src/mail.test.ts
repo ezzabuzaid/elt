@@ -24,6 +24,8 @@ import {
   Pipeline,
   PipelineError,
   type Source,
+  type Stream,
+  StreamStatus,
 } from '@workspace/elt';
 import { MarkdownDestination } from '@workspace/elt-markdown';
 import {
@@ -764,6 +766,64 @@ async function pipeline(source: AppleMailSource, directory: string) {
     ],
   });
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// The records one full-refresh read of a stream yields, in the order Mail's
+// source yields them.
+async function readStream(
+  source: AppleMailSource,
+  stream: Stream,
+): Promise<Record<string, unknown>[]> {
+  const messages = await Array.fromAsync(
+    source.read(
+      [
+        new Copy(
+          stream,
+          new SQLiteDestination({ path: ':memory:' }).table(stream.name),
+        ).configuration,
+      ],
+      new Map(),
+    ),
+  );
+  for (const message of messages)
+    if (message instanceof StreamStatus && message.status === 'FAILED')
+      throw message.error;
+  return messages.flatMap((message) =>
+    'data' in message && isRecord(message.data) ? [message.data] : [],
+  );
+}
+
+test('Mail yields server labels and sender addresses in the numeric order of their keys', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  {
+    using index = new DatabaseSync(store.index);
+    index.exec(`
+      INSERT INTO mailboxes(ROWID,url) VALUES(10,'imap://ACCOUNT/Ten');
+      INSERT INTO server_labels VALUES(1,10),(1,2);
+      INSERT INTO addresses VALUES(10,'ten@example.test',''),(2,'two@example.test','');
+      INSERT INTO sender_addresses VALUES(10,1),(2,1);
+    `);
+  }
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  const labels = await readStream(source, source.serverMessageMailboxes);
+  const senders = await readStream(source, source.senderAddresses);
+
+  assert.deepEqual(
+    labels.map(({ label }) => label),
+    ['1', '2', '10'],
+  );
+  assert.deepEqual(
+    senders.map(({ address }) => address),
+    ['1', '2', '10'],
+  );
+});
 
 test('Mail scope filters dates, message ownership and MIME before copying files and checkpoints', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'mail-scope-'));
