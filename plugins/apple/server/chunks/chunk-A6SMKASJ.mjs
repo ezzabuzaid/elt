@@ -11,10 +11,10 @@ import {
   StreamStatus,
   SyncHistory,
   Target,
-  TargetMissingError,
   TargetOwnedError,
   Writer,
   copyStatus,
+  declaredFormat,
   describeTarget,
   isCalendarDate,
   isTimestamp,
@@ -23,7 +23,7 @@ import {
   readerCatalog,
   syncHistoryRelations,
   undescribed
-} from "./chunk-C5AZWDBZ.mjs";
+} from "./chunk-2EXSIS5H.mjs";
 import {
   __callDispose,
   __using
@@ -172,7 +172,7 @@ var SQLiteCheckpointStore = class extends CheckpointStore {
             const saved = database.prepare("SELECT binding, state FROM checkpoints WHERE id = ?").get(id);
             return saved === void 0 ? void 0 : { binding: String(saved.binding), state: String(saved.state) };
           },
-          save: async (id, { binding, state }) => durable("INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state", id, binding, state),
+          save: async (id, { binding, state }) => durable("INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET binding = excluded.binding, state = excluded.state", id, binding, state),
           remove: async (id) => durable("DELETE FROM checkpoints WHERE id = ?", id)
         });
         database.exec("COMMIT");
@@ -205,20 +205,47 @@ var SQLiteCheckpointStore = class extends CheckpointStore {
 var storageTypes = {
   text: "TEXT",
   integer: "INTEGER",
+  int64: "INTEGER",
   real: "REAL",
+  decimal: "TEXT",
   blob: "BLOB",
   boolean: "INTEGER",
   date: "TEXT",
-  timestamp: "TEXT"
+  timestamp: "TEXT",
+  local_timestamp: "TEXT",
+  local_time: "TEXT"
 };
-function canonical(kind, name) {
+var formatKinds = {
+  "date-time": "timestamp",
+  date: "date",
+  "date-time-local": "local_timestamp",
+  "time-local": "local_time",
+  int64: "int64",
+  decimal: "decimal",
+  base64: "blob"
+};
+var formatted = /* @__PURE__ */ new Set([
+  "int64",
+  "decimal",
+  "local_timestamp",
+  "local_time"
+]);
+var fraction = (precision) => precision === 0 ? "" : `.${"[0-9]".repeat(precision)}`;
+var realSecond = (name) => `strftime('%Y-%m-%dT%H:%M:%S', substr(${name}, 1, 19)) IS substr(${name}, 1, 19)`;
+function canonical(kind, name, format) {
   switch (kind) {
     case "boolean":
       return ` CHECK (${name} IN (0, 1))`;
     case "date":
       return ` CHECK (date(${name}) IS ${name})`;
-    case "timestamp":
-      return ` CHECK (strftime('%Y-%m-%dT%H:%M:%fZ', ${name}) IS ${name})`;
+    case "timestamp": {
+      const precision = format?.name === "date-time" ? format.precision : 3;
+      return precision === 3 ? ` CHECK (strftime('%Y-%m-%dT%H:%M:%fZ', ${name}) IS ${name})` : ` CHECK (${realSecond(name)} AND substr(${name}, 20) GLOB '${fraction(precision)}Z')`;
+    }
+    case "local_timestamp":
+      return format?.name === "date-time-local" ? ` CHECK (${realSecond(name)} AND substr(${name}, 20) GLOB '${fraction(format.precision)}')` : "";
+    case "local_time":
+      return format?.name === "time-local" ? ` CHECK (time(substr(${name}, 1, 8)) IS substr(${name}, 1, 8) AND substr(${name}, 9) GLOB '${fraction(format.precision)}')` : "";
     default:
       return "";
   }
@@ -226,6 +253,8 @@ function canonical(kind, name) {
 var SQLiteColumn = class _SQLiteColumn {
   name;
   kind;
+  // The string format a schema-inferred column keeps, which refines its kind.
+  format;
   required;
   isPrimaryKey;
   nullable;
@@ -238,6 +267,10 @@ var SQLiteColumn = class _SQLiteColumn {
       throw new TypeError("Invalid column name");
     if (!Object.hasOwn(storageTypes, kind))
       throw new TypeError("Unsupported SQLite column type");
+    const { format } = options;
+    if (format === void 0 ? formatted.has(kind) : formatKinds[format.name] !== kind)
+      throw new TypeError(`Column ${name} kind ${kind} must match its format`);
+    this.format = format;
     this.array = options.array ?? false;
     if (this.array && (kind === "blob" || options.primaryKey))
       throw new TypeError("Array columns hold scalar values and cannot be keys");
@@ -258,7 +291,8 @@ var SQLiteColumn = class _SQLiteColumn {
       optional: false,
       primaryKey: true,
       array: this.array,
-      fileRead: this.fileRead
+      fileRead: this.fileRead,
+      format: this.format
     });
   }
   notNull() {
@@ -267,7 +301,8 @@ var SQLiteColumn = class _SQLiteColumn {
       optional: false,
       primaryKey: this.isPrimaryKey,
       array: this.array,
-      fileRead: this.fileRead
+      fileRead: this.fileRead,
+      format: this.format
     });
   }
   from(file) {
@@ -308,10 +343,26 @@ var SQLiteColumn = class _SQLiteColumn {
   get dataType() {
     if (this.storesFile)
       return "integer";
-    return this.array ? `${this.kind}[]` : this.kind;
+    return this.array ? `${this.#typeName}[]` : this.#typeName;
+  }
+  // The kind with the precision and scale its format declares, as SQL writes
+  // them; a timestamp of milliseconds is the plain kind.
+  get #typeName() {
+    const { format } = this;
+    switch (format?.name) {
+      case "date-time":
+        return format.precision === 3 ? this.kind : `${this.kind}(${format.precision})`;
+      case "date-time-local":
+      case "time-local":
+        return `${this.kind}(${format.precision})`;
+      case "decimal":
+        return format.precision === void 0 ? this.kind : `${this.kind}(${[format.precision, format.scale ?? []].join(",")})`;
+      default:
+        return this.kind;
+    }
   }
   get definition() {
-    const check = this.array ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')` : canonical(this.kind, this.quotedName);
+    const check = this.array ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')` : canonical(this.kind, this.quotedName, this.format);
     return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? " PRIMARY KEY" : ""}${this.required ? " NOT NULL" : ""}${check}`;
   }
   encode(record) {
@@ -325,10 +376,21 @@ var SQLiteColumn = class _SQLiteColumn {
     const value = Reflect.get(record, this.name);
     if (value === null && this.nullable)
       return null;
+    const { format } = this;
     if (this.array) {
       if (Array.isArray(value) && value.every((element) => this.#element(element)))
         return JSON.stringify(value);
       throw new TypeError(`Column "${this.name}" requires an array of ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
+    }
+    if (format !== void 0) {
+      if (typeof value === "string" && format.accepts(value)) {
+        if (format.name === "int64")
+          return BigInt(value);
+        if (format.name === "base64")
+          return Buffer.from(value, "base64");
+        return value;
+      }
+      throw new TypeError(`Column "${this.name}" requires a canonical ${format.name} value${this.nullable ? " or null" : " (not null)"}`);
     }
     switch (this.kind) {
       case "text":
@@ -366,6 +428,8 @@ var SQLiteColumn = class _SQLiteColumn {
   }
   // Whether a JSON array element keeps this kind's value exactly.
   #element(value) {
+    if (this.format !== void 0)
+      return typeof value === "string" && this.format.accepts(value);
     switch (this.kind) {
       case "text":
         return typeof value === "string";
@@ -389,7 +453,7 @@ var SQLiteColumn = class _SQLiteColumn {
 function scalarKind(name, type, format) {
   switch (type) {
     case "string":
-      return format === "date" ? "date" : format === "date-time" ? "timestamp" : "text";
+      return format === null ? "text" : formatKinds[format.name];
     case "integer":
       return "integer";
     case "number":
@@ -401,8 +465,8 @@ function scalarKind(name, type, format) {
   }
 }
 var SQLiteColumns = class {
-  // Scalars, and arrays of scalars as JSON arrays in TEXT. The date and
-  // date-time string formats keep their kind, as in Postgres.
+  // Scalars, and arrays of scalars as JSON arrays in TEXT. String formats
+  // keep their kind, as in Postgres.
   static fromSchema({ properties, required = [] }) {
     if (properties === void 0)
       throw new TypeError("SQLite requires an object schema with explicit properties");
@@ -419,14 +483,16 @@ var SQLiteColumns = class {
       if (valueType === void 0 || valueTypes.length !== 1)
         throw new TypeError(`SQLite requires one scalar type for field ${name}`);
       const array = valueType === "array";
-      const scalar = array ? field.items : { type: valueType, format: field.format };
-      if (scalar === void 0)
+      const items = array ? field.items : void 0;
+      if (array && items === void 0)
         throw new TypeError(`Unsupported JSON Schema items for field ${name}`);
-      return new SQLiteColumn(name, scalarKind(name, scalar.type, scalar.format), {
+      const format = declaredFormat(items ?? field);
+      return new SQLiteColumn(name, scalarKind(name, items?.type ?? valueType, format), {
         nullable: types.includes("null"),
         optional: !requiredFields.has(name),
         primaryKey: false,
-        array
+        array,
+        format: format ?? void 0
       });
     });
   }
@@ -674,28 +740,62 @@ var SQLiteWriter = class extends Writer {
     if (existing.type !== "view" || existing.sql !== definition)
       throw new TypeError(`${quote3(view)} is not a view of exactly ${this.table.quotedName}; drop it or delete the database`);
   }
-  // Refuses a target another writer owns, or a resumed one that was dropped,
-  // and prepares it inside a savepoint, so a refused target leaves the shared
-  // transaction as it was.
-  prepare(database, { writer, resuming }, loadedAt) {
+  // The rows of one partition, or every row when the stream is not
+  // partitioned, as a WHERE clause over the target's or the stage's columns.
+  #scope(partition) {
+    if (partition === null)
+      return ["", []];
+    const columns = Object.keys(partition).map((field) => {
+      const column = this.table.columns.find(({ name }) => name === field);
+      if (column === void 0)
+        throw new TypeError(`Resetting a partition requires destination column ${field}`);
+      return column;
+    });
+    return [
+      ` WHERE ${columns.map((column) => `${column.quotedName} = ?`).join(" AND ")}`,
+      columns.map((column) => column.encode(partition))
+    ];
+  }
+  // Drops a target whose stored table no longer fits the stream, with the
+  // reader view of it, so prepare creates both anew. Says whether the target
+  // holds none of the copy's rows. Inside the load's transaction, readers keep
+  // the old table until the load commits.
+  #renew(database) {
+    const stored = database.prepare(`SELECT "sql" FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`).get(this.table.location)?.sql;
+    if (stored === void 0)
+      return true;
+    if (stored === this.table.createTableSQL.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE "))
+      return false;
+    if (this.table.readerView !== void 0)
+      database.exec(`DROP VIEW IF EXISTS ${quote3(this.table.readerView)}`);
+    database.exec(`DROP TABLE ${this.table.quotedName}`);
+    return true;
+  }
+  // Refuses a target another writer owns and prepares it inside a savepoint,
+  // so a refused target leaves the shared transaction as it was.
+  prepare(database, { writer, restart }, loadedAt) {
     const name = quote3(`_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
     const files = this.table.columns.filter((column) => column.storesFile);
     database.exec("SAVEPOINT prepare");
-    let stores;
+    let stores = [];
+    const prune = () => {
+      for (const { column, store } of stores)
+        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
+    };
+    const replacing = this.replaces || restart;
+    let fresh;
     try {
-      if (resuming && !this.exists(database, this.table.location))
-        throw new TargetMissingError(this.table.name, writer);
       this.own(database, writer);
+      fresh = this.#renew(database);
       database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
       database.exec(this.table.createTableSQL);
       stores = files.map((column) => ({
         column,
         store: new SQLiteFileStore(database, this.table, column)
       }));
-      for (const { column, store } of stores)
-        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
-      this.initialize(database);
+      prune();
+      this.initialize(database, replacing);
       if (this.table.readerView !== void 0)
         this.installReaderView(database, this.table.readerView);
       this.describe(database);
@@ -710,15 +810,24 @@ var SQLiteWriter = class extends Writer {
     const columns = this.table.columns.map((column) => column.quotedName);
     const record = database.prepare(`INSERT INTO ${stage} (${op}, ${columns.join(", ")}) VALUES ('R', ${columns.map(() => "?").join(", ")})`);
     const staged = (column) => `SELECT ${column.quotedName} FROM ${stage} WHERE ${column.quotedName} IS NOT NULL`;
+    let resets = [];
     const drop = () => {
       for (const { column, store } of stores)
         database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`);
       database.exec(`DELETE FROM ${stage}`);
+      resets = [];
     };
     let replaced = false;
     return {
+      fresh,
       values: this.values(database),
       apply: async (operation) => {
+        if (operation.type === "RESET") {
+          const [rows, values] = this.#scope(operation.partition);
+          database.prepare(`DELETE FROM ${stage}${rows}`).run(...values);
+          resets.push(operation.partition);
+          return;
+        }
         if (operation.type === "DELETE") {
           const [keys, values] = this.deletionKeys(operation.key);
           database.prepare(`INSERT INTO ${stage} (${op}, ${keys.map((column) => column.quotedName).join(", ")}) VALUES ('D', ${keys.map(() => "?").join(", ")})`).run(...values);
@@ -738,9 +847,15 @@ var SQLiteWriter = class extends Writer {
       commit: async () => {
         database.exec("SAVEPOINT merge");
         try {
-          if (this.replaces && !replaced)
+          if (replacing && !replaced)
             this.replace(database);
+          for (const partition of resets) {
+            const [rows, values] = this.#scope(partition);
+            database.prepare(`DELETE FROM ${this.table.quotedName}${rows}`).run(...values);
+          }
           this.merge(database, stage, loadedAt);
+          if (resets.length > 0)
+            prune();
           drop();
           database.exec("RELEASE merge");
         } catch (error) {
@@ -789,7 +904,7 @@ var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
       const selected = table.columns.find((column2) => column2.name === field);
       if (selected === void 0)
         throw new TypeError(`Deduplication requires destination column ${field}`);
-      if (selected.kind !== inferred.find((column2) => column2.name === field)?.kind)
+      if (selected.dataType !== inferred.find((column2) => column2.name === field)?.dataType)
         throw new TypeError(`Deduplication column ${field} must preserve the source scalar type`);
       return selected;
     };
@@ -801,14 +916,14 @@ var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
   get replaces() {
     return this.configuration.destinationSyncMode === "overwrite_dedup";
   }
-  initialize(database) {
+  initialize(database, replacing) {
     const existing = database.prepare(`PRAGMA table_info(${this.table.quotedName})`).all();
     const tracked = this.cursor === void 0 ? this.keys : [...this.keys, this.cursor];
     for (const column of tracked) {
       if (!existing.some((field) => field.name === column.name && field.type === column.storageType))
         throw new TypeError(`Existing deduplication column ${column.name} has an incompatible storage type`);
     }
-    if (this.replaces)
+    if (replacing)
       return;
     if (database.prepare(`SELECT 1 FROM ${this.table.quotedName} WHERE ${tracked.map((column) => `${column.quotedName} IS NULL`).join(" OR ")} LIMIT 1`).get())
       throw new TypeError("Existing deduplication keys and cursors must be non-null");

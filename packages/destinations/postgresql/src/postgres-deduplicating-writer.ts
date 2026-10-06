@@ -40,7 +40,8 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
           `Deduplication requires destination column ${field}`,
         );
       if (
-        selected.kind !== inferred.find((column) => column.name === field)?.kind
+        selected.storageType !==
+        inferred.find((column) => column.name === field)?.storageType
       )
         throw new TypeError(
           `Deduplication column ${field} must preserve the source scalar type`,
@@ -72,39 +73,27 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     return this.configuration.destinationSyncMode === 'overwrite_dedup';
   }
 
-  protected override async initialize(transaction: Transaction): Promise<void> {
+  protected override async initialize(
+    transaction: Transaction,
+    replacing: boolean,
+  ): Promise<void> {
     await transaction.unsafe(this.createTableSQL);
-    const existing = await transaction.unsafe(
-      'SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2',
-      [this.schema, this.table.name],
-    );
-    const tracked =
-      this.cursor === undefined ? this.keys : [...this.keys, this.cursor];
-    for (const column of tracked)
-      if (
-        !existing.some(
-          (field) =>
-            field.column_name === column.name &&
-            field.data_type === column.dataType,
-        )
-      )
-        throw new TypeError(
-          `Existing deduplication column ${column.name} has an incompatible storage type`,
-        );
     // A replacing load keeps none of these rows: its index is built once the
     // commit has emptied the table.
-    if (this.replaces) {
-      await this.dropOtherIndexes(transaction);
-      return;
-    }
-    const nulls = await transaction.unsafe(
+    if (replacing) await this.dropOtherIndexes(transaction);
+    else await this.index(transaction);
+  }
+
+  protected override async inspect(sql: Transaction): Promise<void> {
+    const tracked =
+      this.cursor === undefined ? this.keys : [...this.keys, this.cursor];
+    const nulls = await sql.unsafe(
       `SELECT 1 FROM ${this.qualifiedName} WHERE ${tracked.map((column) => `${column.quotedName} IS NULL`).join(' OR ')} LIMIT 1`,
     );
     if (nulls.length > 0)
       throw new TypeError(
         'Existing deduplication keys and cursors must be non-null',
       );
-    await this.index(transaction);
   }
 
   protected override async replace(transaction: Transaction): Promise<void> {
@@ -127,6 +116,27 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     );
   }
 
+  // A rebuilt target's key index, created while it is empty and renamed with
+  // the target, since index names are unique in a schema.
+  get #provisionalIndex(): string {
+    return `${this.dedupIndex.slice(0, 50)}_next`;
+  }
+
+  protected override async build(
+    sql: Transaction,
+    into: string,
+  ): Promise<void> {
+    await sql.unsafe(
+      `CREATE UNIQUE INDEX ${quote(this.#provisionalIndex)} ON ${into} (${this.keys.map((column) => column.quotedName).join(', ')})`,
+    );
+  }
+
+  protected override async adopt(sql: Transaction): Promise<void> {
+    await sql.unsafe(
+      `ALTER INDEX ${quote(this.schema)}.${quote(this.#provisionalIndex)} RENAME TO ${quote(this.dedupIndex)}`,
+    );
+  }
+
   // The result of applying the staged operations one at a time: a staged
   // DELETE removes its key, and only records after a key's last DELETE count.
   // replace keeps the newest extraction, so a restated fact overwrites the
@@ -137,24 +147,25 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     sql: Transaction,
     stage: string,
     loadedAt: string,
+    into = this.qualifiedName,
   ): Promise<void> {
     const keys = this.keys.map((column) => column.quotedName);
     const same = (left: string, right: string) =>
       keys.map((key) => `${left}.${key} = ${right}.${key}`).join(' AND ');
     await sql.unsafe(
-      `DELETE FROM ${this.qualifiedName} AS "_elt_target" USING (SELECT DISTINCT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D') AS "deleted" WHERE ${same('"_elt_target"', '"deleted"')}`,
+      `DELETE FROM ${into} AS "_elt_target" USING (SELECT DISTINCT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D') AS "deleted" WHERE ${same('"_elt_target"', '"deleted"')}`,
     );
     const { cursor } = this;
     const guarded =
       this.configuration.dedupPolicy !== 'replace' && cursor !== undefined;
-    const collate = cursor?.kind === 'text' ? ' COLLATE "C"' : '';
+    const collate = cursor?.dataType === 'text' ? ' COLLATE "C"' : '';
     const order = guarded
       ? `"staged".${cursor.quotedName}${collate} DESC, "staged".${seq}`
       : `"staged".${seq} DESC`;
     const columns = this.table.columns.map((column) => column.quotedName);
     await sql.unsafe(
       `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".*, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) ` +
-        `INSERT INTO ${this.qualifiedName} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, $1::text::timestamptz FROM "ranked" WHERE "_elt_rank" = 1 ORDER BY ${seq} ` +
+        `INSERT INTO ${into} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, $1::text::timestamptz FROM "ranked" WHERE "_elt_rank" = 1 ORDER BY ${seq} ` +
         `ON CONFLICT (${keys.join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName}${collate} > "_elt_target".${cursor.quotedName}${collate}` : ''}`,
       [loadedAt],
     );

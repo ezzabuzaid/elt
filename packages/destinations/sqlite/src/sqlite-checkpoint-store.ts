@@ -42,7 +42,7 @@ export class SQLiteCheckpointStore extends CheckpointStore {
         },
         save: async (id, { binding, state }) =>
           durable(
-            'INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state',
+            'INSERT INTO checkpoints (id, binding, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET binding = excluded.binding, state = excluded.state',
             id,
             binding,
             state,

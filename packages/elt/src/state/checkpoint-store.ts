@@ -8,16 +8,27 @@ export type StoredCheckpoint = {
 
 export type CheckpointSession = {
   read(id: string): Promise<StoredCheckpoint | undefined>;
-  // Durable when it resolves. Keeps the binding a replication was first saved with.
+  // Durable when it resolves. Stores the binding with the state, since a
+  // replication that started over saves the shape it started over for.
   save(id: string, checkpoint: StoredCheckpoint): Promise<void>;
   remove(id: string): Promise<void>;
 };
 
+// What a checkpoint belongs to: the copy (its source, target and selection),
+// which must not change, and the shape of the stream it loads, whose change
+// starts the replication over. A store keeps both as one JSON text.
+export type CheckpointBinding = {
+  readonly copy: object;
+  readonly shape: object;
+};
+
 // The checkpoints of one run's replications.
 export type CheckpointRun = {
-  // The saved state, or null for a replication never saved. Throws when the
-  // replication's binding changed since it was saved.
+  // The saved state, or null for a replication never saved or starting over.
+  // Throws when the replication's copy changed since it was saved.
   state(id: string): unknown;
+  // Whether the stream's shape changed since the checkpoint was saved.
+  restart(id: string): boolean;
   save(id: string, state: unknown): Promise<void>;
 };
 
@@ -28,26 +39,40 @@ export type CheckpointRun = {
 export abstract class CheckpointStore {
   // Holds every replication's lock for the whole run.
   async run<T>(
-    bindings: ReadonlyMap<string, object>,
+    bindings: ReadonlyMap<string, CheckpointBinding>,
     work: (run: CheckpointRun) => Promise<T>,
   ): Promise<T> {
     const ids = [...bindings.keys()].sort();
     return this.session(ids, async (session) => {
       const checkpoints = new Map<
         string,
-        { binding: string; state: unknown; changed: boolean }
+        {
+          binding: string;
+          state: unknown;
+          changed: boolean;
+          restart: boolean;
+        }
       >();
-      for (const id of ids) {
-        const binding = JSON.stringify(bindings.get(id));
+      for (const [id, { copy, shape }] of bindings) {
+        const binding = JSON.stringify([copy, shape]);
         const saved = await session.read(id);
+        const [savedCopy, savedShape]: unknown[] =
+          saved === undefined ? [] : JSON.parse(saved.binding);
+        const [currentCopy, currentShape]: unknown[] = JSON.parse(binding);
         const changed =
+          saved !== undefined && !isDeepStrictEqual(savedCopy, currentCopy);
+        const restart =
           saved !== undefined &&
-          !isDeepStrictEqual(JSON.parse(saved.binding), JSON.parse(binding));
+          !changed &&
+          !isDeepStrictEqual(savedShape, currentShape);
         checkpoints.set(id, {
           binding,
           state:
-            saved === undefined || changed ? null : JSON.parse(saved.state),
+            saved === undefined || changed || restart
+              ? null
+              : JSON.parse(saved.state),
           changed,
+          restart,
         });
       }
       const checkpoint = (id: string) => {
@@ -63,6 +88,7 @@ export abstract class CheckpointStore {
       return work({
         // A source may mutate its input state, but only an acknowledged message may advance it.
         state: (id) => structuredClone(checkpoint(id).state),
+        restart: (id) => checkpoint(id).restart,
         save: async (id, state) => {
           const { binding } = checkpoint(id);
           try {

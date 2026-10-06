@@ -5,12 +5,12 @@ import type {
   CopyConfiguration,
   FieldValues,
   KeyValue,
+  Partition,
   Stage,
   TargetDescription,
 } from '@workspace/elt';
 import {
   FileContent,
-  TargetMissingError,
   TargetOwnedError,
   Writer,
   describeTarget,
@@ -76,7 +76,11 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   // Checks and indexes the target needs before its first merge.
-  protected abstract initialize(database: DatabaseSync): void;
+  // replacing: the first commit replaces the target, so its rows are moot.
+  protected abstract initialize(
+    database: DatabaseSync,
+    replacing: boolean,
+  ): void;
 
   // Moves the staged operations into the target.
   protected abstract merge(
@@ -279,23 +283,73 @@ export abstract class SQLiteWriter extends Writer {
       );
   }
 
-  // Refuses a target another writer owns, or a resumed one that was dropped,
-  // and prepares it inside a savepoint, so a refused target leaves the shared
-  // transaction as it was.
+  // The rows of one partition, or every row when the stream is not
+  // partitioned, as a WHERE clause over the target's or the stage's columns.
+  #scope(partition: Partition | null): [string, SQLInputValue[]] {
+    if (partition === null) return ['', []];
+    const columns = Object.keys(partition).map((field) => {
+      const column = this.table.columns.find(({ name }) => name === field);
+      if (column === undefined)
+        throw new TypeError(
+          `Resetting a partition requires destination column ${field}`,
+        );
+      return column;
+    });
+    return [
+      ` WHERE ${columns.map((column) => `${column.quotedName} = ?`).join(' AND ')}`,
+      columns.map((column) => column.encode(partition)),
+    ];
+  }
+
+  // Drops a target whose stored table no longer fits the stream, with the
+  // reader view of it, so prepare creates both anew. Says whether the target
+  // holds none of the copy's rows. Inside the load's transaction, readers keep
+  // the old table until the load commits.
+  #renew(database: DatabaseSync): boolean {
+    const stored = database
+      .prepare(
+        `SELECT "sql" FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`,
+      )
+      .get(this.table.location)?.sql;
+    if (stored === undefined) return true;
+    if (
+      stored ===
+      this.table.createTableSQL.replace(
+        'CREATE TABLE IF NOT EXISTS ',
+        'CREATE TABLE ',
+      )
+    )
+      return false;
+    if (this.table.readerView !== undefined)
+      database.exec(`DROP VIEW IF EXISTS ${quote(this.table.readerView)}`);
+    database.exec(`DROP TABLE ${this.table.quotedName}`);
+    return true;
+  }
+
+  // Refuses a target another writer owns and prepares it inside a savepoint,
+  // so a refused target leaves the shared transaction as it was.
   prepare(
     database: DatabaseSync,
-    { writer, resuming }: { writer: string; resuming: boolean },
+    { writer, restart }: { writer: string; restart: boolean },
     loadedAt: string,
   ): Stage {
     const name = quote(`_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
     const files = this.table.columns.filter((column) => column.storesFile);
     database.exec('SAVEPOINT prepare');
-    let stores: { column: SQLiteColumn; store: SQLiteFileStore }[];
+    let stores: { column: SQLiteColumn; store: SQLiteFileStore }[] = [];
+    // Drops the chunks of files no row of the target refers to.
+    const prune = () => {
+      for (const { column, store } of stores)
+        database.exec(
+          `DELETE FROM ${quote(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`,
+        );
+    };
+    const replacing = this.replaces || restart;
+    let fresh: boolean;
     try {
-      if (resuming && !this.exists(database, this.table.location))
-        throw new TargetMissingError(this.table.name, writer);
       this.own(database, writer);
+      fresh = this.#renew(database);
       // Only this library-owned mode index is replaced; explicit SQL constraints remain authoritative.
       database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
       database.exec(this.table.createTableSQL);
@@ -304,11 +358,8 @@ export abstract class SQLiteWriter extends Writer {
         store: new SQLiteFileStore(database, this.table, column),
       }));
       // Chunks of a stream that failed after another stream committed them.
-      for (const { column, store } of stores)
-        database.exec(
-          `DELETE FROM ${quote(store.name)} WHERE "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`,
-        );
-      this.initialize(database);
+      prune();
+      this.initialize(database, replacing);
       if (this.table.readerView !== undefined)
         this.installReaderView(database, this.table.readerView);
       this.describe(database);
@@ -328,6 +379,8 @@ export abstract class SQLiteWriter extends Writer {
     );
     const staged = (column: SQLiteColumn) =>
       `SELECT ${column.quotedName} FROM ${stage} WHERE ${column.quotedName} IS NOT NULL`;
+    // Scopes the stage dropped, which the next commit empties in the target.
+    let resets: (Partition | null)[] = [];
     // Files staged but never merged, and files a merge did not keep.
     const drop = () => {
       for (const { column, store } of stores)
@@ -335,11 +388,19 @@ export abstract class SQLiteWriter extends Writer {
           `DELETE FROM ${quote(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (SELECT ${column.quotedName} FROM ${this.table.quotedName} WHERE ${column.quotedName} IS NOT NULL)`,
         );
       database.exec(`DELETE FROM ${stage}`);
+      resets = [];
     };
     let replaced = false;
     return {
+      fresh,
       values: this.values(database),
       apply: async (operation) => {
+        if (operation.type === 'RESET') {
+          const [rows, values] = this.#scope(operation.partition);
+          database.prepare(`DELETE FROM ${stage}${rows}`).run(...values);
+          resets.push(operation.partition);
+          return;
+        }
         if (operation.type === 'DELETE') {
           const [keys, values] = this.deletionKeys(operation.key);
           database
@@ -364,8 +425,16 @@ export abstract class SQLiteWriter extends Writer {
       commit: async () => {
         database.exec('SAVEPOINT merge');
         try {
-          if (this.replaces && !replaced) this.replace(database);
+          if (replacing && !replaced) this.replace(database);
+          for (const partition of resets) {
+            const [rows, values] = this.#scope(partition);
+            database
+              .prepare(`DELETE FROM ${this.table.quotedName}${rows}`)
+              .run(...values);
+          }
           this.merge(database, stage, loadedAt);
+          // Files of the rows a reset emptied, and of staged rows it dropped.
+          if (resets.length > 0) prune();
           drop();
           database.exec('RELEASE merge');
         } catch (error) {

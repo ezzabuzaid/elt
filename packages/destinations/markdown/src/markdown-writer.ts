@@ -7,7 +7,7 @@ import type {
   FieldValues,
   Stage,
 } from '@workspace/elt';
-import { TargetMissingError, TargetOwnedError, Writer } from '@workspace/elt';
+import { TargetOwnedError, Writer } from '@workspace/elt';
 
 import { MarkdownDocument } from './markdown-document.ts';
 
@@ -77,33 +77,46 @@ export abstract class MarkdownWriter extends Writer {
 
   // Each target is its own file or folder, so its in-memory rows are already
   // this stream's stage: a commit publishes only this target.
+  // A restart keeps none of the target's rows, so its first commit replaces
+  // them, as an overwrite does.
   async prepare({
     writer,
-    resuming,
+    restart,
   }: {
     writer: string;
-    resuming: boolean;
+    restart: boolean;
   }): Promise<Stage> {
     const lock = await this.lock();
     try {
       const { owner, rows } = await this.read();
-      if (resuming && owner === undefined)
-        throw new TargetMissingError(this.name, writer);
       if (owner !== undefined && owner !== writer)
         throw new TargetOwnedError(this.name, owner, writer);
       const mode = this.configuration.destinationSyncMode;
       // ponytail: Markdown reconciliation holds the target in memory; use an on-disk index if exports outgrow memory.
       let published = new Map<string, unknown>();
-      if (mode === 'append' || mode === 'append_dedup')
+      if (!restart && (mode === 'append' || mode === 'append_dedup'))
         for (const row of rows) this.add(published, row);
       let working = new Map(published);
       return {
+        fresh: owner === undefined,
         values: this.values,
         apply: async (operation) => {
           if (operation.type === 'RECORD') {
             // Validate every observation, including deduplication losers.
             this.document.render(operation.data, 1);
             this.add(working, operation.data);
+            return;
+          }
+          if (operation.type === 'RESET') {
+            const { partition } = operation;
+            for (const [key, row] of working)
+              if (
+                partition === null ||
+                Object.entries(partition).every(
+                  ([field, value]) => Reflect.get(Object(row), field) === value,
+                )
+              )
+                working.delete(key);
             return;
           }
           if (this.deduplication === undefined)

@@ -20,7 +20,12 @@ export { DocumentParser } from './core/document-parser.ts';
 export { FileContent } from './core/file-content.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
 export { FileStorage } from './core/file-storage.ts';
-export { isCalendarDate, isTimestamp } from './core/formats.ts';
+export { isCalendarDate } from './core/formats/calendar-date-format.ts';
+export {
+  type DeclaredFormat,
+  declaredFormat,
+} from './core/formats/declared-format.ts';
+export { isTimestamp } from './core/formats/timestamp-format.ts';
 export type { Partition, PartitionState } from './core/partition.ts';
 export { type Pass, Pipeline, PipelineError } from './core/pipeline.ts';
 export { type ReaderRelation, readerCatalog } from './core/reader-relation.ts';
@@ -46,6 +51,7 @@ export {
   type KeyValue,
   type ReadMessage,
   type RecordMessage,
+  type ResetMessage,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -64,13 +70,13 @@ export {
   type FieldValues,
   type LoadFailure,
   type Stage,
-  TargetMissingError,
   TargetOwnedError,
   type WriteCount,
   type WriteOperation,
   Writer,
 } from './core/writer.ts';
 export {
+  type CheckpointBinding,
   type CheckpointRun,
   type CheckpointSession,
   CheckpointStore,

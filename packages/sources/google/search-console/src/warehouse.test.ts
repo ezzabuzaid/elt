@@ -365,7 +365,7 @@ test('everything the agent can see explains itself', async () => {
   );
 });
 
-test('publication names missing raw tables, publishes after a partial load, and leaves views it does not own alone', async () => {
+test('publication names missing raw tables, including one a failed stream never committed, and leaves views it does not own alone', async () => {
   const google: Google = {
     analytics: ({ dimensions }) => {
       if (dimensions.join() === 'date,page') throw new Error('pages failed');
@@ -395,42 +395,17 @@ test('publication names missing raw tables, publishes after a partial load, and 
     [],
   );
 
+  // A stream that fails before its first commit creates no raw table.
   await assert.rejects(store.run(), /did not load completely/);
-  await store.publish();
-
-  assert.deepEqual(
-    [
-      ...(await store.agent`SELECT count(*)::int AS n FROM search_console_pages_daily`),
-    ],
-    [{ n: 0 }],
+  await assert.rejects(
+    store.publish(),
+    /need raw tables that do not exist yet: google_search_console\.search_pages_daily$/,
   );
   assert.deepEqual(
     (
       await store.agent`SELECT status FROM stream_status WHERE stream = 'searchAnalyticsPages'`
     ).map(({ status }) => status),
     ['failed'],
-  );
-  assert.deepEqual(
-    (
-      await store.agent`SELECT relation, latest_date::text, loaded_at FROM search_console_freshness
-        WHERE relation IN ('search_console_totals_daily', 'search_console_pages_daily') ORDER BY relation`
-    ).map(({ relation, latest_date, loaded_at }) => ({
-      relation,
-      latest_date,
-      loaded: loaded_at instanceof Date,
-    })),
-    [
-      {
-        relation: 'search_console_pages_daily',
-        latest_date: null,
-        loaded: false,
-      },
-      {
-        relation: 'search_console_totals_daily',
-        latest_date: '2026-09-20',
-        loaded: true,
-      },
-    ],
   );
   assert.deepEqual(await other(), before);
 });

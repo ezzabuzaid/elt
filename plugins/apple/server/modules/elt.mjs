@@ -19,10 +19,10 @@ import {
   StreamStatus,
   SyncHistory,
   Target,
-  TargetMissingError,
   TargetOwnedError,
   Writer,
   copyStatus,
+  declaredFormat,
   describeTarget,
   diffGroupedSnapshot,
   diffSnapshot,
@@ -34,7 +34,7 @@ import {
   syncHistoryRelations,
   undescribed,
   validateRecords
-} from "../chunks/chunk-C5AZWDBZ.mjs";
+} from "../chunks/chunk-2EXSIS5H.mjs";
 import "../chunks/chunk-ZGXE7NZW.mjs";
 export {
   Catalog,
@@ -56,10 +56,10 @@ export {
   StreamStatus,
   SyncHistory,
   Target,
-  TargetMissingError,
   TargetOwnedError,
   Writer,
   copyStatus,
+  declaredFormat,
   describeTarget,
   diffGroupedSnapshot,
   diffSnapshot,

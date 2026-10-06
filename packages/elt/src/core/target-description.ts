@@ -54,12 +54,13 @@ export function describeTarget<Column extends DescribedColumn>(
     `Extraction: ${configuration.syncMode}. Loading: ${configuration.destinationSyncMode}. ${loading[configuration.destinationSyncMode]}`,
   );
   if (configuration.dedupPolicy !== undefined) {
-    const { primaryKey, cursorField } = configuration.deduplication();
+    const deduplication = configuration.deduplication();
+    const { primaryKey, cursorField } = deduplication;
     lines.push(`Copy key: ${primaryKey.join(', ')}.`);
     lines.push(
-      configuration.dedupPolicy === 'replace'
+      configuration.dedupPolicy === 'replace' || cursorField === undefined
         ? 'For a repeated key, the newest extracted record wins.'
-        : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare by byte order.`,
+        : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare ${deduplication.format(cursorField)?.ordering ?? 'by byte order'}.`,
     );
   }
   const { properties } = stream.jsonSchema;

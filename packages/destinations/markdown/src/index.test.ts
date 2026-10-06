@@ -477,7 +477,7 @@ test('Markdown publishes at each checkpoint and never publishes a failing partit
   );
 });
 
-test('clearing a Markdown target drops it with its checkpoint, and a deleted one is refused until cleared', async () => {
+test('clearing a Markdown target drops it with its checkpoint, and a deleted one reloads from no checkpoint', async () => {
   class Pages extends Source {
     override coverage() {
       return { description: 'test', selection: {} };
@@ -540,7 +540,8 @@ test('clearing a Markdown target drops it with its checkpoint, and a deleted one
   await pipeline.run();
 
   await rm(join(scratch.path, 'pages.md'));
-  await assert.rejects(pipeline.run(), /Target pages\.md was dropped/);
+  await pipeline.run();
+  assert.equal(await records(), 1);
   await pipeline.clear();
   await pipeline.run();
 
@@ -698,4 +699,275 @@ test('one run loads a file and a folder together: a stream that fails keeps its 
     notes: ['n1', 'n2'],
     tasks: ['t1', 't2'],
   });
+});
+
+test('int64 cursors keep the greater integer, and int64 and base64 keys delete their rows', async () => {
+  let messages: SourceMessage[] = [];
+  const rows = new Stream({
+    name: 'rows',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', format: 'int64' },
+        hash: { type: 'string', contentEncoding: 'base64' },
+        version: { type: 'string', format: 'int64' },
+        name: { type: 'string' },
+      },
+    },
+    primaryKey: ['id', 'hash'],
+    supportedSyncModes: ['incremental'],
+    emitsDeletes: true,
+  });
+  class LedgerSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'int64-test';
+    protected readonly catalog = new Catalog([rows]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract() {
+      yield* messages;
+      yield { type: 'STATE' as const, stream: 'rows', state: {} };
+    }
+  }
+  const row = (id: string, hash: string, version: string, name: string) => ({
+    stream: 'rows',
+    data: { id, hash, version, name },
+  });
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-int64-'));
+  const markdown = new MarkdownDestination({ path: join(scratch.path, 'md') });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new LedgerSource(),
+        destination: markdown,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(rows, markdown.file('rows.md'), {
+            id: 'rows',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+  });
+  const loaded = async () =>
+    Array.from(
+      (await readFile(join(markdown.path, 'rows.md'), 'utf8')).matchAll(
+        /^<!-- elt-record:([A-Za-z0-9+/=]+) -->$/gm,
+      ),
+      ([, encoded]) => {
+        const { id, version, name } = JSON.parse(
+          Buffer.from(String(encoded), 'base64').toString('utf8'),
+        );
+        return `${id} ${version} ${name}`;
+      },
+    ).sort();
+
+  // As text "9" sorts after "10"; as numbers both versions of the second row
+  // round to 9007199254740992 and tie.
+  messages = [
+    row('1', 'AA==', '9', 'old'),
+    row('1', 'AA==', '10', 'new'),
+    row('9007199254740993', '/w==', '9007199254740992', 'old'),
+    row('9007199254740993', '/w==', '9007199254740993', 'new'),
+  ];
+  await pipeline.run();
+  assert.deepEqual(await loaded(), [
+    '1 10 new',
+    '9007199254740993 9007199254740993 new',
+  ]);
+
+  messages = [
+    {
+      type: 'DELETE',
+      stream: 'rows',
+      key: { id: '9007199254740993', hash: '/w==' },
+    },
+  ];
+  await pipeline.run();
+  assert.deepEqual(await loaded(), ['1 10 new']);
+});
+
+test('a reset replaces only its partition at the next commit, and one a failure dropped never reaches a later commit', async () => {
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { account: { type: 'string' }, id: { type: 'string' } },
+    },
+    primaryKey: ['account', 'id'],
+    partitionKey: ['account'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  // What each partition emits on the next run.
+  let script: Record<string, (SourceMessage | Error)[]> = {};
+  class Resetting extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'resetting';
+    protected readonly catalog = new Catalog([items]);
+    protected override partitions() {
+      return [{ account: 'a' }, { account: 'b' }];
+    }
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      _state: unknown,
+      partition: Partition | null,
+    ) {
+      for (const message of script[String(partition?.account)] ?? []) {
+        if (message instanceof Error) throw message;
+        yield message;
+      }
+    }
+  }
+  const record = (account: string, id: string) => ({
+    stream: 'items',
+    data: { account, id },
+  });
+  const reset = { type: 'RESET' as const, stream: 'items' };
+  const state = { type: 'STATE' as const, stream: 'items', state: {} };
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reset-'));
+  const destination = new MarkdownDestination({
+    path: join(scratch.path, 'md'),
+  });
+  const into = destination.file('items.md');
+  const loaded = async () =>
+    Array.from(
+      (await readFile(join(destination.path, 'items.md'), 'utf8')).matchAll(
+        /^<!-- elt-record:([A-Za-z0-9+/=]+) -->$/gm,
+      ),
+      ([, encoded]) => {
+        const { account, id } = JSON.parse(
+          Buffer.from(String(encoded), 'base64').toString('utf8'),
+        );
+        return `${account}${id}`;
+      },
+    ).sort();
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Resetting(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(items, into, {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  script = {
+    a: [record('a', '1'), record('a', '2'), state],
+    b: [record('b', '1'), state],
+  };
+  await pipeline.run();
+  script = { a: [reset, record('a', '2'), state], b: [state] };
+  await pipeline.run();
+  assert.deepEqual(await loaded(), ['a2', 'b1']);
+
+  script = {
+    a: [reset, record('a', '3'), new Error('gone')],
+    b: [record('b', '2'), state],
+  };
+  await assert.rejects(pipeline.run(), PipelineError);
+  assert.deepEqual(await loaded(), ['a2', 'b1', 'b2']);
+});
+
+test('a full refresh ignores resets, so an appending copy keeps its history', async () => {
+  let messages: SourceMessage[] = [];
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  class Resetting extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'resetting';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract() {
+      yield* messages;
+    }
+  }
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reset-'));
+  const destination = new MarkdownDestination({
+    path: join(scratch.path, 'md'),
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Resetting(),
+        destination,
+        steps: [
+          new Copy(items, destination.file('items.md'), {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'append',
+          }),
+        ],
+      }),
+    ],
+  });
+  const ids = async () =>
+    Array.from(
+      (await readFile(join(destination.path, 'items.md'), 'utf8')).matchAll(
+        /^<!-- elt-record:([A-Za-z0-9+/=]+) -->$/gm,
+      ),
+      ([, encoded]) =>
+        JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8')).id,
+    );
+
+  messages = [{ stream: 'items', data: { id: '1' } }];
+  await pipeline.run();
+  messages = [
+    { type: 'RESET', stream: 'items' },
+    { stream: 'items', data: { id: '2' } },
+  ];
+  await pipeline.run();
+
+  assert.deepEqual(await ids(), ['1', '2']);
 });

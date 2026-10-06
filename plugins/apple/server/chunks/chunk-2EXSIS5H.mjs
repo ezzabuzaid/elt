@@ -4,12 +4,189 @@ import {
   __using
 } from "./chunk-ZGXE7NZW.mjs";
 
+// packages/elt/dist/core/formats/field-format.js
+var FieldFormat = class {
+  // False when byte order is not the values' order, so the field cannot be a
+  // cursor.
+  orderable = true;
+  // How cursors of this format compare, as target descriptions state it.
+  ordering = "by byte order";
+  // Canonical values of one field share a width, so their bytes sort as they do.
+  compare(left, right) {
+    return Buffer.compare(Buffer.from(left), Buffer.from(right));
+  }
+};
+
+// packages/elt/dist/core/formats/base64-format.js
+var Base64Format = class extends FieldFormat {
+  name = "base64";
+  orderable = false;
+  accepts(value) {
+    return /^[A-Za-z0-9+/]*={0,2}$/.test(value) && value.length % 4 === 0 && Buffer.from(value, "base64").toString("base64") === value;
+  }
+};
+
+// packages/elt/dist/core/formats/temporal-format.js
+var TemporalFormat = class extends FieldFormat {
+  precision;
+  constructor(precision = 3) {
+    super();
+    if (!Number.isInteger(precision) || precision < 0 || precision > 9)
+      throw new TypeError("Temporal precision must be an integer from 0 to 9 fraction digits");
+    this.precision = precision;
+  }
+  // The pattern of the seconds' fraction this precision requires.
+  get fraction() {
+    return this.precision === 0 ? "" : `\\.\\d{${this.precision}}`;
+  }
+  // Whether a `YYYY-MM-DDTHH:MM:SS` names a real second of the calendar.
+  real(second) {
+    const instant = `${second}.000Z`;
+    const time = Date.parse(instant);
+    return Number.isFinite(time) && new Date(time).toISOString() === instant;
+  }
+};
+
+// packages/elt/dist/core/formats/timestamp-format.js
+var TimestampFormat = class extends TemporalFormat {
+  name = "date-time";
+  #pattern = new RegExp(`^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}${this.fraction}Z$`);
+  accepts(value) {
+    return this.#pattern.test(value) && this.real(value.slice(0, 19));
+  }
+};
+var milliseconds = new TimestampFormat();
+function isTimestamp(value) {
+  return typeof value === "string" && milliseconds.accepts(value);
+}
+
+// packages/elt/dist/core/formats/calendar-date-format.js
+var CalendarDateFormat = class extends FieldFormat {
+  name = "date";
+  accepts(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(value) && isTimestamp(`${value}T00:00:00.000Z`);
+  }
+};
+var day = new CalendarDateFormat();
+function isCalendarDate(value) {
+  return typeof value === "string" && day.accepts(value);
+}
+
+// packages/elt/dist/core/formats/decimal-format.js
+var DecimalFormat = class extends FieldFormat {
+  name = "decimal";
+  orderable = false;
+  // Most significant digits a value has, before and after the point.
+  precision;
+  scale;
+  constructor(precision, scale) {
+    super();
+    if (precision !== void 0 && (!Number.isSafeInteger(precision) || precision < 1))
+      throw new TypeError("Decimal precision must be a positive integer");
+    if (scale !== void 0 && (precision === void 0 || !Number.isSafeInteger(scale) || scale < 0 || scale > precision))
+      throw new TypeError("Decimal scale must be an integer from 0 to its precision");
+    this.precision = precision;
+    this.scale = scale;
+  }
+  accepts(value) {
+    const match = /^-?(0|[1-9]\d*)(?:\.(\d+))?$/.exec(value);
+    if (match === null)
+      return false;
+    const [, integer = "", fraction = ""] = match;
+    if (value.startsWith("-") && /^0+$/.test(integer + fraction))
+      return false;
+    if (this.scale === void 0 ? fraction.endsWith("0") : fraction.length !== this.scale)
+      return false;
+    return this.precision === void 0 || (integer === "0" ? 0 : integer.length) + fraction.length <= this.precision;
+  }
+};
+
+// packages/elt/dist/core/formats/int64-format.js
+var min = -(2n ** 63n);
+var max = 2n ** 63n - 1n;
+var Int64Format = class extends FieldFormat {
+  name = "int64";
+  ordering = "as 64-bit integers";
+  accepts(value) {
+    if (!/^-?(0|[1-9]\d*)$/.test(value) || value === "-0")
+      return false;
+    const integer = BigInt(value);
+    return integer >= min && integer <= max;
+  }
+  compare(left, right) {
+    const a = BigInt(left);
+    const b = BigInt(right);
+    if (a < b)
+      return -1;
+    if (a > b)
+      return 1;
+    return 0;
+  }
+};
+
+// packages/elt/dist/core/formats/local-time-format.js
+var LocalTimeFormat = class extends TemporalFormat {
+  name = "time-local";
+  #pattern = new RegExp(`^\\d{2}:\\d{2}:\\d{2}${this.fraction}$`);
+  accepts(value) {
+    return this.#pattern.test(value) && this.real(`1970-01-01T${value.slice(0, 8)}`);
+  }
+};
+
+// packages/elt/dist/core/formats/local-timestamp-format.js
+var LocalTimestampFormat = class extends TemporalFormat {
+  name = "date-time-local";
+  #pattern = new RegExp(`^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}${this.fraction}$`);
+  accepts(value) {
+    return this.#pattern.test(value) && this.real(value.slice(0, 19));
+  }
+};
+
+// packages/elt/dist/core/formats/declared-format.js
+function declaredFormat(schema) {
+  const { format, precision, scale, contentEncoding } = schema;
+  if (format === void 0 && contentEncoding === void 0) {
+    if (precision !== void 0 || scale !== void 0)
+      throw new TypeError("precision and scale refine a format");
+    return null;
+  }
+  const types = typeof schema.type === "string" ? [schema.type] : schema.type;
+  if (types.filter((type) => type !== "null").join() !== "string")
+    throw new TypeError(`${format ?? `contentEncoding ${contentEncoding}`} spells a string`);
+  if (contentEncoding !== void 0) {
+    if (contentEncoding !== "base64" || format !== void 0 || precision !== void 0 || scale !== void 0)
+      throw new TypeError("contentEncoding is base64 alone");
+    return new Base64Format();
+  }
+  if (scale !== void 0 && format !== "decimal")
+    throw new TypeError("scale refines a decimal");
+  if (precision !== void 0 && (format === "date" || format === "int64"))
+    throw new TypeError(`format ${format} has no precision`);
+  switch (format) {
+    case "date-time":
+      return new TimestampFormat(precision);
+    case "date-time-local":
+      return new LocalTimestampFormat(precision);
+    case "time-local":
+      return new LocalTimeFormat(precision);
+    case "date":
+      return new CalendarDateFormat();
+    case "int64":
+      return new Int64Format();
+    case "decimal":
+      return new DecimalFormat(precision, scale);
+    default:
+      throw new TypeError(`Unsupported format ${String(format)}`);
+  }
+}
+
 // packages/elt/dist/core/deduplication.js
 var Deduplication = class {
   stream;
   primaryKey;
   // Absent when the newest extraction always wins (dedupPolicy replace).
   cursorField;
+  #formats = /* @__PURE__ */ new Map();
   constructor(stream, primaryKey, cursorField) {
     this.stream = stream;
     this.cursorField = cursorField;
@@ -17,10 +194,29 @@ var Deduplication = class {
       throw new TypeError("Deduplication requires distinct primaryKey fields");
     this.primaryKey = Object.freeze([...primaryKey]);
     for (const field of this.primaryKey)
-      this.type(field);
-    if (cursorField !== void 0 && !["string", "number", "integer"].includes(this.type(cursorField)))
-      throw new TypeError("Deduplication cursor must be text or numeric");
+      this.#declare(field);
+    if (cursorField !== void 0) {
+      if (!["string", "number", "integer"].includes(this.type(cursorField)))
+        throw new TypeError("Deduplication cursor must be text or numeric");
+      const format = this.#declare(cursorField);
+      if (format?.orderable === false)
+        throw new TypeError(`Deduplication cursor ${cursorField} cannot order ${format.name} values`);
+    }
     Object.freeze(this);
+  }
+  #declare(field) {
+    this.type(field);
+    const schema = this.stream.jsonSchema.properties?.[field];
+    const format = schema === void 0 ? null : declaredFormat(schema);
+    this.#formats.set(field, format);
+    return format;
+  }
+  // The format of a key or cursor field, null when it declares none.
+  format(field) {
+    const format = this.#formats.get(field);
+    if (format === void 0)
+      throw new TypeError(`${field} is not a key or cursor field`);
+    return format;
   }
   type(field) {
     const properties = this.stream.jsonSchema.properties;
@@ -37,9 +233,10 @@ var Deduplication = class {
       throw new TypeError(`Record is missing key/cursor field ${field}`);
     const value = Reflect.get(record, field);
     const type = this.type(field);
-    if (type === "string" && typeof value === "string" && value.isWellFormed() || type === "boolean" && typeof value === "boolean" || type === "number" && typeof value === "number" && Number.isFinite(value) || type === "integer" && typeof value === "number" && Number.isSafeInteger(value))
+    const format = this.format(field);
+    if (type === "string" && typeof value === "string" && value.isWellFormed() && (format === null || format.accepts(value)) || type === "boolean" && typeof value === "boolean" || type === "number" && typeof value === "number" && Number.isFinite(value) || type === "integer" && typeof value === "number" && Number.isSafeInteger(value))
       return value;
-    throw new TypeError(`Key/cursor field ${field} requires non-null ${type}`);
+    throw new TypeError(format === null ? `Key/cursor field ${field} requires non-null ${type}` : `Key/cursor field ${field} requires a canonical ${format.name} value`);
   }
   key(record) {
     return JSON.stringify(this.primaryKey.map((field) => this.value(record, field)));
@@ -55,9 +252,12 @@ var Deduplication = class {
   newer(record, previous) {
     const value = this.cursor(record);
     const saved = this.cursor(previous);
-    if (typeof value === "string" && typeof saved === "string")
+    if (typeof value !== "string" || typeof saved !== "string")
+      return value > saved;
+    const format = this.cursorField === void 0 ? null : this.format(this.cursorField);
+    if (format === null)
       return Buffer.compare(Buffer.from(value), Buffer.from(saved)) > 0;
-    return value > saved;
+    return format.compare(value, saved) > 0;
   }
 };
 
@@ -200,6 +400,8 @@ var Stream = class {
       const field = jsonSchema.properties?.[expiresBy];
       if (!emitsDeletes || field === void 0 || field.type !== "string" || field.format !== "date-time")
         throw new TypeError("expiresBy must name a non-null date-time property of a stream that emits deletions");
+      if (field.precision !== void 0 && field.precision !== 3)
+        throw new TypeError(`expiresBy ${expiresBy} must keep milliseconds; it declares precision ${field.precision}`);
       this.expiresBy = expiresBy;
     }
     Object.freeze(this);
@@ -510,14 +712,6 @@ var Destination = class {
   }
 };
 
-// packages/elt/dist/core/formats.js
-function isTimestamp(value) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-}
-function isCalendarDate(value) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && isTimestamp(`${value}T00:00:00.000Z`);
-}
-
 // packages/elt/dist/core/interleave.js
 async function* interleave(generators, concurrency) {
   const waiting = [...generators];
@@ -679,8 +873,10 @@ var Source = class {
       const incremental = configuration.syncMode === "incremental";
       try {
         for await (const message2 of this.resolved(configuration, this.extract(configuration, state, null, context)))
-          if (incremental || !("type" in message2) || message2.type !== "STATE")
+          if (!("type" in message2) || message2.type === "DELETE")
             yield message2;
+          else if (incremental)
+            yield message2.type === "RESET" ? { ...message2, partition: null } : message2;
       } catch (error) {
         yield new StreamStatus(name, "FAILED", null, error);
       }
@@ -695,6 +891,8 @@ var Source = class {
         throw new TypeError("Only Source.read reports stream status; extract signals failure by throwing");
       if (message2.stream !== configuration.stream.name)
         throw new TypeError(`Extract for ${configuration.stream.name} emitted ${message2.stream}`);
+      if ("type" in message2 && message2.type === "RESET" && Object.hasOwn(message2, "partition"))
+        throw new TypeError("Only Source.read scopes a reset to its partition");
       if ("type" in message2 || configuration.fileReads.length === 0) {
         yield message2;
         continue;
@@ -753,6 +951,11 @@ var Source = class {
             };
             continue;
           }
+          if ("type" in message2 && message2.type === "RESET") {
+            if (incremental)
+              yield { ...message2, partition };
+            continue;
+          }
           assertInPartition(stream, partition, "type" in message2 ? message2.key : message2.data);
           yield message2;
         }
@@ -781,7 +984,7 @@ var Replicated = class {
   broken = false;
   started = false;
   ended = false;
-  resuming = false;
+  restart = false;
   settled = false;
   copy;
   observe;
@@ -825,9 +1028,12 @@ async function replicate(source, destination, checkpoints, copies, observe) {
   for (const { copy } of replications)
     if (copy.configuration.syncMode === "incremental" && copy.id !== void 0)
       bindings.set(copy.id, {
-        source: source.identity,
-        target: destination.identity(copy.to),
-        configuration: copy.configuration
+        copy: {
+          source: source.identity,
+          target: destination.identity(copy.to),
+          selection: selection(copy.configuration)
+        },
+        shape: shape(copy.from)
       });
   try {
     if (checkpoints === void 0 || bindings.size === 0)
@@ -862,9 +1068,8 @@ async function transfer(source, destination, run, replications) {
       }
       try {
         const { run: run2, id } = checkpoint(replication);
-        const state = run2.state(id);
-        replication.resuming = state !== null;
-        states.set(replication.stream.name, state);
+        states.set(replication.stream.name, run2.state(id));
+        replication.restart = run2.restart(id);
         reading.push(replication);
       } catch (error) {
         fail(replication, error);
@@ -878,8 +1083,10 @@ async function transfer(source, destination, run, replications) {
       try {
         replication.stage = await load.prepare(replication.copy.configuration, replication.copy.to, {
           writer: replication.copy.writer(source),
-          resuming: replication.resuming
+          restart: replication.restart
         });
+        if (replication.stage.fresh)
+          states.set(replication.stream.name, null);
         await replication.files.reconcile(replication.stage.values);
         prepared.push(replication);
       } catch (error) {
@@ -950,7 +1157,7 @@ async function transfer(source, destination, run, replications) {
             if (operation.type === "RECORD") {
               replication.pending.count++;
               replication.emitted.count++;
-            } else {
+            } else if (operation.type === "DELETE") {
               replication.pending.deleted++;
               replication.emitted.deleted++;
             }
@@ -974,6 +1181,31 @@ async function transfer(source, destination, run, replications) {
     var _promise = __callDispose(_stack, _error, _hasError);
     _promise && await _promise;
   }
+}
+function selection(configuration) {
+  const { stream, fileReads, syncMode, destinationSyncMode, cursorField, primaryKey, dedupPolicy } = configuration;
+  return {
+    fileReads,
+    syncMode,
+    destinationSyncMode,
+    cursorField,
+    dedupPolicy,
+    primaryKey: stream.primaryKey.length > 0 ? void 0 : primaryKey
+  };
+}
+function shape(stream) {
+  const { description: _, properties, ...schema } = stream.jsonSchema;
+  const undescribed2 = ({ description: __, ...rest }) => rest;
+  return {
+    ...stream,
+    jsonSchema: {
+      ...schema,
+      properties: properties && Object.fromEntries(Object.entries(properties).map(([name, { items, ...field }]) => [
+        name,
+        { ...undescribed2(field), items: items && undescribed2(items) }
+      ]))
+    }
+  };
 }
 function started(replication) {
   if (!replication.started || replication.stage === void 0)
@@ -1010,7 +1242,7 @@ async function breakStage(replication, error) {
 }
 function validStream(message2) {
   if (message2 === null || typeof message2 !== "object" || typeof message2.stream !== "string")
-    throw new TypeError("Source must emit records with stream and data, DELETE or STATE messages");
+    throw new TypeError("Source must emit records with stream and data, DELETE, RESET or STATE messages");
   return message2.stream;
 }
 function validOperation(stream, message2) {
@@ -1023,13 +1255,20 @@ function validOperation(stream, message2) {
   }
   if ("type" in message2 && message2.type === "DELETE" && Object.hasOwn(message2, "key") && !Object.hasOwn(message2, "data"))
     return { type: "DELETE", key: deletionKey(stream, message2.key) };
+  if ("type" in message2 && message2.type === "RESET" && Object.hasOwn(message2, "partition") && !Object.hasOwn(message2, "data")) {
+    if (!stream.emitsDeletes)
+      throw new TypeError(`Stream ${stream.name} does not emit deletions, so it cannot reset`);
+    if (message2.partition === null !== (stream.partitionKey === void 0))
+      throw new TypeError(`A reset of ${stream.name} is scoped to a partition exactly when the stream is partitioned`);
+    return { type: "RESET", partition: message2.partition };
+  }
   if (!("type" in message2) && "data" in message2 && Object.hasOwn(message2, "data")) {
     if (Object.hasOwn(message2, "file"))
       throw new TypeError("Destinations cannot receive source staging paths");
     wellFormed(message2.data, "Record");
     return { type: "RECORD", data: message2.data };
   }
-  throw new TypeError("Source must emit records with stream and data, DELETE or STATE messages");
+  throw new TypeError("Source must emit records with stream and data, DELETE, RESET or STATE messages");
 }
 function wellFormed(value, path) {
   if (typeof value === "string") {
@@ -1066,12 +1305,6 @@ var TargetOwnedError = class extends TypeError {
   name = "TargetOwnedError";
   constructor(target, owner, writer) {
     super(`Target ${target} is written by ${owner}; ${writer} cannot write it. A target has one writer; clear the owning copy, or drop the target, to reassign it.`);
-  }
-};
-var TargetMissingError = class extends TypeError {
-  name = "TargetMissingError";
-  constructor(target, writer) {
-    super(`Target ${target} was dropped, but ${writer} still has a checkpoint; clear the copy to reload it from scratch.`);
   }
 };
 var Writer = class {
@@ -1314,11 +1547,11 @@ function supported(field) {
     return field.items === void 0 && types.every((type) => scalarTypes.has(type));
   const { items } = field;
   return types.every((type) => type === "array" || type === "null") && // Constraints on an array field belong on its items.
-  field.enum === void 0 && field.format === void 0 && field.minimum === void 0 && field.maximum === void 0 && field.minLength === void 0 && items !== null && typeof items === "object" && itemTypes.has(items.type);
+  field.enum === void 0 && field.format === void 0 && field.precision === void 0 && field.scale === void 0 && field.contentEncoding === void 0 && field.minimum === void 0 && field.maximum === void 0 && field.minLength === void 0 && items !== null && typeof items === "object" && itemTypes.has(items.type);
 }
-function scalarValid(field, types, value) {
+function scalarValid(field, types, format, value) {
   const typed = types.some((type) => type === "integer" ? Number.isSafeInteger(value) : type === "number" ? typeof value === "number" && Number.isFinite(value) : (type === "string" || type === "boolean") && typeof value === type);
-  return typed && (field.enum === void 0 || field.enum.some((member) => member === value)) && !(typeof value === "number" && (field.minimum !== void 0 && value < field.minimum || field.maximum !== void 0 && value > field.maximum)) && !(typeof value === "string" && field.minLength !== void 0 && value.length < field.minLength) && !(field.format === "date-time" && !isTimestamp(value)) && !(field.format === "date" && !isCalendarDate(value));
+  return typed && (field.enum === void 0 || field.enum.some((member) => member === value)) && !(typeof value === "number" && (field.minimum !== void 0 && value < field.minimum || field.maximum !== void 0 && value > field.maximum)) && !(typeof value === "string" && field.minLength !== void 0 && value.length < field.minLength) && (format === null || typeof value === "string" && format.accepts(value));
 }
 function validateRecords(stream, records, source) {
   if (!Array.isArray(records))
@@ -1326,10 +1559,20 @@ function validateRecords(stream, records, source) {
   const { properties } = stream.jsonSchema;
   if (properties === void 0)
     throw new TypeError(`Stream ${stream.name} declares no properties to validate`);
-  const fields = Object.entries(properties);
-  for (const [name, field] of fields)
-    if (!supported(field))
-      throw new TypeError(`Stream ${stream.name}.${name} declares an unsupported type`);
+  const fields = Object.entries(properties).map(([name, schema]) => {
+    const unsupported = (cause) => new TypeError(`Stream ${stream.name}.${name} declares an unsupported type`, { cause });
+    if (!supported(schema))
+      throw unsupported();
+    try {
+      return {
+        name,
+        schema,
+        format: declaredFormat(isArrayField(schema) ? schema.items : schema)
+      };
+    } catch (error) {
+      throw unsupported(error);
+    }
+  });
   const valid = [];
   for (const record of records) {
     assertRecord(record, fields, stream.name, source);
@@ -1340,12 +1583,12 @@ function validateRecords(stream, records, source) {
 function assertRecord(record, fields, stream, source) {
   if (record === null || typeof record !== "object" || Array.isArray(record) || Object.keys(record).length !== fields.length)
     throw new TypeError(`${source} returned an invalid ${stream} record`);
-  for (const [name, field] of fields) {
+  for (const { name, schema, format } of fields) {
     const value = Reflect.get(record, name);
-    const types = typesOf(field);
+    const types = typesOf(schema);
     if (value === null && types.includes("null"))
       continue;
-    const valid = isArrayField(field) ? Array.isArray(value) && value.every((item) => scalarValid(field.items, [field.items.type], item)) : scalarValid(field, types, value);
+    const valid = isArrayField(schema) ? Array.isArray(value) && value.every((item) => scalarValid(schema.items, [schema.items.type], format, item)) : scalarValid(schema, types, format, value);
     if (!valid)
       throw new TypeError(`${source} returned invalid ${stream}.${name}`);
   }
@@ -1518,9 +1761,10 @@ function describeTarget(configuration, columns, storedFile) {
     lines.push(`Source record meaning: ${meaning}`);
   lines.push(`Extraction: ${configuration.syncMode}. Loading: ${configuration.destinationSyncMode}. ${loading[configuration.destinationSyncMode]}`);
   if (configuration.dedupPolicy !== void 0) {
-    const { primaryKey, cursorField } = configuration.deduplication();
+    const deduplication = configuration.deduplication();
+    const { primaryKey, cursorField } = deduplication;
     lines.push(`Copy key: ${primaryKey.join(", ")}.`);
-    lines.push(configuration.dedupPolicy === "replace" ? "For a repeated key, the newest extracted record wins." : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare by byte order.`);
+    lines.push(configuration.dedupPolicy === "replace" || cursorField === void 0 ? "For a repeated key, the newest extracted record wins." : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare ${deduplication.format(cursorField)?.ordering ?? "by byte order"}.`);
   }
   const { properties } = stream.jsonSchema;
   const described = Object.fromEntries(columns.map((column) => {
@@ -1560,14 +1804,18 @@ var CheckpointStore = class {
     const ids = [...bindings.keys()].sort();
     return this.session(ids, async (session) => {
       const checkpoints = /* @__PURE__ */ new Map();
-      for (const id of ids) {
-        const binding = JSON.stringify(bindings.get(id));
+      for (const [id, { copy, shape: shape2 }] of bindings) {
+        const binding = JSON.stringify([copy, shape2]);
         const saved = await session.read(id);
-        const changed = saved !== void 0 && !isDeepStrictEqual4(JSON.parse(saved.binding), JSON.parse(binding));
+        const [savedCopy, savedShape] = saved === void 0 ? [] : JSON.parse(saved.binding);
+        const [currentCopy, currentShape] = JSON.parse(binding);
+        const changed = saved !== void 0 && !isDeepStrictEqual4(savedCopy, currentCopy);
+        const restart = saved !== void 0 && !changed && !isDeepStrictEqual4(savedShape, currentShape);
         checkpoints.set(id, {
           binding,
-          state: saved === void 0 || changed ? null : JSON.parse(saved.state),
-          changed
+          state: saved === void 0 || changed || restart ? null : JSON.parse(saved.state),
+          changed,
+          restart
         });
       }
       const checkpoint = (id) => {
@@ -1581,6 +1829,7 @@ var CheckpointStore = class {
       return work({
         // A source may mutate its input state, but only an acknowledged message may advance it.
         state: (id) => structuredClone(checkpoint(id).state),
+        restart: (id) => checkpoint(id).restart,
         save: async (id, state) => {
           const { binding } = checkpoint(id);
           try {
@@ -1828,6 +2077,9 @@ var LocalFiles = class extends FileStorage {
 };
 
 export {
+  isTimestamp,
+  isCalendarDate,
+  declaredFormat,
   DocumentParser,
   FileStorage,
   FileReference,
@@ -1840,12 +2092,9 @@ export {
   Copy,
   Connection,
   Destination,
-  isTimestamp,
-  isCalendarDate,
   StreamStatus,
   Source,
   TargetOwnedError,
-  TargetMissingError,
   Writer,
   PipelineError,
   Pipeline,

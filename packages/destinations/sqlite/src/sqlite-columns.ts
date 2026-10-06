@@ -1,19 +1,19 @@
-import type { Stream } from '@workspace/elt';
+import {
+  type DeclaredFormat,
+  type Stream,
+  declaredFormat,
+} from '@workspace/elt';
 
-import { SQLiteColumn } from './sqlite-column.ts';
+import { SQLiteColumn, formatKinds } from './sqlite-column.ts';
 
 function scalarKind(
   name: string,
   type: string,
-  format: string | undefined,
+  format: DeclaredFormat | null,
 ): SQLiteColumn['kind'] {
   switch (type) {
     case 'string':
-      return format === 'date'
-        ? 'date'
-        : format === 'date-time'
-          ? 'timestamp'
-          : 'text';
+      return format === null ? 'text' : formatKinds[format.name];
     case 'integer':
       return 'integer';
     case 'number':
@@ -29,8 +29,8 @@ function scalarKind(
 
 // SQLite column declarations are independent of a source or connection.
 export class SQLiteColumns {
-  // Scalars, and arrays of scalars as JSON arrays in TEXT. The date and
-  // date-time string formats keep their kind, as in Postgres.
+  // Scalars, and arrays of scalars as JSON arrays in TEXT. String formats
+  // keep their kind, as in Postgres.
   static fromSchema({
     properties,
     required = [],
@@ -55,19 +55,19 @@ export class SQLiteColumns {
           `SQLite requires one scalar type for field ${name}`,
         );
       const array = valueType === 'array';
-      const scalar = array
-        ? field.items
-        : { type: valueType, format: field.format };
-      if (scalar === undefined)
+      const items = array ? field.items : undefined;
+      if (array && items === undefined)
         throw new TypeError(`Unsupported JSON Schema items for field ${name}`);
+      const format = declaredFormat(items ?? field);
       return new SQLiteColumn(
         name,
-        scalarKind(name, scalar.type, scalar.format),
+        scalarKind(name, items?.type ?? valueType, format),
         {
           nullable: types.includes('null'),
           optional: !requiredFields.has(name),
           primaryKey: false,
           array,
+          format: format ?? undefined,
         },
       );
     });

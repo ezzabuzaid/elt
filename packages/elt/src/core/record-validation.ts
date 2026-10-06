@@ -1,11 +1,26 @@
-import { isCalendarDate, isTimestamp } from './formats.ts';
+import {
+  type DeclaredFormat,
+  declaredFormat,
+} from './formats/declared-format.ts';
 
 // The JSON Schema subset stream properties use: scalar types, optionally
-// nullable, with enum, range, length and date formats; or an array of one such
-// scalar type, optionally nullable, whose items carry those constraints.
-type ScalarSchema = {
+// nullable, with enum, range, length and string formats; or an array of one
+// such scalar type, optionally nullable, whose items carry those constraints.
+export type ScalarSchema = {
   readonly description?: string;
-  readonly format?: 'date-time' | 'date';
+  readonly format?:
+    | 'date-time'
+    | 'date'
+    | 'date-time-local'
+    | 'time-local'
+    | 'int64'
+    | 'decimal';
+  // Fraction-of-second digits of a temporal format (3 when absent), or the
+  // most significant digits of a decimal.
+  readonly precision?: number;
+  // Digits after the point of a decimal.
+  readonly scale?: number;
+  readonly contentEncoding?: 'base64';
   readonly minimum?: number;
   readonly maximum?: number;
   readonly minLength?: number;
@@ -97,6 +112,9 @@ function supported(field: FieldSchema): boolean {
     // Constraints on an array field belong on its items.
     field.enum === undefined &&
     field.format === undefined &&
+    field.precision === undefined &&
+    field.scale === undefined &&
+    field.contentEncoding === undefined &&
     field.minimum === undefined &&
     field.maximum === undefined &&
     field.minLength === undefined &&
@@ -110,6 +128,7 @@ function supported(field: FieldSchema): boolean {
 function scalarValid(
   field: ScalarSchema,
   types: readonly string[],
+  format: DeclaredFormat | null,
   value: unknown,
 ): boolean {
   const typed = types.some((type) =>
@@ -133,10 +152,16 @@ function scalarValid(
       field.minLength !== undefined &&
       value.length < field.minLength
     ) &&
-    !(field.format === 'date-time' && !isTimestamp(value)) &&
-    !(field.format === 'date' && !isCalendarDate(value))
+    (format === null || (typeof value === 'string' && format.accepts(value)))
   );
 }
+
+type CheckedField = {
+  readonly name: string;
+  readonly schema: FieldSchema;
+  // Of the field, or of each item of an array field.
+  readonly format: DeclaredFormat | null;
+};
 
 // Every property is required and a record carries exactly those properties, so
 // a projection that drops or misspells a field fails here instead of loading.
@@ -155,12 +180,25 @@ export function validateRecords<P extends Properties>(
     throw new TypeError(
       `Stream ${stream.name} declares no properties to validate`,
     );
-  const fields: [string, FieldSchema][] = Object.entries(properties);
-  for (const [name, field] of fields)
-    if (!supported(field))
-      throw new TypeError(
-        `Stream ${stream.name}.${name} declares an unsupported type`,
-      );
+  const fields = Object.entries(properties).map(
+    ([name, schema]): CheckedField => {
+      const unsupported = (cause?: unknown) =>
+        new TypeError(
+          `Stream ${stream.name}.${name} declares an unsupported type`,
+          { cause },
+        );
+      if (!supported(schema)) throw unsupported();
+      try {
+        return {
+          name,
+          schema,
+          format: declaredFormat(isArrayField(schema) ? schema.items : schema),
+        };
+      } catch (error) {
+        throw unsupported(error);
+      }
+    },
+  );
   const valid: SchemaRecord<P>[] = [];
   for (const record of records) {
     assertRecord<P>(record, fields, stream.name, source);
@@ -171,7 +209,7 @@ export function validateRecords<P extends Properties>(
 
 function assertRecord<P extends Properties>(
   record: unknown,
-  fields: readonly [string, FieldSchema][],
+  fields: readonly CheckedField[],
   stream: string,
   source: string,
 ): asserts record is SchemaRecord<P> {
@@ -182,16 +220,16 @@ function assertRecord<P extends Properties>(
     Object.keys(record).length !== fields.length
   )
     throw new TypeError(`${source} returned an invalid ${stream} record`);
-  for (const [name, field] of fields) {
+  for (const { name, schema, format } of fields) {
     const value: unknown = Reflect.get(record, name);
-    const types = typesOf(field);
+    const types = typesOf(schema);
     if (value === null && types.includes('null')) continue;
-    const valid = isArrayField(field)
+    const valid = isArrayField(schema)
       ? Array.isArray(value) &&
         value.every((item) =>
-          scalarValid(field.items, [field.items.type], item),
+          scalarValid(schema.items, [schema.items.type], format, item),
         )
-      : scalarValid(field, types, value);
+      : scalarValid(schema, types, format, value);
     if (!valid)
       throw new TypeError(`${source} returned invalid ${stream}.${name}`);
   }

@@ -31,7 +31,8 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
           `Deduplication requires destination column ${field}`,
         );
       if (
-        selected.kind !== inferred.find((column) => column.name === field)?.kind
+        selected.dataType !==
+        inferred.find((column) => column.name === field)?.dataType
       )
         throw new TypeError(
           `Deduplication column ${field} must preserve the source scalar type`,
@@ -48,7 +49,10 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     return this.configuration.destinationSyncMode === 'overwrite_dedup';
   }
 
-  protected override initialize(database: DatabaseSync): void {
+  protected override initialize(
+    database: DatabaseSync,
+    replacing: boolean,
+  ): void {
     const existing = database
       .prepare(`PRAGMA table_info(${this.table.quotedName})`)
       .all();
@@ -67,7 +71,7 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     }
     // A replacing load keeps none of these rows: its index is built once the
     // commit has emptied the table.
-    if (this.replaces) return;
+    if (replacing) return;
     if (
       database
         .prepare(

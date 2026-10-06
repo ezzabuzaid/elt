@@ -7,7 +7,7 @@ import {
   CheckpointStore,
   Connection,
   Copy,
-  type CopyConfiguration,
+  CopyConfiguration,
   type DeclaredCopy,
   Destination,
   DocumentParser,
@@ -179,6 +179,143 @@ test('record validation enforces every property of the stream schema', () => {
   }
 });
 
+test('string formats accept exactly one canonical spelling of each value', () => {
+  const stream = new Stream({
+    name: 'values',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        legacy: { type: 'string', format: 'date-time' },
+        instant: { type: 'string', format: 'date-time', precision: 7 },
+        whole: { type: 'string', format: 'date-time', precision: 0 },
+        local: { type: 'string', format: 'date-time-local', precision: 7 },
+        clock: { type: 'string', format: 'time-local', precision: 3 },
+        count: { type: 'string', format: 'int64' },
+        money: { type: 'string', format: 'decimal', precision: 19, scale: 4 },
+        ratio: { type: ['string', 'null'], format: 'decimal' },
+        bytes: { type: 'string', contentEncoding: 'base64' },
+        ids: { type: 'array', items: { type: 'string', format: 'int64' } },
+      },
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+  const valid = {
+    legacy: '2025-01-02T03:04:05.006Z',
+    instant: '2025-01-02T03:04:05.1234567Z',
+    whole: '2025-01-02T03:04:05Z',
+    local: '9999-12-31T23:59:59.9999999',
+    clock: '23:59:59.999',
+    count: '-9223372036854775808',
+    money: '922337203685477.5807',
+    ratio: '-0.5',
+    bytes: 'AAEC/w==',
+    ids: ['9223372036854775807', '0'],
+  };
+
+  assert.deepEqual(validateRecords(stream, [valid], 'Test'), [valid]);
+  for (const [field, value] of [
+    ['legacy', '2025-01-02T03:04:05.1234567Z'],
+    ['instant', '2025-01-02T03:04:05.123Z'],
+    ['instant', '2025-02-30T03:04:05.1234567Z'],
+    ['whole', '2025-01-02T03:04:05.000Z'],
+    ['local', '2025-01-02T03:04:05.1234567Z'],
+    ['clock', '23:59:59'],
+    ['clock', '24:00:00.000'],
+    ['count', '9223372036854775808'],
+    ['count', '-9223372036854775809'],
+    ['count', '007'],
+    ['count', '-0'],
+    ['count', 7],
+    ['money', '1.5'],
+    ['money', '12345678901234567.0000'],
+    ['money', '-0.0000'],
+    ['ratio', '0.50'],
+    ['ratio', '1e3'],
+    ['ratio', '+1'],
+    ['bytes', 'AAEC/w'],
+    ['bytes', 'AAEC_w=='],
+    ['bytes', 'AAEC/x=='],
+    ['ids', ['01']],
+  ] as const)
+    assert.throws(
+      () => validateRecords(stream, [{ ...valid, [field]: value }], 'Test'),
+      { message: `Test returned invalid values.${field}` },
+    );
+  for (const value of [
+    { type: 'integer', format: 'int64' },
+    { type: 'string', precision: 3 },
+    { type: 'string', format: 'date', precision: 3 },
+    { type: 'string', format: 'int64', precision: 3 },
+    { type: 'string', format: 'date-time', scale: 2 },
+    { type: 'string', format: 'date-time', precision: 10 },
+    { type: 'string', format: 'date-time-local', precision: 1.5 },
+    { type: 'string', format: 'decimal', scale: 2 },
+    { type: 'string', format: 'decimal', precision: 2, scale: 3 },
+    { type: 'string', format: 'int64', contentEncoding: 'base64' },
+    { type: 'string', contentEncoding: 'hex' },
+    {
+      type: 'array',
+      precision: 3,
+      items: { type: 'string', format: 'date-time' },
+    },
+  ]) {
+    const declared = new Stream({
+      name: 'declared',
+      // @ts-expect-error -- some of these schemas are invalid FieldSchemas; the check must reject them at run time too
+      jsonSchema: { type: 'object', properties: { value } },
+      supportedSyncModes: ['full_refresh'],
+    });
+    assert.throws(
+      () => validateRecords(declared, [], 'Test'),
+      /declared\.value declares an unsupported type/,
+    );
+  }
+});
+
+test('expiry keeps millisecond timestamps, and decimal or base64 fields cannot be cursors', () => {
+  const properties = {
+    id: { type: 'string', format: 'int64' },
+    amount: { type: 'string', format: 'decimal' },
+    hash: { type: 'string', contentEncoding: 'base64' },
+    at: { type: 'string', format: 'date-time', precision: 7 },
+  } as const;
+  const stream = new Stream({
+    name: 'ledger',
+    jsonSchema: { type: 'object', properties },
+    primaryKey: ['id'],
+    supportedSyncModes: ['incremental'],
+    emitsDeletes: true,
+  });
+
+  assert.throws(
+    () =>
+      new Stream({
+        name: 'expiring',
+        jsonSchema: { type: 'object', properties },
+        primaryKey: ['id'],
+        supportedSyncModes: ['incremental'],
+        emitsDeletes: true,
+        expiresBy: 'at',
+      }),
+    { message: 'expiresBy at must keep milliseconds; it declares precision 7' },
+  );
+  for (const [cursorField, format] of [
+    ['amount', 'decimal'],
+    ['hash', 'base64'],
+  ] as const)
+    assert.throws(
+      () =>
+        new CopyConfiguration(stream, {
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+          cursorField,
+        }).validateSelection(),
+      {
+        message: `Deduplication cursor ${cursorField} cannot order ${format} values`,
+      },
+    );
+});
+
 type ReadContext = AsyncDisposable & { readonly id: number };
 
 // One scripted extract step: a message to emit or an error to throw. A
@@ -307,6 +444,7 @@ class RecordingWriter extends Writer {
     const { log, refusal } = this;
     log.push('open');
     return {
+      fresh: false,
       values: async function* () {},
       apply: async (operation: WriteOperation) => {
         log.push(

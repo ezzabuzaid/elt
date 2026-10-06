@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import { Deduplication } from './deduplication.ts';
-import { isTimestamp } from './formats.ts';
+import { isTimestamp } from './formats/timestamp-format.ts';
 import type { DeleteMessage, KeyValue, StateMessage } from './source.ts';
 import type { Stream } from './stream.ts';
 

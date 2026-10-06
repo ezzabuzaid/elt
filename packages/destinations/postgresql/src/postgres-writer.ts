@@ -7,8 +7,8 @@ import {
   type FieldValues,
   FileContent,
   type KeyValue,
+  type Partition,
   type Stage,
-  TargetMissingError,
   TargetOwnedError,
   Writer,
   describeTarget,
@@ -19,24 +19,27 @@ import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
 import { PostgresSession, schemaLock } from './postgres-session.ts';
-import type { PostgresReaderView, PostgresTable } from './postgres-table.ts';
+import type { PostgresTable } from './postgres-table.ts';
 
-// The load's one connection; statements run inside its open transaction.
+// The load's one connection, inside one commit's transaction or on its own.
 export type Transaction = postgres.Sql;
 
 const batchSize = 1000;
 export const seq = '"_elt_seq"';
 export const op = '"_elt_op"';
 
-// A run's one connection and write transaction for a schema, shared by every
-// stream's stage. The schema lock serializes everything elt writes there, as
-// SQLite's BEGIN IMMEDIATE does per file; readers never wait on it.
-// ponytail: holds the write transaction during extraction; stage elsewhere if long reads hold back vacuum.
+// How long swapping in a rebuilt target waits for its readers before the
+// copy gives up until the next run.
+const swapTimeout = '3s';
+
+// A run's one connection to a schema. The schema lock keeps every other load
+// out until it closes, as SQLite's BEGIN IMMEDIATE does per file; readers
+// never wait on it. No transaction stays open between commits, so reading the
+// source holds no locks on the targets and keeps nothing from vacuum.
 export class PostgresLoad implements AsyncDisposable {
   readonly #connection: PostgresSession;
   readonly schema: string;
   readonly loadedAt: string;
-  #open = false;
 
   private constructor(
     connection: PostgresSession,
@@ -58,59 +61,33 @@ export class PostgresLoad implements AsyncDisposable {
       const [clock] = await connection.sql.unsafe(
         'SELECT clock_timestamp()::text AS "loadedAt"',
       );
-      const load = new PostgresLoad(
-        connection,
-        schema,
-        String(clock?.loadedAt),
-      );
-      // Keep pending files of every stream protected across commit boundaries.
       // Closing this connection releases the session lock, including on errors.
-      await load.sql.unsafe(
+      await connection.sql.unsafe(
         'SELECT pg_advisory_lock(hashtextextended($1, 0))',
         [schemaLock(schema)],
       );
-      await load.#begin();
-      await load.sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(schema)}`);
-      return load;
+      return new PostgresLoad(connection, schema, String(clock?.loadedAt));
     } catch (error) {
       await connection[Symbol.asyncDispose]();
       throw error;
     }
   }
 
-  async #begin(): Promise<void> {
+  // What work does becomes durable and visible together, or not at all.
+  async transaction<T>(work: (sql: Transaction) => Promise<T>): Promise<T> {
     await this.sql.unsafe('BEGIN');
-    this.#open = true;
-  }
-
-  // Makes everything merged so far durable while retaining the writer lock.
-  async commit(): Promise<void> {
-    await this.sql.unsafe('COMMIT');
-    this.#open = false;
-    await this.#begin();
-  }
-
-  // Any failed statement aborts a Postgres transaction; the savepoint keeps
-  // that failure from erasing the other streams' stages.
-  async savepoint<T>(name: string, work: () => Promise<T>): Promise<T> {
-    await this.sql.unsafe(`SAVEPOINT ${name}`);
     try {
-      const result = await work();
-      await this.sql.unsafe(`RELEASE SAVEPOINT ${name}`);
+      const result = await work(this.sql);
+      await this.sql.unsafe('COMMIT');
       return result;
     } catch (error) {
-      await this.sql.unsafe(`ROLLBACK TO SAVEPOINT ${name}`);
-      await this.sql.unsafe(`RELEASE SAVEPOINT ${name}`);
+      await this.sql.unsafe('ROLLBACK');
       throw error;
     }
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    try {
-      if (this.#open) await this.sql.unsafe('ROLLBACK');
-    } finally {
-      await this.#connection[Symbol.asyncDispose]();
-    }
+    await this.#connection[Symbol.asyncDispose]();
   }
 }
 
@@ -149,17 +126,35 @@ export abstract class PostgresWriter extends Writer {
       );
   }
 
-  protected abstract initialize(transaction: Transaction): Promise<void>;
+  // Creates the target, or adopts the stored one, at the first commit.
+  // replacing: that commit replaces the target, so its rows are moot.
+  protected abstract initialize(
+    transaction: Transaction,
+    replacing: boolean,
+  ): Promise<void>;
+
+  // Refuses, before anything is read, stored rows the load cannot keep.
+  protected async inspect(_sql: Transaction): Promise<void> {}
 
   get qualifiedName(): string {
     return `${quote(this.schema)}.${this.table.quotedName}`;
   }
 
   protected get createTableSQL(): string {
+    return `CREATE TABLE IF NOT EXISTS ${this.#tableSQL(this.qualifiedName)}`;
+  }
+
+  // A table named name with the target's columns.
+  #tableSQL(name: string): string {
     if (this.table.columns.length === 0)
       throw new TypeError('Resolve inferred columns before creating a table');
-    return `CREATE TABLE IF NOT EXISTS ${this.qualifiedName} (${this.table.columns.map((column) => column.definition).join(', ')}, "loaded_at" TIMESTAMPTZ NOT NULL)`;
+    return `${name} (${this.table.columns.map((column) => column.definition).join(', ')}, "loaded_at" TIMESTAMPTZ NOT NULL)`;
   }
+
+  // What a rebuilt target, still empty under its temporary name into, needs
+  // before the merge fills it, and once it takes the target's name.
+  protected async build(_sql: Transaction, _into: string): Promise<void> {}
+  protected async adopt(_sql: Transaction): Promise<void> {}
 
   protected get fields(): string[] {
     return [
@@ -190,15 +185,16 @@ export abstract class PostgresWriter extends Writer {
     await sql.unsafe(`DELETE FROM ${this.qualifiedName}`);
   }
 
-  // Moves the staged operations into the target; every row of a run shares
-  // its loaded_at.
+  // Moves the staged operations into the target, or the table a rebuild
+  // fills; every row of a run shares its loaded_at.
   protected async merge(
     sql: Transaction,
     stage: string,
     loadedAt: string,
+    into = this.qualifiedName,
   ): Promise<void> {
     await sql.unsafe(
-      `INSERT INTO ${this.qualifiedName} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, $1::text::timestamptz FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
+      `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${this.table.columns.map((column) => column.quotedName).join(', ')}, $1::text::timestamptz FROM ${stage} WHERE ${op} = 'R' ORDER BY ${seq}`,
       [loadedAt],
     );
   }
@@ -212,28 +208,54 @@ export abstract class PostgresWriter extends Writer {
     return rows.map((row) => String(row.indexname));
   }
 
-  // The owner lives beside the table it guards and commits with the load. A
-  // dropped table releases it, since nothing it held remains.
-  private async own(transaction: Transaction, writer: string): Promise<void> {
-    const writers = `${quote(this.schema)}."_elt_writers"`;
-    await transaction.unsafe(
-      `CREATE TABLE IF NOT EXISTS ${writers} ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL)`,
+  get #writers(): string {
+    return `${quote(this.schema)}."_elt_writers"`;
+  }
+
+  // The owner lives beside the table it guards. A dropped table releases it,
+  // since nothing it held remains.
+  async #refuse(sql: Transaction, writer: string): Promise<void> {
+    const [writers] = await sql.unsafe(
+      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
+      [this.#writers],
     );
-    await transaction.unsafe(
-      `DELETE FROM ${writers} WHERE to_regclass(format('%I.%I', $1::text, "target")) IS NULL`,
+    if (writers?.exists !== true) return;
+    const [row] = await sql.unsafe(
+      `SELECT "writer" FROM ${this.#writers} WHERE "target" = $1 AND to_regclass(format('%I.%I', $2::text, "target")) IS NOT NULL`,
+      [this.table.name, this.schema],
+    );
+    if (row !== undefined && row.writer !== writer)
+      throw new TargetOwnedError(this.table.name, String(row.writer), writer);
+  }
+
+  // Records the owner with the target's first commit; prepare refused any
+  // other, and the schema lock keeps one in until the load ends.
+  async #own(sql: Transaction, writer: string): Promise<void> {
+    await sql.unsafe(
+      `CREATE TABLE IF NOT EXISTS ${this.#writers} ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL)`,
+    );
+    await sql.unsafe(
+      `DELETE FROM ${this.#writers} WHERE to_regclass(format('%I.%I', $1::text, "target")) IS NULL`,
       [this.schema],
     );
-    const [row] = await transaction.unsafe(
-      `SELECT "writer" FROM ${writers} WHERE "target" = $1`,
-      [this.table.name],
+    await sql.unsafe(
+      `INSERT INTO ${this.#writers} ("target", "writer") VALUES ($1, $2) ON CONFLICT ("target") DO NOTHING`,
+      [this.table.name, writer],
     );
-    if (row === undefined)
-      await transaction.unsafe(
-        `INSERT INTO ${writers} ("target", "writer") VALUES ($1, $2)`,
-        [this.table.name, writer],
-      );
-    else if (row.writer !== writer)
-      throw new TargetOwnedError(this.table.name, String(row.writer), writer);
+  }
+
+  // The target as its first commit makes it: the schema, its owner, the
+  // table and its comments, and the reader view.
+  async #create(
+    sql: Transaction,
+    writer: string,
+    replacing: boolean,
+  ): Promise<void> {
+    await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(this.schema)}`);
+    await this.#own(sql, writer);
+    await this.initialize(sql, replacing);
+    await this.#comment(sql, 'TABLE', this.schema, this.table.name);
+    await this.#describeReaderView(sql);
   }
 
   private values(sql: Transaction): FieldValues {
@@ -271,7 +293,7 @@ export abstract class PostgresWriter extends Writer {
         [quote(this.schema)],
       );
       if (schema?.exists !== true) return;
-      const writers = `${quote(this.schema)}."_elt_writers"`;
+      const writers = this.#writers;
       await transaction.unsafe(
         `CREATE TABLE IF NOT EXISTS ${writers} ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL)`,
       );
@@ -324,14 +346,17 @@ export abstract class PostgresWriter extends Writer {
     await sql.unsafe(comments.map(({ statement }) => statement).join(';'));
   }
 
-  // Created only when absent and never replaced inside the load: replacing a
-  // view readers can see would lock them out until this load commits. A view
-  // of other columns or another table is refused rather than adopted.
-  async #installReaderView(
-    sql: Transaction,
-    reader: PostgresReaderView,
-  ): Promise<void> {
-    const view = `${quote(reader.schema)}.${quote(reader.name)}`;
+  get #readerViewName(): string | undefined {
+    const reader = this.table.readerView;
+    return reader && `${quote(reader.schema)}.${quote(reader.name)}`;
+  }
+
+  // Refuses, before anything is read, a reader view this load did not make:
+  // not a view, or a view of other columns or another table. A stale
+  // target's view still shows the stored columns, which its rebuild replaces.
+  async #refuseReaderView(sql: Transaction, stale: boolean): Promise<void> {
+    const view = this.#readerViewName;
+    if (view === undefined) return;
     const [existing] = await sql.unsafe<
       { relkind: string; columns: string[]; reads: boolean }[]
     >(
@@ -344,12 +369,7 @@ export abstract class PostgresWriter extends Writer {
        FROM pg_class c WHERE c.oid = to_regclass($1)`,
       [view, this.qualifiedName],
     );
-    if (existing === undefined) {
-      await sql.unsafe(
-        `CREATE VIEW ${view} AS SELECT ${this.fields.join(', ')} FROM ${this.qualifiedName}`,
-      );
-      return;
-    }
+    if (existing === undefined) return;
     const expected = [
       ...this.table.columns.map(({ name }) => name),
       'loaded_at',
@@ -357,50 +377,135 @@ export abstract class PostgresWriter extends Writer {
     if (
       existing.relkind !== 'v' ||
       !existing.reads ||
-      existing.columns.join('\0') !== expected.join('\0')
+      (!stale && existing.columns.join('\0') !== expected.join('\0'))
     )
       throw new TypeError(
         `${view} is not a view of exactly ${this.qualifiedName}; drop it or reset the warehouse`,
       );
   }
 
-  // One stream's load inside the run's shared transaction. Operations wait in
-  // a session-private TEMP stage, so another stream's commit never publishes
-  // them and a crash leaves nothing behind; commit merges them into the target
-  // with the result of applying them one at a time.
+  // Created only when absent and never replaced by a commit: replacing a view
+  // readers can see would lock them out. prepare refused any view not this
+  // load's own.
+  async #describeReaderView(sql: Transaction): Promise<void> {
+    const view = this.#readerViewName;
+    const reader = this.table.readerView;
+    if (view === undefined || reader === undefined) return;
+    const [existing] = await sql.unsafe(
+      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
+      [view],
+    );
+    if (existing?.exists !== true)
+      await sql.unsafe(
+        `CREATE VIEW ${view} AS SELECT ${this.fields.join(', ')} FROM ${this.qualifiedName}`,
+      );
+    await this.#comment(sql, 'VIEW', reader.schema, reader.name);
+  }
+
+  get #hash(): string {
+    return createHash('sha256')
+      .update(this.qualifiedName)
+      .digest('hex')
+      .slice(0, 40);
+  }
+
+  // Whether the stored target has the columns, types and NOT NULL the stream
+  // needs. The stage is built from the same column declarations, so Postgres
+  // spells both alike.
+  async #fit(
+    sql: Transaction,
+    stage: string,
+  ): Promise<'missing' | 'stale' | 'fits'> {
+    const columns = (relation: string) =>
+      sql.unsafe<{ name: string; type: string; required: boolean }[]>(
+        'SELECT attname AS name, format_type(atttypid, atttypmod) AS type, attnotnull AS required FROM pg_attribute WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped',
+        [relation],
+      );
+    const stored = await columns(this.qualifiedName);
+    if (stored.length === 0) return 'missing';
+    const types = new Map(
+      (await columns(`pg_temp.${stage}`)).map(({ name, type }) => [name, type]),
+    );
+    const needed = [
+      ...this.table.columns.map(
+        (column) =>
+          `${column.name} ${types.get(column.name)} ${column.required || column.isPrimaryKey}`,
+      ),
+      'loaded_at timestamp with time zone true',
+    ];
+    const has = stored.map(
+      ({ name, type, required }) => `${name} ${type} ${required}`,
+    );
+    return needed.sort().join('\0') === has.sort().join('\0')
+      ? 'fits'
+      : 'stale';
+  }
+
+  // Builds the target in its new shape under another name and swaps it in
+  // last, so readers of the stored table wait only for the swap, not the
+  // load. A reader that holds it past the timeout fails the copy for this
+  // run. Whatever else depends on the target, such as marts, refuses the swap.
+  async #rebuild(sql: Transaction, stage: string, loadedAt: string) {
+    const into = `${quote(this.schema)}.${quote(`_elt_next_${this.#hash}`)}`;
+    await sql.unsafe(`DROP TABLE IF EXISTS ${into}`);
+    await sql.unsafe(`CREATE TABLE ${this.#tableSQL(into)}`);
+    await this.build(sql, into);
+    await this.merge(sql, stage, loadedAt, into);
+    await sql.unsafe(`SET LOCAL lock_timeout = '${swapTimeout}'`);
+    const view = this.#readerViewName;
+    if (view !== undefined) await sql.unsafe(`DROP VIEW IF EXISTS ${view}`);
+    await sql.unsafe(`DROP TABLE ${this.qualifiedName}`);
+    await sql.unsafe(`ALTER TABLE ${into} RENAME TO ${this.table.quotedName}`);
+    await this.adopt(sql);
+    await this.#comment(sql, 'TABLE', this.schema, this.table.name);
+    await this.#describeReaderView(sql);
+  }
+
+  // The rows of one partition, or every row when the stream is not
+  // partitioned, as a WHERE clause over the target's or the stage's columns.
+  #scope(partition: Partition | null): [string, string[]] {
+    if (partition === null) return ['', []];
+    const columns = Object.keys(partition).map((field) => {
+      const column = this.table.columns.find(({ name }) => name === field);
+      if (column === undefined)
+        throw new TypeError(
+          `Resetting a partition requires destination column ${field}`,
+        );
+      return column;
+    });
+    return [
+      ` WHERE ${columns.map((column, index) => `${column.quotedName} = ${column.valueFrom('$1::text::json', index)}`).join(' AND ')}`,
+      [JSON.stringify(columns.map((column) => column.encode(partition)))],
+    ];
+  }
+
+  // One stream's load. Operations wait in a session-private TEMP stage, so no
+  // other session sees them and a crash leaves nothing behind. prepare only
+  // refuses and stages, so a run that fails before a commit leaves nothing.
+  // Each commit is one transaction: the first also creates the target, or
+  // swaps in its rebuild, and every one merges the stage with the result of
+  // applying its operations one at a time.
   async prepare(
     load: PostgresLoad,
-    { writer, resuming }: { writer: string; resuming: boolean },
+    { writer, restart }: { writer: string; restart: boolean },
   ): Promise<Stage> {
     const { sql } = load;
-    const stage = quote(
-      `_elt_stage_${createHash('sha256').update(this.qualifiedName).digest('hex').slice(0, 40)}`,
-    );
+    const stage = quote(`_elt_stage_${this.#hash}`);
     const stores = this.table.columns
       .filter((column) => column.storesFile)
       .map((column) => new PostgresFileStore(this.schema, this.table, column));
-    await load.savepoint('prepare', async () => {
-      if (resuming) {
-        const [table] = await sql.unsafe(
-          'SELECT to_regclass($1) IS NOT NULL AS "exists"',
-          [this.qualifiedName],
-        );
-        if (table?.exists !== true)
-          throw new TargetMissingError(this.table.name, writer);
-      }
-      await this.own(sql, writer);
-      await this.initialize(sql);
-      for (const store of stores) await store.initialize(sql);
-      await this.#comment(sql, 'TABLE', this.schema, this.table.name);
-      if (this.table.readerView !== undefined) {
-        await this.#installReaderView(sql, this.table.readerView);
-        const { schema, name } = this.table.readerView;
-        await this.#comment(sql, 'VIEW', schema, name);
-      }
+    const replacing = this.replaces || restart;
+    const fit = await load.transaction(async (sql) => {
+      await this.#refuse(sql, writer);
       await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${stage}`);
       await sql.unsafe(
         `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
       );
+      for (const store of stores) await store.stage(sql);
+      const stored = await this.#fit(sql, stage);
+      await this.#refuseReaderView(sql, stored === 'stale');
+      if (stored === 'fits' && !replacing) await this.inspect(sql);
+      return stored;
     });
     const { columns } = this.table;
     // One JSON parameter per batch, cast back per column: no bind-parameter
@@ -412,30 +517,35 @@ export abstract class PostgresWriter extends Writer {
       if (pending.length === 0) return;
       const rows = pending;
       pending = [];
-      await load.savepoint('flush', () =>
-        sql.unsafe(insert, [JSON.stringify(rows)]),
-      );
+      await sql.unsafe(insert, [JSON.stringify(rows)]);
     };
+    // Scopes the stage dropped, which the next commit empties in the target.
+    let resets: (Partition | null)[] = [];
     const drop = async () => {
       pending = [];
-      await load.savepoint('drop', async () => {
-        await sql.unsafe(`TRUNCATE ${stage}`);
-        for (const store of stores) await store.prune(sql);
-      });
+      resets = [];
+      await sql.unsafe(`TRUNCATE ${stage}`);
+      for (const store of stores) await store.discard(sql);
     };
-    let replaced = false;
+    let committed = false;
     return {
+      fresh: fit !== 'fits',
       values: this.values(sql),
       apply: async (operation) => {
+        if (operation.type === 'RESET') {
+          await flush();
+          const [rows, values] = this.#scope(operation.partition);
+          await sql.unsafe(`DELETE FROM ${stage}${rows}`, values);
+          resets.push(operation.partition);
+          return;
+        }
         let data = operation.type === 'RECORD' ? operation.data : undefined;
         for (const store of stores) {
           const content: unknown = Reflect.get(Object(data), store.column.name);
           if (content instanceof FileContent)
             data = {
               ...Object(data),
-              [store.column.name]: await load.savepoint('file', () =>
-                store.save(sql, content),
-              ),
+              [store.column.name]: await store.save(sql, content),
             };
         }
         const row =
@@ -447,21 +557,35 @@ export abstract class PostgresWriter extends Writer {
       },
       commit: async () => {
         await flush();
-        await load.savepoint('merge', async () => {
-          if (this.replaces && !replaced) await this.replace(sql);
-          await this.merge(sql, stage, load.loadedAt);
+        await load.transaction(async (sql) => {
+          if (fit === 'stale' && !committed) {
+            await this.#own(sql, writer);
+            for (const store of stores) await store.publish(sql);
+            await this.#rebuild(sql, stage, load.loadedAt);
+          } else {
+            if (!committed) await this.#create(sql, writer, replacing);
+            if (replacing && !committed) await this.replace(sql);
+            for (const partition of resets) {
+              const [rows, values] = this.#scope(partition);
+              await sql.unsafe(
+                `DELETE FROM ${this.qualifiedName}${rows}`,
+                values,
+              );
+            }
+            for (const store of stores) await store.publish(sql);
+            await this.merge(sql, stage, load.loadedAt);
+          }
           await sql.unsafe(`TRUNCATE ${stage}`);
           for (const store of stores) await store.prune(sql);
         });
-        replaced = true;
-        await load.commit();
+        committed = true;
+        resets = [];
       },
       discard: drop,
       [Symbol.asyncDispose]: async () => {
         await drop();
-        await load.savepoint('drop', () =>
-          sql.unsafe(`DROP TABLE pg_temp.${stage}`),
-        );
+        await sql.unsafe(`DROP TABLE pg_temp.${stage}`);
+        for (const store of stores) await store.unstage(sql);
       },
     };
   }

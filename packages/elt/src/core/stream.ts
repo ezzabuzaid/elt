@@ -113,6 +113,11 @@ export class Stream {
         throw new TypeError(
           'expiresBy must name a non-null date-time property of a stream that emits deletions',
         );
+      // Snapshots compare expiry with a millisecond horizon as text.
+      if (field.precision !== undefined && field.precision !== 3)
+        throw new TypeError(
+          `expiresBy ${expiresBy} must keep milliseconds; it declares precision ${field.precision}`,
+        );
       this.expiresBy = expiresBy;
     }
     Object.freeze(this);

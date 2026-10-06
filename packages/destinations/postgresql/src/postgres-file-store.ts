@@ -8,6 +8,9 @@ import { quote } from './identifier.ts';
 import type { PostgresColumn } from './postgres-column.ts';
 import type { PostgresTable } from './postgres-table.ts';
 
+const chunks =
+  '("file" UUID NOT NULL, "n" BIGINT NOT NULL, "bytes" BYTEA NOT NULL, PRIMARY KEY ("file", "n"))';
+
 // Like SQLite, keep original files in bounded chunks rather than one whole-file
 // value. A file column contains the UUID of its ordered BYTEA chunks.
 export class PostgresFileStore {
@@ -16,6 +19,9 @@ export class PostgresFileStore {
   readonly table: PostgresTable;
   readonly column: PostgresColumn;
   readonly qualifiedName: string;
+  // The TEMP table of chunks saved since the last commit, private to the
+  // load's session like the stage of their records.
+  readonly #staged: string;
 
   constructor(schema: string, table: PostgresTable, column: PostgresColumn) {
     this.schema = schema;
@@ -26,13 +32,12 @@ export class PostgresFileStore {
       .digest('hex')
       .slice(0, 40);
     this.qualifiedName = `${quote(schema)}.${quote(`_elt_files_${key}`)}`;
+    this.#staged = quote(`_elt_files_stage_${key}`);
   }
 
-  async initialize(sql: postgres.Sql): Promise<void> {
-    await sql.unsafe(
-      `CREATE TABLE IF NOT EXISTS ${this.qualifiedName} ("file" UUID NOT NULL, "n" BIGINT NOT NULL, "bytes" BYTEA NOT NULL, PRIMARY KEY ("file", "n"))`,
-    );
-    await this.prune(sql);
+  async stage(sql: postgres.Sql): Promise<void> {
+    await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${this.#staged}`);
+    await sql.unsafe(`CREATE TEMP TABLE ${this.#staged} ${chunks}`);
   }
 
   async save(sql: postgres.Sql, content: FileContent): Promise<string> {
@@ -40,7 +45,7 @@ export class PostgresFileStore {
     let n = 0;
     const insert = (bytes: Uint8Array) =>
       sql.unsafe(
-        `INSERT INTO ${this.qualifiedName} ("file", "n", "bytes") VALUES ($1, $2, $3)`,
+        `INSERT INTO pg_temp.${this.#staged} ("file", "n", "bytes") VALUES ($1, $2, $3)`,
         [file, n++, Buffer.from(bytes)],
       );
     for await (const chunk of content.chunks(PostgresFileStore.chunkSize))
@@ -49,8 +54,28 @@ export class PostgresFileStore {
     return file;
   }
 
-  // Called after a stage is merged or discarded, and when reopening after a
-  // crash. This store belongs to just one target column and one writer.
+  // Moves the staged chunks into the store, inside a commit.
+  async publish(sql: postgres.Sql): Promise<void> {
+    await sql.unsafe(
+      `CREATE TABLE IF NOT EXISTS ${this.qualifiedName} ${chunks}`,
+    );
+    await sql.unsafe(
+      `INSERT INTO ${this.qualifiedName} SELECT * FROM pg_temp.${this.#staged}`,
+    );
+    await sql.unsafe(`TRUNCATE pg_temp.${this.#staged}`);
+  }
+
+  async discard(sql: postgres.Sql): Promise<void> {
+    await sql.unsafe(`TRUNCATE pg_temp.${this.#staged}`);
+  }
+
+  async unstage(sql: postgres.Sql): Promise<void> {
+    await sql.unsafe(`DROP TABLE pg_temp.${this.#staged}`);
+  }
+
+  // Called inside each commit, after the merge: chunks no row refers to,
+  // such as a deduplication loser's, go. This store belongs to just one
+  // target column and one writer.
   // ponytail: scans this column's chunks; use targeted cleanup if checkpoint cost grows.
   async prune(sql: postgres.Sql): Promise<void> {
     await sql.unsafe(

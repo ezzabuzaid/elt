@@ -1,4 +1,5 @@
 import {
+  type DeclaredFormat,
   type DocumentParser,
   FileRead,
   type FileReference,
@@ -11,23 +12,54 @@ import { identifier, quote } from './identifier.ts';
 const storageTypes = {
   text: 'TEXT',
   integer: 'BIGINT',
+  int64: 'BIGINT',
   real: 'DOUBLE PRECISION',
+  decimal: 'NUMERIC',
   boolean: 'BOOLEAN',
   date: 'DATE',
   timestamp: 'TIMESTAMPTZ',
+  local_timestamp: 'TIMESTAMP',
+  local_time: 'TIME',
   blob: 'BYTEA',
 } as const;
+
+type Kind = keyof typeof storageTypes;
 
 // information_schema.columns.data_type for each storage type.
 const dataTypes = {
   text: 'text',
   integer: 'bigint',
+  int64: 'bigint',
   real: 'double precision',
+  decimal: 'numeric',
   boolean: 'boolean',
   date: 'date',
   timestamp: 'timestamp with time zone',
+  local_timestamp: 'timestamp without time zone',
+  local_time: 'time without time zone',
   blob: 'bytea',
-} as const;
+} as const satisfies Record<Kind, string>;
+
+// The kind that stores each string format; base64 text loads as its bytes.
+export const formatKinds = {
+  'date-time': 'timestamp',
+  date: 'date',
+  'date-time-local': 'local_timestamp',
+  'time-local': 'local_time',
+  int64: 'int64',
+  decimal: 'decimal',
+  base64: 'blob',
+} as const satisfies Record<DeclaredFormat['name'], Kind>;
+
+const formatted = new Set<Kind>([
+  'int64',
+  'decimal',
+  'local_timestamp',
+  'local_time',
+]);
+
+// Postgres keeps time to the microsecond.
+const finestPrecision = 6;
 
 // A value the batch insert can carry through JSON and cast back to the column type.
 export type EncodedValue =
@@ -41,7 +73,9 @@ function postgresYear(value: string): string {
 
 export class PostgresColumn {
   readonly name: string;
-  readonly kind: keyof typeof storageTypes;
+  readonly kind: Kind;
+  // The string format a schema-inferred column keeps, which refines its kind.
+  readonly format?: DeclaredFormat;
   readonly required: boolean;
   readonly isPrimaryKey: boolean;
   readonly nullable: boolean;
@@ -52,18 +86,27 @@ export class PostgresColumn {
 
   constructor(
     name: string,
-    kind: keyof typeof storageTypes,
+    kind: Kind,
     options: {
       nullable: boolean;
       optional: boolean;
       primaryKey: boolean;
       array?: boolean;
       fileRead?: FileRead;
+      format?: DeclaredFormat;
     },
   ) {
     identifier(name, 'column name');
     if (!Object.hasOwn(storageTypes, kind))
       throw new TypeError('Unsupported Postgres column type');
+    const { format } = options;
+    if (
+      format === undefined
+        ? formatted.has(kind)
+        : formatKinds[format.name] !== kind
+    )
+      throw new TypeError(`Column ${name} kind ${kind} must match its format`);
+    this.format = format;
     this.array = options.array ?? false;
     if (this.array && (kind === 'blob' || options.primaryKey))
       throw new TypeError(
@@ -91,6 +134,7 @@ export class PostgresColumn {
       primaryKey: true,
       array: this.array,
       fileRead: this.fileRead,
+      format: this.format,
     });
   }
 
@@ -101,6 +145,7 @@ export class PostgresColumn {
       primaryKey: this.isPrimaryKey,
       array: this.array,
       fileRead: this.fileRead,
+      format: this.format,
     });
   }
 
@@ -138,21 +183,43 @@ export class PostgresColumn {
     return quote(this.name);
   }
 
+  // A time finer than microseconds keeps its exact text, which sorts in time
+  // order under the "C" collation, since its values share one width.
+  get #exactText(): boolean {
+    const { format } = this;
+    return (
+      (format?.name === 'date-time' ||
+        format?.name === 'date-time-local' ||
+        format?.name === 'time-local') &&
+      format.precision > finestPrecision
+    );
+  }
+
+  // The type of one value, with the precision and scale a decimal declares.
+  get #scalarType(): string {
+    const { format } = this;
+    if (this.#exactText) return 'TEXT';
+    if (format?.name === 'decimal' && format.precision !== undefined)
+      return `NUMERIC(${[format.precision, format.scale ?? []].join(', ')})`;
+    return storageTypes[this.kind];
+  }
+
   get storageType(): string {
     if (this.storesFile) return 'UUID';
-    return `${storageTypes[this.kind]}${this.array ? '[]' : ''}`;
+    return `${this.#scalarType}${this.array ? '[]' : ''}`;
   }
 
   get dataType(): string {
     if (this.storesFile) return 'uuid';
-    return this.array ? 'ARRAY' : dataTypes[this.kind];
+    if (this.array) return 'ARRAY';
+    return this.#exactText ? 'text' : dataTypes[this.kind];
   }
 
   // This column's value read back from element index of a JSON batch row. An
   // array's elements are cast one by one, in order; a JSON null stays NULL.
   valueFrom(row: string, index: number): string {
     if (!this.array) return `(${row}->>${index})::${this.storageType}`;
-    return `CASE WHEN json_typeof(${row}->${index}) = 'array' THEN ARRAY(SELECT element.value::${storageTypes[this.kind]} FROM json_array_elements_text(${row}->${index}) WITH ORDINALITY AS element (value, position) ORDER BY element.position) END`;
+    return `CASE WHEN json_typeof(${row}->${index}) = 'array' THEN ARRAY(SELECT element.value::${this.#scalarType} FROM json_array_elements_text(${row}->${index}) WITH ORDINALITY AS element (value, position) ORDER BY element.position) END`;
   }
 
   get definition(): string {
@@ -186,6 +253,20 @@ export class PostgresColumn {
 
   // One scalar in its batch encoding, or undefined when the kind rejects it.
   #scalar(value: unknown): string | number | boolean | undefined {
+    const { format } = this;
+    if (format !== undefined) {
+      if (typeof value !== 'string' || !format.accepts(value)) return undefined;
+      switch (format.name) {
+        case 'base64':
+          return `\\x${Buffer.from(value, 'base64').toString('hex')}`;
+        case 'date':
+        case 'date-time':
+        case 'date-time-local':
+          return this.#exactText ? value : postgresYear(value);
+        default:
+          return value;
+      }
+    }
     switch (this.kind) {
       case 'text':
         if (typeof value === 'string' && !value.includes('\0')) return value;

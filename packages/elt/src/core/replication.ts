@@ -1,12 +1,15 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import type {
+  CheckpointBinding,
   CheckpointRun,
   CheckpointStore,
 } from '../state/checkpoint-store.ts';
+import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Copy, CopyOutcome, CopyProgress } from './copy.ts';
 import type { Destination } from './destination.ts';
 import { FileTransfer } from './file-transfer.ts';
+import type { FieldSchema, ItemSchema } from './record-validation.ts';
 import {
   type KeyValue,
   type ReadMessage,
@@ -34,7 +37,7 @@ class Replicated<Target extends DestinationTarget> {
   broken = false;
   started = false;
   ended = false;
-  resuming = false;
+  restart = false;
   settled = false;
 
   readonly copy: Copy<Target>;
@@ -101,13 +104,16 @@ export async function replicate<Target extends DestinationTarget>(
   const replications = copies.map(
     (copy) => new Replicated(copy, source, destination, observe),
   );
-  const bindings = new Map<string, object>();
+  const bindings = new Map<string, CheckpointBinding>();
   for (const { copy } of replications)
     if (copy.configuration.syncMode === 'incremental' && copy.id !== undefined)
       bindings.set(copy.id, {
-        source: source.identity,
-        target: destination.identity(copy.to),
-        configuration: copy.configuration,
+        copy: {
+          source: source.identity,
+          target: destination.identity(copy.to),
+          selection: selection(copy.configuration),
+        },
+        shape: shape(copy.from),
       });
   try {
     if (checkpoints === undefined || bindings.size === 0)
@@ -152,9 +158,8 @@ async function transfer<Target extends DestinationTarget>(
     }
     try {
       const { run, id } = checkpoint(replication);
-      const state = run.state(id);
-      replication.resuming = state !== null;
-      states.set(replication.stream.name, state);
+      states.set(replication.stream.name, run.state(id));
+      replication.restart = run.restart(id);
       reading.push(replication);
     } catch (error) {
       fail(replication, error);
@@ -172,9 +177,11 @@ async function transfer<Target extends DestinationTarget>(
         replication.copy.to,
         {
           writer: replication.copy.writer(source),
-          resuming: replication.resuming,
+          restart: replication.restart,
         },
       );
+      // A target this load creates or rebuilds holds nothing to resume from.
+      if (replication.stage.fresh) states.set(replication.stream.name, null);
       await replication.files.reconcile(replication.stage.values);
       prepared.push(replication);
     } catch (error) {
@@ -253,7 +260,7 @@ async function transfer<Target extends DestinationTarget>(
           if (operation.type === 'RECORD') {
             replication.pending.count++;
             replication.emitted.count++;
-          } else {
+          } else if (operation.type === 'DELETE') {
             replication.pending.deleted++;
             replication.emitted.deleted++;
           }
@@ -274,6 +281,52 @@ async function transfer<Target extends DestinationTarget>(
       if (!replication.ended && !replication.broken)
         await breakStage(replication, error);
   }
+}
+
+// What a copy selects of its stream, apart from the stream's shape: changing
+// it refuses the checkpoint. A key the stream declares is part of its shape.
+function selection(configuration: CopyConfiguration): object {
+  const {
+    stream,
+    fileReads,
+    syncMode,
+    destinationSyncMode,
+    cursorField,
+    primaryKey,
+    dedupPolicy,
+  } = configuration;
+  return {
+    fileReads,
+    syncMode,
+    destinationSyncMode,
+    cursorField,
+    dedupPolicy,
+    primaryKey: stream.primaryKey.length > 0 ? undefined : primaryKey,
+  };
+}
+
+// The stream as it shapes the target, without the descriptions that only
+// annotate it; a change to it starts the copy over.
+function shape(stream: Stream): object {
+  const { description: _, properties, ...schema } = stream.jsonSchema;
+  const undescribed = <F extends FieldSchema | ItemSchema>({
+    description: __,
+    ...rest
+  }: F) => rest;
+  return {
+    ...stream,
+    jsonSchema: {
+      ...schema,
+      properties:
+        properties &&
+        Object.fromEntries(
+          Object.entries(properties).map(([name, { items, ...field }]) => [
+            name,
+            { ...undescribed(field), items: items && undescribed(items) },
+          ]),
+        ),
+    },
+  };
 }
 
 function started<Target extends DestinationTarget>(
@@ -335,7 +388,7 @@ function validStream(message: ReadMessage): string {
     typeof message.stream !== 'string'
   )
     throw new TypeError(
-      'Source must emit records with stream and data, DELETE or STATE messages',
+      'Source must emit records with stream and data, DELETE, RESET or STATE messages',
     );
   return message.stream;
 }
@@ -366,6 +419,22 @@ function validOperation(
   )
     return { type: 'DELETE', key: deletionKey(stream, message.key) };
   if (
+    'type' in message &&
+    message.type === 'RESET' &&
+    Object.hasOwn(message, 'partition') &&
+    !Object.hasOwn(message, 'data')
+  ) {
+    if (!stream.emitsDeletes)
+      throw new TypeError(
+        `Stream ${stream.name} does not emit deletions, so it cannot reset`,
+      );
+    if ((message.partition === null) !== (stream.partitionKey === undefined))
+      throw new TypeError(
+        `A reset of ${stream.name} is scoped to a partition exactly when the stream is partitioned`,
+      );
+    return { type: 'RESET', partition: message.partition };
+  }
+  if (
     !('type' in message) &&
     'data' in message &&
     Object.hasOwn(message, 'data')
@@ -376,7 +445,7 @@ function validOperation(
     return { type: 'RECORD', data: message.data };
   }
   throw new TypeError(
-    'Source must emit records with stream and data, DELETE or STATE messages',
+    'Source must emit records with stream and data, DELETE, RESET or STATE messages',
   );
 }
 

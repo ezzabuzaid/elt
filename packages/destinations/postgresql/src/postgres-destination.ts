@@ -45,7 +45,8 @@ export class PostgresDestination extends Destination<PostgresTable> {
     return `//${host}:${port}/${database}/${quote(this.schema)}.${target.quotedName}`;
   }
 
-  // One connection and one write transaction for the whole run.
+  // One connection for the whole run, holding the schema's writer lock; each
+  // commit is its own transaction.
   override async load(): Promise<Load<PostgresTable>> {
     const load = await PostgresLoad.open(this.#url, this.schema);
     return {

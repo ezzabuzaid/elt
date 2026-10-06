@@ -8,17 +8,18 @@ import type { FieldValues, Stage, Writer } from './writer.ts';
 export type DestinationSyncMode =
   'append' | 'overwrite' | 'append_dedup' | 'overwrite_dedup';
 
-// One run's hold on a destination: one transaction every stream's stage
-// shares. As in Airbyte, a checkpoint is a commit point, and a stage commits
-// only its own stream's operations, so a failed stream never publishes rows.
-// prepare refuses a target another writer owns (writer names the copy across
-// runs), or one dropped while its copy resumes from a checkpoint, before
-// anything is read.
+// One run's hold on a destination: the run is its only writer until the load
+// is disposed. As in Airbyte, a checkpoint is a commit point, and a stage
+// commits only its own stream's operations, so a failed stream never publishes
+// rows. prepare refuses a target another writer owns (writer names the copy
+// across runs) before anything is read, and publishes nothing: a target
+// appears no later than its first commit. restart replaces the copy's rows at
+// its first commit, as the stream's shape changed since its checkpoint.
 export type Load<Target extends DestinationTarget> = AsyncDisposable & {
   prepare(
     configuration: CopyConfiguration,
     target: Target,
-    binding: { readonly writer: string; readonly resuming: boolean },
+    binding: { readonly writer: string; readonly restart: boolean },
   ): Promise<Stage>;
 };
 

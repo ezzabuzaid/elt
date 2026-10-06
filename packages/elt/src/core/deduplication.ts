@@ -1,3 +1,7 @@
+import {
+  type DeclaredFormat,
+  declaredFormat,
+} from './formats/declared-format.ts';
 import type { Stream } from './stream.ts';
 
 // The selected logical identity and ordering rule, independent of storage constraints.
@@ -6,6 +10,7 @@ export class Deduplication {
   readonly primaryKey: readonly string[];
   // Absent when the newest extraction always wins (dedupPolicy replace).
   readonly cursorField?: string;
+  readonly #formats = new Map<string, DeclaredFormat | null>();
 
   constructor(
     stream: Stream,
@@ -21,13 +26,33 @@ export class Deduplication {
     )
       throw new TypeError('Deduplication requires distinct primaryKey fields');
     this.primaryKey = Object.freeze([...primaryKey]);
-    for (const field of this.primaryKey) this.type(field);
-    if (
-      cursorField !== undefined &&
-      !['string', 'number', 'integer'].includes(this.type(cursorField))
-    )
-      throw new TypeError('Deduplication cursor must be text or numeric');
+    for (const field of this.primaryKey) this.#declare(field);
+    if (cursorField !== undefined) {
+      if (!['string', 'number', 'integer'].includes(this.type(cursorField)))
+        throw new TypeError('Deduplication cursor must be text or numeric');
+      const format = this.#declare(cursorField);
+      if (format?.orderable === false)
+        throw new TypeError(
+          `Deduplication cursor ${cursorField} cannot order ${format.name} values`,
+        );
+    }
     Object.freeze(this);
+  }
+
+  #declare(field: string): DeclaredFormat | null {
+    this.type(field);
+    const schema = this.stream.jsonSchema.properties?.[field];
+    const format = schema === undefined ? null : declaredFormat(schema);
+    this.#formats.set(field, format);
+    return format;
+  }
+
+  // The format of a key or cursor field, null when it declares none.
+  format(field: string): DeclaredFormat | null {
+    const format = this.#formats.get(field);
+    if (format === undefined)
+      throw new TypeError(`${field} is not a key or cursor field`);
+    return format;
   }
 
   type(field: string): 'string' | 'number' | 'integer' | 'boolean' {
@@ -66,10 +91,12 @@ export class Deduplication {
       throw new TypeError(`Record is missing key/cursor field ${field}`);
     const value: unknown = Reflect.get(record, field);
     const type = this.type(field);
+    const format = this.format(field);
     if (
       (type === 'string' &&
         typeof value === 'string' &&
-        value.isWellFormed()) ||
+        value.isWellFormed() &&
+        (format === null || format.accepts(value))) ||
       (type === 'boolean' && typeof value === 'boolean') ||
       (type === 'number' &&
         typeof value === 'number' &&
@@ -79,7 +106,11 @@ export class Deduplication {
         Number.isSafeInteger(value))
     )
       return value;
-    throw new TypeError(`Key/cursor field ${field} requires non-null ${type}`);
+    throw new TypeError(
+      format === null
+        ? `Key/cursor field ${field} requires non-null ${type}`
+        : `Key/cursor field ${field} requires a canonical ${format.name} value`,
+    );
   }
 
   key(record: unknown): string {
@@ -100,8 +131,12 @@ export class Deduplication {
   newer(record: unknown, previous: unknown): boolean {
     const value = this.cursor(record);
     const saved = this.cursor(previous);
-    if (typeof value === 'string' && typeof saved === 'string')
+    if (typeof value !== 'string' || typeof saved !== 'string')
+      return value > saved;
+    const format =
+      this.cursorField === undefined ? null : this.format(this.cursorField);
+    if (format === null)
       return Buffer.compare(Buffer.from(value), Buffer.from(saved)) > 0;
-    return value > saved;
+    return format.compare(value, saved) > 0;
   }
 }

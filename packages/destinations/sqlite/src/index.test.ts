@@ -28,6 +28,7 @@ import {
   type Partition,
   Pipeline,
   PipelineError,
+  type Properties,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -2095,7 +2096,7 @@ test('a failing partition loads nothing and keeps its checkpoint, while the othe
   assert.deepEqual(rows(), ['a/1=2', 'b/1=9', 'c/1=1']);
 });
 
-test('clear drops a target with its checkpoint, and a target dropped by hand is refused until cleared', async () => {
+test('clear drops a target with its checkpoint, and a target dropped by hand reloads from no checkpoint', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-part-'));
   const source = new Sites(['a'], { a: [{ site: 'a', path: '/', views: 1 }] });
   const destination = new SQLiteDestination({
@@ -2133,11 +2134,8 @@ test('clear drops a target with its checkpoint, and a target dropped by hand is 
     database.exec('DROP TABLE pages');
   }
   source.received.length = 0;
-  await assert.rejects(
-    pipeline.run(),
-    /Target pages was dropped, but \{"copy":"pages"\} still has a checkpoint; clear the copy/,
-  );
-  assert.deepEqual(source.received, []);
+  await pipeline.run();
+  assert.deepEqual(source.received, [['a', null]]);
   const other = new Pipeline({
     connections: [
       new Connection({
@@ -2154,6 +2152,7 @@ test('clear drops a target with its checkpoint, and a target dropped by hand is 
 
   await pipeline.clear();
   assert.equal(saved(), 0);
+  source.received.length = 0;
   await pipeline.run();
 
   assert.deepEqual(source.received, [['a', null]]);
@@ -2500,11 +2499,15 @@ test('a record the cursor guard rejects leaves no stored file behind', async () 
   });
 });
 
+// Each copy's checkpoint binding, its stream shape left out.
+const bound = (copies: readonly (readonly [string, object])[]) =>
+  new Map(copies.map(([id, copy]) => [id, { copy, shape: {} }]));
+
 test('a checkpoint store keeps each acknowledged state, durable at once, and holds its lock for the run', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
   const path = join(scratch.path, 'state.sqlite');
   const store = new SQLiteCheckpointStore({ path });
-  const bindings = new Map([['copy', { source: 'test', target: 'records' }]]);
+  const bindings = bound([['copy', { source: 'test', target: 'records' }]]);
   const received: unknown[] = [];
   const run = (states: unknown[], fail = false) =>
     store.run(bindings, async (checkpoints) => {
@@ -2546,7 +2549,7 @@ test('one checkpoint run holds every copy of a run, each with its own state', as
   const store = new SQLiteCheckpointStore({
     path: join(scratch.path, 'state.sqlite'),
   });
-  const bindings = new Map([
+  const bindings = bound([
     ['left', { target: 'left' }],
     ['right', { target: 'right' }],
   ]);
@@ -2572,20 +2575,20 @@ test('a changed binding is refused for its copy until the checkpoint is reset', 
   const store = new SQLiteCheckpointStore({
     path: join(scratch.path, 'state.sqlite'),
   });
-  const save = (bindings: Map<string, object>) =>
+  const save = (bindings: ReturnType<typeof bound>) =>
     store.run(bindings, async (checkpoints) => {
       for (const id of bindings.keys())
         await checkpoints.save(id, { from: checkpoints.state(id) });
     });
 
   await save(
-    new Map([
+    bound([
       ['copy', { target: 'a' }],
       ['other', { target: 'x' }],
     ]),
   );
   const changed = store.run(
-    new Map([
+    bound([
       ['copy', { target: 'b' }],
       ['other', { target: 'x' }],
     ]),
@@ -2600,7 +2603,7 @@ test('a changed binding is refused for its copy until the checkpoint is reset', 
     /Checkpoint binding changed for copy; reset it or use a new copy ID/,
   );
   await store.reset('copy');
-  await store.run(new Map([['copy', { target: 'b' }]]), async (checkpoints) =>
+  await store.run(bound([['copy', { target: 'b' }]]), async (checkpoints) =>
     assert.equal(checkpoints.state('copy'), null),
   );
 });
@@ -2683,7 +2686,7 @@ test('the SQLite writer lock spans commits, permits readers and releases after d
   try {
     const stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
-      resuming: false,
+      restart: false,
     });
     try {
       await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
@@ -2741,7 +2744,7 @@ test('a commit waits for a reader in another process instead of failing', async 
   await using load = await destination.load();
   const stage = await load.prepare(copy.configuration, copy.to, {
     writer: 'writer',
-    resuming: false,
+    restart: false,
   });
   try {
     await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
@@ -2768,7 +2771,7 @@ test('a clear waits for a reader in another process instead of failing', async (
     await using load = await destination.load();
     await using stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
-      resuming: false,
+      restart: false,
     });
     await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
     await stage.commit();
@@ -3674,4 +3677,398 @@ test('text with a lone surrogate fails its stream instead of loading as a replac
   );
   using database = new DatabaseSync(destination.path, { readOnly: true });
   assert.equal(database.prepare('SELECT count(*) AS n FROM notes').get()?.n, 0);
+});
+
+test('string formats load exactly into checked columns, and int64 cursors and keys work by value', async () => {
+  let messages: SourceMessage[] = [];
+  const described = (description: string) => ({ description });
+  const ledger = new Stream({
+    name: 'ledger',
+    jsonSchema: {
+      type: 'object',
+      description: 'Ledger entries.',
+      properties: {
+        id: { type: 'string', format: 'int64', ...described('Entry id.') },
+        version: {
+          type: 'string',
+          format: 'int64',
+          ...described('Row version.'),
+        },
+        amount: {
+          type: 'string',
+          format: 'decimal',
+          precision: 19,
+          scale: 4,
+          ...described('Amount.'),
+        },
+        at: {
+          type: 'string',
+          format: 'date-time',
+          precision: 7,
+          ...described('Instant.'),
+        },
+        local: {
+          type: 'string',
+          format: 'date-time-local',
+          precision: 7,
+          ...described('Wall clock.'),
+        },
+        clock: {
+          type: 'string',
+          format: 'time-local',
+          precision: 0,
+          ...described('Time of day.'),
+        },
+        bytes: {
+          type: 'string',
+          contentEncoding: 'base64',
+          ...described('Payload.'),
+        },
+      },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['incremental'],
+    emitsDeletes: true,
+  });
+  class LedgerSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'ledger';
+    protected readonly catalog = new Catalog([ledger]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract() {
+      yield* messages;
+      yield { type: 'STATE' as const, stream: 'ledger', state: {} };
+    }
+  }
+  const entry = (id: string, version: string, amount: string) => ({
+    stream: 'ledger',
+    data: {
+      id,
+      version,
+      amount,
+      at: '2025-01-02T03:04:05.1234567Z',
+      local: '9999-12-31T23:59:59.9999999',
+      clock: '23:59:59',
+      bytes: 'AAEC/w==',
+    },
+  });
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-format-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'ledger.sqlite'),
+  });
+  installSQLiteCatalog(destination);
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'ledger',
+        source: new LedgerSource(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(
+            ledger,
+            destination.table('raw_ledger').withReaderView('ledger'),
+            {
+              id: 'ledger',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              cursorField: 'version',
+            },
+          ),
+        ],
+      }),
+    ],
+  });
+  const read = (sql: string) => {
+    using database = new DatabaseSync(destination.path, {
+      readOnly: true,
+      readBigInts: true,
+    });
+    return database.prepare(sql).all();
+  };
+
+  // As text "9" sorts after "10"; as doubles the second entry's versions tie.
+  messages = [
+    entry('9223372036854775807', '9', '1.0000'),
+    entry('9223372036854775807', '10', '2.0000'),
+    entry('9007199254740993', '9007199254740992', '-0.5000'),
+    entry('9007199254740993', '9007199254740993', '922337203685477.5807'),
+  ];
+  await pipeline.run();
+
+  assert.deepEqual(
+    read(
+      'SELECT id, version, amount, at, local, clock, hex(bytes) AS bytes FROM ledger ORDER BY id',
+    ).map((row) => ({ ...row })),
+    [
+      {
+        id: 9007199254740993n,
+        version: 9007199254740993n,
+        amount: '922337203685477.5807',
+        at: '2025-01-02T03:04:05.1234567Z',
+        local: '9999-12-31T23:59:59.9999999',
+        clock: '23:59:59',
+        bytes: '000102FF',
+      },
+      {
+        id: 9223372036854775807n,
+        version: 10n,
+        amount: '2.0000',
+        at: '2025-01-02T03:04:05.1234567Z',
+        local: '9999-12-31T23:59:59.9999999',
+        clock: '23:59:59',
+        bytes: '000102FF',
+      },
+    ],
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      read(
+        "SELECT name, data_type FROM catalog WHERE name LIKE 'ledger.%' ORDER BY name",
+      ).map(({ name, data_type }) => [name, data_type]),
+    ),
+    {
+      'ledger.amount': 'decimal(19,4)',
+      'ledger.at': 'timestamp(7)',
+      'ledger.bytes': 'blob',
+      'ledger.clock': 'local_time(0)',
+      'ledger.id': 'int64',
+      'ledger.loaded_at': 'timestamp',
+      'ledger.local': 'local_timestamp(7)',
+      'ledger.version': 'int64',
+    },
+  );
+  {
+    using database = new DatabaseSync(destination.path);
+    for (const [column, value] of [
+      ['at', '2025-01-02T03:04:05.123Z'],
+      ['at', '2025-02-30T03:04:05.1234567Z'],
+      ['local', '2025-01-02T03:04:05.1234567Z'],
+      ['clock', '23:59:59.0'],
+      ['clock', '25:00:00'],
+    ] as const)
+      assert.throws(
+        () =>
+          database.prepare(`UPDATE raw_ledger SET "${column}" = ?`).run(value),
+        /CHECK constraint failed/,
+      );
+  }
+
+  messages = [
+    { type: 'DELETE', stream: 'ledger', key: { id: '9007199254740993' } },
+  ];
+  await pipeline.run();
+  assert.deepEqual(
+    read('SELECT id FROM ledger').map(({ id }) => id),
+    [9223372036854775807n],
+  );
+});
+
+test('a reset replaces only its partition at the next commit, and one a failure dropped never reaches a later commit', async () => {
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { account: { type: 'string' }, id: { type: 'string' } },
+    },
+    primaryKey: ['account', 'id'],
+    partitionKey: ['account'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  // What each partition emits on the next run.
+  let script: Record<string, (SourceMessage | Error)[]> = {};
+  class Resetting extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'resetting';
+    protected readonly catalog = new Catalog([items]);
+    protected override partitions() {
+      return [{ account: 'a' }, { account: 'b' }];
+    }
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      _state: unknown,
+      partition: Partition | null,
+    ) {
+      for (const message of script[String(partition?.account)] ?? []) {
+        if (message instanceof Error) throw message;
+        yield message;
+      }
+    }
+  }
+  const record = (account: string, id: string) => ({
+    stream: 'items',
+    data: { account, id },
+  });
+  const reset = { type: 'RESET' as const, stream: 'items' };
+  const state = { type: 'STATE' as const, stream: 'items', state: {} };
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reset-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'items.sqlite'),
+  });
+  const into = destination.table('items');
+  const loaded = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT account, id FROM items ORDER BY account, id')
+      .all()
+      .map(({ account, id }) => `${account}${id}`);
+  };
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Resetting(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(items, into, {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  script = {
+    a: [record('a', '1'), record('a', '2'), state],
+    b: [record('b', '1'), state],
+  };
+  await pipeline.run();
+  script = { a: [reset, record('a', '2'), state], b: [state] };
+  await pipeline.run();
+  assert.deepEqual(await loaded(), ['a2', 'b1']);
+
+  script = {
+    a: [reset, record('a', '3'), new Error('gone')],
+    b: [record('b', '2'), state],
+  };
+  await assert.rejects(pipeline.run(), PipelineError);
+  assert.deepEqual(await loaded(), ['a2', 'b1', 'b2']);
+});
+
+test('a stream whose shape changes reloads into a rebuilt table, even when only a CHECK differs', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-drift-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'items.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const received: unknown[] = [];
+  // Each run discovers its stream anew, as a database source does.
+  const run = (properties: Properties, data: readonly object[]) => {
+    const stream = new Stream({
+      name: 'items',
+      jsonSchema: { type: 'object', description: 'Items.', properties },
+      primaryKey: ['id'],
+      supportedSyncModes: ['incremental'],
+      sourceDefinedCursor: true,
+      emitsDeletes: true,
+    });
+    class Discovered extends Source {
+      override coverage() {
+        return { description: 'test', selection: {} };
+      }
+
+      protected override async open() {
+        return new AsyncDisposableStack();
+      }
+
+      readonly identity = 'discovered';
+      protected readonly catalog = new Catalog([stream]);
+      protected override async *observe({ streams }: SourceWatchOptions) {
+        yield streams;
+      }
+      protected override async *extract(
+        _configuration: CopyConfiguration,
+        state: unknown,
+      ) {
+        received.push(state);
+        for (const row of data) yield { stream: 'items', data: row };
+        yield { type: 'STATE' as const, stream: 'items', state: {} };
+      }
+    }
+    return new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new Discovered(),
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(
+              stream,
+              destination.table('raw_items').withReaderView('items'),
+              {
+                id: 'items',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              },
+            ),
+          ],
+        }),
+      ],
+    }).run();
+  };
+  const loaded = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT * FROM items')
+      .all()
+      .map(({ loaded_at: _, ...row }) => ({ ...row }));
+  };
+  const id = { type: 'string', description: 'Id.' } as const;
+  const at = (precision: number) =>
+    ({
+      type: 'string',
+      format: 'date-time',
+      precision,
+      description: 'When.',
+    }) as const;
+
+  await run({ id, at: at(3) }, [{ id: '1', at: '2025-01-02T03:04:05.006Z' }]);
+  await run({ id, at: at(3) }, []);
+  // Both columns stay TEXT; only the CHECK on at's width changes.
+  await run({ id, at: at(7) }, [
+    { id: '1', at: '2025-01-02T03:04:05.1234567Z' },
+  ]);
+  assert.deepEqual(loaded(), [{ id: '1', at: '2025-01-02T03:04:05.1234567Z' }]);
+  const note = { type: ['string', 'null'], description: 'Note.' } as const;
+  await run({ id, at: at(7), note }, [
+    { id: '1', at: '2025-01-02T03:04:05.1234567Z', note: 'n' },
+  ]);
+  await run({ id, at: at(7), note }, []);
+
+  assert.deepEqual(received, [null, {}, null, null, {}]);
+  assert.deepEqual(loaded(), [
+    { id: '1', at: '2025-01-02T03:04:05.1234567Z', note: 'n' },
+  ]);
 });

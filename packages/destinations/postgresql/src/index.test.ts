@@ -23,6 +23,7 @@ import {
   type Partition,
   Pipeline,
   PipelineError,
+  type Properties,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -265,7 +266,7 @@ test("a competing load cannot reconcile pending files between another load's com
   try {
     const stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
-      resuming: false,
+      restart: false,
     });
     try {
       await stage.apply({ type: 'RECORD', data: { id: 'a' } });
@@ -1342,7 +1343,7 @@ test('a table has one writer, even when another loads only its own partitions', 
   assert.equal(late.extracted, 1);
 });
 
-test('an existing key column of another type is refused, and a changed key rebuilds the index', async () => {
+test('a key column stored as another type rebuilds the table, and a changed key rebuilds the index', async () => {
   await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
@@ -1396,7 +1397,14 @@ test('an existing key column of another type is refused, and a changed key rebui
 
   await database.sql`DROP TABLE raw.items`;
   await database.sql`CREATE TABLE raw.items (id bigint, kind text, version bigint, loaded_at timestamptz NOT NULL)`;
-  await assert.rejects(dedup(['id']), /incompatible storage type/);
+  await dedup(['id']);
+  assert.deepEqual(
+    await database.sql`SELECT data_type FROM information_schema.columns WHERE table_schema = 'raw' AND table_name = 'items' AND column_name = 'id'`.then(
+      (columns) => columns.map((column) => column.data_type),
+    ),
+    ['text'],
+  );
+  assert.deepEqual(await indexes(), ['(id)']);
 });
 
 test('declarations are checked before any connection', () => {
@@ -1420,7 +1428,8 @@ test('declarations are checked before any connection', () => {
 });
 
 // One copy's checkpoint binding, as a run of that copy alone passes it.
-const only = (id: string, binding: object = {}) => new Map([[id, binding]]);
+const only = (id: string, copy: object = {}, shape: object = {}) =>
+  new Map([[id, { copy, shape }]]);
 
 test('a Postgres checkpoint store resumes from the last acknowledged state in the schema', async () => {
   await using database = await scratchDatabase(server);
@@ -1651,8 +1660,8 @@ test('replications checkpoint in parallel, and one already running is refused', 
   await assert.rejects(
     store.run(
       new Map([
-        ['a', {}],
-        ['b', {}],
+        ['a', { copy: {}, shape: {} }],
+        ['b', { copy: {}, shape: {} }],
       ]),
       async () => {},
     ),
@@ -1690,7 +1699,7 @@ test('checkpoint state keeps text JSONB would refuse, and the store holds no cre
   );
 });
 
-test('clear empties a table and keeps views on it, releasing its owner and checkpoint; a table dropped by hand is refused until cleared', async () => {
+test('clear empties a table and keeps views on it, releasing its owner and checkpoint; a table dropped by hand reloads from no checkpoint', async () => {
   await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
@@ -1703,7 +1712,17 @@ test('clear empties a table and keeps views on it, releasing its owner and check
     sourceDefinedCursor: true,
     supportedSyncModes: ['full_refresh', 'incremental'],
   });
-  const source = new Messages(stream);
+  const received: unknown[] = [];
+  class Recording extends Messages {
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state?: unknown,
+    ) {
+      received.push(state);
+      yield* super.extract(configuration);
+    }
+  }
+  const source = new Recording(stream);
   source.messages = rows(stream, [{ id: 1 }]);
   const destination = new PostgresDestination({
     url: database.url,
@@ -1758,15 +1777,10 @@ test('clear empties a table and keeps views on it, releasing its owner and check
 
   await database.sql`DROP VIEW raw.items_view`;
   await database.sql`DROP TABLE raw.items`;
-  const extracted = source.extracted;
-  await assert.rejects(
-    pipeline.run(),
-    /Target items was dropped, but \{"copy":"items"\} still has a checkpoint/,
-  );
-  assert.equal(source.extracted, extracted);
-
-  await pipeline.clear();
+  received.length = 0;
   await pipeline.run();
+
+  assert.deepEqual(received, [null]);
   assert.deepEqual(await control(), {
     rows: [1],
     owners: ['items'],
@@ -3090,13 +3104,13 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
     );
     assert.equal(await oid(), created);
 
-    // A load holds its transaction open while it reads; readers of the view
+    // A prepared load stays open while the source reads; readers of the view
     // it keeps must not wait behind it.
     const load = await destination.load();
     try {
       await using stage = await load.prepare(copy.configuration, copy.to, {
         writer: copy.writer(source),
-        resuming: true,
+        restart: false,
       });
       assert.ok(stage);
       const blocking = await sql`SELECT mode FROM pg_locks
@@ -3171,4 +3185,465 @@ test('a reader view needs every column described and refuses a view it did not c
   } finally {
     await scratch[Symbol.asyncDispose]();
   }
+});
+
+test('string formats load exactly: microsecond times typed, finer ones as text that orders as time, decimals and int64 exact', async () => {
+  await using database = await scratchDatabase(server);
+  const ledger = new Stream({
+    name: 'ledger',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', format: 'int64' },
+        version: { type: 'string', format: 'date-time', precision: 7 },
+        amount: { type: 'string', format: 'decimal', precision: 19, scale: 4 },
+        ratio: { type: 'string', format: 'decimal' },
+        at: { type: 'string', format: 'date-time', precision: 6 },
+        local: { type: 'string', format: 'date-time-local', precision: 3 },
+        exact: { type: 'string', format: 'date-time-local', precision: 7 },
+        clock: { type: 'string', format: 'time-local', precision: 0 },
+        bytes: { type: 'string', contentEncoding: 'base64' },
+        ids: { type: 'array', items: { type: 'string', format: 'int64' } },
+      },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['incremental'],
+    emitsDeletes: true,
+  });
+  const source = new Messages(ledger);
+  const entry = (id: string, version: string, amount: string) => ({
+    id,
+    version,
+    amount,
+    ratio: '0.5',
+    at: '2025-01-02T03:04:05.123456Z',
+    local: '2024-02-29T12:00:00.250',
+    exact: '9999-12-31T23:59:59.9999999',
+    clock: '23:59:59',
+    bytes: 'AAEC/w==',
+    ids: ['9007199254740993', '-9223372036854775808'],
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(ledger, destination.table('ledger'), {
+            id: 'ledger',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  // Typed microseconds would round both versions to .123456 and tie.
+  source.messages = rows(ledger, [
+    entry('9223372036854775807', '2025-01-02T03:04:05.1234561Z', '-0.5000'),
+    entry(
+      '9223372036854775807',
+      '2025-01-02T03:04:05.1234567Z',
+      '922337203685477.5807',
+    ),
+    entry('1', '2025-01-02T03:04:05.0000000Z', '0.0000'),
+  ]);
+  await pipeline.run();
+
+  assert.deepEqual(
+    await database.sql`SELECT column_name, data_type, numeric_precision, numeric_scale FROM information_schema.columns WHERE table_schema = 'raw' AND table_name = 'ledger' AND column_name <> 'loaded_at' ORDER BY ordinal_position`.then(
+      (columns) =>
+        columns.map(
+          ({ column_name, data_type, numeric_precision, numeric_scale }) =>
+            [column_name, data_type, numeric_precision, numeric_scale].join(
+              ' ',
+            ),
+        ),
+    ),
+    [
+      'id bigint 64 0',
+      'version text  ',
+      'amount numeric 19 4',
+      'ratio numeric  ',
+      'at timestamp with time zone  ',
+      'local timestamp without time zone  ',
+      'exact text  ',
+      'clock time without time zone  ',
+      'bytes bytea  ',
+      'ids ARRAY  ',
+    ],
+  );
+  assert.deepEqual(
+    await database.sql`SELECT id::text, version, amount::text, ratio::text, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at, to_char(local, 'YYYY-MM-DD"T"HH24:MI:SS.MS') AS local, exact, clock::text, encode(bytes, 'base64') AS bytes, ids::text[] AS ids FROM raw.ledger ORDER BY id DESC`.then(
+      (loaded) => loaded.map((row) => ({ ...row })),
+    ),
+    [
+      {
+        ...entry(
+          '9223372036854775807',
+          '2025-01-02T03:04:05.1234567Z',
+          '922337203685477.5807',
+        ),
+      },
+      { ...entry('1', '2025-01-02T03:04:05.0000000Z', '0.0000') },
+    ],
+  );
+
+  source.messages = [
+    { type: 'DELETE', stream: 'ledger', key: { id: '9223372036854775807' } },
+  ];
+  await pipeline.run();
+  assert.deepEqual(
+    await database.sql`SELECT id::text FROM raw.ledger`.then((loaded) =>
+      loaded.map(({ id }) => id),
+    ),
+    ['1'],
+  );
+});
+
+test('a reset replaces its partition, or the whole table, at the next commit; a failure before the checkpoint keeps rows and checkpoint', async () => {
+  await using database = await scratchDatabase(server);
+  const schema = {
+    type: 'object',
+    properties: { account: { type: 'string' }, id: { type: 'string' } },
+  } as const;
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: schema,
+    primaryKey: ['account', 'id'],
+    partitionKey: ['account'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  const table = new Stream({
+    name: 'table',
+    jsonSchema: schema,
+    primaryKey: ['account', 'id'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  // What each partition of items, and the table, emits on the next run.
+  let script: Record<string, (SourceMessage | Error)[]> = {};
+  const received: unknown[] = [];
+  class Resetting extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'resetting';
+    protected readonly catalog = new Catalog([items, table]);
+    protected override partitions() {
+      return [{ account: 'a' }, { account: 'b' }];
+    }
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+      partition: Partition | null,
+    ) {
+      const name = String(partition?.account ?? configuration.stream.name);
+      received.push([name, state]);
+      for (const message of script[name] ?? []) {
+        if (message instanceof Error) throw message;
+        yield message;
+      }
+    }
+  }
+  const record = (stream: string, account: string, id: string) => ({
+    stream,
+    data: { account, id },
+  });
+  const reset = (stream: string) => ({ type: 'RESET' as const, stream });
+  const state = (stream: string, pass: number) => ({
+    type: 'STATE' as const,
+    stream,
+    state: { pass },
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const selection = {
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  } as const;
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Resetting(),
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(items, destination.table('items'), {
+            id: 'items',
+            ...selection,
+          }),
+          new Copy(table, destination.table('table'), {
+            id: 'table',
+            ...selection,
+          }),
+        ],
+      }),
+    ],
+  });
+  const loaded = async () =>
+    (
+      await database.sql`SELECT 'items' AS stream, account, id FROM raw.items UNION ALL SELECT 'table', account, id FROM raw."table" ORDER BY 1, 2, 3`
+    ).map(({ stream, account, id }) => `${stream} ${account}${id}`);
+
+  script = {
+    a: [
+      record('items', 'a', '1'),
+      record('items', 'a', '2'),
+      state('items', 1),
+    ],
+    b: [record('items', 'b', '1'), state('items', 1)],
+    table: [
+      record('table', 'x', '1'),
+      record('table', 'x', '2'),
+      state('table', 1),
+    ],
+  };
+  await pipeline.run();
+  // a1 and x1 vanished upstream; only a reset can tell.
+  script = {
+    a: [reset('items'), record('items', 'a', '2'), state('items', 2)],
+    b: [state('items', 2)],
+    table: [reset('table'), record('table', 'x', '2'), state('table', 2)],
+  };
+  await pipeline.run();
+  assert.deepEqual(await loaded(), ['items a2', 'items b1', 'table x2']);
+
+  // b commits after a failed, so a reset a dropped must not reach b's commit.
+  script = {
+    a: [reset('items'), record('items', 'a', '3'), new Error('gone')],
+    b: [record('items', 'b', '2'), state('items', 3)],
+    table: [reset('table'), new Error('gone')],
+  };
+  await assert.rejects(pipeline.run(), PipelineError);
+  assert.deepEqual(await loaded(), [
+    'items a2',
+    'items b1',
+    'items b2',
+    'table x2',
+  ]);
+  script = {};
+  received.length = 0;
+  await pipeline.run();
+  assert.deepEqual(received, [
+    ['a', { pass: 2 }],
+    ['b', { pass: 3 }],
+    ['table', { pass: 2 }],
+  ]);
+});
+
+test('a stream whose shape changes reloads into a table rebuilt and swapped in under its reader view; a description edit only updates comments', async () => {
+  await using database = await scratchDatabase(server);
+  await database.sql`CREATE SCHEMA marts`;
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const checkpoints = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
+  });
+  const received: unknown[] = [];
+  // Each run discovers its stream anew, as a database source does.
+  const run = (properties: Properties, data: readonly object[]) => {
+    const stream = new Stream({
+      name: 'items',
+      jsonSchema: { type: 'object', description: 'Items.', properties },
+      primaryKey: ['id'],
+      supportedSyncModes: ['incremental'],
+      sourceDefinedCursor: true,
+      emitsDeletes: true,
+    });
+    class Discovered extends Messages {
+      protected override async *extract(
+        configuration: CopyConfiguration,
+        state?: unknown,
+      ) {
+        received.push(state);
+        yield* super.extract(configuration);
+      }
+    }
+    const source = new Discovered(stream);
+    source.messages = rows(stream, data);
+    return new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(
+              stream,
+              destination.table('items').withReaderView('marts', 'items'),
+              {
+                id: 'items',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              },
+            ),
+          ],
+        }),
+      ],
+    }).run();
+  };
+  const id = { type: 'string', description: 'Id.' } as const;
+  const name = { type: 'string', description: 'Name.' } as const;
+  const shape = async () =>
+    (
+      await database.sql`SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS type, col_description('marts.items'::regclass, a.attnum) AS description FROM pg_attribute a WHERE a.attrelid = 'marts.items'::regclass AND a.attnum > 0 ORDER BY a.attnum`
+    ).map(
+      ({ attname, type, description }) => `${attname} ${type} ${description}`,
+    );
+  const loaded = async () =>
+    (await database.sql`SELECT * FROM marts.items ORDER BY id`).map(
+      ({ loaded_at: _, ...row }) => ({ ...row }),
+    );
+
+  await run({ id, name }, [{ id: '1', name: 'one' }]);
+  await run({ id, name: { ...name, description: 'Display name.' } }, [
+    { id: '1', name: 'one' },
+  ]);
+  assert.deepEqual(received.splice(0), [null, {}]);
+  assert.ok((await shape()).includes('name text Display name.'));
+
+  // A column added, then retyped: each reload starts from no checkpoint.
+  const size = { type: ['integer', 'null'], description: 'Size.' } as const;
+  await run({ id, name, size }, [{ id: '1', name: 'one', size: 3 }]);
+  assert.deepEqual(await loaded(), [{ id: '1', name: 'one', size: '3' }]);
+  const text = { type: ['string', 'null'], description: 'Size.' } as const;
+  await run({ id, name, size: text }, [{ id: '1', name: 'one', size: 'L' }]);
+  await run({ id, name, size: text }, []);
+  assert.deepEqual(received.splice(0), [null, null, {}]);
+  assert.deepEqual(await loaded(), [{ id: '1', name: 'one', size: 'L' }]);
+  assert.ok((await shape()).includes('size text Size.'));
+
+  // A reader that holds the view outlasts the swap's wait; the next run swaps.
+  const reader = postgres(database.url, { max: 1, onnotice: () => {} });
+  try {
+    await reader.begin(async (sql) => {
+      await sql`SELECT * FROM marts.items`;
+      await assert.rejects(
+        run({ id, name }, [{ id: '1', name: 'one' }]),
+        /lock timeout/,
+      );
+    });
+  } finally {
+    await reader.end();
+  }
+  assert.deepEqual(await loaded(), [{ id: '1', name: 'one', size: 'L' }]);
+  await run({ id, name }, [{ id: '1', name: 'one' }]);
+  assert.deepEqual(await loaded(), [{ id: '1', name: 'one' }]);
+  assert.deepEqual(received.splice(0), [null, null]);
+});
+
+test('a load holds no transaction while the source reads, so a run over many tables holds none of their locks', async () => {
+  await using database = await scratchDatabase(server);
+  const streams = Array.from(
+    { length: 50 },
+    (_, index) =>
+      new Stream({
+        name: `t${index}`,
+        jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+        primaryKey: ['id'],
+        supportedSyncModes: ['incremental'],
+        sourceDefinedCursor: true,
+        emitsDeletes: true,
+      }),
+  );
+  const held: number[] = [];
+  class Many extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'many';
+    protected readonly catalog = new Catalog(streams);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(configuration: CopyConfiguration) {
+      // A lock table shared by the whole server runs out past a few
+      // thousand tables held in one transaction.
+      if (configuration.stream === streams[0]) {
+        // Relations a load creates are invisible to other sessions until it
+        // commits, so count their locks without naming them.
+        const [locks] =
+          await database.sql`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'relation' AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND pid <> pg_backend_pid()`;
+        held.push(Number(locks?.n));
+      }
+      yield { stream: configuration.stream.name, data: { id: '1' } };
+      yield {
+        type: 'STATE' as const,
+        stream: configuration.stream.name,
+        state: {},
+      };
+    }
+  }
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Many(),
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: streams.map(
+          (stream) =>
+            new Copy(stream, destination.table(stream.name), {
+              id: stream.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+        ),
+      }),
+    ],
+  }).run();
+
+  assert.deepEqual(held, [0]);
+  assert.deepEqual(
+    await database.sql`SELECT count(*)::int AS n FROM raw.t49`.then((rows) =>
+      rows.map((row) => row.n),
+    ),
+    [1],
+  );
 });

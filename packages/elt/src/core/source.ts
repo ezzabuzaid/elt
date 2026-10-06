@@ -59,7 +59,23 @@ export type DeleteMessage = {
   readonly key: Readonly<Record<string, KeyValue>>;
 };
 
-export type SourceMessage = RecordMessage | StateMessage | DeleteMessage;
+// Starts the stream over, as when the upstream's change history expired: at
+// the next commit the destination drops every row the stream loaded (for a
+// partitioned stream, every row of the partition being read) and keeps only
+// what follows. Only a stream that emits deletions may send it; a full
+// refresh starts over anyway.
+export type ResetMessage = {
+  readonly type: 'RESET';
+  readonly stream: string;
+};
+
+// A reset as Source.read emits it, scoped to the partition being read.
+export type ScopedReset = ResetMessage & {
+  readonly partition: Partition | null;
+};
+
+export type SourceMessage =
+  RecordMessage | StateMessage | DeleteMessage | ResetMessage;
 
 // Where a stream's read stands, as Airbyte's stream status: STARTED before its
 // first message; FAILED when one partition, or the whole stream when
@@ -86,7 +102,8 @@ export class StreamStatus {
   }
 }
 
-export type ReadMessage = SourceMessage | StreamStatus;
+export type ReadMessage =
+  RecordMessage | StateMessage | DeleteMessage | ScopedReset | StreamStatus;
 
 // Airbyte's read(config, catalog, state): one read covers every selected
 // stream, inside one context the source opens for it, so related streams see
@@ -199,8 +216,11 @@ export abstract class Source<
           configuration,
           this.extract(configuration, state, null, context),
         ))
-          if (incremental || !('type' in message) || message.type !== 'STATE')
-            yield message;
+          if (!('type' in message) || message.type === 'DELETE') yield message;
+          else if (incremental)
+            yield message.type === 'RESET'
+              ? { ...message, partition: null }
+              : message;
       } catch (error) {
         yield new StreamStatus(name, 'FAILED', null, error);
       }
@@ -223,6 +243,12 @@ export abstract class Source<
         throw new TypeError(
           `Extract for ${configuration.stream.name} emitted ${message.stream}`,
         );
+      if (
+        'type' in message &&
+        message.type === 'RESET' &&
+        Object.hasOwn(message, 'partition')
+      )
+        throw new TypeError('Only Source.read scopes a reset to its partition');
       if ('type' in message || configuration.fileReads.length === 0) {
         yield message;
         continue;
@@ -313,6 +339,10 @@ export abstract class Source<
                 ),
               },
             };
+            continue;
+          }
+          if ('type' in message && message.type === 'RESET') {
+            if (incremental) yield { ...message, partition };
             continue;
           }
           assertInPartition(

@@ -66,7 +66,7 @@ export class PostgresCheckpointStore extends CheckpointStore {
         },
         save: async (id, { binding, state }) => {
           await sql.unsafe(
-            `INSERT INTO ${this.#table} ("id", "binding", "state") VALUES ($1, $2::text::json, $3::text::json) ON CONFLICT ("id") DO UPDATE SET "state" = excluded."state"`,
+            `INSERT INTO ${this.#table} ("id", "binding", "state") VALUES ($1, $2::text::json, $3::text::json) ON CONFLICT ("id") DO UPDATE SET "binding" = excluded."binding", "state" = excluded."state"`,
             [id, binding, state],
           );
         },

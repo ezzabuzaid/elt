@@ -21,30 +21,21 @@ export class TargetOwnedError extends TypeError {
   }
 }
 
-// Resuming into a target that no longer exists would load only what changed
-// since the checkpoint and silently lose the history before it.
-export class TargetMissingError extends TypeError {
-  override name = 'TargetMissingError';
-  constructor(target: string, writer: string) {
-    super(
-      `Target ${target} was dropped, but ${writer} still has a checkpoint; clear the copy to reload it from scratch.`,
-    );
-  }
-}
-
 // What did not load: one partition, or the whole copy when partition is null.
 export type LoadFailure = {
   readonly partition: Partition | null;
   readonly error: unknown;
 };
 
-// What a stage applies, in source order.
+// What a stage applies, in source order. A RESET drops what the stage holds
+// in its scope, and its next commit first empties that scope of the target.
 export type WriteOperation =
   | { readonly type: 'RECORD'; readonly data: unknown }
   | {
       readonly type: 'DELETE';
       readonly key: Readonly<Record<string, KeyValue>>;
-    };
+    }
+  | { readonly type: 'RESET'; readonly partition: Partition | null };
 
 // Scalar values in a target field, without exposing storage mechanisms.
 export type FieldValues = (field: string) => AsyncIterable<unknown>;
@@ -52,6 +43,10 @@ export type FieldValues = (field: string) => AsyncIterable<unknown>;
 // One stream's open load of its target. What is applied between two commits
 // becomes durable and visible together, or not at all.
 export type Stage = AsyncDisposable & {
+  // The target holds none of the copy's earlier rows: this load creates it,
+  // or rebuilds it because its stored shape no longer fits the stream, so
+  // the copy reloads from no checkpoint.
+  readonly fresh: boolean;
   // Current target values, excluding pending stage operations. Read while
   // holding the target's write lock, including after commit reacquires it.
   values: FieldValues;
