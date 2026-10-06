@@ -1,15 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { SafariProfile } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import {
-  type Row,
-  appleTime,
-  dictionary,
-  number,
-  plistTime,
-  text,
-} from '../safari-values.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { nullableText, nullableNumber } = safariFields;
 const component = { ...nullableNumber, minimum: 0, maximum: 1 } as const;
@@ -68,7 +61,10 @@ const properties = {
   },
 } as const;
 
-export class ProfilesStream extends SafariStream<typeof properties, Row> {
+export class ProfilesStream extends SafariStream<
+  typeof properties,
+  SafariProfile
+> {
   readonly name = 'profiles';
   readonly store = 'tabs';
   readonly primaryKey = ['id'];
@@ -80,27 +76,26 @@ export class ProfilesStream extends SafariStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
+  protected rows(scan: SafariScan): readonly SafariProfile[] {
     return scan.tabs.profiles;
   }
 
-  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
-    const [extra] = scan.tabs.attributes(row);
-    const color = scan.tabs.color(row);
+  protected record(profile: SafariProfile): RecordDraft<typeof properties> {
+    const color = profile.color();
     return {
-      id: row.external_uuid,
-      serverId: row.server_id,
-      title: text(row.title),
-      position: row.order_index,
-      symbol: text(extra.SymbolImageName),
-      colorName: text(color.colorName),
-      red: number(color.redComponent),
-      green: number(color.greenComponent),
-      blue: number(color.blueComponent),
-      alpha: number(color.alphaComponent),
-      favoritesFolderServerId: text(extra.CustomFavoritesFolderServerID),
-      addedAt: plistTime(dictionary(extra['com.apple.Bookmark']).DateAdded),
-      modifiedAt: appleTime(row.last_modified),
+      id: profile.id,
+      serverId: profile.serverId,
+      title: profile.title,
+      position: profile.position,
+      symbol: profile.symbol,
+      colorName: color.colorName,
+      red: color.red,
+      green: color.green,
+      blue: color.blue,
+      alpha: color.alpha,
+      favoritesFolderServerId: profile.favoritesFolderServerId,
+      addedAt: iso(profile.addedAt),
+      modifiedAt: iso(profile.modifiedAt),
     };
   }
 }

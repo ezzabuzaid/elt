@@ -1,15 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { ReadingListItem } from '@workspace/sdk-apple-safari';
 
-import type { BookmarkNode } from '../bookmarks-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import {
-  dictionary,
-  flag,
-  integer,
-  plistTime,
-  text,
-} from '../safari-values.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { nullableText, nullableTimestamp, nullableInteger } = safariFields;
 
@@ -82,7 +75,7 @@ const properties = {
 
 export class ReadingListItemsStream extends SafariStream<
   typeof properties,
-  BookmarkNode
+  ReadingListItem
 > {
   readonly name = 'readingListItems';
   readonly store = 'bookmarks';
@@ -95,36 +88,27 @@ export class ReadingListItemsStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly BookmarkNode[] {
+  protected rows(scan: SafariScan): readonly ReadingListItem[] {
     return scan.bookmarks.readingList;
   }
 
-  protected record({
-    node,
-    position,
-  }: BookmarkNode): RecordDraft<typeof properties> {
-    const saved = dictionary(node.ReadingList);
-    const fetched = dictionary(node.ReadingListNonSync);
+  protected record(item: ReadingListItem): RecordDraft<typeof properties> {
     return {
-      id: node.WebBookmarkUUID,
-      position,
-      title: text(dictionary(node.URIDictionary).title),
-      url: node.URLString,
-      addedAt: plistTime(saved.DateAdded),
-      lastViewedAt: plistTime(saved.DateLastViewed),
-      previewText: text(saved.PreviewText) ?? text(node.previewText),
-      imageUrl: text(node.imageURL),
-      fetchedTitle: text(fetched.Title),
-      fetchedAt: plistTime(fetched.DateLastFetched),
-      fetchResult: integer(fetched.FetchResult),
-      failedLoads: integer(
-        fetched.NumberOfFailedLoadsWithUnknownOrNonRecoverableError,
-      ),
-      addedLocally: flag(fetched.AddedLocally),
-      metadataFetchFailures: integer(
-        fetched.BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey,
-      ),
-      featureText: text(node.featureText),
+      id: item.id,
+      position: item.position,
+      title: item.title,
+      url: item.url,
+      addedAt: iso(item.addedAt),
+      lastViewedAt: iso(item.lastViewedAt),
+      previewText: item.previewText,
+      imageUrl: item.imageUrl,
+      fetchedTitle: item.fetchedTitle,
+      fetchedAt: iso(item.fetchedAt),
+      fetchResult: item.fetchResult,
+      failedLoads: item.failedLoads,
+      addedLocally: item.addedLocally,
+      metadataFetchFailures: item.metadataFetchFailures,
+      featureText: item.featureText,
     };
   }
 }

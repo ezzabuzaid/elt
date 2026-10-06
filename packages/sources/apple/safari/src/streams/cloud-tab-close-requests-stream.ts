@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { CloudTabCloseRequest } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import type { Row } from '../safari-values.ts';
 
 const properties = {
   id: {
@@ -24,7 +24,7 @@ const properties = {
 
 export class CloudTabCloseRequestsStream extends SafariStream<
   typeof properties,
-  Row
+  CloudTabCloseRequest
 > {
   readonly name = 'cloudTabCloseRequests';
   readonly store = 'cloudTabs';
@@ -37,16 +37,18 @@ export class CloudTabCloseRequestsStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
+  protected rows(scan: SafariScan): readonly CloudTabCloseRequest[] {
     return scan.cloudTabs.closeRequests;
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(
+    request: CloudTabCloseRequest,
+  ): RecordDraft<typeof properties> {
     return {
-      id: row.close_request_uuid,
-      deviceId: row.destination_device_uuid,
-      url: row.url,
-      tabId: row.tab_uuid,
+      id: request.id,
+      deviceId: request.deviceId,
+      url: request.url,
+      tabId: request.tabId,
     };
   }
 }

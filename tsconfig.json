@@ -139,6 +139,9 @@
     },
     {
       "path": "./packages/sdks/apple/contacts"
+    },
+    {
+      "path": "./packages/sdks/apple/safari"
     }
   ]
 }

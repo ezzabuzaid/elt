@@ -1,16 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import { type TabGroup, tabGroupKinds } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import {
-  type Row,
-  appleTime,
-  dictionary,
-  flag,
-  plistTime,
-  text,
-} from '../safari-values.ts';
-import { tabGroupKinds } from '../tabs-reader.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { nullableId, nullableText } = safariFields;
 
@@ -76,7 +68,7 @@ const properties = {
   },
 } as const;
 
-export class TabGroupsStream extends SafariStream<typeof properties, Row> {
+export class TabGroupsStream extends SafariStream<typeof properties, TabGroup> {
   readonly name = 'tabGroups';
   readonly store = 'tabs';
   readonly primaryKey = ['id'];
@@ -88,27 +80,25 @@ export class TabGroupsStream extends SafariStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
+  protected rows(scan: SafariScan): readonly TabGroup[] {
     return scan.tabs.tabGroups;
   }
 
-  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
-    const { tabs } = scan;
-    const [extra] = tabs.attributes(row);
+  protected record(group: TabGroup): RecordDraft<typeof properties> {
     return {
-      id: row.external_uuid,
-      parentId: row.parent === 0 ? null : tabs.uuid(row.parent),
-      profileId: tabs.profileOf(row),
-      kind: tabs.kind(row),
-      title: text(row.title),
-      position: row.order_index,
-      hidden: flag(row.hidden),
-      lastSelectedTabId: tabs.uuid(row.last_selected_child),
-      deviceType: text(extra.DeviceTypeIdentifier),
-      topic: text(row.topic_title),
-      addedAt: plistTime(dictionary(extra['com.apple.Bookmark']).DateAdded),
-      modifiedAt: appleTime(row.last_modified),
-      closedAt: appleTime(row.date_closed),
+      id: group.id,
+      parentId: group.parentId,
+      profileId: group.profileId,
+      kind: group.kind,
+      title: group.title,
+      position: group.position,
+      hidden: group.hidden,
+      lastSelectedTabId: group.lastSelectedTabId,
+      deviceType: group.deviceType,
+      topic: group.topic,
+      addedAt: iso(group.addedAt),
+      modifiedAt: iso(group.modifiedAt),
+      closedAt: iso(group.closedAt),
     };
   }
 }

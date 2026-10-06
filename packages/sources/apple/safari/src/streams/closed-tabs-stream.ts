@@ -1,9 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { ClosedTab } from '@workspace/sdk-apple-safari';
 
-import type { ClosedTab } from '../closed-tabs-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import { flag, integer, plistTime, strings, text } from '../safari-values.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { boolean, nullableText, nullableTimestamp } = safariFields;
 
@@ -83,28 +82,24 @@ export class ClosedTabsStream extends SafariStream<
     return scan.closedTabs.tabs;
   }
 
-  protected record({
-    state,
-    closedWindowId,
-    position,
-  }: ClosedTab): RecordDraft<typeof properties> {
+  protected record(tab: ClosedTab): RecordDraft<typeof properties> {
     return {
-      id: state.TabUUID,
-      closedWindowId,
-      position,
-      windowId: text(state.WindowUUID),
-      profileId: state.ProfileUUID,
-      title: text(state.TabTitle),
-      url: text(state.TabURL),
-      closedAt: plistTime(state.DateClosed),
-      lastVisitedAt: plistTime(state.LastVisitTime),
-      tabIndex: integer(state.TabIndex),
-      tabGroupId: text(state.TabGroupForTab),
-      tabGroupType: flag(state.TabGroupTypeForTabKey),
-      ancestorTabIds: strings(state.AncestorTabUUIDsKey),
-      muted: flag(state.IsMuted),
-      disposable: flag(state.IsDisposable),
-      safeToLoad: flag(state.SafeToLoad),
+      id: tab.id,
+      closedWindowId: tab.closedWindowId,
+      position: tab.position,
+      windowId: tab.windowId,
+      profileId: tab.profileId,
+      title: tab.title,
+      url: tab.url,
+      closedAt: iso(tab.closedAt),
+      lastVisitedAt: iso(tab.lastVisitedAt),
+      tabIndex: tab.tabIndex,
+      tabGroupId: tab.tabGroupId,
+      tabGroupType: tab.tabGroupType,
+      ancestorTabIds: tab.ancestorTabIds,
+      muted: tab.muted,
+      disposable: tab.disposable,
+      safeToLoad: tab.safeToLoad,
     };
   }
 }

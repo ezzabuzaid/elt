@@ -405,7 +405,7 @@ packages/destinations/postgresql/ Postgres destination and checkpoint store (elt
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
 packages/sdks/apple/      SDKs, one per Apple store or format (sdk-apple-<name>): accounts,
                           app-database, contacts, eventkit, messages, notes, plist,
-                          segb
+                          safari, segb
 packages/codecs/          Formats several SDKs decode: protobuf (codec-protobuf)
 packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared
                           source-apple-macos (readers, document parser)

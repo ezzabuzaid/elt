@@ -1,9 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { TabHistoryEntry } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { flag, text } from '../safari-values.ts';
-import type { HistoryEntry } from '../tabs-reader.ts';
 
 const { nullableText } = safariFields;
 
@@ -35,9 +34,15 @@ const properties = {
   },
 } as const;
 
+// One entry of one tab's back and forward list.
+type Entry = {
+  readonly tabId: string | null;
+  readonly entry: TabHistoryEntry;
+};
+
 export class TabHistoryEntriesStream extends SafariStream<
   typeof properties,
-  HistoryEntry
+  Entry
 > {
   readonly name = 'tabHistoryEntries';
   readonly store = 'tabs';
@@ -50,29 +55,22 @@ export class TabHistoryEntriesStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly HistoryEntry[] {
-    return scan.tabs.historyEntries();
+  protected rows(scan: SafariScan): readonly Entry[] {
+    return scan.tabs.tabs.flatMap((tab) =>
+      tab.sessionHistory().map((entry) => ({ tabId: tab.id, entry })),
+    );
   }
 
-  protected record({
-    tab,
-    entry,
-    position,
-    current,
-  }: HistoryEntry): RecordDraft<typeof properties> {
+  protected record({ tabId, entry }: Entry): RecordDraft<typeof properties> {
     return {
-      tabId: tab.external_uuid,
-      position,
-      current,
-      url: text(entry.SessionHistoryEntryURL),
-      originalUrl: text(entry.SessionHistoryEntryOriginalURL),
-      title: text(entry.SessionHistoryEntryTitle),
-      scriptCreated: flag(
-        entry.SessionHistoryEntryWasCreatedByJSWithoutUserInteraction,
-      ),
-      externalUrlPolicy: text(
-        entry.SessionHistoryEntryShouldOpenExternalURLsPolicyKey,
-      ),
+      tabId,
+      position: entry.position,
+      current: entry.current,
+      url: entry.url,
+      originalUrl: entry.originalUrl,
+      title: entry.title,
+      scriptCreated: entry.scriptCreated,
+      externalUrlPolicy: entry.externalUrlPolicy,
     };
   }
 }

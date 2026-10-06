@@ -1,14 +1,7 @@
 import type { SchemaRecord } from '@workspace/elt';
+import type { WindowState } from '@workspace/sdk-apple-safari';
 
-import { safariFields } from './safari-stream.ts';
-import {
-  type Dictionary,
-  flag,
-  integer,
-  plistTime,
-  strings,
-  text,
-} from './safari-values.ts';
+import { iso, safariFields } from './safari-stream.ts';
 
 const { boolean, nullableText, nullableInteger } = safariFields;
 
@@ -64,19 +57,19 @@ export const windowStateFields = {
 } as const;
 
 export const windowState = (
-  state: Dictionary,
+  state: WindowState,
 ): SchemaRecord<typeof windowStateFields> => ({
-  closedAt: plistTime(state.DateClosed),
-  private: flag(state.IsPrivateWindow),
-  popup: flag(state.IsPopupWindow),
-  miniaturized: flag(state.Miniaturized),
-  unnamedTabGroupIds: strings(state.UnnamedTabGroupUUIDs),
-  selectedTabIndex: integer(state.SelectedTabIndex),
-  selectedPinnedTabIndex: integer(state.SelectedPinnedTabIndex),
-  tabBarHidden: flag(state.TabBarHidden),
-  favoritesBarHidden: flag(state.FavoritesBarHidden),
-  readingListSidebarVisible: flag(state.PrefersReadingListSidebarVisible),
-  sidebarMode: integer(state.WindowUnifiedSidebarMode),
-  frame: text(state.WindowContentRect),
-  addressFieldText: text(state.CustomUnifiedFieldText),
+  closedAt: iso(state.closedAt),
+  private: state.private,
+  popup: state.popup,
+  miniaturized: state.miniaturized,
+  unnamedTabGroupIds: state.unnamedTabGroupIds,
+  selectedTabIndex: state.selectedTabIndex,
+  selectedPinnedTabIndex: state.selectedPinnedTabIndex,
+  tabBarHidden: state.tabBarHidden,
+  favoritesBarHidden: state.favoritesBarHidden,
+  readingListSidebarVisible: state.readingListSidebarVisible,
+  sidebarMode: state.sidebarMode,
+  frame: state.frame,
+  addressFieldText: state.addressFieldText,
 });

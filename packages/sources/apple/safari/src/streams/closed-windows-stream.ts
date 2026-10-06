@@ -1,9 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { ClosedWindow } from '@workspace/sdk-apple-safari';
 
-import type { ClosedWindow } from '../closed-tabs-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { text } from '../safari-values.ts';
 import { windowState, windowStateFields } from '../window-state.ts';
 
 const properties = {
@@ -44,16 +43,13 @@ export class ClosedWindowsStream extends SafariStream<
     return scan.closedTabs.windows;
   }
 
-  protected record({
-    state,
-    position,
-  }: ClosedWindow): RecordDraft<typeof properties> {
+  protected record(window: ClosedWindow): RecordDraft<typeof properties> {
     return {
-      id: state.WindowUUID,
-      position,
-      profileId: state.ProfileUUID,
-      activeTabGroupId: text(state.activeTabGroupUUID),
-      ...windowState(state),
+      id: window.id,
+      position: window.position,
+      profileId: window.profileId,
+      activeTabGroupId: window.activeTabGroupId,
+      ...windowState(window.state),
     };
   }
 }

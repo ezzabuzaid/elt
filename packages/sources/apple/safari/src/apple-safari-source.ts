@@ -1,5 +1,3 @@
-import { readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 
 import type {
@@ -10,21 +8,18 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+import {
+  Safari,
+  type SafariLocation,
+  type SafariStore,
+  type SafariVersion,
+  safariContainer,
+  safariDirectory,
+} from '@workspace/sdk-apple-safari';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
-import {
-  type SafariLocation,
-  SafariScan,
-  type SafariStore,
-  databaseStores,
-  storeFiles,
-} from './safari-scan.ts';
-import {
-  SafariDatabaseVersion,
-  safariContainer,
-  safariDirectory,
-} from './safari-store.ts';
+import { SafariScan } from './safari-scan.ts';
 import type { SafariReader } from './safari-stream.ts';
 import { BookmarksStream } from './streams/bookmarks-stream.ts';
 import { ClosedTabsStream } from './streams/closed-tabs-stream.ts';
@@ -125,6 +120,7 @@ export class AppleSafariSource extends Source<SafariScan> {
 
   readonly location: SafariLocation;
   readonly scope: ImportScope;
+  readonly #safari: Safari;
 
   constructor({
     directory = safariDirectory,
@@ -138,13 +134,14 @@ export class AppleSafariSource extends Source<SafariScan> {
     super();
     this.location = Object.freeze({ directory, container });
     this.scope = scope;
+    this.#safari = new Safari(this.location);
     this.identity = `apple-safari:${directory}:${container}`;
     Object.freeze(this);
   }
 
   protected override open(streams: readonly Stream[]): Promise<SafariScan> {
     return SafariScan.open(
-      this.location,
+      this.#safari,
       new Set(streams.map((stream) => readerOf(stream).store)),
       this.scope,
     );
@@ -154,42 +151,20 @@ export class AppleSafariSource extends Source<SafariScan> {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
 
-  // Databases report commits through data_version; Safari rewrites each
-  // property list whole, so a changed stat marks a new one.
+  // Each store the streams read reports its own changes.
   protected override async *observe({
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
-    const files = storeFiles(this.location);
-    const stores = [
-      ...new Set(streams.map((stream) => readerOf(stream).store)),
-    ];
     using versions = new DisposableStack();
-    const opened = new Map<string, SafariDatabaseVersion>();
-    const version = (path: string) => {
-      let found = opened.get(path);
-      if (found === undefined) {
-        found = versions.use(new SafariDatabaseVersion(path));
-        opened.set(path, found);
-      }
-      return found.current;
-    };
-    const probes = new Map<SafariStore, () => Promise<string>>(
-      stores.map((store) => {
-        if (store === 'history')
-          return [
-            store,
-            async () =>
-              (await historyFiles(this.location)).map(version).join(','),
-          ];
-        if (!databaseStores.has(store))
-          return [store, () => fingerprint(files[store])];
-        return [store, async () => String(version(files[store]))];
-      }),
+    const probes = new Map<SafariStore, SafariVersion>(
+      [...new Set(streams.map((stream) => readerOf(stream).store))].map(
+        (store) => [store, versions.use(this.#safari.version(store))],
+      ),
     );
     const seen = new Map<SafariStore, string>();
-    for (const [store, probe] of probes) seen.set(store, await probe());
+    for (const [store, probe] of probes) seen.set(store, await probe.current());
     yield streams;
     try {
       for await (const _ of setInterval(pollIntervalMs, undefined, {
@@ -197,7 +172,7 @@ export class AppleSafariSource extends Source<SafariScan> {
       })) {
         const changed = new Set<SafariStore>();
         for (const [store, probe] of probes) {
-          const current = await probe();
+          const current = await probe.current();
           if (current === seen.get(store)) continue;
           seen.set(store, current);
           changed.add(store);
@@ -228,40 +203,5 @@ export class AppleSafariSource extends Source<SafariScan> {
         yield message;
       else yield { ...message, file: reader.file(message.data, scan) };
     }
-  }
-}
-
-// Every History.db: the default profile's, and each other profile's, so a
-// profile created while watching is picked up.
-async function historyFiles(location: SafariLocation): Promise<string[]> {
-  const profiles = join(location.container, 'Profiles');
-  const found = await readdir(profiles, { withFileTypes: true }).catch(
-    (error: unknown) => {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
-        return [];
-      throw error;
-    },
-  );
-  const others = await Promise.all(
-    found
-      .filter((entry) => entry.isDirectory())
-      .map(async (entry) => {
-        const path = join(profiles, entry.name, 'History.db');
-        return (await fingerprint(path)) === 'missing' ? [] : [path];
-      }),
-  );
-  return [storeFiles(location).history, ...others.flat()];
-}
-
-// A property list's identity on disk; a rewrite changes it. A missing file
-// reads as its own state, so its return is a change too.
-async function fingerprint(path: string): Promise<string> {
-  try {
-    const { ino, size, mtimeMs } = await stat(path);
-    return `${ino}:${size}:${mtimeMs}`;
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
-      return 'missing';
-    throw error;
   }
 }

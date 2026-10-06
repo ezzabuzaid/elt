@@ -23,6 +23,7 @@ import {
   Pipeline,
   PipelineError,
   type Source,
+  type Stream,
   StreamStatus,
   readerCatalog,
   syncHistoryRelations,
@@ -892,6 +893,123 @@ async function tabsFixture(root: string, path: string) {
 
 const rows = <T extends object>(found: Iterable<T>) =>
   [...found].map((row) => ({ ...row }));
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// The records one full-refresh read of a stream yields, in the order Safari
+// yields them.
+async function readStream(
+  source: AppleSafariSource,
+  stream: Stream,
+): Promise<Record<string, unknown>[]> {
+  const messages = await Array.fromAsync(
+    source.read(
+      [
+        new Copy(
+          stream,
+          new SQLiteDestination({ path: ':memory:' }).table(stream.name),
+        ).configuration,
+      ],
+      new Map(),
+    ),
+  );
+  for (const message of messages)
+    if (message instanceof StreamStatus && message.status === 'FAILED')
+      throw message.error;
+  return messages.flatMap((message) =>
+    'data' in message && isRecord(message.data) ? [message.data] : [],
+  );
+}
+
+// Each stream's primary keys in the order today's source yields them for
+// safariFixture, joined by |.
+const PRIMARY_KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
+  historyItems: ['DefaultProfile|1', 'DefaultProfile|2', 'PROFILE-WORK|1'],
+  historyVisits: [
+    'DefaultProfile|10',
+    'DefaultProfile|11',
+    'DefaultProfile|12',
+    'PROFILE-WORK|1',
+  ],
+  historyTombstones: [
+    'DefaultProfile|1',
+    'DefaultProfile|2',
+    'DefaultProfile|3',
+  ],
+  historyTags: ['DefaultProfile|1'],
+  historyItemTags: ['DefaultProfile|1|1'],
+  profiles: ['DefaultProfile', 'PROFILE-WORK'],
+  profileStartPageSections: ['PROFILE-WORK|0', 'PROFILE-WORK|1'],
+  windows: ['WIN-1', 'WIN-2'],
+  windowProfiles: ['WIN-1|DefaultProfile'],
+  windowTabGroups: ['WIN-1|GROUP-NAMED', 'WIN-1|GROUP-LOCAL'],
+  tabGroups: [
+    'pinned',
+    'DEVICE-FOLDER',
+    'GROUP-WORK',
+    'GROUP-NAMED',
+    'GROUP-FAVORITES',
+    'GROUP-LOCAL',
+    'GROUP-PRIVATE',
+  ],
+  tabs: ['TAB-NAMED', 'TAB-FAVORITE', 'TAB-LOCAL', 'TAB-PINNED', 'TAB-WORK'],
+  tabHistoryEntries: ['TAB-NAMED|0', 'TAB-NAMED|1'],
+  cloudTabDevices: ['DEV-1'],
+  cloudTabs: ['TAB-1'],
+  cloudTabPositions: ['TAB-1|0'],
+  cloudTabCloseRequests: ['CR-1'],
+  bookmarks: [
+    'PROXY-HISTORY',
+    'BAR',
+    'BM-1',
+    'FOLDER-1',
+    'BM-2',
+    'MENU',
+    'READING-LIST',
+  ],
+  readingListItems: ['RL-1'],
+  closedWindows: ['W-1'],
+  closedWindowActiveTabs: ['W-1|G-2'],
+  closedTabs: ['CT-1', 'CT-2', 'CT-3'],
+  downloads: ['DL-1', 'DL-2'],
+};
+
+// The fields of the record whose key field holds the given value.
+const fieldsOf = (
+  records: readonly Record<string, unknown>[],
+  key: string,
+  value: unknown,
+  fields: readonly string[],
+) => {
+  const found = records.find((record) => record[key] === value);
+  assert.ok(found, `no record with ${key} ${String(value)}`);
+  return Object.fromEntries(fields.map((field) => [field, found[field]]));
+};
+
+// Gives the dates of a binary property list at the given instant a fraction
+// of a second more, as Safari's own NSDates carry: plutil writes whole
+// seconds only. A date is the marker 0x33 and a big-endian double of seconds
+// since 2001-01-01.
+async function addFraction(path: string, at: Date, fraction: number) {
+  const bytes = await readFile(path);
+  const seconds = (at.getTime() - Date.UTC(2001, 0, 1)) / 1000;
+  const date = (value: number) => {
+    const encoded = Buffer.alloc(9);
+    encoded[0] = 0x33;
+    encoded.writeDoubleBE(value, 1);
+    return encoded;
+  };
+  const whole = date(seconds);
+  const fractional = date(seconds + fraction);
+  let found = bytes.indexOf(whole);
+  assert.notEqual(found, -1);
+  while (found !== -1) {
+    fractional.copy(bytes, found);
+    found = bytes.indexOf(whole, found + whole.length);
+  }
+  await writeFile(path, bytes);
+}
 
 test('Safari reads history, iCloud Tabs, bookmarks and recently closed tabs as documented views', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
@@ -1944,6 +2062,577 @@ test('a Safari watch wakes only the streams of the store that changed, while Saf
     ['bookmarks'],
     ['historyVisits'],
     ['tabs'],
+  ]);
+});
+
+test('Safari reads a value it keeps in two places from either, and a blank one as absent', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  const location = await safariFixture(scratch.path);
+  const plist = (value: unknown) => binaryPlist(scratch.path, value);
+  const closedHere = new Date('2026-03-04T05:06:07Z');
+  {
+    using tabs = new DatabaseSync(join(location.container, 'SafariTabs.db'));
+    const tab = tabs.prepare(
+      'INSERT INTO bookmarks (id, parent, type, title, url, order_index, external_uuid, extra_attributes, local_attributes, topic_title, date_closed) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+    // Pinned only on this Mac, with blank synced values and topic.
+    tab.run(
+      60,
+      2,
+      'Locally pinned',
+      'https://local.example/page',
+      3,
+      'TAB-LOCAL-PIN',
+      await plist({ PinnedTitle: '', PinnedAddress: '' }),
+      await plist({
+        WindowUUID: 'WIN-1',
+        IsPinned: true,
+        PinnedPageTitle: 'Local pin',
+        PinnedPageURL: 'https://local.example/',
+        TabPageContextIDKey: {
+          profileIdentifier: 'DefaultProfile',
+          topicID: 'Gardening',
+        },
+      }),
+      '',
+      null,
+    );
+    // Closed, as only this Mac records it.
+    tab.run(
+      61,
+      40,
+      'Closed here',
+      'https://example.com/closed-here',
+      4,
+      'TAB-CLOSED-LOCAL',
+      null,
+      await plist({ WindowUUID: 'WIN-1', DateClosed: closedHere }),
+      null,
+      null,
+    );
+    // Closed in both places: the database's time wins.
+    tab.run(
+      62,
+      40,
+      'Closed twice',
+      'https://example.com/closed-twice',
+      5,
+      'TAB-CLOSED-BOTH',
+      null,
+      await plist({ WindowUUID: 'WIN-1', DateClosed: closedHere }),
+      null,
+      appleSeconds('2026-03-05T06:07:08Z'),
+    );
+    const window = tabs.prepare(
+      'INSERT INTO windows (id, uuid, active_profile_id, date_closed, extra_attributes) VALUES (?, ?, 6, ?, ?)',
+    );
+    window.run(
+      3,
+      'WIN-CLOSED-BOTH',
+      appleSeconds('2026-03-06T00:00:00Z'),
+      await plist({ DateClosed: new Date('2026-03-01T00:00:00Z') }),
+    );
+    window.run(
+      4,
+      'WIN-CLOSED-STATE',
+      null,
+      await plist({ DateClosed: new Date('2026-03-02T00:00:00Z') }),
+    );
+  }
+  await writePlist(join(location.directory, 'Bookmarks.plist'), {
+    ...bookmarksPlist,
+    Children: bookmarksPlist.Children.map((folder) => {
+      if (folder.WebBookmarkUUID === 'BAR' && 'Children' in folder)
+        return {
+          ...folder,
+          Children: [
+            ...folder.Children,
+            {
+              Title: '',
+              URIDictionary: { title: 'From the page' },
+              URLString: 'https://example.com/untitled',
+              WebBookmarkType: 'WebBookmarkTypeLeaf',
+              WebBookmarkUUID: 'BM-UNTITLED',
+            },
+          ],
+        };
+      if (folder.WebBookmarkUUID === 'READING-LIST' && 'Children' in folder)
+        return {
+          ...folder,
+          Children: [
+            ...folder.Children,
+            {
+              ReadingList: { DateAdded: new Date('2026-02-02T10:00:00Z') },
+              URIDictionary: { title: 'Saved later' },
+              URLString: 'https://example.net/later',
+              WebBookmarkType: 'WebBookmarkTypeLeaf',
+              WebBookmarkUUID: 'RL-2',
+              previewText: 'From the bookmark',
+            },
+          ],
+        };
+      return folder;
+    }),
+  });
+  const source = new AppleSafariSource(location);
+
+  const tabs = await readStream(source, source.tabs);
+  const windows = await readStream(source, source.windows);
+  const bookmarks = await readStream(source, source.bookmarks);
+  const readingList = await readStream(source, source.readingListItems);
+
+  assert.deepEqual(
+    fieldsOf(tabs, 'id', 'TAB-LOCAL-PIN', [
+      'pinned',
+      'pinnedTitle',
+      'pinnedUrl',
+      'topic',
+    ]),
+    {
+      pinned: true,
+      pinnedTitle: 'Local pin',
+      pinnedUrl: 'https://local.example/',
+      topic: 'Gardening',
+    },
+  );
+  assert.deepEqual(fieldsOf(tabs, 'id', 'TAB-CLOSED-LOCAL', ['closedAt']), {
+    closedAt: '2026-03-04T05:06:07.000Z',
+  });
+  assert.deepEqual(fieldsOf(tabs, 'id', 'TAB-CLOSED-BOTH', ['closedAt']), {
+    closedAt: '2026-03-05T06:07:08.000Z',
+  });
+  assert.deepEqual(fieldsOf(windows, 'id', 'WIN-CLOSED-BOTH', ['closedAt']), {
+    closedAt: '2026-03-06T00:00:00.000Z',
+  });
+  assert.deepEqual(fieldsOf(windows, 'id', 'WIN-CLOSED-STATE', ['closedAt']), {
+    closedAt: '2026-03-02T00:00:00.000Z',
+  });
+  assert.deepEqual(fieldsOf(bookmarks, 'id', 'BM-UNTITLED', ['title']), {
+    title: 'From the page',
+  });
+  assert.deepEqual(fieldsOf(readingList, 'id', 'RL-2', ['previewText']), {
+    previewText: 'From the bookmark',
+  });
+});
+
+test('Safari keeps each time as stored: database times round to the millisecond, property list dates truncate, and its sentinels read as none', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  const location = await safariFixture(scratch.path);
+  {
+    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    // Safari writes REAL seconds, here 0.6 ms past a whole second.
+    history
+      .prepare(
+        'INSERT INTO history_visits (id, history_item, visit_time) VALUES (?, ?, ?)',
+      )
+      .run(20, 2, appleSeconds('2026-01-20T09:00:00Z') + 0.0006);
+    // An unbounded end: NSDate's distantFuture.
+    history
+      .prepare('INSERT INTO history_tombstones VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(
+        4,
+        appleSeconds('2026-01-05T00:00:00Z'),
+        63_113_904_000,
+        'https://forever.example/',
+        8,
+        'DEVICE-1',
+        0,
+      );
+    history.exec('UPDATE history_items SET status_code = 404 WHERE id = 2');
+  }
+  {
+    using cloud = new DatabaseSync(join(location.container, 'CloudTabs.db'));
+    cloud
+      .prepare('UPDATE cloud_tabs SET last_viewed_time = ? WHERE tab_uuid = ?')
+      .run(appleSeconds('2026-03-03T10:00:00Z'), 'TAB-1');
+  }
+  const closedTabs = join(location.directory, 'RecentlyClosedTabs.plist');
+  await writePlist(closedTabs, {
+    ...closedTabsPlist,
+    ClosedTabOrWindowPersistentStates:
+      closedTabsPlist.ClosedTabOrWindowPersistentStates.map((entry) =>
+        entry.PersistentStateType === 1
+          ? {
+              ...entry,
+              PersistentState: {
+                ...entry.PersistentState,
+                // NSDate's distantFuture year, which means never.
+                TabStates: entry.PersistentState.TabStates.map((tab) =>
+                  tab.TabUUID === 'CT-2'
+                    ? {
+                        ...tab,
+                        LastVisitTime: new Date('4001-01-01T00:00:00Z'),
+                      }
+                    : tab,
+                ),
+              },
+            }
+          : entry,
+      ),
+  });
+  await addFraction(closedTabs, new Date('2026-03-01T12:00:00Z'), 0.0006);
+  const source = new AppleSafariSource(location);
+
+  const visits = await readStream(source, source.historyVisits);
+  const tombstones = await readStream(source, source.historyTombstones);
+  const items = await readStream(source, source.historyItems);
+  const cloudTabs = await readStream(source, source.cloudTabs);
+  const closed = await readStream(source, source.closedTabs);
+
+  assert.deepEqual(fieldsOf(visits, 'id', 20, ['visitedAt']), {
+    visitedAt: '2026-01-20T09:00:00.001Z',
+  });
+  assert.deepEqual(fieldsOf(closed, 'id', 'CT-1', ['closedAt']), {
+    closedAt: '2026-03-01T12:00:00.000Z',
+  });
+  assert.deepEqual(fieldsOf(closed, 'id', 'CT-2', ['lastVisitedAt']), {
+    lastVisitedAt: null,
+  });
+  assert.deepEqual(fieldsOf(tombstones, 'id', 4, ['startAt', 'endAt']), {
+    startAt: '2026-01-05T00:00:00.000Z',
+    endAt: null,
+  });
+  assert.deepEqual(
+    items
+      .filter((item) => item.profileId === 'DefaultProfile')
+      .map(({ id, statusCode }) => ({ id, statusCode })),
+    [
+      { id: 1, statusCode: null },
+      { id: 2, statusCode: 404 },
+    ],
+  );
+  assert.deepEqual(fieldsOf(cloudTabs, 'id', 'TAB-1', ['lastViewedAt']), {
+    lastViewedAt: '2026-03-03T10:00:00.000Z',
+  });
+});
+
+test('Safari reads its folders, window groups, tag links and closed tabs as it structures them', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  const location = await safariFixture(scratch.path);
+  {
+    using tabs = new DatabaseSync(join(location.container, 'SafariTabs.db'));
+    // A window's group that is also one of its unnamed groups.
+    tabs
+      .prepare(
+        'INSERT INTO windows_unnamed_tab_groups (window_id, tab_group_id) VALUES (?, ?)',
+      )
+      .run(1, 30);
+    // Built-in folders: one by its special id, two Safari names by uuid.
+    const folder = tabs.prepare(
+      'INSERT INTO bookmarks (id, parent, type, special_id, title, order_index, external_uuid) VALUES (?, ?, 1, ?, ?, ?, ?)',
+    );
+    folder.run(70, 0, 6, 'Recovered', 3, 'SPECIAL-FOLDER');
+    folder.run(71, null, 0, 'privatePinned', 0, 'privatePinned');
+    folder.run(72, null, 0, 'recentlyClosed', 0, 'recentlyClosed');
+  }
+  {
+    // A tag link whose history item is gone, which a connection without
+    // foreign keys, as Safari's can be, leaves behind.
+    using history = new DatabaseSync(join(location.directory, 'History.db'), {
+      enableForeignKeyConstraints: false,
+    });
+    history
+      .prepare('INSERT INTO history_items_to_tags VALUES (?, ?, ?)')
+      .run(99, 1, appleSeconds('2026-01-12T00:00:00Z'));
+  }
+  // The same tab closed under two profiles: Work first, then the default.
+  await writePlist(join(location.directory, 'RecentlyClosedTabs.plist'), {
+    ...closedTabsPlist,
+    ClosedTabOrWindowPersistentStates: [
+      ...closedTabsPlist.ClosedTabOrWindowPersistentStates,
+      {
+        PersistentStateType: 0,
+        PersistentState: {
+          TabUUID: 'CT-9',
+          WindowUUID: 'W-9',
+          ProfileUUID: 'PROFILE-WORK',
+          TabTitle: 'Closed at work',
+          TabURL: 'https://work.example/closed',
+          DateClosed: new Date('2026-03-05T12:00:00Z'),
+        },
+      },
+      {
+        PersistentStateType: 0,
+        PersistentState: {
+          TabUUID: 'CT-9',
+          WindowUUID: 'W-9',
+          ProfileUUID: 'DefaultProfile',
+          TabTitle: 'Closed at home',
+          TabURL: 'https://example.com/closed-home',
+          DateClosed: new Date('2026-03-06T12:00:00Z'),
+        },
+      },
+    ],
+  });
+  const source = new AppleSafariSource(location);
+  const work = new AppleSafariSource({
+    ...location,
+    scope: { collectionIds: ['PROFILE-WORK'] },
+  });
+
+  const windowGroups = await readStream(source, source.windowTabGroups);
+  const groups = await readStream(source, source.tabGroups);
+  const itemTags = await readStream(source, source.historyItemTags);
+  const closed = await readStream(source, source.closedTabs);
+  const closedAtWork = await readStream(work, work.closedTabs);
+
+  // The window's own row comes first and keeps its active tab.
+  assert.deepEqual(windowGroups, [
+    {
+      windowId: 'WIN-1',
+      tabGroupId: 'GROUP-NAMED',
+      activeTabId: 'TAB-NAMED',
+      unnamed: true,
+    },
+    {
+      windowId: 'WIN-1',
+      tabGroupId: 'GROUP-LOCAL',
+      activeTabId: null,
+      unnamed: true,
+    },
+  ]);
+  assert.deepEqual(
+    Object.fromEntries(
+      groups
+        .filter(({ id }) =>
+          [
+            'SPECIAL-FOLDER',
+            'privatePinned',
+            'recentlyClosed',
+            'GROUP-WORK',
+          ].includes(String(id)),
+        )
+        .map(({ id, kind }) => [String(id), kind]),
+    ),
+    {
+      'SPECIAL-FOLDER': 'special',
+      privatePinned: 'privatePinned',
+      recentlyClosed: 'recentlyClosed',
+      'GROUP-WORK': 'unnamed',
+    },
+  );
+  assert.deepEqual(
+    itemTags.map(({ profileId, itemId, tagId }) => ({
+      profileId,
+      itemId,
+      tagId,
+    })),
+    [{ profileId: 'DefaultProfile', itemId: 1, tagId: 1 }],
+  );
+  // Unscoped, the later close wins; scoped to Work, only its own close is
+  // listed.
+  assert.deepEqual(
+    fieldsOf(closed, 'id', 'CT-9', ['profileId', 'title', 'closedAt']),
+    {
+      profileId: 'DefaultProfile',
+      title: 'Closed at home',
+      closedAt: '2026-03-06T12:00:00.000Z',
+    },
+  );
+  assert.deepEqual(
+    closedAtWork.map(({ id, profileId, title }) => ({ id, profileId, title })),
+    [{ id: 'CT-9', profileId: 'PROFILE-WORK', title: 'Closed at work' }],
+  );
+});
+
+test('Safari writes every stream with its fields in schema order and its rows in store order', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  const location = await safariFixture(scratch.path);
+  const source = new AppleSafariSource(location);
+  const { streams } = await source.discover();
+
+  const read = await Promise.all(
+    streams.map(async (stream) => ({
+      stream,
+      records: await readStream(source, stream),
+    })),
+  );
+
+  for (const { stream, records } of read)
+    for (const record of records)
+      assert.deepEqual(
+        Object.keys(record),
+        Object.keys(stream.jsonSchema.properties ?? {}),
+        stream.name,
+      );
+  assert.deepEqual(
+    Object.fromEntries(
+      read.map(({ stream, records }) => [
+        stream.name,
+        records.map((record) =>
+          stream.primaryKey.map((key) => record[key]).join('|'),
+        ),
+      ]),
+    ),
+    PRIMARY_KEY_ORDER,
+  );
+});
+
+test('a malformed or missing Safari value fails only the streams that read it', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  // The streams one load fails after a change to a fresh library.
+  const failedAfter = async (
+    name: string,
+    change: (location: {
+      readonly directory: string;
+      readonly container: string;
+    }) => Promise<void>,
+  ) => {
+    const root = join(scratch.path, name);
+    const location = await safariFixture(root);
+    await change(location);
+    const safari = await appleImport(
+      new AppleSafariSource(location),
+      join(root, 'import'),
+    );
+    const failure = await safari.load().then(
+      () => null,
+      (error: unknown) => error,
+    );
+    if (failure === null) return [];
+    assert.ok(failure instanceof PipelineError);
+    return failure.results
+      .filter(({ failures }) => failures.length > 0)
+      .map(({ copy }) => copy.configuration.stream.name)
+      .sort();
+  };
+  const history = [
+    'historyItemTags',
+    'historyItems',
+    'historyTags',
+    'historyTombstones',
+    'historyVisits',
+  ];
+  const tabsStore = [
+    'profileStartPageSections',
+    'profiles',
+    'tabGroups',
+    'tabHistoryEntries',
+    'tabs',
+    'windowProfiles',
+    'windowTabGroups',
+    'windows',
+  ];
+
+  const counts = await failedAfter('counts', async ({ directory }) => {
+    using database = new DatabaseSync(join(directory, 'History.db'));
+    database.exec(
+      "UPDATE history_items SET daily_visit_counts = x'010203' WHERE id = 1",
+    );
+  });
+  const position = await failedAfter('position', async ({ container }) => {
+    using database = new DatabaseSync(join(container, 'CloudTabs.db'));
+    database.exec("UPDATE cloud_tabs SET position = x'00'");
+  });
+  const session = await failedAfter('session', async ({ container }) => {
+    const local = await binaryPlist(join(scratch.path, 'session'), {
+      WindowUUID: 'WIN-1',
+      SessionState: new Uint8Array([0, 0, 0, 2, 1, 2, 3]),
+      TabPageContextIDKey: { profileIdentifier: 'DefaultProfile' },
+    });
+    using database = new DatabaseSync(join(container, 'SafariTabs.db'));
+    database
+      .prepare('UPDATE bookmarks SET local_attributes = ? WHERE id = 32')
+      .run(local);
+  });
+  const layout = await failedAfter('layout', async ({ container }) => {
+    using database = new DatabaseSync(join(container, 'SafariTabs.db'));
+    database.exec('ALTER TABLE windows DROP COLUMN scene_id');
+  });
+  const profile = await failedAfter('profile', async ({ container }) => {
+    await rm(join(container, 'Profiles', 'SERVER-WORK', 'History.db'));
+  });
+  const limit = await failedAfter('limit', async () => {
+    await writePlist(
+      join(scratch.path, 'limit', 'Preferences', 'com.apple.Safari.plist'),
+      { HistoryAgeInDaysLimit: 'a week' },
+    );
+  });
+
+  assert.deepEqual(counts, ['historyItems']);
+  assert.deepEqual(position, ['cloudTabPositions']);
+  assert.deepEqual(session, ['tabHistoryEntries']);
+  // History lists its profiles from SafariTabs.db, so it fails with it.
+  assert.deepEqual(layout, [...history, ...tabsStore].sort());
+  assert.deepEqual(profile, history);
+  assert.deepEqual(limit, history);
+});
+
+test('Safari keeps a year of history when it has written no preferences', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  const location = await safariFixture(scratch.path);
+  await rm(join(scratch.path, 'Preferences', 'com.apple.Safari.plist'));
+  const daysAgo = (days: number) =>
+    appleSeconds(new Date(Date.now() - days * 86_400_000).toISOString());
+  {
+    using history = new DatabaseSync(join(location.directory, 'History.db'));
+    history.exec(`INSERT INTO history_items (id, url, visit_count, daily_visit_counts, should_recompute_derived_visit_counts, visit_count_score)
+      VALUES (3, 'https://older.example/', 1, x'', 0, 0), (4, 'https://newer.example/', 1, x'', 0, 0)`);
+    history
+      .prepare(
+        'INSERT INTO history_visits (id, history_item, visit_time) VALUES (?, ?, ?), (?, ?, ?)',
+      )
+      .run(30, 3, daysAgo(400), 31, 4, daysAgo(100));
+  }
+  const safari = await appleImport(
+    new AppleSafariSource(location),
+    join(scratch.path, 'import'),
+  );
+  await safari.load();
+  {
+    using database = new DatabaseSync(join(location.directory, 'History.db'));
+    database.exec(
+      'DELETE FROM history_visits WHERE id IN (30, 31); DELETE FROM history_items WHERE id IN (3, 4)',
+    );
+  }
+
+  const loaded = await safari.load();
+
+  // The visit past a year expired with Safari's default limit and stays; the
+  // one within it was removed.
+  assert.deepEqual(
+    loaded
+      .filter(({ copy }) => copy.from.name === 'historyVisits')
+      .map(({ deleted }) => deleted),
+    [1],
+  );
+  assert.deepEqual(
+    safari
+      .read('SELECT id FROM history_visits WHERE id >= 30')
+      .map(({ id }) => id),
+    [30],
+  );
+});
+
+test('a Safari watch wakes history when a profile History.db appears, and a property list’s streams when it goes and comes back', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
+  const location = await safariFixture(scratch.path);
+  const source = new AppleSafariSource(location);
+  const bookmarks = join(location.directory, 'Bookmarks.plist');
+  const controller = new AbortController();
+  const woken: string[][] = [];
+
+  for await (const batch of source.watch({
+    streams: [source.historyVisits, source.bookmarks],
+    // A batch that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  })) {
+    woken.push(batch.map((stream) => stream.name));
+    if (woken.length === 1) {
+      const profile = join(location.container, 'Profiles', 'SERVER-NEW');
+      await mkdir(profile);
+      using created = new DatabaseSync(join(profile, 'History.db'));
+      created.exec(historySchema);
+    } else if (woken.length === 2) await rm(bookmarks);
+    else if (woken.length === 3) await writePlist(bookmarks, bookmarksPlist);
+    else controller.abort();
+  }
+
+  assert.deepEqual(woken, [
+    ['historyVisits', 'bookmarks'],
+    ['historyVisits'],
+    ['bookmarks'],
+    ['bookmarks'],
   ]);
 });
 

@@ -1,10 +1,7 @@
 import type { RecordDraft } from '@workspace/elt';
-import type { PlistValue } from '@workspace/sdk-apple-plist';
 
-import type { ClosedWindow } from '../closed-tabs-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { dictionary } from '../safari-values.ts';
 
 const properties = {
   windowId: {
@@ -23,9 +20,9 @@ const properties = {
 } as const;
 
 type Entry = {
-  windowId: PlistValue | undefined;
-  tabGroupId: string;
-  tabId: PlistValue;
+  readonly windowId: string | null;
+  readonly tabGroupId: string;
+  readonly tabId: string | null;
 };
 
 export class ClosedWindowActiveTabsStream extends SafariStream<
@@ -44,14 +41,12 @@ export class ClosedWindowActiveTabsStream extends SafariStream<
   } as const;
 
   protected rows(scan: SafariScan): readonly Entry[] {
-    return scan.closedTabs.windows.flatMap(({ state }: ClosedWindow) =>
-      Object.entries(dictionary(state.TabGroupsToActiveTabs)).map(
-        ([tabGroupId, tabId]) => ({
-          windowId: state.WindowUUID,
-          tabGroupId,
-          tabId,
-        }),
-      ),
+    return scan.closedTabs.windows.flatMap((window) =>
+      window.activeTabs.map(({ tabGroupId, tabId }) => ({
+        windowId: window.id,
+        tabGroupId,
+        tabId,
+      })),
     );
   }
 

@@ -1,76 +1,227 @@
-import { dirname, join } from 'node:path';
-
-import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
-
-import { BookmarksReader } from './bookmarks-reader.ts';
-import { ClosedTabsReader } from './closed-tabs-reader.ts';
-import { CloudTabsReader, cloudTabsColumns } from './cloud-tabs-reader.ts';
-import { DownloadsReader } from './downloads-reader.ts';
+import type {
+  Bookmarks,
+  ClosedTab,
+  ClosedWindow,
+  CloudTab,
+  CloudTabCloseRequest,
+  CloudTabDevice,
+  CloudTabs,
+  Download,
+  HistoryItem,
+  HistoryItemTag,
+  HistoryTag,
+  HistoryTombstone,
+  HistoryVisit,
+  ProfileHistory,
+  Safari,
+  SafariProfile,
+  SafariStore,
+  SafariTabs,
+  SafariWindow,
+  Tab,
+  TabGroup,
+  WindowProfile,
+  WindowTabGroup,
+} from '@workspace/sdk-apple-safari';
 import {
-  HistoryReader,
-  type SafariHistory,
-  historyColumns,
-  historyHorizon,
-} from './history-reader.ts';
-import {
-  SafariDatabase,
-  readSafariPlist,
-  readSafariPreferences,
-} from './safari-store.ts';
-import { defaultProfile, text } from './safari-values.ts';
-import { TabsReader, tabsColumns } from './tabs-reader.ts';
+  type ImportScope,
+  selected,
+  withinDates,
+} from '@workspace/source-apple-macos/import-scope';
 
-// Where Safari keeps each kind of data: databases it commits to, and property
-// lists it rewrites whole.
-export type SafariStore =
-  'history' | 'tabs' | 'cloudTabs' | 'bookmarks' | 'closedTabs' | 'downloads';
+import { iso } from './safari-stream.ts';
 
-export type SafariLocation = {
-  // ~/Library/Safari: History.db and the property lists.
-  readonly directory: string;
-  // Safari's container: SafariTabs.db, CloudTabs.db and each other profile's
-  // History.db.
-  readonly container: string;
+const dayMs = 86_400_000;
+// Manually's 365000 days reach back past the first year a timestamp can name.
+const firstYear = Date.parse('0001-01-01T00:00:00.000Z');
+// Safari prunes by its own clock before a read sees the result; an hour inside
+// the limit absorbs a daylight-saving shift.
+const marginMs = 3_600_000;
+
+// The instant Safari keeps visits from at startedAt.
+const historyHorizon = (days: number, startedAt: Date) =>
+  new Date(
+    Math.max(firstYear, startedAt.getTime() - days * dayMs + marginMs),
+  ).toISOString();
+
+// A row of one profile's history, with the profile it belongs to.
+export type Profiled<T> = { readonly profileId: string; readonly row: T };
+
+// One profile's history as an import scope keeps it: the scope's profiles and
+// dates select visits, and items, tags and tag links follow the visits kept.
+class ProfileRecords {
+  readonly profileId: string;
+  readonly #history: ProfileHistory;
+  readonly #scope: ImportScope;
+  #visits?: HistoryVisit[];
+  #items?: HistoryItem[];
+  #itemTags?: HistoryItemTag[];
+  #tags?: HistoryTag[];
+
+  constructor(history: ProfileHistory, scope: ImportScope) {
+    this.profileId = history.profileId;
+    this.#history = history;
+    this.#scope = scope;
+  }
+
+  get #included(): boolean {
+    return selected(this.#scope.collectionIds, this.profileId);
+  }
+
+  get #dated(): boolean {
+    return this.#scope.startAt !== undefined || this.#scope.endAt !== undefined;
+  }
+
+  get visits(): HistoryVisit[] {
+    this.#visits ??= this.#included
+      ? this.#history
+          .visits()
+          .filter((visit) => withinDates(this.#scope, iso(visit.visitedAt)))
+      : [];
+    return this.#visits;
+  }
+
+  get items(): HistoryItem[] {
+    if (this.#items !== undefined) return this.#items;
+    const visited = new Set(this.visits.map((visit) => visit.itemId));
+    this.#items = this.#included
+      ? this.#history
+          .items()
+          .filter((item) => !this.#dated || visited.has(item.id))
+      : [];
+    return this.#items;
+  }
+
+  get itemTags(): HistoryItemTag[] {
+    if (this.#itemTags !== undefined) return this.#itemTags;
+    const items = new Set(this.items.map((item) => item.id));
+    this.#itemTags = this.#included
+      ? this.#history.itemTags().filter((link) => items.has(link.itemId))
+      : [];
+    return this.#itemTags;
+  }
+
+  get tags(): HistoryTag[] {
+    if (this.#tags !== undefined) return this.#tags;
+    const linked = new Set(this.itemTags.map((link) => link.tagId));
+    this.#tags = this.#included
+      ? this.#history.tags().filter((tag) => !this.#dated || linked.has(tag.id))
+      : [];
+    return this.#tags;
+  }
+
+  // Tombstones record deletions to sync to other devices, whatever their date.
+  get tombstones(): HistoryTombstone[] {
+    return this.#included ? this.#history.tombstones() : [];
+  }
+}
+
+// Safari history as one run reads it, with the instant Safari keeps visits
+// from.
+type ScopedHistory = {
+  readonly profiles: readonly ProfileRecords[];
+  readonly horizon: string;
 };
 
-// The file each store keeps; history has one more History.db per profile.
-export const storeFiles = ({ directory, container }: SafariLocation) =>
-  ({
-    history: join(directory, 'History.db'),
-    tabs: join(container, 'SafariTabs.db'),
-    cloudTabs: join(container, 'CloudTabs.db'),
-    bookmarks: join(directory, 'Bookmarks.plist'),
-    closedTabs: join(directory, 'RecentlyClosedTabs.plist'),
-    downloads: join(directory, 'Downloads.plist'),
-  }) satisfies Record<SafariStore, string>;
+// SafariTabs.db as an import scope keeps it: the scope's profiles select
+// profiles, windows, groups and tabs. Folders of no profile, such as pinned
+// tabs, are shared by every profile, so any profile's scope keeps them.
+class ScopedTabs {
+  readonly #tabs: SafariTabs;
+  readonly #scope: ImportScope;
+  #profiles?: SafariProfile[];
+  #windows?: SafariWindow[];
+  #tabGroups?: TabGroup[];
+  #tabList?: Tab[];
 
-// Safari's own preferences, beside its container's Safari folder.
-export const safariPreferences = ({ container }: SafariLocation) =>
-  join(dirname(container), 'Preferences/com.apple.Safari.plist');
+  constructor(tabs: SafariTabs, scope: ImportScope) {
+    this.#tabs = tabs;
+    this.#scope = scope;
+  }
 
-// The default profile keeps its history in ~/Library/Safari; every other
-// profile in the container's Profiles folder named by its server_id.
-export const profileHistory = (
-  { directory, container }: SafariLocation,
-  serverId: string,
-) =>
-  serverId === defaultProfile
-    ? join(directory, 'History.db')
-    : join(container, 'Profiles', serverId, 'History.db');
+  #selected(profileId: string | null): boolean {
+    return selected(this.#scope.collectionIds, profileId);
+  }
 
-export const databaseStores = new Set<SafariStore>([
-  'history',
-  'tabs',
-  'cloudTabs',
-]);
+  get profiles(): SafariProfile[] {
+    this.#profiles ??= this.#tabs
+      .profiles()
+      .filter((profile) => this.#selected(profile.id));
+    return this.#profiles;
+  }
+
+  get windows(): SafariWindow[] {
+    this.#windows ??= this.#tabs
+      .windows()
+      .filter((window) => this.#selected(window.profileId));
+    return this.#windows;
+  }
+
+  get windowProfiles(): WindowProfile[] {
+    return this.#tabs
+      .windowProfiles()
+      .filter((link) => this.#selected(link.windowProfileId));
+  }
+
+  get windowTabGroups(): WindowTabGroup[] {
+    return this.#tabs
+      .windowTabGroups()
+      .filter((link) => this.#selected(link.windowProfileId));
+  }
+
+  get tabGroups(): TabGroup[] {
+    this.#tabGroups ??= this.#tabs
+      .tabGroups()
+      .filter(
+        (group) => group.profileId === null || this.#selected(group.profileId),
+      );
+    return this.#tabGroups;
+  }
+
+  get tabs(): Tab[] {
+    this.#tabList ??= this.#tabs
+      .tabs()
+      .filter((tab) => this.#selected(tab.profileId));
+    return this.#tabList;
+  }
+}
+
+// CloudTabs.db as one run reads it; its tabs serve both the tabs and their
+// positions.
+class CloudTabsRecords {
+  readonly #cloudTabs: CloudTabs;
+  #tabs?: CloudTab[];
+
+  constructor(cloudTabs: CloudTabs) {
+    this.#cloudTabs = cloudTabs;
+  }
+
+  get devices(): CloudTabDevice[] {
+    return this.#cloudTabs.devices();
+  }
+
+  get tabs(): CloudTab[] {
+    this.#tabs ??= this.#cloudTabs.tabs();
+    return this.#tabs;
+  }
+
+  get closeRequests(): CloudTabCloseRequest[] {
+    return this.#cloudTabs.closeRequests();
+  }
+}
+
+type ClosedEntries = {
+  readonly windows: ClosedWindow[];
+  readonly tabs: ClosedTab[];
+};
 
 type Readers = {
-  history: SafariHistory;
-  tabs: TabsReader;
-  cloudTabs: CloudTabsReader;
-  bookmarks: BookmarksReader;
-  closedTabs: ClosedTabsReader;
-  downloads: DownloadsReader;
+  history: ScopedHistory;
+  tabs: ScopedTabs;
+  cloudTabs: CloudTabsRecords;
+  bookmarks: Bookmarks;
+  closedTabs: ClosedEntries;
+  downloads: Download[];
 };
 
 // A store's reader, or why it could not be opened.
@@ -92,20 +243,15 @@ export class SafariScan implements AsyncDisposable {
   }
 
   static async open(
-    location: SafariLocation,
+    safari: Safari,
     stores: ReadonlySet<SafariStore>,
     scope: ImportScope,
   ): Promise<SafariScan> {
-    const files = storeFiles(location);
     const startedAt = new Date();
     await using resources = new AsyncDisposableStack();
-    const database = async (
-      path: string,
-      columns: Readonly<Record<string, readonly string[]>>,
-    ) => resources.use(await SafariDatabase.open(path, columns));
     const open = async <S extends SafariStore>(
       store: S,
-      reader: () => Promise<Readers[S]>,
+      reader: () => Promise<Readers[S]> | Readers[S],
     ): Promise<Opened<Readers[S]> | undefined> => {
       if (!stores.has(store)) return undefined;
       try {
@@ -115,88 +261,59 @@ export class SafariScan implements AsyncDisposable {
       }
     };
     const opened: OpenedStores = {
-      // Each profile's History.db, pinned on its own; SafariTabs.db lists them.
       history: await open('history', async () => {
-        const profiles = new TabsReader(
-          await database(files.tabs, tabsColumns),
-          {},
-        ).allProfiles;
-        const readers: HistoryReader[] = [];
-        for (const profile of profiles) {
-          const serverId = text(profile.server_id);
-          const profileId = text(profile.external_uuid);
-          if (serverId === null || profileId === null)
-            throw new TypeError('A Safari profile has no identifier');
-          readers.push(
-            new HistoryReader(
-              await database(
-                profileHistory(location, serverId),
-                historyColumns,
-              ),
-              profileId,
-              scope,
-            ),
-          );
-        }
+        const history = resources.use(safari.history());
         return {
-          profiles: readers,
-          horizon: historyHorizon(
-            await readSafariPreferences(safariPreferences(location)),
-            startedAt,
+          profiles: history.profiles.map(
+            (profile) => new ProfileRecords(profile, scope),
           ),
+          horizon: historyHorizon(await safari.historyAgeInDays(), startedAt),
         };
       }),
       tabs: await open(
         'tabs',
-        async () =>
-          new TabsReader(await database(files.tabs, tabsColumns), scope),
+        () => new ScopedTabs(resources.use(safari.tabs()), scope),
       ),
       cloudTabs: await open(
         'cloudTabs',
-        async () =>
-          new CloudTabsReader(
-            await database(files.cloudTabs, cloudTabsColumns),
-          ),
+        () => new CloudTabsRecords(resources.use(safari.cloudTabs())),
       ),
-      bookmarks: await open(
-        'bookmarks',
-        async () => new BookmarksReader(await readSafariPlist(files.bookmarks)),
+      bookmarks: await open('bookmarks', () => safari.bookmarks()),
+      closedTabs: await open('closedTabs', async () =>
+        (await safari.recentlyClosed()).closed((profileId) =>
+          selected(scope.collectionIds, profileId),
+        ),
       ),
-      closedTabs: await open(
-        'closedTabs',
-        async () =>
-          new ClosedTabsReader(await readSafariPlist(files.closedTabs), scope),
-      ),
-      downloads: await open(
-        'downloads',
-        async () =>
-          new DownloadsReader(await readSafariPlist(files.downloads), scope),
+      downloads: await open('downloads', async () =>
+        (await safari.downloads()).downloads.filter((download) =>
+          selected(scope.collectionIds, download.profileId),
+        ),
       ),
     };
     return new SafariScan(resources.move(), opened);
   }
 
-  get history(): SafariHistory {
+  get history(): ScopedHistory {
     return this.#reader('history');
   }
 
-  get tabs(): TabsReader {
+  get tabs(): ScopedTabs {
     return this.#reader('tabs');
   }
 
-  get downloads(): DownloadsReader {
+  get downloads(): Download[] {
     return this.#reader('downloads');
   }
 
-  get cloudTabs(): CloudTabsReader {
+  get cloudTabs(): CloudTabsRecords {
     return this.#reader('cloudTabs');
   }
 
-  get bookmarks(): BookmarksReader {
+  get bookmarks(): Bookmarks {
     return this.#reader('bookmarks');
   }
 
-  get closedTabs(): ClosedTabsReader {
+  get closedTabs(): ClosedEntries {
     return this.#reader('closedTabs');
   }
 

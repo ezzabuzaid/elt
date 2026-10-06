@@ -6,13 +6,18 @@ import {
   type SyncMode,
   validateRecords,
 } from '@workspace/elt';
+import type { SafariStore } from '@workspace/sdk-apple-safari';
 
-import type { SafariScan, SafariStore } from './safari-scan.ts';
+import type { SafariScan } from './safari-scan.ts';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;
 const integer = { type: 'integer' } as const;
 const nullableInteger = { type: ['integer', 'null'] } as const;
+
+// A time as a record holds it.
+export const iso = (date: Date | null): string | null =>
+  date?.toISOString() ?? null;
 
 export const safariFields = {
   id: { ...text, minLength: 1 },

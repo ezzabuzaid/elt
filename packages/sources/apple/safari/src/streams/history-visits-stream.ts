@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { HistoryVisit } from '@workspace/sdk-apple-safari';
 
-import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import { type Row, appleTime, flag, integer, text } from '../safari-values.ts';
+import type { Profiled, SafariScan } from '../safari-scan.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { profileId, boolean, nullableText, nullableInteger } = safariFields;
 
@@ -70,7 +70,10 @@ const properties = {
   },
 } as const;
 
-export class HistoryVisitsStream extends SafariStream<typeof properties, Row> {
+export class HistoryVisitsStream extends SafariStream<
+  typeof properties,
+  Profiled<HistoryVisit>
+> {
   readonly name = 'historyVisits';
   readonly store = 'history';
   readonly primaryKey = ['profileId', 'id'];
@@ -87,22 +90,27 @@ export class HistoryVisitsStream extends SafariStream<typeof properties, Row> {
     return scan.history.horizon;
   }
 
-  protected rows(scan: SafariScan): readonly Row[] {
-    return scan.history.profiles.flatMap((history) => history.visits);
+  protected rows(scan: SafariScan): readonly Profiled<HistoryVisit>[] {
+    return scan.history.profiles.flatMap(({ profileId, visits }) =>
+      visits.map((row) => ({ profileId, row })),
+    );
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record({
+    profileId,
+    row,
+  }: Profiled<HistoryVisit>): RecordDraft<typeof properties> {
     return {
-      profileId: row.$profile,
+      profileId,
       id: row.id,
-      itemId: row.history_item,
-      visitedAt: appleTime(row.visit_time),
-      title: text(row.title),
-      loadSuccessful: flag(row.load_successful),
-      httpNonGet: flag(row.http_non_get),
-      synthesized: flag(row.synthesized),
-      redirectSourceId: integer(row.redirect_source),
-      redirectDestinationId: integer(row.redirect_destination),
+      itemId: row.itemId,
+      visitedAt: iso(row.visitedAt),
+      title: row.title,
+      loadSuccessful: row.loadSuccessful,
+      httpNonGet: row.httpNonGet,
+      synthesized: row.synthesized,
+      redirectSourceId: row.redirectSourceId,
+      redirectDestinationId: row.redirectDestinationId,
       origin: row.origin,
       generation: row.generation,
       attributes: row.attributes,

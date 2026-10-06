@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { SafariWindow } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import { type Row, appleTime, flag, text } from '../safari-values.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 import { windowState, windowStateFields } from '../window-state.ts';
 
 const { nullableId, nullableText } = safariFields;
@@ -43,7 +43,10 @@ const properties = {
   ...windowStateFields,
 } as const;
 
-export class WindowsStream extends SafariStream<typeof properties, Row> {
+export class WindowsStream extends SafariStream<
+  typeof properties,
+  SafariWindow
+> {
   readonly name = 'windows';
   readonly store = 'tabs';
   readonly primaryKey = ['id'];
@@ -55,23 +58,21 @@ export class WindowsStream extends SafariStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
+  protected rows(scan: SafariScan): readonly SafariWindow[] {
     return scan.tabs.windows;
   }
 
-  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
-    const { tabs } = scan;
-    const state = windowState(tabs.windowState(row));
+  protected record(window: SafariWindow): RecordDraft<typeof properties> {
     return {
-      id: row.uuid,
-      profileId: tabs.uuid(row.active_profile_id),
-      activeTabGroupId: tabs.uuid(row.active_tab_group_id),
-      localTabGroupId: tabs.uuid(row.local_tab_group_id),
-      privateTabGroupId: tabs.uuid(row.private_tab_group_id),
-      lastSession: flag(row.is_last_session),
-      sceneId: text(row.scene_id),
-      ...state,
-      closedAt: appleTime(row.date_closed) ?? state.closedAt,
+      id: window.id,
+      profileId: window.profileId,
+      activeTabGroupId: window.activeTabGroupId,
+      localTabGroupId: window.localTabGroupId,
+      privateTabGroupId: window.privateTabGroupId,
+      lastSession: window.lastSession,
+      sceneId: window.sceneId,
+      ...windowState(window.state),
+      closedAt: iso(window.closedAt),
     };
   }
 }

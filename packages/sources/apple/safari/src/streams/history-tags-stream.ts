@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { HistoryTag } from '@workspace/sdk-apple-safari';
 
-import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import { type Row, appleTime } from '../safari-values.ts';
+import type { Profiled, SafariScan } from '../safari-scan.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { profileId } = safariFields;
 
@@ -38,7 +38,10 @@ const properties = {
   },
 } as const;
 
-export class HistoryTagsStream extends SafariStream<typeof properties, Row> {
+export class HistoryTagsStream extends SafariStream<
+  typeof properties,
+  Profiled<HistoryTag>
+> {
   readonly name = 'historyTags';
   readonly store = 'history';
   readonly primaryKey = ['profileId', 'id'];
@@ -50,20 +53,25 @@ export class HistoryTagsStream extends SafariStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
-    return scan.history.profiles.flatMap((history) => history.tags);
+  protected rows(scan: SafariScan): readonly Profiled<HistoryTag>[] {
+    return scan.history.profiles.flatMap(({ profileId, tags }) =>
+      tags.map((row) => ({ profileId, row })),
+    );
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record({
+    profileId,
+    row,
+  }: Profiled<HistoryTag>): RecordDraft<typeof properties> {
     return {
-      profileId: row.$profile,
+      profileId,
       id: row.id,
       type: row.type,
       level: row.level,
       identifier: row.identifier,
       title: row.title,
-      modifiedAt: appleTime(row.modification_timestamp),
-      itemCount: row.item_count,
+      modifiedAt: iso(row.modifiedAt),
+      itemCount: row.itemCount,
     };
   }
 }

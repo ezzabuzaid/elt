@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { WindowTabGroup } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import { type Row, flag } from '../safari-values.ts';
 
 const properties = {
   windowId: {
@@ -26,7 +26,7 @@ const properties = {
 
 export class WindowTabGroupsStream extends SafariStream<
   typeof properties,
-  Row
+  WindowTabGroup
 > {
   readonly name = 'windowTabGroups';
   readonly store = 'tabs';
@@ -39,17 +39,16 @@ export class WindowTabGroupsStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
+  protected rows(scan: SafariScan): readonly WindowTabGroup[] {
     return scan.tabs.windowTabGroups;
   }
 
-  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
-    const { tabs } = scan;
+  protected record(link: WindowTabGroup): RecordDraft<typeof properties> {
     return {
-      windowId: tabs.windowUuid(row.window_id),
-      tabGroupId: tabs.uuid(row.tab_group_id),
-      activeTabId: tabs.uuid(row.active_tab_id),
-      unnamed: flag(row.unnamed),
+      windowId: link.windowId,
+      tabGroupId: link.tabGroupId,
+      activeTabId: link.activeTabId,
+      unnamed: link.unnamed,
     };
   }
 }

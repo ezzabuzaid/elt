@@ -1,18 +1,10 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { HistoryItem } from '@workspace/sdk-apple-safari';
 
-import { triggers } from '../history-reader.ts';
-import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import {
-  type Row,
-  appleTime,
-  counts,
-  flag,
-  integer,
-  text,
-} from '../safari-values.ts';
+import type { Profiled, SafariScan } from '../safari-scan.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
-const { profileId, id, nullableText, ordinal, boolean } = safariFields;
+const { profileId, nullableText, ordinal, boolean } = safariFields;
 const countList = { type: 'integer', minimum: 0 } as const;
 
 const properties = {
@@ -72,7 +64,10 @@ const properties = {
   },
 } as const;
 
-export class HistoryItemsStream extends SafariStream<typeof properties, Row> {
+export class HistoryItemsStream extends SafariStream<
+  typeof properties,
+  Profiled<HistoryItem>
+> {
   readonly name = 'historyItems';
   readonly store = 'history';
   readonly primaryKey = ['profileId', 'id'];
@@ -89,24 +84,29 @@ export class HistoryItemsStream extends SafariStream<typeof properties, Row> {
     return scan.history.horizon;
   }
 
-  protected rows(scan: SafariScan): readonly Row[] {
-    return scan.history.profiles.flatMap((history) => history.items);
+  protected rows(scan: SafariScan): readonly Profiled<HistoryItem>[] {
+    return scan.history.profiles.flatMap(({ profileId, items }) =>
+      items.map((row) => ({ profileId, row })),
+    );
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record({
+    profileId,
+    row,
+  }: Profiled<HistoryItem>): RecordDraft<typeof properties> {
     return {
-      profileId: row.$profile,
+      profileId,
       id: row.id,
       url: row.url,
-      domainExpansion: text(row.domain_expansion),
-      visitCount: row.visit_count,
-      visitCountScore: row.visit_count_score,
-      dailyVisitCounts: counts(row.daily_visit_counts),
-      weeklyVisitCounts: counts(row.weekly_visit_counts),
-      autocompleteTriggers: triggers(row.autocomplete_triggers),
-      statusCode: integer(row.status_code) || null,
-      derivedCountsStale: flag(row.should_recompute_derived_visit_counts),
-      lastVisitedAt: appleTime(row.last_visit_time),
+      domainExpansion: row.domainExpansion,
+      visitCount: row.visitCount,
+      visitCountScore: row.visitCountScore,
+      dailyVisitCounts: row.dailyVisitCounts(),
+      weeklyVisitCounts: row.weeklyVisitCounts(),
+      autocompleteTriggers: row.autocompleteTriggers(),
+      statusCode: row.statusCode,
+      derivedCountsStale: row.derivedCountsStale,
+      lastVisitedAt: iso(row.lastVisitedAt),
     };
   }
 }

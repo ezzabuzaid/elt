@@ -7,6 +7,10 @@ import {
   withinDates
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
+  AppDatabase,
+  AppDatabaseVersion
+} from "../../chunks/chunk-NHBH24IB.mjs";
+import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
@@ -32,22 +36,17 @@ import {
 } from "../../chunks/chunk-ZGXE7NZW.mjs";
 
 // packages/sources/apple/safari/dist/apple-safari-source.js
-import { readdir, stat } from "node:fs/promises";
-import { join as join3 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
-// packages/sources/apple/safari/dist/safari-scan.js
-import { dirname, join as join2 } from "node:path";
-
-// packages/sources/apple/safari/dist/safari-values.js
-var defaultProfile = "DefaultProfile";
+// packages/sdks/apple/safari/dist/safari-values.js
 var appleEpochSeconds = 978307200;
 var distantPast = -63114076800;
 var distantFuture = 63113904e3;
-var appleTime = (value) => typeof value === "number" && Number.isFinite(value) && value > distantPast && value < distantFuture ? new Date(Math.round((value + appleEpochSeconds) * 1e3)).toISOString() : null;
-var plistTime = (value) => value instanceof Date && value.getUTCFullYear() > 1 && value.getUTCFullYear() < 4001 ? value.toISOString() : null;
-var base64 = (value) => value instanceof Uint8Array ? Buffer.from(value).toString("base64") : null;
+var appleTime = (value) => typeof value === "number" && Number.isFinite(value) && value > distantPast && value < distantFuture ? new Date(Math.round((value + appleEpochSeconds) * 1e3)) : null;
+var plistTime = (value) => value instanceof Date && value.getUTCFullYear() > 1 && value.getUTCFullYear() < 4001 ? value : null;
 var text = (value) => typeof value === "string" && value !== "" ? value : null;
+var stored = (value) => typeof value === "string" ? value : null;
+var storedNumber = (value) => typeof value === "number" ? value : null;
 var integer = (value) => typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 var number = (value) => typeof value === "number" && Number.isFinite(value) ? value : null;
 var flag = (value) => value === 1 || value === true;
@@ -63,9 +62,52 @@ function counts(value) {
   return Array.from({ length: value.byteLength / 4 }, (_, index) => view.getInt32(index * 4, true));
 }
 
-// packages/sources/apple/safari/dist/bookmarks-reader.js
+// packages/sdks/apple/safari/dist/bookmarks.js
+var bookmarkKinds = ["folder", "bookmark", "proxy"];
+var kindsByType = /* @__PURE__ */ new Map([
+  ["WebBookmarkTypeList", "folder"],
+  ["WebBookmarkTypeLeaf", "bookmark"],
+  ["WebBookmarkTypeProxy", "proxy"]
+]);
 var readingListTitle = "com.apple.ReadingList";
-var BookmarksReader = class {
+var bookmark = (node, parentId, position) => ({
+  id: stored(node.WebBookmarkUUID),
+  parentId,
+  position,
+  kind: kindsByType.get(node.WebBookmarkType) ?? null,
+  title: text(node.Title) ?? text(dictionary(node.URIDictionary).title),
+  url: text(node.URLString),
+  identifier: text(node.WebBookmarkIdentifier),
+  hidden: flag(node.ShouldOmitFromUI),
+  addedAt: plistTime(node.dateAdded),
+  description: text(node.previewText),
+  descriptionUserDefined: flag(node.previewTextIsUserDefined),
+  featureText: text(node.featureText),
+  metadataFetchFailures: integer(dictionary(node.ReadingListNonSync).BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey),
+  serverId: text(dictionary(node.Sync).ServerID)
+});
+var readingListItem = (node, position) => {
+  const saved = dictionary(node.ReadingList);
+  const fetched = dictionary(node.ReadingListNonSync);
+  return {
+    id: stored(node.WebBookmarkUUID),
+    position,
+    title: text(dictionary(node.URIDictionary).title),
+    url: stored(node.URLString),
+    addedAt: plistTime(saved.DateAdded),
+    lastViewedAt: plistTime(saved.DateLastViewed),
+    previewText: text(saved.PreviewText) ?? text(node.previewText),
+    imageUrl: text(node.imageURL),
+    fetchedTitle: text(fetched.Title),
+    fetchedAt: plistTime(fetched.DateLastFetched),
+    fetchResult: integer(fetched.FetchResult),
+    failedLoads: integer(fetched.NumberOfFailedLoadsWithUnknownOrNonRecoverableError),
+    addedLocally: flag(fetched.AddedLocally),
+    metadataFetchFailures: integer(fetched.BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey),
+    featureText: text(node.featureText)
+  };
+};
+var Bookmarks = class {
   bookmarks = [];
   readingList = [];
   constructor(plist2) {
@@ -74,65 +116,35 @@ var BookmarksReader = class {
       throw new TypeError("Bookmarks.plist has no root folder");
     const walk = (folder2, parentId) => list(folder2.Children).forEach((child, position) => {
       const node = dictionary(child);
-      const entry = { node, parentId, position };
       if (folder2.Title === readingListTitle && node.WebBookmarkType === "WebBookmarkTypeLeaf") {
-        this.readingList.push(entry);
+        this.readingList.push(readingListItem(node, position));
         return;
       }
-      this.bookmarks.push(entry);
+      this.bookmarks.push(bookmark(node, parentId, position));
       walk(node, String(node.WebBookmarkUUID));
     });
     walk(root, null);
   }
 };
 
-// packages/sources/apple/safari/dist/closed-tabs-reader.js
-var windowType = 1;
-var ClosedTabsReader = class {
-  #windows = /* @__PURE__ */ new Map();
-  #tabs = /* @__PURE__ */ new Map();
-  constructor(plist2, scope) {
-    const entries = dictionary(plist2).ClosedTabOrWindowPersistentStates;
-    if (!Array.isArray(entries))
-      throw new TypeError("RecentlyClosedTabs.plist lists no closed entries");
-    entries.forEach((value, position) => {
-      const entry = dictionary(value);
-      const state = dictionary(entry.PersistentState);
-      if (!selected(scope.collectionIds, state.ProfileUUID))
-        return;
-      if (entry.PersistentStateType !== windowType) {
-        latest(this.#tabs, state.TabUUID, {
-          state,
-          closedWindowId: null,
-          position
-        });
-        return;
-      }
-      latest(this.#windows, state.WindowUUID, { state, position });
-      for (const [index, tab] of list(state.TabStates).entries())
-        latest(this.#tabs, dictionary(tab).TabUUID, {
-          state: dictionary(tab),
-          closedWindowId: state.WindowUUID,
-          position: index
-        });
-    });
-  }
-  get windows() {
-    return [...this.#windows.values()];
-  }
-  get tabs() {
-    return [...this.#tabs.values()];
+// packages/sdks/apple/safari/dist/cloud-tabs.js
+import { inflateSync } from "node:zlib";
+
+// packages/sdks/apple/safari/dist/errors.js
+var SafariUnavailableError = class extends Error {
+  name = "SafariUnavailableError";
+  constructor(path, cause) {
+    super(`Safari data at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Safari does not need to be open.`, { cause });
   }
 };
-function latest(entries, id2, entry) {
-  const kept = entries.get(id2);
-  const closed = (candidate) => candidate.state.DateClosed instanceof Date ? candidate.state.DateClosed.getTime() : Number.NEGATIVE_INFINITY;
-  if (kept === void 0 || closed(entry) > closed(kept))
-    entries.set(id2, entry);
-}
+var SafariSchemaError = class extends Error {
+  name = "SafariSchemaError";
+  constructor(path, missing) {
+    super(`The Safari store at ${path} has a layout this reader does not read (missing ${missing.join(", ")}).`);
+  }
+};
 
-// packages/sources/apple/safari/dist/cloud-tabs-reader.js
-import { inflateSync } from "node:zlib";
+// packages/sdks/apple/safari/dist/cloud-tabs.js
 var cloudTabsColumns = {
   cloud_tab_devices: [
     "device_uuid",
@@ -163,45 +175,178 @@ var cloudTabsColumns = {
   ]
 };
 var select = (table, order) => `SELECT ${cloudTabsColumns[table].join(", ")} FROM ${table} ORDER BY ${order}`;
-var CloudTabsReader = class {
-  database;
-  #tabs;
-  constructor(database) {
-    this.database = database;
+var CloudTabs = class {
+  #database;
+  constructor(path) {
+    this.#database = new AppDatabase(path, SafariUnavailableError);
+    this.#database.requireColumns(cloudTabsColumns, SafariSchemaError);
   }
-  get devices() {
-    return this.database.all(select("cloud_tab_devices", "device_uuid"));
+  devices() {
+    return this.#database.all(select("cloud_tab_devices", "device_uuid")).map((row) => ({
+      id: stored(row.device_uuid),
+      name: text(row.device_name),
+      type: text(row.device_type_identifier),
+      duplicateName: flag(row.has_duplicate_device_name),
+      ephemeral: flag(row.is_ephemeral_device),
+      modifiedAt: appleTime(row.last_modified)
+    }));
   }
-  get tabs() {
-    this.#tabs ??= this.database.all(select("cloud_tabs", "tab_uuid"));
-    return this.#tabs;
+  tabs() {
+    return this.#database.all(select("cloud_tabs", "tab_uuid")).map((row) => ({
+      id: stored(row.tab_uuid),
+      deviceId: stored(row.device_uuid),
+      title: text(row.title),
+      url: stored(row.url),
+      showingReader: flag(row.is_showing_reader),
+      pinned: flag(row.is_pinned),
+      readerScrollPageIndex: integer(row.reader_scroll_position_page_index),
+      sceneId: text(row.scene_id),
+      lastViewedAt: row.last_viewed_time === 0 ? null : appleTime(row.last_viewed_time),
+      topic: text(row.topic_title),
+      positions: () => {
+        if (!(row.position instanceof Uint8Array))
+          throw new TypeError("A Safari iCloud tab has no position");
+        const { sortValues } = JSON.parse(inflateSync(row.position).toString("utf8"));
+        return sortValues;
+      }
+    }));
   }
-  get closeRequests() {
-    return this.database.all(select("cloud_tab_close_requests", "close_request_uuid"));
+  closeRequests() {
+    return this.#database.all(select("cloud_tab_close_requests", "close_request_uuid")).map((row) => ({
+      id: stored(row.close_request_uuid),
+      deviceId: stored(row.destination_device_uuid),
+      url: stored(row.url),
+      tabId: stored(row.tab_uuid)
+    }));
   }
-  // A tab's position is zlib-compressed JSON: {"sortValues": [...]}.
-  positions() {
-    return this.tabs.flatMap((tab) => {
-      if (!(tab.position instanceof Uint8Array))
-        throw new TypeError("A Safari iCloud tab has no position");
-      const { sortValues } = JSON.parse(inflateSync(tab.position).toString("utf8"));
-      return sortValues.map((entry, index) => ({ tab, entry, index }));
-    });
+  [Symbol.dispose]() {
+    this.#database[Symbol.dispose]();
   }
 };
 
-// packages/sources/apple/safari/dist/downloads-reader.js
-var DownloadsReader = class {
+// packages/sdks/apple/safari/dist/downloads.js
+import { existsSync } from "node:fs";
+var download = (entry) => {
+  const path = stored(entry.DownloadEntryPath);
+  return {
+    id: stored(entry.DownloadEntryIdentifier),
+    profileId: text(entry.DownloadEntryProfileUUIDStringKey),
+    url: stored(entry.DownloadEntryURL),
+    path,
+    openedPath: text(entry.DownloadEntryPostPath),
+    addedAt: plistTime(entry.DownloadEntryDateAddedKey),
+    finishedAt: plistTime(entry.DownloadEntryDateFinishedKey),
+    bytesReceived: integer(entry.DownloadEntryProgressBytesSoFar),
+    bytesTotal: integer(entry.DownloadEntryProgressTotalToLoad),
+    removeWhenDone: flag(entry.DownloadEntryRemoveWhenDoneKey),
+    get availableLocally() {
+      return path !== null && path !== "" && existsSync(path);
+    }
+  };
+};
+var Downloads = class {
   downloads;
-  constructor(plist2, scope) {
+  constructor(plist2) {
     const history = dictionary(plist2).DownloadHistory;
     if (!Array.isArray(history))
       throw new TypeError("Downloads.plist lists no download history");
-    this.downloads = list(history).map(dictionary).filter((entry) => selected(scope.collectionIds, entry.DownloadEntryProfileUUIDStringKey));
+    this.downloads = list(history).map(dictionary).map(download);
   }
 };
 
-// packages/sources/apple/safari/dist/history-reader.js
+// packages/sdks/apple/safari/dist/window-state.js
+var windowState = (state) => ({
+  closedAt: plistTime(state.DateClosed),
+  private: flag(state.IsPrivateWindow),
+  popup: flag(state.IsPopupWindow),
+  miniaturized: flag(state.Miniaturized),
+  unnamedTabGroupIds: strings(state.UnnamedTabGroupUUIDs),
+  selectedTabIndex: integer(state.SelectedTabIndex),
+  selectedPinnedTabIndex: integer(state.SelectedPinnedTabIndex),
+  tabBarHidden: flag(state.TabBarHidden),
+  favoritesBarHidden: flag(state.FavoritesBarHidden),
+  readingListSidebarVisible: flag(state.PrefersReadingListSidebarVisible),
+  sidebarMode: integer(state.WindowUnifiedSidebarMode),
+  frame: text(state.WindowContentRect),
+  addressFieldText: text(state.CustomUnifiedFieldText)
+});
+
+// packages/sdks/apple/safari/dist/recently-closed.js
+var windowType = 1;
+var closedWindow = ({ state, position }) => ({
+  id: stored(state.WindowUUID),
+  position,
+  profileId: stored(state.ProfileUUID),
+  activeTabGroupId: text(state.activeTabGroupUUID),
+  state: windowState(state),
+  activeTabs: Object.entries(dictionary(state.TabGroupsToActiveTabs)).map(([tabGroupId, tabId]) => ({ tabGroupId, tabId: stored(tabId) }))
+});
+var closedTab = ({ state, closedWindowId, position }) => ({
+  id: stored(state.TabUUID),
+  closedWindowId: stored(closedWindowId),
+  position,
+  windowId: text(state.WindowUUID),
+  profileId: stored(state.ProfileUUID),
+  title: text(state.TabTitle),
+  url: text(state.TabURL),
+  closedAt: plistTime(state.DateClosed),
+  lastVisitedAt: plistTime(state.LastVisitTime),
+  tabIndex: integer(state.TabIndex),
+  tabGroupId: text(state.TabGroupForTab),
+  tabGroupType: flag(state.TabGroupTypeForTabKey),
+  ancestorTabIds: strings(state.AncestorTabUUIDsKey),
+  muted: flag(state.IsMuted),
+  disposable: flag(state.IsDisposable),
+  safeToLoad: flag(state.SafeToLoad)
+});
+var RecentlyClosed = class {
+  #entries;
+  constructor(plist2) {
+    const entries = dictionary(plist2).ClosedTabOrWindowPersistentStates;
+    if (!Array.isArray(entries))
+      throw new TypeError("RecentlyClosedTabs.plist lists no closed entries");
+    this.#entries = entries;
+  }
+  // The entries keep() keeps, before a later closing replaces an earlier
+  // one, so a tab closed under two profiles keeps the kept profile's entry.
+  closed(keep) {
+    const windows = /* @__PURE__ */ new Map();
+    const tabs = /* @__PURE__ */ new Map();
+    this.#entries.forEach((value, position) => {
+      const entry = dictionary(value);
+      const state = dictionary(entry.PersistentState);
+      if (!keep(stored(state.ProfileUUID)))
+        return;
+      if (entry.PersistentStateType !== windowType) {
+        latest(tabs, state.TabUUID, { state, closedWindowId: null, position });
+        return;
+      }
+      latest(windows, state.WindowUUID, {
+        state,
+        closedWindowId: void 0,
+        position
+      });
+      for (const [index, tab] of list(state.TabStates).entries())
+        latest(tabs, dictionary(tab).TabUUID, {
+          state: dictionary(tab),
+          closedWindowId: state.WindowUUID,
+          position: index
+        });
+    });
+    return {
+      windows: [...windows.values()].map(closedWindow),
+      tabs: [...tabs.values()].map(closedTab)
+    };
+  }
+};
+function latest(entries, id, entry) {
+  const kept = entries.get(id);
+  const closed = (candidate) => candidate.state.DateClosed instanceof Date ? candidate.state.DateClosed.getTime() : Number.NEGATIVE_INFINITY;
+  if (kept === void 0 || closed(entry) > closed(kept))
+    entries.set(id, entry);
+}
+
+// packages/sdks/apple/safari/dist/safari-history.js
 var historyColumns = {
   history_items: [
     "id",
@@ -251,169 +396,86 @@ var historyColumns = {
   history_items_to_tags: ["history_item", "tag_id", "timestamp"]
 };
 var select2 = (table, order) => `SELECT ${historyColumns[table].join(", ")} FROM ${table} ORDER BY ${order}`;
-var dayMs = 864e5;
-var defaultHistoryAgeInDays = 365;
-var firstYear = Date.parse("0001-01-01T00:00:00.000Z");
-var marginMs = 36e5;
-function historyHorizon(preferences, startedAt) {
-  const configured = isDictionary(preferences) ? preferences.HistoryAgeInDaysLimit : void 0;
-  const limit = configured ?? defaultHistoryAgeInDays;
-  if (typeof limit !== "number")
-    throw new TypeError("Safari HistoryAgeInDaysLimit is not a number");
-  return new Date(Math.max(firstYear, startedAt.getTime() - Math.max(1, limit) * dayMs + marginMs)).toISOString();
-}
-var HistoryReader = class {
-  database;
+var ProfileHistory = class {
+  // The profile's external UUID; DefaultProfile for the default one.
   profileId;
-  scope;
-  #visits;
-  #items;
-  #itemTags;
-  #tags;
-  constructor(database, profileId5, scope) {
-    this.database = database;
+  #database;
+  constructor(path, profileId5) {
     this.profileId = profileId5;
-    this.scope = scope;
+    this.#database = new AppDatabase(path, SafariUnavailableError);
+    this.#database.requireColumns(historyColumns, SafariSchemaError);
   }
-  get #included() {
-    return selected(this.scope.collectionIds, this.profileId);
+  visits() {
+    return this.#database.all(select2("history_visits", "id")).map((row) => ({
+      id: storedNumber(row.id),
+      itemId: storedNumber(row.history_item),
+      visitedAt: appleTime(row.visit_time),
+      title: text(row.title),
+      loadSuccessful: flag(row.load_successful),
+      httpNonGet: flag(row.http_non_get),
+      synthesized: flag(row.synthesized),
+      redirectSourceId: integer(row.redirect_source),
+      redirectDestinationId: integer(row.redirect_destination),
+      origin: storedNumber(row.origin),
+      generation: storedNumber(row.generation),
+      attributes: storedNumber(row.attributes),
+      score: storedNumber(row.score)
+    }));
   }
-  #all(sql) {
-    return this.database.all(sql).map((row) => ({ ...row, $profile: this.profileId }));
-  }
-  get #dated() {
-    return this.scope.startAt !== void 0 || this.scope.endAt !== void 0;
-  }
-  get visits() {
-    this.#visits ??= this.#included ? this.#all(select2("history_visits", "id")).filter((row) => withinDates(this.scope, appleTime(row.visit_time))) : [];
-    return this.#visits;
-  }
-  get items() {
-    if (this.#items !== void 0)
-      return this.#items;
-    const visited = new Set(this.visits.map((visit) => visit.history_item));
-    this.#items = this.#included ? this.#all(`SELECT ${historyColumns.history_items.join(", ")},
+  items() {
+    return this.#database.all(`SELECT ${historyColumns.history_items.join(", ")},
             (SELECT max(visit_time) FROM history_visits
               WHERE history_item = history_items.id) AS last_visit_time
-            FROM history_items ORDER BY id`).filter((row) => !this.#dated || visited.has(row.id)) : [];
-    return this.#items;
+            FROM history_items ORDER BY id`).map((row) => ({
+      id: storedNumber(row.id),
+      url: stored(row.url),
+      domainExpansion: text(row.domain_expansion),
+      visitCount: storedNumber(row.visit_count),
+      visitCountScore: storedNumber(row.visit_count_score),
+      statusCode: integer(row.status_code) || null,
+      derivedCountsStale: flag(row.should_recompute_derived_visit_counts),
+      lastVisitedAt: appleTime(row.last_visit_time),
+      dailyVisitCounts: () => counts(row.daily_visit_counts),
+      weeklyVisitCounts: () => counts(row.weekly_visit_counts),
+      autocompleteTriggers: () => row.autocomplete_triggers instanceof Uint8Array ? parseBinaryPlist(row.autocomplete_triggers) : null
+    }));
   }
-  get itemTags() {
-    if (this.#itemTags !== void 0)
-      return this.#itemTags;
-    const items = new Set(this.items.map((item) => item.id));
-    this.#itemTags = this.#included ? this.#all(select2("history_items_to_tags", "history_item, tag_id")).filter((row) => items.has(row.history_item)) : [];
-    return this.#itemTags;
+  itemTags() {
+    return this.#database.all(select2("history_items_to_tags", "history_item, tag_id")).map((row) => ({
+      itemId: storedNumber(row.history_item),
+      tagId: storedNumber(row.tag_id),
+      taggedAt: appleTime(row.timestamp)
+    }));
   }
-  get tags() {
-    if (this.#tags !== void 0)
-      return this.#tags;
-    const linked = new Set(this.itemTags.map((link) => link.tag_id));
-    this.#tags = this.#included ? this.#all(select2("history_tags", "id")).filter((row) => !this.#dated || linked.has(row.id)) : [];
-    return this.#tags;
+  tags() {
+    return this.#database.all(select2("history_tags", "id")).map((row) => ({
+      id: storedNumber(row.id),
+      type: storedNumber(row.type),
+      level: storedNumber(row.level),
+      identifier: stored(row.identifier),
+      title: stored(row.title),
+      modifiedAt: appleTime(row.modification_timestamp),
+      itemCount: storedNumber(row.item_count)
+    }));
   }
-  // Tombstones record deletions to sync to other devices, whatever their date.
-  get tombstones() {
-    return this.#included ? this.#all(select2("history_tombstones", "id")) : [];
-  }
-};
-var triggers = (value) => value instanceof Uint8Array ? parseBinaryPlist(value) : null;
-
-// packages/sources/apple/safari/dist/safari-store.js
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-var safariDirectory = join(homedir(), "Library/Safari");
-var safariContainer = join(homedir(), "Library/Containers/com.apple.Safari/Data/Library/Safari");
-var SafariUnavailableError = class extends Error {
-  name = "SafariUnavailableError";
-  constructor(path, cause) {
-    super(`Safari data at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Safari does not need to be open.`, { cause });
-  }
-};
-var SafariSchemaError = class extends Error {
-  name = "SafariSchemaError";
-  constructor(path, missing) {
-    super(`The Safari store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
-  }
-};
-var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
-var open = (path) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
-      throw new SafariUnavailableError(path, cause);
-    throw cause;
-  }
-};
-var SafariDatabaseVersion = class {
-  #database;
-  #version;
-  constructor(path) {
-    this.#database = open(path);
-    this.#version = this.#database.prepare("PRAGMA data_version");
-  }
-  get current() {
-    return Number(this.#version.get()?.data_version);
+  tombstones() {
+    return this.#database.all(select2("history_tombstones", "id")).map((row) => ({
+      id: storedNumber(row.id),
+      startAt: appleTime(row.start_time),
+      endAt: appleTime(row.end_time),
+      url: text(row.url),
+      encryptedUrl: row.url instanceof Uint8Array ? row.url : null,
+      generation: storedNumber(row.generation),
+      deviceId: text(row.udid),
+      attributes: storedNumber(row.attributes)
+    }));
   }
   [Symbol.dispose]() {
-    this.#database.close();
+    this.#database[Symbol.dispose]();
   }
 };
-var SafariDatabase = class _SafariDatabase {
-  path;
-  #database;
-  constructor(path, database) {
-    this.path = path;
-    this.#database = database;
-  }
-  static async open(path, required) {
-    const database = open(path);
-    try {
-      database.exec("BEGIN");
-      const missing = Object.entries(required).flatMap(([table, columns]) => {
-        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table).map((column) => column.name));
-        return columns.filter((column) => !present.has(column)).map((column) => `${table}.${column}`);
-      });
-      if (missing.length > 0)
-        throw new SafariSchemaError(path, missing);
-      return new _SafariDatabase(path, database);
-    } catch (cause) {
-      database.close();
-      throw cause;
-    }
-  }
-  all(sql) {
-    return this.#database.prepare(sql).all();
-  }
-  async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction)
-      this.#database.exec("COMMIT");
-    this.#database.close();
-  }
-};
-async function readSafariPlist(path) {
-  let bytes;
-  try {
-    bytes = await readFile(path);
-  } catch (cause) {
-    throw new SafariUnavailableError(path, cause);
-  }
-  return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readPlist(path);
-}
-async function readSafariPreferences(path) {
-  try {
-    return await readSafariPlist(path);
-  } catch (error) {
-    if (error instanceof SafariUnavailableError && error.cause instanceof Error && "code" in error.cause && error.cause.code === "ENOENT")
-      return null;
-    throw error;
-  }
-}
 
-// packages/sources/apple/safari/dist/tabs-reader.js
+// packages/sdks/apple/safari/dist/safari-tabs.js
 var tabsColumns = {
   bookmarks: [
     "id",
@@ -452,15 +514,17 @@ var tabsColumns = {
   settings: ["key", "value", "parent"]
 };
 var select3 = (table, order) => `SELECT ${tabsColumns[table].join(", ")} FROM ${table} ORDER BY ${order}`;
+function tabsDatabase(path) {
+  const database = new AppDatabase(path, SafariUnavailableError);
+  database.requireColumns(tabsColumns, SafariSchemaError);
+  return database;
+}
 var folder = 1;
 var profileSubtype = 2;
 var favoritesSubtype = 1;
 var deviceSubtype = 3;
 var rootId = 0;
-var namedSpecials = new Map(["pinned", "privatePinned", "recentlyClosed"].map((kind) => [
-  kind,
-  kind
-]));
+var defaultProfile = "DefaultProfile";
 var tabGroupKinds = [
   "named",
   "unnamed",
@@ -473,43 +537,94 @@ var tabGroupKinds = [
   "device",
   "special"
 ];
-var TabsReader = class {
-  database;
-  scope;
+var namedSpecials = new Map(["pinned", "privatePinned", "recentlyClosed"].map((kind) => [
+  kind,
+  kind
+]));
+var isProfile = (row) => row.type === folder && row.subtype === profileSubtype;
+var profileListings = (database) => database.all(select3("bookmarks", "id")).filter(isProfile).map((row) => ({
+  profileId: text(row.external_uuid),
+  serverId: text(row.server_id)
+}));
+var plist = (value) => value instanceof Uint8Array ? dictionary(parseBinaryPlist(value)) : {};
+var SafariTabs = class {
+  #database;
   #rows;
   #byId;
   #windows;
   #attributes = /* @__PURE__ */ new Map();
-  constructor(database, scope) {
-    this.database = database;
-    this.scope = scope;
-    this.#rows = database.all(select3("bookmarks", "id"));
+  #settings;
+  constructor(path) {
+    this.#database = tabsDatabase(path);
+    this.#rows = this.#database.all(select3("bookmarks", "id"));
     this.#byId = new Map(this.#rows.map((row) => [row.id, row]));
-    this.#windows = database.all(select3("windows", "id"));
+    this.#windows = this.#database.all(select3("windows", "id"));
   }
-  // Every profile, and where its History.db lives: the default profile's is
-  // ~/Library/Safari, another's the Profiles folder named by its server_id.
-  get allProfiles() {
-    return this.#rows.filter((row) => row.type === folder && row.subtype === profileSubtype);
+  profiles() {
+    return this.#rows.filter(isProfile).map((row) => {
+      const extra = () => this.#attributesOf(row)[0];
+      return {
+        id: stored(row.external_uuid),
+        serverId: stored(row.server_id),
+        title: text(row.title),
+        position: storedNumber(row.order_index),
+        get symbol() {
+          return text(extra().SymbolImageName);
+        },
+        get favoritesFolderServerId() {
+          return text(extra().CustomFavoritesFolderServerID);
+        },
+        get addedAt() {
+          return plistTime(dictionary(extra()["com.apple.Bookmark"]).DateAdded);
+        },
+        modifiedAt: appleTime(row.last_modified),
+        color: () => this.#color(row),
+        startPageSections: () => this.#startPageSections(row)
+      };
+    });
   }
-  get profiles() {
-    return this.allProfiles.filter((row) => selected(this.scope.collectionIds, row.external_uuid));
+  windows() {
+    return this.#windows.map((row) => {
+      let state;
+      const decoded = () => state ??= windowState(plist(row.extra_attributes));
+      return {
+        id: stored(row.uuid),
+        profileId: this.#uuid(row.active_profile_id),
+        activeTabGroupId: this.#uuid(row.active_tab_group_id),
+        localTabGroupId: this.#uuid(row.local_tab_group_id),
+        privateTabGroupId: this.#uuid(row.private_tab_group_id),
+        lastSession: flag(row.is_last_session),
+        sceneId: text(row.scene_id),
+        get state() {
+          return decoded();
+        },
+        get closedAt() {
+          return appleTime(row.date_closed) ?? decoded().closedAt;
+        }
+      };
+    });
   }
-  get windows() {
-    return this.#windows.filter((window) => selected(this.scope.collectionIds, this.uuid(window.active_profile_id)));
+  // Links of windows that exist, in the database's order.
+  windowProfiles() {
+    return this.#database.all(select3("windows_profiles", "window_id, profile_id")).flatMap((row) => {
+      const window = this.#window(row.window_id);
+      if (window === void 0)
+        return [];
+      return [
+        {
+          windowId: text(window.uuid),
+          profileId: this.#uuid(row.profile_id),
+          activeTabGroupId: this.#uuid(row.active_tab_group_id),
+          windowProfileId: this.#uuid(window.active_profile_id)
+        }
+      ];
+    });
   }
-  // Folders of no profile, such as pinned tabs, are shared by every profile,
-  // so any profile's scope keeps them.
-  get tabGroups() {
-    return this.#rows.filter((row) => row.type === folder && row.id !== rootId && row.subtype !== profileSubtype && (this.profileOf(row) === null || this.#included(row)));
-  }
-  get tabs() {
-    return this.#rows.filter((row) => row.type !== folder && this.#included(row));
-  }
-  get windowTabGroups() {
-    const windows = new Set(this.windows.map((window) => window.id));
-    const unnamed = this.database.all(select3("windows_unnamed_tab_groups", "window_id, tab_group_id")).filter((row) => windows.has(row.window_id));
-    const active = this.database.all(select3("windows_tab_groups", "window_id, tab_group_id")).filter((row) => windows.has(row.window_id));
+  // A window's tab groups: those it shows, then its unnamed groups. A group
+  // in both keeps its place and its active tab, marked unnamed.
+  windowTabGroups() {
+    const unnamed = this.#database.all(select3("windows_unnamed_tab_groups", "window_id, tab_group_id"));
+    const active = this.#database.all(select3("windows_tab_groups", "window_id, tab_group_id"));
     const key = (row) => `${row.window_id}:${row.tab_group_id}`;
     const pairs = /* @__PURE__ */ new Map();
     for (const row of active)
@@ -521,19 +636,100 @@ var TabsReader = class {
         ...row,
         unnamed: 1
       });
-    return [...pairs.values()];
+    return [...pairs.values()].flatMap((row) => {
+      const window = this.#window(row.window_id);
+      if (window === void 0)
+        return [];
+      return [
+        {
+          windowId: text(window.uuid),
+          tabGroupId: this.#uuid(row.tab_group_id),
+          activeTabId: this.#uuid(row.active_tab_id),
+          unnamed: flag(row.unnamed),
+          windowProfileId: this.#uuid(window.active_profile_id)
+        }
+      ];
+    });
   }
-  get windowProfiles() {
-    const windows = new Set(this.windows.map((window) => window.id));
-    return this.database.all(select3("windows_profiles", "window_id, profile_id")).filter((row) => windows.has(row.window_id));
+  tabGroups() {
+    return this.#rows.filter((row) => row.type === folder && row.id !== rootId && row.subtype !== profileSubtype).map((row) => {
+      const extra = () => this.#attributesOf(row)[0];
+      const kind = () => this.#kind(row);
+      return {
+        id: stored(row.external_uuid),
+        parentId: row.parent === rootId ? null : this.#uuid(row.parent),
+        profileId: this.#profileOf(row),
+        get kind() {
+          return kind();
+        },
+        title: text(row.title),
+        position: storedNumber(row.order_index),
+        hidden: flag(row.hidden),
+        lastSelectedTabId: this.#uuid(row.last_selected_child),
+        get deviceType() {
+          return text(extra().DeviceTypeIdentifier);
+        },
+        topic: text(row.topic_title),
+        get addedAt() {
+          return plistTime(dictionary(extra()["com.apple.Bookmark"]).DateAdded);
+        },
+        modifiedAt: appleTime(row.last_modified),
+        closedAt: appleTime(row.date_closed)
+      };
+    });
   }
-  // Each profile's color, an archived WBSNamedColorOption.
-  color(profile) {
-    const setting = this.database.all(select3("settings", "parent")).find((row) => row.parent === profile.id && row.key === "ProfileColor");
-    return setting?.value instanceof Uint8Array ? dictionary(decodeArchive(setting.value)) : {};
+  tabs() {
+    return this.#rows.filter((row) => row.type !== folder).map((row) => {
+      const [extra, local] = this.#attributesOf(row);
+      const context = dictionary(local.TabPageContextIDKey);
+      return {
+        id: stored(row.external_uuid),
+        tabGroupId: this.#uuid(row.parent),
+        profileId: this.#profileOf(row),
+        windowId: text(local.WindowUUID),
+        position: storedNumber(row.order_index),
+        tabIndex: integer(local.TabIndex),
+        title: text(row.title),
+        url: text(row.url),
+        localTitle: text(extra.LocalTitle),
+        localUrl: text(extra.LocalURL),
+        pinned: flag(extra.IsPinned) || flag(local.IsPinned),
+        pinnedTitle: text(extra.PinnedTitle) ?? text(local.PinnedPageTitle),
+        pinnedUrl: text(extra.PinnedAddress) ?? text(local.PinnedPageURL),
+        addedAt: plistTime(dictionary(extra["com.apple.Bookmark"]).DateAdded),
+        lastViewedAt: plistTime(extra.DateLastViewed),
+        lastVisitedAt: plistTime(local.LastVisitTime),
+        lastAccessedAt: plistTime(local.LastAccessDate),
+        modifiedAt: appleTime(row.last_modified),
+        closedAt: appleTime(row.date_closed) ?? plistTime(local.DateClosed),
+        muted: flag(local.IsMuted),
+        showingReader: flag(local.ShowingReader),
+        readerScrollOffset: number(local.ReaderViewTopScrollOffset),
+        openedFromLink: flag(local.OpenedFromLink),
+        standaloneImage: flag(local.DisplayingStandaloneImage),
+        disposable: flag(local.IsDisposable),
+        safeToLoad: flag(local.SafeToLoad),
+        ancestorTabIds: strings(local.AncestorTabUUIDsKey),
+        deviceId: text(extra.DeviceIdentifier),
+        topic: text(row.topic_title) ?? text(context.topicID),
+        pageLanguage: text(context.pageLanguage),
+        pageSummary: text(context.summary),
+        pageKeywords: strings(context.keywords),
+        pageKeywordWeights: list(context.keywordsWeights),
+        featureText: text(extra.featureText),
+        favorite: () => {
+          const parent = this.#byId.get(row.parent);
+          return parent !== void 0 && this.#kind(parent) === "favorites";
+        },
+        sessionHistory: () => sessionHistory(local)
+      };
+    });
+  }
+  [Symbol.dispose]() {
+    this.#database[Symbol.dispose]();
   }
   // A row's own attributes and its attributes local to this Mac.
-  attributes(row) {
+  #attributesOf(row) {
     let found = this.#attributes.get(row.id);
     if (found === void 0) {
       found = [plist(row.extra_attributes), plist(row.local_attributes)];
@@ -541,19 +737,36 @@ var TabsReader = class {
     }
     return found;
   }
-  windowState(window) {
-    return plist(window.extra_attributes);
+  #color(profile) {
+    this.#settings ??= this.#database.all(select3("settings", "parent"));
+    const setting = this.#settings.find((row) => row.parent === profile.id && row.key === "ProfileColor");
+    const color = setting?.value instanceof Uint8Array ? dictionary(decodeArchive(setting.value)) : {};
+    return {
+      colorName: text(color.colorName),
+      red: number(color.redComponent),
+      green: number(color.greenComponent),
+      blue: number(color.blueComponent),
+      alpha: number(color.alphaComponent)
+    };
   }
-  row(id2) {
-    return this.#byId.get(id2);
+  #startPageSections(profile) {
+    const data = this.#attributesOf(profile)[0].StartPageSectionsData;
+    if (!(data instanceof Uint8Array))
+      return [];
+    const { Sections } = JSON.parse(Buffer.from(data).toString("utf8"));
+    return Sections.map((section, position) => ({
+      position,
+      identifier: section.Identifier,
+      enabled: section.IsEnabled
+    }));
   }
-  uuid(id2) {
-    return text(this.#byId.get(id2)?.external_uuid);
+  #window(id) {
+    return this.#windows.find((window) => window.id === id);
   }
-  windowUuid(id2) {
-    return text(this.#windows.find((window) => window.id === id2)?.uuid);
+  #uuid(id) {
+    return text(this.#byId.get(id)?.external_uuid);
   }
-  kind(row) {
+  #kind(row) {
     const named = namedSpecials.get(row.external_uuid);
     if (named !== void 0)
       return named;
@@ -567,148 +780,223 @@ var TabsReader = class {
       return "private";
     if (this.#windows.some((window) => window.local_tab_group_id === row.id))
       return "local";
-    return this.attributes(row)[0].IsUnnamed === true ? "unnamed" : "named";
+    return this.#attributesOf(row)[0].IsUnnamed === true ? "unnamed" : "named";
   }
   // The profile a row belongs to: its nearest profile folder; under the root,
   // the default profile; a window's own groups, that window's profile; a
   // tab's page context names its profile. NULL when Safari records none.
-  profileOf(row) {
+  #profileOf(row) {
     if (row.type !== folder) {
-      const context = dictionary(this.attributes(row)[1].TabPageContextIDKey);
+      const context = dictionary(this.#attributesOf(row)[1].TabPageContextIDKey);
       const named = text(context.profileIdentifier);
       if (named !== null)
         return named;
     }
     for (let current = row; current !== void 0; current = this.#byId.get(current.parent)) {
-      if (current.type === folder && current.subtype === profileSubtype)
+      if (isProfile(current))
         return text(current.external_uuid);
       if (current.parent === rootId)
         return defaultProfile;
       const window = this.#windows.find((window2) => window2.local_tab_group_id === current?.id || window2.private_tab_group_id === current?.id || window2.active_tab_group_id === current?.id);
       if (window !== void 0)
-        return this.uuid(window.active_profile_id);
+        return this.#uuid(window.active_profile_id);
     }
     return null;
   }
-  historyEntries() {
-    return this.tabs.flatMap((tab) => {
-      const state = this.attributes(tab)[1].SessionState;
-      if (!(state instanceof Uint8Array))
-        return [];
-      const session = dictionary(dictionary(parseBinaryPlist(state.subarray(4))).SessionHistory);
-      const current = session.SessionHistoryCurrentIndex;
-      return list(session.SessionHistoryEntries).map((entry, position) => ({
-        tab,
-        entry: dictionary(entry),
-        position,
-        current: position === current
-      }));
-    });
+};
+function sessionHistory(local) {
+  const state = local.SessionState;
+  if (!(state instanceof Uint8Array))
+    return [];
+  const session = dictionary(dictionary(parseBinaryPlist(state.subarray(4))).SessionHistory);
+  const current = session.SessionHistoryCurrentIndex;
+  return list(session.SessionHistoryEntries).map((value, position) => {
+    const entry = dictionary(value);
+    return {
+      position,
+      current: position === current,
+      url: text(entry.SessionHistoryEntryURL),
+      originalUrl: text(entry.SessionHistoryEntryOriginalURL),
+      title: text(entry.SessionHistoryEntryTitle),
+      scriptCreated: flag(entry.SessionHistoryEntryWasCreatedByJSWithoutUserInteraction),
+      externalUrlPolicy: text(entry.SessionHistoryEntryShouldOpenExternalURLsPolicyKey)
+    };
+  });
+}
+
+// packages/sdks/apple/safari/dist/safari-version.js
+import { readdir, stat } from "node:fs/promises";
+import { join as join2 } from "node:path";
+
+// packages/sdks/apple/safari/dist/safari-location.js
+import { homedir } from "node:os";
+import { join } from "node:path";
+var safariDirectory = join(homedir(), "Library/Safari");
+var safariContainer = join(homedir(), "Library/Containers/com.apple.Safari/Data/Library/Safari");
+var storeFiles = ({ directory, container }) => ({
+  history: join(directory, "History.db"),
+  tabs: join(container, "SafariTabs.db"),
+  cloudTabs: join(container, "CloudTabs.db"),
+  bookmarks: join(directory, "Bookmarks.plist"),
+  closedTabs: join(directory, "RecentlyClosedTabs.plist"),
+  downloads: join(directory, "Downloads.plist")
+});
+var profileHistory = ({ directory, container }, serverId) => serverId === defaultProfile ? join(directory, "History.db") : join(container, "Profiles", serverId, "History.db");
+
+// packages/sdks/apple/safari/dist/safari-version.js
+async function fingerprint(path) {
+  try {
+    const { ino, size, mtimeMs } = await stat(path);
+    return `${ino}:${size}:${mtimeMs}`;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return "missing";
+    throw error;
   }
-  #included(row) {
-    return selected(this.scope.collectionIds, this.profileOf(row));
+}
+async function historyFiles(location) {
+  const profiles = join2(location.container, "Profiles");
+  const found = await readdir(profiles, { withFileTypes: true }).catch((error) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return [];
+    throw error;
+  });
+  const others = await Promise.all(found.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    const path = join2(profiles, entry.name, "History.db");
+    return await fingerprint(path) === "missing" ? [] : [path];
+  }));
+  return [storeFiles(location).history, ...others.flat()];
+}
+var SafariVersion = class {
+  #location;
+  #store;
+  #databases = /* @__PURE__ */ new Map();
+  constructor(location, store) {
+    this.#location = location;
+    this.#store = store;
+  }
+  async current() {
+    const files = storeFiles(this.#location);
+    if (this.#store === "history") {
+      const paths = await historyFiles(this.#location);
+      for (const [path, version] of this.#databases)
+        if (!paths.includes(path)) {
+          version[Symbol.dispose]();
+          this.#databases.delete(path);
+        }
+      return paths.map((path) => this.#version(path)).join(",");
+    }
+    if (this.#store === "tabs" || this.#store === "cloudTabs")
+      return String(this.#version(files[this.#store]));
+    return fingerprint(files[this.#store]);
+  }
+  [Symbol.dispose]() {
+    for (const version of this.#databases.values())
+      version[Symbol.dispose]();
+    this.#databases.clear();
+  }
+  #version(path) {
+    let version = this.#databases.get(path);
+    if (version === void 0) {
+      version = new AppDatabaseVersion(path, SafariUnavailableError);
+      this.#databases.set(path, version);
+    }
+    return version.current;
   }
 };
-var plist = (value) => value instanceof Uint8Array ? dictionary(parseBinaryPlist(value)) : {};
 
-// packages/sources/apple/safari/dist/safari-scan.js
-var storeFiles = ({ directory, container }) => ({
-  history: join2(directory, "History.db"),
-  tabs: join2(container, "SafariTabs.db"),
-  cloudTabs: join2(container, "CloudTabs.db"),
-  bookmarks: join2(directory, "Bookmarks.plist"),
-  closedTabs: join2(directory, "RecentlyClosedTabs.plist"),
-  downloads: join2(directory, "Downloads.plist")
-});
-var safariPreferences = ({ container }) => join2(dirname(container), "Preferences/com.apple.Safari.plist");
-var profileHistory = ({ directory, container }, serverId) => serverId === defaultProfile ? join2(directory, "History.db") : join2(container, "Profiles", serverId, "History.db");
-var databaseStores = /* @__PURE__ */ new Set([
-  "history",
-  "tabs",
-  "cloudTabs"
-]);
-var SafariScan = class _SafariScan {
-  #resources;
-  #stores;
-  constructor(resources, stores) {
-    this.#resources = resources;
-    this.#stores = stores;
+// packages/sdks/apple/safari/dist/safari.js
+import { readFile } from "node:fs/promises";
+import { dirname, join as join3 } from "node:path";
+var preferences = ({ container }) => join3(dirname(container), "Preferences/com.apple.Safari.plist");
+async function readSafariPlist(path) {
+  let bytes;
+  try {
+    bytes = await readFile(path);
+  } catch (cause) {
+    throw new SafariUnavailableError(path, cause);
   }
-  static async open(location, stores, scope) {
-    var _stack = [];
+  return isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : readPlist(path);
+}
+async function readSafariPreferences(path) {
+  try {
+    return await readSafariPlist(path);
+  } catch (error) {
+    if (error instanceof SafariUnavailableError && error.cause instanceof Error && "code" in error.cause && error.cause.code === "ENOENT")
+      return null;
+    throw error;
+  }
+}
+var defaultHistoryAgeInDays = 365;
+var SafariHistory = class {
+  profiles;
+  constructor(profiles) {
+    this.profiles = profiles;
+  }
+  [Symbol.dispose]() {
+    for (const profile of this.profiles)
+      profile[Symbol.dispose]();
+  }
+};
+var Safari = class {
+  location;
+  constructor(location) {
+    this.location = location;
+  }
+  // Each profile's History.db, as SafariTabs.db lists the profiles.
+  history() {
+    const listings = (() => {
+      var _stack = [];
+      try {
+        const database = __using(_stack, tabsDatabase(storeFiles(this.location).tabs));
+        return profileListings(database);
+      } catch (_) {
+        var _error = _, _hasError = true;
+      } finally {
+        __callDispose(_stack, _error, _hasError);
+      }
+    })();
+    const profiles = [];
     try {
-      const files = storeFiles(location);
-      const startedAt = /* @__PURE__ */ new Date();
-      const resources = __using(_stack, new AsyncDisposableStack(), true);
-      const database = async (path, columns) => resources.use(await SafariDatabase.open(path, columns));
-      const open2 = async (store, reader) => {
-        if (!stores.has(store))
-          return void 0;
-        try {
-          return { reader: await reader() };
-        } catch (error) {
-          return { error };
-        }
-      };
-      const opened = {
-        // Each profile's History.db, pinned on its own; SafariTabs.db lists them.
-        history: await open2("history", async () => {
-          const profiles = new TabsReader(await database(files.tabs, tabsColumns), {}).allProfiles;
-          const readers2 = [];
-          for (const profile of profiles) {
-            const serverId = text(profile.server_id);
-            const profileId5 = text(profile.external_uuid);
-            if (serverId === null || profileId5 === null)
-              throw new TypeError("A Safari profile has no identifier");
-            readers2.push(new HistoryReader(await database(profileHistory(location, serverId), historyColumns), profileId5, scope));
-          }
-          return {
-            profiles: readers2,
-            horizon: historyHorizon(await readSafariPreferences(safariPreferences(location)), startedAt)
-          };
-        }),
-        tabs: await open2("tabs", async () => new TabsReader(await database(files.tabs, tabsColumns), scope)),
-        cloudTabs: await open2("cloudTabs", async () => new CloudTabsReader(await database(files.cloudTabs, cloudTabsColumns))),
-        bookmarks: await open2("bookmarks", async () => new BookmarksReader(await readSafariPlist(files.bookmarks))),
-        closedTabs: await open2("closedTabs", async () => new ClosedTabsReader(await readSafariPlist(files.closedTabs), scope)),
-        downloads: await open2("downloads", async () => new DownloadsReader(await readSafariPlist(files.downloads), scope))
-      };
-      return new _SafariScan(resources.move(), opened);
-    } catch (_) {
-      var _error = _, _hasError = true;
-    } finally {
-      var _promise = __callDispose(_stack, _error, _hasError);
-      _promise && await _promise;
+      for (const { profileId: profileId5, serverId } of listings) {
+        if (serverId === null || profileId5 === null)
+          throw new TypeError("A Safari profile has no identifier");
+        profiles.push(new ProfileHistory(profileHistory(this.location, serverId), profileId5));
+      }
+    } catch (error) {
+      for (const profile of profiles)
+        profile[Symbol.dispose]();
+      throw error;
     }
+    return new SafariHistory(profiles);
   }
-  get history() {
-    return this.#reader("history");
+  // How many days of history Safari keeps, from its preferences.
+  async historyAgeInDays() {
+    const read = await readSafariPreferences(preferences(this.location));
+    const configured = isDictionary(read) ? read.HistoryAgeInDaysLimit : void 0;
+    const limit = configured ?? defaultHistoryAgeInDays;
+    if (typeof limit !== "number")
+      throw new TypeError("Safari HistoryAgeInDaysLimit is not a number");
+    return Math.max(1, limit);
   }
-  get tabs() {
-    return this.#reader("tabs");
+  tabs() {
+    return new SafariTabs(storeFiles(this.location).tabs);
   }
-  get downloads() {
-    return this.#reader("downloads");
+  cloudTabs() {
+    return new CloudTabs(storeFiles(this.location).cloudTabs);
   }
-  get cloudTabs() {
-    return this.#reader("cloudTabs");
+  async bookmarks() {
+    return new Bookmarks(await readSafariPlist(storeFiles(this.location).bookmarks));
   }
-  get bookmarks() {
-    return this.#reader("bookmarks");
+  async recentlyClosed() {
+    return new RecentlyClosed(await readSafariPlist(storeFiles(this.location).closedTabs));
   }
-  get closedTabs() {
-    return this.#reader("closedTabs");
+  async downloads() {
+    return new Downloads(await readSafariPlist(storeFiles(this.location).downloads));
   }
-  #reader(store) {
-    const opened = this.#stores[store];
-    if (opened === void 0)
-      throw new Error(`Safari ${store} was not opened for this run`);
-    if ("error" in opened)
-      throw opened.error;
-    return opened.reader;
-  }
-  [Symbol.asyncDispose]() {
-    return this.#resources.disposeAsync();
+  // A probe whose current value changes when the store does.
+  version(store) {
+    return new SafariVersion(this.location, store);
   }
 };
 
@@ -717,6 +1005,7 @@ var text2 = { type: "string" };
 var nullableText = { type: ["string", "null"] };
 var integer2 = { type: "integer" };
 var nullableInteger = { type: ["integer", "null"] };
+var iso = (date) => date?.toISOString() ?? null;
 var safariFields = {
   id: { ...text2, minLength: 1 },
   nullableId: { ...nullableText, minLength: 1 },
@@ -762,13 +1051,190 @@ var SafariStream = class {
   }
 };
 
+// packages/sources/apple/safari/dist/safari-scan.js
+var dayMs = 864e5;
+var firstYear = Date.parse("0001-01-01T00:00:00.000Z");
+var marginMs = 36e5;
+var historyHorizon = (days, startedAt) => new Date(Math.max(firstYear, startedAt.getTime() - days * dayMs + marginMs)).toISOString();
+var ProfileRecords = class {
+  profileId;
+  #history;
+  #scope;
+  #visits;
+  #items;
+  #itemTags;
+  #tags;
+  constructor(history, scope) {
+    this.profileId = history.profileId;
+    this.#history = history;
+    this.#scope = scope;
+  }
+  get #included() {
+    return selected(this.#scope.collectionIds, this.profileId);
+  }
+  get #dated() {
+    return this.#scope.startAt !== void 0 || this.#scope.endAt !== void 0;
+  }
+  get visits() {
+    this.#visits ??= this.#included ? this.#history.visits().filter((visit) => withinDates(this.#scope, iso(visit.visitedAt))) : [];
+    return this.#visits;
+  }
+  get items() {
+    if (this.#items !== void 0)
+      return this.#items;
+    const visited = new Set(this.visits.map((visit) => visit.itemId));
+    this.#items = this.#included ? this.#history.items().filter((item) => !this.#dated || visited.has(item.id)) : [];
+    return this.#items;
+  }
+  get itemTags() {
+    if (this.#itemTags !== void 0)
+      return this.#itemTags;
+    const items = new Set(this.items.map((item) => item.id));
+    this.#itemTags = this.#included ? this.#history.itemTags().filter((link) => items.has(link.itemId)) : [];
+    return this.#itemTags;
+  }
+  get tags() {
+    if (this.#tags !== void 0)
+      return this.#tags;
+    const linked = new Set(this.itemTags.map((link) => link.tagId));
+    this.#tags = this.#included ? this.#history.tags().filter((tag) => !this.#dated || linked.has(tag.id)) : [];
+    return this.#tags;
+  }
+  // Tombstones record deletions to sync to other devices, whatever their date.
+  get tombstones() {
+    return this.#included ? this.#history.tombstones() : [];
+  }
+};
+var ScopedTabs = class {
+  #tabs;
+  #scope;
+  #profiles;
+  #windows;
+  #tabGroups;
+  #tabList;
+  constructor(tabs, scope) {
+    this.#tabs = tabs;
+    this.#scope = scope;
+  }
+  #selected(profileId5) {
+    return selected(this.#scope.collectionIds, profileId5);
+  }
+  get profiles() {
+    this.#profiles ??= this.#tabs.profiles().filter((profile) => this.#selected(profile.id));
+    return this.#profiles;
+  }
+  get windows() {
+    this.#windows ??= this.#tabs.windows().filter((window) => this.#selected(window.profileId));
+    return this.#windows;
+  }
+  get windowProfiles() {
+    return this.#tabs.windowProfiles().filter((link) => this.#selected(link.windowProfileId));
+  }
+  get windowTabGroups() {
+    return this.#tabs.windowTabGroups().filter((link) => this.#selected(link.windowProfileId));
+  }
+  get tabGroups() {
+    this.#tabGroups ??= this.#tabs.tabGroups().filter((group) => group.profileId === null || this.#selected(group.profileId));
+    return this.#tabGroups;
+  }
+  get tabs() {
+    this.#tabList ??= this.#tabs.tabs().filter((tab) => this.#selected(tab.profileId));
+    return this.#tabList;
+  }
+};
+var CloudTabsRecords = class {
+  #cloudTabs;
+  #tabs;
+  constructor(cloudTabs) {
+    this.#cloudTabs = cloudTabs;
+  }
+  get devices() {
+    return this.#cloudTabs.devices();
+  }
+  get tabs() {
+    this.#tabs ??= this.#cloudTabs.tabs();
+    return this.#tabs;
+  }
+  get closeRequests() {
+    return this.#cloudTabs.closeRequests();
+  }
+};
+var SafariScan = class _SafariScan {
+  #resources;
+  #stores;
+  constructor(resources, stores) {
+    this.#resources = resources;
+    this.#stores = stores;
+  }
+  static async open(safari, stores, scope) {
+    var _stack = [];
+    try {
+      const startedAt = /* @__PURE__ */ new Date();
+      const resources = __using(_stack, new AsyncDisposableStack(), true);
+      const open = async (store, reader) => {
+        if (!stores.has(store))
+          return void 0;
+        try {
+          return { reader: await reader() };
+        } catch (error) {
+          return { error };
+        }
+      };
+      const opened = {
+        history: await open("history", async () => {
+          const history = resources.use(safari.history());
+          return {
+            profiles: history.profiles.map((profile) => new ProfileRecords(profile, scope)),
+            horizon: historyHorizon(await safari.historyAgeInDays(), startedAt)
+          };
+        }),
+        tabs: await open("tabs", () => new ScopedTabs(resources.use(safari.tabs()), scope)),
+        cloudTabs: await open("cloudTabs", () => new CloudTabsRecords(resources.use(safari.cloudTabs()))),
+        bookmarks: await open("bookmarks", () => safari.bookmarks()),
+        closedTabs: await open("closedTabs", async () => (await safari.recentlyClosed()).closed((profileId5) => selected(scope.collectionIds, profileId5))),
+        downloads: await open("downloads", async () => (await safari.downloads()).downloads.filter((download2) => selected(scope.collectionIds, download2.profileId)))
+      };
+      return new _SafariScan(resources.move(), opened);
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise = __callDispose(_stack, _error, _hasError);
+      _promise && await _promise;
+    }
+  }
+  get history() {
+    return this.#reader("history");
+  }
+  get tabs() {
+    return this.#reader("tabs");
+  }
+  get downloads() {
+    return this.#reader("downloads");
+  }
+  get cloudTabs() {
+    return this.#reader("cloudTabs");
+  }
+  get bookmarks() {
+    return this.#reader("bookmarks");
+  }
+  get closedTabs() {
+    return this.#reader("closedTabs");
+  }
+  #reader(store) {
+    const opened = this.#stores[store];
+    if (opened === void 0)
+      throw new Error(`Safari ${store} was not opened for this run`);
+    if ("error" in opened)
+      throw opened.error;
+    return opened.reader;
+  }
+  [Symbol.asyncDispose]() {
+    return this.#resources.disposeAsync();
+  }
+};
+
 // packages/sources/apple/safari/dist/streams/bookmarks-stream.js
 var { nullableText: nullableText2 } = safariFields;
-var kinds = /* @__PURE__ */ new Map([
-  ["WebBookmarkTypeList", "folder"],
-  ["WebBookmarkTypeLeaf", "bookmark"],
-  ["WebBookmarkTypeProxy", "proxy"]
-]);
 var properties = {
   id: {
     ...safariFields.id,
@@ -784,7 +1250,7 @@ var properties = {
   },
   kind: {
     ...safariFields.text,
-    enum: [...kinds.values()],
+    enum: bookmarkKinds,
     description: "folder, bookmark, or proxy (a placeholder such as the History entry of the Bookmarks menu)."
   },
   title: {
@@ -841,22 +1307,22 @@ var BookmarksStream = class extends SafariStream {
   rows(scan) {
     return scan.bookmarks.bookmarks;
   }
-  record({ node, parentId, position }) {
+  record(bookmark2) {
     return {
-      id: node.WebBookmarkUUID,
-      parentId,
-      position,
-      kind: kinds.get(node.WebBookmarkType) ?? null,
-      title: text(node.Title) ?? text(dictionary(node.URIDictionary).title),
-      url: text(node.URLString),
-      identifier: text(node.WebBookmarkIdentifier),
-      hidden: flag(node.ShouldOmitFromUI),
-      addedAt: plistTime(node.dateAdded),
-      description: text(node.previewText),
-      descriptionUserDefined: flag(node.previewTextIsUserDefined),
-      featureText: text(node.featureText),
-      metadataFetchFailures: integer(dictionary(node.ReadingListNonSync).BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey),
-      serverId: text(dictionary(node.Sync).ServerID)
+      id: bookmark2.id,
+      parentId: bookmark2.parentId,
+      position: bookmark2.position,
+      kind: bookmark2.kind,
+      title: bookmark2.title,
+      url: bookmark2.url,
+      identifier: bookmark2.identifier,
+      hidden: bookmark2.hidden,
+      addedAt: iso(bookmark2.addedAt),
+      description: bookmark2.description,
+      descriptionUserDefined: bookmark2.descriptionUserDefined,
+      featureText: bookmark2.featureText,
+      metadataFetchFailures: bookmark2.metadataFetchFailures,
+      serverId: bookmark2.serverId
     };
   }
 };
@@ -928,24 +1394,24 @@ var ClosedTabsStream = class extends SafariStream {
   rows(scan) {
     return scan.closedTabs.tabs;
   }
-  record({ state, closedWindowId, position }) {
+  record(tab) {
     return {
-      id: state.TabUUID,
-      closedWindowId,
-      position,
-      windowId: text(state.WindowUUID),
-      profileId: state.ProfileUUID,
-      title: text(state.TabTitle),
-      url: text(state.TabURL),
-      closedAt: plistTime(state.DateClosed),
-      lastVisitedAt: plistTime(state.LastVisitTime),
-      tabIndex: integer(state.TabIndex),
-      tabGroupId: text(state.TabGroupForTab),
-      tabGroupType: flag(state.TabGroupTypeForTabKey),
-      ancestorTabIds: strings(state.AncestorTabUUIDsKey),
-      muted: flag(state.IsMuted),
-      disposable: flag(state.IsDisposable),
-      safeToLoad: flag(state.SafeToLoad)
+      id: tab.id,
+      closedWindowId: tab.closedWindowId,
+      position: tab.position,
+      windowId: tab.windowId,
+      profileId: tab.profileId,
+      title: tab.title,
+      url: tab.url,
+      closedAt: iso(tab.closedAt),
+      lastVisitedAt: iso(tab.lastVisitedAt),
+      tabIndex: tab.tabIndex,
+      tabGroupId: tab.tabGroupId,
+      tabGroupType: tab.tabGroupType,
+      ancestorTabIds: tab.ancestorTabIds,
+      muted: tab.muted,
+      disposable: tab.disposable,
+      safeToLoad: tab.safeToLoad
     };
   }
 };
@@ -976,8 +1442,8 @@ var ClosedWindowActiveTabsStream = class extends SafariStream {
     required: Object.keys(properties3)
   };
   rows(scan) {
-    return scan.closedTabs.windows.flatMap(({ state }) => Object.entries(dictionary(state.TabGroupsToActiveTabs)).map(([tabGroupId, tabId]) => ({
-      windowId: state.WindowUUID,
+    return scan.closedTabs.windows.flatMap((window) => window.activeTabs.map(({ tabGroupId, tabId }) => ({
+      windowId: window.id,
       tabGroupId,
       tabId
     })));
@@ -1035,20 +1501,20 @@ var windowStateFields = {
     description: "Text typed into the address field and not yet submitted; NULL when none."
   }
 };
-var windowState = (state) => ({
-  closedAt: plistTime(state.DateClosed),
-  private: flag(state.IsPrivateWindow),
-  popup: flag(state.IsPopupWindow),
-  miniaturized: flag(state.Miniaturized),
-  unnamedTabGroupIds: strings(state.UnnamedTabGroupUUIDs),
-  selectedTabIndex: integer(state.SelectedTabIndex),
-  selectedPinnedTabIndex: integer(state.SelectedPinnedTabIndex),
-  tabBarHidden: flag(state.TabBarHidden),
-  favoritesBarHidden: flag(state.FavoritesBarHidden),
-  readingListSidebarVisible: flag(state.PrefersReadingListSidebarVisible),
-  sidebarMode: integer(state.WindowUnifiedSidebarMode),
-  frame: text(state.WindowContentRect),
-  addressFieldText: text(state.CustomUnifiedFieldText)
+var windowState2 = (state) => ({
+  closedAt: iso(state.closedAt),
+  private: state.private,
+  popup: state.popup,
+  miniaturized: state.miniaturized,
+  unnamedTabGroupIds: state.unnamedTabGroupIds,
+  selectedTabIndex: state.selectedTabIndex,
+  selectedPinnedTabIndex: state.selectedPinnedTabIndex,
+  tabBarHidden: state.tabBarHidden,
+  favoritesBarHidden: state.favoritesBarHidden,
+  readingListSidebarVisible: state.readingListSidebarVisible,
+  sidebarMode: state.sidebarMode,
+  frame: state.frame,
+  addressFieldText: state.addressFieldText
 });
 
 // packages/sources/apple/safari/dist/streams/closed-windows-stream.js
@@ -1081,13 +1547,13 @@ var ClosedWindowsStream = class extends SafariStream {
   rows(scan) {
     return scan.closedTabs.windows;
   }
-  record({ state, position }) {
+  record(window) {
     return {
-      id: state.WindowUUID,
-      position,
-      profileId: state.ProfileUUID,
-      activeTabGroupId: text(state.activeTabGroupUUID),
-      ...windowState(state)
+      id: window.id,
+      position: window.position,
+      profileId: window.profileId,
+      activeTabGroupId: window.activeTabGroupId,
+      ...windowState2(window.state)
     };
   }
 };
@@ -1121,12 +1587,12 @@ var CloudTabCloseRequestsStream = class extends SafariStream {
   rows(scan) {
     return scan.cloudTabs.closeRequests;
   }
-  record(row) {
+  record(request) {
     return {
-      id: row.close_request_uuid,
-      deviceId: row.destination_device_uuid,
-      url: row.url,
-      tabId: row.tab_uuid
+      id: request.id,
+      deviceId: request.deviceId,
+      url: request.url,
+      tabId: request.tabId
     };
   }
 };
@@ -1172,14 +1638,14 @@ var CloudTabDevicesStream = class extends SafariStream {
   rows(scan) {
     return scan.cloudTabs.devices;
   }
-  record(row) {
+  record(device) {
     return {
-      id: row.device_uuid,
-      name: text(row.device_name),
-      type: text(row.device_type_identifier),
-      duplicateName: flag(row.has_duplicate_device_name),
-      ephemeral: flag(row.is_ephemeral_device),
-      modifiedAt: appleTime(row.last_modified)
+      id: device.id,
+      name: device.name,
+      type: device.type,
+      duplicateName: device.duplicateName,
+      ephemeral: device.ephemeral,
+      modifiedAt: iso(device.modifiedAt)
     };
   }
 };
@@ -1218,12 +1684,12 @@ var CloudTabPositionsStream = class extends SafariStream {
     required: Object.keys(properties7)
   };
   rows(scan) {
-    return scan.cloudTabs.positions();
+    return scan.cloudTabs.tabs.flatMap((tab) => tab.positions().map((entry, position) => ({ tabId: tab.id, position, entry })));
   }
-  record({ tab, entry, index }) {
+  record({ tabId, position, entry }) {
     return {
-      tabId: tab.tab_uuid,
-      position: index,
+      tabId,
+      position,
       changeId: entry.changeID,
       sortValue: entry.sortValue,
       deviceId: entry.deviceIdentifier
@@ -1282,24 +1748,23 @@ var CloudTabsStream = class extends SafariStream {
   rows(scan) {
     return scan.cloudTabs.tabs;
   }
-  record(row) {
+  record(tab) {
     return {
-      id: row.tab_uuid,
-      deviceId: row.device_uuid,
-      title: text(row.title),
-      url: row.url,
-      showingReader: flag(row.is_showing_reader),
-      pinned: flag(row.is_pinned),
-      readerScrollPageIndex: integer(row.reader_scroll_position_page_index),
-      sceneId: text(row.scene_id),
-      lastViewedAt: row.last_viewed_time === 0 ? null : appleTime(row.last_viewed_time),
-      topic: text(row.topic_title)
+      id: tab.id,
+      deviceId: tab.deviceId,
+      title: tab.title,
+      url: tab.url,
+      showingReader: tab.showingReader,
+      pinned: tab.pinned,
+      readerScrollPageIndex: tab.readerScrollPageIndex,
+      sceneId: tab.sceneId,
+      lastViewedAt: iso(tab.lastViewedAt),
+      topic: tab.topic
     };
   }
 };
 
 // packages/sources/apple/safari/dist/streams/downloads-stream.js
-import { existsSync } from "node:fs";
 var { boolean: boolean5, nullableText: nullableText7, nullableTimestamp: nullableTimestamp2, nullableInteger: nullableInteger3 } = safariFields;
 var properties9 = {
   id: { ...safariFields.id, description: "Download identifier." },
@@ -1353,22 +1818,21 @@ var DownloadsStream = class extends SafariStream {
     required: Object.keys(properties9)
   };
   rows(scan) {
-    return scan.downloads.downloads;
+    return scan.downloads;
   }
-  record(entry) {
-    const path = entry.DownloadEntryPath;
+  record(download2) {
     return {
-      id: entry.DownloadEntryIdentifier,
-      profileId: text(entry.DownloadEntryProfileUUIDStringKey),
-      url: entry.DownloadEntryURL,
-      path,
-      openedPath: text(entry.DownloadEntryPostPath),
-      addedAt: plistTime(entry.DownloadEntryDateAddedKey),
-      finishedAt: plistTime(entry.DownloadEntryDateFinishedKey),
-      bytesReceived: integer(entry.DownloadEntryProgressBytesSoFar),
-      bytesTotal: integer(entry.DownloadEntryProgressTotalToLoad),
-      removeWhenDone: flag(entry.DownloadEntryRemoveWhenDoneKey),
-      availableLocally: typeof path === "string" && path !== "" && existsSync(path)
+      id: download2.id,
+      profileId: download2.profileId,
+      url: download2.url,
+      path: download2.path,
+      openedPath: download2.openedPath,
+      addedAt: iso(download2.addedAt),
+      finishedAt: iso(download2.finishedAt),
+      bytesReceived: download2.bytesReceived,
+      bytesTotal: download2.bytesTotal,
+      removeWhenDone: download2.removeWhenDone,
+      availableLocally: download2.availableLocally
     };
   }
   // The original file, not a copy: downloads reach gigabytes and readers
@@ -1405,20 +1869,20 @@ var HistoryItemTagsStream = class extends SafariStream {
     required: Object.keys(properties10)
   };
   rows(scan) {
-    return scan.history.profiles.flatMap((history) => history.itemTags);
+    return scan.history.profiles.flatMap(({ profileId: profileId5, itemTags }) => itemTags.map((row) => ({ profileId: profileId5, row })));
   }
-  record(row) {
+  record({ profileId: profileId5, row }) {
     return {
-      profileId: row.$profile,
-      itemId: row.history_item,
-      tagId: row.tag_id,
-      taggedAt: appleTime(row.timestamp)
+      profileId: profileId5,
+      itemId: row.itemId,
+      tagId: row.tagId,
+      taggedAt: iso(row.taggedAt)
     };
   }
 };
 
 // packages/sources/apple/safari/dist/streams/history-items-stream.js
-var { profileId, id, nullableText: nullableText8, ordinal, boolean: boolean6 } = safariFields;
+var { profileId, nullableText: nullableText8, ordinal, boolean: boolean6 } = safariFields;
 var countList = { type: "integer", minimum: 0 };
 var properties11 = {
   profileId,
@@ -1482,22 +1946,22 @@ var HistoryItemsStream = class extends SafariStream {
     return scan.history.horizon;
   }
   rows(scan) {
-    return scan.history.profiles.flatMap((history) => history.items);
+    return scan.history.profiles.flatMap(({ profileId: profileId5, items }) => items.map((row) => ({ profileId: profileId5, row })));
   }
-  record(row) {
+  record({ profileId: profileId5, row }) {
     return {
-      profileId: row.$profile,
+      profileId: profileId5,
       id: row.id,
       url: row.url,
-      domainExpansion: text(row.domain_expansion),
-      visitCount: row.visit_count,
-      visitCountScore: row.visit_count_score,
-      dailyVisitCounts: counts(row.daily_visit_counts),
-      weeklyVisitCounts: counts(row.weekly_visit_counts),
-      autocompleteTriggers: triggers(row.autocomplete_triggers),
-      statusCode: integer(row.status_code) || null,
-      derivedCountsStale: flag(row.should_recompute_derived_visit_counts),
-      lastVisitedAt: appleTime(row.last_visit_time)
+      domainExpansion: row.domainExpansion,
+      visitCount: row.visitCount,
+      visitCountScore: row.visitCountScore,
+      dailyVisitCounts: row.dailyVisitCounts(),
+      weeklyVisitCounts: row.weeklyVisitCounts(),
+      autocompleteTriggers: row.autocompleteTriggers(),
+      statusCode: row.statusCode,
+      derivedCountsStale: row.derivedCountsStale,
+      lastVisitedAt: iso(row.lastVisitedAt)
     };
   }
 };
@@ -1543,18 +2007,18 @@ var HistoryTagsStream = class extends SafariStream {
     required: Object.keys(properties12)
   };
   rows(scan) {
-    return scan.history.profiles.flatMap((history) => history.tags);
+    return scan.history.profiles.flatMap(({ profileId: profileId5, tags }) => tags.map((row) => ({ profileId: profileId5, row })));
   }
-  record(row) {
+  record({ profileId: profileId5, row }) {
     return {
-      profileId: row.$profile,
+      profileId: profileId5,
       id: row.id,
       type: row.type,
       level: row.level,
       identifier: row.identifier,
       title: row.title,
-      modifiedAt: appleTime(row.modification_timestamp),
-      itemCount: row.item_count
+      modifiedAt: iso(row.modifiedAt),
+      itemCount: row.itemCount
     };
   }
 };
@@ -1607,18 +2071,18 @@ var HistoryTombstonesStream = class extends SafariStream {
     required: Object.keys(properties13)
   };
   rows(scan) {
-    return scan.history.profiles.flatMap((history) => history.tombstones);
+    return scan.history.profiles.flatMap(({ profileId: profileId5, tombstones }) => tombstones.map((row) => ({ profileId: profileId5, row })));
   }
-  record(row) {
+  record({ profileId: profileId5, row }) {
     return {
-      profileId: row.$profile,
+      profileId: profileId5,
       id: row.id,
-      startAt: appleTime(row.start_time),
-      endAt: appleTime(row.end_time),
-      url: text(row.url),
-      encryptedUrl: base64(row.url),
+      startAt: iso(row.startAt),
+      endAt: iso(row.endAt),
+      url: row.url,
+      encryptedUrl: row.encryptedUrl === null ? null : Buffer.from(row.encryptedUrl).toString("base64"),
       generation: row.generation,
-      deviceId: text(row.udid),
+      deviceId: row.deviceId,
       attributes: row.attributes
     };
   }
@@ -1696,20 +2160,20 @@ var HistoryVisitsStream = class extends SafariStream {
     return scan.history.horizon;
   }
   rows(scan) {
-    return scan.history.profiles.flatMap((history) => history.visits);
+    return scan.history.profiles.flatMap(({ profileId: profileId5, visits }) => visits.map((row) => ({ profileId: profileId5, row })));
   }
-  record(row) {
+  record({ profileId: profileId5, row }) {
     return {
-      profileId: row.$profile,
+      profileId: profileId5,
       id: row.id,
-      itemId: row.history_item,
-      visitedAt: appleTime(row.visit_time),
-      title: text(row.title),
-      loadSuccessful: flag(row.load_successful),
-      httpNonGet: flag(row.http_non_get),
-      synthesized: flag(row.synthesized),
-      redirectSourceId: integer(row.redirect_source),
-      redirectDestinationId: integer(row.redirect_destination),
+      itemId: row.itemId,
+      visitedAt: iso(row.visitedAt),
+      title: row.title,
+      loadSuccessful: row.loadSuccessful,
+      httpNonGet: row.httpNonGet,
+      synthesized: row.synthesized,
+      redirectSourceId: row.redirectSourceId,
+      redirectDestinationId: row.redirectDestinationId,
       origin: row.origin,
       generation: row.generation,
       attributes: row.attributes,
@@ -1745,24 +2209,14 @@ var ProfileStartPageSectionsStream = class extends SafariStream {
     required: Object.keys(properties15)
   };
   rows(scan) {
-    return scan.tabs.profiles.flatMap((profile) => {
-      const data = scan.tabs.attributes(profile)[0].StartPageSectionsData;
-      if (!(data instanceof Uint8Array))
-        return [];
-      const { Sections } = JSON.parse(Buffer.from(data).toString("utf8"));
-      return Sections.map((section, position) => ({
-        profile,
-        position,
-        section
-      }));
-    });
+    return scan.tabs.profiles.flatMap((profile) => profile.startPageSections().map((section) => ({ profileId: profile.id, section })));
   }
-  record({ profile, position, section }) {
+  record({ profileId: profileId5, section }) {
     return {
-      profileId: profile.external_uuid,
-      position,
-      identifier: section.Identifier,
-      enabled: section.IsEnabled
+      profileId: profileId5,
+      position: section.position,
+      identifier: section.identifier,
+      enabled: section.enabled
     };
   }
 };
@@ -1831,23 +2285,22 @@ var ProfilesStream = class extends SafariStream {
   rows(scan) {
     return scan.tabs.profiles;
   }
-  record(row, scan) {
-    const [extra] = scan.tabs.attributes(row);
-    const color = scan.tabs.color(row);
+  record(profile) {
+    const color = profile.color();
     return {
-      id: row.external_uuid,
-      serverId: row.server_id,
-      title: text(row.title),
-      position: row.order_index,
-      symbol: text(extra.SymbolImageName),
-      colorName: text(color.colorName),
-      red: number(color.redComponent),
-      green: number(color.greenComponent),
-      blue: number(color.blueComponent),
-      alpha: number(color.alphaComponent),
-      favoritesFolderServerId: text(extra.CustomFavoritesFolderServerID),
-      addedAt: plistTime(dictionary(extra["com.apple.Bookmark"]).DateAdded),
-      modifiedAt: appleTime(row.last_modified)
+      id: profile.id,
+      serverId: profile.serverId,
+      title: profile.title,
+      position: profile.position,
+      symbol: profile.symbol,
+      colorName: color.colorName,
+      red: color.red,
+      green: color.green,
+      blue: color.blue,
+      alpha: color.alpha,
+      favoritesFolderServerId: profile.favoritesFolderServerId,
+      addedAt: iso(profile.addedAt),
+      modifiedAt: iso(profile.modifiedAt)
     };
   }
 };
@@ -1926,25 +2379,23 @@ var ReadingListItemsStream = class extends SafariStream {
   rows(scan) {
     return scan.bookmarks.readingList;
   }
-  record({ node, position }) {
-    const saved = dictionary(node.ReadingList);
-    const fetched = dictionary(node.ReadingListNonSync);
+  record(item) {
     return {
-      id: node.WebBookmarkUUID,
-      position,
-      title: text(dictionary(node.URIDictionary).title),
-      url: node.URLString,
-      addedAt: plistTime(saved.DateAdded),
-      lastViewedAt: plistTime(saved.DateLastViewed),
-      previewText: text(saved.PreviewText) ?? text(node.previewText),
-      imageUrl: text(node.imageURL),
-      fetchedTitle: text(fetched.Title),
-      fetchedAt: plistTime(fetched.DateLastFetched),
-      fetchResult: integer(fetched.FetchResult),
-      failedLoads: integer(fetched.NumberOfFailedLoadsWithUnknownOrNonRecoverableError),
-      addedLocally: flag(fetched.AddedLocally),
-      metadataFetchFailures: integer(fetched.BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey),
-      featureText: text(node.featureText)
+      id: item.id,
+      position: item.position,
+      title: item.title,
+      url: item.url,
+      addedAt: iso(item.addedAt),
+      lastViewedAt: iso(item.lastViewedAt),
+      previewText: item.previewText,
+      imageUrl: item.imageUrl,
+      fetchedTitle: item.fetchedTitle,
+      fetchedAt: iso(item.fetchedAt),
+      fetchResult: item.fetchResult,
+      failedLoads: item.failedLoads,
+      addedLocally: item.addedLocally,
+      metadataFetchFailures: item.metadataFetchFailures,
+      featureText: item.featureText
     };
   }
 };
@@ -2019,23 +2470,21 @@ var TabGroupsStream = class extends SafariStream {
   rows(scan) {
     return scan.tabs.tabGroups;
   }
-  record(row, scan) {
-    const { tabs } = scan;
-    const [extra] = tabs.attributes(row);
+  record(group) {
     return {
-      id: row.external_uuid,
-      parentId: row.parent === 0 ? null : tabs.uuid(row.parent),
-      profileId: tabs.profileOf(row),
-      kind: tabs.kind(row),
-      title: text(row.title),
-      position: row.order_index,
-      hidden: flag(row.hidden),
-      lastSelectedTabId: tabs.uuid(row.last_selected_child),
-      deviceType: text(extra.DeviceTypeIdentifier),
-      topic: text(row.topic_title),
-      addedAt: plistTime(dictionary(extra["com.apple.Bookmark"]).DateAdded),
-      modifiedAt: appleTime(row.last_modified),
-      closedAt: appleTime(row.date_closed)
+      id: group.id,
+      parentId: group.parentId,
+      profileId: group.profileId,
+      kind: group.kind,
+      title: group.title,
+      position: group.position,
+      hidden: group.hidden,
+      lastSelectedTabId: group.lastSelectedTabId,
+      deviceType: group.deviceType,
+      topic: group.topic,
+      addedAt: iso(group.addedAt),
+      modifiedAt: iso(group.modifiedAt),
+      closedAt: iso(group.closedAt)
     };
   }
 };
@@ -2078,18 +2527,18 @@ var TabHistoryEntriesStream = class extends SafariStream {
     required: Object.keys(properties19)
   };
   rows(scan) {
-    return scan.tabs.historyEntries();
+    return scan.tabs.tabs.flatMap((tab) => tab.sessionHistory().map((entry) => ({ tabId: tab.id, entry })));
   }
-  record({ tab, entry, position, current }) {
+  record({ tabId, entry }) {
     return {
-      tabId: tab.external_uuid,
-      position,
-      current,
-      url: text(entry.SessionHistoryEntryURL),
-      originalUrl: text(entry.SessionHistoryEntryOriginalURL),
-      title: text(entry.SessionHistoryEntryTitle),
-      scriptCreated: flag(entry.SessionHistoryEntryWasCreatedByJSWithoutUserInteraction),
-      externalUrlPolicy: text(entry.SessionHistoryEntryShouldOpenExternalURLsPolicyKey)
+      tabId,
+      position: entry.position,
+      current: entry.current,
+      url: entry.url,
+      originalUrl: entry.originalUrl,
+      title: entry.title,
+      scriptCreated: entry.scriptCreated,
+      externalUrlPolicy: entry.externalUrlPolicy
     };
   }
 };
@@ -2240,47 +2689,43 @@ var TabsStream = class extends SafariStream {
   rows(scan) {
     return scan.tabs.tabs;
   }
-  record(row, scan) {
-    const { tabs } = scan;
-    const [extra, local] = tabs.attributes(row);
-    const context = dictionary(local.TabPageContextIDKey);
-    const parent = tabs.row(row.parent);
+  record(tab) {
     return {
-      id: row.external_uuid,
-      tabGroupId: tabs.uuid(row.parent),
-      kind: parent !== void 0 && tabs.kind(parent) === "favorites" ? "favorite" : "tab",
-      profileId: tabs.profileOf(row),
-      windowId: text(local.WindowUUID),
-      position: row.order_index,
-      tabIndex: integer(local.TabIndex),
-      title: text(row.title),
-      url: text(row.url),
-      localTitle: text(extra.LocalTitle),
-      localUrl: text(extra.LocalURL),
-      pinned: flag(extra.IsPinned) || flag(local.IsPinned),
-      pinnedTitle: text(extra.PinnedTitle) ?? text(local.PinnedPageTitle),
-      pinnedUrl: text(extra.PinnedAddress) ?? text(local.PinnedPageURL),
-      addedAt: plistTime(dictionary(extra["com.apple.Bookmark"]).DateAdded),
-      lastViewedAt: plistTime(extra.DateLastViewed),
-      lastVisitedAt: plistTime(local.LastVisitTime),
-      lastAccessedAt: plistTime(local.LastAccessDate),
-      modifiedAt: appleTime(row.last_modified),
-      closedAt: appleTime(row.date_closed) ?? plistTime(local.DateClosed),
-      muted: flag(local.IsMuted),
-      showingReader: flag(local.ShowingReader),
-      readerScrollOffset: number(local.ReaderViewTopScrollOffset),
-      openedFromLink: flag(local.OpenedFromLink),
-      standaloneImage: flag(local.DisplayingStandaloneImage),
-      disposable: flag(local.IsDisposable),
-      safeToLoad: flag(local.SafeToLoad),
-      ancestorTabIds: strings(local.AncestorTabUUIDsKey),
-      deviceId: text(extra.DeviceIdentifier),
-      topic: text(row.topic_title) ?? text(context.topicID),
-      pageLanguage: text(context.pageLanguage),
-      pageSummary: text(context.summary),
-      pageKeywords: strings(context.keywords),
-      pageKeywordWeights: list(context.keywordsWeights),
-      featureText: text(extra.featureText)
+      id: tab.id,
+      tabGroupId: tab.tabGroupId,
+      kind: tab.favorite() ? "favorite" : "tab",
+      profileId: tab.profileId,
+      windowId: tab.windowId,
+      position: tab.position,
+      tabIndex: tab.tabIndex,
+      title: tab.title,
+      url: tab.url,
+      localTitle: tab.localTitle,
+      localUrl: tab.localUrl,
+      pinned: tab.pinned,
+      pinnedTitle: tab.pinnedTitle,
+      pinnedUrl: tab.pinnedUrl,
+      addedAt: iso(tab.addedAt),
+      lastViewedAt: iso(tab.lastViewedAt),
+      lastVisitedAt: iso(tab.lastVisitedAt),
+      lastAccessedAt: iso(tab.lastAccessedAt),
+      modifiedAt: iso(tab.modifiedAt),
+      closedAt: iso(tab.closedAt),
+      muted: tab.muted,
+      showingReader: tab.showingReader,
+      readerScrollOffset: tab.readerScrollOffset,
+      openedFromLink: tab.openedFromLink,
+      standaloneImage: tab.standaloneImage,
+      disposable: tab.disposable,
+      safeToLoad: tab.safeToLoad,
+      ancestorTabIds: tab.ancestorTabIds,
+      deviceId: tab.deviceId,
+      topic: tab.topic,
+      pageLanguage: tab.pageLanguage,
+      pageSummary: tab.pageSummary,
+      pageKeywords: tab.pageKeywords,
+      pageKeywordWeights: tab.pageKeywordWeights,
+      featureText: tab.featureText
     };
   }
 };
@@ -2313,12 +2758,11 @@ var WindowProfilesStream = class extends SafariStream {
   rows(scan) {
     return scan.tabs.windowProfiles;
   }
-  record(row, scan) {
-    const { tabs } = scan;
+  record(link) {
     return {
-      windowId: tabs.windowUuid(row.window_id),
-      profileId: tabs.uuid(row.profile_id),
-      activeTabGroupId: tabs.uuid(row.active_tab_group_id)
+      windowId: link.windowId,
+      profileId: link.profileId,
+      activeTabGroupId: link.activeTabGroupId
     };
   }
 };
@@ -2355,13 +2799,12 @@ var WindowTabGroupsStream = class extends SafariStream {
   rows(scan) {
     return scan.tabs.windowTabGroups;
   }
-  record(row, scan) {
-    const { tabs } = scan;
+  record(link) {
     return {
-      windowId: tabs.windowUuid(row.window_id),
-      tabGroupId: tabs.uuid(row.tab_group_id),
-      activeTabId: tabs.uuid(row.active_tab_id),
-      unnamed: flag(row.unnamed)
+      windowId: link.windowId,
+      tabGroupId: link.tabGroupId,
+      activeTabId: link.activeTabId,
+      unnamed: link.unnamed
     };
   }
 };
@@ -2412,19 +2855,17 @@ var WindowsStream = class extends SafariStream {
   rows(scan) {
     return scan.tabs.windows;
   }
-  record(row, scan) {
-    const { tabs } = scan;
-    const state = windowState(tabs.windowState(row));
+  record(window) {
     return {
-      id: row.uuid,
-      profileId: tabs.uuid(row.active_profile_id),
-      activeTabGroupId: tabs.uuid(row.active_tab_group_id),
-      localTabGroupId: tabs.uuid(row.local_tab_group_id),
-      privateTabGroupId: tabs.uuid(row.private_tab_group_id),
-      lastSession: flag(row.is_last_session),
-      sceneId: text(row.scene_id),
-      ...state,
-      closedAt: appleTime(row.date_closed) ?? state.closedAt
+      id: window.id,
+      profileId: window.profileId,
+      activeTabGroupId: window.activeTabGroupId,
+      localTabGroupId: window.localTabGroupId,
+      privateTabGroupId: window.privateTabGroupId,
+      lastSession: window.lastSession,
+      sceneId: window.sceneId,
+      ...windowState2(window.state),
+      closedAt: iso(window.closedAt)
     };
   }
 };
@@ -2492,53 +2933,32 @@ var AppleSafariSource = class extends Source {
   downloads = readers.downloads.describe();
   location;
   scope;
+  #safari;
   constructor({ directory = safariDirectory, container = safariContainer, scope = {} } = {}) {
     super();
     this.location = Object.freeze({ directory, container });
     this.scope = scope;
+    this.#safari = new Safari(this.location);
     this.identity = `apple-safari:${directory}:${container}`;
     Object.freeze(this);
   }
   open(streams) {
-    return SafariScan.open(this.location, new Set(streams.map((stream) => readerOf(stream).store)), this.scope);
+    return SafariScan.open(this.#safari, new Set(streams.map((stream) => readerOf(stream).store)), this.scope);
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
-  // Databases report commits through data_version; Safari rewrites each
-  // property list whole, so a changed stat marks a new one.
+  // Each store the streams read reports its own changes.
   async *observe({ streams, signal }) {
     var _stack = [];
     try {
       if (signal.aborted)
         return;
-      const files = storeFiles(this.location);
-      const stores = [
-        ...new Set(streams.map((stream) => readerOf(stream).store))
-      ];
       const versions = __using(_stack, new DisposableStack());
-      const opened = /* @__PURE__ */ new Map();
-      const version = (path) => {
-        let found = opened.get(path);
-        if (found === void 0) {
-          found = versions.use(new SafariDatabaseVersion(path));
-          opened.set(path, found);
-        }
-        return found.current;
-      };
-      const probes = new Map(stores.map((store) => {
-        if (store === "history")
-          return [
-            store,
-            async () => (await historyFiles(this.location)).map(version).join(",")
-          ];
-        if (!databaseStores.has(store))
-          return [store, () => fingerprint(files[store])];
-        return [store, async () => String(version(files[store]))];
-      }));
+      const probes = new Map([...new Set(streams.map((stream) => readerOf(stream).store))].map((store) => [store, versions.use(this.#safari.version(store))]));
       const seen = /* @__PURE__ */ new Map();
       for (const [store, probe] of probes)
-        seen.set(store, await probe());
+        seen.set(store, await probe.current());
       yield streams;
       try {
         for await (const _2 of setInterval(pollIntervalMs, void 0, {
@@ -2546,7 +2966,7 @@ var AppleSafariSource = class extends Source {
         })) {
           const changed = /* @__PURE__ */ new Set();
           for (const [store, probe] of probes) {
-            const current = await probe();
+            const current = await probe.current();
             if (current === seen.get(store))
               continue;
             seen.set(store, current);
@@ -2578,29 +2998,6 @@ var AppleSafariSource = class extends Source {
     }
   }
 };
-async function historyFiles(location) {
-  const profiles = join3(location.container, "Profiles");
-  const found = await readdir(profiles, { withFileTypes: true }).catch((error) => {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT")
-      return [];
-    throw error;
-  });
-  const others = await Promise.all(found.filter((entry) => entry.isDirectory()).map(async (entry) => {
-    const path = join3(profiles, entry.name, "History.db");
-    return await fingerprint(path) === "missing" ? [] : [path];
-  }));
-  return [storeFiles(location).history, ...others.flat()];
-}
-async function fingerprint(path) {
-  try {
-    const { ino, size, mtimeMs } = await stat(path);
-    return `${ino}:${size}:${mtimeMs}`;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT")
-      return "missing";
-    throw error;
-  }
-}
 
 // packages/connectors/apple/safari/dist/safari-connector.js
 var SafariConnector = class extends AppleConnector {

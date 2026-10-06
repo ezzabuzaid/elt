@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { CloudTab } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import { type Row, appleTime, flag, integer, text } from '../safari-values.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { boolean, nullableText } = safariFields;
 
@@ -46,7 +46,7 @@ const properties = {
   },
 } as const;
 
-export class CloudTabsStream extends SafariStream<typeof properties, Row> {
+export class CloudTabsStream extends SafariStream<typeof properties, CloudTab> {
   readonly name = 'cloudTabs';
   readonly store = 'cloudTabs';
   readonly primaryKey = ['id'];
@@ -58,23 +58,22 @@ export class CloudTabsStream extends SafariStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
+  protected rows(scan: SafariScan): readonly CloudTab[] {
     return scan.cloudTabs.tabs;
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(tab: CloudTab): RecordDraft<typeof properties> {
     return {
-      id: row.tab_uuid,
-      deviceId: row.device_uuid,
-      title: text(row.title),
-      url: row.url,
-      showingReader: flag(row.is_showing_reader),
-      pinned: flag(row.is_pinned),
-      readerScrollPageIndex: integer(row.reader_scroll_position_page_index),
-      sceneId: text(row.scene_id),
-      lastViewedAt:
-        row.last_viewed_time === 0 ? null : appleTime(row.last_viewed_time),
-      topic: text(row.topic_title),
+      id: tab.id,
+      deviceId: tab.deviceId,
+      title: tab.title,
+      url: tab.url,
+      showingReader: tab.showingReader,
+      pinned: tab.pinned,
+      readerScrollPageIndex: tab.readerScrollPageIndex,
+      sceneId: tab.sceneId,
+      lastViewedAt: iso(tab.lastViewedAt),
+      topic: tab.topic,
     };
   }
 }

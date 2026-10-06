@@ -5,8 +5,7 @@ import { type PlistValue, isDictionary } from '@workspace/sdk-apple-plist';
 export type Row = Record<string, SQLOutputValue>;
 export type Dictionary = Readonly<Record<string, PlistValue>>;
 
-// The only profile every Safari has; its history lives in History.db.
-export const defaultProfile = 'DefaultProfile';
+type Stored = SQLOutputValue | PlistValue | undefined;
 
 const appleEpochSeconds = 978_307_200;
 
@@ -16,37 +15,42 @@ const distantPast = -63_114_076_800;
 const distantFuture = 63_113_904_000;
 
 // Safari's databases store times as seconds since 2001-01-01.
-export const appleTime = (value: SQLOutputValue | PlistValue | undefined) =>
+export const appleTime = (value: Stored): Date | null =>
   typeof value === 'number' &&
   Number.isFinite(value) &&
   value > distantPast &&
   value < distantFuture
-    ? new Date(Math.round((value + appleEpochSeconds) * 1000)).toISOString()
+    ? new Date(Math.round((value + appleEpochSeconds) * 1000))
     : null;
 
 // Property lists mark "never" with NSDate's distantPast (year 1) and
 // distantFuture (year 4001); neither is a real time.
-export const plistTime = (value: PlistValue | undefined) =>
+export const plistTime = (value: PlistValue | undefined): Date | null =>
   value instanceof Date &&
   value.getUTCFullYear() > 1 &&
   value.getUTCFullYear() < 4001
-    ? value.toISOString()
+    ? value
     : null;
 
-export const base64 = (value: SQLOutputValue | PlistValue | undefined) =>
-  value instanceof Uint8Array ? Buffer.from(value).toString('base64') : null;
-
-export const text = (value: SQLOutputValue | PlistValue | undefined) =>
+// Text Safari wrote; an empty string means it wrote none, so a fallback
+// key can supply the value.
+export const text = (value: Stored): string | null =>
   typeof value === 'string' && value !== '' ? value : null;
 
-export const integer = (value: SQLOutputValue | PlistValue | undefined) =>
+// A value Safari stores as written, empty strings included.
+export const stored = (value: Stored): string | null =>
+  typeof value === 'string' ? value : null;
+
+export const storedNumber = (value: Stored): number | null =>
+  typeof value === 'number' ? value : null;
+
+export const integer = (value: Stored): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 
-export const number = (value: SQLOutputValue | PlistValue | undefined) =>
+export const number = (value: Stored): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
 
-export const flag = (value: SQLOutputValue | PlistValue | undefined) =>
-  value === 1 || value === true;
+export const flag = (value: Stored): boolean => value === 1 || value === true;
 
 export const dictionary = (value: PlistValue | undefined): Dictionary =>
   isDictionary(value) ? value : {};

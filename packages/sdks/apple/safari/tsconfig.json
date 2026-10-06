@@ -8,16 +8,10 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../macos"
+      "path": "../app-database"
     },
     {
-      "path": "../../../sdks/apple/safari"
-    },
-    {
-      "path": "../../../elt"
-    },
-    {
-      "path": "../../../destinations/sqlite"
+      "path": "../plist"
     }
   ]
 }

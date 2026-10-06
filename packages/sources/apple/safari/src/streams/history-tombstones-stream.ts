@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { HistoryTombstone } from '@workspace/sdk-apple-safari';
 
-import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import { type Row, appleTime, base64, text } from '../safari-values.ts';
+import type { Profiled, SafariScan } from '../safari-scan.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { profileId, nullableText, nullableTimestamp } = safariFields;
 
@@ -49,7 +49,7 @@ const properties = {
 
 export class HistoryTombstonesStream extends SafariStream<
   typeof properties,
-  Row
+  Profiled<HistoryTombstone>
 > {
   readonly name = 'historyTombstones';
   readonly store = 'history';
@@ -62,20 +62,28 @@ export class HistoryTombstonesStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
-    return scan.history.profiles.flatMap((history) => history.tombstones);
+  protected rows(scan: SafariScan): readonly Profiled<HistoryTombstone>[] {
+    return scan.history.profiles.flatMap(({ profileId, tombstones }) =>
+      tombstones.map((row) => ({ profileId, row })),
+    );
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record({
+    profileId,
+    row,
+  }: Profiled<HistoryTombstone>): RecordDraft<typeof properties> {
     return {
-      profileId: row.$profile,
+      profileId,
       id: row.id,
-      startAt: appleTime(row.start_time),
-      endAt: appleTime(row.end_time),
-      url: text(row.url),
-      encryptedUrl: base64(row.url),
+      startAt: iso(row.startAt),
+      endAt: iso(row.endAt),
+      url: row.url,
+      encryptedUrl:
+        row.encryptedUrl === null
+          ? null
+          : Buffer.from(row.encryptedUrl).toString('base64'),
       generation: row.generation,
-      deviceId: text(row.udid),
+      deviceId: row.deviceId,
       attributes: row.attributes,
     };
   }

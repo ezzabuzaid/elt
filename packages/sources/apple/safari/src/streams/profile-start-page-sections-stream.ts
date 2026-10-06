@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { StartPageSection } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import type { Row } from '../safari-values.ts';
 
 const properties = {
   profileId: safariFields.profileId,
@@ -22,9 +22,8 @@ const properties = {
 } as const;
 
 type Section = {
-  profile: Row;
-  position: number;
-  section: { Identifier: string; IsEnabled: boolean };
+  readonly profileId: string | null;
+  readonly section: StartPageSection;
 };
 
 export class ProfileStartPageSectionsStream extends SafariStream<
@@ -43,30 +42,22 @@ export class ProfileStartPageSectionsStream extends SafariStream<
   } as const;
 
   protected rows(scan: SafariScan): readonly Section[] {
-    return scan.tabs.profiles.flatMap((profile) => {
-      const data = scan.tabs.attributes(profile)[0].StartPageSectionsData;
-      if (!(data instanceof Uint8Array)) return [];
-      const { Sections }: { Sections: Section['section'][] } = JSON.parse(
-        Buffer.from(data).toString('utf8'),
-      );
-      return Sections.map((section, position) => ({
-        profile,
-        position,
-        section,
-      }));
-    });
+    return scan.tabs.profiles.flatMap((profile) =>
+      profile
+        .startPageSections()
+        .map((section) => ({ profileId: profile.id, section })),
+    );
   }
 
   protected record({
-    profile,
-    position,
+    profileId,
     section,
   }: Section): RecordDraft<typeof properties> {
     return {
-      profileId: profile.external_uuid,
-      position,
-      identifier: section.Identifier,
-      enabled: section.IsEnabled,
+      profileId,
+      position: section.position,
+      identifier: section.identifier,
+      enabled: section.enabled,
     };
   }
 }

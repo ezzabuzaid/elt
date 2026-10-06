@@ -1,16 +1,8 @@
-import { existsSync } from 'node:fs';
-
 import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+import type { Download } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import {
-  type Dictionary,
-  flag,
-  integer,
-  plistTime,
-  text,
-} from '../safari-values.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { boolean, nullableText, nullableTimestamp, nullableInteger } =
   safariFields;
@@ -59,10 +51,7 @@ const properties = {
   },
 } as const;
 
-export class DownloadsStream extends SafariStream<
-  typeof properties,
-  Dictionary
-> {
+export class DownloadsStream extends SafariStream<typeof properties, Download> {
   readonly name = 'downloads';
   readonly store = 'downloads';
   readonly primaryKey = ['id'];
@@ -75,25 +64,23 @@ export class DownloadsStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Dictionary[] {
-    return scan.downloads.downloads;
+  protected rows(scan: SafariScan): readonly Download[] {
+    return scan.downloads;
   }
 
-  protected record(entry: Dictionary): RecordDraft<typeof properties> {
-    const path = entry.DownloadEntryPath;
+  protected record(download: Download): RecordDraft<typeof properties> {
     return {
-      id: entry.DownloadEntryIdentifier,
-      profileId: text(entry.DownloadEntryProfileUUIDStringKey),
-      url: entry.DownloadEntryURL,
-      path,
-      openedPath: text(entry.DownloadEntryPostPath),
-      addedAt: plistTime(entry.DownloadEntryDateAddedKey),
-      finishedAt: plistTime(entry.DownloadEntryDateFinishedKey),
-      bytesReceived: integer(entry.DownloadEntryProgressBytesSoFar),
-      bytesTotal: integer(entry.DownloadEntryProgressTotalToLoad),
-      removeWhenDone: flag(entry.DownloadEntryRemoveWhenDoneKey),
-      availableLocally:
-        typeof path === 'string' && path !== '' && existsSync(path),
+      id: download.id,
+      profileId: download.profileId,
+      url: download.url,
+      path: download.path,
+      openedPath: download.openedPath,
+      addedAt: iso(download.addedAt),
+      finishedAt: iso(download.finishedAt),
+      bytesReceived: download.bytesReceived,
+      bytesTotal: download.bytesTotal,
+      removeWhenDone: download.removeWhenDone,
+      availableLocally: download.availableLocally,
     };
   }
 

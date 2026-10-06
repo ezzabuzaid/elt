@@ -1,23 +1,10 @@
 import type { RecordDraft } from '@workspace/elt';
+import { type Bookmark, bookmarkKinds } from '@workspace/sdk-apple-safari';
 
-import type { BookmarkNode } from '../bookmarks-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import {
-  dictionary,
-  flag,
-  integer,
-  plistTime,
-  text,
-} from '../safari-values.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { nullableText } = safariFields;
-
-const kinds = new Map<unknown, string>([
-  ['WebBookmarkTypeList', 'folder'],
-  ['WebBookmarkTypeLeaf', 'bookmark'],
-  ['WebBookmarkTypeProxy', 'proxy'],
-]);
 
 const properties = {
   id: {
@@ -36,7 +23,7 @@ const properties = {
   },
   kind: {
     ...safariFields.text,
-    enum: [...kinds.values()],
+    enum: bookmarkKinds,
     description:
       'folder, bookmark, or proxy (a placeholder such as the History entry of the Bookmarks menu).',
   },
@@ -89,10 +76,7 @@ const properties = {
   },
 } as const;
 
-export class BookmarksStream extends SafariStream<
-  typeof properties,
-  BookmarkNode
-> {
+export class BookmarksStream extends SafariStream<typeof properties, Bookmark> {
   readonly name = 'bookmarks';
   readonly store = 'bookmarks';
   readonly primaryKey = ['id'];
@@ -104,33 +88,26 @@ export class BookmarksStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly BookmarkNode[] {
+  protected rows(scan: SafariScan): readonly Bookmark[] {
     return scan.bookmarks.bookmarks;
   }
 
-  protected record({
-    node,
-    parentId,
-    position,
-  }: BookmarkNode): RecordDraft<typeof properties> {
+  protected record(bookmark: Bookmark): RecordDraft<typeof properties> {
     return {
-      id: node.WebBookmarkUUID,
-      parentId,
-      position,
-      kind: kinds.get(node.WebBookmarkType) ?? null,
-      title: text(node.Title) ?? text(dictionary(node.URIDictionary).title),
-      url: text(node.URLString),
-      identifier: text(node.WebBookmarkIdentifier),
-      hidden: flag(node.ShouldOmitFromUI),
-      addedAt: plistTime(node.dateAdded),
-      description: text(node.previewText),
-      descriptionUserDefined: flag(node.previewTextIsUserDefined),
-      featureText: text(node.featureText),
-      metadataFetchFailures: integer(
-        dictionary(node.ReadingListNonSync)
-          .BookmarkSidebarMetadataFetchFailuresDueToUnknownOrNonRecoverableErrorKey,
-      ),
-      serverId: text(dictionary(node.Sync).ServerID),
+      id: bookmark.id,
+      parentId: bookmark.parentId,
+      position: bookmark.position,
+      kind: bookmark.kind,
+      title: bookmark.title,
+      url: bookmark.url,
+      identifier: bookmark.identifier,
+      hidden: bookmark.hidden,
+      addedAt: iso(bookmark.addedAt),
+      description: bookmark.description,
+      descriptionUserDefined: bookmark.descriptionUserDefined,
+      featureText: bookmark.featureText,
+      metadataFetchFailures: bookmark.metadataFetchFailures,
+      serverId: bookmark.serverId,
     };
   }
 }

@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { CloudTabDevice } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import { type Row, appleTime, flag, text } from '../safari-values.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { boolean, nullableText } = safariFields;
 
@@ -37,7 +37,7 @@ const properties = {
 
 export class CloudTabDevicesStream extends SafariStream<
   typeof properties,
-  Row
+  CloudTabDevice
 > {
   readonly name = 'cloudTabDevices';
   readonly store = 'cloudTabs';
@@ -50,18 +50,18 @@ export class CloudTabDevicesStream extends SafariStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
+  protected rows(scan: SafariScan): readonly CloudTabDevice[] {
     return scan.cloudTabs.devices;
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(device: CloudTabDevice): RecordDraft<typeof properties> {
     return {
-      id: row.device_uuid,
-      name: text(row.device_name),
-      type: text(row.device_type_identifier),
-      duplicateName: flag(row.has_duplicate_device_name),
-      ephemeral: flag(row.is_ephemeral_device),
-      modifiedAt: appleTime(row.last_modified),
+      id: device.id,
+      name: device.name,
+      type: device.type,
+      duplicateName: device.duplicateName,
+      ephemeral: device.ephemeral,
+      modifiedAt: iso(device.modifiedAt),
     };
   }
 }

@@ -1,19 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { Tab } from '@workspace/sdk-apple-safari';
 
 import type { SafariScan } from '../safari-scan.ts';
-import { SafariStream, safariFields } from '../safari-stream.ts';
-import {
-  type Row,
-  appleTime,
-  dictionary,
-  flag,
-  integer,
-  list,
-  number,
-  plistTime,
-  strings,
-  text,
-} from '../safari-values.ts';
+import { SafariStream, iso, safariFields } from '../safari-stream.ts';
 
 const { boolean, nullableId, nullableText, nullableTimestamp } = safariFields;
 
@@ -156,7 +145,7 @@ const properties = {
   },
 } as const;
 
-export class TabsStream extends SafariStream<typeof properties, Row> {
+export class TabsStream extends SafariStream<typeof properties, Tab> {
   readonly name = 'tabs';
   readonly store = 'tabs';
   readonly primaryKey = ['id'];
@@ -168,54 +157,47 @@ export class TabsStream extends SafariStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: SafariScan): readonly Row[] {
+  protected rows(scan: SafariScan): readonly Tab[] {
     return scan.tabs.tabs;
   }
 
-  protected record(row: Row, scan: SafariScan): RecordDraft<typeof properties> {
-    const { tabs } = scan;
-    const [extra, local] = tabs.attributes(row);
-    const context = dictionary(local.TabPageContextIDKey);
-    const parent = tabs.row(row.parent);
+  protected record(tab: Tab): RecordDraft<typeof properties> {
     return {
-      id: row.external_uuid,
-      tabGroupId: tabs.uuid(row.parent),
-      kind:
-        parent !== undefined && tabs.kind(parent) === 'favorites'
-          ? 'favorite'
-          : 'tab',
-      profileId: tabs.profileOf(row),
-      windowId: text(local.WindowUUID),
-      position: row.order_index,
-      tabIndex: integer(local.TabIndex),
-      title: text(row.title),
-      url: text(row.url),
-      localTitle: text(extra.LocalTitle),
-      localUrl: text(extra.LocalURL),
-      pinned: flag(extra.IsPinned) || flag(local.IsPinned),
-      pinnedTitle: text(extra.PinnedTitle) ?? text(local.PinnedPageTitle),
-      pinnedUrl: text(extra.PinnedAddress) ?? text(local.PinnedPageURL),
-      addedAt: plistTime(dictionary(extra['com.apple.Bookmark']).DateAdded),
-      lastViewedAt: plistTime(extra.DateLastViewed),
-      lastVisitedAt: plistTime(local.LastVisitTime),
-      lastAccessedAt: plistTime(local.LastAccessDate),
-      modifiedAt: appleTime(row.last_modified),
-      closedAt: appleTime(row.date_closed) ?? plistTime(local.DateClosed),
-      muted: flag(local.IsMuted),
-      showingReader: flag(local.ShowingReader),
-      readerScrollOffset: number(local.ReaderViewTopScrollOffset),
-      openedFromLink: flag(local.OpenedFromLink),
-      standaloneImage: flag(local.DisplayingStandaloneImage),
-      disposable: flag(local.IsDisposable),
-      safeToLoad: flag(local.SafeToLoad),
-      ancestorTabIds: strings(local.AncestorTabUUIDsKey),
-      deviceId: text(extra.DeviceIdentifier),
-      topic: text(row.topic_title) ?? text(context.topicID),
-      pageLanguage: text(context.pageLanguage),
-      pageSummary: text(context.summary),
-      pageKeywords: strings(context.keywords),
-      pageKeywordWeights: list(context.keywordsWeights),
-      featureText: text(extra.featureText),
+      id: tab.id,
+      tabGroupId: tab.tabGroupId,
+      kind: tab.favorite() ? 'favorite' : 'tab',
+      profileId: tab.profileId,
+      windowId: tab.windowId,
+      position: tab.position,
+      tabIndex: tab.tabIndex,
+      title: tab.title,
+      url: tab.url,
+      localTitle: tab.localTitle,
+      localUrl: tab.localUrl,
+      pinned: tab.pinned,
+      pinnedTitle: tab.pinnedTitle,
+      pinnedUrl: tab.pinnedUrl,
+      addedAt: iso(tab.addedAt),
+      lastViewedAt: iso(tab.lastViewedAt),
+      lastVisitedAt: iso(tab.lastVisitedAt),
+      lastAccessedAt: iso(tab.lastAccessedAt),
+      modifiedAt: iso(tab.modifiedAt),
+      closedAt: iso(tab.closedAt),
+      muted: tab.muted,
+      showingReader: tab.showingReader,
+      readerScrollOffset: tab.readerScrollOffset,
+      openedFromLink: tab.openedFromLink,
+      standaloneImage: tab.standaloneImage,
+      disposable: tab.disposable,
+      safeToLoad: tab.safeToLoad,
+      ancestorTabIds: tab.ancestorTabIds,
+      deviceId: tab.deviceId,
+      topic: tab.topic,
+      pageLanguage: tab.pageLanguage,
+      pageSummary: tab.pageSummary,
+      pageKeywords: tab.pageKeywords,
+      pageKeywordWeights: tab.pageKeywordWeights,
+      featureText: tab.featureText,
     };
   }
 }

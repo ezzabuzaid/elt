@@ -1,9 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { SortValue } from '@workspace/sdk-apple-safari';
 
-import type { SortValue } from '../cloud-tabs-reader.ts';
 import type { SafariScan } from '../safari-scan.ts';
 import { SafariStream, safariFields } from '../safari-stream.ts';
-import type { Row } from '../safari-values.ts';
 
 const properties = {
   tabId: {
@@ -30,7 +29,12 @@ const properties = {
   },
 } as const;
 
-type Entry = { tab: Row; entry: SortValue; index: number };
+// One entry of one iCloud tab's position.
+type Entry = {
+  readonly tabId: string | null;
+  readonly position: number;
+  readonly entry: SortValue;
+};
 
 export class CloudTabPositionsStream extends SafariStream<
   typeof properties,
@@ -48,17 +52,21 @@ export class CloudTabPositionsStream extends SafariStream<
   } as const;
 
   protected rows(scan: SafariScan): readonly Entry[] {
-    return scan.cloudTabs.positions();
+    return scan.cloudTabs.tabs.flatMap((tab) =>
+      tab
+        .positions()
+        .map((entry, position) => ({ tabId: tab.id, position, entry })),
+    );
   }
 
   protected record({
-    tab,
+    tabId,
+    position,
     entry,
-    index,
   }: Entry): RecordDraft<typeof properties> {
     return {
-      tabId: tab.tab_uuid,
-      position: index,
+      tabId,
+      position,
       changeId: entry.changeID,
       sortValue: entry.sortValue,
       deviceId: entry.deviceIdentifier,
