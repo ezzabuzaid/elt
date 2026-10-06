@@ -1,0 +1,20 @@
+{
+  "name": "context-compiler",
+  "interface": {
+    "displayName": "Context Compiler"
+  },
+  "plugins": [
+    {
+      "name": "apple",
+      "source": {
+        "source": "local",
+        "path": "./plugins/apple"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

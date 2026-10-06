@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "apple": {
+      "command": "./launch_node",
+      "args": ["./server/main.mjs"],
+      "cwd": ".",
+      "tool_timeout_sec": 1800,
+      "env_vars": [
+        "CODEX_MCP_NODE_PATH",
+        "CODEX_BROWSER_USE_NODE_PATH",
+        "CODEX_CLI_PATH",
+        "CODEX_ELECTRON_RESOURCES_PATH",
+        "XDG_CACHE_HOME"
+      ]
+    }
+  }
+}
