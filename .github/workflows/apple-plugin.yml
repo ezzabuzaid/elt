@@ -27,8 +27,11 @@ jobs:
           cache: npm
       - run: npm ci
       # Every push, not nx affected: skills and hooks under plugins/apple
-      # belong to no project, and an unchanged build publishes no commit.
-      - run: npx nx run apple-plugin:marketplace
+      # belong to no project, and an unchanged build publishes no commit. A
+      # failing test stops the publish. The runner has no ChatGPT app, so the
+      # end-to-end tests launch the plugin on this job's Node instead of
+      # Codex's bundled one.
+      - run: CODEX_MCP_NODE_PATH="$(command -v node)" npx nx run-many -t test marketplace -p apple-plugin
       - uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
