@@ -154,9 +154,6 @@
     },
     {
       "path": "./packages/sdks/apple/books"
-    },
-    {
-      "path": "./packages/sdks/microsoft/sql-server"
     }
   ]
 }
