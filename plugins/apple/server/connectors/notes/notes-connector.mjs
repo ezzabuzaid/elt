@@ -37,79 +37,23 @@ import {
 } from "../../chunks/chunk-ZGXE7NZW.mjs";
 
 // packages/sources/apple/notes/dist/apple-notes-source.js
-import { join as join3 } from "node:path";
 import { setInterval } from "node:timers/promises";
 
-// packages/sources/apple/notes/dist/apple-notes-stream.js
-var notesFields = {
-  ...eventKitFields,
-  nullableId: { type: ["string", "null"], minLength: 1 },
-  nullableNumber: { type: ["number", "null"] }
+// packages/sdks/apple/notes/dist/errors.js
+var NotesUnavailableError = class extends Error {
+  name = "NotesUnavailableError";
+  constructor(path, cause) {
+    super(`The Notes store at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Notes.app does not need to be open.`, { cause });
+  }
 };
-var AppleNotesStream = class {
-  primaryKey = ["id"];
-  supportedSyncModes = Object.freeze([
-    "full_refresh",
-    "incremental"
-  ]);
-  // Every read is the whole store, so incremental copies diff snapshots.
-  sourceDefinedCursor = true;
-  emitsDeletes = true;
-  #stream;
-  describe() {
-    this.#stream ??= new Stream(this);
-    return this.#stream;
-  }
-  async read(scan) {
-    const records = await Promise.all(this.rows(scan).map((row) => this.record(row, scan)));
-    return validateRecords(this, records, "Notes");
-  }
-  // The file a record carries, for streams that support file reads.
-  file(_record, _scan) {
-    return null;
+var NotesSchemaError = class extends Error {
+  name = "NotesSchemaError";
+  constructor(path, missing) {
+    super(`The Notes store at ${path} has a layout this reader does not read (missing ${missing.join(", ")}).`);
   }
 };
 
-// packages/sources/apple/notes/dist/accounts-stream.js
-var { id, text, ordinal } = notesFields;
-var properties = {
-  id: {
-    ...id,
-    description: "Notes account identifier; referenced by the accountId fields of other streams from this source."
-  },
-  name: { ...text, description: "Account name displayed by Notes." },
-  type: {
-    ...ordinal,
-    description: "Numeric account type stored by Notes; an opaque category, not a quantity."
-  }
-};
-var AccountsStream = class extends AppleNotesStream {
-  name = "accounts";
-  jsonSchema = {
-    type: "object",
-    description: "One source record per account in the local Notes store, excluding accounts marked for deletion. This is what Notes has synced to this Mac.",
-    properties,
-    required: Object.keys(properties)
-  };
-  rows(scan) {
-    return scan.accounts;
-  }
-  record(row) {
-    return {
-      id: row.ZIDENTIFIER,
-      name: row.ZNAME,
-      type: row.ZACCOUNTTYPE
-    };
-  }
-};
-
-// packages/sources/apple/notes/dist/attachments-stream.js
-import { access } from "node:fs/promises";
-
-// packages/sources/apple/notes/dist/notes-scan.js
-import { dirname, join } from "node:path";
-
-// packages/sources/apple/notes/dist/note-document.js
+// packages/sdks/apple/notes/dist/note-document.js
 import { gunzipSync, inflateSync } from "node:zlib";
 var decompress = (bytes) => bytes[0] === 31 && bytes[1] === 139 ? gunzipSync(bytes) : inflateSync(bytes);
 var versionData = (bytes) => {
@@ -119,27 +63,25 @@ var versionData = (bytes) => {
   return new ProtobufMessage(data);
 };
 var uuid = (bytes) => Buffer.from(bytes).toString("hex");
-var paragraphStyles = {
-  title: 0,
-  heading: 1,
-  subheading: 2,
-  monospaced: 4,
-  bullet: 100,
-  dash: 101,
-  numbered: 102,
-  checklist: 103
-};
+var paragraphStyles = /* @__PURE__ */ new Map([
+  [0, "title"],
+  [1, "heading"],
+  [2, "subheading"],
+  [4, "monospaced"],
+  [100, "bullet"],
+  [101, "dash"],
+  [102, "numbered"],
+  [103, "checklist"]
+]);
 var attachmentCharacter = "\uFFFC";
 var NoteDocument = class _NoteDocument {
-  text;
   paragraphs;
-  constructor(text5, paragraphs) {
-    this.text = text5;
+  constructor(paragraphs) {
     this.paragraphs = paragraphs;
   }
   static decode(bytes) {
     const note = versionData(bytes);
-    const text5 = note.string(2) ?? "";
+    const text6 = note.string(2) ?? "";
     const paragraphs = [];
     let current = [];
     let style;
@@ -147,7 +89,7 @@ var NoteDocument = class _NoteDocument {
     const close = () => {
       const todo = style?.message(5);
       paragraphs.push({
-        style: style?.uint(1),
+        style: paragraphStyles.get(style?.uint(1)) ?? "body",
         indent: style?.uint(4) ?? 0,
         blockQuote: style?.uint(8) ?? 0,
         startNumber: style?.uint(7),
@@ -162,7 +104,7 @@ var NoteDocument = class _NoteDocument {
     };
     for (const run of note.messages(5)) {
       const length = run.uint(1) ?? 0;
-      const segment = text5.slice(offset, offset + length);
+      const segment = text6.slice(offset, offset + length);
       offset += length;
       const hints = run.uint(5) ?? 0;
       const attachment = run.message(12);
@@ -185,9 +127,9 @@ var NoteDocument = class _NoteDocument {
           close();
       });
     }
-    if (offset < text5.length)
+    if (offset < text6.length)
       current.push({
-        text: text5.slice(offset),
+        text: text6.slice(offset),
         bold: false,
         italic: false,
         strikethrough: false,
@@ -196,84 +138,8 @@ var NoteDocument = class _NoteDocument {
       });
     if (current.length > 0)
       close();
-    return new _NoteDocument(text5, paragraphs);
+    return new _NoteDocument(paragraphs);
   }
-  // The visible text, with each attachment character replaced as the caller
-  // renders it: an inline tag by its text, a file by nothing.
-  plain(attachment) {
-    return this.paragraphs.map((paragraph) => paragraph.runs.map(({ text: text5, attachment: reference }) => reference === null ? text5 : text5.replaceAll(attachmentCharacter, () => attachment(reference))).join("")).join("\n");
-  }
-  // Attachments render through the caller: a table becomes its cells, an
-  // inline tag its text, a file a link to the attachment row.
-  markdown(attachment) {
-    const lines = [];
-    const numbers = [];
-    let monospaced = false;
-    for (const paragraph of this.paragraphs) {
-      const code = paragraph.style === paragraphStyles.monospaced;
-      if (code !== monospaced) {
-        lines.push("```");
-        monospaced = code;
-      }
-      if (code) {
-        lines.push(plain(paragraph));
-        continue;
-      }
-      const numbered = paragraph.style === paragraphStyles.numbered;
-      numbers.length = numbered ? paragraph.indent + 1 : 0;
-      if (numbered)
-        numbers[paragraph.indent] = paragraph.startNumber ?? (numbers[paragraph.indent] ?? 0) + 1;
-      const heading = paragraph.style === paragraphStyles.title || paragraph.style === paragraphStyles.heading || paragraph.style === paragraphStyles.subheading;
-      const content = merge(heading ? paragraph.runs.map((run) => ({ ...run, bold: false })) : paragraph.runs).map((run) => inline(run, attachment)).join("");
-      if (content === "") {
-        lines.push("");
-        continue;
-      }
-      const indent = "  ".repeat(paragraph.indent);
-      const quote = "> ".repeat(paragraph.blockQuote);
-      const prefix = paragraph.style === paragraphStyles.title ? "# " : paragraph.style === paragraphStyles.heading ? "## " : paragraph.style === paragraphStyles.subheading ? "### " : paragraph.style === paragraphStyles.bullet || paragraph.style === paragraphStyles.dash ? `${indent}- ` : numbered ? `${indent}${numbers[paragraph.indent]}. ` : paragraph.style === paragraphStyles.checklist ? `${indent}- [${paragraph.todo?.done ? "x" : " "}] ` : "";
-      lines.push(`${quote}${prefix}${prefix === "" ? escapeLineStart(content) : content}`);
-    }
-    if (monospaced)
-      lines.push("```");
-    return lines.join("\n");
-  }
-};
-var plain = (paragraph) => paragraph.runs.map((run) => run.text).join("").replaceAll(attachmentCharacter, "");
-var merge = (runs) => runs.reduce((merged, run) => {
-  const previous = merged.at(-1);
-  if (previous !== void 0 && previous.attachment === null && run.attachment === null && previous.bold === run.bold && previous.italic === run.italic && previous.strikethrough === run.strikethrough && previous.link === run.link)
-    merged[merged.length - 1] = {
-      ...previous,
-      text: previous.text + run.text
-    };
-  else
-    merged.push(run);
-  return merged;
-}, []);
-var escapeInline = (text5) => text5.replace(/[\\`*_[\]~<]/g, "\\$&");
-var escapeLineStart = (line) => line.replace(/^(\s*)([#>+-]|\d+[.)])(?=\s|$)/, "$1\\$2");
-var inline = (run, attachment) => {
-  const { attachment: reference } = run;
-  if (reference !== null)
-    return run.text.split("").map((character) => character === attachmentCharacter ? attachment(reference) : escapeInline(character)).join("");
-  const text5 = run.text.trim();
-  if (text5 === "")
-    return run.text;
-  let body = escapeInline(text5);
-  if (run.strikethrough)
-    body = `~~${body}~~`;
-  if (run.bold && run.italic)
-    body = `***${body}***`;
-  else if (run.bold)
-    body = `**${body}**`;
-  else if (run.italic)
-    body = `*${body}*`;
-  if (run.link !== null)
-    body = `[${body}](<${run.link}>)`;
-  const leading = run.text.slice(0, run.text.length - run.text.trimStart().length);
-  const trailing = run.text.slice(run.text.trimEnd().length);
-  return `${leading}${body}${trailing}`;
 };
 function decodeTable(bytes) {
   const document = versionData(bytes);
@@ -342,26 +208,20 @@ function decodeTable(bytes) {
       const line = y === void 0 ? void 0 : grid[y];
       if (x === void 0 || line === void 0)
         throw new TypeError("Notes table cell has no row or column position");
-      const text5 = reference(cell.message(2), "cell").message(10)?.string(2);
-      line[x] = (text5 ?? "").replaceAll(attachmentCharacter, "");
+      const text6 = reference(cell.message(2), "cell").message(10)?.string(2);
+      line[x] = (text6 ?? "").replaceAll(attachmentCharacter, "");
     }
   }
   return direction === "CRTableColumnDirectionRightToLeft" ? grid.map((row) => row.toReversed()) : grid;
 }
-function markdownTable(grid) {
-  if (grid.length === 0)
-    return "";
-  const cell = (text5) => escapeInline(text5).replaceAll("|", "\\|").replaceAll("\n", "<br>");
-  const row = (cells) => `| ${cells.map(cell).join(" | ")} |`;
-  const [header = [], ...body] = grid;
-  return [
-    row(header),
-    `| ${header.map(() => "---").join(" | ")} |`,
-    ...body.map(row)
-  ].join("\n");
-}
 
-// packages/sources/apple/notes/dist/notes-scan.js
+// packages/sdks/apple/notes/dist/note-store.js
+import { homedir } from "node:os";
+import { join as join2 } from "node:path";
+
+// packages/sdks/apple/notes/dist/note-store-snapshot.js
+import { access } from "node:fs/promises";
+import { dirname, join } from "node:path";
 var requiredColumns = {
   Z_PRIMARYKEY: ["Z_ENT", "Z_NAME"],
   ZICNOTEDATA: ["Z_PK", "ZDATA"],
@@ -453,104 +313,391 @@ var inlineSql = `SELECT i.ZIDENTIFIER, n.ZIDENTIFIER AS note, i.ZTYPEUTI1, i.ZAL
   JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER
   WHERE i.Z_ENT = ${entity("ICInlineAttachment")} AND ${live("i")} AND ${live("n")}
   ORDER BY i.Z_PK`;
-var noteLinkType = "com.apple.notes.inlinetextattachment.link";
 var appleEpochSeconds = 978307200;
-var time = (value) => typeof value === "number" ? new Date(Math.round((value + appleEpochSeconds) * 1e3)).toISOString() : null;
-var string = (value) => typeof value === "string" && value.trim() !== "" ? value : null;
+var time = (value) => typeof value === "number" ? new Date(Math.round((value + appleEpochSeconds) * 1e3)) : null;
+var text = (value) => typeof value === "string" ? value : null;
 var number = (value) => typeof value === "number" ? value : null;
 var flag = (value) => value === 1;
+var tableType = "com.apple.notes.table";
+var NoteStoreSnapshot = class {
+  #path;
+  #database;
+  constructor(path) {
+    this.#path = path;
+    this.#database = new AppDatabase(path, NotesUnavailableError);
+    this.#database.requireColumns(requiredColumns, NotesSchemaError);
+  }
+  accounts() {
+    return this.#database.all(accountsSql).map((row) => ({
+      id: text(row.ZIDENTIFIER),
+      name: text(row.ZNAME),
+      type: number(row.ZACCOUNTTYPE)
+    }));
+  }
+  folders() {
+    return this.#database.all(foldersSql).map((row) => ({
+      id: text(row.ZIDENTIFIER),
+      accountId: text(row.account),
+      parentId: text(row.parent),
+      name: text(row.ZTITLE2),
+      type: number(row.ZFOLDERTYPE),
+      smartQuery: text(row.ZSMARTFOLDERQUERYJSON),
+      shared: flag(row.shared)
+    }));
+  }
+  notes() {
+    return this.#database.all(notesSql).map((row) => {
+      const locked = flag(row.ZISPASSWORDPROTECTED);
+      const data = row.ZDATA;
+      return {
+        id: text(row.ZIDENTIFIER),
+        accountId: text(row.account),
+        folderId: text(row.folder),
+        title: text(row.ZTITLE1),
+        createdAt: time(row.ZCREATIONDATE3),
+        modifiedAt: time(row.ZMODIFICATIONDATE1),
+        pinned: flag(row.ZISPINNED),
+        hasChecklist: flag(row.ZHASCHECKLIST),
+        checklistInProgress: flag(row.ZHASCHECKLISTINPROGRESS),
+        locked,
+        shared: flag(row.shared),
+        document: () => locked || !(data instanceof Uint8Array) ? null : NoteDocument.decode(data)
+      };
+    });
+  }
+  attachments() {
+    return this.#database.all(attachmentsSql).map((row) => {
+      const locked = flag(row.locked);
+      const file = this.#file(row, locked);
+      const data = row.ZMERGEABLEDATA1;
+      return {
+        id: text(row.ZIDENTIFIER),
+        noteId: text(row.note),
+        parentId: text(row.parent),
+        locked,
+        type: text(row.ZTYPEUTI),
+        title: text(row.title),
+        filename: text(row.ZFILENAME),
+        url: text(row.ZURLSTRING),
+        summary: text(row.ZSUMMARY),
+        ocrSummary: text(row.ZOCRSUMMARY),
+        handwritingSummary: text(row.ZHANDWRITINGSUMMARY),
+        imageClassificationSummary: text(row.ZIMAGECLASSIFICATIONSUMMARY),
+        indexableText: text(row.ZADDITIONALINDEXABLETEXT),
+        fileSize: number(row.ZFILESIZE),
+        duration: number(row.ZDURATION),
+        width: number(row.ZSIZEWIDTH),
+        height: number(row.ZSIZEHEIGHT),
+        latitude: number(row.ZLATITUDE),
+        longitude: number(row.ZLONGITUDE),
+        createdAt: time(row.ZCREATIONDATE),
+        modifiedAt: time(row.ZMODIFICATIONDATE),
+        file,
+        availableLocally: async () => file !== null && access(file).then(() => true, () => false),
+        table: () => row.ZTYPEUTI !== tableType || locked || !(data instanceof Uint8Array) ? null : decodeTable(data)
+      };
+    });
+  }
+  inlineAttachments() {
+    return this.#database.all(inlineSql).map((row) => ({
+      id: text(row.ZIDENTIFIER),
+      noteId: text(row.note),
+      type: text(row.ZTYPEUTI1),
+      altText: text(row.ZALTTEXT),
+      target: text(row.ZTOKENCONTENTIDENTIFIER),
+      createdAt: time(row.ZCREATIONDATE2)
+    }));
+  }
+  [Symbol.dispose]() {
+    this.#database[Symbol.dispose]();
+  }
+  // <store directory>/Accounts/<account>/Media/<media>/[<generation>/]<filename>
+  #file(row, locked) {
+    if (locked || typeof row.account !== "string" || typeof row.media !== "string" || typeof row.ZFILENAME !== "string")
+      return null;
+    return join(dirname(this.#path), "Accounts", row.account, "Media", row.media, ...typeof row.ZGENERATION1 === "string" ? [row.ZGENERATION1] : [], row.ZFILENAME);
+  }
+};
+
+// packages/sdks/apple/notes/dist/note-store.js
+var noteStorePath = join2(homedir(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
+var NotesStore = class {
+  #path;
+  constructor(path) {
+    this.#path = path;
+  }
+  // The store as of one moment, so notes, their attachments and folders
+  // agree.
+  open() {
+    return new NoteStoreSnapshot(this.#path);
+  }
+  // Notes keeps NoteStore.sqlite and its WAL open while it runs; this probe
+  // changes with each commit Notes makes.
+  version() {
+    return new AppDatabaseVersion(this.#path, NotesUnavailableError);
+  }
+};
+
+// packages/sdks/apple/notes/dist/notes-app.js
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
+var execFile = promisify(execFileCallback);
+var bundle = "com.apple.Notes";
+async function launchNotesHidden() {
+  const { stdout } = await execFile("/usr/bin/lsappinfo", [
+    "info",
+    "-only",
+    "pid",
+    "-app",
+    bundle
+  ]);
+  if (/\bpid"?\s*=\s*\d+/.test(stdout))
+    return false;
+  await execFile("/usr/bin/open", ["-g", "-j", "-b", bundle]);
+  return true;
+}
+
+// packages/sources/apple/notes/dist/apple-notes-stream.js
+var notesFields = {
+  ...eventKitFields,
+  nullableId: { type: ["string", "null"], minLength: 1 },
+  nullableNumber: { type: ["number", "null"] }
+};
+var AppleNotesStream = class {
+  primaryKey = ["id"];
+  supportedSyncModes = Object.freeze([
+    "full_refresh",
+    "incremental"
+  ]);
+  // Every read is the whole store, so incremental copies diff snapshots.
+  sourceDefinedCursor = true;
+  emitsDeletes = true;
+  #stream;
+  describe() {
+    this.#stream ??= new Stream(this);
+    return this.#stream;
+  }
+  async read(scan) {
+    const records = await Promise.all(this.rows(scan).map((row) => this.record(row, scan)));
+    return validateRecords(this, records, "Notes");
+  }
+  // The file a record carries, for streams that support file reads.
+  file(_record, _scan) {
+    return null;
+  }
+};
+
+// packages/sources/apple/notes/dist/accounts-stream.js
+var { id, text: text2, ordinal } = notesFields;
+var properties = {
+  id: {
+    ...id,
+    description: "Notes account identifier; referenced by the accountId fields of other streams from this source."
+  },
+  name: { ...text2, description: "Account name displayed by Notes." },
+  type: {
+    ...ordinal,
+    description: "Numeric account type stored by Notes; an opaque category, not a quantity."
+  }
+};
+var AccountsStream = class extends AppleNotesStream {
+  name = "accounts";
+  jsonSchema = {
+    type: "object",
+    description: "One source record per account in the local Notes store, excluding accounts marked for deletion. This is what Notes has synced to this Mac.",
+    properties,
+    required: Object.keys(properties)
+  };
+  rows(scan) {
+    return scan.accounts;
+  }
+  record(account) {
+    return { id: account.id, name: account.name, type: account.type };
+  }
+};
+
+// packages/sources/apple/notes/dist/note-markdown.js
+function plainText(document, attachment) {
+  return document.paragraphs.map((paragraph) => paragraph.runs.map(({ text: text6, attachment: reference }) => reference === null ? text6 : text6.replaceAll(attachmentCharacter, () => attachment(reference))).join("")).join("\n");
+}
+function markdown(document, attachment) {
+  const lines = [];
+  const numbers = [];
+  let monospaced = false;
+  for (const paragraph of document.paragraphs) {
+    const code = paragraph.style === "monospaced";
+    if (code !== monospaced) {
+      lines.push("```");
+      monospaced = code;
+    }
+    if (code) {
+      lines.push(plain(paragraph));
+      continue;
+    }
+    const numbered = paragraph.style === "numbered";
+    numbers.length = numbered ? paragraph.indent + 1 : 0;
+    if (numbered)
+      numbers[paragraph.indent] = paragraph.startNumber ?? (numbers[paragraph.indent] ?? 0) + 1;
+    const heading = paragraph.style === "title" || paragraph.style === "heading" || paragraph.style === "subheading";
+    const content = merge(heading ? paragraph.runs.map((run) => ({ ...run, bold: false })) : paragraph.runs).map((run) => inline(run, attachment)).join("");
+    if (content === "") {
+      lines.push("");
+      continue;
+    }
+    const quote = "> ".repeat(paragraph.blockQuote);
+    const prefix = linePrefix(paragraph, numbers[paragraph.indent]);
+    lines.push(`${quote}${prefix}${prefix === "" ? escapeLineStart(content) : content}`);
+  }
+  if (monospaced)
+    lines.push("```");
+  return lines.join("\n");
+}
+function linePrefix(paragraph, number2) {
+  const indent = "  ".repeat(paragraph.indent);
+  switch (paragraph.style) {
+    case "title":
+      return "# ";
+    case "heading":
+      return "## ";
+    case "subheading":
+      return "### ";
+    case "bullet":
+    case "dash":
+      return `${indent}- `;
+    case "numbered":
+      return `${indent}${number2}. `;
+    case "checklist":
+      return `${indent}- [${paragraph.todo?.done ? "x" : " "}] `;
+    default:
+      return "";
+  }
+}
+var plain = (paragraph) => paragraph.runs.map((run) => run.text).join("").replaceAll(attachmentCharacter, "");
+var merge = (runs) => runs.reduce((merged, run) => {
+  const previous = merged.at(-1);
+  if (previous !== void 0 && previous.attachment === null && run.attachment === null && previous.bold === run.bold && previous.italic === run.italic && previous.strikethrough === run.strikethrough && previous.link === run.link)
+    merged[merged.length - 1] = {
+      ...previous,
+      text: previous.text + run.text
+    };
+  else
+    merged.push(run);
+  return merged;
+}, []);
+var escapeInline = (text6) => text6.replace(/[\\`*_[\]~<]/g, "\\$&");
+var escapeLineStart = (line) => line.replace(/^(\s*)([#>+-]|\d+[.)])(?=\s|$)/, "$1\\$2");
+var inline = (run, attachment) => {
+  const { attachment: reference } = run;
+  if (reference !== null)
+    return run.text.split("").map((character) => character === attachmentCharacter ? attachment(reference) : escapeInline(character)).join("");
+  const text6 = run.text.trim();
+  if (text6 === "")
+    return run.text;
+  let body = escapeInline(text6);
+  if (run.strikethrough)
+    body = `~~${body}~~`;
+  if (run.bold && run.italic)
+    body = `***${body}***`;
+  else if (run.bold)
+    body = `**${body}**`;
+  else if (run.italic)
+    body = `*${body}*`;
+  if (run.link !== null)
+    body = `[${body}](<${run.link}>)`;
+  const leading = run.text.slice(0, run.text.length - run.text.trimStart().length);
+  const trailing = run.text.slice(run.text.trimEnd().length);
+  return `${leading}${body}${trailing}`;
+};
+function markdownTable(grid) {
+  if (grid.length === 0)
+    return "";
+  const cell = (text6) => escapeInline(text6).replaceAll("|", "\\|").replaceAll("\n", "<br>");
+  const row = (cells) => `| ${cells.map(cell).join(" | ")} |`;
+  const [header = [], ...body] = grid;
+  return [
+    row(header),
+    `| ${header.map(() => "---").join(" | ")} |`,
+    ...body.map(row)
+  ].join("\n");
+}
+
+// packages/sources/apple/notes/dist/notes-scan.js
+var noteLinkType = "com.apple.notes.inlinetextattachment.link";
+var string = (value) => value !== null && value.trim() !== "" ? value : null;
 var NotesScan = class {
   #accounts;
   #folders;
   #notes;
   #attachments;
   #inline;
-  #tables = /* @__PURE__ */ new Map();
-  store;
-  scope;
-  constructor(store, scope = {}) {
-    this.store = store;
-    this.scope = scope;
+  #snapshot;
+  #scope;
+  constructor(snapshot, scope = {}) {
+    this.#snapshot = snapshot;
+    this.#scope = scope;
   }
   async [Symbol.asyncDispose]() {
-    this.store[Symbol.dispose]();
+    this.#snapshot[Symbol.dispose]();
   }
+  // A folder scope keeps only the accounts that own a selected folder.
   get accounts() {
-    this.#accounts ??= this.store.all(accountsSql).filter((row) => selected(this.scope.accountIds, row.ZIDENTIFIER) && (this.scope.collectionIds === void 0 || this.folders.some((folder) => folder.account === row.ZIDENTIFIER)));
+    this.#accounts ??= this.#snapshot.accounts().filter((account) => selected(this.#scope.accountIds, account.id) && (this.#scope.collectionIds === void 0 || this.folders.some((folder) => folder.accountId === account.id)));
     return this.#accounts;
   }
   get folders() {
-    this.#folders ??= this.store.all(foldersSql).filter((row) => selected(this.scope.accountIds, row.account) && selected(this.scope.collectionIds, row.ZIDENTIFIER));
+    this.#folders ??= this.#snapshot.folders().filter((folder) => selected(this.#scope.accountIds, folder.accountId) && selected(this.#scope.collectionIds, folder.id));
     return this.#folders;
   }
   get notes() {
-    this.#notes ??= this.store.all(notesSql).filter((row) => selected(this.scope.accountIds, row.account) && selected(this.scope.collectionIds, row.folder) && withinDates(this.scope, time(row.ZMODIFICATIONDATE1))).map((row) => ({
-      row,
-      document: row.ZISPASSWORDPROTECTED === 1 || !(row.ZDATA instanceof Uint8Array) ? null : NoteDocument.decode(row.ZDATA)
-    }));
+    this.#notes ??= this.#snapshot.notes().filter((note) => selected(this.#scope.accountIds, note.accountId) && selected(this.#scope.collectionIds, note.folderId) && withinDates(this.#scope, note.modifiedAt?.toISOString() ?? null));
     return this.#notes;
   }
-  // Attachments and inline attachments by identifier, in store order.
+  // Attachments and inline attachments of the notes in scope, by identifier,
+  // in store order. An attachment the store lists once per location keeps
+  // one entry.
   get attachments() {
     if (this.#attachments !== void 0)
       return this.#attachments;
-    const notes = new Set(this.notes.map((note) => note.row.ZIDENTIFIER));
-    this.#attachments ??= new Map(this.store.all(attachmentsSql).filter((row) => notes.has(row.note)).map((row) => [row.ZIDENTIFIER, row]));
+    const notes = new Set(this.notes.map((note) => note.id));
+    this.#attachments = new Map(this.#snapshot.attachments().filter((attachment) => notes.has(attachment.noteId)).map((attachment) => [attachment.id, attachment]));
     return this.#attachments;
   }
   get inline() {
     if (this.#inline !== void 0)
       return this.#inline;
-    const notes = new Set(this.notes.map((note) => note.row.ZIDENTIFIER));
-    this.#inline ??= new Map(this.store.all(inlineSql).filter((row) => notes.has(row.note)).map((row) => [row.ZIDENTIFIER, row]));
+    const notes = new Set(this.notes.map((note) => note.id));
+    this.#inline = new Map(this.#snapshot.inlineAttachments().filter((inline2) => notes.has(inline2.noteId)).map((inline2) => [inline2.id, inline2]));
     return this.#inline;
-  }
-  table(row) {
-    if (row.ZTYPEUTI !== "com.apple.notes.table" || row.locked === 1 || !(row.ZMERGEABLEDATA1 instanceof Uint8Array))
-      return null;
-    const key = String(row.ZIDENTIFIER);
-    let grid = this.#tables.get(key);
-    if (grid === void 0) {
-      grid = decodeTable(row.ZMERGEABLEDATA1);
-      this.#tables.set(key, grid);
-    }
-    return grid;
-  }
-  // The original file under the account's Media directory.
-  file(row) {
-    if (row.locked === 1 || typeof row.account !== "string" || typeof row.media !== "string" || typeof row.ZFILENAME !== "string")
-      return null;
-    return join(dirname(this.store.path), "Accounts", row.account, "Media", row.media, ...typeof row.ZGENERATION1 === "string" ? [row.ZGENERATION1] : [], row.ZFILENAME);
   }
   // Plain text keeps what reads as text: inline tags and mentions.
   text(document) {
-    return document.plain(({ id: id6 }) => string(this.inline.get(id6)?.ZALTTEXT) ?? "");
+    return plainText(document, ({ id: id6 }) => string(this.inline.get(id6)?.altText ?? null) ?? "");
   }
   markdown(document) {
-    return document.markdown(({ id: id6, type }) => {
+    return markdown(document, ({ id: id6, type }) => {
       const token = this.inline.get(id6);
       if (token !== void 0) {
-        const text5 = String(token.ZALTTEXT ?? "");
-        const target = string(token.ZTOKENCONTENTIDENTIFIER);
-        return token.ZTYPEUTI1 === noteLinkType && target !== null ? `[${text5}](<${target}>)` : text5;
+        const text6 = token.altText ?? "";
+        const target = string(token.target);
+        return token.type === noteLinkType && target !== null ? `[${text6}](<${target}>)` : text6;
       }
-      const row = this.attachments.get(id6);
-      if (row === void 0)
+      const attachment = this.attachments.get(id6);
+      if (attachment === void 0)
         return "";
-      const grid = this.table(row);
+      const grid = attachment.table();
       if (grid !== null)
         return `
 ${markdownTable(grid)}
 `;
-      const label = string(row.title) ?? string(row.ZFILENAME) ?? type ?? id6;
-      const url = string(row.ZURLSTRING);
+      const label = string(attachment.title) ?? string(attachment.filename) ?? type ?? id6;
+      const url = string(attachment.url);
       return url === null ? `[${label}](attachment:${id6})` : `[${label}](<${url}>)`;
     });
   }
 };
 
 // packages/sources/apple/notes/dist/attachments-stream.js
-var { id: id2, nullableId, text: text2, nullableText, ordinal: ordinal2, nullableNumber, nullableTimestamp, boolean } = notesFields;
+var { id: id2, nullableId, text: text3, nullableText, ordinal: ordinal2, nullableNumber, nullableTimestamp, boolean } = notesFields;
 var properties2 = {
   id: {
     ...id2,
@@ -565,7 +712,7 @@ var properties2 = {
     description: "Parent attachment identifier in attachments.id within this source, such as a scan gallery containing pages; NULL for a top-level attachment."
   },
   type: {
-    ...text2,
+    ...text3,
     description: "Uniform type identifier recorded by Notes, such as com.apple.notes.table. public.data is emitted when Notes has no type value."
   },
   title: {
@@ -653,42 +800,41 @@ var AttachmentsStream = class extends AppleNotesStream {
   rows(scan) {
     return [...scan.attachments.values()];
   }
-  async record(row, scan) {
-    const content = (value) => row.locked === 1 ? null : string(value);
-    const file = scan.file(row);
+  async record(attachment) {
+    const content = (value) => attachment.locked ? null : string(value);
     return {
-      id: row.ZIDENTIFIER,
-      noteId: row.note,
-      parentId: string(row.parent),
-      type: string(row.ZTYPEUTI) ?? "public.data",
-      title: string(row.title),
-      filename: string(row.ZFILENAME),
-      url: content(row.ZURLSTRING),
-      summary: content(row.ZSUMMARY),
-      ocrText: content(row.ZOCRSUMMARY),
-      handwritingText: content(row.ZHANDWRITINGSUMMARY),
-      imageLabels: content(row.ZIMAGECLASSIFICATIONSUMMARY),
-      transcript: content(row.ZADDITIONALINDEXABLETEXT),
-      fileSize: number(row.ZFILESIZE) ?? 0,
-      duration: number(row.ZDURATION) || null,
-      width: number(row.ZSIZEWIDTH) || null,
-      height: number(row.ZSIZEHEIGHT) || null,
-      latitude: number(row.ZLATITUDE),
-      longitude: number(row.ZLONGITUDE),
-      createdAt: time(row.ZCREATIONDATE),
-      modifiedAt: time(row.ZMODIFICATIONDATE),
-      availableLocally: file !== null && await access(file).then(() => true, () => false)
+      id: attachment.id,
+      noteId: attachment.noteId,
+      parentId: string(attachment.parentId),
+      type: string(attachment.type) ?? "public.data",
+      title: string(attachment.title),
+      filename: string(attachment.filename),
+      url: content(attachment.url),
+      summary: content(attachment.summary),
+      ocrText: content(attachment.ocrSummary),
+      handwritingText: content(attachment.handwritingSummary),
+      imageLabels: content(attachment.imageClassificationSummary),
+      transcript: content(attachment.indexableText),
+      fileSize: attachment.fileSize ?? 0,
+      duration: attachment.duration || null,
+      width: attachment.width || null,
+      height: attachment.height || null,
+      latitude: attachment.latitude,
+      longitude: attachment.longitude,
+      createdAt: attachment.createdAt?.toISOString() ?? null,
+      modifiedAt: attachment.modifiedAt?.toISOString() ?? null,
+      availableLocally: await attachment.availableLocally()
     };
   }
   // The original file, not a staged copy: readers only read it.
   file(record, scan) {
-    const row = scan.attachments.get(record.id);
-    return record.availableLocally && row !== void 0 ? scan.file(row) : null;
+    const attachment = scan.attachments.get(record.id);
+    return record.availableLocally && attachment !== void 0 ? attachment.file : null;
   }
 };
 
 // packages/sources/apple/notes/dist/folders-stream.js
-var { id: id3, nullableId: nullableId2, text: text3, ordinal: ordinal3, nullableText: nullableText2, boolean: boolean2 } = notesFields;
+var { id: id3, nullableId: nullableId2, text: text4, ordinal: ordinal3, nullableText: nullableText2, boolean: boolean2 } = notesFields;
 var properties3 = {
   id: {
     ...id3,
@@ -702,7 +848,7 @@ var properties3 = {
     ...nullableId2,
     description: "Parent folder identifier in folders.id within this source; NULL for a root folder."
   },
-  name: { ...text3, description: "Folder title displayed by Notes." },
+  name: { ...text4, description: "Folder title displayed by Notes." },
   type: {
     ...ordinal3,
     description: "Numeric folder category stored by Notes. 1 means Recently Deleted; its notes remain exported until permanently deleted."
@@ -727,21 +873,21 @@ var FoldersStream = class extends AppleNotesStream {
   rows(scan) {
     return scan.folders;
   }
-  record(row) {
+  record(folder) {
     return {
-      id: row.ZIDENTIFIER,
-      accountId: row.account,
-      parentId: string(row.parent),
-      name: row.ZTITLE2,
-      type: row.ZFOLDERTYPE,
-      smartQuery: string(row.ZSMARTFOLDERQUERYJSON),
-      shared: flag(row.shared)
+      id: folder.id,
+      accountId: folder.accountId,
+      parentId: string(folder.parentId),
+      name: folder.name,
+      type: folder.type,
+      smartQuery: string(folder.smartQuery),
+      shared: folder.shared
     };
   }
 };
 
 // packages/sources/apple/notes/dist/inline-attachments-stream.js
-var { id: id4, text: text4, nullableText: nullableText3, nullableTimestamp: nullableTimestamp2 } = notesFields;
+var { id: id4, text: text5, nullableText: nullableText3, nullableTimestamp: nullableTimestamp2 } = notesFields;
 var properties4 = {
   id: { ...id4, description: "Notes identifier of this inline attachment." },
   noteId: {
@@ -749,7 +895,7 @@ var properties4 = {
     description: "Containing note identifier; refers to notes.id within this source. One note can contain many inline attachments."
   },
   type: {
-    ...text4,
+    ...text5,
     description: "Notes type identifier, such as com.apple.notes.inlinetextattachment.hashtag; distinguishes tags, mentions, note links and calculation results."
   },
   text: {
@@ -776,64 +922,17 @@ var InlineAttachmentsStream = class extends AppleNotesStream {
   rows(scan) {
     return [...scan.inline.values()];
   }
-  record(row) {
+  record(inline2) {
     return {
-      id: row.ZIDENTIFIER,
-      noteId: row.note,
-      type: row.ZTYPEUTI1,
-      text: string(row.ZALTTEXT),
-      target: string(row.ZTOKENCONTENTIDENTIFIER),
-      createdAt: time(row.ZCREATIONDATE2)
+      id: inline2.id,
+      noteId: inline2.noteId,
+      type: inline2.type,
+      text: string(inline2.altText),
+      target: string(inline2.target),
+      createdAt: inline2.createdAt?.toISOString() ?? null
     };
   }
 };
-
-// packages/sources/apple/notes/dist/note-store.js
-import { homedir } from "node:os";
-import { join as join2 } from "node:path";
-var notesContainer = join2(homedir(), "Library/Group Containers/group.com.apple.notes");
-var NotesUnavailableError = class extends Error {
-  name = "NotesUnavailableError";
-  constructor(path, cause) {
-    super(`The Notes store at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it. Notes.app does not need to be open.`, { cause });
-  }
-};
-var NotesSchemaError = class extends Error {
-  name = "NotesSchemaError";
-  constructor(path, missing) {
-    super(`The Notes store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
-  }
-};
-var NoteStoreVersion = class extends AppDatabaseVersion {
-  constructor(path) {
-    super(path, NotesUnavailableError);
-  }
-};
-var NoteStore = class extends AppDatabase {
-  constructor(path, columns) {
-    super(path, NotesUnavailableError);
-    this.requireColumns(columns, NotesSchemaError);
-  }
-};
-
-// packages/sources/apple/notes/dist/notes-app.js
-import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
-var execFile = promisify(execFileCallback);
-var bundle = "com.apple.Notes";
-async function launchNotesHidden() {
-  const { stdout } = await execFile("/usr/bin/lsappinfo", [
-    "info",
-    "-only",
-    "pid",
-    "-app",
-    bundle
-  ]);
-  if (/\bpid"?\s*=\s*\d+/.test(stdout))
-    return false;
-  await execFile("/usr/bin/open", ["-g", "-j", "-b", bundle]);
-  return true;
-}
 
 // packages/sources/apple/notes/dist/notes-stream.js
 var { id: id5, nullableText: nullableText4, nullableTimestamp: nullableTimestamp3, boolean: boolean3 } = notesFields;
@@ -902,22 +1001,23 @@ var NotesStream = class extends AppleNotesStream {
   rows(scan) {
     return scan.notes;
   }
-  // A locked note's body is encrypted: it keeps its title, dates and flags.
-  record({ row, document }, scan) {
+  // A locked note has no document: it keeps its title, dates and flags.
+  record(note, scan) {
+    const document = note.document();
     return {
-      id: row.ZIDENTIFIER,
-      accountId: row.account,
-      folderId: row.folder,
-      title: string(row.ZTITLE1),
+      id: note.id,
+      accountId: note.accountId,
+      folderId: note.folderId,
+      title: string(note.title),
       text: document === null ? null : scan.text(document),
       markdown: document === null ? null : scan.markdown(document),
-      createdAt: time(row.ZCREATIONDATE3),
-      modifiedAt: time(row.ZMODIFICATIONDATE1),
-      pinned: flag(row.ZISPINNED),
-      hasChecklist: flag(row.ZHASCHECKLIST),
-      checklistInProgress: flag(row.ZHASCHECKLISTINPROGRESS),
-      locked: flag(row.ZISPASSWORDPROTECTED),
-      shared: flag(row.shared)
+      createdAt: note.createdAt?.toISOString() ?? null,
+      modifiedAt: note.modifiedAt?.toISOString() ?? null,
+      pinned: note.pinned,
+      hasChecklist: note.hasChecklist,
+      checklistInProgress: note.checklistInProgress,
+      locked: note.locked,
+      shared: note.shared
     };
   }
 };
@@ -944,15 +1044,17 @@ var AppleNotesSource = class extends Source {
   attachments = readers.attachments.describe();
   path;
   scope;
-  constructor({ path = join3(notesContainer, "NoteStore.sqlite"), scope = {} } = {}) {
+  #store;
+  constructor({ path = noteStorePath, scope = {} } = {}) {
     super();
     this.path = path;
     this.scope = scope;
+    this.#store = new NotesStore(path);
     this.identity = `apple-notes:${path}`;
     Object.freeze(this);
   }
   async open() {
-    return new NotesScan(new NoteStore(this.path, requiredColumns), this.scope);
+    return new NotesScan(this.#store.open(), this.scope);
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
@@ -962,7 +1064,7 @@ var AppleNotesSource = class extends Source {
     try {
       if (signal.aborted)
         return;
-      const version = __using(_stack, new NoteStoreVersion(this.path));
+      const version = __using(_stack, this.#store.version());
       let seen = version.current;
       await launchNotesHidden();
       let nextLaunch = Date.now() + launchIntervalMs;

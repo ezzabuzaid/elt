@@ -1,16 +1,8 @@
-import { access } from 'node:fs/promises';
-import type { SQLOutputValue } from 'node:sqlite';
-
 import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+import type { NoteAttachment } from '@workspace/sdk-apple-notes';
 
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
-import {
-  type NotesScan,
-  type Row,
-  number,
-  string,
-  time,
-} from './notes-scan.ts';
+import { type NotesScan, string } from './notes-scan.ts';
 
 const {
   id,
@@ -137,7 +129,7 @@ type Attachment = SchemaRecord<typeof properties>;
 
 export class AttachmentsStream extends AppleNotesStream<
   typeof properties,
-  Row
+  NoteAttachment
 > {
   readonly name = 'attachments';
   readonly jsonSchema = {
@@ -149,52 +141,47 @@ export class AttachmentsStream extends AppleNotesStream<
   } as const;
   readonly supportsFileTransfer = true;
 
-  protected rows(scan: NotesScan): readonly Row[] {
+  protected rows(scan: NotesScan): readonly NoteAttachment[] {
     return [...scan.attachments.values()];
   }
 
   protected async record(
-    row: Row,
-    scan: NotesScan,
+    attachment: NoteAttachment,
   ): Promise<RecordDraft<typeof properties>> {
     // A locked note's attachments keep only what the list of attachments
     // shows, not what they contain.
-    const content = (value: SQLOutputValue | undefined) =>
-      row.locked === 1 ? null : string(value);
-    const file = scan.file(row);
+    const content = (value: string | null) =>
+      attachment.locked ? null : string(value);
     return {
-      id: row.ZIDENTIFIER,
-      noteId: row.note,
-      parentId: string(row.parent),
-      type: string(row.ZTYPEUTI) ?? 'public.data',
-      title: string(row.title),
-      filename: string(row.ZFILENAME),
-      url: content(row.ZURLSTRING),
-      summary: content(row.ZSUMMARY),
-      ocrText: content(row.ZOCRSUMMARY),
-      handwritingText: content(row.ZHANDWRITINGSUMMARY),
-      imageLabels: content(row.ZIMAGECLASSIFICATIONSUMMARY),
-      transcript: content(row.ZADDITIONALINDEXABLETEXT),
-      fileSize: number(row.ZFILESIZE) ?? 0,
-      duration: number(row.ZDURATION) || null,
-      width: number(row.ZSIZEWIDTH) || null,
-      height: number(row.ZSIZEHEIGHT) || null,
-      latitude: number(row.ZLATITUDE),
-      longitude: number(row.ZLONGITUDE),
-      createdAt: time(row.ZCREATIONDATE),
-      modifiedAt: time(row.ZMODIFICATIONDATE),
-      availableLocally:
-        file !== null &&
-        (await access(file).then(
-          () => true,
-          () => false,
-        )),
+      id: attachment.id,
+      noteId: attachment.noteId,
+      parentId: string(attachment.parentId),
+      type: string(attachment.type) ?? 'public.data',
+      title: string(attachment.title),
+      filename: string(attachment.filename),
+      url: content(attachment.url),
+      summary: content(attachment.summary),
+      ocrText: content(attachment.ocrSummary),
+      handwritingText: content(attachment.handwritingSummary),
+      imageLabels: content(attachment.imageClassificationSummary),
+      transcript: content(attachment.indexableText),
+      fileSize: attachment.fileSize ?? 0,
+      duration: attachment.duration || null,
+      width: attachment.width || null,
+      height: attachment.height || null,
+      latitude: attachment.latitude,
+      longitude: attachment.longitude,
+      createdAt: attachment.createdAt?.toISOString() ?? null,
+      modifiedAt: attachment.modifiedAt?.toISOString() ?? null,
+      availableLocally: await attachment.availableLocally(),
     };
   }
 
   // The original file, not a staged copy: readers only read it.
   override file(record: Attachment, scan: NotesScan): string | null {
-    const row = scan.attachments.get(record.id);
-    return record.availableLocally && row !== undefined ? scan.file(row) : null;
+    const attachment = scan.attachments.get(record.id);
+    return record.availableLocally && attachment !== undefined
+      ? attachment.file
+      : null;
   }
 }

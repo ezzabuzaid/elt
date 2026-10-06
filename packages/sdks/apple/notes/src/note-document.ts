@@ -25,24 +25,36 @@ const versionData = (bytes: Uint8Array): ProtobufMessage => {
 
 const uuid = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
 
-// topotext ParagraphStyle.style. An absent style is body text.
-const paragraphStyles = {
-  title: 0,
-  heading: 1,
-  subheading: 2,
-  monospaced: 4,
-  bullet: 100,
-  dash: 101,
-  numbered: 102,
-  checklist: 103,
-} as const;
+export type ParagraphStyle =
+  | 'title'
+  | 'heading'
+  | 'subheading'
+  | 'monospaced'
+  | 'bullet'
+  | 'dash'
+  | 'numbered'
+  | 'checklist'
+  | 'body';
+
+// topotext ParagraphStyle.style by number. An absent style is body text, and
+// so is one this reader does not know.
+const paragraphStyles = new Map<number | undefined, ParagraphStyle>([
+  [0, 'title'],
+  [1, 'heading'],
+  [2, 'subheading'],
+  [4, 'monospaced'],
+  [100, 'bullet'],
+  [101, 'dash'],
+  [102, 'numbered'],
+  [103, 'checklist'],
+]);
 
 export type NoteAttachmentReference = {
   readonly id: string;
   readonly type: string | null;
 };
 
-type Run = {
+export type Run = {
   readonly text: string;
   readonly bold: boolean;
   readonly italic: boolean;
@@ -51,8 +63,8 @@ type Run = {
   readonly attachment: NoteAttachmentReference | null;
 };
 
-type Paragraph = {
-  readonly style: number | undefined;
+export type Paragraph = {
+  readonly style: ParagraphStyle;
   readonly indent: number;
   readonly blockQuote: number;
   readonly startNumber: number | undefined;
@@ -61,14 +73,14 @@ type Paragraph = {
 };
 
 // The attachment character Notes puts where an attachment sits in the text.
-const attachmentCharacter = '\ufffc';
+export const attachmentCharacter = '\ufffc';
 
+// A note body's paragraphs, each a style and runs of formatted text, with
+// attachment characters marking where attachments sit.
 export class NoteDocument {
-  readonly text: string;
   readonly paragraphs: readonly Paragraph[];
 
-  private constructor(text: string, paragraphs: readonly Paragraph[]) {
-    this.text = text;
+  private constructor(paragraphs: readonly Paragraph[]) {
     this.paragraphs = paragraphs;
   }
 
@@ -84,7 +96,7 @@ export class NoteDocument {
     const close = () => {
       const todo = style?.message(5);
       paragraphs.push({
-        style: style?.uint(1),
+        style: paragraphStyles.get(style?.uint(1)) ?? 'body',
         indent: style?.uint(4) ?? 0,
         blockQuote: style?.uint(8) ?? 0,
         startNumber: style?.uint(7),
@@ -138,154 +150,9 @@ export class NoteDocument {
         attachment: null,
       });
     if (current.length > 0) close();
-    return new NoteDocument(text, paragraphs);
-  }
-
-  // The visible text, with each attachment character replaced as the caller
-  // renders it: an inline tag by its text, a file by nothing.
-  plain(attachment: (reference: NoteAttachmentReference) => string): string {
-    return this.paragraphs
-      .map((paragraph) =>
-        paragraph.runs
-          .map(({ text, attachment: reference }) =>
-            reference === null
-              ? text
-              : text.replaceAll(attachmentCharacter, () =>
-                  attachment(reference),
-                ),
-          )
-          .join(''),
-      )
-      .join('\n');
-  }
-
-  // Attachments render through the caller: a table becomes its cells, an
-  // inline tag its text, a file a link to the attachment row.
-  markdown(attachment: (reference: NoteAttachmentReference) => string): string {
-    const lines: string[] = [];
-    const numbers: number[] = [];
-    let monospaced = false;
-    for (const paragraph of this.paragraphs) {
-      const code = paragraph.style === paragraphStyles.monospaced;
-      if (code !== monospaced) {
-        lines.push('```');
-        monospaced = code;
-      }
-      if (code) {
-        lines.push(plain(paragraph));
-        continue;
-      }
-      const numbered = paragraph.style === paragraphStyles.numbered;
-      numbers.length = numbered ? paragraph.indent + 1 : 0;
-      if (numbered)
-        numbers[paragraph.indent] =
-          paragraph.startNumber ?? (numbers[paragraph.indent] ?? 0) + 1;
-      // Notes draws headings bold; the heading marker already says so.
-      const heading =
-        paragraph.style === paragraphStyles.title ||
-        paragraph.style === paragraphStyles.heading ||
-        paragraph.style === paragraphStyles.subheading;
-      const content = merge(
-        heading
-          ? paragraph.runs.map((run) => ({ ...run, bold: false }))
-          : paragraph.runs,
-      )
-        .map((run) => inline(run, attachment))
-        .join('');
-      if (content === '') {
-        lines.push('');
-        continue;
-      }
-      const indent = '  '.repeat(paragraph.indent);
-      const quote = '> '.repeat(paragraph.blockQuote);
-      const prefix =
-        paragraph.style === paragraphStyles.title
-          ? '# '
-          : paragraph.style === paragraphStyles.heading
-            ? '## '
-            : paragraph.style === paragraphStyles.subheading
-              ? '### '
-              : paragraph.style === paragraphStyles.bullet ||
-                  paragraph.style === paragraphStyles.dash
-                ? `${indent}- `
-                : numbered
-                  ? `${indent}${numbers[paragraph.indent]}. `
-                  : paragraph.style === paragraphStyles.checklist
-                    ? `${indent}- [${paragraph.todo?.done ? 'x' : ' '}] `
-                    : '';
-      lines.push(
-        `${quote}${prefix}${prefix === '' ? escapeLineStart(content) : content}`,
-      );
-    }
-    if (monospaced) lines.push('```');
-    return lines.join('\n');
+    return new NoteDocument(paragraphs);
   }
 }
-
-const plain = (paragraph: Paragraph) =>
-  paragraph.runs
-    .map((run) => run.text)
-    .join('')
-    .replaceAll(attachmentCharacter, '');
-
-// Runs that differ only in what Markdown cannot show (fonts, underline) join,
-// so emphasis wraps a phrase once instead of each fragment.
-const merge = (runs: readonly Run[]): Run[] =>
-  runs.reduce<Run[]>((merged, run) => {
-    const previous = merged.at(-1);
-    if (
-      previous !== undefined &&
-      previous.attachment === null &&
-      run.attachment === null &&
-      previous.bold === run.bold &&
-      previous.italic === run.italic &&
-      previous.strikethrough === run.strikethrough &&
-      previous.link === run.link
-    )
-      merged[merged.length - 1] = {
-        ...previous,
-        text: previous.text + run.text,
-      };
-    else merged.push(run);
-    return merged;
-  }, []);
-
-const escapeInline = (text: string) => text.replace(/[\\`*_[\]~<]/g, '\\$&');
-
-// Text that would read as Markdown structure at the start of a line.
-const escapeLineStart = (line: string) =>
-  line.replace(/^(\s*)([#>+-]|\d+[.)])(?=\s|$)/, '$1\\$2');
-
-const inline = (
-  run: Run,
-  attachment: (reference: NoteAttachmentReference) => string,
-): string => {
-  const { attachment: reference } = run;
-  if (reference !== null)
-    return run.text
-      .split('')
-      .map((character) =>
-        character === attachmentCharacter
-          ? attachment(reference)
-          : escapeInline(character),
-      )
-      .join('');
-  const text = run.text.trim();
-  if (text === '') return run.text;
-  let body = escapeInline(text);
-  if (run.strikethrough) body = `~~${body}~~`;
-  if (run.bold && run.italic) body = `***${body}***`;
-  else if (run.bold) body = `**${body}**`;
-  else if (run.italic) body = `*${body}*`;
-  if (run.link !== null) body = `[${body}](<${run.link}>)`;
-  // Emphasis markers must hug the text, so surrounding spaces stay outside.
-  const leading = run.text.slice(
-    0,
-    run.text.length - run.text.trimStart().length,
-  );
-  const trailing = run.text.slice(run.text.trimEnd().length);
-  return `${leading}${body}${trailing}`;
-};
 
 // A table's rows × columns of cell text, in visual order. The CRDT keeps an
 // object pool: pool[0] maps crRows/crColumns (ordered sets of row and column
@@ -386,18 +253,4 @@ export function decodeTable(bytes: Uint8Array): string[][] {
   return direction === 'CRTableColumnDirectionRightToLeft'
     ? grid.map((row) => row.toReversed())
     : grid;
-}
-
-export function markdownTable(grid: readonly (readonly string[])[]): string {
-  if (grid.length === 0) return '';
-  const cell = (text: string) =>
-    escapeInline(text).replaceAll('|', '\\|').replaceAll('\n', '<br>');
-  const row = (cells: readonly string[]) =>
-    `| ${cells.map(cell).join(' | ')} |`;
-  const [header = [], ...body] = grid;
-  return [
-    row(header),
-    `| ${header.map(() => '---').join(' | ')} |`,
-    ...body.map(row),
-  ].join('\n');
 }

@@ -1,7 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { NoteAccount } from '@workspace/sdk-apple-notes';
 
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
-import type { NotesScan, Row } from './notes-scan.ts';
+import type { NotesScan } from './notes-scan.ts';
 
 const { id, text, ordinal } = notesFields;
 
@@ -19,7 +20,10 @@ const properties = {
   },
 } as const;
 
-export class AccountsStream extends AppleNotesStream<typeof properties, Row> {
+export class AccountsStream extends AppleNotesStream<
+  typeof properties,
+  NoteAccount
+> {
   readonly name = 'accounts';
   readonly jsonSchema = {
     type: 'object',
@@ -29,15 +33,11 @@ export class AccountsStream extends AppleNotesStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: NotesScan): readonly Row[] {
+  protected rows(scan: NotesScan): readonly NoteAccount[] {
     return scan.accounts;
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
-    return {
-      id: row.ZIDENTIFIER,
-      name: row.ZNAME,
-      type: row.ZACCOUNTTYPE,
-    };
+  protected record(account: NoteAccount): RecordDraft<typeof properties> {
+    return { id: account.id, name: account.name, type: account.type };
   }
 }

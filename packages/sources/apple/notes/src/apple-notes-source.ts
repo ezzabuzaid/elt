@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 
 import type {
@@ -9,6 +8,11 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+import {
+  NotesStore,
+  launchNotesHidden,
+  noteStorePath,
+} from '@workspace/sdk-apple-notes';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -17,9 +21,7 @@ import type { NotesReader } from './apple-notes-stream.ts';
 import { AttachmentsStream } from './attachments-stream.ts';
 import { FoldersStream } from './folders-stream.ts';
 import { InlineAttachmentsStream } from './inline-attachments-stream.ts';
-import { NoteStore, NoteStoreVersion, notesContainer } from './note-store.ts';
-import { launchNotesHidden } from './notes-app.ts';
-import { NotesScan, requiredColumns } from './notes-scan.ts';
+import { NotesScan } from './notes-scan.ts';
 import { NotesStream } from './notes-stream.ts';
 
 const readers = {
@@ -55,9 +57,10 @@ export class AppleNotesSource extends Source<NotesScan> {
 
   readonly path: string;
   readonly scope: ImportScope;
+  readonly #store: NotesStore;
 
   constructor({
-    path = join(notesContainer, 'NoteStore.sqlite'),
+    path = noteStorePath,
     scope = {},
   }: {
     path?: string;
@@ -66,12 +69,13 @@ export class AppleNotesSource extends Source<NotesScan> {
     super();
     this.path = path;
     this.scope = scope;
+    this.#store = new NotesStore(path);
     this.identity = `apple-notes:${path}`;
     Object.freeze(this);
   }
 
   protected override async open(): Promise<NotesScan> {
-    return new NotesScan(new NoteStore(this.path, requiredColumns), this.scope);
+    return new NotesScan(this.#store.open(), this.scope);
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {
@@ -83,7 +87,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
-    using version = new NoteStoreVersion(this.path);
+    using version = this.#store.version();
     let seen = version.current;
     await launchNotesHidden();
     let nextLaunch = Date.now() + launchIntervalMs;

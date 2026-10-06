@@ -1,7 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { InlineAttachment } from '@workspace/sdk-apple-notes';
 
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
-import { type NotesScan, type Row, string, time } from './notes-scan.ts';
+import { type NotesScan, string } from './notes-scan.ts';
 
 const { id, text, nullableText, nullableTimestamp } = notesFields;
 
@@ -36,7 +37,7 @@ const properties = {
 
 export class InlineAttachmentsStream extends AppleNotesStream<
   typeof properties,
-  Row
+  InlineAttachment
 > {
   readonly name = 'inlineAttachments';
   readonly jsonSchema = {
@@ -47,18 +48,18 @@ export class InlineAttachmentsStream extends AppleNotesStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: NotesScan): readonly Row[] {
+  protected rows(scan: NotesScan): readonly InlineAttachment[] {
     return [...scan.inline.values()];
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(inline: InlineAttachment): RecordDraft<typeof properties> {
     return {
-      id: row.ZIDENTIFIER,
-      noteId: row.note,
-      type: row.ZTYPEUTI1,
-      text: string(row.ZALTTEXT),
-      target: string(row.ZTOKENCONTENTIDENTIFIER),
-      createdAt: time(row.ZCREATIONDATE2),
+      id: inline.id,
+      noteId: inline.noteId,
+      type: inline.type,
+      text: string(inline.altText),
+      target: string(inline.target),
+      createdAt: inline.createdAt?.toISOString() ?? null,
     };
   }
 }

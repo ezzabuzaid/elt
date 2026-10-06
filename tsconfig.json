@@ -133,6 +133,9 @@
     },
     {
       "path": "./packages/sdks/apple/messages"
+    },
+    {
+      "path": "./packages/sdks/apple/notes"
     }
   ]
 }

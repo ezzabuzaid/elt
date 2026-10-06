@@ -1,13 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { Note } from '@workspace/sdk-apple-notes';
 
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
-import {
-  type NoteEntry,
-  type NotesScan,
-  flag,
-  string,
-  time,
-} from './notes-scan.ts';
+import { type NotesScan, string } from './notes-scan.ts';
 
 const { id, nullableText, nullableTimestamp, boolean } = notesFields;
 
@@ -77,10 +72,7 @@ const properties = {
   },
 } as const;
 
-export class NotesStream extends AppleNotesStream<
-  typeof properties,
-  NoteEntry
-> {
+export class NotesStream extends AppleNotesStream<typeof properties, Note> {
   readonly name = 'notes';
   readonly jsonSchema = {
     type: 'object',
@@ -90,29 +82,30 @@ export class NotesStream extends AppleNotesStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: NotesScan): readonly NoteEntry[] {
+  protected rows(scan: NotesScan): readonly Note[] {
     return scan.notes;
   }
 
-  // A locked note's body is encrypted: it keeps its title, dates and flags.
+  // A locked note has no document: it keeps its title, dates and flags.
   protected record(
-    { row, document }: NoteEntry,
+    note: Note,
     scan: NotesScan,
   ): RecordDraft<typeof properties> {
+    const document = note.document();
     return {
-      id: row.ZIDENTIFIER,
-      accountId: row.account,
-      folderId: row.folder,
-      title: string(row.ZTITLE1),
+      id: note.id,
+      accountId: note.accountId,
+      folderId: note.folderId,
+      title: string(note.title),
       text: document === null ? null : scan.text(document),
       markdown: document === null ? null : scan.markdown(document),
-      createdAt: time(row.ZCREATIONDATE3),
-      modifiedAt: time(row.ZMODIFICATIONDATE1),
-      pinned: flag(row.ZISPINNED),
-      hasChecklist: flag(row.ZHASCHECKLIST),
-      checklistInProgress: flag(row.ZHASCHECKLISTINPROGRESS),
-      locked: flag(row.ZISPASSWORDPROTECTED),
-      shared: flag(row.shared),
+      createdAt: note.createdAt?.toISOString() ?? null,
+      modifiedAt: note.modifiedAt?.toISOString() ?? null,
+      pinned: note.pinned,
+      hasChecklist: note.hasChecklist,
+      checklistInProgress: note.checklistInProgress,
+      locked: note.locked,
+      shared: note.shared,
     };
   }
 }

@@ -257,7 +257,7 @@ EventKit has no read transaction, so Calendar and Reminders contexts read optimi
 
 ### Apple Notes behavior
 
-The source reads Notes' own Core Data store, `~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite`, read-only under Full Disk Access; Notes does not need to be open. Each run reads every selected stream inside one SQLite read transaction, so notes, attachments and folders come from the same moment. Note bodies are gzipped protobuf documents and tables are gzipped CRDT documents; both are decoded in-process.
+The source reads Notes' own Core Data store, `~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite`, read-only under Full Disk Access through its SDK, `@workspace/sdk-apple-notes`; Notes does not need to be open. Each run reads every selected stream inside one SQLite read transaction, so notes, attachments and folders come from the same moment. Note bodies are gzipped protobuf documents and tables are gzipped CRDT documents; both are decoded in-process.
 
 | Stream              | Key    | Contents                                                                                                                                                                                                                                                                                                                                                          |
 | ------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -277,7 +277,7 @@ Notes in Recently Deleted are notes in that folder, so they remain in the export
 
 Only Notes syncs iCloud notes on the Mac. While Notes is closed, the store holds what Notes last synced: edits made on other devices reach it the next time Notes runs, which a [Notes watch](#watching-for-changes) arranges by launching Notes hidden.
 
-The store's layout changes between macOS releases. The source reads the macOS 26 layout and checks every column it uses before reading; a store without one fails with `NotesSchemaError` naming the missing columns rather than loading misplaced fields. A store that cannot be opened (missing, or no Full Disk Access) fails with `NotesUnavailableError`.
+The store's layout changes between macOS releases. The SDK reads the macOS 26 layout and checks every column it uses when it opens the store; a store without one fails with `NotesSchemaError` naming the missing columns rather than loading misplaced fields. A store that cannot be opened (missing, or no Full Disk Access) fails with `NotesUnavailableError`.
 
 ## Watching for changes
 

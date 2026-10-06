@@ -1,7 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { NoteFolder } from '@workspace/sdk-apple-notes';
 
 import { AppleNotesStream, notesFields } from './apple-notes-stream.ts';
-import { type NotesScan, type Row, flag, string } from './notes-scan.ts';
+import { type NotesScan, string } from './notes-scan.ts';
 
 const { id, nullableId, text, ordinal, nullableText, boolean } = notesFields;
 
@@ -38,7 +39,10 @@ const properties = {
   },
 } as const;
 
-export class FoldersStream extends AppleNotesStream<typeof properties, Row> {
+export class FoldersStream extends AppleNotesStream<
+  typeof properties,
+  NoteFolder
+> {
   readonly name = 'folders';
   readonly jsonSchema = {
     type: 'object',
@@ -48,19 +52,19 @@ export class FoldersStream extends AppleNotesStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: NotesScan): readonly Row[] {
+  protected rows(scan: NotesScan): readonly NoteFolder[] {
     return scan.folders;
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(folder: NoteFolder): RecordDraft<typeof properties> {
     return {
-      id: row.ZIDENTIFIER,
-      accountId: row.account,
-      parentId: string(row.parent),
-      name: row.ZTITLE2,
-      type: row.ZFOLDERTYPE,
-      smartQuery: string(row.ZSMARTFOLDERQUERYJSON),
-      shared: flag(row.shared),
+      id: folder.id,
+      accountId: folder.accountId,
+      parentId: string(folder.parentId),
+      name: folder.name,
+      type: folder.type,
+      smartQuery: string(folder.smartQuery),
+      shared: folder.shared,
     };
   }
 }

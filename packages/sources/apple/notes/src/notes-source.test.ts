@@ -206,6 +206,14 @@ const richNote = [
       type: 'com.apple.notes.inlinetextattachment.link',
     },
   },
+  { text: '\nwho ' },
+  {
+    text: '\ufffc',
+    attachment: {
+      id: 'INLINE-BLANK',
+      type: 'com.apple.notes.inlinetextattachment.mention',
+    },
+  },
   { text: '\n' },
 ];
 
@@ -213,6 +221,10 @@ const richNote = [
 // locked note, a note in Recently Deleted, a cloud placeholder and a row
 // Notes marked for deletion. The file attachment's bytes sit where Notes
 // keeps media; the photo's do not, as when iCloud has not downloaded it.
+// Also cases a live store rarely holds: a second account with its own
+// folder, a scan gallery whose page belongs to the gallery rather than the
+// note, a photo with a blank user title and two locations, and a mention
+// whose text is blank.
 const noteStoreFixture = async (directory: string) => {
   const path = join(directory, 'NoteStore.sqlite');
   const media = join(
@@ -234,11 +246,12 @@ const noteStoreFixture = async (directory: string) => {
   const created = coreDataSeconds('2025-01-02T03:04:05.006Z');
   const modified = coreDataSeconds('2025-02-03T04:05:06.007Z');
   database.exec(`
-    INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZNAME, ZACCOUNTTYPE) VALUES (1, 14, 'ACCOUNT-1', 'iCloud', 1);
+    INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZNAME, ZACCOUNTTYPE) VALUES (1, 14, 'ACCOUNT-1', 'iCloud', 1), (18, 14, 'ACCOUNT-2', 'On My Mac', 3);
     INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE2, ZACCOUNT8, ZFOLDERTYPE, ZPARENT) VALUES
       (2, 15, 'FOLDER-NOTES', 'Notes', 1, 0, NULL),
       (3, 15, 'FOLDER-TRASH', 'Recently Deleted', 1, 1, NULL),
-      (4, 15, 'FOLDER-CHILD', 'Child', 1, 0, 2);
+      (4, 15, 'FOLDER-CHILD', 'Child', 1, 0, 2),
+      (19, 15, 'FOLDER-LOCAL', 'Local', 18, 0, NULL);
     INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZACCOUNT7, ZNOTEDATA, ZCREATIONDATE3, ZMODIFICATIONDATE1, ZISPINNED, ZISPASSWORDPROTECTED, ZHASCHECKLIST, ZHASCHECKLISTINPROGRESS) VALUES
       (5, 12, 'NOTE-RICH', 'Groceries', 2, 1, 1, ${created}, ${modified}, 1, 0, 1, 1),
       (6, 12, 'NOTE-LOCKED', 'Secret', 2, 1, 2, ${created}, ${modified}, 0, 1, 0, 0),
@@ -249,14 +262,19 @@ const noteStoreFixture = async (directory: string) => {
       (11, 5, 'ATT-TABLE', 5, 1, NULL, 'com.apple.notes.table', 0, ${created}, ${modified}, NULL, 0),
       (12, 5, 'ATT-PHOTO', 5, 1, 13, 'public.jpeg', 2048, ${created}, ${modified}, 'photo words', 0),
       (14, 5, 'ATT-LOCKED', 6, 1, NULL, 'public.jpeg', 10, ${created}, ${modified}, 'secret words', 0),
-      (16, 5, 'ATT-PURGED', 5, 1, NULL, 'public.jpeg', 10, ${created}, ${modified}, NULL, 1);
+      (16, 5, 'ATT-PURGED', 5, 1, NULL, 'public.jpeg', 10, ${created}, ${modified}, NULL, 1),
+      (20, 5, 'ATT-GALLERY', 5, 1, NULL, 'com.apple.notes.gallery', 0, ${created}, ${modified}, NULL, 0),
+      (21, 5, 'ATT-PAGE', NULL, 1, NULL, 'com.apple.paper.doc.scan', 0, ${created}, ${modified}, NULL, 0);
+    UPDATE ZICCLOUDSYNCINGOBJECT SET ZPARENTATTACHMENT = 20 WHERE Z_PK = 21;
+    UPDATE ZICCLOUDSYNCINGOBJECT SET ZUSERTITLE = '', ZTITLE = 'Photo' WHERE Z_PK = 12;
     INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZFILENAME, ZGENERATION1, ZACCOUNT6, ZATTACHMENT1) VALUES
       (10, 11, 'MEDIA-FILE', 'list.txt', '1_GEN', 1, 9),
       (13, 11, 'MEDIA-PHOTO', 'photo.jpg', '1_GEN', 1, 12);
     INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZNOTE1, ZTYPEUTI1, ZALTTEXT, ZTOKENCONTENTIDENTIFIER, ZCREATIONDATE2) VALUES
       (15, 9, 'INLINE-TAG', 5, 'com.apple.notes.inlinetextattachment.hashtag', '#food', 'FOOD', ${created}),
-      (17, 9, 'INLINE-LINK', 5, 'com.apple.notes.inlinetextattachment.link', 'Old', 'applenotes:note/note-trashed', ${created});
-    INSERT INTO ZICLOCATION (ZATTACHMENT, ZLATITUDE, ZLONGITUDE) VALUES (12, 52.52, 13.405);
+      (17, 9, 'INLINE-LINK', 5, 'com.apple.notes.inlinetextattachment.link', 'Old', 'applenotes:note/note-trashed', ${created}),
+      (22, 9, 'INLINE-BLANK', 5, 'com.apple.notes.inlinetextattachment.mention', ' ', NULL, ${created});
+    INSERT INTO ZICLOCATION (ZATTACHMENT, ZLATITUDE, ZLONGITUDE) VALUES (12, 52.52, 13.405), (12, 48.8566, 2.3522);
   `);
   database
     .prepare(
@@ -338,6 +356,9 @@ test('Notes scope excludes other folders from records, attachments and checkpoin
   });
   const { pipeline, destination } = notesPipeline(source, scratch.path);
   await pipeline.run();
+  assert.deepEqual(noteRows(destination.path, 'SELECT id FROM accounts'), [
+    { id: 'ACCOUNT-1' },
+  ]);
   assert.deepEqual(noteRows(destination.path, 'SELECT id FROM notes'), [
     { id: 'NOTE-TRASHED' },
   ]);
@@ -353,6 +374,24 @@ test('Notes scope excludes other folders from records, attachments and checkpoin
   );
   assert.ok(saved.includes('NOTE-TRASHED'));
   assert.ok(!saved.includes('NOTE-RICH') && !saved.includes('ATT-FILE'));
+});
+
+test('a Notes folder scope keeps only the accounts that own a selected folder', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-scope-'));
+  const source = new AppleNotesSource({
+    path: await noteStoreFixture(scratch.path),
+    scope: { collectionIds: ['FOLDER-LOCAL'] },
+  });
+  const { pipeline, destination } = notesPipeline(source, scratch.path);
+
+  await pipeline.run();
+
+  assert.deepEqual(noteRows(destination.path, 'SELECT id FROM accounts'), [
+    { id: 'ACCOUNT-2' },
+  ]);
+  assert.deepEqual(noteRows(destination.path, 'SELECT id FROM folders'), [
+    { id: 'FOLDER-LOCAL' },
+  ]);
 });
 
 test('Notes exports every stream from its store, skipping cloud placeholders and locked content', async () => {
@@ -384,15 +423,16 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
   assert.deepEqual(
     results.map(({ copy, count }) => [copy.from.name, count]),
     [
-      ['accounts', 1],
-      ['folders', 3],
+      ['accounts', 2],
+      ['folders', 4],
       ['notes', 3],
-      ['inlineAttachments', 2],
-      ['attachments', 4],
+      ['inlineAttachments', 3],
+      ['attachments', 6],
     ],
   );
   assert.deepEqual(rows('SELECT id, name, type FROM accounts'), [
     { id: 'ACCOUNT-1', name: 'iCloud', type: 1 },
+    { id: 'ACCOUNT-2', name: 'On My Mac', type: 3 },
   ]);
   assert.deepEqual(
     rows('SELECT id, accountId, parentId, name, type FROM folders ORDER BY id'),
@@ -402,6 +442,13 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
         accountId: 'ACCOUNT-1',
         parentId: 'FOLDER-NOTES',
         name: 'Child',
+        type: 0,
+      },
+      {
+        id: 'FOLDER-LOCAL',
+        accountId: 'ACCOUNT-2',
+        parentId: null,
+        name: 'Local',
         type: 0,
       },
       {
@@ -442,7 +489,9 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
         id: 'NOTE-RICH',
         folderId: 'FOLDER-NOTES',
         title: 'Groceries',
-        text: 'Groceries\nMilk\nEggs\nBuy fresh\nsee site\n\n\ntag #food\nlink Old',
+        // A blank mention adds nothing to the text but keeps its stored
+        // space in Markdown.
+        text: 'Groceries\nMilk\nEggs\nBuy fresh\nsee site\n\n\ntag #food\nlink Old\nwho ',
         markdown: [
           '# Groceries',
           '- [x] Milk',
@@ -457,6 +506,7 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
           '',
           'tag #food',
           'link [Old](<applenotes:note/note-trashed>)',
+          'who  ',
         ].join('\n'),
         createdAt: '2025-01-02T03:04:05.006Z',
         modifiedAt: '2025-02-03T04:05:06.007Z',
@@ -486,6 +536,13 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
     ),
     [
       {
+        id: 'INLINE-BLANK',
+        noteId: 'NOTE-RICH',
+        type: 'com.apple.notes.inlinetextattachment.mention',
+        text: null,
+        target: null,
+      },
+      {
         id: 'INLINE-LINK',
         noteId: 'NOTE-RICH',
         type: 'com.apple.notes.inlinetextattachment.link',
@@ -503,13 +560,15 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
   );
   assert.deepEqual(
     rows(
-      'SELECT id, noteId, type, filename, ocrText, latitude, longitude, availableLocally, CAST(bytes AS TEXT) AS content FROM attachments ORDER BY id',
+      'SELECT id, noteId, parentId, type, title, filename, ocrText, latitude, longitude, availableLocally, CAST(bytes AS TEXT) AS content FROM attachments ORDER BY id',
     ).map(({ content, ...row }) => ({ ...row, hasBytes: content !== null })),
     [
       {
         id: 'ATT-FILE',
         noteId: 'NOTE-RICH',
+        parentId: null,
         type: 'public.plain-text',
+        title: null,
         filename: 'list.txt',
         ocrText: null,
         latitude: null,
@@ -518,9 +577,11 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
         hasBytes: true,
       },
       {
-        id: 'ATT-LOCKED',
-        noteId: 'NOTE-LOCKED',
-        type: 'public.jpeg',
+        id: 'ATT-GALLERY',
+        noteId: 'NOTE-RICH',
+        parentId: null,
+        type: 'com.apple.notes.gallery',
+        title: null,
         filename: null,
         ocrText: null,
         latitude: null,
@@ -529,9 +590,40 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
         hasBytes: false,
       },
       {
+        id: 'ATT-LOCKED',
+        noteId: 'NOTE-LOCKED',
+        parentId: null,
+        type: 'public.jpeg',
+        title: null,
+        filename: null,
+        ocrText: null,
+        latitude: null,
+        longitude: null,
+        availableLocally: 0,
+        hasBytes: false,
+      },
+      {
+        // A scan page belongs to its gallery, and through it to the note.
+        id: 'ATT-PAGE',
+        noteId: 'NOTE-RICH',
+        parentId: 'ATT-GALLERY',
+        type: 'com.apple.paper.doc.scan',
+        title: null,
+        filename: null,
+        ocrText: null,
+        latitude: null,
+        longitude: null,
+        availableLocally: 0,
+        hasBytes: false,
+      },
+      {
+        // One record despite two locations; a blank user title hides the
+        // stored one.
         id: 'ATT-PHOTO',
         noteId: 'NOTE-RICH',
+        parentId: null,
         type: 'public.jpeg',
+        title: null,
         filename: 'photo.jpg',
         ocrText: 'photo words',
         latitude: 52.52,
@@ -542,7 +634,9 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
       {
         id: 'ATT-TABLE',
         noteId: 'NOTE-RICH',
+        parentId: null,
         type: 'com.apple.notes.table',
+        title: null,
         filename: null,
         ocrText: null,
         latitude: null,
