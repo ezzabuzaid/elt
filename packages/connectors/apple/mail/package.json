@@ -11,6 +11,7 @@
   "dependencies": {
     "@workspace/connector-apple-connector": "0.0.1",
     "@workspace/sdk-apple-accounts": "0.0.1",
+    "@workspace/sdk-apple-mail": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
     "@workspace/source-apple-mail": "0.0.1"
   }

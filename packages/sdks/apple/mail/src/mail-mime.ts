@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { copyFile, open, rm } from 'node:fs/promises';
-import { basename, extname, join } from 'node:path';
+import { basename } from 'node:path';
 import type { Transform } from 'node:stream';
 import { pipeline, finished as streamFinished } from 'node:stream/promises';
 
@@ -13,45 +13,55 @@ import {
 } from '@zone-eu/mailsplit';
 import libmime from 'libmime';
 
-import {
-  type MailFile,
-  MailSchemaError,
-  type MailStore,
-  assertMailFile,
-  hashMailFile,
-} from './mail-store.ts';
+import { MailSchemaError } from './errors.ts';
+import type { MailFile, MailFiles } from './mail-files.ts';
 
-export type MailPart = {
-  messageId: string;
-  partId: string;
-  parentPartId: string | null;
-  contentType: string | null;
-  charset: string | null;
-  transferEncoding: string | null;
-  disposition: string | null;
-  filename: string | null;
-  contentId: string | null;
-  isMultipart: boolean;
-  isAttachment: boolean;
-  declaredBytes: number | null;
-  decodedBytes: number | null;
-  availableLocally: boolean;
-  sha256: string | null;
+// One MIME part of a message file. A value the MIME parser reports absent is
+// null.
+export type MimePart = {
+  // Dotted MIME part number, such as 1 or 1.2. The root of a multipart message
+  // is TEXT; a single-part message is 1, as Mail's index numbers it.
+  readonly id: string;
+  readonly parentId: string | null;
+  readonly contentType: string | null;
+  readonly charset: string | null;
+  readonly transferEncoding: string | null;
+  readonly disposition: string | null;
+  readonly filename: string | null;
+  readonly contentId: string | null;
+  readonly isMultipart: boolean;
+  // A non-multipart part with a filename, an attachment disposition, an
+  // attached message or a media type other than text/*.
+  readonly isAttachment: boolean;
+  // X-Apple-Content-Length: the size of a part Mail downloads apart from its
+  // message, whose body in the message file is then empty.
+  readonly declaredBytes: number | null;
+  // After transfer decoding, or the size of the separate file of a detached
+  // part; null for a container, a part not decoded, or a detached part whose
+  // file is missing.
+  readonly decodedBytes: number | null;
+  // False only for a detached part whose separate file is missing.
+  readonly availableLocally: boolean;
+  readonly sha256: string | null;
+  // The decoded bytes, staged where the caller asked.
+  readonly file: string | null;
+  // A text/* part decoded with its charset, when nothing is staged.
+  readonly text: string | null;
 };
 
-export type MailHeader = {
-  messageId: string;
-  partId: string;
-  position: number;
-  name: string;
-  value: string;
-  rawLineBase64: string;
+type MimeHeader = {
+  readonly partId: string;
+  // Within the part's header block, in stored order.
+  readonly position: number;
+  // As the MIME parser keys it, in lowercase.
+  readonly name: string;
+  // Folded lines joined and encoded words decoded.
+  readonly value: string;
+  // The whole header line, folded continuation lines joined with CRLF.
+  readonly rawLine: Uint8Array;
 };
-export type DecodedMailPart = {
-  record: MailPart;
-  path: string | null;
-  text: string | null;
-};
+
+type Part = { -readonly [Key in keyof MimePart]: MimePart[Key] };
 
 const failure = (error: unknown) =>
   Error.isError(error) ? error : new Error(String(error), { cause: error });
@@ -72,15 +82,24 @@ function partId(node: MimeNode): string {
 
 // Splitter owns MIME structure, encoded headers, filenames and transfer decoding.
 // This function only owns Apple's byte frame and separately downloaded files.
+// It reads either the headers of every part, or the parts, decoding those
+// decode() selects: staged to the file stage() names, or, when stage is null,
+// as text for text/* parts.
 export async function readMailMime(
-  store: MailStore,
+  files: MailFiles,
   messageId: string,
   file: MailFile,
-  readHeaders: boolean,
-  stageFiles: boolean,
-  decode: (part: MailPart) => boolean,
-): Promise<{ headers: MailHeader[]; parts: DecodedMailPart[] }> {
-  await assertMailFile(file);
+  {
+    headers: readHeaders,
+    decode,
+    stage,
+  }: {
+    readonly headers: boolean;
+    readonly decode: (part: MimePart) => boolean;
+    readonly stage: ((part: MimePart) => string) | null;
+  },
+): Promise<{ headers: MimeHeader[]; parts: MimePart[] }> {
+  await file.assertUnchanged();
   await using handle = await open(file.path, 'r');
   const prefix = Buffer.alloc(64);
   const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
@@ -96,8 +115,8 @@ export async function readMailMime(
   if (!Number.isSafeInteger(length) || length < 1 || start + length > file.size)
     throw new MailSchemaError(`Truncated EMLX message ${messageId}`);
 
-  const headers: MailHeader[] = [];
-  const parts: DecodedMailPart[] = [];
+  const headers: MimeHeader[] = [];
+  const parts: Part[] = [];
   const splitter = new Splitter({ ignoreEmbedded: true });
   // The official option preserves an attached message/rfc822 as its complete
   // decoded file. Expanding it in Splitter would consume its attachment bytes.
@@ -113,7 +132,7 @@ export async function readMailMime(
   let active: {
     decoder: Transform;
     finished: Promise<void>;
-    part: DecodedMailPart;
+    part: Part;
     hash: ReturnType<typeof createHash>;
     textDecoder: TextDecoder | null;
   } | null = null;
@@ -125,19 +144,18 @@ export async function readMailMime(
     decoder.end();
     await finished;
     if (textDecoder !== null) part.text += textDecoder.decode();
-    const record = part.record;
     if (
-      record.decodedBytes === 0 &&
-      record.declaredBytes !== null &&
-      record.declaredBytes > 0
+      part.decodedBytes === 0 &&
+      part.declaredBytes !== null &&
+      part.declaredBytes > 0
     ) {
-      const diskId = record.partId;
-      const candidates = store.attachments.get(`${messageId}:${diskId}`);
+      const diskId = part.id;
+      const candidates = files.attachments.get(`${messageId}:${diskId}`);
       if (candidates === undefined) {
-        record.availableLocally = false;
-        record.decodedBytes = null;
-        if (part.path !== null) await rm(part.path);
-        part.path = null;
+        part.availableLocally = false;
+        part.decodedBytes = null;
+        if (part.file !== null) await rm(part.file);
+        part.file = null;
         part.text = null;
         return;
       }
@@ -145,22 +163,22 @@ export async function readMailMime(
         candidates.length === 1
           ? candidates
           : candidates.filter(
-              (candidate) => basename(candidate.path) === record.filename,
+              (candidate) => basename(candidate.path) === part.filename,
             );
       const [original] = matches;
       if (original === undefined || matches.length !== 1)
         throw new MailSchemaError(
           `Ambiguous detached Mail attachment ${messageId}:${diskId}`,
         );
-      await assertMailFile(original);
-      if (part.path !== null) await copyFile(original.path, part.path);
+      await original.assertUnchanged();
+      if (part.file !== null) await copyFile(original.path, part.file);
       if (textDecoder !== null)
         part.text = await mailPartText(original.path, textDecoder);
-      await assertMailFile(original);
-      record.decodedBytes = original.size;
-      record.sha256 = await hashMailFile(original);
+      await original.assertUnchanged();
+      part.decodedBytes = original.size;
+      part.sha256 = await original.hash();
     } else {
-      record.sha256 = hash.digest('hex');
+      part.sha256 = hash.digest('hex');
     }
   };
 
@@ -179,14 +197,11 @@ export async function readMailMime(
               Buffer.from(header.line, 'latin1').toString('utf8'),
             );
             headers.push({
-              messageId,
               partId: id,
               position,
               name: header.key,
               value: libmime.decodeWords(decoded.value),
-              rawLineBase64: Buffer.from(header.line, 'latin1').toString(
-                'base64',
-              ),
+              rawLine: Buffer.from(header.line, 'latin1'),
             });
           }
         if (readHeaders) continue;
@@ -202,11 +217,9 @@ export async function readMailMime(
         const contentId = node.headers.getFirst('Content-ID');
         // MimeNode.parseHeaders explicitly uses false for absent optional fields;
         // Headers.getFirst explicitly returns '' when a header is absent.
-        const record: MailPart = {
-          messageId,
-          partId: id,
-          parentPartId:
-            node.parentNode === false ? null : partId(node.parentNode),
+        const part: Part = {
+          id,
+          parentId: node.parentNode === false ? null : partId(node.parentNode),
           contentType: node.contentType === false ? null : node.contentType,
           charset: node.charset === false ? null : node.charset,
           transferEncoding:
@@ -228,48 +241,34 @@ export async function readMailMime(
           decodedBytes: null,
           availableLocally: true,
           sha256: null,
+          file: null,
+          text: null,
         };
-        const part: DecodedMailPart = { record, path: null, text: null };
         parts.push(part);
-        if (node.multipart !== false || !decode(record)) continue;
-        const extension =
-          node.filename === false
-            ? node.contentType === 'text/html'
-              ? '.html'
-              : node.contentType !== false &&
-                  node.contentType.startsWith('text/')
-                ? '.txt'
-                : ''
-            : extname(node.filename);
-        if (stageFiles)
-          part.path = join(
-            store.scratch.path,
-            `${messageId}-${id}${extension}`,
-          );
+        if (node.multipart !== false || !decode(part)) continue;
+        if (stage !== null) part.file = stage(part);
         const decoder = node.getDecoder();
         const hash = createHash('sha256');
         // Missing charset is MimeNode's documented false value; TextDecoder
         // owns the default. Keep text only when the caller requested bodies.
         const textDecoder =
-          !stageFiles &&
-          record.contentType !== null &&
-          record.contentType.startsWith('text/')
-            ? new TextDecoder(
-                record.charset === null ? undefined : record.charset,
-              )
+          stage === null &&
+          part.contentType !== null &&
+          part.contentType.startsWith('text/')
+            ? new TextDecoder(part.charset === null ? undefined : part.charset)
             : null;
         if (textDecoder !== null) part.text = '';
-        record.decodedBytes = 0;
+        part.decodedBytes = 0;
         decoder.on('data', (bytes: Buffer) => {
           hash.update(bytes);
-          record.decodedBytes = (record.decodedBytes ?? 0) + bytes.length;
+          part.decodedBytes = (part.decodedBytes ?? 0) + bytes.length;
           if (textDecoder !== null)
             part.text += textDecoder.decode(bytes, { stream: true });
         });
         const finished =
-          part.path === null
+          part.file === null
             ? streamFinished(decoder, { cleanup: true })
-            : pipeline(decoder, createWriteStream(part.path, { flags: 'wx' }));
+            : pipeline(decoder, createWriteStream(part.file, { flags: 'wx' }));
         finished.catch((error: unknown) => splitter.destroy(failure(error)));
         active = { decoder, finished, part, hash, textDecoder };
       } else if (chunk.type === 'body' && active !== null) {
@@ -279,7 +278,7 @@ export async function readMailMime(
     }
     await finish();
     await input;
-    await assertMailFile(file);
+    await file.assertUnchanged();
     return { headers, parts };
   } catch (error) {
     const reason = failure(error);
@@ -288,7 +287,7 @@ export async function readMailMime(
     await input.catch(() => {});
     if (active !== null) await active.finished.catch(() => {});
     await Promise.allSettled(
-      parts.flatMap((part) => (part.path === null ? [] : [rm(part.path)])),
+      parts.flatMap((part) => (part.file === null ? [] : [rm(part.file)])),
     );
     throw error;
   }

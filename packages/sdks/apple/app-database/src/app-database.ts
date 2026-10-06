@@ -92,6 +92,14 @@ export class AppDatabase implements Disposable {
     return this.#database.prepare(sql).all(...parameters);
   }
 
+  // Rows one at a time, for a table too large to hold whole.
+  iterate(
+    sql: string,
+    ...parameters: SQLInputValue[]
+  ): IterableIterator<Record<string, SQLOutputValue>> {
+    return this.#database.prepare(sql).iterate(...parameters);
+  }
+
   [Symbol.dispose](): void {
     if (!this.#database.isOpen) return;
     if (this.#database.isTransaction) this.#database.exec('COMMIT');

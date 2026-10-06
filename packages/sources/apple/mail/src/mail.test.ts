@@ -8,6 +8,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -23,6 +24,7 @@ import {
   LocalFiles,
   Pipeline,
   PipelineError,
+  type ReadMessage,
   type Source,
   type Stream,
   StreamStatus,
@@ -40,14 +42,14 @@ import {
   AccountsUnavailableError,
   accountsStorePath,
 } from '@workspace/sdk-apple-accounts';
-import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
-
-import { AppleMailSource } from './apple-mail-source.ts';
 import {
   MailUnavailableError,
   mailDirectory,
   mailVersionDirectory,
-} from './mail-store.ts';
+} from '@workspace/sdk-apple-mail';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
+
+import { AppleMailSource } from './apple-mail-source.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -795,6 +797,93 @@ async function readStream(
   );
 }
 
+// One full-refresh read of the given streams, in that order: the records each
+// yields and the error each failed with. during sees every message before the
+// read moves on, so a test can change the store at a chosen point.
+async function readAll(
+  source: AppleMailSource,
+  {
+    streams,
+    during = () => {},
+  }: {
+    readonly streams?: readonly Stream[];
+    readonly during?: (message: ReadMessage) => Promise<void> | void;
+  } = {},
+) {
+  const selected = streams ?? (await source.discover()).streams;
+  const records = new Map<string, Record<string, unknown>[]>();
+  const failed = new Map<string, unknown>();
+  for await (const message of source.read(
+    selected.map(
+      (stream) =>
+        new Copy(
+          stream,
+          new SQLiteDestination({ path: ':memory:' }).table(stream.name),
+        ).configuration,
+    ),
+    new Map(),
+  )) {
+    await during(message);
+    if (message instanceof StreamStatus) {
+      if (message.status === 'FAILED')
+        failed.set(message.stream, message.error);
+    } else if ('data' in message && isRecord(message.data))
+      records.set(message.stream, [
+        ...(records.get(message.stream) ?? []),
+        message.data,
+      ]);
+  }
+  return { records, failed };
+}
+
+// One full read of every stream from a fresh fixture under root, after change
+// has written the store the way Mail would have left it.
+async function readAfter(
+  root: string,
+  change: (store: Awaited<ReturnType<typeof fixture>>) => Promise<void> | void,
+  scope: ConstructorParameters<typeof AppleMailSource>[0]['scope'] = {},
+) {
+  const store = await fixture(root);
+  await change(store);
+  return readAll(
+    new AppleMailSource({ path: store.root, accounts: store.accounts, scope }),
+  );
+}
+
+// Exactly these streams failed, each with an error of that name whose message
+// holds that text.
+function assertFailed(
+  failed: ReadonlyMap<string, unknown>,
+  expected: Readonly<Record<string, readonly [name: string, message: RegExp]>>,
+) {
+  assert.deepEqual([...failed.keys()].sort(), Object.keys(expected).sort());
+  for (const [stream, [name, message]] of Object.entries(expected)) {
+    const error = failed.get(stream);
+    assert.ok(error instanceof Error, stream);
+    assert.equal(error.name, name, stream);
+    assert.match(error.message, message, stream);
+  }
+}
+
+// The named fields of each record one stream yielded, joined by colons.
+function values(
+  records: ReadonlyMap<string, readonly Record<string, unknown>[]>,
+  stream: string,
+  ...fields: string[]
+) {
+  return (records.get(stream) ?? []).map((record) =>
+    fields.map((field) => String(record[field])).join(':'),
+  );
+}
+
+function exec(path: string, sql: string) {
+  using database = new DatabaseSync(path);
+  database.exec(sql);
+}
+
+// An EMLX file as Mail writes it: the message's byte count, then the message.
+const emlxOf = (message: string) => `${Buffer.byteLength(message)}\n${message}`;
+
 test('Mail yields server labels and sender addresses in the numeric order of their keys', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
   const store = await fixture(join(dir.path, 'Mail'));
@@ -822,6 +911,744 @@ test('Mail yields server labels and sender addresses in the numeric order of the
   assert.deepEqual(
     senders.map(({ address }) => address),
     ['1', '2', '10'],
+  );
+});
+
+test('Mail yields every record with its fields in schema order, smart mailboxes with parentId before properties, and subjects and signatures in store order', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  exec(store.index, "INSERT INTO subjects VALUES(10,'Ten'),(2,'Two')");
+  const signatures = join(store.root, 'V10/MailData/Signatures');
+  await mkdir(join(signatures, 'Nested'));
+  await writeFile(
+    join(signatures, 'Nested/a.mailsignature'),
+    'Content-Type: text/plain\r\n\r\nNested',
+  );
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+  const { streams } = await source.discover();
+
+  const { records, failed } = await readAll(source);
+
+  assertFailed(failed, {});
+  for (const stream of streams) {
+    const yielded = records.get(stream.name) ?? [];
+    assert.ok(yielded.length > 0, stream.name);
+    const order =
+      stream === source.smartMailboxes
+        ? ['id', 'parentId', 'properties']
+        : Object.keys(stream.jsonSchema.properties ?? {});
+    for (const record of yielded)
+      assert.deepEqual(Object.keys(record), order, stream.name);
+  }
+  // The schema and the records both follow the table's columns, so pin the
+  // order Mail's messages table lists them in, not one derived from either.
+  assert.deepEqual(Object.keys(records.get('messages')?.[0] ?? {}), [
+    'id',
+    'messageId',
+    'globalMessageId',
+    'remoteId',
+    'documentIdBase64',
+    'sender',
+    'subjectPrefix',
+    'subject',
+    'summary',
+    'dateSent',
+    'dateReceived',
+    'mailbox',
+    'remoteMailbox',
+    'flags',
+    'read',
+    'flagged',
+    'deleted',
+    'size',
+    'conversationId',
+    'dateLastViewed',
+    'listIdHash',
+    'unsubscribeType',
+    'searchableMessage',
+    'brandIndicator',
+    'displayDate',
+    'flagColor',
+    'color',
+    'type',
+    'fuzzyAncestor',
+    'automatedConversation',
+    'rootStatus',
+    'isUrgent',
+  ]);
+  assert.deepEqual(values(records, 'subjects', 'id'), ['1', '2', '10']);
+  // A directory's own signatures come before those of its subdirectories.
+  assert.deepEqual(values(records, 'signatures', 'id'), ['example', 'a']);
+});
+
+test('An account scope keeps that account’s mailboxes, the messages labelled into them and those labels, and drops server rows and SMTP servers', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+    scope: { accountIds: ['LOCAL'] },
+  });
+
+  const { records, failed } = await readAll(source);
+
+  assertFailed(failed, {});
+  assert.deepEqual(values(records, 'mailboxes', 'id'), ['2']);
+  // Message 1 sits in ACCOUNT's inbox and is labelled into LOCAL's Archive.
+  assert.deepEqual(values(records, 'messages', 'id'), ['1']);
+  assert.deepEqual(
+    values(records, 'messageMailboxes', 'messageId', 'mailboxId'),
+    ['1:2'],
+  );
+  assert.deepEqual(values(records, 'serverMessages', 'id'), []);
+  assert.deepEqual(values(records, 'serverMessageMailboxes', 'label'), []);
+  assert.deepEqual(values(records, 'accounts', 'id'), ['LOCAL']);
+  assert.deepEqual(values(records, 'smtpServers', 'id'), []);
+});
+
+test('A stored 0 date reads as the epoch, and a dated scope keeps a message by its received date, else its sent date', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  exec(store.index, 'UPDATE messages SET date_sent=0 WHERE ROWID=2');
+  const everything = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  const unscoped = await readStream(everything, everything.messages);
+
+  assert.deepEqual(
+    unscoped.map(({ id, dateSent }) => [id, dateSent]),
+    [
+      ['1', '2025-01-02T03:04:05.000Z'],
+      ['2', '1970-01-01T00:00:00.000Z'],
+    ],
+  );
+
+  // Message 1 was received before the range and sent inside it; message 2
+  // has no received date and was sent inside it.
+  exec(
+    store.index,
+    `UPDATE messages SET date_received=1704067200 WHERE ROWID=1;
+     UPDATE messages SET date_sent=1736000000 WHERE ROWID=2;`,
+  );
+  const january = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+    scope: {
+      startAt: '2025-01-01T00:00:00.000Z',
+      endAt: '2025-02-01T00:00:00.000Z',
+    },
+  });
+
+  const dated = await readStream(january, january.messages);
+
+  assert.deepEqual(
+    dated.map(({ id }) => id),
+    ['2'],
+  );
+});
+
+test('Mail times keep SQLite’s millisecond rounding, and the years 0000 and 9999 read back unchanged', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  exec(
+    store.index,
+    `UPDATE messages SET date_sent=-62167219200, date_received=253402300799.999,
+       date_last_viewed=1735787045.9996, display_date=1735787045.0005
+     WHERE ROWID=2`,
+  );
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  const messages = await readStream(source, source.messages);
+
+  const message = messages.find(({ id }) => id === '2');
+  assert.deepEqual(
+    {
+      dateSent: message?.dateSent,
+      dateReceived: message?.dateReceived,
+      dateLastViewed: message?.dateLastViewed,
+      displayDate: message?.displayDate,
+    },
+    {
+      dateSent: '0000-01-01T00:00:00.000Z',
+      dateReceived: '9999-12-31T23:59:59.999Z',
+      dateLastViewed: '2025-01-02T03:04:06.000Z',
+      displayDate: '2025-01-02T03:04:05.001Z',
+    },
+  );
+});
+
+test('A date before year 0 fails only messages, and a dated scope leaves that message out', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  // Year -1199, and year -1, which SQLite writes with a three-digit year.
+  for (const seconds of [-100000000000, -62180000000]) {
+    const store = await fixture(join(dir.path, `Mail${seconds}`));
+    exec(
+      store.index,
+      `UPDATE messages SET date_received=${seconds} WHERE ROWID=2`,
+    );
+
+    const unscoped = await readAll(
+      new AppleMailSource({ path: store.root, accounts: store.accounts }),
+    );
+    const dated = await readAll(
+      new AppleMailSource({
+        path: store.root,
+        accounts: store.accounts,
+        scope: {
+          startAt: '2025-01-01T00:00:00.000Z',
+          endAt: '2025-02-01T00:00:00.000Z',
+        },
+      }),
+    );
+
+    assertFailed(unscoped.failed, {
+      messages: ['TypeError', /invalid messages\.dateReceived/],
+    });
+    assertFailed(dated.failed, {});
+    assert.deepEqual(values(dated.records, 'messages', 'id'), ['1']);
+  }
+});
+
+test('Text in a Base64 column passes through, and a blob in a text column fails only messages', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  exec(store.index, "UPDATE messages SET document_id='plain' WHERE ROWID=1");
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  const plain = await readStream(source, source.messages);
+  exec(store.index, "UPDATE messages SET color=X'00' WHERE ROWID=1");
+  const blob = await readAll(source);
+
+  assert.deepEqual(
+    plain.map(({ id, documentIdBase64 }) => [id, documentIdBase64]),
+    [
+      ['1', 'plain'],
+      ['2', null],
+    ],
+  );
+  assertFailed(blob.failed, {
+    messages: ['TypeError', /invalid messages\.color/],
+  });
+});
+
+test('An integer beyond 2^53 fails a scoped read as it opens, and only messages when unscoped', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  // A column the scope never filters by: the selection reads whole rows, the
+  // same rows the streams read, so any value they would refuse it refuses.
+  exec(
+    store.index,
+    'UPDATE messages SET flags=9223372036854775807 WHERE ROWID=2',
+  );
+  const tooLarge = (error: unknown) =>
+    error instanceof RangeError &&
+    'code' in error &&
+    error.code === 'ERR_OUT_OF_RANGE';
+
+  const unscoped = await readAll(
+    new AppleMailSource({ path: store.root, accounts: store.accounts }),
+  );
+
+  assert.deepEqual([...unscoped.failed.keys()], ['messages']);
+  assert.ok(tooLarge(unscoped.failed.get('messages')));
+  // The scope is resolved from every messages row before any stream reads.
+  await assert.rejects(
+    readAll(
+      new AppleMailSource({
+        path: store.root,
+        accounts: store.accounts,
+        scope: { collectionIds: ['1'] },
+      }),
+    ),
+    tooLarge,
+  );
+});
+
+test('A mailbox URL that does not parse fails only accounts and smtpServers, and a collection scope still opens', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  exec(store.index, "INSERT INTO mailboxes(ROWID,url) VALUES(3,'not a url')");
+  const invalid = ['TypeError', /Invalid URL/] as const;
+
+  const unscoped = await readAll(
+    new AppleMailSource({ path: store.root, accounts: store.accounts }),
+  );
+  const scoped = await readAll(
+    new AppleMailSource({
+      path: store.root,
+      accounts: store.accounts,
+      scope: { collectionIds: ['1'] },
+    }),
+  );
+
+  assertFailed(unscoped.failed, { accounts: invalid, smtpServers: invalid });
+  assertFailed(scoped.failed, { accounts: invalid, smtpServers: invalid });
+  assert.deepEqual(values(scoped.records, 'messages', 'id'), ['1', '2']);
+});
+
+test('A message file rewritten mid-read fails only messageFiles, even once its record was read, and a removed rules file fails only rules', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  const file = join(store.data, 'Messages/1.partial.emlx');
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+  const { streams } = await source.discover();
+  // The changed stream reads last, after every other stream that reads the
+  // same file, and the file changes as it starts.
+  const last = (stream: Stream) => [
+    ...streams.filter((other) => other !== stream),
+    stream,
+  ];
+  const onStart =
+    (stream: Stream, change: () => Promise<void>) =>
+    async (message: ReadMessage) => {
+      if (
+        message instanceof StreamStatus &&
+        message.stream === stream.name &&
+        message.status === 'STARTED'
+      )
+        await change();
+    };
+
+  // The same bytes written again make a new version of the file.
+  const started = await readAll(source, {
+    streams: last(source.messageFiles),
+    during: onStart(source.messageFiles, () => writeFile(file, emlx)),
+  });
+  const recorded = await readAll(source, {
+    streams: last(source.messageFiles),
+    during: async (message) => {
+      if (
+        !(message instanceof StreamStatus) &&
+        message.stream === source.messageFiles.name &&
+        'data' in message &&
+        isRecord(message.data) &&
+        message.data.messageId === '1'
+      )
+        await writeFile(file, emlx);
+    },
+  });
+  const removed = await readAll(source, {
+    streams: last(source.rules),
+    during: onStart(source.rules, () =>
+      rm(join(store.root, 'V10/MailData/SyncedRules.plist')),
+    ),
+  });
+
+  const changed = [
+    'MailChangingError',
+    /changed a file during extraction/,
+  ] as const;
+  assertFailed(started.failed, { messageFiles: changed });
+  assertFailed(recorded.failed, { messageFiles: changed });
+  assert.deepEqual(values(recorded.records, 'messageFiles', 'messageId'), [
+    '1',
+  ]);
+  assertFailed(removed.failed, {
+    rules: ['MailChangingError', /removed a file during extraction/],
+  });
+});
+
+test('A detached file removed mid-read fails only messageParts and attachments, and a removed configuration file only configuration', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  const settings = join(store.root, 'V10/MailData/Settings.plist');
+  await writeFile(settings, xml('<dict><key>Enabled</key><true/></dict>'));
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+  // Removed once the read has opened, before its first stream reads.
+  const atOpen = (change: () => Promise<void>) => {
+    let changed = false;
+    return async (message: ReadMessage) => {
+      if (changed || !(message instanceof StreamStatus)) return;
+      changed = true;
+      await change();
+    };
+  };
+
+  const detached = await readAll(source, {
+    during: atOpen(() => rm(join(store.data, 'Attachments/1/2/detached.pdf'))),
+  });
+  const configuration = await readAll(source, {
+    during: atOpen(() => rm(settings)),
+  });
+
+  const removed = [
+    'MailChangingError',
+    /removed a file during extraction/,
+  ] as const;
+  assertFailed(detached.failed, {
+    attachments: removed,
+    messageParts: removed,
+  });
+  assertFailed(configuration.failed, { configuration: removed });
+});
+
+test('Two files for one indexed message fail the whole read', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  const archive = join(store.root, 'V10/LOCAL/Archive.mbox/UUID/Data/Messages');
+  await mkdir(archive, { recursive: true });
+  await writeFile(join(archive, '1.emlx'), emlx);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  await assert.rejects(readAll(source), {
+    name: 'MailSchemaError',
+    message: /more than one file for indexed message 1/,
+  });
+});
+
+test('A detached attachment resolves by its file name, and an ambiguous one fails only the streams that read it', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const part = 'Attachments/1/2';
+
+  const renamed = await readAfter(join(dir.path, 'renamed'), ({ data }) =>
+    rename(join(data, part, 'detached.pdf'), join(data, part, 'renamed.pdf')),
+  );
+  const named = await readAfter(join(dir.path, 'named'), ({ data }) =>
+    // Sorts before detached.pdf, so only the name match picks the right one.
+    writeFile(join(data, part, 'a-other.pdf'), '%PDF-other'),
+  );
+  const ambiguous = await readAfter(
+    join(dir.path, 'ambiguous'),
+    async ({ data }) => {
+      await rename(join(data, part, 'detached.pdf'), join(data, part, 'a.pdf'));
+      await writeFile(join(data, part, 'b.pdf'), '%PDF-other');
+    },
+  );
+  // Message 2 has no message file; the index alone lists its attachment 1.
+  const indexOnly = await readAfter(
+    join(dir.path, 'index-only'),
+    async ({ data }) => {
+      await mkdir(join(data, 'Attachments/2/1'), { recursive: true });
+      await writeFile(join(data, 'Attachments/2/1/x.txt'), 'x');
+      await writeFile(join(data, 'Attachments/2/1/y.txt'), 'y');
+    },
+  );
+
+  // A part's only file is its file, whatever its name; among several, the
+  // one with the file name the MIME part declares.
+  const resolved = `1:2:true:12:${digest(Buffer.from('%PDF-fixture'))}`;
+  for (const { records, failed } of [renamed, named]) {
+    assertFailed(failed, {});
+    for (const stream of ['messageParts', 'attachments'])
+      assert.ok(
+        values(
+          records,
+          stream,
+          'messageId',
+          'partId',
+          'availableLocally',
+          'decodedBytes',
+          'sha256',
+        ).includes(resolved),
+        stream,
+      );
+  }
+  assertFailed(ambiguous.failed, {
+    attachments: ['MailSchemaError', /Ambiguous detached Mail attachment 1:2/],
+    messageParts: ['MailSchemaError', /Ambiguous detached Mail attachment 1:2/],
+  });
+  assertFailed(indexOnly.failed, {
+    attachments: ['MailSchemaError', /Ambiguous indexed Mail attachment 2:1/],
+  });
+});
+
+test('An invalid indexed part number fails only attachments, and an invalid Apple content length only messageParts and attachments', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+
+  const partNumber = await readAfter(join(dir.path, 'part'), ({ index }) =>
+    exec(index, "INSERT INTO attachments VALUES(4,2,'x','bad.txt')"),
+  );
+  const length = await readAfter(join(dir.path, 'length'), ({ data }) =>
+    writeFile(
+      join(data, 'Messages/1.partial.emlx'),
+      emlxOf(
+        mime.replace(
+          'X-Apple-Content-Length: 12',
+          'X-Apple-Content-Length: 12x',
+        ),
+      ),
+    ),
+  );
+
+  assertFailed(partNumber.failed, {
+    attachments: [
+      'MailSchemaError',
+      /Invalid indexed Mail attachment part 2:x/,
+    ],
+  });
+  assert.deepEqual(values(partNumber.records, 'indexedAttachments', 'id'), [
+    '1',
+    '2',
+    '3',
+    '4',
+  ]);
+  const size = [
+    'MailSchemaError',
+    /Invalid detached MIME size in message 1/,
+  ] as const;
+  assertFailed(length.failed, { attachments: size, messageParts: size });
+  assert.ok(values(length.records, 'messageHeaders', 'messageId').length > 0);
+});
+
+test('A charset TextDecoder does not know fails only messageParts, even on a text attachment, whose bytes attachments still copies', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+
+  const { failed } = await readAfter(join(dir.path, 'Mail'), ({ data }) =>
+    writeFile(
+      join(data, 'Messages/1.partial.emlx'),
+      emlxOf(
+        mime
+          .replace(
+            'text/plain; charset=UTF-8',
+            'text/plain; charset=x-unknown-charset',
+          )
+          .replace(
+            'Content-Type: image/png',
+            'Content-Type: text/plain; charset=x-unknown-charset',
+          ),
+      ),
+    ),
+  );
+
+  assertFailed(failed, { messageParts: ['RangeError', /x-unknown-charset/] });
+});
+
+test('A malformed rule or smart mailbox fails exactly the streams that read the malformed key', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const mailData = (root: string, name: string) =>
+    join(root, 'V10/MailData', name);
+  const write = (name: string, plist: string) => (store: { root: string }) =>
+    writeFile(mailData(store.root, name), xml(plist));
+
+  const criteria = await readAfter(
+    join(dir.path, 'criteria'),
+    write(
+      'SyncedRules.plist',
+      '<array><dict><key>RuleId</key><string>rule</string><key>Criteria</key><dict/></dict></array>',
+    ),
+  );
+  const ruleId = await readAfter(
+    join(dir.path, 'rule-id'),
+    write(
+      'SyncedRules.plist',
+      '<array><dict><key>RuleName</key><string>Example</string></dict></array>',
+    ),
+  );
+  const activeState = await readAfter(
+    join(dir.path, 'active-state'),
+    write('RulesActiveState.plist', '<array><string>rule</string></array>'),
+  );
+  const enabled = await readAfter(
+    join(dir.path, 'enabled'),
+    write(
+      'RulesActiveState.plist',
+      '<dict><key>rule</key><integer>1</integer></dict>',
+    ),
+  );
+  const mailboxCriteria = await readAfter(
+    join(dir.path, 'mailbox-criteria'),
+    write(
+      'SyncedSmartMailboxes.plist',
+      '<array><dict><key>MailboxID</key><string>smart</string><key>MailboxCriteria</key><dict/></dict></array>',
+    ),
+  );
+  const children = await readAfter(
+    join(dir.path, 'children'),
+    write(
+      'SyncedSmartMailboxes.plist',
+      '<array><dict><key>MailboxID</key><string>parent</string><key>MailboxChildren</key><dict/></dict></array>',
+    ),
+  );
+
+  const notList = ['MailSchemaError', /not a list/] as const;
+  assertFailed(criteria.failed, { ruleConditions: notList });
+  const noId = ['MailSchemaError', /has no RuleId/] as const;
+  assertFailed(ruleId.failed, { ruleConditions: noId, rules: noId });
+  const notDictionary = ['MailSchemaError', /non-dictionary/] as const;
+  assertFailed(activeState.failed, {
+    ruleConditions: notDictionary,
+    rules: notDictionary,
+  });
+  assertFailed(enabled.failed, {
+    rules: ['TypeError', /invalid rules\.enabled/],
+  });
+  assertFailed(mailboxCriteria.failed, { smartMailboxConditions: notList });
+  assertFailed(children.failed, {
+    smartMailboxConditions: notList,
+    smartMailboxes: notList,
+  });
+});
+
+test('Mail’s store fails to open as unavailable without a readable version file or index, and as itself for a bad version name or an index that is not a database', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const persistence = (version: string) => (store: { root: string }) =>
+    writeFile(
+      join(store.root, 'PersistenceInfo.plist'),
+      xml(
+        `<dict><key>LastUsedVersionDirectoryName</key><string>${version}</string></dict>`,
+      ),
+    );
+  const unavailable = {
+    name: 'MailUnavailableError',
+    message: /Full Disk Access/,
+  };
+
+  await assert.rejects(
+    readAfter(join(dir.path, 'truncated'), ({ root }) =>
+      writeFile(
+        join(root, 'PersistenceInfo.plist'),
+        '<?xml version="1.0"?><plist version="1.0"><dict>',
+      ),
+    ),
+    unavailable,
+  );
+  // plutil reads a bare word as an old-style property list string.
+  await assert.rejects(
+    readAfter(join(dir.path, 'string'), ({ root }) =>
+      writeFile(join(root, 'PersistenceInfo.plist'), 'garbage'),
+    ),
+    { name: 'MailSchemaError', message: /non-dictionary/ },
+  );
+  await assert.rejects(
+    readAfter(join(dir.path, 'current'), persistence('Current')),
+    { name: 'MailSchemaError', message: /current version directory/ },
+  );
+  await assert.rejects(
+    readAfter(join(dir.path, 'missing'), persistence('V11')),
+    unavailable,
+  );
+  await assert.rejects(
+    readAfter(join(dir.path, 'text'), ({ index }) =>
+      writeFile(index, 'not a database'),
+    ),
+    (error) =>
+      error instanceof Error &&
+      error.name !== 'MailUnavailableError' &&
+      /not a database/.test(error.message),
+  );
+});
+
+test('A scoped read still reads the streams it leaves out, so a malformed rules or smart mailbox file fails them', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const scope = { collectionIds: ['1'] };
+
+  const rules = await readAfter(
+    join(dir.path, 'rules'),
+    ({ root }) =>
+      writeFile(join(root, 'V10/MailData/SyncedRules.plist'), xml('<dict/>')),
+    scope,
+  );
+  const smart = await readAfter(
+    join(dir.path, 'smart'),
+    ({ root }) =>
+      writeFile(
+        join(root, 'V10/MailData/SyncedSmartMailboxes.plist'),
+        xml('<dict/>'),
+      ),
+    scope,
+  );
+
+  const notList = ['MailSchemaError', /not a list/] as const;
+  assertFailed(rules.failed, { ruleConditions: notList, rules: notList });
+  assertFailed(smart.failed, {
+    smartMailboxConditions: notList,
+    smartMailboxes: notList,
+  });
+});
+
+test('Mail’s undated numbers keep the values Mail stored', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  exec(
+    store.index,
+    `UPDATE message_global_data SET follow_up_start_date=1735787001,
+       follow_up_end_date=1735787002, due_by=1735787003,
+       read_later_date=1735787004, send_later_date=1735787005.5;
+     UPDATE address_metadata SET smime_capabilities_date=1735787006;
+     UPDATE business_addresses SET last_modified=1735787007;
+     UPDATE events SET start_date=1735787008, end_date=1735787009.25;`,
+  );
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+  const fields = async (stream: Stream, names: readonly string[]) => {
+    const [record] = await readStream(source, stream);
+    return Object.fromEntries(names.map((name) => [name, record?.[name]]));
+  };
+
+  assert.deepEqual(
+    await fields(source.messageGlobalData, [
+      'followUpStartDateRaw',
+      'followUpEndDateRaw',
+      'dueByRaw',
+      'readLaterDateRaw',
+      'sendLaterDateRaw',
+    ]),
+    {
+      followUpStartDateRaw: 1735787001,
+      followUpEndDateRaw: 1735787002,
+      dueByRaw: 1735787003,
+      readLaterDateRaw: 1735787004,
+      sendLaterDateRaw: 1735787005.5,
+    },
+  );
+  assert.deepEqual(
+    await fields(source.addressMetadata, ['smimeCapabilitiesDateRaw']),
+    { smimeCapabilitiesDateRaw: 1735787006 },
+  );
+  assert.deepEqual(
+    await fields(source.businessAddresses, ['lastModifiedRaw']),
+    { lastModifiedRaw: 1735787007 },
+  );
+  assert.deepEqual(
+    await fields(source.events, ['startDateRaw', 'endDateRaw']),
+    { startDateRaw: 1735787008, endDateRaw: 1735787009.25 },
+  );
+});
+
+test('A configuration plist keeps archiver UIDs as {"value":N}, data as Base64, big integers as text and dates in ISO 8601', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  // As Mail's recentSearches.plist holds them: keyed archiver references.
+  await writeFile(
+    join(store.root, 'V10/MailData/recentSearches.plist'),
+    xml(
+      '<dict><key>Searches</key><array><dict><key>CF$UID</key><integer>7</integer></dict><integer>9223372036854775807</integer><data>AQID</data><date>2025-01-02T03:04:05Z</date></array></dict>',
+    ),
+  );
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+
+  const configuration = await readStream(source, source.configuration);
+
+  assert.equal(
+    configuration.find(
+      ({ relativePath }) => relativePath === 'MailData/recentSearches.plist',
+    )?.properties,
+    '{"Searches":[{"value":7},"9223372036854775807","AQID","2025-01-02T03:04:05.000Z"]}',
   );
 });
 

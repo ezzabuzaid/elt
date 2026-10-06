@@ -9,12 +9,12 @@ import {
   AccountsStore,
   accountsStorePath,
 } from '@workspace/sdk-apple-accounts';
+import { mailDirectory } from '@workspace/sdk-apple-mail';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import {
   AppleMailSource,
   restrictedMailStreams,
 } from '@workspace/source-apple-mail/apple-mail-source';
-import { mailDirectory } from '@workspace/source-apple-mail/mail-store';
 
 const accountName = (row: Row) =>
   String(JSON.parse(String(row.properties)).name);

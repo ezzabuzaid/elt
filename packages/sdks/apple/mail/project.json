@@ -1,0 +1,13 @@
+{
+  "name": "sdk-apple-mail",
+  "sourceRoot": "packages/sdks/apple/mail/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/apple/mail/dist/*.test.js\""
+    }
+  }
+}
