@@ -12,6 +12,7 @@ import {
   SQLiteDestination,
 } from '@workspace/elt-sqlite';
 import {
+  AccountsSchemaError,
   AccountsUnavailableError,
   accountsStorePath,
 } from '@workspace/sdk-apple-accounts';
@@ -611,6 +612,43 @@ test('an unreadable Accounts store fails every stream, naming Full Disk Access',
     }
     return true;
   });
+});
+
+test('a table in a layout this reader does not know fails only the stream that reads it, by name, and the others load', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-accounts-'));
+  const path = join(dir.path, 'Accounts4.sqlite');
+  accountsFixture(path);
+  {
+    using store = new DatabaseSync(path);
+    store.exec('ALTER TABLE ZAUTHORIZATION DROP COLUMN ZOPTIONS');
+  }
+  const out = join(dir.path, 'out.sqlite');
+
+  await assert.rejects(
+    (await pipeline(new AppleAccountsSource({ path }), dir.path)).run(),
+    (error) => {
+      assert.ok(error instanceof PipelineError);
+      assert.equal(error.errors.length, 1);
+      const [cause] = error.errors;
+      assert.ok(cause instanceof AccountsSchemaError);
+      assert.match(cause.message, /ZAUTHORIZATION\.ZOPTIONS/);
+      return true;
+    },
+  );
+
+  for (const stream of [
+    'accounts',
+    'accountProperties',
+    'accountDataclasses',
+    'accountTypes',
+    'dataclasses',
+    'accessOptionKeys',
+    'credentialItems',
+  ])
+    assert.ok(
+      Number(rows(out, `SELECT count(*) AS n FROM ${stream}`)[0]?.n) > 0,
+      stream,
+    );
 });
 
 test('watching the Accounts store reports each commit to it', async () => {

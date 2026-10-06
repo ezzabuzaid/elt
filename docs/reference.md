@@ -1538,6 +1538,8 @@ Left out:
 
 Every stream is a [snapshot stream](#snapshot-streams): a run reads the whole store, an unchanged record writes nothing, and a vanished key deletes its row. The store is small, so a run reads it whole in well under a second.
 
+Each kind of record checks only the columns it reads. A macOS whose layout lacks one fails only the streams that read that table, with `AccountsSchemaError` naming the missing columns, and the others load; Mail, which reads only accounts, keeps loading.
+
 ### Watching
 
 A watch polls the store's `data_version` every second through `AccountsStore.version()` and wakes every selected stream on a commit. accountsd commits on its own: a read-only connection saw five commits in five minutes with no account edited on 2026-10-05, so a watch wakes about once a minute, and a pass with nothing changed writes nothing.

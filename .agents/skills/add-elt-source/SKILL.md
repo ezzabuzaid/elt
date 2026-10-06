@@ -104,7 +104,7 @@ Test the source the way a user runs it, as a black box. Do not write unit tests.
 
 ## Gotchas
 
-- **A store's columns are checked per table, on each read** → `AppDatabase.requireColumns` closes the shared snapshot on a miss, so every stream after the first fails with a bare `database is not open`. Check every column the SDK reads once, when the snapshot opens, as the Notes, Messages, Safari and Call History SDKs do.
+- **A store's columns are checked per table, on each read** → `AppDatabase.requireColumns` closes the shared snapshot on a miss, so every stream after the first fails with a bare `database is not open`. Check every column the SDK reads once, when the snapshot opens, as the Notes, Messages, Safari and Call History SDKs do; or, when the store's readers use different tables, check each read with `missingColumns`, which keeps the snapshot open, as Accounts does so Mail is not blocked by tables it does not read.
 - **A failed read returns an empty list** → the snapshot diff sees every key vanish and deletes every row. Throw on failure; never turn an error into an empty collection.
 - **A value changes between two reads with no edits** (export timestamps, generated IDs) → incremental diffs see unchanged records as changed. Find these while probing and drop or normalize them.
 - **A scan yields the same key twice** (overlapping reads) → `diffSnapshot` breaks. Deduplicate before passing the scan.

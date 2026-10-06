@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import {
+  AccountsSchemaError,
   AccountsStore,
   AccountsUnavailableError,
   accountsStorePath,
@@ -430,6 +431,33 @@ test('the store version changes when another connection commits', async () => {
   });
 
   assert.notEqual(version.current, before);
+});
+
+test('a table in a layout this reader does not know fails only its own reads, and accounts still read from the same snapshot', async () => {
+  await using scratch = await ScratchAccountsStore.create();
+  await scratch.account({
+    pk: 1,
+    identifier: 'GOOGLE',
+    type: 'com.apple.account.Google',
+  });
+  {
+    using app = new DatabaseSync(scratch.path);
+    app.exec('ALTER TABLE ZAUTHORIZATION DROP COLUMN ZOPTIONS');
+  }
+  using snapshot = new AccountsStore(scratch.path).open();
+
+  assert.throws(
+    () => snapshot.authorizations(),
+    (error: unknown) => {
+      assert.ok(error instanceof AccountsSchemaError);
+      assert.match(error.message, /ZAUTHORIZATION\.ZOPTIONS/);
+      return true;
+    },
+  );
+  assert.deepEqual(
+    snapshot.accounts().map(({ identifier }) => identifier),
+    ['GOOGLE'],
+  );
 });
 
 test('this Mac’s Accounts store reads as one consistent snapshot: accounts, their types and data classes, and access keys', (t) => {

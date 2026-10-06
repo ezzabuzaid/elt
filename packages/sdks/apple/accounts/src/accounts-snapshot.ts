@@ -333,8 +333,12 @@ export class AccountsSnapshot implements Disposable {
     this.#database[Symbol.dispose]();
   }
 
+  // Mail reads only accounts, so a table it does not read fails only the
+  // reads of that table, and the snapshot stays open for the rest.
   #require(columns: AppDatabaseColumns): void {
-    this.#database.requireColumns(columns, AccountsSchemaError);
+    const missing = this.#database.missingColumns(columns);
+    if (missing.length > 0)
+      throw new AccountsSchemaError(this.#database.path, missing);
   }
 
   #dataclassNames(): Map<number, string> {

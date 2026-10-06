@@ -60,9 +60,20 @@ export class AppDatabase implements Disposable {
     }
   }
 
-  // Refuses a layout without these columns, and closes the database.
+  // Refuses a layout without these columns, and closes the database: the
+  // check a reader makes while it opens the snapshot.
   requireColumns(columns: AppDatabaseColumns, schema: SchemaError): void {
-    const missing = Object.entries(columns).flatMap(([table, names]) => {
+    const missing = this.missingColumns(columns);
+    if (missing.length === 0) return;
+    this[Symbol.dispose]();
+    throw new schema(this.path, missing);
+  }
+
+  // The columns, as table.column, that this layout lacks. A reader whose
+  // reads use different tables checks each read with it and keeps the
+  // snapshot open for the others.
+  missingColumns(columns: AppDatabaseColumns): string[] {
+    return Object.entries(columns).flatMap(([table, names]) => {
       const present = new Set(
         this.all('SELECT name FROM pragma_table_info(?)', table).map(
           (column) => column.name,
@@ -72,9 +83,6 @@ export class AppDatabase implements Disposable {
         .filter((name) => !present.has(name))
         .map((name) => `${table}.${name}`);
     });
-    if (missing.length === 0) return;
-    this[Symbol.dispose]();
-    throw new schema(this.path, missing);
   }
 
   all(
