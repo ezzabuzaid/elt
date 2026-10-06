@@ -3,13 +3,13 @@ import {
   RemindersStore
 } from "../../chunks/chunk-TWJG64VL.mjs";
 import {
+  eventKitFields
+} from "../../chunks/chunk-YUEL2AIL.mjs";
+import {
   accounts,
   collections,
   name
 } from "../../chunks/chunk-FGFSL4M6.mjs";
-import {
-  eventKitFields
-} from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";

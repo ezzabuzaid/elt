@@ -1,12 +1,12 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
-  AppDatabase,
-  AppDatabaseVersion
-} from "./chunk-NHBH24IB.mjs";
-import {
   decodeArchive,
   isDictionary
 } from "./chunk-2VSN4436.mjs";
+import {
+  AppDatabase,
+  AppDatabaseVersion
+} from "./chunk-NHBH24IB.mjs";
 
 // packages/sdks/apple/accounts/dist/accounts-store.js
 import { homedir } from "node:os";

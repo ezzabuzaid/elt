@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/connector-apple-call-history",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/call-history-connector.js",
+  "contextCompiler": {
+    "name": "call-history",
+    "title": "Call History"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/source-apple-call-history": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  }
+}

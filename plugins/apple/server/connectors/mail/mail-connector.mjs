@@ -4,7 +4,11 @@ import {
   AccountsUnavailableError,
   accountsStorePath,
   mailDataclass
-} from "../../chunks/chunk-7KL5742R.mjs";
+} from "../../chunks/chunk-KANKLTZK.mjs";
+import {
+  isDictionary,
+  readPlist
+} from "../../chunks/chunk-2VSN4436.mjs";
 import {
   accounts,
   byId
@@ -17,10 +21,6 @@ import "../../chunks/chunk-NHBH24IB.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
-import {
-  isDictionary,
-  readPlist
-} from "../../chunks/chunk-2VSN4436.mjs";
 import {
   AppleConnector
 } from "../../chunks/chunk-A6SMKASJ.mjs";

@@ -36,6 +36,9 @@
       "path": "../contacts"
     },
     {
+      "path": "../call-history"
+    },
+    {
       "path": "../calendar"
     },
     {

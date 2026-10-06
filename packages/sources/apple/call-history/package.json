@@ -1,0 +1,20 @@
+{
+  "name": "@workspace/source-apple-call-history",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-call-history-source": {
+      "types": "./dist/apple-call-history-source.d.ts",
+      "default": "./dist/apple-call-history-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/sdk-apple-call-history": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

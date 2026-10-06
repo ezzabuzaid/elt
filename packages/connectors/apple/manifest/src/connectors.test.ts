@@ -27,6 +27,7 @@ test('every connector folder loads as its connector for the host, and one that c
     'activity',
     'books',
     'calendar',
+    'call-history',
     'contacts',
     'mail',
     'messages',
@@ -35,6 +36,11 @@ test('every connector folder loads as its connector for the host, and one that c
     'reminders',
     'safari',
   ]);
+  const callHistory = connectors.find(({ name }) => name === 'call-history');
+  assert.equal(
+    callHistory?.guidance(),
+    'Turn on Terminal in System Settings › Privacy & Security › Full Disk Access, then quit and reopen Terminal. macOS does not ask for this access. No app needs to be open: macOS keeps the calls from Phone, FaceTime and your iPhone in one store.',
+  );
   const photos = connectors.find(({ name }) => name === 'photos');
   assert.equal(
     photos?.guidance(),

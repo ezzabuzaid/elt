@@ -144,6 +144,15 @@
       "path": "./packages/sdks/apple/safari"
     },
     {
+      "path": "./packages/sdks/apple/call-history"
+    },
+    {
+      "path": "./packages/sources/apple/call-history"
+    },
+    {
+      "path": "./packages/connectors/apple/call-history"
+    },
+    {
       "path": "./packages/sdks/apple/books"
     }
   ]

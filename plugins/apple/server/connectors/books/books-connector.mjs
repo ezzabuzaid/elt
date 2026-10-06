@@ -3,17 +3,17 @@ import {
   ProtobufMessage
 } from "../../chunks/chunk-QMS7KGTZ.mjs";
 import {
+  isBinaryPlist,
+  isDictionary,
+  parseBinaryPlist
+} from "../../chunks/chunk-2VSN4436.mjs";
+import {
   AppDatabase,
   AppDatabaseVersion
 } from "../../chunks/chunk-NHBH24IB.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
-import {
-  isBinaryPlist,
-  isDictionary,
-  parseBinaryPlist
-} from "../../chunks/chunk-2VSN4436.mjs";
 import {
   AppleConnector
 } from "../../chunks/chunk-A6SMKASJ.mjs";

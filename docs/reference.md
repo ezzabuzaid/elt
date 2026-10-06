@@ -1554,6 +1554,95 @@ Checked live on 2026-10-05 against macOS 27.0:
 
 Unverified: values of `authorizations` and `credentialItems`. Neither this Mac's store nor its `VerifiedBackup` copy holds a row, and accountsd writes them only for an app that holds Accounts framework entitlements and asks for access to an account type, which no tool here can do.
 
+## Apple Call History
+
+```ts
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+import { AppleCallHistorySource } from '@workspace/source-apple-call-history/apple-call-history-source';
+
+// ~/Library/Application Support/CallHistoryDB/CallHistory.storedata, calls
+// that started from 2026-01-01 on
+const source = new AppleCallHistorySource(undefined, {
+  startAt: '2026-01-01T00:00:00.000Z',
+});
+const destination = new SQLiteDestination({
+  path: './outputs/calls.sqlite',
+});
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'apple-call-history',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/calls-state.sqlite',
+      }),
+      steps: [source.calls, source.callParticipants].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads `~/Library/Application Support/CallHistoryDB/CallHistory.storedata`, the CallHistory framework's Core Data store, with the `@workspace/sdk-apple-call-history` SDK. callhistoryd writes it for Phone and FaceTime and fills it from the user's other devices through iCloud (`CallHistorySyncHelper`), so it holds the iPhone's phone calls as well as the Mac's FaceTime calls. No app needs to be open, and neither app nor the framework is used. `npx nx run apple-cli:start -- sync --connector call-history` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views (`calls`, `call_participants`). Every stream of a run reads one snapshot of the store, a read transaction on a read-only connection, never `immutable`, since callhistoryd keeps a write-ahead log.
+
+### Access
+
+The store needs [Full Disk Access](#full-disk-access). On 2026-10-06 a terminal with the grant read it, and a launchd job without it got SQLite's AUTH (23, `authorization denied`), where the Accounts store gave CANTOPEN; both become `CallHistoryUnavailableError`, which names the grant, and fail every stream.
+
+### Streams
+
+| Stream                | Upstream                                  | One record per                                                                       |
+| --------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `calls`               | `ZCALLRECORD`, its initiator in `ZHANDLE` | call: when, how long, phone or FaceTime, direction, answered, caller ID and blocking |
+| `callParticipants`    | `Z_*REMOTEPARTICIPANTHANDLES`, `ZHANDLE`  | other party on a call: several for a group FaceTime call, none for a withheld number |
+| `callTimers`          | `ZCALLDBPROPERTIES`                       | the Phone app's call-time totals, in seconds; one record                             |
+| `emergencyMediaItems` | `ZEMERGENCYMEDIAITEM`                     | photo or video shared with emergency services during a call                          |
+| `saintDavidsCounts`   | `ZSAINTDAVIDSCOUNTS`                      | count CallHistory keeps per call and type code, an Apple feature it does not name    |
+
+The column meanings come from Apple's model, `CallHistory 46.mom` in `CallHistory.framework`, the version the store's `com.apple.callhistory.databaseInfo.plist` names. A call's `id` is `ZUNIQUE_ID`, unique in the store and the same on every device that syncs the call. callhistoryd copies each handle for each call: on 2026-10-06 3,448 `ZHANDLE` rows held 500 distinct addresses and none belonged to two calls, so a participant names a party to one call, not a contact, and the initiator is carried on `calls` rather than as a stream of its own. Core Data names the participant join table after entity numbers (`Z_2REMOTEPARTICIPANTHANDLES` on macOS 27), so the SDK finds it by its name's end.
+
+Only the codes Apple names are decoded, and each keeps its raw value beside it: `kind` from `ZCALLTYPE` (1 phone, 8 FaceTime video, 16 FaceTime audio, after `kCHCallTypeTelephony`, `kCHCallTypeFaceTimeVideo` and `kCHCallTypeFaceTimeAudio`) and `category` from `ZCALL_CATEGORY` (1 audio, 2 video). A code the reader does not know, such as a TTY category or a type Apple adds later, loads with `kind` or `category` null and its number kept. Every other code (disconnect cause, filtering, junk confidence, verification, handle type) is Apple's undocumented number, kept as stored. UUID columns are written as `NSUUID` writes them, in uppercase. `startedAt` is a [`date-time` with `precision` 6](#string-formats): Core Data keeps a date as seconds since 2001-01-01 in a double, which resolves about a tenth of a microsecond today, and 2,121 of the 2,123 calls on 2026-10-06 held a fraction finer than a millisecond, so the SDK writes it to the microsecond rather than through a JavaScript `Date`.
+
+`emergencyMediaItems` and `saintDavidsCounts` are keyed by their Core Data row numbers: their call is optional in the model, so no call-based key is guaranteed.
+
+Left out: Core Data's own bookkeeping (`Z_METADATA`, `Z_MODELCACHE`, `Z_PRIMARYKEY`), and `ZHANDLE` rows no call refers to. The model deletes a call's participant handles with it but only clears the call from its initiator handle, so the 293 such rows on 2026-10-06 are initiators of deleted calls.
+
+### Date range
+
+An import's date range selects calls by `startedAt`, from `startAt` inclusive to `endAt` exclusive. `callParticipants`, `emergencyMediaItems` and `saintDavidsCounts` keep the rows of the selected calls, plus any row that names no call, since it has no date to fall outside. `callTimers` spans every call and loads whole.
+
+### Changes and deletions
+
+Every stream is a [snapshot stream](#snapshot-streams): a run reads the whole store, an unchanged record writes nothing, and a vanished key deletes its row. A call that leaves the store is deleted from the import, whether the user removed it from Recents, Core Data cascaded the deletion, or callhistoryd dropped it. On this Mac every phone call before 2025-07-07, 521 of them, had left the store at once, with no removal in callhistoryd's logs over the next 30 days and no retention rule in CallHistory to name the cause. elt has no way to tell such an upstream loss from a deletion (an `expiresBy` horizon needs a retention rule), so another such cut would delete those calls from the import too.
+
+The SDK checks every column it reads when a snapshot opens: a store from a macOS whose layout lacks one fails every stream with `CallHistorySchemaError`, which names the missing columns, and leaves the import as it was. The participant join table is looked up only when `callParticipants` reads, so a store without it fails that stream alone, naming `Z_*REMOTEPARTICIPANTHANDLES`, while the others load.
+
+### Watching
+
+A watch polls the store's `data_version` every second through `CallHistoryStore.version()` and wakes every selected stream on a commit, such as a new call or one synced from the iPhone. On 2026-10-06 a read-only connection saw callhistoryd commit a new call (2,121 to 2,122 calls), and the next load wrote that call and its participant and nothing else.
+
+### Call History export probe
+
+Checked live on 2026-10-06 against macOS 27.0 (26A428):
+
+- The store held 2,121 calls (2,067 phone calls from 2025-07-07 on, 43 FaceTime video and 11 FaceTime audio calls from 2025-02-27 on), 3,448 handles, 2,108 participant links, one row of call-time totals and no emergency media or Saint Davids counts. 13 calls named no participant.
+- A load through `apple-cli` took 0.4 s and wrote 2,121 calls, 2,108 participants and 1 call-time row, every call with a known `kind` and `category`; a second load wrote nothing. `/usr/bin/sqlite3` read every view.
+- Two reads with no call in between hashed every table identically, so no value changes per read.
+
+Unverified: values of `emergencyMediaItems` and `saintDavidsCounts`. Both tables are empty here and are tested only against their declared shapes: emergency media exists only after media is shared during an emergency call, and Apple names neither the Saint Davids feature nor its type codes (`ZSAINT_DAVIDS_1` is 0 and `ZSAINT_DAVIDS_2` empty on every call here).
+
 ## Google Search Console
 
 `SearchConsoleSource` reads one property through the `searchconsole:v1` API. `sites`, `sitemaps` and `searchAnalytics` are served under the original `webmasters/v3` path prefix; URL inspection is served from `v1` on the same host.

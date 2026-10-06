@@ -1,0 +1,9 @@
+{
+  "name": "sdk-apple-call-history",
+  "sourceRoot": "packages/sdks/apple/call-history/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {}
+  }
+}

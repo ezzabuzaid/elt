@@ -11,6 +11,7 @@ Copy this checklist into your response and tick it off as you go:
 
 ```
 - [ ] Probing: every access method and change signal listed, live checks run
+- [ ] SDK written or reused: the store's location, read-only open, decoding, errors and change signal
 - [ ] Source written, sync strategy picked from the list
 - [ ] Black-box tests through source classes and real destinations
 - [ ] README and docs/reference.md
@@ -35,6 +36,7 @@ Copy this checklist into your response and tick it off as you go:
   - **Apple Safari**: several stores behind one source, SQLite databases and property lists; `open` reads only the stores the selected streams need, and a store that cannot be opened fails only its streams; per-profile databases listed by another store; array fields for lists of values.
   - **Apple Books**: several Core Data stores in two containers plus preference files; a Coherence CRDT document decoded with `codec-protobuf`; files in iCloud Drive whose placeholders must never be opened (BSD flags via `/usr/bin/stat`); a package directory staged as one file per record.
   - **Apple Activity**: an upstream that drops records after a fixed age without a deletion (Biome segment files, knowledgeC), so streams declare `expiresBy` and pass the age as a horizon; a private binary format read by its own package (`packages/sdks/apple/segb`); records addressed by their place in a file; one snapshot group per segment fingerprinted by its trailer, since the files never change size or modification time; a stream base per store that owns its diff.
+  - **Apple Call History**: a Core Data store another daemon fills from the user's other devices through iCloud (callhistoryd); the meaning of each column and code taken from the app's own Core Data model (`CallHistory 46.mom` in the framework); per-call copies of related rows (handles), so the related entity is folded into its parent and a join stream rather than keyed by Core Data's row number; a numbered join table found by its name's end; every column checked once when the snapshot opens; an import date range that keeps the records of the selected parents.
   - **Google Search Console** (`packages/sources/google/search-console`): REST through `google-auth`, a date cursor with restated facts (`dedupPolicy: 'replace'`), polling `observe()`, quota-bound per-item refetch.
 
 ## Probing
@@ -102,6 +104,7 @@ Test the source the way a user runs it, as a black box. Do not write unit tests.
 
 ## Gotchas
 
+- **A store's columns are checked per table, on each read** → `AppDatabase.requireColumns` closes the shared snapshot on a miss, so every stream after the first fails with a bare `database is not open`. Check every column the SDK reads once, when the snapshot opens, as the Notes, Messages, Safari and Call History SDKs do.
 - **A failed read returns an empty list** → the snapshot diff sees every key vanish and deletes every row. Throw on failure; never turn an error into an empty collection.
 - **A value changes between two reads with no edits** (export timestamps, generated IDs) → incremental diffs see unchanged records as changed. Find these while probing and drop or normalize them.
 - **A scan yields the same key twice** (overlapping reads) → `diffSnapshot` breaks. Deduplicate before passing the scan.

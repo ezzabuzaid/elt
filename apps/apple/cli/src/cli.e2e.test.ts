@@ -1368,8 +1368,19 @@ test('the setup wizard saves what the person picks and syncs it when asked', asy
   const wizard = terminal(mac.path, 'setup');
   try {
     await wizard.shows('Which connectors should be imported?');
-    // Connectors are listed by name; Notes is the eighth.
-    await wizard.type(down, down, down, down, down, down, down, space, enter);
+    // Connectors are listed by name; Notes is the ninth.
+    await wizard.type(
+      down,
+      down,
+      down,
+      down,
+      down,
+      down,
+      down,
+      down,
+      space,
+      enter,
+    );
     await wizard.shows('Narrow any connector?');
     await wizard.type(space, enter);
     await wizard.shows('Notes: accounts');
@@ -1631,4 +1642,81 @@ test('sync loads Safari history from its library and tabs from where Safari keep
     '--json',
   );
   assert.ok(JSON.parse(tabs.stdout)[0].n > 0, tabs.stderr);
+});
+
+// The user's call history, where callhistoryd keeps it under HOME: every table
+// the reader reads, as macOS 27's CallHistory model declares it, holding a
+// call from August and one from September, each with one participant.
+function withCallHistory(mac: string) {
+  const directory = join(mac, 'Library/Application Support/CallHistoryDB');
+  mkdirSync(directory, { recursive: true });
+  using store = new DatabaseSync(join(directory, 'CallHistory.storedata'));
+  store.exec(`
+    CREATE TABLE ZCALLDBPROPERTIES ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZTIMER_ALL FLOAT, ZTIMER_INCOMING FLOAT, ZTIMER_LAST FLOAT, ZTIMER_LIFETIME FLOAT, ZTIMER_OUTGOING FLOAT );
+    CREATE TABLE ZCALLRECORD ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZANSWERED INTEGER, ZAUTOANSWEREDREASON INTEGER, ZCALLDIRECTORYIDENTITYTYPE INTEGER, ZCALL_CATEGORY INTEGER, ZCALLTYPE INTEGER, ZDISCONNECTED_CAUSE INTEGER, ZFACE_TIME_DATA INTEGER, ZFILTERED_OUT_REASON INTEGER, ZHANDLE_TYPE INTEGER, ZHASMESSAGE INTEGER, ZJUNKCONFIDENCE INTEGER, ZNUMBER_AVAILABILITY INTEGER, ZORIGINATED INTEGER, ZREAD INTEGER, ZSCREENSHARINGTYPE INTEGER, ZUSEDEMERGENCYVIDEOSTREAMING INTEGER, ZVERIFICATIONSTATUS INTEGER, ZWASEMERGENCYCALL INTEGER, ZDATE TIMESTAMP, ZDURATION FLOAT, ZADDRESS VARCHAR, ZBLOCKEDBYEXTENSION VARCHAR, ZIDENTITYEXTENSION VARCHAR, ZISO_COUNTRY_CODE VARCHAR, ZJUNKIDENTIFICATIONCATEGORY VARCHAR, ZLOCATION VARCHAR, ZNAME VARCHAR, ZSERVICE_PROVIDER VARCHAR, ZUNIQUE_ID VARCHAR, ZCONVERSATIONID BLOB, ZIMAGEURL VARCHAR, ZLOCALPARTICIPANTUUID BLOB, ZOUTGOINGLOCALPARTICIPANTUUID BLOB, ZPARTICIPANTGROUPUUID BLOB , ZINITIATOR INTEGER, ZBLOCKEDBYEXTENSIONNAME VARCHAR, ZREMINDERUUID BLOB, ZNEEDEDSCANNOUNCEMENT INTEGER, ZCOMMUNICATIONTRUSTSCORE INTEGER, ZORIGINATINGUITYPE INTEGER, ZORIGINATINGDEVICENAME VARCHAR, ZDIDENABLETRANSLATION INTEGER, ZSAINT_DAVIDS_1 INTEGER, ZSAINT_DAVIDS_2 VARCHAR);
+    CREATE TABLE ZEMERGENCYMEDIAITEM ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZEMERGENCYMEDIATYPE INTEGER, ZUPLOADEDFORCALL INTEGER, ZASSETID VARCHAR );
+    CREATE TABLE ZHANDLE ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZTYPE INTEGER, ZNORMALIZEDVALUE VARCHAR, ZVALUE VARCHAR );
+    CREATE TABLE ZSAINTDAVIDSCOUNTS ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZCOUNT INTEGER, ZTYPE INTEGER, ZCALL INTEGER );
+    CREATE TABLE Z_2REMOTEPARTICIPANTHANDLES ( Z_2REMOTEPARTICIPANTCALLS INTEGER, Z_4REMOTEPARTICIPANTHANDLES INTEGER, PRIMARY KEY (Z_2REMOTEPARTICIPANTCALLS, Z_4REMOTEPARTICIPANTHANDLES) );
+    INSERT INTO ZCALLRECORD (Z_PK, Z_ENT, ZUNIQUE_ID, ZDATE, ZDURATION, ZSERVICE_PROVIDER, ZCALLTYPE, ZCALL_CATEGORY, ZORIGINATED, ZANSWERED)
+      VALUES (1, 2, 'CALL-AUGUST', ${appleSeconds('2026-08-20T09:00:00Z')}, 60, 'com.apple.Telephony', 1, 1, 1, 1),
+             (2, 2, 'CALL-SEPTEMBER', ${appleSeconds('2026-09-20T09:00:00Z')}, 90, 'com.apple.FaceTime', 16, 1, 0, 1);
+    INSERT INTO ZHANDLE (Z_PK, Z_ENT, ZTYPE, ZVALUE, ZNORMALIZEDVALUE)
+      VALUES (1, 4, 2, '+15550100100', '+15550100100'), (2, 4, 3, 'ada@example.com', 'ada@example.com');
+    INSERT INTO Z_2REMOTEPARTICIPANTHANDLES VALUES (1, 1), (2, 2);
+    INSERT INTO ZCALLDBPROPERTIES (Z_PK, Z_ENT, ZTIMER_LIFETIME) VALUES (1, 1, 150);
+  `);
+}
+
+test('call history syncs from where callhistoryd keeps it, and --since keeps the calls from that day on with their participants', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  withCallHistory(mac.path);
+
+  const setup = cli(
+    mac.path,
+    'setup',
+    '--connector',
+    'call-history',
+    '--since',
+    '2026-09-01',
+  );
+  const synced = cli(mac.path, 'sync');
+  const calls = cli(
+    mac.path,
+    'query',
+    'call-history',
+    'SELECT id, kind FROM calls',
+    '--json',
+  );
+  const participants = cli(
+    mac.path,
+    'query',
+    'call-history',
+    'SELECT callId, value FROM call_participants',
+    '--json',
+  );
+
+  assert.equal(setup.status, 0, setup.stderr);
+  assert.equal(synced.status, 0, synced.stdout + synced.stderr);
+  assert.equal(lines(synced.stdout)[0].connector, 'call-history');
+  assert.deepEqual(JSON.parse(calls.stdout), [
+    { id: 'CALL-SEPTEMBER', kind: 'faceTimeAudio' },
+  ]);
+  assert.deepEqual(JSON.parse(participants.stdout), [
+    { callId: 'CALL-SEPTEMBER', value: 'ada@example.com' },
+  ]);
+});
+
+test('call history that macOS keeps behind Full Disk Access fails its sync naming that access', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  // No store under HOME: SQLite cannot open it, as under a privacy denial.
+  assert.equal(cli(mac.path, 'setup', '--connector', 'call-history').status, 0);
+
+  const synced = cli(mac.path, 'sync');
+
+  assert.equal(synced.status, 1);
+  const [pass] = lines(synced.stdout);
+  assert.equal(pass.connector, 'call-history');
+  assert.equal(pass.status, 'failed');
+  assert.match(pass.error, /Full Disk Access/);
 });

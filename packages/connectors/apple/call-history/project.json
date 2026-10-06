@@ -1,0 +1,8 @@
+{
+  "name": "connector-apple-call-history",
+  "sourceRoot": "packages/connectors/apple/call-history/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  }
+}
