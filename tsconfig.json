@@ -142,6 +142,9 @@
     },
     {
       "path": "./packages/sdks/apple/safari"
+    },
+    {
+      "path": "./packages/sdks/apple/books"
     }
   ]
 }

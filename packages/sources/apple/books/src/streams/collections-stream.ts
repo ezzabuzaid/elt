@@ -1,14 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { Collection } from '@workspace/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
-import {
-  type Row,
-  coreDataTime,
-  flag,
-  integer,
-  text,
-} from '../books-values.ts';
+import { BooksStream, booksFields, iso } from '../books-stream.ts';
 
 const { boolean, nullableInteger, nullableText, nullableTimestamp } =
   booksFields;
@@ -49,7 +43,10 @@ const properties = {
   },
 } as const;
 
-export class CollectionsStream extends BooksStream<typeof properties, Row> {
+export class CollectionsStream extends BooksStream<
+  typeof properties,
+  Collection
+> {
   readonly name = 'collections';
   readonly store = 'library';
   readonly primaryKey = ['collectionId'];
@@ -61,25 +58,23 @@ export class CollectionsStream extends BooksStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Row[] {
-    return scan.library.all(
-      'SELECT * FROM ZBKCOLLECTION WHERE ZCOLLECTIONID IS NOT NULL ORDER BY Z_PK',
-    );
+  protected rows(scan: BooksScan): readonly Collection[] {
+    return scan.library.collections();
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(collection: Collection): RecordDraft<typeof properties> {
     return {
-      collectionId: row.ZCOLLECTIONID,
-      title: text(row.ZTITLE),
-      details: text(row.ZDETAILS),
-      deleted: flag(row.ZDELETEDFLAG),
-      hidden: flag(row.ZHIDDEN),
-      placeholder: flag(row.ZPLACEHOLDER),
-      sortKey: integer(row.ZSORTKEY),
-      sortMode: integer(row.ZSORTMODE),
-      viewMode: integer(row.ZVIEWMODE),
-      modifiedAt: coreDataTime(row.ZLASTMODIFICATION),
-      localModifiedAt: coreDataTime(row.ZLOCALMODDATE),
+      collectionId: collection.collectionId,
+      title: collection.title,
+      details: collection.details,
+      deleted: collection.deleted,
+      hidden: collection.hidden,
+      placeholder: collection.placeholder,
+      sortKey: collection.sortKey,
+      sortMode: collection.sortMode,
+      viewMode: collection.viewMode,
+      modifiedAt: iso(collection.modifiedAt),
+      localModifiedAt: iso(collection.localModifiedAt),
     };
   }
 }

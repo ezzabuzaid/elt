@@ -1,17 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import { type LibraryAsset, contentTypes } from '@workspace/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
-import {
-  type Row,
-  base64,
-  coreDataTime,
-  flag,
-  integer,
-  nullableFlag,
-  number,
-  text,
-} from '../books-values.ts';
+import { BooksStream, base64, booksFields, iso } from '../books-stream.ts';
 
 const {
   boolean,
@@ -21,12 +12,6 @@ const {
   nullableText,
   nullableTimestamp,
 } = booksFields;
-
-// Only codes verified against a live library; others keep their code alone.
-const contentTypes: Readonly<Record<number, string>> = {
-  1: 'epub',
-  3: 'pdf',
-};
 
 const properties = {
   assetId: booksFields.assetId,
@@ -66,7 +51,7 @@ const properties = {
   kind: { ...nullableText, description: 'Store kind of the item.' },
   contentType: {
     ...nullableText,
-    enum: Object.values(contentTypes),
+    enum: contentTypes,
     description:
       'What the asset is: epub or pdf; NULL for any other kind, whose code is in contentTypeCode.',
   },
@@ -292,7 +277,10 @@ const properties = {
   },
 } as const;
 
-export class LibraryAssetsStream extends BooksStream<typeof properties, Row> {
+export class LibraryAssetsStream extends BooksStream<
+  typeof properties,
+  LibraryAsset
+> {
   readonly name = 'libraryAssets';
   readonly store = 'library';
   readonly primaryKey = ['assetId'];
@@ -304,111 +292,97 @@ export class LibraryAssetsStream extends BooksStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Row[] {
-    return scan.library.all(`
-      SELECT asset.*,
-        container.ZASSETID AS seriesContainerAssetId,
-        parent.ZASSETID AS supplementalContentParentAssetId
-      FROM ZBKLIBRARYASSET asset
-      LEFT JOIN ZBKLIBRARYASSET container ON container.Z_PK = asset.ZSERIESCONTAINER
-      LEFT JOIN ZBKLIBRARYASSET parent ON parent.Z_PK = asset.ZSUPPLEMENTALCONTENTPARENT
-      WHERE asset.ZASSETID IS NOT NULL
-      ORDER BY asset.Z_PK`);
+  protected rows(scan: BooksScan): readonly LibraryAsset[] {
+    return scan.library.assets();
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
-    const contentTypeCode = integer(row.ZCONTENTTYPE);
+  protected record(asset: LibraryAsset): RecordDraft<typeof properties> {
     return {
-      assetId: row.ZASSETID,
-      title: text(row.ZTITLE),
-      sortTitle: text(row.ZSORTTITLE),
-      author: text(row.ZAUTHOR),
-      sortAuthor: text(row.ZSORTAUTHOR),
-      authorCount: integer(row.ZAUTHORCOUNT),
-      authorNames: base64(row.ZAUTHORNAMES),
-      narratorCount: integer(row.ZNARRATORCOUNT),
-      narratorNames: base64(row.ZNARRATORNAMES),
-      genre: text(row.ZGENRE),
-      genres: base64(row.ZGENRES),
-      language: text(row.ZLANGUAGE),
-      bookDescription: text(row.ZBOOKDESCRIPTION),
-      comments: text(row.ZCOMMENTS),
-      grouping: text(row.ZGROUPING),
-      year: text(row.ZYEAR),
-      kind: text(row.ZKIND),
-      contentType:
-        contentTypeCode === null
-          ? null
-          : (contentTypes[contentTypeCode] ?? null),
-      contentTypeCode,
-      mappedAssetId: text(row.ZMAPPEDASSETID),
-      mappedAssetContentTypeCode: integer(row.ZMAPPEDASSETCONTENTTYPE),
-      temporaryAssetId: text(row.ZTEMPORARYASSETID),
-      epubId: text(row.ZEPUBID),
-      assetGuid: text(row.ZASSETGUID),
-      storeId: text(row.ZSTOREID),
-      storePlaylistId: text(row.ZSTOREPLAYLISTID),
-      familyId: text(row.ZFAMILYID),
-      accountId: text(row.ZACCOUNTID),
-      purchasedDsid: text(row.ZPURCHASEDDSID),
-      downloadedDsid: text(row.ZDOWNLOADEDDSID),
-      dataSource: text(row.ZDATASOURCEIDENTIFIER),
-      path: text(row.ZPATH),
-      url: text(row.ZURL),
-      permalink: text(row.ZPERMLINK),
-      coverUrl: text(row.ZCOVERURL),
-      coverAspectRatio: number(row.ZCOVERASPECTRATIO),
-      coverWritingMode: text(row.ZCOVERWRITINGMODE),
-      pageProgressionDirection: text(row.ZPAGEPROGRESSIONDIRECTION),
-      pageCount: integer(row.ZPAGECOUNT),
-      fileSize: integer(row.ZFILESIZE),
-      duration: number(row.ZDURATION),
-      readingProgress: number(row.ZREADINGPROGRESS),
-      highWaterMarkProgress: number(row.ZBOOKHIGHWATERMARKPROGRESS),
-      isFinished: flag(row.ZISFINISHED),
-      notFinished: nullableFlag(row.ZNOTFINISHED),
-      finishedDateKind: integer(row.ZFINISHEDDATEKIND),
-      finishedAt: coreDataTime(row.ZDATEFINISHED),
-      lastOpenedAt: coreDataTime(row.ZLASTOPENDATE),
-      lastEngagedAt: coreDataTime(row.ZLASTENGAGEDDATE),
-      createdAt: coreDataTime(row.ZCREATIONDATE),
-      modifiedAt: coreDataTime(row.ZMODIFICATIONDATE),
-      purchasedAt: coreDataTime(row.ZPURCHASEDATE),
-      releasedAt: coreDataTime(row.ZRELEASEDATE),
-      updatedAt: coreDataTime(row.ZUPDATEDATE),
-      expectedAt: coreDataTime(row.ZEXPECTEDDATE),
-      rating: integer(row.ZRATING),
-      computedRating: integer(row.ZCOMPUTEDRATING),
-      taste: integer(row.ZTASTE),
-      tasteSyncedToStore: nullableFlag(row.ZTASTESYNCEDTOSTORE),
-      isSample: flag(row.ZISSAMPLE),
-      isExplicit: nullableFlag(row.ZISEXPLICIT),
-      isHidden: flag(row.ZISHIDDEN),
-      isLocked: nullableFlag(row.ZISLOCKED),
-      isNew: nullableFlag(row.ZISNEW),
-      isProof: nullableFlag(row.ZISPROOF),
-      isDevelopment: nullableFlag(row.ZISDEVELOPMENT),
-      isEphemeral: nullableFlag(row.ZISEPHEMERAL),
-      isStoreAudiobook: nullableFlag(row.ZISSTOREAUDIOBOOK),
-      isSupplementalContent: nullableFlag(row.ZISSUPPLEMENTALCONTENT),
-      supplementalContentParentAssetId: text(
-        row.supplementalContentParentAssetId,
-      ),
-      isTrackedAsRecent: nullableFlag(row.ZISTRACKEDASRECENT),
-      canRedownload: nullableFlag(row.ZCANREDOWNLOAD),
-      hasReadAloudSupport: nullableFlag(row.ZHASRACSUPPORT),
-      desktopSupportLevel: integer(row.ZDESKTOPSUPPORTLEVEL),
-      state: integer(row.ZSTATE),
-      combinedState: integer(row.ZCOMBINEDSTATE),
-      versionNumber: number(row.ZVERSIONNUMBER),
-      version: text(row.ZVERSIONNUMBERHUMANREADABLE),
-      seriesId: text(row.ZSERIESID),
-      seriesContainerAssetId: text(row.seriesContainerAssetId),
-      sequenceNumber: number(row.ZSEQUENCENUMBER),
-      sequenceDisplayName: text(row.ZSEQUENCEDISPLAYNAME),
-      seriesIsOrdered: nullableFlag(row.ZSERIESISORDERED),
-      seriesIsHidden: nullableFlag(row.ZSERIESISHIDDEN),
-      seriesIsCloudOnly: nullableFlag(row.ZSERIESISCLOUDONLY),
+      assetId: asset.assetId,
+      title: asset.title,
+      sortTitle: asset.sortTitle,
+      author: asset.author,
+      sortAuthor: asset.sortAuthor,
+      authorCount: asset.authorCount,
+      authorNames: base64(asset.authorNames),
+      narratorCount: asset.narratorCount,
+      narratorNames: base64(asset.narratorNames),
+      genre: asset.genre,
+      genres: base64(asset.genres),
+      language: asset.language,
+      bookDescription: asset.bookDescription,
+      comments: asset.comments,
+      grouping: asset.grouping,
+      year: asset.year,
+      kind: asset.kind,
+      contentType: asset.contentType,
+      contentTypeCode: asset.contentTypeCode,
+      mappedAssetId: asset.mappedAssetId,
+      mappedAssetContentTypeCode: asset.mappedAssetContentTypeCode,
+      temporaryAssetId: asset.temporaryAssetId,
+      epubId: asset.epubId,
+      assetGuid: asset.assetGuid,
+      storeId: asset.storeId,
+      storePlaylistId: asset.storePlaylistId,
+      familyId: asset.familyId,
+      accountId: asset.accountId,
+      purchasedDsid: asset.purchasedDsid,
+      downloadedDsid: asset.downloadedDsid,
+      dataSource: asset.dataSource,
+      path: asset.path,
+      url: asset.url,
+      permalink: asset.permalink,
+      coverUrl: asset.coverUrl,
+      coverAspectRatio: asset.coverAspectRatio,
+      coverWritingMode: asset.coverWritingMode,
+      pageProgressionDirection: asset.pageProgressionDirection,
+      pageCount: asset.pageCount,
+      fileSize: asset.fileSize,
+      duration: asset.duration,
+      readingProgress: asset.readingProgress,
+      highWaterMarkProgress: asset.highWaterMarkProgress,
+      isFinished: asset.isFinished,
+      notFinished: asset.notFinished,
+      finishedDateKind: asset.finishedDateKind,
+      finishedAt: iso(asset.finishedAt),
+      lastOpenedAt: iso(asset.lastOpenedAt),
+      lastEngagedAt: iso(asset.lastEngagedAt),
+      createdAt: iso(asset.createdAt),
+      modifiedAt: iso(asset.modifiedAt),
+      purchasedAt: iso(asset.purchasedAt),
+      releasedAt: iso(asset.releasedAt),
+      updatedAt: iso(asset.updatedAt),
+      expectedAt: iso(asset.expectedAt),
+      rating: asset.rating,
+      computedRating: asset.computedRating,
+      taste: asset.taste,
+      tasteSyncedToStore: asset.tasteSyncedToStore,
+      isSample: asset.isSample,
+      isExplicit: asset.isExplicit,
+      isHidden: asset.isHidden,
+      isLocked: asset.isLocked,
+      isNew: asset.isNew,
+      isProof: asset.isProof,
+      isDevelopment: asset.isDevelopment,
+      isEphemeral: asset.isEphemeral,
+      isStoreAudiobook: asset.isStoreAudiobook,
+      isSupplementalContent: asset.isSupplementalContent,
+      supplementalContentParentAssetId: asset.supplementalContentParentAssetId,
+      isTrackedAsRecent: asset.isTrackedAsRecent,
+      canRedownload: asset.canRedownload,
+      hasReadAloudSupport: asset.hasReadAloudSupport,
+      desktopSupportLevel: asset.desktopSupportLevel,
+      state: asset.state,
+      combinedState: asset.combinedState,
+      versionNumber: asset.versionNumber,
+      version: asset.version,
+      seriesId: asset.seriesId,
+      seriesContainerAssetId: asset.seriesContainerAssetId,
+      sequenceNumber: asset.sequenceNumber,
+      sequenceDisplayName: asset.sequenceDisplayName,
+      seriesIsOrdered: asset.seriesIsOrdered,
+      seriesIsHidden: asset.seriesIsHidden,
+      seriesIsCloudOnly: asset.seriesIsCloudOnly,
     };
   }
 }

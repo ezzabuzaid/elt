@@ -1,12 +1,12 @@
 import type { RecordDraft } from '@workspace/elt';
-
-import type { BooksScan } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
 import type {
   ReadingDay,
   ReadingMonth,
   StreakRecord,
-} from '../reading-history.ts';
+} from '@workspace/sdk-apple-books';
+
+import type { BooksScan } from '../books-scan.ts';
+import { BooksStream, booksFields } from '../books-stream.ts';
 
 const { nullableInteger } = booksFields;
 

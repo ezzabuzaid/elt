@@ -1,14 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { Purchase } from '@workspace/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
-import {
-  type Row,
-  coreDataTime,
-  integer,
-  nullableFlag,
-  text,
-} from '../books-values.ts';
+import { BooksStream, booksFields, iso } from '../books-stream.ts';
 
 const { nullableBoolean, nullableInteger, nullableText, nullableTimestamp } =
   booksFields;
@@ -64,7 +58,7 @@ const properties = {
   },
 } as const;
 
-export class PurchasesStream extends BooksStream<typeof properties, Row> {
+export class PurchasesStream extends BooksStream<typeof properties, Purchase> {
   readonly name = 'purchases';
   readonly store = 'purchases';
   readonly primaryKey = ['storeId'];
@@ -76,34 +70,32 @@ export class PurchasesStream extends BooksStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Row[] {
-    return scan.purchases.all(
-      'SELECT * FROM ZBLJALISCOSERVERITEM WHERE ZSTOREID IS NOT NULL ORDER BY Z_PK',
-    );
+  protected rows(scan: BooksScan): readonly Purchase[] {
+    return scan.purchases.purchases();
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(purchase: Purchase): RecordDraft<typeof properties> {
     return {
-      storeId: String(row.ZSTOREID),
-      title: text(row.ZTITLE),
-      sortTitle: text(row.ZSORTEDTITLE),
-      artist: text(row.ZARTIST),
-      sortAuthor: text(row.ZSORTEDAUTHOR),
-      genre: text(row.ZGENRE),
-      fileExtension: text(row.ZFILEEXTENSION),
-      version: text(row.ZDISPLAYVERSION),
-      purchasedAt: coreDataTime(row.ZPURCHASEDAT),
-      expectedAt: coreDataTime(row.ZEXPECTEDDATE),
-      isAudiobook: nullableFlag(row.ZISAUDIOBOOK),
-      containsAudio: nullableFlag(row.ZCONTAINSAUDIO),
-      isExplicit: nullableFlag(row.ZISEXPLICIT),
-      isHidden: nullableFlag(row.ZISHIDDEN),
-      isDisabled: nullableFlag(row.ZISDISABLED),
-      isPictureBook: nullableFlag(row.ZISPICTUREBOOK),
-      isReadAloud: nullableFlag(row.ZISREADALOUD),
-      purchaseHistoryId: integer(row.ZPURCHASEHISTORYID),
-      storeAccountId: integer(row.ZSTOREACCOUNTID),
-      artworkUrl: text(row.ZARTWORKURLSTRING),
+      storeId: purchase.storeId,
+      title: purchase.title,
+      sortTitle: purchase.sortTitle,
+      artist: purchase.artist,
+      sortAuthor: purchase.sortAuthor,
+      genre: purchase.genre,
+      fileExtension: purchase.fileExtension,
+      version: purchase.version,
+      purchasedAt: iso(purchase.purchasedAt),
+      expectedAt: iso(purchase.expectedAt),
+      isAudiobook: purchase.isAudiobook,
+      containsAudio: purchase.containsAudio,
+      isExplicit: purchase.isExplicit,
+      isHidden: purchase.isHidden,
+      isDisabled: purchase.isDisabled,
+      isPictureBook: purchase.isPictureBook,
+      isReadAloud: purchase.isReadAloud,
+      purchaseHistoryId: purchase.purchaseHistoryId,
+      storeAccountId: purchase.storeAccountId,
+      artworkUrl: purchase.artworkUrl,
     };
   }
 }

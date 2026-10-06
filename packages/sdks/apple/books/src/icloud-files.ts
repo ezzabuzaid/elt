@@ -36,9 +36,7 @@ async function flags(paths: readonly string[]): Promise<Map<string, number>> {
 
 // Which of these paths exist with their bytes on this Mac, read from their
 // flags alone so no placeholder is fetched.
-export async function localPaths(
-  paths: readonly string[],
-): Promise<Set<string>> {
+async function localPaths(paths: readonly string[]): Promise<Set<string>> {
   const found = await flags(paths);
   return new Set(
     paths.filter((path) => {

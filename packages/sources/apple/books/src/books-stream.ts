@@ -6,13 +6,22 @@ import {
   type SyncMode,
   validateRecords,
 } from '@workspace/elt';
+import type { BooksStore } from '@workspace/sdk-apple-books';
 
-import type { BooksScan, BooksStore } from './books-scan.ts';
+import type { BooksScan } from './books-scan.ts';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;
 const integer = { type: 'integer' } as const;
 const nullableInteger = { type: ['integer', 'null'] } as const;
+
+// A time as a record holds it.
+export const iso = (date: Date | null): string | null =>
+  date?.toISOString() ?? null;
+
+// Bytes as a record holds them.
+export const base64 = (bytes: Uint8Array | null): string | null =>
+  bytes === null ? null : Buffer.from(bytes).toString('base64');
 
 export const booksFields = {
   id: { ...text, minLength: 1 },

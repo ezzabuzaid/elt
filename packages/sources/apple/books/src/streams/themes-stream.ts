@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { Theme } from '@workspace/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
 import { BooksStream, booksFields } from '../books-stream.ts';
-import { type Row, nullableFlag, number } from '../books-values.ts';
 
 const { nullableBoolean, nullableNumber } = booksFields;
 
@@ -27,7 +27,7 @@ const properties = {
   wordSpacing: { ...nullableNumber, description: 'Word spacing.' },
 } as const;
 
-export class ThemesStream extends BooksStream<typeof properties, Row> {
+export class ThemesStream extends BooksStream<typeof properties, Theme> {
   readonly name = 'themes';
   readonly store = 'themes';
   readonly primaryKey = ['id'];
@@ -39,23 +39,21 @@ export class ThemesStream extends BooksStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Row[] {
-    return scan.themes.all(
-      'SELECT * FROM ZBOOKTHEME WHERE ZIDENTIFIER IS NOT NULL ORDER BY Z_PK',
-    );
+  protected rows(scan: BooksScan): readonly Theme[] {
+    return scan.themes.themes();
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(theme: Theme): RecordDraft<typeof properties> {
     return {
-      id: row.ZIDENTIFIER,
-      hasCustomLayout: nullableFlag(row.ZHASCUSTOMLAYOUT),
-      boldText: nullableFlag(row.ZISFONTBOLDED),
-      justify: nullableFlag(row.ZJUSTIFY),
-      multipleColumns: nullableFlag(row.ZMULTIPLECOLUMNMODE),
-      letterSpacing: number(row.ZLETTERSPACING),
-      lineHeight: number(row.ZLINEHEIGHT),
-      marginAdjustment: number(row.ZMARGINADJUSTMENT),
-      wordSpacing: number(row.ZWORDSPACING),
+      id: theme.id,
+      hasCustomLayout: theme.hasCustomLayout,
+      boldText: theme.boldText,
+      justify: theme.justify,
+      multipleColumns: theme.multipleColumns,
+      letterSpacing: theme.letterSpacing,
+      lineHeight: theme.lineHeight,
+      marginAdjustment: theme.marginAdjustment,
+      wordSpacing: theme.wordSpacing,
     };
   }
 }

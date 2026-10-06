@@ -1,309 +1,23 @@
-import { join } from 'node:path';
-
-import type { PlistValue } from '@workspace/sdk-apple-plist';
-
-import {
-  BooksDatabase,
-  booksContainer,
-  booksGroupContainer,
-  readBooksPlist,
-} from './books-store.ts';
-import { type ReadingHistory, readingHistory } from './reading-history.ts';
-
-// Where Books keeps each kind of data: Core Data stores it commits to, and
-// preference files it rewrites whole.
-export type BooksStore =
-  | 'library'
-  | 'annotations'
-  | 'assetData'
-  | 'readingHistory'
-  | 'purchases'
-  | 'themes'
-  | 'preferences';
-
-export type BooksLocation = {
-  // Books.app's container: library, annotations, themes, preferences.
-  readonly container: string;
-  // The group container bookdatastored writes: reading state, reading
-  // history, store purchases, shared preferences.
-  readonly groupContainer: string;
-};
-
-export const defaultBooksLocation: BooksLocation = Object.freeze({
-  container: booksContainer,
-  groupContainer: booksGroupContainer,
-});
-
-const bookData = (group: string) =>
-  join(group, 'Documents/BCCloudData-BookDataStoreService');
-
-// The file each store keeps; preferences span two files.
-export const storeFiles = ({ container, groupContainer }: BooksLocation) =>
-  ({
-    library: join(
-      container,
-      'Documents/BKLibrary/BKLibrary-1-091020131601.sqlite',
-    ),
-    annotations: join(
-      container,
-      'Documents/AEAnnotation/AEAnnotation_v10312011_1727_local.sqlite',
-    ),
-    assetData: join(bookData(groupContainer), 'BCAssetData/BCAssetData'),
-    readingHistory: join(
-      bookData(groupContainer),
-      'CRDTModelSync-ReadingHistoryModel/CRDTModelSync-ReadingHistoryModel',
-    ),
-    purchases: join(
-      groupContainer,
-      'Documents/BKJaliscoServerSource/BKJaliscoServerSource-v09182016.sqlite',
-    ),
-    themes: join(
-      container,
-      'Library/Application Support/Books/BookTheme.sqlite',
-    ),
-    preferences: join(container, 'Library/Preferences/com.apple.iBooksX.plist'),
-  }) satisfies Record<BooksStore, string>;
-
-export const sharedPreferences = ({ groupContainer }: BooksLocation) =>
-  join(groupContainer, 'Library/Preferences/group.com.apple.iBooks.plist');
-
-export const databaseStores = new Set<BooksStore>([
-  'library',
-  'annotations',
-  'assetData',
-  'readingHistory',
-  'purchases',
-  'themes',
-]);
-
-// The columns each stream reads; opening a store checks them all.
-const columns = {
-  library: {
-    ZBKLIBRARYASSET: [
-      'Z_PK',
-      'ZASSETID',
-      'ZTITLE',
-      'ZSORTTITLE',
-      'ZAUTHOR',
-      'ZSORTAUTHOR',
-      'ZAUTHORCOUNT',
-      'ZAUTHORNAMES',
-      'ZNARRATORCOUNT',
-      'ZNARRATORNAMES',
-      'ZGENRE',
-      'ZGENRES',
-      'ZLANGUAGE',
-      'ZBOOKDESCRIPTION',
-      'ZCOMMENTS',
-      'ZGROUPING',
-      'ZYEAR',
-      'ZKIND',
-      'ZCONTENTTYPE',
-      'ZMAPPEDASSETCONTENTTYPE',
-      'ZMAPPEDASSETID',
-      'ZTEMPORARYASSETID',
-      'ZEPUBID',
-      'ZASSETGUID',
-      'ZSTOREID',
-      'ZSTOREPLAYLISTID',
-      'ZFAMILYID',
-      'ZACCOUNTID',
-      'ZPURCHASEDDSID',
-      'ZDOWNLOADEDDSID',
-      'ZDATASOURCEIDENTIFIER',
-      'ZPATH',
-      'ZURL',
-      'ZPERMLINK',
-      'ZCOVERURL',
-      'ZCOVERASPECTRATIO',
-      'ZCOVERWRITINGMODE',
-      'ZPAGEPROGRESSIONDIRECTION',
-      'ZPAGECOUNT',
-      'ZFILESIZE',
-      'ZDURATION',
-      'ZREADINGPROGRESS',
-      'ZBOOKHIGHWATERMARKPROGRESS',
-      'ZISFINISHED',
-      'ZNOTFINISHED',
-      'ZFINISHEDDATEKIND',
-      'ZDATEFINISHED',
-      'ZLASTOPENDATE',
-      'ZLASTENGAGEDDATE',
-      'ZCREATIONDATE',
-      'ZMODIFICATIONDATE',
-      'ZPURCHASEDATE',
-      'ZRELEASEDATE',
-      'ZUPDATEDATE',
-      'ZEXPECTEDDATE',
-      'ZRATING',
-      'ZCOMPUTEDRATING',
-      'ZTASTE',
-      'ZTASTESYNCEDTOSTORE',
-      'ZISSAMPLE',
-      'ZISEXPLICIT',
-      'ZISHIDDEN',
-      'ZISLOCKED',
-      'ZISNEW',
-      'ZISPROOF',
-      'ZISDEVELOPMENT',
-      'ZISEPHEMERAL',
-      'ZISSTOREAUDIOBOOK',
-      'ZISSUPPLEMENTALCONTENT',
-      'ZISTRACKEDASRECENT',
-      'ZCANREDOWNLOAD',
-      'ZHASRACSUPPORT',
-      'ZDESKTOPSUPPORTLEVEL',
-      'ZSTATE',
-      'ZCOMBINEDSTATE',
-      'ZVERSIONNUMBER',
-      'ZVERSIONNUMBERHUMANREADABLE',
-      'ZSERIESID',
-      'ZSERIESCONTAINER',
-      'ZSEQUENCENUMBER',
-      'ZSEQUENCEDISPLAYNAME',
-      'ZSERIESISORDERED',
-      'ZSERIESISHIDDEN',
-      'ZSERIESISCLOUDONLY',
-      'ZSUPPLEMENTALCONTENTPARENT',
-    ],
-    ZBKCOLLECTION: [
-      'Z_PK',
-      'ZCOLLECTIONID',
-      'ZTITLE',
-      'ZDETAILS',
-      'ZDELETEDFLAG',
-      'ZHIDDEN',
-      'ZPLACEHOLDER',
-      'ZSORTKEY',
-      'ZSORTMODE',
-      'ZVIEWMODE',
-      'ZLASTMODIFICATION',
-      'ZLOCALMODDATE',
-    ],
-    ZBKCOLLECTIONMEMBER: [
-      'ZCOLLECTION',
-      'ZASSETID',
-      'ZSORTKEY',
-      'ZLOCALMODDATE',
-    ],
-  },
-  annotations: {
-    ZAEANNOTATION: [
-      'ZANNOTATIONUUID',
-      'ZANNOTATIONASSETID',
-      'ZANNOTATIONTYPE',
-      'ZANNOTATIONSTYLE',
-      'ZANNOTATIONISUNDERLINE',
-      'ZANNOTATIONDELETED',
-      'ZANNOTATIONSELECTEDTEXT',
-      'ZANNOTATIONREPRESENTATIVETEXT',
-      'ZANNOTATIONNOTE',
-      'ZANNOTATIONLOCATION',
-      'ZPLLOCATIONRANGESTART',
-      'ZPLLOCATIONRANGEEND',
-      'ZPLABSOLUTEPHYSICALLOCATION',
-      'ZPLSTORAGEUUID',
-      'ZANNOTATIONCREATORIDENTIFIER',
-      'ZANNOTATIONCREATIONDATE',
-      'ZANNOTATIONMODIFICATIONDATE',
-      'ZFUTUREPROOFING5',
-    ],
-  },
-  assetData: {
-    ZBCASSETDETAIL: [
-      'ZASSETID',
-      'ZDELETEDFLAG',
-      'ZREADINGPROGRESS',
-      'ZREADINGPROGRESSHIGHWATERMARK',
-      'ZISFINISHED',
-      'ZNOTFINISHED',
-      'ZFINISHEDDATEKIND',
-      'ZDATEFINISHED',
-      'ZISTRACKEDASRECENT',
-      'ZLASTOPENDATE',
-      'ZLASTENGAGEDDATE',
-      'ZMODIFICATIONDATE',
-      'ZSTARRATING',
-      'ZTASTE',
-      'ZTASTESYNCEDTOSTORE',
-      'ZBOOKMARKTIME',
-      'ZDATEPLAYBACKTIMEUPDATED',
-      'ZREADINGPOSITIONCFISTRING',
-      'ZREADINGPOSITIONLOCATIONRANGESTART',
-      'ZREADINGPOSITIONLOCATIONRANGEEND',
-      'ZREADINGPOSITIONABSOLUTEPHYSICALLOCATION',
-      'ZREADINGPOSITIONSTORAGEUUID',
-      'ZREADINGPOSITIONASSETVERSION',
-      'ZREADINGPOSITIONANNOTATIONVERSION',
-      'ZREADINGPOSITIONLOCATIONUPDATEDATE',
-    ],
-    ZBCASSETREVIEW: [
-      'ZASSETREVIEWID',
-      'ZDELETEDFLAG',
-      'ZSTARRATING',
-      'ZREVIEWTITLE',
-      'ZREVIEWBODY',
-      'ZUSERID',
-      'ZMODIFICATIONDATE',
-    ],
-  },
-  readingHistory: {
-    ZCRDTMODELSYNCENTITY: ['ZTYPE', 'ZDELETEDFLAG', 'ZPROTODATA'],
-  },
-  purchases: {
-    ZBLJALISCOSERVERITEM: [
-      'ZSTOREID',
-      'ZTITLE',
-      'ZSORTEDTITLE',
-      'ZARTIST',
-      'ZSORTEDAUTHOR',
-      'ZGENRE',
-      'ZFILEEXTENSION',
-      'ZDISPLAYVERSION',
-      'ZPURCHASEDAT',
-      'ZEXPECTEDDATE',
-      'ZISAUDIOBOOK',
-      'ZCONTAINSAUDIO',
-      'ZISEXPLICIT',
-      'ZISHIDDEN',
-      'ZISDISABLED',
-      'ZISPICTUREBOOK',
-      'ZISREADALOUD',
-      'ZPURCHASEHISTORYID',
-      'ZSTOREACCOUNTID',
-      'ZARTWORKURLSTRING',
-    ],
-  },
-  themes: {
-    ZBOOKTHEME: [
-      'ZIDENTIFIER',
-      'ZHASCUSTOMLAYOUT',
-      'ZISFONTBOLDED',
-      'ZJUSTIFY',
-      'ZMULTIPLECOLUMNMODE',
-      'ZLETTERSPACING',
-      'ZLINEHEIGHT',
-      'ZMARGINADJUSTMENT',
-      'ZWORDSPACING',
-    ],
-  },
-} satisfies Partial<
-  Record<BooksStore, Readonly<Record<string, readonly string[]>>>
->;
-
-export type Preferences = {
-  readonly app: PlistValue;
-  readonly shared: PlistValue;
-};
+import type {
+  BookAssetData,
+  Books,
+  BooksAnnotations,
+  BooksLibrary,
+  BooksPurchases,
+  BooksStore,
+  BooksThemes,
+  ReadingGoal,
+  ReadingHistory,
+} from '@workspace/sdk-apple-books';
 
 type Opened = {
-  library: BooksDatabase;
-  annotations: BooksDatabase;
-  assetData: BooksDatabase;
+  library: BooksLibrary;
+  annotations: BooksAnnotations;
+  assetData: BookAssetData;
   readingHistory: ReadingHistory;
-  purchases: BooksDatabase;
-  themes: BooksDatabase;
-  preferences: Preferences;
+  purchases: BooksPurchases;
+  themes: BooksThemes;
+  preferences: ReadingGoal;
 };
 
 // A store's contents, or why it could not be opened.
@@ -316,32 +30,22 @@ type OpenedStores = { [S in BooksStore]?: Result<Opened[S]> };
 // and a store that cannot be opened fails only the streams that read it.
 // Disposing it ends the read transactions.
 export class BooksScan implements AsyncDisposable {
-  readonly location: BooksLocation;
   readonly #resources: AsyncDisposableStack;
   readonly #stores: OpenedStores;
 
-  private constructor(
-    location: BooksLocation,
-    resources: AsyncDisposableStack,
-    stores: OpenedStores,
-  ) {
-    this.location = location;
+  private constructor(resources: AsyncDisposableStack, stores: OpenedStores) {
     this.#resources = resources;
     this.#stores = stores;
   }
 
   static async open(
-    location: BooksLocation,
+    books: Books,
     stores: ReadonlySet<BooksStore>,
   ): Promise<BooksScan> {
-    const files = storeFiles(location);
     await using resources = new AsyncDisposableStack();
-    const database = async (
-      store: Exclude<BooksStore, 'readingHistory' | 'preferences'>,
-    ) => resources.use(new BooksDatabase(files[store], columns[store]));
     const open = async <S extends BooksStore>(
       store: S,
-      value: () => Promise<Opened[S]>,
+      value: () => Opened[S] | Promise<Opened[S]>,
     ): Promise<Result<Opened[S]> | undefined> => {
       if (!stores.has(store)) return undefined;
       try {
@@ -351,42 +55,35 @@ export class BooksScan implements AsyncDisposable {
       }
     };
     const opened: OpenedStores = {
-      library: await open('library', () => database('library')),
-      annotations: await open('annotations', () => database('annotations')),
-      assetData: await open('assetData', () => database('assetData')),
+      library: await open('library', () => resources.use(books.library())),
+      annotations: await open('annotations', () =>
+        resources.use(books.annotations()),
+      ),
+      assetData: await open('assetData', () =>
+        resources.use(books.assetData()),
+      ),
       // Decoded whole while the read transaction pins it, then released.
-      readingHistory: await open('readingHistory', async () => {
-        using store = new BooksDatabase(
-          files.readingHistory,
-          columns.readingHistory,
-        );
-        const rows = store.all(
-          "SELECT ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel' AND coalesce(ZDELETEDFLAG, 0) = 0",
-        );
-        const bytes = rows[0]?.ZPROTODATA;
-        if (rows.length !== 1 || !(bytes instanceof Uint8Array))
-          return { months: [], days: [], streaks: [] };
-        return readingHistory(bytes, files.readingHistory);
-      }),
-      purchases: await open('purchases', () => database('purchases')),
-      themes: await open('themes', () => database('themes')),
-      preferences: await open('preferences', async () => ({
-        app: await readBooksPlist(files.preferences),
-        shared: await readBooksPlist(sharedPreferences(location)),
-      })),
+      readingHistory: await open('readingHistory', () =>
+        books.readingHistory(),
+      ),
+      purchases: await open('purchases', () =>
+        resources.use(books.purchases()),
+      ),
+      themes: await open('themes', () => resources.use(books.themes())),
+      preferences: await open('preferences', () => books.readingGoal()),
     };
-    return new BooksScan(location, resources.move(), opened);
+    return new BooksScan(resources.move(), opened);
   }
 
-  get library(): BooksDatabase {
+  get library(): BooksLibrary {
     return this.#value('library');
   }
 
-  get annotations(): BooksDatabase {
+  get annotations(): BooksAnnotations {
     return this.#value('annotations');
   }
 
-  get assetData(): BooksDatabase {
+  get assetData(): BookAssetData {
     return this.#value('assetData');
   }
 
@@ -394,15 +91,15 @@ export class BooksScan implements AsyncDisposable {
     return this.#value('readingHistory');
   }
 
-  get purchases(): BooksDatabase {
+  get purchases(): BooksPurchases {
     return this.#value('purchases');
   }
 
-  get themes(): BooksDatabase {
+  get themes(): BooksThemes {
     return this.#value('themes');
   }
 
-  get preferences(): Preferences {
+  get readingGoal(): ReadingGoal {
     return this.#value('preferences');
   }
 

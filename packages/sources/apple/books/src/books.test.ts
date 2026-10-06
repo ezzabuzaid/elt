@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import {
+  chmod,
   mkdir,
   mkdtempDisposable,
   readFile,
   rm,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -21,6 +23,7 @@ import {
   Pipeline,
   PipelineError,
   type Source,
+  type Stream,
   StreamStatus,
 } from '@workspace/elt';
 import {
@@ -30,14 +33,14 @@ import {
   SQLiteSyncHistory,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
-
-import { AppleBooksSource } from './apple-books-source.ts';
 import {
   BooksSchemaError,
   BooksUnavailableError,
   booksContainer,
   booksGroupContainer,
-} from './books-store.ts';
+} from '@workspace/sdk-apple-books';
+
+import { AppleBooksSource } from './apple-books-source.ts';
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -375,8 +378,8 @@ function database(path: string, schema: string): DatabaseSync {
 }
 
 // One library with an EPUB package, a PDF, and a book whose file is gone; its
-// annotations, collections, synced reading state, reading history, a store
-// purchase, a custom theme, and the reading goal preferences.
+// annotations, collections, synced reading state, a store review, reading
+// history, a store purchase, a custom theme, and the reading goal preferences.
 async function booksFixture(root: string): Promise<BooksFixture> {
   const container = join(root, 'container');
   const groupContainer = join(root, 'group');
@@ -629,6 +632,17 @@ async function booksFixture(root: string): Promise<BooksFixture> {
       null,
       at('2024-01-01T00:00:00.000Z'),
     );
+    store
+      .prepare(
+        'INSERT INTO ZBCASSETREVIEW (Z_PK, Z_ENT, Z_OPT, ZASSETREVIEWID, ZDELETEDFLAG, ZSTARRATING, ZREVIEWTITLE, ZREVIEWBODY, ZUSERID, ZMODIFICATIONDATE) VALUES (1, 3, 1, ?, 0, 4, ?, ?, ?, ?)',
+      )
+      .run(
+        'REVIEW-9',
+        'Worth it',
+        'Clear and practical.',
+        '1234567',
+        at('2025-01-02T03:04:05.000Z'),
+      );
   }
   {
     using store = database(files.readingHistory, readingHistorySchema);
@@ -672,6 +686,96 @@ async function booksFixture(root: string): Promise<BooksFixture> {
 const run = promisify(execFile);
 const rows = <T extends object>(found: Iterable<T>) =>
   [...found].map((row) => ({ ...row }));
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// The records one full-refresh read of a stream yields, in the order Books
+// yields them.
+async function readStream(
+  source: AppleBooksSource,
+  stream: Stream,
+): Promise<Record<string, unknown>[]> {
+  const messages = await Array.fromAsync(
+    source.read(
+      [
+        new Copy(
+          stream,
+          new SQLiteDestination({ path: ':memory:' }).table(stream.name),
+        ).configuration,
+      ],
+      new Map(),
+    ),
+  );
+  for (const message of messages)
+    if (message instanceof StreamStatus && message.status === 'FAILED')
+      throw message.error;
+  return messages.flatMap((message) =>
+    'data' in message && isRecord(message.data) ? [message.data] : [],
+  );
+}
+
+// The fields of the record whose key field holds the given value.
+const fieldsOf = (
+  records: readonly Record<string, unknown>[],
+  key: string,
+  value: unknown,
+  fields: readonly string[],
+) => {
+  const found = records.find((record) => record[key] === value);
+  assert.ok(found, `no record with ${key} ${String(value)}`);
+  return Object.fromEntries(fields.map((field) => [field, found[field]]));
+};
+
+// The streams one load of a fresh fixture under root fails after a change to
+// it, each with its error as text.
+async function failedAfter(
+  root: string,
+  change: (location: BooksFixture) => Promise<void>,
+): Promise<Record<string, string>> {
+  const location = await booksFixture(root);
+  await change(location);
+  const books = await appleImport(
+    new AppleBooksSource(location),
+    join(root, 'import'),
+  );
+  const failure = await books.load().then(
+    () => null,
+    (error: unknown) => error,
+  );
+  if (failure === null) return {};
+  assert.ok(failure instanceof PipelineError);
+  return Object.fromEntries(
+    failure.results
+      .filter(({ failures }) => failures.length > 0)
+      .map(({ copy, failures }) => [
+        copy.configuration.stream.name,
+        String(failures[0]?.error),
+      ]),
+  );
+}
+
+// Rebuilds a table the way a later Books might lay it out: the same columns
+// and rows, without its Z_PK.
+function withoutPrimaryKey(path: string, table: string): void {
+  using store = new DatabaseSync(path);
+  const columns = store
+    .prepare('SELECT name FROM pragma_table_info(?)')
+    .all(table)
+    .flatMap(({ name }) =>
+      typeof name === 'string' && name !== 'Z_PK' ? [name] : [],
+    );
+  store.exec(`CREATE TABLE rebuilt AS SELECT ${columns.join(', ')} FROM ${table};
+    DROP TABLE ${table};
+    ALTER TABLE rebuilt RENAME TO ${table}`);
+}
+
+// NSDate's distantPast and distantFuture in seconds since 2001-01-01, which
+// Core Data and property lists store to mean "none".
+const distantPast = -63_114_076_800;
+const distantFuture = 63_113_904_000;
+const fromAppleSeconds = (seconds: number) =>
+  new Date(Date.UTC(2001, 0, 1) + seconds * 1000);
 
 test('Books reads its library, annotations, synced reading state and reading history as documented views', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
@@ -1233,6 +1337,907 @@ test('a Books watch wakes only the streams of the store that changed, while Book
     ['readingGoal'],
     ['assetDetails'],
   ]);
+});
+
+test('a malformed or missing Books store, column or value fails only the streams that read it', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  // The failures one load has after running sql on one store of a fresh
+  // fixture.
+  const afterSql = (
+    name: string,
+    store: keyof BooksFixture['files'],
+    sql: string,
+  ) =>
+    failedAfter(join(scratch.path, name), async ({ files }) => {
+      using database = new DatabaseSync(files[store]);
+      database.exec(sql);
+    });
+  const withoutKey = (
+    name: string,
+    store: keyof BooksFixture['files'],
+    table: string,
+  ) =>
+    failedAfter(join(scratch.path, name), async ({ files }) =>
+      withoutPrimaryKey(files[store], table),
+    );
+  const library = [
+    'bookFiles',
+    'collectionMembers',
+    'collections',
+    'libraryAssets',
+  ];
+  const reading = ['readingDays', 'readingMonths', 'streakRecords'];
+
+  const viewMode = await afterSql(
+    'view-mode',
+    'library',
+    'ALTER TABLE ZBKCOLLECTION DROP COLUMN ZVIEWMODE',
+  );
+  const note = await afterSql(
+    'note',
+    'annotations',
+    'ALTER TABLE ZAEANNOTATION DROP COLUMN ZANNOTATIONNOTE',
+  );
+  const justify = await afterSql(
+    'justify',
+    'themes',
+    'ALTER TABLE ZBOOKTHEME DROP COLUMN ZJUSTIFY',
+  );
+  const genre = await afterSql(
+    'genre',
+    'purchases',
+    'ALTER TABLE ZBLJALISCOSERVERITEM DROP COLUMN ZGENRE',
+  );
+  const unkeyed = {
+    collectionMembers: await withoutKey(
+      'members',
+      'library',
+      'ZBKCOLLECTIONMEMBER',
+    ),
+    annotations: await withoutKey(
+      'annotations',
+      'annotations',
+      'ZAEANNOTATION',
+    ),
+    assetDetails: await withoutKey('details', 'assetData', 'ZBCASSETDETAIL'),
+    reviews: await withoutKey('reviews', 'assetData', 'ZBCASSETREVIEW'),
+    purchases: await withoutKey(
+      'purchases',
+      'purchases',
+      'ZBLJALISCOSERVERITEM',
+    ),
+    themes: await withoutKey('themes', 'themes', 'ZBOOKTHEME'),
+  };
+  // A column no stream maps, holding an integer JavaScript cannot represent.
+  const generation = await afterSql(
+    'generation',
+    'library',
+    "UPDATE ZBKLIBRARYASSET SET ZGENERATION = 9007199254740993 WHERE ZASSETID = 'A1'",
+  );
+  const blobId = await afterSql(
+    'blob-id',
+    'assetData',
+    "UPDATE ZBCASSETDETAIL SET ZASSETID = x'454c5345' WHERE ZASSETID = 'ELSEWHERE'",
+  );
+  const noGroup = await failedAfter(
+    join(scratch.path, 'no-group'),
+    async ({ groupContainer }) => {
+      await rm(groupContainer, { recursive: true });
+    },
+  );
+  const emptyHistory = await afterSql(
+    'empty-history',
+    'readingHistory',
+    "UPDATE ZCRDTMODELSYNCENTITY SET ZPROTODATA = x''",
+  );
+  const badMonth = await failedAfter(
+    join(scratch.path, 'bad-month'),
+    async ({ files }) => {
+      using database = new DatabaseSync(files.readingHistory);
+      database
+        .prepare('UPDATE ZCRDTMODELSYNCENTITY SET ZPROTODATA = ?')
+        .run(
+          readingHistoryDocument(
+            [{ key: 202613, lastDayStreakOrdinal: -1, days: [] }],
+            [],
+          ),
+        );
+    },
+  );
+
+  // A store missing a column a stream reads fails every stream of that store.
+  assert.deepEqual(Object.keys(viewMode).sort(), library);
+  for (const error of Object.values(viewMode)) {
+    assert.match(error, /^BooksSchemaError: /);
+    assert.match(error, /BKLibrary-1-091020131601\.sqlite /);
+    assert.match(error, /missing ZBKCOLLECTION\.ZVIEWMODE/);
+  }
+  assert.deepEqual(Object.keys(note), ['annotations']);
+  assert.match(note.annotations ?? '', /^BooksSchemaError: /);
+  assert.match(
+    note.annotations ?? '',
+    /AEAnnotation_v10312011_1727_local\.sqlite /,
+  );
+  assert.match(
+    note.annotations ?? '',
+    /missing ZAEANNOTATION\.ZANNOTATIONNOTE/,
+  );
+  assert.deepEqual(Object.keys(justify), ['themes']);
+  assert.match(justify.themes ?? '', /^BooksSchemaError: /);
+  assert.match(justify.themes ?? '', /BookTheme\.sqlite /);
+  assert.match(justify.themes ?? '', /missing ZBOOKTHEME\.ZJUSTIFY/);
+  assert.deepEqual(Object.keys(genre), ['purchases']);
+  assert.match(genre.purchases ?? '', /^BooksSchemaError: /);
+  assert.match(
+    genre.purchases ?? '',
+    /BKJaliscoServerSource-v09182016\.sqlite /,
+  );
+  assert.match(genre.purchases ?? '', /missing ZBLJALISCOSERVERITEM\.ZGENRE/);
+  // Z_PK only orders rows, so a table without it fails only its own stream,
+  // when its query runs, and the store's other streams load.
+  for (const [stream, failed] of Object.entries(unkeyed)) {
+    assert.deepEqual(Object.keys(failed), [stream]);
+    assert.match(failed[stream] ?? '', /no such column: (member\.)?Z_PK/);
+  }
+  assert.deepEqual(Object.keys(generation), ['libraryAssets']);
+  assert.match(generation.libraryAssets ?? '', /9007199254740993/);
+  assert.deepEqual(Object.keys(blobId), ['assetDetails']);
+  assert.match(blobId.assetDetails ?? '', /invalid assetDetails\.assetId/);
+  // Without the group container, everything bookdatastored keeps fails, and
+  // each failure names its own file and the grant.
+  assert.deepEqual(Object.keys(noGroup).sort(), [
+    'assetDetails',
+    'purchases',
+    'readingDays',
+    'readingGoal',
+    'readingMonths',
+    'reviews',
+    'streakRecords',
+  ]);
+  for (const error of Object.values(noGroup)) {
+    assert.match(error, /^BooksUnavailableError: /);
+    assert.match(error, /Full Disk Access/);
+  }
+  assert.match(noGroup.assetDetails ?? '', /BCAssetData cannot be read/);
+  assert.match(noGroup.reviews ?? '', /BCAssetData cannot be read/);
+  for (const stream of reading)
+    assert.match(
+      noGroup[stream] ?? '',
+      /CRDTModelSync-ReadingHistoryModel cannot be read/,
+    );
+  assert.match(
+    noGroup.purchases ?? '',
+    /BKJaliscoServerSource-v09182016\.sqlite cannot be read/,
+  );
+  assert.match(
+    noGroup.readingGoal ?? '',
+    /group\.com\.apple\.iBooks\.plist cannot be read/,
+  );
+  assert.deepEqual(Object.keys(emptyHistory).sort(), reading);
+  for (const error of Object.values(emptyHistory)) {
+    assert.match(error, /^BooksSchemaError: /);
+    assert.match(error, /CRDTModelSync-ReadingHistoryModel /);
+    assert.match(error, /missing reading history signature/);
+  }
+  assert.deepEqual(Object.keys(badMonth).sort(), reading);
+  for (const error of Object.values(badMonth)) {
+    assert.match(error, /^BooksSchemaError: /);
+    assert.match(error, /CRDTModelSync-ReadingHistoryModel /);
+    assert.match(error, /missing reading history month key 202613/);
+  }
+});
+
+test('Books names the preference file it cannot read, and only readingGoal fails', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  // The app's preferences as an XML property list, which Books never writes.
+  const xmlPreferences = (path: string) =>
+    writeFile(
+      path,
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${xml({
+        'ReadingGoals.StreakDay': { goal: 1800 },
+        'ReadingHistory.CurrentStreak': 0,
+      })}</plist>`,
+    );
+
+  const sharedMissing = await failedAfter(
+    join(scratch.path, 'shared-missing'),
+    async ({ files }) => {
+      await rm(files.sharedPreferences);
+    },
+  );
+  const appXml = await failedAfter(
+    join(scratch.path, 'app-xml'),
+    async ({ files }) => {
+      await xmlPreferences(files.appPreferences);
+    },
+  );
+  const both = await failedAfter(
+    join(scratch.path, 'both'),
+    async ({ files }) => {
+      await xmlPreferences(files.appPreferences);
+      await rm(files.sharedPreferences);
+    },
+  );
+
+  assert.deepEqual(Object.keys(sharedMissing), ['readingGoal']);
+  assert.match(sharedMissing.readingGoal ?? '', /^BooksUnavailableError: /);
+  assert.match(
+    sharedMissing.readingGoal ?? '',
+    /group\.com\.apple\.iBooks\.plist cannot be read\..*Full Disk Access/,
+  );
+  // The app's file is read first, so its layout fails the read even when the
+  // shared file is gone.
+  for (const failed of [appXml, both]) {
+    assert.deepEqual(Object.keys(failed), ['readingGoal']);
+    assert.match(failed.readingGoal ?? '', /^BooksSchemaError: /);
+    assert.match(failed.readingGoal ?? '', /com\.apple\.iBooksX\.plist /);
+    assert.match(failed.readingGoal ?? '', /binary property list/);
+  }
+});
+
+test('a Books watch fails before its first batch when a watched database is missing, and wakes the streams of each store and preference file that changes', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  const missing = await booksFixture(join(scratch.path, 'missing'));
+  await rm(missing.files.themes);
+  const withoutThemes = new AppleBooksSource(missing);
+  const location = await booksFixture(join(scratch.path, 'watched'));
+  const source = new AppleBooksSource(location);
+  const streams = [
+    source.libraryAssets,
+    source.collections,
+    source.collectionMembers,
+    source.bookFiles,
+    source.readingMonths,
+    source.readingDays,
+    source.streakRecords,
+    source.purchases,
+    source.themes,
+    source.readingGoal,
+  ];
+  // Books and bookdatastored hold their connections, and so their WALs, open.
+  using library = new DatabaseSync(location.files.library);
+  using history = new DatabaseSync(location.files.readingHistory);
+  using purchases = new DatabaseSync(location.files.purchases);
+  using themes = new DatabaseSync(location.files.themes);
+  const controller = new AbortController();
+  const before: string[][] = [];
+  const woken: string[][] = [];
+
+  const failure = await (async () => {
+    for await (const batch of withoutThemes.watch({
+      streams: [withoutThemes.libraryAssets, withoutThemes.themes],
+      signal: AbortSignal.timeout(10_000),
+    }))
+      before.push(batch.map((stream) => stream.name));
+  })().then(
+    () => null,
+    (error: unknown) => error,
+  );
+  for await (const batch of source.watch({
+    streams,
+    // A batch that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+  })) {
+    woken.push(batch.map((stream) => stream.name));
+    if (woken.length === 1)
+      await writePlist(location.files.sharedPreferences, {
+        BKReadingGoalsUserDefaultsKey: false,
+        streakDatUserDefaultsKey: {
+          date: new Date('2026-09-20T08:00:00.000Z'),
+          goal: 2400,
+        },
+      });
+    else if (woken.length === 2) await rm(location.files.appPreferences);
+    else if (woken.length === 3)
+      await writePlist(location.files.appPreferences, {
+        'ReadingGoals.StreakDay': { goal: 1800 },
+        'ReadingHistory.CurrentStreak': 2,
+      });
+    else if (woken.length === 4)
+      history
+        .prepare('UPDATE ZCRDTMODELSYNCENTITY SET ZPROTODATA = ?')
+        .run(readingHistoryDocument(defaultHistory.months.slice(0, 1), []));
+    else if (woken.length === 5)
+      library.exec(
+        "UPDATE ZBKLIBRARYASSET SET ZTITLE = 'Watched' WHERE ZASSETID = 'A1'",
+      );
+    else if (woken.length === 6)
+      purchases.exec("UPDATE ZBLJALISCOSERVERITEM SET ZTITLE = 'Watched'");
+    else if (woken.length === 7)
+      themes.exec('UPDATE ZBOOKTHEME SET ZLINEHEIGHT = 1.6');
+    else controller.abort();
+  }
+
+  assert.deepEqual(before, []);
+  assert.ok(failure instanceof Error);
+  assert.equal(failure.name, 'BooksUnavailableError');
+  assert.match(failure.message, /BookTheme\.sqlite cannot be read/);
+  assert.deepEqual(woken, [
+    streams.map((stream) => stream.name),
+    // The shared preference file is rewritten, then the app's goes and
+    // comes back.
+    ['readingGoal'],
+    ['readingGoal'],
+    ['readingGoal'],
+    ['readingMonths', 'readingDays', 'streakRecords'],
+    ['libraryAssets', 'collections', 'collectionMembers', 'bookFiles'],
+    ['purchases'],
+    ['themes'],
+  ]);
+});
+
+test('Books reads no reading history when Books holds no live document, and loads the reading streams empty', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  const location = await booksFixture(scratch.path);
+  const source = new AppleBooksSource(location);
+  // Each reading stream's records, read on its own.
+  const readHistory = async () =>
+    Object.fromEntries(
+      await Promise.all(
+        [source.readingMonths, source.readingDays, source.streakRecords].map(
+          async (stream): Promise<[string, Record<string, unknown>[]]> => [
+            stream.name,
+            await readStream(source, stream),
+          ],
+        ),
+      ),
+    );
+  // bookdatastored holds its connection open.
+  using history = new DatabaseSync(location.files.readingHistory);
+
+  const live = await readHistory();
+  history.exec('UPDATE ZCRDTMODELSYNCENTITY SET ZDELETEDFLAG = 1');
+  const deleted = await readHistory();
+  history.exec(
+    'UPDATE ZCRDTMODELSYNCENTITY SET ZDELETEDFLAG = 0, ZPROTODATA = NULL',
+  );
+  const noData = await readHistory();
+  history.exec('DELETE FROM ZCRDTMODELSYNCENTITY');
+  const noRow = await readHistory();
+
+  const empty = { readingMonths: [], readingDays: [], streakRecords: [] };
+  // The same document reads while it is live.
+  assert.deepEqual(
+    Object.values(live).map((records) => records.length),
+    [2, 2, 2],
+  );
+  assert.deepEqual(deleted, empty);
+  assert.deepEqual(noData, empty);
+  assert.deepEqual(noRow, empty);
+});
+
+// Each stream's primary keys, joined by |, in the order Books yields them for
+// booksFixture with the rows the order test adds: Z_PK order, which differs
+// from key order, and reading history in its document's order.
+const PRIMARY_KEY_ORDER: Readonly<Record<string, readonly string[]>> = {
+  libraryAssets: ['A1', 'P2', 'G3', 'Z4'],
+  collections: ['Finished_Collection_ID', '4F1E-WANT'],
+  collectionMembers: [
+    'Finished_Collection_ID|P2',
+    '4F1E-WANT|LEFT',
+    'Finished_Collection_ID|A1',
+  ],
+  bookFiles: ['A1', 'P2', 'G3', 'Z4'],
+  annotations: ['H-1', 'U-2', 'R-3', 'D-4'],
+  assetDetails: ['A1', 'ELSEWHERE', '0-ELSEWHERE'],
+  reviews: ['REVIEW-9', 'REVIEW-1'],
+  readingMonths: ['2026-09', '2022-08'],
+  readingDays: ['2026-09-14', '2026-09-08'],
+  streakRecords: ['7', '1'],
+  readingGoal: ['current'],
+  purchases: ['1587320271', '1000000001'],
+  themes: ['Quiet', 'Calm'],
+};
+
+test('Books writes every stream with its fields in schema order and its rows in store order', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  const location = await booksFixture(scratch.path);
+  {
+    using library = new DatabaseSync(location.files.library);
+    library.exec(
+      "INSERT INTO ZBKCOLLECTIONMEMBER (Z_PK, Z_ENT, Z_OPT, ZCOLLECTION, ZASSET, ZASSETID, ZSORTKEY) VALUES (3, 3, 1, 1, 1, 'A1', 2)",
+    );
+  }
+  {
+    using assetData = new DatabaseSync(location.files.assetData);
+    assetData.exec(`
+      INSERT INTO ZBCASSETDETAIL (Z_PK, Z_ENT, Z_OPT, ZASSETID, ZDELETEDFLAG) VALUES (3, 2, 1, '0-ELSEWHERE', 0);
+      INSERT INTO ZBCASSETREVIEW (Z_PK, Z_ENT, Z_OPT, ZASSETREVIEWID, ZDELETEDFLAG) VALUES (2, 3, 1, 'REVIEW-1', 0)`);
+  }
+  {
+    using purchases = new DatabaseSync(location.files.purchases);
+    purchases.exec(
+      "INSERT INTO ZBLJALISCOSERVERITEM (Z_PK, Z_ENT, Z_OPT, ZSTOREID, ZTITLE) VALUES (2, 4, 1, '1000000001', 'Bought earlier')",
+    );
+  }
+  {
+    using themes = new DatabaseSync(location.files.themes);
+    themes.exec(
+      "INSERT INTO ZBOOKTHEME (Z_PK, Z_ENT, Z_OPT, ZIDENTIFIER) VALUES (2, 1, 1, 'Calm')",
+    );
+  }
+  {
+    // A document whose months, days and streaks are not in key order.
+    using history = new DatabaseSync(location.files.readingHistory);
+    history
+      .prepare('UPDATE ZCRDTMODELSYNCENTITY SET ZPROTODATA = ?')
+      .run(
+        readingHistoryDocument(
+          defaultHistory.months
+            .map((month) => ({ ...month, days: month.days.toReversed() }))
+            .toReversed(),
+          defaultHistory.streaks.toReversed(),
+        ),
+      );
+  }
+  const source = new AppleBooksSource(location);
+  const { streams } = await source.discover();
+
+  const read = await Promise.all(
+    streams.map(async (stream) => ({
+      stream,
+      records: await readStream(source, stream),
+    })),
+  );
+
+  for (const { stream, records } of read)
+    for (const record of records)
+      assert.deepEqual(
+        Object.keys(record),
+        Object.keys(stream.jsonSchema.properties ?? {}),
+        stream.name,
+      );
+  assert.deepEqual(
+    Object.fromEntries(
+      read.map(({ stream, records }) => [
+        stream.name,
+        records.map((record) =>
+          stream.primaryKey.map((key) => record[key]).join('|'),
+        ),
+      ]),
+    ),
+    PRIMARY_KEY_ORDER,
+  );
+});
+
+test('Books keeps each stored value as Books means it', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  const location = await booksFixture(scratch.path);
+  const lastRead = at('2026-09-14T11:38:00.000Z');
+  {
+    using library = new DatabaseSync(location.files.library);
+    // A supplement of P2 with empty text, an unverified content type, a
+    // fractional rating, archived names, every flag value, and times at the
+    // edges of what Core Data means by none.
+    library
+      .prepare(
+        "INSERT INTO ZBKLIBRARYASSET (Z_PK, Z_ENT, Z_OPT, ZASSETID, ZTITLE, ZSTOREID, ZCONTENTTYPE, ZRATING, ZAUTHORNAMES, ZGENRES, ZISFINISHED, ZISSAMPLE, ZISHIDDEN, ZNOTFINISHED, ZISEXPLICIT, ZISLOCKED, ZISNEW, ZSUPPLEMENTALCONTENTPARENT, ZDATEFINISHED, ZLASTOPENDATE, ZLASTENGAGEDDATE, ZCREATIONDATE, ZMODIFICATIONDATE, ZPURCHASEDATE) VALUES (5, 5, 1, 'T5', '', '', 2, 2.5, x'0102', x'', NULL, 2, 1, NULL, 0, 1, 2, 2, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        distantPast,
+        distantPast + 1,
+        distantFuture,
+        distantFuture - 1,
+        // Each rounds differently when the parts are rounded or truncated
+        // apart from the sum.
+        lastRead + 0.0005,
+        lastRead + 0.0055,
+      );
+    library.exec(
+      "INSERT INTO ZBKCOLLECTION (Z_PK, Z_ENT, Z_OPT, ZCOLLECTIONID, ZTITLE, ZDELETEDFLAG, ZHIDDEN, ZPLACEHOLDER) VALUES (3, 2, 1, 'DELETED-C', '', 1, NULL, 2)",
+    );
+  }
+  {
+    using themes = new DatabaseSync(location.files.themes);
+    themes.exec(
+      "INSERT INTO ZBOOKTHEME (Z_PK, Z_ENT, Z_OPT, ZIDENTIFIER, ZHASCUSTOMLAYOUT, ZISFONTBOLDED, ZJUSTIFY, ZMULTIPLECOLUMNMODE, ZLETTERSPACING, ZLINEHEIGHT, ZMARGINADJUSTMENT, ZWORDSPACING) VALUES (2, 1, 1, 'Calm', 1, 0, 2, 1, 0.05, 2, -1, 0)",
+    );
+  }
+  const source = new AppleBooksSource(location);
+
+  const assets = await readStream(source, source.libraryAssets);
+  const collections = await readStream(source, source.collections);
+  const reviews = await readStream(source, source.reviews);
+  const annotations = await readStream(source, source.annotations);
+  const themes = await readStream(source, source.themes);
+
+  assert.deepEqual(
+    fieldsOf(assets, 'assetId', 'T5', [
+      'title',
+      'storeId',
+      'contentType',
+      'contentTypeCode',
+      'rating',
+      'authorNames',
+      'genres',
+      'narratorNames',
+      'isFinished',
+      'isSample',
+      'isHidden',
+      'notFinished',
+      'isExplicit',
+      'isLocked',
+      'isNew',
+      'supplementalContentParentAssetId',
+      'seriesContainerAssetId',
+      'finishedAt',
+      'lastOpenedAt',
+      'lastEngagedAt',
+      'createdAt',
+      'modifiedAt',
+      'purchasedAt',
+    ]),
+    {
+      title: null,
+      storeId: null,
+      contentType: null,
+      contentTypeCode: 2,
+      rating: null,
+      authorNames: 'AQI=',
+      genres: null,
+      narratorNames: null,
+      // Flags: NULL and 2 are false; Core Data booleans that may be unset
+      // keep NULL.
+      isFinished: false,
+      isSample: false,
+      isHidden: true,
+      notFinished: null,
+      isExplicit: false,
+      isLocked: true,
+      isNew: false,
+      supplementalContentParentAssetId: 'P2',
+      seriesContainerAssetId: null,
+      // distantPast and distantFuture mean none; a second inside is a time.
+      finishedAt: null,
+      lastOpenedAt: '0000-12-30T00:00:01.000Z',
+      lastEngagedAt: null,
+      createdAt: '4000-12-31T23:59:59.000Z',
+      modifiedAt: '2026-09-14T11:38:00.001Z',
+      purchasedAt: '2026-09-14T11:38:00.005Z',
+    },
+  );
+  assert.deepEqual(
+    fieldsOf(assets, 'assetId', 'G3', [
+      'isFinished',
+      'seriesContainerAssetId',
+      'supplementalContentParentAssetId',
+    ]),
+    {
+      isFinished: false,
+      seriesContainerAssetId: 'A1',
+      supplementalContentParentAssetId: null,
+    },
+  );
+  assert.deepEqual(
+    fieldsOf(collections, 'collectionId', 'DELETED-C', [
+      'title',
+      'deleted',
+      'hidden',
+      'placeholder',
+    ]),
+    { title: null, deleted: true, hidden: false, placeholder: false },
+  );
+  assert.deepEqual(reviews, [
+    {
+      id: 'REVIEW-9',
+      deleted: false,
+      starRating: 4,
+      title: 'Worth it',
+      body: 'Clear and practical.',
+      userId: '1234567',
+      modifiedAt: '2025-01-02T03:04:05.000Z',
+    },
+  ]);
+  assert.deepEqual(
+    ['D-4', 'H-1', 'R-3'].map((id) =>
+      fieldsOf(annotations, 'id', id, ['assetId', 'kind', 'kindCode']),
+    ),
+    [
+      // A deletion marker's empty book is none, and its kind has no name.
+      { assetId: null, kind: null, kindCode: 0 },
+      { assetId: 'A1', kind: 'highlight', kindCode: 2 },
+      { assetId: 'A1', kind: 'readingPosition', kindCode: 3 },
+    ],
+  );
+  assert.deepEqual(themes, [
+    {
+      id: 'Quiet',
+      hasCustomLayout: null,
+      boldText: true,
+      justify: false,
+      multipleColumns: null,
+      letterSpacing: null,
+      lineHeight: 1.4,
+      marginAdjustment: null,
+      wordSpacing: null,
+    },
+    {
+      id: 'Calm',
+      hasCustomLayout: true,
+      boldText: false,
+      justify: false,
+      multipleColumns: true,
+      letterSpacing: 0.05,
+      lineHeight: 2,
+      marginAdjustment: -1,
+      wordSpacing: 0,
+    },
+  ]);
+});
+
+test('Books takes the reading goal from whichever preference file holds it', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  const location = await booksFixture(scratch.path);
+  const source = new AppleBooksSource(location);
+  const sharedDate = new Date('2022-03-05T08:02:05.000Z');
+  const appDate = new Date('2024-06-01T09:00:00.000Z');
+  // The goal one read yields after Books writes both preference files.
+  const goalWith = async (app: unknown, shared: unknown) => {
+    await writePlist(location.files.appPreferences, app);
+    await writePlist(location.files.sharedPreferences, shared);
+    return readStream(source, source.readingGoal);
+  };
+
+  const both = await goalWith(
+    {
+      'ReadingGoals.StreakDay': { goal: 900, date: appDate },
+      'ReadingHistory.CurrentStreak': 3,
+    },
+    {
+      BKReadingGoalsUserDefaultsKey: true,
+      streakDatUserDefaultsKey: { goal: 1800, date: sharedDate },
+    },
+  );
+  const sharedOnly = await goalWith(
+    { 'ReadingGoals.StreakDay': { date: appDate } },
+    {
+      BKReadingGoalsUserDefaultsKey: 1,
+      streakDatUserDefaultsKey: {
+        goal: 1800,
+        date: fromAppleSeconds(distantPast),
+      },
+    },
+  );
+  const zero = await goalWith(
+    { 'ReadingGoals.StreakDay': { goal: 0, date: appDate } },
+    {
+      streakDatUserDefaultsKey: {
+        goal: 1800,
+        date: fromAppleSeconds(distantFuture),
+      },
+    },
+  );
+  const appArray = await goalWith(
+    [{ 'ReadingGoals.StreakDay': { goal: 900, date: appDate } }],
+    {
+      BKReadingGoalsUserDefaultsKey: false,
+      streakDatUserDefaultsKey: { goal: 1800, date: sharedDate },
+    },
+  );
+
+  // The app's goal and streak win; the shared file's date does.
+  assert.deepEqual(both, [
+    {
+      id: 'current',
+      enabled: true,
+      dailyGoalSeconds: 900,
+      goalSetAt: '2022-03-05T08:02:05.000Z',
+      currentStreakDays: 3,
+    },
+  ]);
+  // Without an app goal the shared one counts, and a shared date at
+  // distantPast falls back to the app's; enabled is a boolean or nothing.
+  assert.deepEqual(sharedOnly, [
+    {
+      id: 'current',
+      enabled: null,
+      dailyGoalSeconds: 1800,
+      goalSetAt: '2024-06-01T09:00:00.000Z',
+      currentStreakDays: null,
+    },
+  ]);
+  // A goal of 0 is a goal; a shared date in year 4001 is none.
+  assert.deepEqual(zero, [
+    {
+      id: 'current',
+      enabled: null,
+      dailyGoalSeconds: 0,
+      goalSetAt: '2024-06-01T09:00:00.000Z',
+      currentStreakDays: null,
+    },
+  ]);
+  // An app file whose root is not a dictionary holds no values.
+  assert.deepEqual(appArray, [
+    {
+      id: 'current',
+      enabled: false,
+      dailyGoalSeconds: 1800,
+      goalSetAt: '2022-03-05T08:02:05.000Z',
+      currentStreakDays: null,
+    },
+  ]);
+});
+
+test('Books classifies each book file by what is on disk', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  // A book Books added from a file at path.
+  const addBook = (
+    location: BooksFixture,
+    key: number,
+    assetId: string,
+    path: string,
+  ) => {
+    using library = new DatabaseSync(location.files.library);
+    library
+      .prepare(
+        "INSERT INTO ZBKLIBRARYASSET (Z_PK, Z_ENT, Z_OPT, ZASSETID, ZTITLE, ZCONTENTTYPE, ZPATH, ZISFINISHED, ZISHIDDEN, ZISSAMPLE, ZDATASOURCEIDENTIFIER) VALUES (?, 5, 1, ?, ?, 1, ?, 0, 0, 0, 'com.apple.ibooks.datasource.ubiquity')",
+      )
+      .run(key, assetId, assetId, path);
+  };
+  const addEmptyPackage = async (location: BooksFixture) => {
+    const folder = join(location.documents, 'Empty.epub');
+    await mkdir(folder);
+    addBook(location, 5, 'E5', folder);
+  };
+  const location = await booksFixture(join(scratch.path, 'books'));
+  addBook(location, 5, 'X5', join(location.documents, 'X.PDF'));
+  addBook(location, 6, 'Y6', join(location.documents, 'Y.EPUB'));
+  const folder = join(location.documents, 'Folder');
+  await mkdir(folder);
+  await writeFile(join(folder, 'notes.txt'), 'not a book');
+  addBook(location, 7, 'F7', folder);
+  // Modification times with a fraction of a millisecond, as APFS keeps them.
+  const epub = join(location.documents, 'Design.epub');
+  for (const file of [
+    'mimetype',
+    'META-INF/container.xml',
+    'OEBPS/content.opf',
+  ])
+    await utimes(join(epub, file), 1_788_000_000, 1_788_000_000);
+  await utimes(
+    join(epub, 'OEBPS/chapter.xhtml'),
+    1_789_000_100.456_789,
+    1_789_000_100.456_789,
+  );
+  await utimes(
+    join(location.documents, 'Notes.pdf'),
+    1_789_000_000.123_789,
+    1_789_000_000.123_789,
+  );
+  await utimes(
+    join(location.documents, 'Packed.epub'),
+    1_788_500_000,
+    1_788_500_000,
+  );
+  const books = await appleImport(
+    new AppleBooksSource(location),
+    join(scratch.path, 'import'),
+  );
+  const emptyLocation = await booksFixture(join(scratch.path, 'empty-listed'));
+  await addEmptyPackage(emptyLocation);
+  const emptySource = new AppleBooksSource(emptyLocation);
+  const locked: string[] = [];
+
+  await books.load();
+  const listed = await readStream(emptySource, emptySource.bookFiles);
+  const empty = await failedAfter(join(scratch.path, 'empty'), addEmptyPackage);
+
+  assert.deepEqual(
+    rows(
+      books.read(
+        `SELECT "assetId", format, "availableLocally" AS local, "fileCount" AS count, "sizeBytes" AS size, "modifiedAt", "attachmentRef" IS NOT NULL AS stored FROM book_files ORDER BY "assetId"`,
+      ),
+    ),
+    [
+      // The latest file of the package, its fraction of a millisecond cut.
+      {
+        assetId: 'A1',
+        format: 'epub-package',
+        local: 1,
+        count: 4,
+        size: 280,
+        modifiedAt: '2026-09-10T00:28:20.456Z',
+        stored: 1,
+      },
+      // A directory that is no EPUB package is never exported.
+      {
+        assetId: 'F7',
+        format: 'epub-package',
+        local: 0,
+        count: null,
+        size: null,
+        modifiedAt: null,
+        stored: 0,
+      },
+      {
+        assetId: 'G3',
+        format: 'epub-package',
+        local: 0,
+        count: null,
+        size: null,
+        modifiedAt: null,
+        stored: 0,
+      },
+      {
+        assetId: 'P2',
+        format: 'file',
+        local: 1,
+        count: 1,
+        size: 18,
+        modifiedAt: '2026-09-10T00:26:40.123Z',
+        stored: 1,
+      },
+      // A missing path's format comes from its extension, in any case.
+      {
+        assetId: 'X5',
+        format: 'file',
+        local: 0,
+        count: null,
+        size: null,
+        modifiedAt: null,
+        stored: 0,
+      },
+      {
+        assetId: 'Y6',
+        format: 'epub-package',
+        local: 0,
+        count: null,
+        size: null,
+        modifiedAt: null,
+        stored: 0,
+      },
+      {
+        assetId: 'Z4',
+        format: 'file',
+        local: 1,
+        count: 1,
+        size: 22,
+        modifiedAt: '2026-09-04T05:33:20.000Z',
+        stored: 1,
+      },
+    ],
+  );
+  // An empty package is on this Mac, but writing it as an .epub fails, and
+  // fails only bookFiles.
+  assert.deepEqual(
+    fieldsOf(listed, 'assetId', 'E5', [
+      'format',
+      'availableLocally',
+      'fileCount',
+      'sizeBytes',
+      'modifiedAt',
+    ]),
+    {
+      format: 'epub-package',
+      availableLocally: true,
+      fileCount: 0,
+      sizeBytes: 0,
+      modifiedAt: null,
+    },
+  );
+  assert.deepEqual(Object.keys(empty), ['bookFiles']);
+  assert.match(empty.bookFiles ?? '', /no mimetype/);
+  try {
+    const unlistable = await failedAfter(
+      join(scratch.path, 'unlistable'),
+      async (fixture) => {
+        const denied = join(fixture.documents, 'Locked.epub');
+        await mkdir(denied);
+        await writeFile(join(denied, 'mimetype'), 'application/epub+zip');
+        addBook(fixture, 5, 'L5', denied);
+        await chmod(denied, 0o000);
+        locked.push(denied);
+      },
+    );
+
+    // A package it cannot list is not a missing one: bookFiles fails, and
+    // only it.
+    assert.deepEqual(Object.keys(unlistable), ['bookFiles']);
+    assert.match(unlistable.bookFiles ?? '', /EACCES/);
+    assert.match(unlistable.bookFiles ?? '', /Locked\.epub/);
+  } finally {
+    await Promise.all(locked.map((path) => chmod(path, 0o755)));
+  }
 });
 
 test('Books reads this Mac’s stores into SQLite without opening iCloud placeholders', async (t) => {

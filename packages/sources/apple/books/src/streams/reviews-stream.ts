@@ -1,14 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { Review } from '@workspace/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
-import {
-  type Row,
-  coreDataTime,
-  flag,
-  integer,
-  text,
-} from '../books-values.ts';
+import { BooksStream, booksFields, iso } from '../books-stream.ts';
 
 const { nullableInteger, nullableText, nullableTimestamp } = booksFields;
 
@@ -31,7 +25,7 @@ const properties = {
   },
 } as const;
 
-export class ReviewsStream extends BooksStream<typeof properties, Row> {
+export class ReviewsStream extends BooksStream<typeof properties, Review> {
   readonly name = 'reviews';
   readonly store = 'assetData';
   readonly primaryKey = ['id'];
@@ -43,21 +37,19 @@ export class ReviewsStream extends BooksStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Row[] {
-    return scan.assetData.all(
-      'SELECT * FROM ZBCASSETREVIEW WHERE ZASSETREVIEWID IS NOT NULL ORDER BY Z_PK',
-    );
+  protected rows(scan: BooksScan): readonly Review[] {
+    return scan.assetData.reviews();
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(review: Review): RecordDraft<typeof properties> {
     return {
-      id: row.ZASSETREVIEWID,
-      deleted: flag(row.ZDELETEDFLAG),
-      starRating: integer(row.ZSTARRATING),
-      title: text(row.ZREVIEWTITLE),
-      body: text(row.ZREVIEWBODY),
-      userId: text(row.ZUSERID),
-      modifiedAt: coreDataTime(row.ZMODIFICATIONDATE),
+      id: review.id,
+      deleted: review.deleted,
+      starRating: review.starRating,
+      title: review.title,
+      body: review.body,
+      userId: review.userId,
+      modifiedAt: iso(review.modifiedAt),
     };
   }
 }

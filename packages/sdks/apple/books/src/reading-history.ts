@@ -1,6 +1,7 @@
 import { ProtobufMessage } from '@workspace/codec-protobuf';
+import { AppDatabase } from '@workspace/sdk-apple-app-database';
 
-import { BooksSchemaError } from './books-store.ts';
+import { BooksSchemaError, BooksUnavailableError } from './errors.ts';
 
 // Books' reading history is a Coherence CRDT document (Apple's private CRDT
 // framework, wire format version 4) that bookdatastored syncs through
@@ -134,10 +135,7 @@ function varints(bytes: Uint8Array): number[] {
   return values;
 }
 
-export function readingHistory(
-  bytes: Uint8Array,
-  source: string,
-): ReadingHistory {
+function decode(bytes: Uint8Array, source: string): ReadingHistory {
   const layout = new Layout(source);
   if (
     bytes.length < 8 ||
@@ -217,4 +215,24 @@ export function readingHistory(
     ),
   }));
   return { months, days, streaks };
+}
+
+// The reading-history store's columns this reader reads.
+const readingHistoryColumns = {
+  ZCRDTMODELSYNCENTITY: ['ZTYPE', 'ZDELETEDFLAG', 'ZPROTODATA'],
+};
+
+const noHistory: ReadingHistory = { months: [], days: [], streaks: [] };
+
+// The reading history bookdatastored keeps at path, decoded whole while one
+// read transaction pins it; empty when Books holds no single live document.
+export function readingHistory(path: string): ReadingHistory {
+  using database = new AppDatabase(path, BooksUnavailableError);
+  database.requireColumns(readingHistoryColumns, BooksSchemaError);
+  const rows = database.all(
+    "SELECT ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel' AND coalesce(ZDELETEDFLAG, 0) = 0",
+  );
+  const bytes = rows[0]?.ZPROTODATA;
+  if (rows.length !== 1 || !(bytes instanceof Uint8Array)) return noHistory;
+  return decode(bytes, path);
 }

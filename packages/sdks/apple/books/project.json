@@ -1,0 +1,9 @@
+{
+  "name": "sdk-apple-books",
+  "sourceRoot": "packages/sdks/apple/books/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {}
+  }
+}

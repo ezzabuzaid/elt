@@ -1,4 +1,4 @@
-import { mkdtempDisposable, rm, stat } from 'node:fs/promises';
+import { mkdtempDisposable, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setInterval } from 'node:timers/promises';
@@ -11,18 +11,17 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+import {
+  Books,
+  type BooksLocation,
+  type BooksStore,
+  type BooksVersion,
+  booksContainer,
+  booksGroupContainer,
+} from '@workspace/sdk-apple-books';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
-import {
-  type BooksLocation,
-  BooksScan,
-  type BooksStore,
-  databaseStores,
-  defaultBooksLocation,
-  sharedPreferences,
-  storeFiles,
-} from './books-scan.ts';
-import { BooksDatabaseVersion } from './books-store.ts';
+import { BooksScan } from './books-scan.ts';
 import type { BooksReader } from './books-stream.ts';
 import { AnnotationsStream } from './streams/annotations-stream.ts';
 import { AssetDetailsStream } from './streams/asset-details-stream.ts';
@@ -92,23 +91,25 @@ export class AppleBooksSource extends Source<BooksScan> {
   readonly themes = readers.themes.describe();
 
   readonly location: BooksLocation;
+  readonly #books: Books;
 
   constructor({
-    container = defaultBooksLocation.container,
-    groupContainer = defaultBooksLocation.groupContainer,
+    container = booksContainer,
+    groupContainer = booksGroupContainer,
   }: {
     container?: string;
     groupContainer?: string;
   } = {}) {
     super();
     this.location = Object.freeze({ container, groupContainer });
+    this.#books = new Books(this.location);
     this.identity = `apple-books:${container}:${groupContainer}`;
     Object.freeze(this);
   }
 
   protected override open(streams: readonly Stream[]): Promise<BooksScan> {
     return BooksScan.open(
-      this.location,
+      this.#books,
       new Set(streams.map((stream) => readerOf(stream).store)),
     );
   }
@@ -117,33 +118,22 @@ export class AppleBooksSource extends Source<BooksScan> {
     return localAppleStoreCoverage;
   }
 
-  // Databases report commits through data_version; preference files are
-  // rewritten whole, so a changed stat marks a new one. A book downloaded from
-  // iCloud without a library change is picked up by the next change or run.
+  // Each store the streams read reports its own changes. A book downloaded
+  // from iCloud without a library change is picked up by the next change or
+  // run.
   protected override async *observe({
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
-    const files = storeFiles(this.location);
-    const stores = [
-      ...new Set(streams.map((stream) => readerOf(stream).store)),
-    ];
     using versions = new DisposableStack();
-    const probes = new Map<BooksStore, () => Promise<string>>(
-      stores.map((store) => {
-        if (!databaseStores.has(store))
-          return [
-            store,
-            async () =>
-              `${await fingerprint(files.preferences)}|${await fingerprint(sharedPreferences(this.location))}`,
-          ];
-        const version = versions.use(new BooksDatabaseVersion(files[store]));
-        return [store, async () => String(version.current)];
-      }),
+    const probes = new Map<BooksStore, BooksVersion>(
+      [...new Set(streams.map((stream) => readerOf(stream).store))].map(
+        (store) => [store, versions.use(this.#books.version(store))],
+      ),
     );
     const seen = new Map<BooksStore, string>();
-    for (const [store, probe] of probes) seen.set(store, await probe());
+    for (const [store, probe] of probes) seen.set(store, await probe.current());
     yield streams;
     try {
       for await (const _ of setInterval(pollIntervalMs, undefined, {
@@ -151,7 +141,7 @@ export class AppleBooksSource extends Source<BooksScan> {
       })) {
         const changed = new Set<BooksStore>();
         for (const [store, probe] of probes) {
-          const current = await probe();
+          const current = await probe.current();
           if (current === seen.get(store)) continue;
           seen.set(store, current);
           changed.add(store);
@@ -192,18 +182,5 @@ export class AppleBooksSource extends Source<BooksScan> {
       yield { ...message, file };
       if (file?.startsWith(staging.path)) await rm(file, { force: true });
     }
-  }
-}
-
-// A preference file's identity on disk; a rewrite changes it. A missing file
-// reads as its own state, so its return is a change too.
-async function fingerprint(path: string): Promise<string> {
-  try {
-    const { ino, size, mtimeMs } = await stat(path);
-    return `${ino}:${size}:${mtimeMs}`;
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
-      return 'missing';
-    throw error;
   }
 }

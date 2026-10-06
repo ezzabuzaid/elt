@@ -1292,7 +1292,7 @@ await new Pipeline({
 }).run();
 ```
 
-The source reads the stores Books and its sync daemon, `bookdatastored`, keep; Books need not be open. `npx nx run apple-cli:start -- sync --connector books` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views; a book whose bytes are on this Mac is saved in its `files` folder and referenced by `attachmentRef`.
+The source reads the stores Books and its sync daemon, `bookdatastored`, keep, through its SDK, `@workspace/sdk-apple-books`; Books need not be open. `npx nx run apple-cli:start -- sync --connector books` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views; a book whose bytes are on this Mac is saved in its `files` folder and referenced by `attachmentRef`.
 
 | Store                                                                   | Where                                                                                                      | Streams                                                          |
 | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
@@ -1305,7 +1305,7 @@ The source reads the stores Books and its sync daemon, `bookdatastored`, keep; B
 | `com.apple.iBooksX.plist`, `group.com.apple.iBooks.plist`               | each container's `Library/Preferences`                                                                     | `readingGoal`                                                    |
 | Book files                                                              | each asset's `ZPATH`, usually `~/Library/Mobile Documents/iCloud~com~apple~iBooks/Documents`               | `bookFiles`                                                      |
 
-A run opens only the stores its selected streams read and pins each database in one read transaction. Every store uses Core Data's persistent WAL and most current rows live only in the WAL, so the connector opens them read-only and never as `immutable`, which would hide them. Stores are separate files, so streams of different stores need not agree, and a store that cannot be opened fails only its own streams: a missing or unreadable file raises `BooksUnavailableError` naming Full Disk Access, and a database without a column the connector reads, or a reading history in another format version, raises `BooksSchemaError`. Rows already loaded stay.
+A run opens only the stores its selected streams read and pins each database in one read transaction. Every store uses Core Data's persistent WAL and most current rows live only in the WAL, so the reader opens them read-only and never as `immutable`, which would hide them. Stores are separate files, so streams of different stores need not agree, and a store that cannot be opened fails only its own streams: a missing or unreadable file raises `BooksUnavailableError` naming Full Disk Access, and a database without a column the reader reads, or a reading history in another format version, raises `BooksSchemaError`. Rows already loaded stay.
 
 ### Access
 
@@ -1334,7 +1334,7 @@ The history is a Coherence document (Apple's CRDT framework), signature `crdt` a
 
 ### Book files
 
-Most books live in iCloud Drive, often as placeholders whose bytes are not on this Mac. Reading a placeholder, or listing one that is a directory, makes macOS download it. The connector reads each item's BSD flags with `/usr/bin/stat` (Node's `stat` has none) and lists a package directory only after its own flags show it is local, checking every entry before descending; any placeholder makes the book `availableLocally: false` with no file. A book downloaded from iCloud without a library change is picked up by the next change or run.
+Most books live in iCloud Drive, often as placeholders whose bytes are not on this Mac. Reading a placeholder, or listing one that is a directory, makes macOS download it. The reader reads each item's BSD flags with `/usr/bin/stat` (Node's `stat` has none) and lists a package directory only after its own flags show it is local, checking every entry before descending; any placeholder makes the book `availableLocally: false` with no file. A book downloaded from iCloud without a library change is picked up by the next change or run.
 
 ### Changes and deletions
 

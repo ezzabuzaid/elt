@@ -1,23 +1,11 @@
 import type { RecordDraft } from '@workspace/elt';
+import { type Annotation, annotationKinds } from '@workspace/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
-import {
-  type Row,
-  coreDataTime,
-  flag,
-  integer,
-  text,
-} from '../books-values.ts';
+import { BooksStream, booksFields, iso } from '../books-stream.ts';
 
 const { boolean, nullableInteger, nullableText, nullableTimestamp } =
   booksFields;
-
-// Codes verified against a live store; others keep their code alone.
-const kinds: Readonly<Record<number, string>> = {
-  2: 'highlight',
-  3: 'readingPosition',
-};
 
 const properties = {
   id: { ...booksFields.id, description: 'Annotation UUID.' },
@@ -28,7 +16,7 @@ const properties = {
   },
   kind: {
     ...nullableText,
-    enum: Object.values(kinds),
+    enum: annotationKinds,
     description:
       'highlight: highlighted or underlined text, with an optional note; readingPosition: where Books last left the book. NULL for any other kind, whose code is in kindCode.',
   },
@@ -95,7 +83,10 @@ const properties = {
   },
 } as const;
 
-export class AnnotationsStream extends BooksStream<typeof properties, Row> {
+export class AnnotationsStream extends BooksStream<
+  typeof properties,
+  Annotation
+> {
   readonly name = 'annotations';
   readonly store = 'annotations';
   readonly primaryKey = ['id'];
@@ -107,34 +98,31 @@ export class AnnotationsStream extends BooksStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Row[] {
-    return scan.annotations.all(
-      'SELECT * FROM ZAEANNOTATION WHERE ZANNOTATIONUUID IS NOT NULL ORDER BY Z_PK',
-    );
+  protected rows(scan: BooksScan): readonly Annotation[] {
+    return scan.annotations.annotations();
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
-    const kindCode = integer(row.ZANNOTATIONTYPE);
+  protected record(annotation: Annotation): RecordDraft<typeof properties> {
     return {
-      id: row.ZANNOTATIONUUID,
-      assetId: text(row.ZANNOTATIONASSETID),
-      kind: kindCode === null ? null : (kinds[kindCode] ?? null),
-      kindCode,
-      style: integer(row.ZANNOTATIONSTYLE),
-      underline: flag(row.ZANNOTATIONISUNDERLINE),
-      deleted: flag(row.ZANNOTATIONDELETED),
-      selectedText: text(row.ZANNOTATIONSELECTEDTEXT),
-      representativeText: text(row.ZANNOTATIONREPRESENTATIVETEXT),
-      note: text(row.ZANNOTATIONNOTE),
-      chapter: text(row.ZFUTUREPROOFING5),
-      location: text(row.ZANNOTATIONLOCATION),
-      rangeStart: integer(row.ZPLLOCATIONRANGESTART),
-      rangeEnd: integer(row.ZPLLOCATIONRANGEEND),
-      physicalLocation: integer(row.ZPLABSOLUTEPHYSICALLOCATION),
-      storageId: text(row.ZPLSTORAGEUUID),
-      creator: text(row.ZANNOTATIONCREATORIDENTIFIER),
-      createdAt: coreDataTime(row.ZANNOTATIONCREATIONDATE),
-      modifiedAt: coreDataTime(row.ZANNOTATIONMODIFICATIONDATE),
+      id: annotation.id,
+      assetId: annotation.assetId,
+      kind: annotation.kind,
+      kindCode: annotation.kindCode,
+      style: annotation.style,
+      underline: annotation.underline,
+      deleted: annotation.deleted,
+      selectedText: annotation.selectedText,
+      representativeText: annotation.representativeText,
+      note: annotation.note,
+      chapter: annotation.chapter,
+      location: annotation.location,
+      rangeStart: annotation.rangeStart,
+      rangeEnd: annotation.rangeEnd,
+      physicalLocation: annotation.physicalLocation,
+      storageId: annotation.storageId,
+      creator: annotation.creator,
+      createdAt: iso(annotation.createdAt),
+      modifiedAt: iso(annotation.modifiedAt),
     };
   }
 }

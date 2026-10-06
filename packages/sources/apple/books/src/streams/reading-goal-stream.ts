@@ -1,9 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
-import { type PlistValue, isDictionary } from '@workspace/sdk-apple-plist';
+import type { ReadingGoal } from '@workspace/sdk-apple-books';
 
-import type { BooksScan, Preferences } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
-import { integer, plistTime } from '../books-values.ts';
+import type { BooksScan } from '../books-scan.ts';
+import { BooksStream, booksFields, iso } from '../books-stream.ts';
 
 const { nullableBoolean, nullableInteger, nullableTimestamp } = booksFields;
 
@@ -34,13 +33,9 @@ const properties = {
   },
 } as const;
 
-const dictionary = (
-  value: PlistValue | undefined,
-): Readonly<Record<string, PlistValue>> => (isDictionary(value) ? value : {});
-
 export class ReadingGoalStream extends BooksStream<
   typeof properties,
-  Preferences
+  ReadingGoal
 > {
   readonly name = 'readingGoal';
   readonly store = 'preferences';
@@ -53,25 +48,17 @@ export class ReadingGoalStream extends BooksStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Preferences[] {
-    return [scan.preferences];
+  protected rows(scan: BooksScan): readonly ReadingGoal[] {
+    return [scan.readingGoal];
   }
 
-  protected record({
-    app,
-    shared,
-  }: Preferences): RecordDraft<typeof properties> {
-    const appValues = dictionary(app);
-    const sharedValues = dictionary(shared);
-    const goal = dictionary(sharedValues.streakDatUserDefaultsKey);
-    const appGoal = dictionary(appValues['ReadingGoals.StreakDay']);
-    const enabled = sharedValues.BKReadingGoalsUserDefaultsKey;
+  protected record(goal: ReadingGoal): RecordDraft<typeof properties> {
     return {
       id: 'current',
-      enabled: typeof enabled === 'boolean' ? enabled : null,
-      dailyGoalSeconds: integer(appGoal.goal) ?? integer(goal.goal),
-      goalSetAt: plistTime(goal.date) ?? plistTime(appGoal.date),
-      currentStreakDays: integer(appValues['ReadingHistory.CurrentStreak']),
+      enabled: goal.enabled,
+      dailyGoalSeconds: goal.dailyGoalSeconds,
+      goalSetAt: iso(goal.goalSetAt),
+      currentStreakDays: goal.currentStreakDays,
     };
   }
 }

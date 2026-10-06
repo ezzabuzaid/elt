@@ -8,16 +8,13 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../../../sdks/apple/books"
+      "path": "../../../codecs/protobuf"
     },
     {
-      "path": "../macos"
+      "path": "../app-database"
     },
     {
-      "path": "../../../elt"
-    },
-    {
-      "path": "../../../destinations/sqlite"
+      "path": "../plist"
     }
   ]
 }

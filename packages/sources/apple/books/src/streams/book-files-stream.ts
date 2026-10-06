@@ -1,11 +1,14 @@
 import { join } from 'node:path';
 
 import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+import {
+  type BookFile,
+  bookFileFormats,
+  exportBookFile,
+} from '@workspace/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
-import { writeEpub } from '../epub-package.ts';
-import { type LocalFile, localFiles } from '../icloud-files.ts';
+import { BooksStream, booksFields, iso } from '../books-stream.ts';
 
 const { boolean, nullableInteger, nullableTimestamp } = booksFields;
 
@@ -18,7 +21,7 @@ const properties = {
   },
   format: {
     ...booksFields.text,
-    enum: ['epub-package', 'file'],
+    enum: bookFileFormats,
     description:
       "epub-package: an unzipped EPUB directory, exported as one .epub file; file: a single file such as a PDF or a zipped .epub, exported as it is. For a placeholder, read from the path's extension.",
   },
@@ -44,28 +47,7 @@ const properties = {
   },
 } as const;
 
-type Row = {
-  readonly assetId: string;
-  readonly path: string;
-  readonly format: 'epub-package' | 'file';
-  // The item's files when its exportable form is on this Mac; null otherwise.
-  readonly files: readonly LocalFile[] | null;
-};
-
-// A local item is a single file when localFiles returns the item itself;
-// otherwise it is a directory, exportable only as an EPUB package.
-const single = (files: readonly LocalFile[]) =>
-  files.length === 1 && files[0]?.name === '';
-
-function exportable(
-  path: string,
-  files: readonly LocalFile[] | null,
-): Row['files'] {
-  if (files === null || single(files)) return files;
-  return path.toLowerCase().endsWith('.epub') ? files : null;
-}
-
-export class BookFilesStream extends BooksStream<typeof properties, Row> {
+export class BookFilesStream extends BooksStream<typeof properties, BookFile> {
   readonly name = 'bookFiles';
   readonly store = 'library';
   readonly primaryKey = ['assetId'];
@@ -78,72 +60,30 @@ export class BookFilesStream extends BooksStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected async rows(scan: BooksScan): Promise<readonly Row[]> {
-    const rows: Row[] = [];
-    for (const row of scan.library.all(
-      'SELECT ZASSETID, ZPATH FROM ZBKLIBRARYASSET WHERE ZASSETID IS NOT NULL AND ZPATH IS NOT NULL ORDER BY Z_PK',
-    )) {
-      // The query selects only rows whose ZASSETID and ZPATH are not null.
-      const path = String(row.ZPATH);
-      const files = await localFiles(path).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code === 'ENOENT') return null;
-          throw error;
-        },
-      );
-      rows.push({
-        assetId: String(row.ZASSETID),
-        path,
-        format:
-          files === null
-            ? path.toLowerCase().endsWith('.epub')
-              ? 'epub-package'
-              : 'file'
-            : single(files)
-              ? 'file'
-              : 'epub-package',
-        files: exportable(path, files),
-      });
-    }
-    return rows;
+  protected rows(scan: BooksScan): Promise<readonly BookFile[]> {
+    return scan.library.bookFiles();
   }
 
-  protected record({
-    assetId,
-    path,
-    format,
-    files,
-  }: Row): RecordDraft<typeof properties> {
+  protected record(file: BookFile): RecordDraft<typeof properties> {
     return {
-      assetId,
-      path,
-      format,
-      availableLocally: files !== null,
-      fileCount: files?.length ?? null,
-      sizeBytes: files?.reduce((sum, file) => sum + file.size, 0) ?? null,
-      modifiedAt:
-        files === null || files.length === 0
-          ? null
-          : new Date(
-              Math.max(...files.map((file) => file.modifiedMs)),
-            ).toISOString(),
+      assetId: file.assetId,
+      path: file.path,
+      format: file.format,
+      availableLocally: file.availableLocally,
+      fileCount: file.fileCount,
+      sizeBytes: file.sizeBytes,
+      modifiedAt: iso(file.modifiedAt),
     };
   }
 
   // A single file is exported as it is; a package is written as one .epub
-  // under staging. Rechecked here, so a file that became a placeholder since
-  // the scan is not opened.
+  // under staging.
   override async file(
     record: SchemaRecord<typeof properties>,
     _scan: BooksScan,
     staging: string,
   ): Promise<string | null> {
     if (!record.availableLocally) return null;
-    const files = exportable(record.path, await localFiles(record.path));
-    if (files === null) return null;
-    if (single(files)) return files[0]?.path ?? null;
-    const target = join(staging, `${record.assetId}.epub`);
-    await writeEpub(files, target);
-    return target;
+    return exportBookFile(record.path, join(staging, `${record.assetId}.epub`));
   }
 }

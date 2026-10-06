@@ -1,16 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { AssetDetail } from '@workspace/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
-import {
-  type Row,
-  coreDataTime,
-  flag,
-  integer,
-  nullableFlag,
-  number,
-  text,
-} from '../books-values.ts';
+import { BooksStream, booksFields, iso } from '../books-stream.ts';
 
 const {
   boolean,
@@ -120,7 +112,10 @@ const properties = {
   },
 } as const;
 
-export class AssetDetailsStream extends BooksStream<typeof properties, Row> {
+export class AssetDetailsStream extends BooksStream<
+  typeof properties,
+  AssetDetail
+> {
   readonly name = 'assetDetails';
   readonly store = 'assetData';
   readonly primaryKey = ['assetId'];
@@ -132,41 +127,37 @@ export class AssetDetailsStream extends BooksStream<typeof properties, Row> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Row[] {
-    return scan.assetData.all(
-      'SELECT * FROM ZBCASSETDETAIL WHERE ZASSETID IS NOT NULL ORDER BY Z_PK',
-    );
+  protected rows(scan: BooksScan): readonly AssetDetail[] {
+    return scan.assetData.details();
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(detail: AssetDetail): RecordDraft<typeof properties> {
     return {
-      assetId: row.ZASSETID,
-      deleted: flag(row.ZDELETEDFLAG),
-      readingProgress: number(row.ZREADINGPROGRESS),
-      highWaterMarkProgress: number(row.ZREADINGPROGRESSHIGHWATERMARK),
-      isFinished: flag(row.ZISFINISHED),
-      notFinished: nullableFlag(row.ZNOTFINISHED),
-      finishedDateKind: integer(row.ZFINISHEDDATEKIND),
-      finishedAt: coreDataTime(row.ZDATEFINISHED),
-      isTrackedAsRecent: nullableFlag(row.ZISTRACKEDASRECENT),
-      lastOpenedAt: coreDataTime(row.ZLASTOPENDATE),
-      lastEngagedAt: coreDataTime(row.ZLASTENGAGEDDATE),
-      modifiedAt: coreDataTime(row.ZMODIFICATIONDATE),
-      starRating: integer(row.ZSTARRATING),
-      taste: integer(row.ZTASTE),
-      tasteSyncedToStore: nullableFlag(row.ZTASTESYNCEDTOSTORE),
-      audiobookPosition: number(row.ZBOOKMARKTIME),
-      audiobookPositionUpdatedAt: coreDataTime(row.ZDATEPLAYBACKTIMEUPDATED),
-      position: text(row.ZREADINGPOSITIONCFISTRING),
-      positionRangeStart: integer(row.ZREADINGPOSITIONLOCATIONRANGESTART),
-      positionRangeEnd: integer(row.ZREADINGPOSITIONLOCATIONRANGEEND),
-      positionPhysicalLocation: integer(
-        row.ZREADINGPOSITIONABSOLUTEPHYSICALLOCATION,
-      ),
-      positionStorageId: text(row.ZREADINGPOSITIONSTORAGEUUID),
-      positionAssetVersion: text(row.ZREADINGPOSITIONASSETVERSION),
-      positionAnnotationVersion: text(row.ZREADINGPOSITIONANNOTATIONVERSION),
-      positionUpdatedAt: coreDataTime(row.ZREADINGPOSITIONLOCATIONUPDATEDATE),
+      assetId: detail.assetId,
+      deleted: detail.deleted,
+      readingProgress: detail.readingProgress,
+      highWaterMarkProgress: detail.highWaterMarkProgress,
+      isFinished: detail.isFinished,
+      notFinished: detail.notFinished,
+      finishedDateKind: detail.finishedDateKind,
+      finishedAt: iso(detail.finishedAt),
+      isTrackedAsRecent: detail.isTrackedAsRecent,
+      lastOpenedAt: iso(detail.lastOpenedAt),
+      lastEngagedAt: iso(detail.lastEngagedAt),
+      modifiedAt: iso(detail.modifiedAt),
+      starRating: detail.starRating,
+      taste: detail.taste,
+      tasteSyncedToStore: detail.tasteSyncedToStore,
+      audiobookPosition: detail.audiobookPosition,
+      audiobookPositionUpdatedAt: iso(detail.audiobookPositionUpdatedAt),
+      position: detail.position,
+      positionRangeStart: detail.positionRangeStart,
+      positionRangeEnd: detail.positionRangeEnd,
+      positionPhysicalLocation: detail.positionPhysicalLocation,
+      positionStorageId: detail.positionStorageId,
+      positionAssetVersion: detail.positionAssetVersion,
+      positionAnnotationVersion: detail.positionAnnotationVersion,
+      positionUpdatedAt: iso(detail.positionUpdatedAt),
     };
   }
 }

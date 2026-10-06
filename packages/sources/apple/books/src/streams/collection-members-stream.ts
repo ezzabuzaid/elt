@@ -1,8 +1,8 @@
 import type { RecordDraft } from '@workspace/elt';
+import type { CollectionMember } from '@workspace/sdk-apple-books';
 
 import type { BooksScan } from '../books-scan.ts';
-import { BooksStream, booksFields } from '../books-stream.ts';
-import { type Row, coreDataTime, integer } from '../books-values.ts';
+import { BooksStream, booksFields, iso } from '../books-stream.ts';
 
 const properties = {
   collectionId: {
@@ -26,7 +26,7 @@ const properties = {
 
 export class CollectionMembersStream extends BooksStream<
   typeof properties,
-  Row
+  CollectionMember
 > {
   readonly name = 'collectionMembers';
   readonly store = 'library';
@@ -39,22 +39,16 @@ export class CollectionMembersStream extends BooksStream<
     required: Object.keys(properties),
   } as const;
 
-  protected rows(scan: BooksScan): readonly Row[] {
-    return scan.library.all(`
-      SELECT collection.ZCOLLECTIONID AS collectionId, member.ZASSETID,
-        member.ZSORTKEY, member.ZLOCALMODDATE
-      FROM ZBKCOLLECTIONMEMBER member
-      JOIN ZBKCOLLECTION collection ON collection.Z_PK = member.ZCOLLECTION
-      WHERE collection.ZCOLLECTIONID IS NOT NULL AND member.ZASSETID IS NOT NULL
-      ORDER BY member.Z_PK`);
+  protected rows(scan: BooksScan): readonly CollectionMember[] {
+    return scan.library.collectionMembers();
   }
 
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(member: CollectionMember): RecordDraft<typeof properties> {
     return {
-      collectionId: row.collectionId,
-      assetId: row.ZASSETID,
-      sortKey: integer(row.ZSORTKEY),
-      addedAt: coreDataTime(row.ZLOCALMODDATE),
+      collectionId: member.collectionId,
+      assetId: member.assetId,
+      sortKey: member.sortKey,
+      addedAt: iso(member.addedAt),
     };
   }
 }
