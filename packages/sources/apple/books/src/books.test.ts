@@ -1706,6 +1706,93 @@ test('Books reads no reading history when Books holds no live document, and load
   assert.deepEqual(noRow, empty);
 });
 
+// Loads the fixture once, then again after change; what the second load
+// failed and the reading history rows it left exported.
+async function reloadedHistory(
+  root: string,
+  change: (readingHistory: DatabaseSync) => void,
+) {
+  const location = await booksFixture(root);
+  const books = await appleImport(
+    new AppleBooksSource(location),
+    join(root, 'import'),
+  );
+  const exported = () =>
+    ['reading_months', 'reading_days', 'streak_records'].map(
+      (view) => books.read(`SELECT count(*) AS n FROM ${view}`)[0]?.n,
+    );
+  await books.load();
+  const before = exported();
+  {
+    using history = new DatabaseSync(location.files.readingHistory);
+    change(history);
+  }
+  const failure = await books.load().then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(failure instanceof PipelineError);
+  const failed = Object.fromEntries(
+    failure.results
+      .filter(({ failures }) => failures.length > 0)
+      .map(({ copy, failures }) => [
+        copy.configuration.stream.name,
+        String(failures[0]?.error),
+      ]),
+  );
+  return { before, after: exported(), failed, location };
+}
+
+test('Books refuses reading history it holds twice, and keeps the history it exported', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+
+  const { before, after, failed, location } = await reloadedHistory(
+    scratch.path,
+    (history) =>
+      history.exec(
+        "INSERT INTO ZCRDTMODELSYNCENTITY (Z_ENT, Z_OPT, ZTYPE, ZDELETEDFLAG, ZPROTODATA) SELECT Z_ENT, Z_OPT, ZTYPE, 0, ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel'",
+      ),
+  );
+
+  assert.deepEqual(Object.keys(failed).sort(), [
+    'readingDays',
+    'readingMonths',
+    'streakRecords',
+  ]);
+  for (const error of Object.values(failed)) {
+    assert.match(error, /^BooksSchemaError: /);
+    assert.ok(error.includes(location.files.readingHistory), error);
+    assert.match(error, /a single live reading history document \(2 found\)/);
+  }
+  assert.deepEqual(before, [2, 2, 2]);
+  assert.deepEqual(after, before);
+});
+
+test('Books refuses a reading history document that is not bytes, and keeps the history it exported', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+
+  const { before, after, failed, location } = await reloadedHistory(
+    scratch.path,
+    (history) =>
+      history.exec(
+        "UPDATE ZCRDTMODELSYNCENTITY SET ZPROTODATA = 'not a document' WHERE ZTYPE = 'ReadingHistoryModel'",
+      ),
+  );
+
+  assert.deepEqual(Object.keys(failed).sort(), [
+    'readingDays',
+    'readingMonths',
+    'streakRecords',
+  ]);
+  for (const error of Object.values(failed)) {
+    assert.match(error, /^BooksSchemaError: /);
+    assert.ok(error.includes(location.files.readingHistory), error);
+    assert.match(error, /reading history document bytes/);
+  }
+  assert.deepEqual(before, [2, 2, 2]);
+  assert.deepEqual(after, before);
+});
+
 // Each stream's primary keys, joined by |, in the order Books yields them for
 // booksFixture with the rows the order test adds: Z_PK order, which differs
 // from key order, and reading history in its document's order.

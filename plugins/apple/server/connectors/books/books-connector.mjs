@@ -1014,9 +1014,15 @@ function readingHistory(path) {
     const database = __using(_stack, new AppDatabase(path, BooksUnavailableError));
     database.requireColumns(readingHistoryColumns, BooksSchemaError);
     const rows = database.all("SELECT ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel' AND coalesce(ZDELETEDFLAG, 0) = 0");
-    const bytes2 = rows[0]?.ZPROTODATA;
-    if (rows.length !== 1 || !(bytes2 instanceof Uint8Array))
+    if (rows.length > 1)
+      throw new BooksSchemaError(path, [
+        `a single live reading history document (${rows.length} found)`
+      ]);
+    const bytes2 = rows[0]?.ZPROTODATA ?? null;
+    if (bytes2 === null)
       return noHistory;
+    if (!(bytes2 instanceof Uint8Array))
+      throw new BooksSchemaError(path, ["reading history document bytes"]);
     return decode(bytes2, path);
   } catch (_) {
     var _error = _, _hasError = true;

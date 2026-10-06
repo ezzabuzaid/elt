@@ -225,14 +225,23 @@ const readingHistoryColumns = {
 const noHistory: ReadingHistory = { months: [], days: [], streaks: [] };
 
 // The reading history bookdatastored keeps at path, decoded whole while one
-// read transaction pins it; empty when Books holds no single live document.
+// read transaction pins it; empty while Books holds no document or no data
+// for it yet. Books' model does not keep the document unique, and nothing
+// says which of two live ones is current, so two refuse to read rather than
+// pick one; so does a document that is not bytes.
 export function readingHistory(path: string): ReadingHistory {
   using database = new AppDatabase(path, BooksUnavailableError);
   database.requireColumns(readingHistoryColumns, BooksSchemaError);
   const rows = database.all(
     "SELECT ZPROTODATA FROM ZCRDTMODELSYNCENTITY WHERE ZTYPE = 'ReadingHistoryModel' AND coalesce(ZDELETEDFLAG, 0) = 0",
   );
-  const bytes = rows[0]?.ZPROTODATA;
-  if (rows.length !== 1 || !(bytes instanceof Uint8Array)) return noHistory;
+  if (rows.length > 1)
+    throw new BooksSchemaError(path, [
+      `a single live reading history document (${rows.length} found)`,
+    ]);
+  const bytes = rows[0]?.ZPROTODATA ?? null;
+  if (bytes === null) return noHistory;
+  if (!(bytes instanceof Uint8Array))
+    throw new BooksSchemaError(path, ['reading history document bytes']);
   return decode(bytes, path);
 }
