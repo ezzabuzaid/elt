@@ -45,9 +45,6 @@
       "path": "./packages/queue/sqlite"
     },
     {
-      "path": "./packages/test"
-    },
-    {
       "path": "./packages/sources/apple/macos"
     },
     {

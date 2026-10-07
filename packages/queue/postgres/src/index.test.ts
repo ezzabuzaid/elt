@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { describe, it } from 'node:test';
 
+import { Docker, TestRun } from '@zukhruf/testing/docker';
+import { Postgres } from '@zukhruf/testing/postgres';
+
 import type { QueueJob } from '@workspace/queue-abstract';
-import { startPostgresContainer } from '@workspace/test';
 
 import { type PgBossJobQueue, createPgBossJobQueue } from './index.ts';
 
@@ -33,36 +35,35 @@ async function waitFor(
   throw new Error('Timed out waiting for queue condition');
 }
 
-// Per-test container + queue with teardown in finally, so every test stays
-// self-contained (no shared lifecycle hooks).
+const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
+
+// Per-test server + queue, disposed at the end of each test, so every test
+// stays self-contained (no shared lifecycle hooks). Without Docker the server
+// cannot start, and the test fails.
 async function withQueue(
   run: (jobQueue: PgBossJobQueue) => Promise<void>,
 ): Promise<void> {
-  const container = await startPostgresContainer({
+  await using server = await new Postgres({
+    docker,
     image: POSTGRES_IMAGE,
     password: 'postgres',
     database: 'queue_test',
     user: 'postgres',
+  }).start();
+  const jobQueue = createPgBossJobQueue({
+    connectionString: server.connectionString,
+    application_name: `queue_postgres_test_${runId}`,
+    schedule: true,
+    cronMonitorIntervalSeconds: 1,
+    cronWorkerIntervalSeconds: 1,
+    queueCacheIntervalSeconds: 1,
+    supervise: false,
   });
-  assert.ok(container, 'Docker must be available for queue-postgres tests');
+  await jobQueue.start();
   try {
-    const jobQueue = createPgBossJobQueue({
-      connectionString: container.connectionString,
-      application_name: `queue_postgres_test_${runId}`,
-      schedule: true,
-      cronMonitorIntervalSeconds: 1,
-      cronWorkerIntervalSeconds: 1,
-      queueCacheIntervalSeconds: 1,
-      supervise: false,
-    });
-    await jobQueue.start();
-    try {
-      await run(jobQueue);
-    } finally {
-      await jobQueue.stop({ graceful: true, close: true, timeout: 30_000 });
-    }
+    await run(jobQueue);
   } finally {
-    await container.cleanup();
+    await jobQueue.stop({ graceful: true, close: true, timeout: 30_000 });
   }
 }
 

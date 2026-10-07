@@ -126,11 +126,6 @@ export default [
     files: ['packages/queue/abstract/src/**/*.ts'],
     rules: { 'island/no-generic-port': 'off' },
   },
-  // Prints why a container test skipped when Docker is not available.
-  {
-    files: ['packages/test/src/**/*.ts'],
-    rules: { 'island/no-console': 'off' },
-  },
   {
     files: ['**/*.ts', '**/*.cts', '**/*.mts'],
     // A disable directive that no longer suppresses anything is an escape hatch
