@@ -10,7 +10,7 @@ import {
 import {
   AppDatabase,
   AppDatabaseVersion
-} from "../../chunks/chunk-ZN2QKR65.mjs";
+} from "../../chunks/chunk-SDFTRGL6.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";

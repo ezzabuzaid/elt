@@ -4,9 +4,11 @@ import {
   AccountsUnavailableError,
   accountsStorePath,
   mailDataclass
-} from "../../chunks/chunk-YPETN26T.mjs";
+} from "../../chunks/chunk-RMLM5EPJ.mjs";
 import {
+  isBinaryPlist,
   isDictionary,
+  parseBinaryPlist,
   readPlist
 } from "../../chunks/chunk-2VSN4436.mjs";
 import {
@@ -17,7 +19,10 @@ import {
   selected,
   withinDates
 } from "../../chunks/chunk-YM7ADF2O.mjs";
-import "../../chunks/chunk-ZN2QKR65.mjs";
+import {
+  AppDatabase,
+  AppDatabaseVersion
+} from "../../chunks/chunk-SDFTRGL6.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
@@ -2060,15 +2065,15 @@ var require_dbcs_codec = __commonJS({
       this.nodeIdx = 0;
       return ret;
     };
-    function findIdx(table2, val) {
-      if (table2[0] > val) {
+    function findIdx(table, val) {
+      if (table[0] > val) {
         return -1;
       }
       var l = 0;
-      var r = table2.length;
+      var r = table.length;
       while (l < r - 1) {
         var mid = l + (r - l + 1 >> 1);
-        if (table2[mid] <= val) {
+        if (table[mid] <= val) {
           l = mid;
         } else {
           r = mid;
@@ -3706,7 +3711,7 @@ var require_lib = __commonJS({
     module.exports.encodings = null;
     module.exports.defaultCharUnicode = "\uFFFD";
     module.exports.defaultCharSingleByte = "?";
-    module.exports.encode = function encode(str, encoding, options) {
+    module.exports.encode = function encode2(str, encoding, options) {
       str = "" + (str || "");
       var encoder = module.exports.getEncoder(encoding, options);
       var res = encoder.write(str);
@@ -20754,7 +20759,7 @@ var require_libbase64 = __commonJS({
     var { Buffer: Buffer2 } = __require("node:buffer");
     var stream = __require("node:stream");
     var Transform = stream.Transform;
-    function encode(buffer) {
+    function encode2(buffer) {
       if (typeof buffer === "string") {
         buffer = Buffer2.from(buffer, "utf-8");
       }
@@ -20851,7 +20856,7 @@ var require_libbase64 = __commonJS({
         } else {
           this._remainingBytes = false;
         }
-        let b64 = this._curLine + encode(chunk);
+        let b64 = this._curLine + encode2(chunk);
         if (this.options.lineLength) {
           b64 = this._getWrapped(b64);
           let lastLF = b64.lastIndexOf("\n");
@@ -20872,7 +20877,7 @@ var require_libbase64 = __commonJS({
       }
       _flush(done) {
         if (this._remainingBytes && this._remainingBytes.length) {
-          this._curLine += encode(this._remainingBytes);
+          this._curLine += encode2(this._remainingBytes);
         }
         if (this._curLine) {
           this._curLine = this._getWrapped(this._curLine, true);
@@ -20932,7 +20937,7 @@ var require_libbase64 = __commonJS({
       }
     };
     module.exports = {
-      encode,
+      encode: encode2,
       decode,
       wrap,
       Encoder,
@@ -20948,7 +20953,7 @@ var require_libqp = __commonJS({
     var { Buffer: Buffer2 } = __require("node:buffer");
     var stream = __require("node:stream");
     var Transform = stream.Transform;
-    function encode(buffer) {
+    function encode2(buffer) {
       if (typeof buffer === "string") {
         buffer = Buffer2.from(buffer, "utf-8");
       }
@@ -21083,7 +21088,7 @@ var require_libqp = __commonJS({
         }
         this.inputBytes += chunk.length;
         if (this.options.lineLength) {
-          qp = this._curLine + encode(chunk);
+          qp = this._curLine + encode2(chunk);
           qp = wrap(qp, this.options.lineLength);
           qp = qp.replace(/(^|\n)([^\n]*)$/, (match, lineBreak, lastLine) => {
             this._curLine = lastLine;
@@ -21094,7 +21099,7 @@ var require_libqp = __commonJS({
             this.push(qp);
           }
         } else {
-          qp = encode(chunk);
+          qp = encode2(chunk);
           this.outputBytes += qp.length;
           this.push(qp, "ascii");
         }
@@ -21139,7 +21144,7 @@ var require_libqp = __commonJS({
       }
     };
     module.exports = {
-      encode,
+      encode: encode2,
       decode,
       wrap,
       Encoder,
@@ -23713,7 +23718,7 @@ var require_libmime = __commonJS({
        * @return {Array} A list of encoded keys and headers
        */
       buildHeaderParam(key, data, maxLength, fromCharset) {
-        let list2 = [];
+        let list = [];
         if (typeof data !== "string" && !Buffer2.isBuffer(data)) {
           data = data === null || data === void 0 ? "" : data.toString();
         }
@@ -23735,13 +23740,13 @@ var require_libmime = __commonJS({
             ];
           }
           encodedStr = encodedStr.replace(new RegExp(".{" + maxLength + "}", "g"), (str) => {
-            list2.push({
+            list.push({
               line: str
             });
             return "";
           });
           if (encodedStr) {
-            list2.push({
+            list.push({
               line: encodedStr
             });
           }
@@ -23772,7 +23777,7 @@ var require_libmime = __commonJS({
               chr = chr === " " ? chr : this.safeEncodeURIComponent(chr);
               if (chr !== encodedStr[i]) {
                 if ((this.safeEncodeURIComponent(line) + chr).length >= maxLength) {
-                  list2.push({
+                  list.push({
                     line,
                     encoded: isEncoded
                   });
@@ -23787,7 +23792,7 @@ var require_libmime = __commonJS({
               }
             }
             if ((line + chr).length >= maxLength) {
-              list2.push({
+              list.push({
                 line,
                 encoded: isEncoded
               });
@@ -23803,13 +23808,13 @@ var require_libmime = __commonJS({
             }
           }
           if (line) {
-            list2.push({
+            list.push({
               line,
               encoded: isEncoded
             });
           }
         }
-        return list2.map((item, i2) => ({
+        return list.map((item, i2) => ({
           // encoded lines: {name}*{part}*
           // unencoded lines: {name}*{part}
           // if any line needs to be encoded then the first line (part==0) is always encoded
@@ -23847,22 +23852,22 @@ var require_libmime = __commonJS({
        * @param {String} extension Extension (or filename) to be checked for
        * @return {String} Content type
        */
-      detectMimeType(extension) {
-        extension = (extension || "").toString().toLowerCase().replace(/\s/g, "").replace(/^\./g, "").split(".").pop();
-        if (!hasOwn(mimetypes.extensions, extension)) {
+      detectMimeType(extension2) {
+        extension2 = (extension2 || "").toString().toLowerCase().replace(/\s/g, "").replace(/^\./g, "").split(".").pop();
+        if (!hasOwn(mimetypes.extensions, extension2)) {
           return "application/octet-stream";
         }
-        if (typeof mimetypes.extensions[extension] === "string") {
-          return mimetypes.extensions[extension];
+        if (typeof mimetypes.extensions[extension2] === "string") {
+          return mimetypes.extensions[extension2];
         }
         let mimeParts;
-        for (let i = 0, len = mimetypes.extensions[extension].length; i < len; i++) {
-          mimeParts = mimetypes.extensions[extension][i].split("/");
-          if (mimeParts[1] === extension) {
-            return mimetypes.extensions[extension][i];
+        for (let i = 0, len = mimetypes.extensions[extension2].length; i < len; i++) {
+          mimeParts = mimetypes.extensions[extension2][i].split("/");
+          if (mimeParts[1] === extension2) {
+            return mimetypes.extensions[extension2][i];
           }
         }
-        return mimetypes.extensions[extension][0];
+        return mimetypes.extensions[extension2][0];
       }
       /**
        * Folds long lines, useful for folding header lines (afterSpace=false) and
@@ -24416,9 +24421,9 @@ var require_mime_node = __commonJS({
           contentHeader = headers.getFirst("Content-Type");
         } else {
           if (parsedContentDisposition.params.filename) {
-            let extension = pathlib.parse(parsedContentDisposition.params.filename).ext.replace(/^\./, "");
-            if (extension) {
-              contentHeader = libmime2.detectMimeType(extension);
+            let extension2 = pathlib.parse(parsedContentDisposition.params.filename).ext.replace(/^\./, "");
+            if (extension2) {
+              contentHeader = libmime2.detectMimeType(extension2);
             }
           }
           if (!contentHeader) {
@@ -25618,16 +25623,925 @@ var require_mailsplit = __commonJS({
   }
 });
 
-// packages/sources/apple/mail/dist/apple-mail-source.js
-import { createHash as createHash3 } from "node:crypto";
+// packages/sdks/apple/mail/dist/errors.js
+var MailUnavailableError = class extends Error {
+  name = "MailUnavailableError";
+  constructor(path, cause) {
+    super(`Mail's store at ${path} cannot be read. Grant the exporting process Full Disk Access in System Settings > Privacy & Security.`, { cause });
+  }
+};
+var MailSchemaError = class extends Error {
+  name = "MailSchemaError";
+};
+var MailLayoutError = class extends MailSchemaError {
+  constructor(path, missing) {
+    super(`The Mail index at ${path} has a layout this reader does not read (missing ${missing.join(", ")}).`);
+  }
+};
+var MailChangingError = class extends Error {
+  name = "MailChangingError";
+};
+
+// packages/sdks/apple/mail/dist/mail-tables.js
+var messagesTable = {
+  name: "messages",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    message_id: "id",
+    global_message_id: "id",
+    remote_id: "id",
+    document_id: "bytes",
+    sender: "id",
+    subject_prefix: "text",
+    subject: "id",
+    summary: "id",
+    date_sent: "time",
+    date_received: "time",
+    mailbox: "id",
+    remote_mailbox: "id",
+    flags: "number",
+    read: "number",
+    flagged: "number",
+    deleted: "number",
+    size: "number",
+    conversation_id: "id",
+    date_last_viewed: "time",
+    list_id_hash: "id",
+    unsubscribe_type: "number",
+    searchable_message: "id",
+    brand_indicator: "id",
+    display_date: "time",
+    flag_color: "number",
+    color: "text",
+    type: "number",
+    fuzzy_ancestor: "id",
+    automated_conversation: "number",
+    root_status: "number",
+    is_urgent: "number"
+  }
+};
+var mailboxesTable = {
+  name: "mailboxes",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    url: "text",
+    total_count: "number",
+    unread_count: "number",
+    deleted_count: "number",
+    unseen_count: "number",
+    unread_count_adjusted_for_duplicates: "number",
+    change_identifier: "text",
+    source: "number",
+    alleged_change_identifier: "text"
+  }
+};
+var addressesTable = {
+  name: "addresses",
+  keys: ["ROWID"],
+  columns: { ROWID: "id", address: "text", comment: "text" }
+};
+var recipientsTable = {
+  name: "recipients",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    message: "id",
+    address: "id",
+    type: "number",
+    position: "number"
+  }
+};
+var attachmentsTable = {
+  name: "attachments",
+  keys: ["ROWID"],
+  columns: { ROWID: "id", message: "id", attachment_id: "text", name: "text" }
+};
+var labelsTable = {
+  name: "labels",
+  keys: ["message_id", "mailbox_id"],
+  columns: { message_id: "id", mailbox_id: "id" }
+};
+var serverMessagesTable = {
+  name: "server_messages",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    message: "id",
+    mailbox: "id",
+    sequence_identifier: "number",
+    read: "number",
+    deleted: "number",
+    replied: "number",
+    flagged: "number",
+    draft: "number",
+    forwarded: "number",
+    redirected: "number",
+    junk_level_set_by_user: "number",
+    junk_level: "number",
+    flag_color: "number",
+    remote_id: "id"
+  }
+};
+var serverLabelsTable = {
+  name: "server_labels",
+  keys: ["server_message", "label"],
+  columns: { server_message: "id", label: "id" }
+};
+var conversationsTable = {
+  name: "conversations",
+  keys: ["conversation_id"],
+  columns: { conversation_id: "id", flags: "number", sync_key: "text" }
+};
+var conversationMessagesTable = {
+  name: "conversation_id_message_id",
+  keys: ["conversation_id", "message_id"],
+  columns: { conversation_id: "id", message_id: "id", date_sent: "time" }
+};
+var messageReferencesTable = {
+  name: "message_references",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    message: "id",
+    reference: "id",
+    is_originator: "number"
+  }
+};
+var messageGlobalDataTable = {
+  name: "message_global_data",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    message_id: "id",
+    follow_up_start_date: "undatedNumber",
+    follow_up_end_date: "undatedNumber",
+    follow_up_jsonstringformodelevaluationforsuggestions: "text",
+    due_by: "undatedNumber",
+    read_later_date: "undatedNumber",
+    send_later_date: "undatedNumber",
+    validation_state: "number",
+    model_category: "number",
+    model_subcategory: "number",
+    category_model_version: "number",
+    category_is_temporary: "number",
+    model_analytics: "text",
+    model_high_impact: "number",
+    generated_summary: "id",
+    urgent: "number",
+    message_id_header: "text"
+  }
+};
+var subjectsTable = {
+  name: "subjects",
+  keys: ["ROWID"],
+  columns: { ROWID: "id", subject: "text" }
+};
+var summariesTable = {
+  name: "summaries",
+  keys: ["ROWID"],
+  columns: { ROWID: "id", summary: "text" }
+};
+var generatedSummariesTable = {
+  name: "generated_summaries",
+  keys: ["ROWID"],
+  columns: { ROWID: "id", summary: "bytes", status: "number" }
+};
+var messageMetadataTable = {
+  name: "message_metadata",
+  keys: ["message_id"],
+  columns: { message_id: "id", timestamp: "number", json_values: "text" }
+};
+var dataDetectionResultsTable = {
+  name: "data_detection_results",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    global_message_id: "id",
+    category: "text",
+    value: "text"
+  }
+};
+var richLinksTable = {
+  name: "rich_links",
+  keys: ["ROWID"],
+  columns: { ROWID: "id", title: "text", url: "text", hash: "text" }
+};
+var messageRichLinksTable = {
+  name: "message_rich_links",
+  keys: ["global_message_id", "rich_link"],
+  columns: { global_message_id: "id", rich_link: "id" }
+};
+var protectedMessageDataTable = {
+  name: "protected_message_data",
+  keys: ["ROWID"],
+  columns: { ROWID: "id", data: "text" }
+};
+var brandIndicatorsTable = {
+  name: "brand_indicators",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    url: "text",
+    indicator: "bytes",
+    indicator_hash: "text",
+    hash_algorithm: "text"
+  }
+};
+var brandIndicatorEvidenceTable = {
+  name: "brand_indicator_evidence",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    brand_indicator: "id",
+    url: "text",
+    evidence: "bytes",
+    unverified_messages: "text"
+  }
+};
+var addressMetadataTable = {
+  name: "address_metadata",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    address: "text",
+    smime_capabilities: "text",
+    smime_capabilities_date: "undatedNumber"
+  }
+};
+var businessesTable = {
+  name: "businesses",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    address_comment: "text",
+    domain: "text",
+    brand_id: "id",
+    localized_brand_name: "text"
+  }
+};
+var businessAddressesTable = {
+  name: "business_addresses",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    address: "id",
+    business: "id",
+    category: "number",
+    last_modified: "undatedNumber",
+    last_bcs_sync: "time"
+  }
+};
+var businessCategoriesTable = {
+  name: "business_categories",
+  keys: ["ROWID"],
+  columns: { ROWID: "id", business: "id", category: "number" }
+};
+var sendersTable = {
+  name: "senders",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    contact_identifier: "text",
+    bucket: "number",
+    user_initiated: "number"
+  }
+};
+var senderAddressesTable = {
+  name: "sender_addresses",
+  keys: ["address"],
+  columns: { address: "id", sender: "id" }
+};
+var eventsTable = {
+  name: "events",
+  keys: ["ROWID"],
+  columns: {
+    ROWID: "id",
+    message_id: "id",
+    start_date: "undatedNumber",
+    end_date: "undatedNumber",
+    location: "text",
+    out_of_date: "number",
+    processed: "number",
+    is_all_day: "number",
+    associated_id_string: "text",
+    original_receiving_account: "text",
+    ical_uid: "text",
+    is_response_requested: "number"
+  }
+};
+var envelopeTables = [
+  messagesTable,
+  mailboxesTable,
+  addressesTable,
+  recipientsTable,
+  attachmentsTable,
+  labelsTable,
+  serverMessagesTable,
+  serverLabelsTable,
+  conversationsTable,
+  conversationMessagesTable,
+  messageReferencesTable,
+  messageGlobalDataTable,
+  subjectsTable,
+  summariesTable,
+  generatedSummariesTable,
+  messageMetadataTable,
+  dataDetectionResultsTable,
+  richLinksTable,
+  messageRichLinksTable,
+  protectedMessageDataTable,
+  brandIndicatorsTable,
+  brandIndicatorEvidenceTable,
+  addressMetadataTable,
+  businessesTable,
+  businessAddressesTable,
+  businessCategoriesTable,
+  sendersTable,
+  senderAddressesTable,
+  eventsTable
+];
+
+// packages/sdks/apple/mail/dist/envelope-index.js
+var required = Object.fromEntries(envelopeTables.map((table) => [table.name, Object.keys(table.columns)]));
+function expression(column, kind) {
+  if (kind === "id")
+    return `CAST("${column}" AS TEXT)`;
+  if (kind === "time")
+    return `strftime('%Y-%m-%dT%H:%M:%fZ', "${column}", 'unixepoch')`;
+  return `"${column}"`;
+}
+var select = ({ name, keys, columns }) => `SELECT ${Object.entries(columns).map(([column, kind]) => `${expression(column, kind)} AS "${column}"`).join(", ")} FROM "${name}" ORDER BY ${keys.map((key) => `"${name}"."${key}"`).join(", ")}`;
+function stored(value) {
+  if (value === void 0 || typeof value === "bigint")
+    throw new TypeError("The Mail index returned an unreadable value");
+  return value;
+}
+var mailDate = (text2) => new Date(text2.replace(/^-(\d+)/, (_, year) => `-${year.padStart(6, "0")}`));
+var read = (kind, value) => kind === "time" && typeof value === "string" ? mailDate(value) : value;
+function isRow(table, row) {
+  return Object.entries(table.columns).every(([column, kind]) => {
+    const value = row[column];
+    if (kind === "id")
+      return typeof value === "string" || value === null && !table.keys.includes(column);
+    if (kind === "time")
+      return value === null || value instanceof Date;
+    return value === null || typeof value === "string" || typeof value === "number" || value instanceof Uint8Array;
+  });
+}
+var EnvelopeIndex = class {
+  #database;
+  constructor(path) {
+    this.#database = new AppDatabase(path, MailUnavailableError);
+    this.#database.requireColumns(required, MailLayoutError);
+  }
+  *rows(table) {
+    for (const values of this.#database.iterate(select(table))) {
+      const row = Object.fromEntries(Object.entries(table.columns).map(([column, kind]) => [
+        column,
+        read(kind, values[column])
+      ]));
+      if (!isRow(table, row))
+        throw new TypeError(`The Mail index returned an unreadable ${table.name} row`);
+      yield row;
+    }
+  }
+  // Every message's ROWID, as decimal text, in index order.
+  *messageIds() {
+    for (const { id } of this.#database.iterate("SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID"))
+      yield String(id);
+  }
+  *indexedAttachments() {
+    for (const row of this.#database.iterate("SELECT CAST(message AS TEXT) AS message, attachment_id, name FROM attachments ORDER BY ROWID"))
+      yield {
+        // CAST of attachments.message, which the index declares NOT NULL.
+        message: String(row.message),
+        attachmentId: stored(row.attachment_id),
+        name: stored(row.name)
+      };
+  }
+  // Each mailbox's URL, whose host names its account.
+  *mailboxUrls() {
+    for (const { url } of this.#database.iterate("SELECT url FROM mailboxes ORDER BY ROWID"))
+      yield stored(url);
+  }
+  [Symbol.dispose]() {
+    this.#database[Symbol.dispose]();
+  }
+};
+
+// packages/sdks/apple/mail/dist/mail-files.js
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { copyFile, readFile, readdir, stat } from "node:fs/promises";
+import { basename, join, relative, sep } from "node:path";
+
+// packages/sdks/apple/mail/dist/mail-plists.js
+function plistObject(value) {
+  if (!isDictionary(value))
+    throw new MailSchemaError("Mail returned a non-dictionary property list");
+  return value;
+}
+function plistList(value) {
+  if (!Array.isArray(value))
+    throw new MailSchemaError("Mail configuration is not a list");
+  return value;
+}
+function requiredString(object, key) {
+  const value = object[key];
+  if (typeof value !== "string" || value === "")
+    throw new MailSchemaError(`Mail configuration has no ${key}`);
+  return value;
+}
+
+// packages/sdks/apple/mail/dist/mail-files.js
+var MailFile = class _MailFile {
+  path;
+  size;
+  version;
+  constructor(path, size, version) {
+    this.path = path;
+    this.size = size;
+    this.version = version;
+  }
+  static async inspect(path) {
+    const info = await stat(path, { bigint: true });
+    if (!info.isFile())
+      throw new MailSchemaError(`Mail content is not a regular file: ${path}`);
+    return new _MailFile(path, Number(info.size), `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`);
+  }
+  async assertUnchanged() {
+    const current = await _MailFile.inspect(this.path).catch((cause) => {
+      throw new MailChangingError(`Mail removed a file during extraction: ${this.path}`, { cause });
+    });
+    if (current.version !== this.version)
+      throw new MailChangingError(`Mail changed a file during extraction: ${this.path}`);
+  }
+  // SHA-256 of the bytes as lowercase hexadecimal.
+  async hash() {
+    await this.assertUnchanged();
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(this.path))
+      hash.update(chunk);
+    await this.assertUnchanged();
+    return hash.digest("hex");
+  }
+  async copyTo(target) {
+    await this.assertUnchanged();
+    await copyFile(this.path, target);
+    await this.assertUnchanged();
+  }
+};
+function compareCodeUnits(a, b) {
+  if (a < b)
+    return -1;
+  if (a > b)
+    return 1;
+  return 0;
+}
+var criteria = (dictionary, key) => () => {
+  const value = dictionary[key];
+  return value === void 0 ? [] : plistList(value);
+};
+function* smartMailboxTree(entries, parentId) {
+  for (const entry of entries) {
+    const dictionary = plistObject(entry);
+    const id = requiredString(dictionary, "MailboxID");
+    yield {
+      id,
+      parentId,
+      dictionary,
+      conditions: criteria(dictionary, "MailboxCriteria")
+    };
+    if (dictionary.MailboxChildren !== void 0)
+      yield* smartMailboxTree(plistList(dictionary.MailboxChildren), id);
+  }
+}
+var MailFiles = class _MailFiles {
+  directory;
+  // By message ROWID: <id>.emlx, or <id>.partial.emlx when its attachments
+  // are downloaded apart.
+  messages;
+  // By "<message>:<part>": the files under Attachments/<message>/<part>/, in
+  // listing order.
+  attachments;
+  signatures;
+  // By path relative to the version folder.
+  #plists;
+  constructor(directory, messages, attachments, plists, signatures) {
+    this.directory = directory;
+    this.messages = messages;
+    this.attachments = attachments;
+    this.#plists = plists;
+    this.signatures = signatures;
+  }
+  static async read(directory) {
+    const messages = /* @__PURE__ */ new Map();
+    const attachments = /* @__PURE__ */ new Map();
+    const plists = /* @__PURE__ */ new Map();
+    const signatures = [];
+    const entries = await readdir(directory, {
+      recursive: true,
+      withFileTypes: true
+    });
+    for (const entry of entries) {
+      if (!entry.isFile())
+        continue;
+      const filePath = join(entry.parentPath, entry.name);
+      const segments = relative(directory, filePath).split(sep);
+      const attachment = segments.indexOf("Attachments");
+      if (/^\d+(\.partial)?\.emlx$/.test(entry.name)) {
+        const id = entry.name.slice(0, entry.name.indexOf("."));
+        if (messages.has(id))
+          throw new MailSchemaError(`Mail has more than one file for indexed message ${id}`);
+        messages.set(id, await MailFile.inspect(filePath));
+      } else if (attachment !== -1 && segments.length >= attachment + 4) {
+        const key = `${segments[attachment + 1]}:${segments[attachment + 2]}`;
+        const files = attachments.get(key);
+        const file = await MailFile.inspect(filePath);
+        if (files === void 0)
+          attachments.set(key, [file]);
+        else
+          files.push(file);
+      } else if (entry.name.endsWith(".plist")) {
+        plists.set(relative(directory, filePath), await MailFile.inspect(filePath));
+      } else if (entry.name.endsWith(".mailsignature")) {
+        signatures.push(await MailFile.inspect(filePath));
+      }
+    }
+    return new _MailFiles(directory, messages, attachments, plists, signatures);
+  }
+  // The file's path relative to the version folder.
+  relative(file) {
+    return relative(this.directory, file.path);
+  }
+  // The Info.plist of each .mbox folder, by relative path.
+  mailboxProperties() {
+    return this.#plistsWhere((path) => path.endsWith("/Info.plist") && path.split("/").some((part) => part.endsWith(".mbox")));
+  }
+  // The property lists under a MailData or Signatures folder, by relative
+  // path, except caches: RemoteContentURLCache and BiomeStream.
+  configuration() {
+    return this.#plistsWhere((path) => /(^|\/)(Signatures|MailData)\//.test(path) && !/(RemoteContentURLCache|BiomeStream)\//.test(path));
+  }
+  async plist(file) {
+    await file.assertUnchanged();
+    const value = await readPlist(file.path);
+    await file.assertUnchanged();
+    return value;
+  }
+  async signature(file) {
+    await file.assertUnchanged();
+    const content = await readFile(file.path, "utf8");
+    await file.assertUnchanged();
+    return { name: basename(file.path, ".mailsignature"), content };
+  }
+  // The file Mail downloaded for an attachment its index records, or
+  // undefined before it arrives.
+  indexedFile(attachment) {
+    const key = `${attachment.message}:${attachment.attachmentId}`;
+    if (typeof attachment.attachmentId !== "string" || !/^\d+(?:\.\d+)*$/.test(attachment.attachmentId))
+      throw new MailSchemaError(`Invalid indexed Mail attachment part ${key}`);
+    const candidates = this.attachments.get(key);
+    if (candidates !== void 0 && candidates.length !== 1)
+      throw new MailSchemaError(`Ambiguous indexed Mail attachment ${key}`);
+    return candidates?.[0];
+  }
+  // Synced rules, then unsynced ones, each with its active state. The
+  // active-state file is checked before the first rule.
+  async *rules() {
+    const activeValue = await this.#plistAt("MailData/RulesActiveState.plist");
+    const active = activeValue === null ? null : plistObject(activeValue);
+    for (const scope of ["Synced", "Unsynced"]) {
+      const value = await this.#plistAt(`MailData/${scope}Rules.plist`);
+      if (value === null)
+        continue;
+      for (const entry of plistList(value)) {
+        const dictionary = plistObject(entry);
+        const id = requiredString(dictionary, "RuleId");
+        yield {
+          scope,
+          id,
+          dictionary,
+          enabled: active?.[id] ?? null,
+          conditions: criteria(dictionary, "Criteria")
+        };
+      }
+    }
+  }
+  async *smartMailboxes() {
+    const value = await this.#plistAt("MailData/SyncedSmartMailboxes.plist");
+    if (value === null)
+      return;
+    yield* smartMailboxTree(plistList(value), null);
+  }
+  // A property list by relative path. One that did not exist when the store
+  // was listed holds no entries; one that disappears or fails parsing since
+  // is an error.
+  async #plistAt(path) {
+    const file = this.#plists.get(path);
+    return file === void 0 ? null : this.plist(file);
+  }
+  #plistsWhere(matches) {
+    return [...this.#plists].filter(([path]) => matches(path)).sort(([a], [b]) => compareCodeUnits(a, b)).map(([, file]) => file);
+  }
+};
+
+// packages/sdks/apple/mail/dist/mail-location.js
+import { readFile as readFile2 } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join as join2 } from "node:path";
+var mailDirectory = join2(homedir(), "Library/Mail");
+var unreadable = /* @__PURE__ */ new Set(["ENOENT", "EACCES", "EPERM"]);
+async function mailVersionDirectory(root) {
+  const path = join2(root, "PersistenceInfo.plist");
+  const bytes = await readFile2(path).catch((cause) => {
+    if (cause instanceof Error && "code" in cause && unreadable.has(String(cause.code)))
+      throw new MailUnavailableError(root, cause);
+    throw cause;
+  });
+  const info = plistObject(isBinaryPlist(bytes) ? parseBinaryPlist(bytes) : await readPlist(path));
+  const version = info.LastUsedVersionDirectoryName;
+  if (typeof version !== "string" || !/^V\d+$/.test(version))
+    throw new MailSchemaError("Mail has no valid current version directory");
+  return join2(root, version);
+}
+var envelopeIndexPath = (directory) => join2(directory, "MailData/Envelope Index");
+
+// packages/sdks/apple/mail/dist/mail-mime.js
+var import_mailsplit = __toESM(require_mailsplit(), 1);
+var import_libmime = __toESM(require_libmime(), 1);
+import { createHash as createHash2 } from "node:crypto";
+import { once } from "node:events";
+import { createReadStream as createReadStream2, createWriteStream } from "node:fs";
+import { copyFile as copyFile2, open, rm } from "node:fs/promises";
+import { basename as basename2 } from "node:path";
+import { pipeline, finished as streamFinished } from "node:stream/promises";
+var failure = (error) => Error.isError(error) ? error : new Error(String(error), { cause: error });
+function partId(node) {
+  if (node.partNr === false)
+    throw new MailSchemaError("MIME parser returned an unresolved part number");
+  if (node.multipart === false && node.partNr.length === 1 && node.partNr[0] === "TEXT")
+    return "1";
+  return node.partNr.join(".");
+}
+async function readMailMime(files, messageId, file, { headers: readHeaders, decode, stage }) {
+  var _stack = [];
+  try {
+    await file.assertUnchanged();
+    const handle = __using(_stack, await open(file.path, "r"), true);
+    const prefix = Buffer.alloc(64);
+    const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
+    const line = /^(\d+)[ \t]*\r?\n/.exec(prefix.subarray(0, bytesRead).toString("ascii"));
+    if (line === null)
+      throw new MailSchemaError(`Invalid EMLX byte count for message ${messageId}`);
+    const length = Number(line[1]);
+    const start = Buffer.byteLength(line[0]);
+    if (!Number.isSafeInteger(length) || length < 1 || start + length > file.size)
+      throw new MailSchemaError(`Truncated EMLX message ${messageId}`);
+    const headers = [];
+    const parts = [];
+    const splitter = new import_mailsplit.Splitter({ ignoreEmbedded: true });
+    const input = pipeline(handle.createReadStream({
+      start,
+      end: start + length - 1,
+      autoClose: false
+    }), splitter);
+    input.catch(() => {
+    });
+    let active = null;
+    const finish = async () => {
+      if (active === null)
+        return;
+      const { decoder, finished, part, hash, textDecoder } = active;
+      active = null;
+      decoder.end();
+      await finished;
+      if (textDecoder !== null)
+        part.text += textDecoder.decode();
+      if (part.decodedBytes === 0 && part.declaredBytes !== null && part.declaredBytes > 0) {
+        const diskId = part.id;
+        const candidates = files.attachments.get(`${messageId}:${diskId}`);
+        if (candidates === void 0) {
+          part.availableLocally = false;
+          part.decodedBytes = null;
+          if (part.file !== null)
+            await rm(part.file);
+          part.file = null;
+          part.text = null;
+          return;
+        }
+        const matches = candidates.length === 1 ? candidates : candidates.filter((candidate) => basename2(candidate.path) === part.filename);
+        const [original] = matches;
+        if (original === void 0 || matches.length !== 1)
+          throw new MailSchemaError(`Ambiguous detached Mail attachment ${messageId}:${diskId}`);
+        await original.assertUnchanged();
+        if (part.file !== null)
+          await copyFile2(original.path, part.file);
+        if (textDecoder !== null)
+          part.text = await mailPartText(original.path, textDecoder);
+        await original.assertUnchanged();
+        part.decodedBytes = original.size;
+        part.sha256 = await original.hash();
+      } else {
+        part.sha256 = hash.digest("hex");
+      }
+    };
+    const chunks = splitter;
+    try {
+      for await (const chunk of chunks) {
+        if (chunk.type === "node") {
+          await finish();
+          const node = chunk;
+          if (node.headers === false)
+            throw new MailSchemaError("MIME parser returned no headers");
+          const id = partId(node);
+          if (readHeaders)
+            for (const [position, header] of node.headers.getList().entries()) {
+              const decoded = import_libmime.default.decodeHeader(Buffer.from(header.line, "latin1").toString("utf8"));
+              headers.push({
+                partId: id,
+                position,
+                name: header.key,
+                value: import_libmime.default.decodeWords(decoded.value),
+                rawLine: Buffer.from(header.line, "latin1")
+              });
+            }
+          if (readHeaders)
+            continue;
+          const appleLength = node.headers.getFirst("X-Apple-Content-Length");
+          if (appleLength !== "" && (!/^\d+$/.test(appleLength) || !Number.isSafeInteger(Number(appleLength))))
+            throw new MailSchemaError(`Invalid detached MIME size in message ${messageId}`);
+          const contentId = node.headers.getFirst("Content-ID");
+          const part = {
+            id,
+            parentId: node.parentNode === false ? null : partId(node.parentNode),
+            contentType: node.contentType === false ? null : node.contentType,
+            charset: node.charset === false ? null : node.charset,
+            transferEncoding: node.encoding === false || node.encoding === "" ? null : node.encoding,
+            disposition: node.disposition === false ? null : node.disposition,
+            filename: node.filename === false ? null : node.filename,
+            contentId: contentId === "" ? null : contentId,
+            isMultipart: node.multipart !== false,
+            isAttachment: node.multipart === false && (node.filename !== false || node.disposition === "attachment" || node.rfc822 || node.contentType !== false && !node.contentType.startsWith("text/")),
+            declaredBytes: appleLength === "" ? null : Number(appleLength),
+            decodedBytes: null,
+            availableLocally: true,
+            sha256: null,
+            file: null,
+            text: null
+          };
+          parts.push(part);
+          if (node.multipart !== false || !decode(part))
+            continue;
+          if (stage !== null)
+            part.file = stage(part);
+          const decoder = node.getDecoder();
+          const hash = createHash2("sha256");
+          const textDecoder = stage === null && part.contentType !== null && part.contentType.startsWith("text/") ? new TextDecoder(part.charset === null ? void 0 : part.charset) : null;
+          if (textDecoder !== null)
+            part.text = "";
+          part.decodedBytes = 0;
+          decoder.on("data", (bytes) => {
+            hash.update(bytes);
+            part.decodedBytes = (part.decodedBytes ?? 0) + bytes.length;
+            if (textDecoder !== null)
+              part.text += textDecoder.decode(bytes, { stream: true });
+          });
+          const finished = part.file === null ? streamFinished(decoder, { cleanup: true }) : pipeline(decoder, createWriteStream(part.file, { flags: "wx" }));
+          finished.catch((error) => splitter.destroy(failure(error)));
+          active = { decoder, finished, part, hash, textDecoder };
+        } else if (chunk.type === "body" && active !== null) {
+          if (!active.decoder.write(chunk.value))
+            await once(active.decoder, "drain");
+        }
+      }
+      await finish();
+      await input;
+      await file.assertUnchanged();
+      return { headers, parts };
+    } catch (error) {
+      const reason = failure(error);
+      splitter.destroy(reason);
+      if (active !== null)
+        active.decoder.destroy(reason);
+      await input.catch(() => {
+      });
+      if (active !== null)
+        await active.finished.catch(() => {
+        });
+      await Promise.allSettled(parts.flatMap((part) => part.file === null ? [] : [rm(part.file)]));
+      throw error;
+    }
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    var _promise = __callDispose(_stack, _error, _hasError);
+    _promise && await _promise;
+  }
+}
+async function mailPartText(path, decoder) {
+  let text2 = "";
+  for await (const bytes of createReadStream2(path))
+    text2 += decoder.decode(bytes, { stream: true });
+  return text2 + decoder.decode();
+}
+
+// packages/sdks/apple/mail/dist/mail-version.js
 import { watch } from "node:fs";
-import { copyFile as copyFile2, rm as rm2 } from "node:fs/promises";
-import { extname as extname2, join as join4, relative as relative2 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+var MailVersion = class {
+  #resources;
+  #index;
+  #events = 0;
+  #failure = null;
+  constructor(root, directory) {
+    var _stack = [];
+    try {
+      const resources = __using(_stack, new DisposableStack());
+      this.#index = resources.use(new AppDatabaseVersion(envelopeIndexPath(directory), MailUnavailableError));
+      const watcher = watch(root, { recursive: true }, () => {
+        this.#events += 1;
+      });
+      resources.defer(() => watcher.close());
+      watcher.on("error", (error) => {
+        this.#failure = error;
+      });
+      this.#resources = resources.move();
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  }
+  get current() {
+    if (this.#failure !== null)
+      throw this.#failure;
+    return `${this.#index.current}:${this.#events}`;
+  }
+  [Symbol.dispose]() {
+    this.#resources.dispose();
+  }
+};
+
+// packages/sdks/apple/mail/dist/mail-store.js
+var MailSnapshot = class {
+  directory;
+  index;
+  files;
+  constructor(directory, index, files) {
+    this.directory = directory;
+    this.index = index;
+    this.files = files;
+  }
+  [Symbol.dispose]() {
+    this.index[Symbol.dispose]();
+  }
+};
+var MailStore = class {
+  root;
+  constructor(root = mailDirectory) {
+    this.root = root;
+  }
+  async open() {
+    const directory = await mailVersionDirectory(this.root);
+    const index = this.#atRoot(() => new EnvelopeIndex(envelopeIndexPath(directory)));
+    try {
+      return new MailSnapshot(directory, index, await MailFiles.read(directory));
+    } catch (error) {
+      index[Symbol.dispose]();
+      throw error;
+    }
+  }
+  // A probe whose current value changes when the store does.
+  async version() {
+    const directory = await mailVersionDirectory(this.root);
+    return this.#atRoot(() => new MailVersion(this.root, directory));
+  }
+  // Full Disk Access covers the whole store, so an index this process cannot
+  // open names the store's root.
+  #atRoot(open2) {
+    try {
+      return open2();
+    } catch (error) {
+      if (error instanceof MailUnavailableError)
+        throw new MailUnavailableError(this.root, error.cause);
+      throw error;
+    }
+  }
+};
+
+// packages/sources/apple/mail/dist/apple-mail-source.js
 import { setInterval } from "node:timers/promises";
 
+// packages/sources/apple/mail/dist/mail-scan.js
+import { createHash as createHash3 } from "node:crypto";
+import { mkdtempDisposable } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join as join4 } from "node:path";
+
 // packages/sources/apple/mail/dist/mail-accounts.js
-import { join } from "node:path";
+import { join as join3 } from "node:path";
 var MailAccounts = class {
   #byIdentifier;
   constructor(accounts2) {
@@ -25677,7 +26591,7 @@ function mailAccount(account, directory) {
     serverName: incoming.host,
     port: incoming.port,
     usesSsl: incoming.usesTls,
-    directory: join(directory, account.identifier),
+    directory: join3(directory, account.identifier),
     sendingServerId: account.sendingAccountIdentifier
   };
 }
@@ -25694,705 +26608,360 @@ function unknownAccount(host, scheme, directory) {
     serverName: null,
     port: null,
     usesSsl: null,
-    directory: join(directory, host),
+    directory: join3(directory, host),
     sendingServerId: null
   };
 }
 
-// packages/sources/apple/mail/dist/mail-mime.js
-var import_mailsplit = __toESM(require_mailsplit(), 1);
-var import_libmime = __toESM(require_libmime(), 1);
-import { createHash as createHash2 } from "node:crypto";
-import { once } from "node:events";
-import { createReadStream as createReadStream2, createWriteStream } from "node:fs";
-import { copyFile, open, rm } from "node:fs/promises";
-import { basename as basename2, extname, join as join3 } from "node:path";
-import { pipeline, finished as streamFinished } from "node:stream/promises";
+// packages/sources/apple/mail/dist/mail-selection.js
+var MailSelection = class {
+  #scope;
+  #mailboxes = /* @__PURE__ */ new Set();
+  #messages = /* @__PURE__ */ new Set();
+  #hashes = /* @__PURE__ */ new Set();
+  #globalMessages = /* @__PURE__ */ new Set();
+  #addresses = /* @__PURE__ */ new Set();
+  #addressTexts = /* @__PURE__ */ new Set();
+  #serverMessages = /* @__PURE__ */ new Set();
+  #conversations = /* @__PURE__ */ new Set();
+  #richLinks = /* @__PURE__ */ new Set();
+  #generatedSummaries = /* @__PURE__ */ new Set();
+  #brands = /* @__PURE__ */ new Set();
+  #businesses = /* @__PURE__ */ new Set();
+  #senders = /* @__PURE__ */ new Set();
+  #subjects = /* @__PURE__ */ new Set();
+  #summaries = /* @__PURE__ */ new Set();
+  constructor(index, scope) {
+    this.#scope = scope;
+    for (const row of index.rows(mailboxesTable)) {
+      const account = typeof row.url === "string" ? URL.parse(row.url)?.hostname : void 0;
+      if (selected(scope.accountIds, account) && selected(scope.collectionIds, row.ROWID))
+        this.#mailboxes.add(row.ROWID);
+    }
+    const labelled = /* @__PURE__ */ new Set();
+    for (const row of index.rows(labelsTable))
+      if (this.#mailboxes.has(row.mailbox_id))
+        labelled.add(row.message_id);
+    for (const row of index.rows(messagesTable)) {
+      if (!((this.#mailboxes.has(row.mailbox) || this.#mailboxes.has(row.remote_mailbox) || labelled.has(row.ROWID)) && withinDates(scope, (row.date_received ?? row.date_sent)?.toISOString() ?? null)))
+        continue;
+      this.#messages.add(row.ROWID);
+      this.#hashes.add(row.message_id);
+      this.#globalMessages.add(row.global_message_id);
+      this.#addresses.add(row.sender);
+      this.#brands.add(row.brand_indicator);
+      this.#subjects.add(row.subject);
+      this.#summaries.add(row.summary);
+    }
+    for (const row of index.rows(recipientsTable))
+      if (this.#messages.has(row.message))
+        this.#addresses.add(row.address);
+    for (const row of index.rows(addressesTable))
+      if (this.#addresses.has(row.ROWID))
+        this.#addressTexts.add(row.address);
+    for (const row of index.rows(serverMessagesTable))
+      if (this.#messages.has(row.message) && this.#mailboxes.has(row.mailbox))
+        this.#serverMessages.add(row.ROWID);
+    for (const row of index.rows(conversationMessagesTable))
+      if (this.#hashes.has(row.message_id))
+        this.#conversations.add(row.conversation_id);
+    for (const row of index.rows(messageRichLinksTable))
+      if (this.#globalMessages.has(row.global_message_id))
+        this.#richLinks.add(row.rich_link);
+    for (const row of index.rows(messageGlobalDataTable))
+      if (this.#globalMessages.has(row.ROWID))
+        this.#generatedSummaries.add(row.generated_summary);
+    for (const row of index.rows(businessAddressesTable))
+      if (this.#addresses.has(row.address))
+        this.#businesses.add(row.business);
+    for (const row of index.rows(senderAddressesTable))
+      if (this.#addresses.has(row.address))
+        this.#senders.add(row.sender);
+  }
+  account(id) {
+    return selected(this.#scope.accountIds, id);
+  }
+  mailbox(id) {
+    return this.#mailboxes.has(id);
+  }
+  message(id) {
+    return this.#messages.has(id);
+  }
+  // A Message-ID hash, as messages.messageId holds it.
+  messageHash(hash) {
+    return this.#hashes.has(hash);
+  }
+  globalMessage(id) {
+    return this.#globalMessages.has(id);
+  }
+  conversation(id) {
+    return this.#conversations.has(id);
+  }
+  serverMessage(id) {
+    return this.#serverMessages.has(id);
+  }
+  address(id) {
+    return this.#addresses.has(id);
+  }
+  // An address as text, as addresses.address holds it.
+  addressText(address) {
+    return this.#addressTexts.has(address);
+  }
+  subject(id) {
+    return this.#subjects.has(id);
+  }
+  summary(id) {
+    return this.#summaries.has(id);
+  }
+  generatedSummary(id) {
+    return this.#generatedSummaries.has(id);
+  }
+  richLink(id) {
+    return this.#richLinks.has(id);
+  }
+  brand(id) {
+    return this.#brands.has(id);
+  }
+  business(id) {
+    return this.#businesses.has(id);
+  }
+  sender(id) {
+    return this.#senders.has(id);
+  }
+};
 
-// packages/sources/apple/mail/dist/mail-store.js
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdtempDisposable, readFile, readdir, stat } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { basename, join as join2, relative, sep } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-var mailDirectory = join2(homedir(), "Library/Mail");
-var MailUnavailableError = class extends Error {
-  name = "MailUnavailableError";
-  constructor(path, cause) {
-    super(`Mail's store at ${path} cannot be read. Grant the exporting process Full Disk Access in System Settings > Privacy & Security.`, { cause });
-  }
-};
-var MailSchemaError = class extends Error {
-  name = "MailSchemaError";
-};
-var MailChangingError = class extends Error {
-  name = "MailChangingError";
-};
-function plistJSON(value) {
-  return JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item instanceof Uint8Array ? Buffer.from(item).toString("base64") : item);
+// packages/sources/apple/mail/dist/mail-scan.js
+var messageParserVersion = 1;
+function compareKeys(a, b) {
+  if (a < b)
+    return -1;
+  if (a > b)
+    return 1;
+  return 0;
 }
-function plistObject(value) {
-  if (!isDictionary(value))
-    throw new MailSchemaError("Mail returned a non-dictionary property list");
-  return value;
-}
-async function mailVersionDirectory(root) {
-  const info = plistObject(await readPlist(join2(root, "PersistenceInfo.plist")));
-  const version = info.LastUsedVersionDirectoryName;
-  if (typeof version !== "string" || !/^V\d+$/.test(version))
-    throw new MailSchemaError("Mail has no valid current version directory");
-  return join2(root, version);
-}
-async function inspectMailFile(path) {
-  const info = await stat(path, { bigint: true });
-  if (!info.isFile())
-    throw new MailSchemaError(`Mail content is not a regular file: ${path}`);
-  return {
-    path,
-    size: Number(info.size),
-    version: `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`
-  };
-}
-async function assertMailFile(file) {
-  const current = await inspectMailFile(file.path).catch((cause) => {
-    throw new MailChangingError(`Mail removed a file during extraction: ${file.path}`, { cause });
-  });
-  if (current.version !== file.version)
-    throw new MailChangingError(`Mail changed a file during extraction: ${file.path}`);
-}
-async function hashMailFile(file) {
-  await assertMailFile(file);
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(file.path))
-    hash.update(chunk);
-  await assertMailFile(file);
-  return hash.digest("hex");
-}
-var MailStore = class _MailStore {
-  messages = /* @__PURE__ */ new Map();
-  attachments = /* @__PURE__ */ new Map();
-  plists = /* @__PURE__ */ new Map();
-  signatures = [];
-  path;
-  database;
+var MailScan = class _MailScan {
+  snapshot;
+  // null when the import takes everything.
+  selection;
+  // Where decoded attachments are staged while their records are read.
   scratch;
-  resources;
-  constructor(path, database, scratch, resources) {
-    this.path = path;
-    this.database = database;
+  #resources;
+  #accountsStore;
+  #accounts = null;
+  #inputs = null;
+  constructor(resources, snapshot, scratch, selection, accounts2) {
+    this.#resources = resources;
+    this.snapshot = snapshot;
     this.scratch = scratch;
-    this.resources = resources;
+    this.selection = selection;
+    this.#accountsStore = accounts2;
   }
-  static async open(root, required) {
-    let path;
-    let database;
+  static async open(store, accounts2, scope) {
+    var _stack = [];
     try {
-      path = await mailVersionDirectory(root);
-      database = new DatabaseSync(join2(path, "MailData/Envelope Index"), {
-        readOnly: true
-      });
-    } catch (cause) {
-      if (cause instanceof MailSchemaError)
-        throw cause;
-      throw new MailUnavailableError(root, cause);
+      const resources = __using(_stack, new AsyncDisposableStack(), true);
+      const snapshot = resources.use(await store.open());
+      const scratch = resources.use(await mkdtempDisposable(join4(tmpdir(), "apple-mail-")));
+      const selection = Object.keys(scope).length === 0 ? null : new MailSelection(snapshot.index, scope);
+      return new _MailScan(resources.move(), snapshot, scratch.path, selection, accounts2);
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise = __callDispose(_stack, _error, _hasError);
+      _promise && await _promise;
     }
-    const resources = new AsyncDisposableStack();
-    resources.use(database);
+  }
+  // Read once per scan, and only by the two account streams: a store this
+  // process cannot open fails those copies, not the rest of Mail.
+  accountRecords() {
+    var _stack = [];
     try {
-      database.exec("BEGIN");
-      const missing = Object.entries(required).flatMap(([table2, columns]) => {
-        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table2).map((row) => row.name));
-        return columns.filter((column) => !present.has(column)).map((column) => `${table2}.${column}`);
-      });
-      if (missing.length)
-        throw new MailSchemaError(`Unsupported Mail index schema: missing ${missing.join(", ")}`);
-      const scratch = resources.use(await mkdtempDisposable(join2(tmpdir(), "apple-mail-")));
-      const store = new _MailStore(path, database, scratch, resources);
-      const entries = await readdir(path, {
-        recursive: true,
-        withFileTypes: true
-      });
-      for (const entry of entries) {
-        if (!entry.isFile())
-          continue;
-        const filePath = join2(entry.parentPath, entry.name);
-        const segments = relative(path, filePath).split(sep);
-        const attachment = segments.indexOf("Attachments");
-        if (/^\d+(\.partial)?\.emlx$/.test(entry.name)) {
-          const id = entry.name.slice(0, entry.name.indexOf("."));
-          if (store.messages.has(id))
-            throw new MailSchemaError(`Mail has more than one file for indexed message ${id}`);
-          store.messages.set(id, await inspectMailFile(filePath));
-        } else if (attachment !== -1 && segments.length >= attachment + 4) {
-          const key = `${segments[attachment + 1]}:${segments[attachment + 2]}`;
-          const files = store.attachments.get(key);
-          const file = await inspectMailFile(filePath);
-          if (files === void 0)
-            store.attachments.set(key, [file]);
-          else
-            files.push(file);
-        } else if (entry.name.endsWith(".plist")) {
-          store.plists.set(relative(path, filePath), await inspectMailFile(filePath));
-        } else if (entry.name.endsWith(".mailsignature")) {
-          store.signatures.push(await inspectMailFile(filePath));
-        }
+      if (this.#accounts !== null)
+        return this.#accounts;
+      const hosts = /* @__PURE__ */ new Map();
+      for (const url of this.snapshot.index.mailboxUrls()) {
+        const parsed = new URL(String(url));
+        if (!hosts.has(parsed.hostname))
+          hosts.set(parsed.hostname, parsed.protocol.slice(0, -1));
       }
-      return store;
-    } catch (error) {
-      await resources.disposeAsync();
-      throw error;
+      const snapshot = __using(_stack, this.#accountsStore.open());
+      const accounts2 = new MailAccounts(snapshot.accounts());
+      this.#accounts = {
+        accounts: accounts2.accounts(hosts, this.snapshot.directory),
+        smtpServers: accounts2.smtpServers()
+      };
+      return this.#accounts;
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
     }
   }
-  async plist(name) {
-    const file = this.plists.get(name);
-    if (file === void 0)
-      return null;
-    await assertMailFile(file);
-    const value = await readPlist(file.path);
-    await assertMailFile(file);
-    return value;
+  // Gathered once per scan, for the messages the selection keeps.
+  messageInputs() {
+    if (this.#inputs !== null)
+      return this.#inputs;
+    const detached = /* @__PURE__ */ new Map();
+    for (const [key, files] of [...this.snapshot.files.attachments].sort(([a], [b]) => compareKeys(a, b))) {
+      const id = key.slice(0, key.indexOf(":"));
+      detached.set(id, [...detached.get(id) ?? [], [key, files]]);
+    }
+    const indexed = /* @__PURE__ */ new Map();
+    for (const row of this.snapshot.index.indexedAttachments()) {
+      if (this.selection !== null && !this.selection.message(row.message))
+        continue;
+      indexed.set(row.message, [...indexed.get(row.message) ?? [], row]);
+    }
+    this.#inputs = { detached, indexed };
+    return this.#inputs;
   }
-  async signature(file) {
-    await assertMailFile(file);
-    const content = await readFile(file.path, "utf8");
-    await assertMailFile(file);
-    return { id: basename(file.path, ".mailsignature"), content };
+  // Everything a message's records are read from: the .emlx and detached
+  // files by their versions, and the index's attachment rows. A file that
+  // changes while it is read fails the read, so a matching fingerprint means
+  // the saved records came from these inputs.
+  fingerprint(id, file) {
+    const { detached, indexed } = this.messageInputs();
+    const identity = (input) => [
+      this.snapshot.files.relative(input),
+      input.version
+    ];
+    return createHash3("sha256").update(JSON.stringify([
+      messageParserVersion,
+      file === void 0 ? null : identity(file),
+      (detached.get(id) ?? []).map(([key, files]) => [
+        key,
+        files.map(identity)
+      ]),
+      (indexed.get(id) ?? []).map((row) => [row.attachmentId, row.name])
+    ])).digest("base64url");
   }
   async [Symbol.asyncDispose]() {
-    await this.resources.disposeAsync();
+    await this.#resources.disposeAsync();
   }
 };
 
-// packages/sources/apple/mail/dist/mail-mime.js
-var failure = (error) => Error.isError(error) ? error : new Error(String(error), { cause: error });
-function partId(node) {
-  if (node.partNr === false)
-    throw new MailSchemaError("MIME parser returned an unresolved part number");
-  if (node.multipart === false && node.partNr.length === 1 && node.partNr[0] === "TEXT")
-    return "1";
-  return node.partNr.join(".");
-}
-async function readMailMime(store, messageId, file, readHeaders, stageFiles, decode) {
-  var _stack = [];
-  try {
-    await assertMailFile(file);
-    const handle = __using(_stack, await open(file.path, "r"), true);
-    const prefix = Buffer.alloc(64);
-    const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
-    const line = /^(\d+)[ \t]*\r?\n/.exec(prefix.subarray(0, bytesRead).toString("ascii"));
-    if (line === null)
-      throw new MailSchemaError(`Invalid EMLX byte count for message ${messageId}`);
-    const length = Number(line[1]);
-    const start = Buffer.byteLength(line[0]);
-    if (!Number.isSafeInteger(length) || length < 1 || start + length > file.size)
-      throw new MailSchemaError(`Truncated EMLX message ${messageId}`);
-    const headers = [];
-    const parts = [];
-    const splitter = new import_mailsplit.Splitter({ ignoreEmbedded: true });
-    const input = pipeline(handle.createReadStream({
-      start,
-      end: start + length - 1,
-      autoClose: false
-    }), splitter);
-    input.catch(() => {
-    });
-    let active = null;
-    const finish = async () => {
-      if (active === null)
-        return;
-      const { decoder, finished, part, hash, textDecoder } = active;
-      active = null;
-      decoder.end();
-      await finished;
-      if (textDecoder !== null)
-        part.text += textDecoder.decode();
-      const record = part.record;
-      if (record.decodedBytes === 0 && record.declaredBytes !== null && record.declaredBytes > 0) {
-        const diskId = record.partId;
-        const candidates = store.attachments.get(`${messageId}:${diskId}`);
-        if (candidates === void 0) {
-          record.availableLocally = false;
-          record.decodedBytes = null;
-          if (part.path !== null)
-            await rm(part.path);
-          part.path = null;
-          part.text = null;
-          return;
-        }
-        const matches = candidates.length === 1 ? candidates : candidates.filter((candidate) => basename2(candidate.path) === record.filename);
-        const [original] = matches;
-        if (original === void 0 || matches.length !== 1)
-          throw new MailSchemaError(`Ambiguous detached Mail attachment ${messageId}:${diskId}`);
-        await assertMailFile(original);
-        if (part.path !== null)
-          await copyFile(original.path, part.path);
-        if (textDecoder !== null)
-          part.text = await mailPartText(original.path, textDecoder);
-        await assertMailFile(original);
-        record.decodedBytes = original.size;
-        record.sha256 = await hashMailFile(original);
-      } else {
-        record.sha256 = hash.digest("hex");
+// packages/sources/apple/mail/dist/apple-mail-stream.js
+var mailSchema = (description, properties) => ({
+  type: "object",
+  description,
+  properties,
+  required: Object.keys(properties)
+});
+var AppleMailStream = class {
+  supportedSyncModes = Object.freeze([
+    "full_refresh",
+    "incremental"
+  ]);
+  // Every read is the whole store, so incremental copies diff snapshots.
+  sourceDefinedCursor = true;
+  emitsDeletes = true;
+  #stream;
+  describe() {
+    this.#stream ??= new Stream(this);
+    return this.#stream;
+  }
+  async *extract(configuration, state, scan) {
+    const { stream } = configuration;
+    const { selection } = scan;
+    const accepts = (data) => selection === null || this.accepts(data, selection);
+    let file = null;
+    const records = async function* (entries2) {
+      for await (const entry of entries2) {
+        if (!accepts(entry.data))
+          continue;
+        file = entry.file;
+        yield* validateRecords(stream, [entry.data], "Mail");
       }
     };
-    const chunks = splitter;
-    try {
-      for await (const chunk of chunks) {
-        if (chunk.type === "node") {
-          await finish();
-          const node = chunk;
-          if (node.headers === false)
-            throw new MailSchemaError("MIME parser returned no headers");
-          const id = partId(node);
-          if (readHeaders)
-            for (const [position, header] of node.headers.getList().entries()) {
-              const decoded = import_libmime.default.decodeHeader(Buffer.from(header.line, "latin1").toString("utf8"));
-              headers.push({
-                messageId,
-                partId: id,
-                position,
-                name: header.key,
-                value: import_libmime.default.decodeWords(decoded.value),
-                rawLineBase64: Buffer.from(header.line, "latin1").toString("base64")
-              });
-            }
-          if (readHeaders)
-            continue;
-          const appleLength = node.headers.getFirst("X-Apple-Content-Length");
-          if (appleLength !== "" && (!/^\d+$/.test(appleLength) || !Number.isSafeInteger(Number(appleLength))))
-            throw new MailSchemaError(`Invalid detached MIME size in message ${messageId}`);
-          const contentId = node.headers.getFirst("Content-ID");
-          const record = {
-            messageId,
-            partId: id,
-            parentPartId: node.parentNode === false ? null : partId(node.parentNode),
-            contentType: node.contentType === false ? null : node.contentType,
-            charset: node.charset === false ? null : node.charset,
-            transferEncoding: node.encoding === false || node.encoding === "" ? null : node.encoding,
-            disposition: node.disposition === false ? null : node.disposition,
-            filename: node.filename === false ? null : node.filename,
-            contentId: contentId === "" ? null : contentId,
-            isMultipart: node.multipart !== false,
-            isAttachment: node.multipart === false && (node.filename !== false || node.disposition === "attachment" || node.rfc822 || node.contentType !== false && !node.contentType.startsWith("text/")),
-            declaredBytes: appleLength === "" ? null : Number(appleLength),
-            decodedBytes: null,
-            availableLocally: true,
-            sha256: null
-          };
-          const part = { record, path: null, text: null };
-          parts.push(part);
-          if (node.multipart !== false || !decode(record))
-            continue;
-          const extension = node.filename === false ? node.contentType === "text/html" ? ".html" : node.contentType !== false && node.contentType.startsWith("text/") ? ".txt" : "" : extname(node.filename);
-          if (stageFiles)
-            part.path = join3(store.scratch.path, `${messageId}-${id}${extension}`);
-          const decoder = node.getDecoder();
-          const hash = createHash2("sha256");
-          const textDecoder = !stageFiles && record.contentType !== null && record.contentType.startsWith("text/") ? new TextDecoder(record.charset === null ? void 0 : record.charset) : null;
-          if (textDecoder !== null)
-            part.text = "";
-          record.decodedBytes = 0;
-          decoder.on("data", (bytes) => {
-            hash.update(bytes);
-            record.decodedBytes = (record.decodedBytes ?? 0) + bytes.length;
-            if (textDecoder !== null)
-              part.text += textDecoder.decode(bytes, { stream: true });
-          });
-          const finished = part.path === null ? streamFinished(decoder, { cleanup: true }) : pipeline(decoder, createWriteStream(part.path, { flags: "wx" }));
-          finished.catch((error) => splitter.destroy(failure(error)));
-          active = { decoder, finished, part, hash, textDecoder };
-        } else if (chunk.type === "body" && active !== null) {
-          if (!active.decoder.write(chunk.value))
-            await once(active.decoder, "drain");
-        }
-      }
-      await finish();
-      await input;
-      await assertMailFile(file);
-      return { headers, parts };
-    } catch (error) {
-      const reason = failure(error);
-      splitter.destroy(reason);
-      if (active !== null)
-        active.decoder.destroy(reason);
-      await input.catch(() => {
-      });
-      if (active !== null)
-        await active.finished.catch(() => {
-        });
-      await Promise.allSettled(parts.flatMap((part) => part.path === null ? [] : [rm(part.path)]));
-      throw error;
-    }
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    var _promise = __callDispose(_stack, _error, _hasError);
-    _promise && await _promise;
+    const entries = () => this.entries(scan);
+    const messages = configuration.syncMode !== "incremental" ? (async function* () {
+      for await (const data of records(entries()))
+        yield { stream: stream.name, data };
+    })() : this.snapshot(stream, scan, records, state);
+    for await (const message of messages)
+      yield "type" in message || configuration.fileReads.length === 0 ? message : { ...message, file };
   }
-}
-async function mailPartText(path, decoder) {
-  let text2 = "";
-  for await (const bytes of createReadStream2(path))
-    text2 += decoder.decode(bytes, { stream: true });
-  return text2 + decoder.decode();
-}
+  // An incremental read: the scan compared with the saved snapshot.
+  snapshot(stream, scan, records, state) {
+    return diffSnapshot(stream, records(this.entries(scan)), state);
+  }
+};
 
-// packages/sources/apple/mail/dist/mail-tables.js
-var rawDates = /* @__PURE__ */ new Set([
-  "due_by",
-  "end_date",
-  "follow_up_end_date",
-  "follow_up_start_date",
-  "last_modified",
-  "read_later_date",
-  "send_later_date",
-  "smime_capabilities_date",
-  "start_date"
-]);
-var rawDate = (column, kind) => kind === "number" && rawDates.has(column);
-var fieldName = (column, kind) => (column === "ROWID" ? "id" : column.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())) + (kind === "base64" ? "Base64" : rawDate(column, kind) ? "Raw" : "");
+// packages/sources/apple/mail/dist/mail-fields.js
+var kinds = {
+  id: {
+    scalar: "string",
+    suffix: "",
+    loads: "an integer loaded as decimal text to keep 64-bit precision"
+  },
+  text: { scalar: "string", suffix: "", loads: "text as stored" },
+  number: { scalar: "number", suffix: "", loads: "number as stored" },
+  undatedNumber: {
+    scalar: "number",
+    suffix: "Raw",
+    loads: "raw number as stored; its date epoch is unverified, so it is not converted"
+  },
+  time: {
+    scalar: "string",
+    suffix: "",
+    loads: "Unix seconds converted to a UTC timestamp with millisecond precision"
+  },
+  bytes: {
+    scalar: "string",
+    suffix: "Base64",
+    loads: "BLOB bytes encoded as Base64; a stored text value passes through unchanged"
+  }
+};
 var undocumented = "Meaning not documented by Apple.";
-function provenance(name, column, kind, key) {
-  const value = column === "ROWID" ? "the local row identifier, loaded as decimal text" : {
-    id: "an integer loaded as decimal text to keep 64-bit precision",
-    time: "Unix seconds converted to a UTC timestamp with millisecond precision",
-    base64: "BLOB bytes encoded as Base64; a stored text value passes through unchanged",
-    text: "text as stored",
-    number: rawDate(column, kind) ? "raw number as stored; its date epoch is unverified, so it is not converted" : "number as stored"
-  }[kind];
-  return `Envelope Index ${name}.${column}, ${value}${key ? "" : "; NULL when the index stores no value"}.`;
+var fieldName = (column, kind) => (column === "ROWID" ? "id" : column.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())) + kinds[kind].suffix;
+function provenance(table, column, kind, key) {
+  const value = column === "ROWID" ? "the local row identifier, loaded as decimal text" : kinds[kind].loads;
+  return `Envelope Index ${table.name}.${column}, ${value}${key ? "" : "; NULL when the index stores no value"}.`;
 }
-function table(name, description, keys, columns, meanings) {
+function tableProperties(table, meanings) {
   const meaning = meanings;
   const properties = {};
-  const select = [];
-  const blobs = [];
-  for (const [column, kind] of Object.entries(columns)) {
-    const field = fieldName(column, kind);
-    const key = keys.includes(column);
-    const scalar = kind === "number" ? key ? "integer" : "number" : "string";
-    properties[field] = {
-      type: key ? scalar : [scalar, "null"],
+  for (const [column, kind] of Object.entries(table.columns)) {
+    const key = table.keys.includes(column);
+    const { scalar } = kinds[kind];
+    const type = scalar === "number" && key ? "integer" : scalar;
+    properties[fieldName(column, kind)] = {
+      type: key ? type : [type, "null"],
       ...kind === "time" ? { format: "date-time" } : {},
-      description: `${provenance(name, column, kind, key)} ${meaning[column] ?? undocumented}`
+      description: `${provenance(table, column, kind, key)} ${meaning[column] ?? undocumented}`
     };
-    const expression = kind === "id" ? `CAST("${column}" AS TEXT)` : kind === "time" ? `strftime('%Y-%m-%dT%H:%M:%fZ', "${column}", 'unixepoch')` : `"${column}"`;
-    select.push(`${expression} AS "${field}"`);
-    if (kind === "base64")
-      blobs.push(field);
   }
-  return {
-    name,
-    description: `${description} Read from the Envelope Index ${name} table; index row identifiers are local to this Mac. Relationships name source streams within this source, not destination tables.`,
-    columns: Object.keys(columns),
-    properties,
-    primaryKey: keys.map((key) => {
-      const kind = columns[key];
-      if (kind === void 0)
-        throw new TypeError(`Mail table ${name} has no key column ${key}`);
-      return fieldName(key, kind);
-    }),
-    blobs,
-    // Qualified, since SQLite would otherwise sort a key by a result column
-    // that shares its name: the text copy, so 10 before 2.
-    sql: `SELECT ${select.join(", ")} FROM "${name}" ORDER BY ${keys.map((key) => `"${name}"."${key}"`).join(", ")}`
-  };
+  return properties;
 }
-var mailTables = {
-  messages: table("messages", "One record per message row in the local Mail index, across all accounts. Primary key id. Mailbox membership is its own grain: messageMailboxes holds message and mailbox pairs beside messages.mailbox and messages.remoteMailbox. subject, summary and sender hold identifiers that need explicit joins to subjects.id, summaries.id and addresses.id, and recipients are rows of recipients. The index declares no foreign keys for these references; they follow how this source reads the index, and a live store resolved every one. Bodies and headers are in messageParts and messageHeaders; whether the message file is on this Mac is in messageFiles.", ["ROWID"], {
-    ROWID: "id",
-    message_id: "id",
-    global_message_id: "id",
-    remote_id: "id",
-    document_id: "base64",
-    sender: "id",
-    subject_prefix: "text",
-    subject: "id",
-    summary: "id",
-    date_sent: "time",
-    date_received: "time",
-    mailbox: "id",
-    remote_mailbox: "id",
-    flags: "number",
-    read: "number",
-    flagged: "number",
-    deleted: "number",
-    size: "number",
-    conversation_id: "id",
-    date_last_viewed: "time",
-    list_id_hash: "id",
-    unsubscribe_type: "number",
-    searchable_message: "id",
-    brand_indicator: "id",
-    display_date: "time",
-    flag_color: "number",
-    color: "text",
-    type: "number",
-    fuzzy_ancestor: "id",
-    automated_conversation: "number",
-    root_status: "number",
-    is_urgent: "number"
-  }, {
-    ROWID: "Local message identifier. messageMailboxes.messageId, recipients.message, indexedAttachments.message, serverMessages.message, messageReferences.message, events.messageId, messageFiles.messageId, messageHeaders.messageId, messageParts.messageId and attachments.messageId refer to it within this source.",
-    message_id: "Hash Mail stores for the message's Message-ID, not this stream's id. conversationMessages.messageId and messageGlobalData.messageId hold the same hash within this source. It is not unique in the captured index schema, so a join on it can match several messages rows.",
-    global_message_id: "Refers to messageGlobalData.id within this source; the captured index schema does not make it unique.",
-    sender: "Refers to addresses.id within this source, which holds the address text.",
-    subject: "Refers to subjects.id within this source, which holds the subject text.",
-    summary: "Refers to summaries.id within this source, which holds the summary text.",
-    mailbox: "Refers to mailboxes.id within this source. A message can belong to further mailboxes through messageMailboxes.",
-    remote_mailbox: "Refers to mailboxes.id within this source.",
-    conversation_id: `${undocumented} This source relates messages to conversations through conversationMessages, not this column.`,
-    brand_indicator: "Refers to brandIndicators.id within this source."
-  }),
-  mailboxes: table("mailboxes", "One record per mailbox row in the local Mail index, identified by its URL. Primary key id. Messages relate through messageMailboxes (many to many), messages.mailbox and messages.remoteMailbox; server messages through serverMessages.mailbox and serverMessageMailboxes.label. Count columns are passed through as stored, not recomputed from messages.", ["ROWID"], {
-    ROWID: "id",
-    url: "text",
-    total_count: "number",
-    unread_count: "number",
-    deleted_count: "number",
-    unseen_count: "number",
-    unread_count_adjusted_for_duplicates: "number",
-    change_identifier: "text",
-    source: "number",
-    alleged_change_identifier: "text"
-  }, {
-    ROWID: "Local mailbox identifier. messageMailboxes.mailboxId, messages.mailbox, messages.remoteMailbox, serverMessages.mailbox and serverMessageMailboxes.label refer to it within this source.",
-    url: "Mailbox URL, unique in the captured index schema. Its host matches accounts.id within this source."
-  }),
-  addresses: table("addresses", "One record per distinct address and comment pair in the local Mail index; the captured index schema keeps each pair once. Primary key id. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to id; addressMetadata matches on the address text instead.", ["ROWID"], { ROWID: "id", address: "text", comment: "text" }, {
-    ROWID: "Local address identifier. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to it within this source.",
-    address: "Address text; the captured index schema compares it case-insensitively. addressMetadata.address holds the same text within this source."
-  }),
-  recipients: table("recipients", "One record per address in one recipient position of one message. Primary key id. message refers to messages.id and address to addresses.id; the captured index schema keeps (message, type, position) unique and does not enforce message, so rows whose message is gone are kept. A message has many recipients: count messages at message grain (distinct message) after joining.", ["ROWID"], {
-    ROWID: "id",
-    message: "id",
-    address: "id",
-    type: "number",
-    position: "number"
-  }, {
-    ROWID: "Local recipient row identifier.",
-    message: "Refers to messages.id within this source; not enforced by the index, so it can match no message.",
-    address: "Refers to addresses.id within this source."
-  }),
-  indexedAttachments: table("attachments", "One record per attachment Mail records in its index for a message, which can exist before the message file or the attachment file is downloaded. Primary key id. message refers to messages.id; (message, attachmentId) matches (messageId, partId) in attachments and, once the message file is local, in messageParts. This stream carries no bytes or availability; the attachments stream does.", ["ROWID"], { ROWID: "id", message: "id", attachment_id: "text", name: "text" }, {
-    ROWID: "Local index attachment row identifier.",
-    message: "Refers to messages.id within this source.",
-    attachment_id: "MIME part number of the attachment, such as 2 or 1.2; equals partId in attachments and messageParts within this source.",
-    name: "Attachment name recorded by the index; attachments.filename uses it when the MIME part is not available locally."
-  }),
-  messageMailboxes: table("labels", "One record per message and mailbox membership; a message can belong to several mailboxes. Primary key (messageId, mailboxId). messageId refers to messages.id and mailboxId to mailboxes.id. Joining messages through this stream repeats a message once per mailbox: count at message grain.", ["message_id", "mailbox_id"], { message_id: "id", mailbox_id: "id" }, {
-    message_id: "Refers to messages.id within this source (the local id, not the hash in messages.messageId).",
-    mailbox_id: "Refers to mailboxes.id within this source."
-  }),
-  serverMessages: table("server_messages", "One record per server message row, kept in a table separate from messages. Primary key id. message refers to messages.id and mailbox to mailboxes.id; (mailbox, remoteId) is unique in the captured index schema. Further mailbox memberships are in serverMessageMailboxes.", ["ROWID"], {
-    ROWID: "id",
-    message: "id",
-    mailbox: "id",
-    sequence_identifier: "number",
-    read: "number",
-    deleted: "number",
-    replied: "number",
-    flagged: "number",
-    draft: "number",
-    forwarded: "number",
-    redirected: "number",
-    junk_level_set_by_user: "number",
-    junk_level: "number",
-    flag_color: "number",
-    remote_id: "id"
-  }, {
-    ROWID: "Local server message identifier; serverMessageMailboxes.serverMessage refers to it within this source.",
-    message: "Refers to messages.id within this source; the index sets it to NULL when that message row is deleted.",
-    mailbox: "Refers to mailboxes.id within this source.",
-    remote_id: `${undocumented} Unique together with mailbox in the captured index schema.`
-  }),
-  serverMessageMailboxes: table("server_labels", "One record per server message and mailbox membership. Primary key (serverMessage, label). serverMessage refers to serverMessages.id and label to mailboxes.id. Joining through this stream repeats a server message once per mailbox: count at server message grain.", ["server_message", "label"], { server_message: "id", label: "id" }, {
-    server_message: "Refers to serverMessages.id within this source.",
-    label: "Refers to mailboxes.id within this source."
-  }),
-  conversations: table("conversations", "One record per conversation row in the local Mail index. Primary key conversationId. Messages belong to conversations through conversationMessages.", ["conversation_id"], { conversation_id: "id", flags: "number", sync_key: "text" }, {
-    conversation_id: "Local conversation identifier; conversationMessages.conversationId refers to it within this source."
-  }),
-  conversationMessages: table("conversation_id_message_id", "One record per conversation and message membership. Primary key (conversationId, messageId). conversationId refers to conversations.conversationId; messageId is the Message-ID hash in messages.messageId, not messages.id. That hash is not unique in messages, so a join can match several messages rows: count at message grain.", ["conversation_id", "message_id"], { conversation_id: "id", message_id: "id", date_sent: "time" }, {
-    conversation_id: "Refers to conversations.conversationId within this source.",
-    message_id: "Message-ID hash; matches messages.messageId within this source, not messages.id."
-  }),
-  messageReferences: table("message_references", "One record per reference a message row carries. Primary key id. message refers to messages.id; reference is a Message-ID hash in the same space as messages.messageId and can match no messages row.", ["ROWID"], {
-    ROWID: "id",
-    message: "id",
-    reference: "id",
-    is_originator: "number"
-  }, {
-    ROWID: "Local message reference row identifier.",
-    message: "Refers to messages.id within this source.",
-    reference: "Message-ID hash in the same space as messages.messageId within this source; not enforced by the index, so it can match no messages row."
-  }),
-  messageGlobalData: table("message_global_data", "One record per message global data row in the local Mail index. Primary key id. messages.globalMessageId and messageRichLinks.globalMessageId refer to id; messageId holds the Message-ID hash of messages.messageId; generatedSummary refers to generatedSummaries.id. Raw-suffixed numbers keep their stored values because their date epoch is unverified.", ["ROWID"], {
-    ROWID: "id",
-    message_id: "id",
-    follow_up_start_date: "number",
-    follow_up_end_date: "number",
-    follow_up_jsonstringformodelevaluationforsuggestions: "text",
-    due_by: "number",
-    read_later_date: "number",
-    send_later_date: "number",
-    validation_state: "number",
-    model_category: "number",
-    model_subcategory: "number",
-    category_model_version: "number",
-    category_is_temporary: "number",
-    model_analytics: "text",
-    model_high_impact: "number",
-    generated_summary: "id",
-    urgent: "number",
-    message_id_header: "text"
-  }, {
-    ROWID: "Local identifier; messages.globalMessageId and messageRichLinks.globalMessageId refer to it within this source.",
-    message_id: "Message-ID hash, the same value as messages.messageId within this source; unique in the captured index schema.",
-    generated_summary: "Refers to generatedSummaries.id within this source."
-  }),
-  subjects: table("subjects", "One record per distinct subject text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.subject refers to id: join from messages to read a message's subject.", ["ROWID"], { ROWID: "id", subject: "text" }, {
-    ROWID: "Local subject identifier; messages.subject refers to it within this source.",
-    subject: "Subject text Mail stores for its messages, passed through as collected."
-  }),
-  summaries: table("summaries", "One record per distinct summary text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.summary refers to id: join from messages to read a message's summary.", ["ROWID"], { ROWID: "id", summary: "text" }, {
-    ROWID: "Local summary identifier; messages.summary refers to it within this source.",
-    summary: "Summary text Mail already stores, passed through as collected; this connector generates no summaries."
-  }),
-  generatedSummaries: table("generated_summaries", "One record per generated summary row in the local Mail index. Primary key id. messageGlobalData.generatedSummary refers to id. The summary is a binary payload exported as Base64 without decoding.", ["ROWID"], { ROWID: "id", summary: "base64", status: "number" }, {
-    ROWID: "Local generated summary identifier; messageGlobalData.generatedSummary refers to it within this source.",
-    summary: `${undocumented} Mail's stored payload; this connector does not decode it.`
-  }),
-  messageMetadata: table("message_metadata", "One record per message metadata row in the local Mail index. Primary key messageId. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream. jsonValues is native JSON text passed through as data.", ["message_id"], { message_id: "id", timestamp: "number", json_values: "text" }, {
-    message_id: `${undocumented} Not proven to refer to messages.id or messages.messageId, so no join is stated.`,
-    json_values: `${undocumented} Native JSON text passed through without interpretation.`
-  }),
-  dataDetectionResults: table("data_detection_results", "One record per detection result row in the local Mail index: a category and value. Primary key id. (globalMessageId, category, value) is unique in the captured index schema. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.", ["ROWID"], {
-    ROWID: "id",
-    global_message_id: "id",
-    category: "text",
-    value: "text"
-  }, {
-    ROWID: "Local detection result row identifier.",
-    global_message_id: `${undocumented} Not proven to refer to messageGlobalData.id, so no join is stated.`
-  }),
-  richLinks: table("rich_links", "One record per rich link row in the local Mail index. Primary key id. messageRichLinks.richLink refers to id; hash is unique in the captured index schema.", ["ROWID"], { ROWID: "id", title: "text", url: "text", hash: "text" }, {
-    ROWID: "Local rich link identifier; messageRichLinks.richLink refers to it within this source.",
-    hash: `${undocumented} Unique in the captured index schema.`
-  }),
-  messageRichLinks: table("message_rich_links", "One record per message global data row and rich link pair. Primary key (globalMessageId, richLink). globalMessageId refers to messageGlobalData.id, reached from messages through messages.globalMessageId; richLink refers to richLinks.id. A message can have several links: count at message grain.", ["global_message_id", "rich_link"], { global_message_id: "id", rich_link: "id" }, {
-    global_message_id: "Refers to messageGlobalData.id within this source.",
-    rich_link: "Refers to richLinks.id within this source."
-  }),
-  protectedMessageData: table("protected_message_data", "One record per protected message data row in the local Mail index. Primary key id. data is an opaque native payload passed through as text. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.", ["ROWID"], { ROWID: "id", data: "text" }, {
-    ROWID: `${undocumented} Not proven to refer to any other stream, so no join is stated.`,
-    data: `${undocumented} Opaque native payload passed through without interpretation.`
-  }),
-  brandIndicators: table("brand_indicators", "One record per brand indicator row in the local Mail index. Primary key id. messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to id; url is unique in the captured index schema. indicator is binary, exported as Base64 without decoding.", ["ROWID"], {
-    ROWID: "id",
-    url: "text",
-    indicator: "base64",
-    indicator_hash: "text",
-    hash_algorithm: "text"
-  }, {
-    ROWID: "Local brand indicator identifier; messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to it within this source.",
-    url: `${undocumented} Unique in the captured index schema.`
-  }),
-  brandIndicatorEvidence: table("brand_indicator_evidence", "One record per brand indicator evidence row in the local Mail index. Primary key id. brandIndicator refers to brandIndicators.id; (brandIndicator, url) is unique in the captured index schema. evidence is binary, exported as Base64 without decoding.", ["ROWID"], {
-    ROWID: "id",
-    brand_indicator: "id",
-    url: "text",
-    evidence: "base64",
-    unverified_messages: "text"
-  }, {
-    ROWID: "Local brand indicator evidence row identifier.",
-    brand_indicator: "Refers to brandIndicators.id within this source."
-  }),
-  addressMetadata: table("address_metadata", "One record per address metadata row in the local Mail index. Primary key id. address holds address text, unique in the captured index schema, and matches addresses.address, not addresses.id.", ["ROWID"], {
-    ROWID: "id",
-    address: "text",
-    smime_capabilities: "text",
-    smime_capabilities_date: "number"
-  }, {
-    ROWID: "Local address metadata row identifier.",
-    address: "Address text matching addresses.address within this source; the captured index schema compares both case-insensitively."
-  }),
-  businesses: table("businesses", "One record per business row in the local Mail index. Primary key id. businessAddresses.business and businessCategories.business refer to id. The captured index schema requires each row to hold either addressComment and domain, or brandId and localizedBrandName, and leaves the other pair NULL.", ["ROWID"], {
-    ROWID: "id",
-    address_comment: "text",
-    domain: "text",
-    brand_id: "id",
-    localized_brand_name: "text"
-  }, {
-    ROWID: "Local business identifier; businessAddresses.business and businessCategories.business refer to it within this source."
-  }),
-  businessAddresses: table("business_addresses", "One record per address assigned to a business. Primary key id. address refers to addresses.id, unique in the captured index schema, and business refers to businesses.id.", ["ROWID"], {
-    ROWID: "id",
-    address: "id",
-    business: "id",
-    category: "number",
-    last_modified: "number",
-    last_bcs_sync: "time"
-  }, {
-    ROWID: "Local business address row identifier.",
-    address: "Refers to addresses.id within this source; unique in the captured index schema.",
-    business: "Refers to businesses.id within this source."
-  }),
-  businessCategories: table("business_categories", "One record per business category row in the local Mail index. Primary key id. business refers to businesses.id and is unique in the captured index schema.", ["ROWID"], { ROWID: "id", business: "id", category: "number" }, {
-    ROWID: "Local business category row identifier.",
-    business: "Refers to businesses.id within this source; unique in the captured index schema."
-  }),
-  senders: table("senders", "One record per sender row in the local Mail index. Primary key id. senderAddresses.sender refers to id; contactIdentifier is unique in the captured index schema.", ["ROWID"], {
-    ROWID: "id",
-    contact_identifier: "text",
-    bucket: "number",
-    user_initiated: "number"
-  }, {
-    ROWID: "Local sender identifier; senderAddresses.sender refers to it within this source.",
-    contact_identifier: `${undocumented} Unique in the captured index schema.`
-  }),
-  senderAddresses: table("sender_addresses", "One record per address assigned to a sender. Primary key address. address refers to addresses.id and sender to senders.id; each address has at most one sender.", ["address"], { address: "id", sender: "id" }, {
-    address: "Refers to addresses.id within this source.",
-    sender: "Refers to senders.id within this source."
-  }),
-  events: table("events", "One record per event row the local Mail index stores for a message. Primary key id. messageId refers to messages.id, the local id, not the Message-ID hash. startDateRaw and endDateRaw keep stored numbers because their date epoch is unverified.", ["ROWID"], {
-    ROWID: "id",
-    message_id: "id",
-    start_date: "number",
-    end_date: "number",
-    location: "text",
-    out_of_date: "number",
-    processed: "number",
-    is_all_day: "number",
-    associated_id_string: "text",
-    original_receiving_account: "text",
-    ical_uid: "text",
-    is_response_requested: "number"
-  }, {
-    ROWID: "Local event row identifier.",
-    message_id: "Refers to messages.id within this source (the local id, not messages.messageId)."
-  })
-};
-function mailStream(name, description, properties, primaryKey, files) {
-  return new Stream({
-    name,
-    jsonSchema: {
-      type: "object",
-      description,
-      properties,
-      required: Object.keys(properties)
-    },
-    primaryKey,
-    supportedSyncModes: ["full_refresh", "incremental"],
-    sourceDefinedCursor: true,
-    emitsDeletes: true,
-    ...files ? { supportsFileTransfer: true } : {}
+function encode(kind, value) {
+  if (kind === "bytes" && value instanceof Uint8Array)
+    return Buffer.from(value).toString("base64");
+  if (kind === "time" && value instanceof Date)
+    return value.toISOString();
+  return value;
+}
+function tableRecord(table, row) {
+  return Object.fromEntries(Object.entries(table.columns).map(([column, kind]) => [
+    fieldName(column, kind),
+    encode(kind, row[column])
+  ]));
+}
+function plistJSON(value) {
+  return JSON.stringify(value, (_, item) => {
+    if (typeof item === "bigint")
+      return item.toString();
+    if (item instanceof Uint8Array)
+      return Buffer.from(item).toString("base64");
+    return item;
   });
 }
-var tableStreams = Object.entries(mailTables).map(([name, definition]) => mailStream(name, definition.description, definition.properties, definition.primaryKey, false));
-
-// packages/sources/apple/mail/dist/apple-mail-source.js
+function described(fields, descriptions) {
+  const meaning = descriptions;
+  return Object.fromEntries(Object.entries(fields).map(([name, field]) => [
+    name,
+    { ...field, description: meaning[name] }
+  ]));
+}
 var text = { type: "string" };
 var nullableText = { type: ["string", "null"] };
 var nullableNumber = { type: ["number", "null"] };
@@ -26438,80 +27007,595 @@ var fileFields = {
   size: nullableNumber,
   sha256: nullableText
 };
-function described(fields, descriptions) {
-  const meaning = descriptions;
-  return Object.fromEntries(Object.entries(fields).map(([name, field]) => [
-    name,
-    { ...field, description: meaning[name] }
-  ]));
-}
+var plistFields = { relativePath: text, properties: text };
 var plistProperties = "The property list converted to JSON: data values become Base64 strings, dates ISO 8601 strings and integers beyond 2^53 decimal strings. Kept as data; this source does not interpret its keys.";
 var localMessageId = "Refers to messages.id within this source (the local id, not the Message-ID hash in messages.messageId).";
 var partId2 = "Dotted MIME part number, such as 1 or 1.2. The root of a multipart message is TEXT; a single-part message is 1, as in the index. Equals indexedAttachments.attachmentId for attachments Mail indexes.";
 var sha256 = "SHA-256 of the bytes as lowercase hexadecimal";
-var accountStreams = {
-  accounts: mailStream("accounts", "One record per Mail account that owns mailboxes: each host of mailboxes.url, read from the system Accounts store (~/Library/Accounts/Accounts4.sqlite) without Mail scripting or Automation access. A host the store does not know, such as an On My Mac account, keeps only what its URL says. Primary key id. properties is JSON data; no password or authentication property is read.", described(metadata, {
+
+// packages/sources/apple/mail/dist/streams/accounts-stream.js
+var AccountsStream = class extends AppleMailStream {
+  name = "accounts";
+  primaryKey = ["id"];
+  jsonSchema = mailSchema("One record per Mail account that owns mailboxes: each host of mailboxes.url, read from the system Accounts store (~/Library/Accounts/Accounts4.sqlite) without Mail scripting or Automation access. A host the store does not know, such as an On My Mac account, keeps only what its URL says. Primary key id. properties is JSON data; no password or authentication property is read.", described(metadata, {
     id: "The Accounts store identifier of the account, which Mail uses as the host of its mailbox URLs and as its folder name; the host of mailboxes.url matches it within this source.",
     properties: "JSON object: id; name (the account description, else its parent account's, such as iCloud or Google); type (the Accounts store account type, such as com.apple.account.IMAP, or the URL scheme for a host the store does not know); parentType (the type of the account it belongs to, such as com.apple.account.AppleAccount for iCloud, else null); enabled (active with Mail turned on for it or its parent, null when unknown); emailAddresses (its own and its parent's identity address and aliases, and for iCloud the Apple ID aliases and the iCloud Mail address); fullName; userName; serverName, port and usesSsl of its incoming server (the Exchange EWS host); directory (its folder in the Mail store); sendingServerId (the account it sends through: an smtpServers.id, or its own id for an Exchange account, which sends through EWS; else null). A value the store does not hold is null. Kept as data without interpretation."
-  }), ["id"], false),
-  smtpServers: mailStream("smtpServers", "One record per SMTP server account in the system Accounts store (~/Library/Accounts/Accounts4.sqlite), read without Mail scripting or Automation access. Primary key id. accounts.properties.sendingServerId refers to id for an account that sends through SMTP; scoped imports still omit this stream, because a server can serve accounts outside the scope.", described(metadata, {
-    id: "The Accounts store identifier of the SMTP account.",
-    properties: "JSON object: id; name (its parent account's description, such as iCloud or Google); userName; serverName; port; usesSsl; enabled. For iCloud the server settings come from the parent account's Mail settings. A value the store does not hold is null; no password is read. Kept as data without interpretation."
-  }), ["id"], false)
+  }));
+  *entries(scan) {
+    for (const data of scan.accountRecords().accounts)
+      yield { data, file: null };
+  }
+  accepts(record, selection) {
+    return selection.account(record.id);
+  }
 };
-var fileStreams = {
-  mailboxProperties: mailStream("mailboxProperties", "One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.", described({ relativePath: text, properties: text }, {
-    relativePath: "Path of the Info.plist file relative to the current Mail version directory.",
-    properties: plistProperties
-  }), ["relativePath"], false),
-  rules: mailStream("rules", "One record per Mail rule in MailData/SyncedRules.plist (scope Synced) or MailData/UnsyncedRules.plist (scope Unsynced). Primary key (scope, id). Conditions are ruleConditions rows, joined by (scope, ownerId) to (scope, id). Scoped imports omit this stream.", described({ ...scopedMetadata, enabled: { type: ["boolean", "null"] } }, {
-    scope: "Synced for a rule read from MailData/SyncedRules.plist, Unsynced for one read from MailData/UnsyncedRules.plist.",
-    id: "RuleId value of the rule; with scope, the primary key.",
-    properties: `The whole rule dictionary, including its Criteria. ${plistProperties}`,
-    enabled: "Value stored for this RuleId in MailData/RulesActiveState.plist; NULL when that file is absent or has no entry for the rule."
-  }), ["scope", "id"], false),
-  ruleConditions: mailStream("ruleConditions", "One record per entry of a rule's Criteria list, in stored order. Primary key (scope, ownerId, position). Join (scope, ownerId) to rules (scope, id) within this source. A rule without Criteria has no rows. Scoped imports omit this stream.", described(conditionFields, {
-    scope: "Scope of the owning rule, Synced or Unsynced; joins to rules.scope together with ownerId.",
-    ownerId: "RuleId of the owning rule; join (scope, ownerId) to rules (scope, id) within this source.",
-    position: "Zero-based position of the condition in the rule's Criteria list.",
-    properties: `The condition dictionary. ${plistProperties}`
-  }), ["scope", "ownerId", "position"], false),
-  smartMailboxes: mailStream("smartMailboxes", "One record per smart mailbox dictionary in MailData/SyncedSmartMailboxes.plist, including those nested under MailboxChildren. Primary key id. parentId refers to the containing smart mailbox. Conditions are smartMailboxConditions rows whose ownerId is id. Scoped imports omit this stream.", described({ ...metadata, parentId: nullableText }, {
-    id: "MailboxID value of the smart mailbox.",
-    properties: `The whole smart mailbox dictionary, including its MailboxCriteria and nested MailboxChildren. ${plistProperties}`,
-    parentId: "Refers to smartMailboxes.id of the smart mailbox whose MailboxChildren contains this one; NULL at the top level."
-  }), ["id"], false),
-  smartMailboxConditions: mailStream("smartMailboxConditions", "One record per entry of a smart mailbox's MailboxCriteria list, in stored order. Primary key (scope, ownerId, position). ownerId refers to smartMailboxes.id within this source; these conditions do not join to rules. Scoped imports omit this stream.", described(conditionFields, {
-    scope: "Always Synced: only MailData/SyncedSmartMailboxes.plist is read. smartMailboxes has no scope field, so join on ownerId alone.",
-    ownerId: "MailboxID of the owning smart mailbox; refers to smartMailboxes.id within this source.",
-    position: "Zero-based position of the condition in the smart mailbox's MailboxCriteria list.",
-    properties: `The condition dictionary. ${plistProperties}`
-  }), ["scope", "ownerId", "position"], false),
-  signatures: mailStream("signatures", "One record per .mailsignature file in the current Mail store. Primary key id. No link to accounts is stated; scoped imports omit this stream.", described({ id: text, content: text }, {
-    id: "File name of the .mailsignature file without its extension.",
-    content: "The whole file read as UTF-8 text, including its MIME headers; not parsed."
-  }), ["id"], false),
-  configuration: mailStream("configuration", "One record per property list file under a MailData or Signatures directory of the current Mail store, except files under RemoteContentURLCache or BiomeStream. Primary key relativePath. It includes the rule and smart mailbox files that rules and smartMailboxes also read. Scoped imports omit this stream.", described({ relativePath: text, properties: text }, {
+
+// packages/sources/apple/mail/dist/mail-table-stream.js
+var MailTableStream = class extends AppleMailStream {
+  table;
+  jsonSchema;
+  primaryKey;
+  constructor(table, description, meanings) {
+    super();
+    this.table = table;
+    this.jsonSchema = mailSchema(`${description} Read from the Envelope Index ${table.name} table; index row identifiers are local to this Mac. Relationships name source streams within this source, not destination tables.`, tableProperties(table, meanings));
+    this.primaryKey = table.keys.map((key) => {
+      const kind = table.columns[key];
+      if (kind === void 0)
+        throw new TypeError(`Mail table ${table.name} has no key column ${key}`);
+      return fieldName(key, kind);
+    });
+  }
+  *entries(scan) {
+    for (const row of scan.snapshot.index.rows(this.table))
+      yield { data: tableRecord(this.table, row), file: null };
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/address-metadata-stream.js
+var AddressMetadataStream = class extends MailTableStream {
+  name = "addressMetadata";
+  constructor() {
+    super(addressMetadataTable, "One record per address metadata row in the local Mail index. Primary key id. address holds address text, unique in the captured index schema, and matches addresses.address, not addresses.id.", {
+      ROWID: "Local address metadata row identifier.",
+      address: "Address text matching addresses.address within this source; the captured index schema compares both case-insensitively."
+    });
+  }
+  accepts(record, selection) {
+    return selection.addressText(record.address);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/addresses-stream.js
+var AddressesStream = class extends MailTableStream {
+  name = "addresses";
+  constructor() {
+    super(addressesTable, "One record per distinct address and comment pair in the local Mail index; the captured index schema keeps each pair once. Primary key id. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to id; addressMetadata matches on the address text instead.", {
+      ROWID: "Local address identifier. messages.sender, recipients.address, businessAddresses.address and senderAddresses.address refer to it within this source.",
+      address: "Address text; the captured index schema compares it case-insensitively. addressMetadata.address holds the same text within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.address(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/attachments-stream.js
+import { rm as rm2 } from "node:fs/promises";
+import { extname, join as join5 } from "node:path";
+
+// packages/sources/apple/mail/dist/mail-message-stream.js
+var MailMessageStream = class extends AppleMailStream {
+  // One group per selected message, in index order. Selection runs on every
+  // scan; only reading a message whose inputs are unchanged is skipped.
+  async *#groups(scan) {
+    const inputs = scan.messageInputs();
+    const listed = /* @__PURE__ */ new Set();
+    for (const id of scan.snapshot.index.messageIds()) {
+      if (scan.selection !== null && !scan.selection.message(id))
+        continue;
+      listed.add(id);
+      const file = scan.snapshot.files.messages.get(id);
+      if (file === void 0 && !this.readsWithoutFile(id, inputs.indexed))
+        continue;
+      yield {
+        key: id,
+        fingerprint: scan.fingerprint(id, file),
+        records: () => this.messageEntries(scan, id, file)
+      };
+    }
+    yield* this.unlisted(scan, listed);
+  }
+  snapshot(stream, scan, records, state) {
+    return diffGroupedSnapshot(stream, this.#accepted(scan, records), state);
+  }
+  async *entries(scan) {
+    for await (const group of this.#groups(scan))
+      yield* group.records();
+  }
+  accepts(record, selection) {
+    return selection.message(record.messageId);
+  }
+  // Groups for messages the index no longer lists.
+  async *unlisted(_scan, _listed) {
+  }
+  async *#accepted(scan, records) {
+    for await (const group of this.#groups(scan))
+      yield {
+        key: group.key,
+        fingerprint: group.fingerprint,
+        records: () => records(group.records())
+      };
+  }
+};
+var partRecord = (messageId, part, isAttachment) => ({
+  messageId,
+  partId: part.id,
+  parentPartId: part.parentId,
+  contentType: part.contentType,
+  charset: part.charset,
+  transferEncoding: part.transferEncoding,
+  disposition: part.disposition,
+  filename: part.filename,
+  contentId: part.contentId,
+  isMultipart: part.isMultipart,
+  isAttachment,
+  declaredBytes: part.declaredBytes,
+  decodedBytes: part.decodedBytes,
+  availableLocally: part.availableLocally,
+  sha256: part.sha256
+});
+var indexedParts = (scan, id) => new Map((scan.messageInputs().indexed.get(id) ?? []).map((row) => [
+  String(row.attachmentId),
+  row
+]));
+
+// packages/sources/apple/mail/dist/streams/attachments-stream.js
+function extension(part) {
+  if (part.filename !== null)
+    return extname(part.filename);
+  if (part.contentType === "text/html")
+    return ".html";
+  return part.contentType !== null && part.contentType.startsWith("text/") ? ".txt" : "";
+}
+async function* indexedEntries(scan, rows) {
+  for (const row of rows) {
+    const file = scan.snapshot.files.indexedFile(row);
+    const record = {
+      messageId: row.message,
+      partId: row.attachmentId,
+      parentPartId: null,
+      contentType: null,
+      charset: null,
+      transferEncoding: null,
+      disposition: null,
+      filename: row.name,
+      contentId: null,
+      isMultipart: false,
+      isAttachment: true,
+      declaredBytes: null,
+      decodedBytes: file === void 0 ? null : file.size,
+      availableLocally: file !== void 0,
+      sha256: file === void 0 ? null : await file.hash()
+    };
+    let path = null;
+    if (file !== void 0) {
+      path = join5(scan.scratch, `indexed-${row.message}-${String(row.attachmentId)}${extname(file.path)}`);
+      await file.copyTo(path);
+    }
+    try {
+      yield { data: record, file: path };
+    } finally {
+      if (path !== null)
+        await rm2(path);
+    }
+  }
+}
+var AttachmentsStream = class extends MailMessageStream {
+  name = "attachments";
+  primaryKey = ["messageId", "partId"];
+  supportsFileTransfer = true;
+  jsonSchema = mailSchema("One record per attachment: each MIME part with isAttachment true in a locally available message file, plus each indexedAttachments row whose part was not found in one (index-only rows). Index attachment metadata can exist before the message or attachment file is downloaded. Primary key (messageId, partId), the same key as messageParts and as (message, attachmentId) in indexedAttachments. Index-only rows have NULL MIME fields. availableLocally tells whether the bytes are on this Mac; the transferred file is the decoded attachment, and an attached message stays one complete file.", described(partFields, {
+    messageId: localMessageId,
+    partId: partId2,
+    parentPartId: "partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for a root part and for index-only rows.",
+    contentType: "Media type as parsed from Content-Type by the MIME parser; NULL for index-only rows or when the parser reports none.",
+    charset: "Charset parameter of Content-Type; NULL when absent or for index-only rows.",
+    transferEncoding: "Content-Transfer-Encoding value; NULL when absent, empty or for index-only rows.",
+    disposition: "Content-Disposition type, such as attachment or inline; NULL when absent or for index-only rows.",
+    filename: "Filename as parsed from the part's headers by the MIME parser; for index-only rows, the name in indexedAttachments.name. NULL when neither exists.",
+    contentId: "Content-ID header value; NULL when absent or for index-only rows.",
+    isMultipart: "Whether the part is a multipart container; false for index-only rows.",
+    isAttachment: "Always true in this stream.",
+    declaredBytes: "Byte count from the part's X-Apple-Content-Length header; NULL when absent or for index-only rows.",
+    decodedBytes: "Bytes after transfer decoding, or the size of the separate file under the message's Attachments directory; NULL when the bytes are not on this Mac.",
+    availableLocally: "Whether the attachment bytes are on this Mac. False for a detached or index-only attachment whose file has not been downloaded; a later run updates the row once the file appears.",
+    sha256: `${sha256} of the attachment; NULL when the bytes are not on this Mac.`
+  }));
+  // A message whose file has not arrived still has the attachments its index
+  // rows name.
+  readsWithoutFile(id, indexed) {
+    return indexed.has(id);
+  }
+  // Each attachment part is staged in the scan's storage and removed once the
+  // consumer reads its record; index rows no part claims follow.
+  async *messageEntries(scan, id, file) {
+    const unclaimed = indexedParts(scan, id);
+    if (file !== void 0) {
+      const { parts } = await readMailMime(scan.snapshot.files, id, file, {
+        headers: false,
+        decode: (part) => part.isAttachment || unclaimed.has(part.id),
+        stage: (part) => join5(scan.scratch, `${id}-${part.id}${extension(part)}`)
+      });
+      try {
+        for (const part of parts) {
+          const indexed = unclaimed.delete(part.id);
+          if (part.isAttachment || indexed)
+            yield { data: partRecord(id, part, true), file: part.file };
+        }
+      } finally {
+        for (const part of parts)
+          if (part.file !== null)
+            await rm2(part.file);
+      }
+    }
+    yield* indexedEntries(scan, unclaimed.values());
+  }
+  // The index can know an attachment of a message it no longer lists.
+  async *unlisted(scan, listed) {
+    for (const [id, rows] of scan.messageInputs().indexed)
+      if (!listed.has(id))
+        yield {
+          key: id,
+          fingerprint: scan.fingerprint(id, void 0),
+          records: () => indexedEntries(scan, rows)
+        };
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/brand-indicator-evidence-stream.js
+var BrandIndicatorEvidenceStream = class extends MailTableStream {
+  name = "brandIndicatorEvidence";
+  constructor() {
+    super(brandIndicatorEvidenceTable, "One record per brand indicator evidence row in the local Mail index. Primary key id. brandIndicator refers to brandIndicators.id; (brandIndicator, url) is unique in the captured index schema. evidence is binary, exported as Base64 without decoding.", {
+      ROWID: "Local brand indicator evidence row identifier.",
+      brand_indicator: "Refers to brandIndicators.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.brand(record.brandIndicator);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/brand-indicators-stream.js
+var BrandIndicatorsStream = class extends MailTableStream {
+  name = "brandIndicators";
+  constructor() {
+    super(brandIndicatorsTable, "One record per brand indicator row in the local Mail index. Primary key id. messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to id; url is unique in the captured index schema. indicator is binary, exported as Base64 without decoding.", {
+      ROWID: "Local brand indicator identifier; messages.brandIndicator and brandIndicatorEvidence.brandIndicator refer to it within this source.",
+      url: `${undocumented} Unique in the captured index schema.`
+    });
+  }
+  accepts(record, selection) {
+    return selection.brand(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/business-addresses-stream.js
+var BusinessAddressesStream = class extends MailTableStream {
+  name = "businessAddresses";
+  constructor() {
+    super(businessAddressesTable, "One record per address assigned to a business. Primary key id. address refers to addresses.id, unique in the captured index schema, and business refers to businesses.id.", {
+      ROWID: "Local business address row identifier.",
+      address: "Refers to addresses.id within this source; unique in the captured index schema.",
+      business: "Refers to businesses.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.address(record.address);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/business-categories-stream.js
+var BusinessCategoriesStream = class extends MailTableStream {
+  name = "businessCategories";
+  constructor() {
+    super(businessCategoriesTable, "One record per business category row in the local Mail index. Primary key id. business refers to businesses.id and is unique in the captured index schema.", {
+      ROWID: "Local business category row identifier.",
+      business: "Refers to businesses.id within this source; unique in the captured index schema."
+    });
+  }
+  accepts(record, selection) {
+    return selection.business(record.business);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/businesses-stream.js
+var BusinessesStream = class extends MailTableStream {
+  name = "businesses";
+  constructor() {
+    super(businessesTable, "One record per business row in the local Mail index. Primary key id. businessAddresses.business and businessCategories.business refer to id. The captured index schema requires each row to hold either addressComment and domain, or brandId and localizedBrandName, and leaves the other pair NULL.", {
+      ROWID: "Local business identifier; businessAddresses.business and businessCategories.business refer to it within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.business(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/configuration-stream.js
+var ConfigurationStream = class extends AppleMailStream {
+  name = "configuration";
+  primaryKey = ["relativePath"];
+  jsonSchema = mailSchema("One record per property list file under a MailData or Signatures directory of the current Mail store, except files under RemoteContentURLCache or BiomeStream. Primary key relativePath. It includes the rule and smart mailbox files that rules and smartMailboxes also read. Scoped imports omit this stream.", described(plistFields, {
     relativePath: "Path of the property list file relative to the current Mail version directory.",
     properties: plistProperties
-  }), ["relativePath"], false),
-  messageFiles: mailStream("messageFiles", "One record per messages row, describing its EMLX message file on this Mac. Primary key messageId. The row exists even when no file is present: availableLocally is false and the file fields are NULL. EMLX files that no messages row names are not included. The transferred file is the original EMLX bytes, including Mail's leading byte count line and trailing property list.", described(fileFields, {
+  }));
+  async *entries(scan) {
+    const { files } = scan.snapshot;
+    for (const file of files.configuration())
+      yield {
+        data: {
+          relativePath: files.relative(file),
+          properties: plistJSON(await files.plist(file))
+        },
+        file: null
+      };
+  }
+  // Settings of no proven account: a scoped import omits them rather than
+  // copying unrelated settings.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/conversation-messages-stream.js
+var ConversationMessagesStream = class extends MailTableStream {
+  name = "conversationMessages";
+  constructor() {
+    super(conversationMessagesTable, "One record per conversation and message membership. Primary key (conversationId, messageId). conversationId refers to conversations.conversationId; messageId is the Message-ID hash in messages.messageId, not messages.id. That hash is not unique in messages, so a join can match several messages rows: count at message grain.", {
+      conversation_id: "Refers to conversations.conversationId within this source.",
+      message_id: "Message-ID hash; matches messages.messageId within this source, not messages.id."
+    });
+  }
+  accepts(record, selection) {
+    return selection.messageHash(record.messageId);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/conversations-stream.js
+var ConversationsStream = class extends MailTableStream {
+  name = "conversations";
+  constructor() {
+    super(conversationsTable, "One record per conversation row in the local Mail index. Primary key conversationId. Messages belong to conversations through conversationMessages.", {
+      conversation_id: "Local conversation identifier; conversationMessages.conversationId refers to it within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.conversation(record.conversationId);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/data-detection-results-stream.js
+var DataDetectionResultsStream = class extends MailTableStream {
+  name = "dataDetectionResults";
+  constructor() {
+    super(dataDetectionResultsTable, "One record per detection result row in the local Mail index: a category and value. Primary key id. (globalMessageId, category, value) is unique in the captured index schema. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.", {
+      ROWID: "Local detection result row identifier.",
+      global_message_id: `${undocumented} Not proven to refer to messageGlobalData.id, so no join is stated.`
+    });
+  }
+  // No proven account or message ownership: a scoped import omits these
+  // records rather than copying unrelated data or guessing joins.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/events-stream.js
+var EventsStream = class extends MailTableStream {
+  name = "events";
+  constructor() {
+    super(eventsTable, "One record per event row the local Mail index stores for a message. Primary key id. messageId refers to messages.id, the local id, not the Message-ID hash. startDateRaw and endDateRaw keep stored numbers because their date epoch is unverified.", {
+      ROWID: "Local event row identifier.",
+      message_id: "Refers to messages.id within this source (the local id, not messages.messageId)."
+    });
+  }
+  accepts(record, selection) {
+    return selection.message(record.messageId);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/generated-summaries-stream.js
+var GeneratedSummariesStream = class extends MailTableStream {
+  name = "generatedSummaries";
+  constructor() {
+    super(generatedSummariesTable, "One record per generated summary row in the local Mail index. Primary key id. messageGlobalData.generatedSummary refers to id. The summary is a binary payload exported as Base64 without decoding.", {
+      ROWID: "Local generated summary identifier; messageGlobalData.generatedSummary refers to it within this source.",
+      summary: `${undocumented} Mail's stored payload; this connector does not decode it.`
+    });
+  }
+  accepts(record, selection) {
+    return selection.generatedSummary(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/indexed-attachments-stream.js
+var IndexedAttachmentsStream = class extends MailTableStream {
+  name = "indexedAttachments";
+  constructor() {
+    super(attachmentsTable, "One record per attachment Mail records in its index for a message, which can exist before the message file or the attachment file is downloaded. Primary key id. message refers to messages.id; (message, attachmentId) matches (messageId, partId) in attachments and, once the message file is local, in messageParts. This stream carries no bytes or availability; the attachments stream does.", {
+      ROWID: "Local index attachment row identifier.",
+      message: "Refers to messages.id within this source.",
+      attachment_id: "MIME part number of the attachment, such as 2 or 1.2; equals partId in attachments and messageParts within this source.",
+      name: "Attachment name recorded by the index; attachments.filename uses it when the MIME part is not available locally."
+    });
+  }
+  accepts(record, selection) {
+    return selection.message(record.message);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/mailbox-properties-stream.js
+var MailboxPropertiesStream = class extends AppleMailStream {
+  name = "mailboxProperties";
+  primaryKey = ["relativePath"];
+  jsonSchema = mailSchema("One record per Info.plist file inside a .mbox directory of the current Mail store. Primary key relativePath. This source does not map these files to mailboxes.id, so no join is stated; scoped imports omit this stream.", described(plistFields, {
+    relativePath: "Path of the Info.plist file relative to the current Mail version directory.",
+    properties: plistProperties
+  }));
+  async *entries(scan) {
+    const { files } = scan.snapshot;
+    for (const file of files.mailboxProperties())
+      yield {
+        data: {
+          relativePath: files.relative(file),
+          properties: plistJSON(await files.plist(file))
+        },
+        file: null
+      };
+  }
+  // No proven mailbox: a scoped import omits these records rather than
+  // guessing joins.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/mailboxes-stream.js
+var MailboxesStream = class extends MailTableStream {
+  name = "mailboxes";
+  constructor() {
+    super(mailboxesTable, "One record per mailbox row in the local Mail index, identified by its URL. Primary key id. Messages relate through messageMailboxes (many to many), messages.mailbox and messages.remoteMailbox; server messages through serverMessages.mailbox and serverMessageMailboxes.label. Count columns are passed through as stored, not recomputed from messages.", {
+      ROWID: "Local mailbox identifier. messageMailboxes.mailboxId, messages.mailbox, messages.remoteMailbox, serverMessages.mailbox and serverMessageMailboxes.label refer to it within this source.",
+      url: "Mailbox URL, unique in the captured index schema. Its host matches accounts.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.mailbox(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/message-files-stream.js
+var MessageFilesStream = class extends MailMessageStream {
+  name = "messageFiles";
+  primaryKey = ["messageId"];
+  supportsFileTransfer = true;
+  jsonSchema = mailSchema("One record per messages row, describing its EMLX message file on this Mac. Primary key messageId. The row exists even when no file is present: availableLocally is false and the file fields are NULL. EMLX files that no messages row names are not included. The transferred file is the original EMLX bytes, including Mail's leading byte count line and trailing property list.", described(fileFields, {
     messageId: localMessageId,
     relativePath: "Path of <id>.emlx or <id>.partial.emlx relative to the current Mail version directory; NULL when no file is present.",
     availableLocally: "Whether an EMLX file for this message was present when the run read the store. False does not mean the message was deleted.",
     partial: "True when the file is named <id>.partial.emlx, false when <id>.emlx; NULL when no file is present. This source does not interpret the name further; detached attachment bytes are resolved in messageParts and attachments.",
     size: "Size of the EMLX file in bytes; NULL when no file is present.",
     sha256: `${sha256} of the whole EMLX file; NULL when no file is present.`
-  }), ["messageId"], true),
-  messageHeaders: mailStream("messageHeaders", "One record per header line of each MIME part of a locally available message file, in stored order; repeated header names stay separate rows. Primary key (messageId, partId, position). (messageId, partId) joins to messageParts (messageId, partId). Messages without a local file have no rows. An attached message/rfc822 is one part; its inner headers are not split out.", described(headersFields, {
+  }));
+  readsWithoutFile() {
+    return true;
+  }
+  // The transferred file is checked again once the consumer has read it.
+  async *messageEntries(scan, id, file) {
+    const data = {
+      messageId: id,
+      relativePath: file === void 0 ? null : scan.snapshot.files.relative(file),
+      availableLocally: file !== void 0,
+      partial: file === void 0 ? null : file.path.endsWith(".partial.emlx"),
+      size: file === void 0 ? null : file.size,
+      sha256: file === void 0 ? null : await file.hash()
+    };
+    yield { data, file: file === void 0 ? null : file.path };
+    if (file !== void 0)
+      await file.assertUnchanged();
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/message-global-data-stream.js
+var MessageGlobalDataStream = class extends MailTableStream {
+  name = "messageGlobalData";
+  constructor() {
+    super(messageGlobalDataTable, "One record per message global data row in the local Mail index. Primary key id. messages.globalMessageId and messageRichLinks.globalMessageId refer to id; messageId holds the Message-ID hash of messages.messageId; generatedSummary refers to generatedSummaries.id. Raw-suffixed numbers keep their stored values because their date epoch is unverified.", {
+      ROWID: "Local identifier; messages.globalMessageId and messageRichLinks.globalMessageId refer to it within this source.",
+      message_id: "Message-ID hash, the same value as messages.messageId within this source; unique in the captured index schema.",
+      generated_summary: "Refers to generatedSummaries.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.globalMessage(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/message-headers-stream.js
+var MessageHeadersStream = class extends MailMessageStream {
+  name = "messageHeaders";
+  primaryKey = ["messageId", "partId", "position"];
+  jsonSchema = mailSchema("One record per header line of each MIME part of a locally available message file, in stored order; repeated header names stay separate rows. Primary key (messageId, partId, position). (messageId, partId) joins to messageParts (messageId, partId). Messages without a local file have no rows. An attached message/rfc822 is one part; its inner headers are not split out.", described(headersFields, {
     messageId: localMessageId,
     partId: `${partId2} Joins to messageParts.partId with messageId.`,
     position: "Zero-based position of the header within its part's header block, preserving the stored order.",
     name: "Header name as keyed by the MIME parser, in lowercase.",
     value: "Header value with folded lines joined and encoded words decoded to text; the original line is in rawLineBase64.",
     rawLineBase64: "Bytes of the whole header line as the MIME parser keeps it, including folded continuation lines joined with CRLF, as Base64."
-  }), ["messageId", "partId", "position"], false),
-  messageParts: mailStream("messageParts", "One record per MIME part, including multipart containers, of each locally available message file. Primary key (messageId, partId). parentPartId links a part to its container: join (messageId, parentPartId) to messageParts (messageId, partId). Messages without a local file have no rows (see messageFiles). A detached part whose separate file is missing stays as a row with availableLocally false. An attached message/rfc822 is one part; its inner parts are not expanded.", described({ ...partFields, text: nullableText }, {
+  }));
+  readsWithoutFile() {
+    return false;
+  }
+  async *messageEntries(scan, id, file) {
+    if (file === void 0)
+      return;
+    const { headers } = await readMailMime(scan.snapshot.files, id, file, {
+      headers: true,
+      decode: () => false,
+      stage: null
+    });
+    for (const header of headers)
+      yield {
+        data: {
+          messageId: id,
+          partId: header.partId,
+          position: header.position,
+          name: header.name,
+          value: header.value,
+          rawLineBase64: Buffer.from(header.rawLine).toString("base64")
+        },
+        file: null
+      };
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/message-mailboxes-stream.js
+var MessageMailboxesStream = class extends MailTableStream {
+  name = "messageMailboxes";
+  constructor() {
+    super(labelsTable, "One record per message and mailbox membership; a message can belong to several mailboxes. Primary key (messageId, mailboxId). messageId refers to messages.id and mailboxId to mailboxes.id. Joining messages through this stream repeats a message once per mailbox: count at message grain.", {
+      message_id: "Refers to messages.id within this source (the local id, not the hash in messages.messageId).",
+      mailbox_id: "Refers to mailboxes.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.message(record.messageId) && selection.mailbox(record.mailboxId);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/message-metadata-stream.js
+var MessageMetadataStream = class extends MailTableStream {
+  name = "messageMetadata";
+  constructor() {
+    super(messageMetadataTable, "One record per message metadata row in the local Mail index. Primary key messageId. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream. jsonValues is native JSON text passed through as data.", {
+      message_id: `${undocumented} Not proven to refer to messages.id or messages.messageId, so no join is stated.`,
+      json_values: `${undocumented} Native JSON text passed through without interpretation.`
+    });
+  }
+  // No proven account or message ownership: a scoped import omits these
+  // records rather than copying unrelated data or guessing joins.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/message-parts-stream.js
+var MessagePartsStream = class extends MailMessageStream {
+  name = "messageParts";
+  primaryKey = ["messageId", "partId"];
+  jsonSchema = mailSchema("One record per MIME part, including multipart containers, of each locally available message file. Primary key (messageId, partId). parentPartId links a part to its container: join (messageId, parentPartId) to messageParts (messageId, partId). Messages without a local file have no rows (see messageFiles). A detached part whose separate file is missing stays as a row with availableLocally false. An attached message/rfc822 is one part; its inner parts are not expanded.", described({ ...partFields, text: nullableText }, {
     messageId: localMessageId,
     partId: partId2,
     parentPartId: "partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for the root part.",
@@ -26528,51 +27612,427 @@ var fileStreams = {
     availableLocally: "False only for a detached part whose separate file is missing on this Mac; true otherwise, including multipart containers.",
     sha256: `${sha256} after transfer decoding, or of the separate file for a detached part; NULL for multipart containers and missing detached parts.`,
     text: "Text of a text/* part decoded with its charset (UTF-8 when none is declared), including a detached part read from its separate file; NULL for other media types, multipart containers and missing detached parts. Decoded from the message itself; no document parser is applied."
-  }), ["messageId", "partId"], false),
-  attachments: mailStream("attachments", "One record per attachment: each MIME part with isAttachment true in a locally available message file, plus each indexedAttachments row whose part was not found in one (index-only rows). Index attachment metadata can exist before the message or attachment file is downloaded. Primary key (messageId, partId), the same key as messageParts and as (message, attachmentId) in indexedAttachments. Index-only rows have NULL MIME fields. availableLocally tells whether the bytes are on this Mac; the transferred file is the decoded attachment, and an attached message stays one complete file.", described(partFields, {
-    messageId: localMessageId,
-    partId: partId2,
-    parentPartId: "partId of the containing multipart part; join (messageId, parentPartId) to messageParts (messageId, partId). NULL for a root part and for index-only rows.",
-    contentType: "Media type as parsed from Content-Type by the MIME parser; NULL for index-only rows or when the parser reports none.",
-    charset: "Charset parameter of Content-Type; NULL when absent or for index-only rows.",
-    transferEncoding: "Content-Transfer-Encoding value; NULL when absent, empty or for index-only rows.",
-    disposition: "Content-Disposition type, such as attachment or inline; NULL when absent or for index-only rows.",
-    filename: "Filename as parsed from the part's headers by the MIME parser; for index-only rows, the name in indexedAttachments.name. NULL when neither exists.",
-    contentId: "Content-ID header value; NULL when absent or for index-only rows.",
-    isMultipart: "Whether the part is a multipart container; false for index-only rows.",
-    isAttachment: "Always true in this stream.",
-    declaredBytes: "Byte count from the part's X-Apple-Content-Length header; NULL when absent or for index-only rows.",
-    decodedBytes: "Bytes after transfer decoding, or the size of the separate file under the message's Attachments directory; NULL when the bytes are not on this Mac.",
-    availableLocally: "Whether the attachment bytes are on this Mac. False for a detached or index-only attachment whose file has not been downloaded; a later run updates the row once the file appears.",
-    sha256: `${sha256} of the attachment; NULL when the bytes are not on this Mac.`
-  }), ["messageId", "partId"], true)
+  }));
+  readsWithoutFile() {
+    return false;
+  }
+  // Every part is decoded; text/* parts as text, nothing staged.
+  async *messageEntries(scan, id, file) {
+    if (file === void 0)
+      return;
+    const unclaimed = indexedParts(scan, id);
+    const { parts } = await readMailMime(scan.snapshot.files, id, file, {
+      headers: false,
+      decode: () => true,
+      stage: null
+    });
+    for (const part of parts) {
+      const indexed = unclaimed.delete(part.id);
+      yield {
+        data: {
+          ...partRecord(id, part, part.isAttachment || indexed),
+          text: part.text
+        },
+        file: null
+      };
+    }
+  }
 };
-var catalog = new Catalog([
-  ...Object.values(accountStreams),
-  ...tableStreams,
-  ...Object.values(fileStreams)
+
+// packages/sources/apple/mail/dist/streams/message-references-stream.js
+var MessageReferencesStream = class extends MailTableStream {
+  name = "messageReferences";
+  constructor() {
+    super(messageReferencesTable, "One record per reference a message row carries. Primary key id. message refers to messages.id; reference is a Message-ID hash in the same space as messages.messageId and can match no messages row.", {
+      ROWID: "Local message reference row identifier.",
+      message: "Refers to messages.id within this source.",
+      reference: "Message-ID hash in the same space as messages.messageId within this source; not enforced by the index, so it can match no messages row."
+    });
+  }
+  accepts(record, selection) {
+    return selection.message(record.message);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/message-rich-links-stream.js
+var MessageRichLinksStream = class extends MailTableStream {
+  name = "messageRichLinks";
+  constructor() {
+    super(messageRichLinksTable, "One record per message global data row and rich link pair. Primary key (globalMessageId, richLink). globalMessageId refers to messageGlobalData.id, reached from messages through messages.globalMessageId; richLink refers to richLinks.id. A message can have several links: count at message grain.", {
+      global_message_id: "Refers to messageGlobalData.id within this source.",
+      rich_link: "Refers to richLinks.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.globalMessage(record.globalMessageId);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/messages-stream.js
+var MessagesStream = class extends MailTableStream {
+  name = "messages";
+  constructor() {
+    super(messagesTable, "One record per message row in the local Mail index, across all accounts. Primary key id. Mailbox membership is its own grain: messageMailboxes holds message and mailbox pairs beside messages.mailbox and messages.remoteMailbox. subject, summary and sender hold identifiers that need explicit joins to subjects.id, summaries.id and addresses.id, and recipients are rows of recipients. The index declares no foreign keys for these references; they follow how this source reads the index, and a live store resolved every one. Bodies and headers are in messageParts and messageHeaders; whether the message file is on this Mac is in messageFiles.", {
+      ROWID: "Local message identifier. messageMailboxes.messageId, recipients.message, indexedAttachments.message, serverMessages.message, messageReferences.message, events.messageId, messageFiles.messageId, messageHeaders.messageId, messageParts.messageId and attachments.messageId refer to it within this source.",
+      message_id: "Hash Mail stores for the message's Message-ID, not this stream's id. conversationMessages.messageId and messageGlobalData.messageId hold the same hash within this source. It is not unique in the captured index schema, so a join on it can match several messages rows.",
+      global_message_id: "Refers to messageGlobalData.id within this source; the captured index schema does not make it unique.",
+      sender: "Refers to addresses.id within this source, which holds the address text.",
+      subject: "Refers to subjects.id within this source, which holds the subject text.",
+      summary: "Refers to summaries.id within this source, which holds the summary text.",
+      mailbox: "Refers to mailboxes.id within this source. A message can belong to further mailboxes through messageMailboxes.",
+      remote_mailbox: "Refers to mailboxes.id within this source.",
+      conversation_id: `${undocumented} This source relates messages to conversations through conversationMessages, not this column.`,
+      brand_indicator: "Refers to brandIndicators.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.message(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/protected-message-data-stream.js
+var ProtectedMessageDataStream = class extends MailTableStream {
+  name = "protectedMessageData";
+  constructor() {
+    super(protectedMessageDataTable, "One record per protected message data row in the local Mail index. Primary key id. data is an opaque native payload passed through as text. The source proves no owning message for these rows, so no join is stated and scoped imports omit this stream.", {
+      ROWID: `${undocumented} Not proven to refer to any other stream, so no join is stated.`,
+      data: `${undocumented} Opaque native payload passed through without interpretation.`
+    });
+  }
+  // No proven account or message ownership: a scoped import omits these
+  // records rather than copying unrelated data or guessing joins.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/recipients-stream.js
+var RecipientsStream = class extends MailTableStream {
+  name = "recipients";
+  constructor() {
+    super(recipientsTable, "One record per address in one recipient position of one message. Primary key id. message refers to messages.id and address to addresses.id; the captured index schema keeps (message, type, position) unique and does not enforce message, so rows whose message is gone are kept. A message has many recipients: count messages at message grain (distinct message) after joining.", {
+      ROWID: "Local recipient row identifier.",
+      message: "Refers to messages.id within this source; not enforced by the index, so it can match no message.",
+      address: "Refers to addresses.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.message(record.message);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/rich-links-stream.js
+var RichLinksStream = class extends MailTableStream {
+  name = "richLinks";
+  constructor() {
+    super(richLinksTable, "One record per rich link row in the local Mail index. Primary key id. messageRichLinks.richLink refers to id; hash is unique in the captured index schema.", {
+      ROWID: "Local rich link identifier; messageRichLinks.richLink refers to it within this source.",
+      hash: `${undocumented} Unique in the captured index schema.`
+    });
+  }
+  accepts(record, selection) {
+    return selection.richLink(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/rule-conditions-stream.js
+var RuleConditionsStream = class extends AppleMailStream {
+  name = "ruleConditions";
+  primaryKey = ["scope", "ownerId", "position"];
+  jsonSchema = mailSchema("One record per entry of a rule's Criteria list, in stored order. Primary key (scope, ownerId, position). Join (scope, ownerId) to rules (scope, id) within this source. A rule without Criteria has no rows. Scoped imports omit this stream.", described(conditionFields, {
+    scope: "Scope of the owning rule, Synced or Unsynced; joins to rules.scope together with ownerId.",
+    ownerId: "RuleId of the owning rule; join (scope, ownerId) to rules (scope, id) within this source.",
+    position: "Zero-based position of the condition in the rule's Criteria list.",
+    properties: `The condition dictionary. ${plistProperties}`
+  }));
+  async *entries(scan) {
+    for await (const rule of scan.snapshot.files.rules())
+      for (const [position, condition] of rule.conditions().entries())
+        yield {
+          data: {
+            scope: rule.scope,
+            ownerId: rule.id,
+            position,
+            properties: plistJSON(condition)
+          },
+          file: null
+        };
+  }
+  // Rules of no proven account: a scoped import omits them rather than
+  // copying unrelated settings.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/rules-stream.js
+var RulesStream = class extends AppleMailStream {
+  name = "rules";
+  primaryKey = ["scope", "id"];
+  jsonSchema = mailSchema("One record per Mail rule in MailData/SyncedRules.plist (scope Synced) or MailData/UnsyncedRules.plist (scope Unsynced). Primary key (scope, id). Conditions are ruleConditions rows, joined by (scope, ownerId) to (scope, id). Scoped imports omit this stream.", described({ ...scopedMetadata, enabled: { type: ["boolean", "null"] } }, {
+    scope: "Synced for a rule read from MailData/SyncedRules.plist, Unsynced for one read from MailData/UnsyncedRules.plist.",
+    id: "RuleId value of the rule; with scope, the primary key.",
+    properties: `The whole rule dictionary, including its Criteria. ${plistProperties}`,
+    enabled: "Value stored for this RuleId in MailData/RulesActiveState.plist; NULL when that file is absent or has no entry for the rule."
+  }));
+  async *entries(scan) {
+    for await (const rule of scan.snapshot.files.rules())
+      yield {
+        data: {
+          scope: rule.scope,
+          id: rule.id,
+          properties: plistJSON(rule.dictionary),
+          enabled: rule.enabled
+        },
+        file: null
+      };
+  }
+  // Rules of no proven account: a scoped import omits them rather than
+  // copying unrelated settings.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/sender-addresses-stream.js
+var SenderAddressesStream = class extends MailTableStream {
+  name = "senderAddresses";
+  constructor() {
+    super(senderAddressesTable, "One record per address assigned to a sender. Primary key address. address refers to addresses.id and sender to senders.id; each address has at most one sender.", {
+      address: "Refers to addresses.id within this source.",
+      sender: "Refers to senders.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.address(record.address);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/senders-stream.js
+var SendersStream = class extends MailTableStream {
+  name = "senders";
+  constructor() {
+    super(sendersTable, "One record per sender row in the local Mail index. Primary key id. senderAddresses.sender refers to id; contactIdentifier is unique in the captured index schema.", {
+      ROWID: "Local sender identifier; senderAddresses.sender refers to it within this source.",
+      contact_identifier: `${undocumented} Unique in the captured index schema.`
+    });
+  }
+  accepts(record, selection) {
+    return selection.sender(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/server-message-mailboxes-stream.js
+var ServerMessageMailboxesStream = class extends MailTableStream {
+  name = "serverMessageMailboxes";
+  constructor() {
+    super(serverLabelsTable, "One record per server message and mailbox membership. Primary key (serverMessage, label). serverMessage refers to serverMessages.id and label to mailboxes.id. Joining through this stream repeats a server message once per mailbox: count at server message grain.", {
+      server_message: "Refers to serverMessages.id within this source.",
+      label: "Refers to mailboxes.id within this source."
+    });
+  }
+  accepts(record, selection) {
+    return selection.serverMessage(record.serverMessage) && selection.mailbox(record.label);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/server-messages-stream.js
+var ServerMessagesStream = class extends MailTableStream {
+  name = "serverMessages";
+  constructor() {
+    super(serverMessagesTable, "One record per server message row, kept in a table separate from messages. Primary key id. message refers to messages.id and mailbox to mailboxes.id; (mailbox, remoteId) is unique in the captured index schema. Further mailbox memberships are in serverMessageMailboxes.", {
+      ROWID: "Local server message identifier; serverMessageMailboxes.serverMessage refers to it within this source.",
+      message: "Refers to messages.id within this source; the index sets it to NULL when that message row is deleted.",
+      mailbox: "Refers to mailboxes.id within this source.",
+      remote_id: `${undocumented} Unique together with mailbox in the captured index schema.`
+    });
+  }
+  accepts(record, selection) {
+    return selection.serverMessage(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/signatures-stream.js
+var SignaturesStream = class extends AppleMailStream {
+  name = "signatures";
+  primaryKey = ["id"];
+  jsonSchema = mailSchema("One record per .mailsignature file in the current Mail store. Primary key id. No link to accounts is stated; scoped imports omit this stream.", described({ id: text, content: text }, {
+    id: "File name of the .mailsignature file without its extension.",
+    content: "The whole file read as UTF-8 text, including its MIME headers; not parsed."
+  }));
+  async *entries(scan) {
+    const { files } = scan.snapshot;
+    for (const file of files.signatures) {
+      const signature = await files.signature(file);
+      yield {
+        data: { id: signature.name, content: signature.content },
+        file: null
+      };
+    }
+  }
+  // Signatures of no proven account: a scoped import omits them rather than
+  // copying unrelated settings.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/smart-mailbox-conditions-stream.js
+var SmartMailboxConditionsStream = class extends AppleMailStream {
+  name = "smartMailboxConditions";
+  primaryKey = ["scope", "ownerId", "position"];
+  jsonSchema = mailSchema("One record per entry of a smart mailbox's MailboxCriteria list, in stored order. Primary key (scope, ownerId, position). ownerId refers to smartMailboxes.id within this source; these conditions do not join to rules. Scoped imports omit this stream.", described(conditionFields, {
+    scope: "Always Synced: only MailData/SyncedSmartMailboxes.plist is read. smartMailboxes has no scope field, so join on ownerId alone.",
+    ownerId: "MailboxID of the owning smart mailbox; refers to smartMailboxes.id within this source.",
+    position: "Zero-based position of the condition in the smart mailbox's MailboxCriteria list.",
+    properties: `The condition dictionary. ${plistProperties}`
+  }));
+  async *entries(scan) {
+    for await (const mailbox of scan.snapshot.files.smartMailboxes())
+      for (const [position, criterion] of mailbox.conditions().entries())
+        yield {
+          data: {
+            scope: "Synced",
+            ownerId: mailbox.id,
+            position,
+            properties: plistJSON(criterion)
+          },
+          file: null
+        };
+  }
+  // Searches of no proven account: a scoped import omits them rather than
+  // copying unrelated settings.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/smart-mailboxes-stream.js
+var SmartMailboxesStream = class extends AppleMailStream {
+  name = "smartMailboxes";
+  primaryKey = ["id"];
+  jsonSchema = mailSchema("One record per smart mailbox dictionary in MailData/SyncedSmartMailboxes.plist, including those nested under MailboxChildren. Primary key id. parentId refers to the containing smart mailbox. Conditions are smartMailboxConditions rows whose ownerId is id. Scoped imports omit this stream.", described({ ...metadata, parentId: nullableText }, {
+    id: "MailboxID value of the smart mailbox.",
+    properties: `The whole smart mailbox dictionary, including its MailboxCriteria and nested MailboxChildren. ${plistProperties}`,
+    parentId: "Refers to smartMailboxes.id of the smart mailbox whose MailboxChildren contains this one; NULL at the top level."
+  }));
+  async *entries(scan) {
+    for await (const mailbox of scan.snapshot.files.smartMailboxes())
+      yield {
+        data: {
+          id: mailbox.id,
+          parentId: mailbox.parentId,
+          properties: plistJSON(mailbox.dictionary)
+        },
+        file: null
+      };
+  }
+  // Searches of no proven account: a scoped import omits them rather than
+  // copying unrelated settings.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/smtp-servers-stream.js
+var SmtpServersStream = class extends AppleMailStream {
+  name = "smtpServers";
+  primaryKey = ["id"];
+  jsonSchema = mailSchema("One record per SMTP server account in the system Accounts store (~/Library/Accounts/Accounts4.sqlite), read without Mail scripting or Automation access. Primary key id. accounts.properties.sendingServerId refers to id for an account that sends through SMTP; scoped imports still omit this stream, because a server can serve accounts outside the scope.", described(metadata, {
+    id: "The Accounts store identifier of the SMTP account.",
+    properties: "JSON object: id; name (its parent account's description, such as iCloud or Google); userName; serverName; port; usesSsl; enabled. For iCloud the server settings come from the parent account's Mail settings. A value the store does not hold is null; no password is read. Kept as data without interpretation."
+  }));
+  *entries(scan) {
+    for (const data of scan.accountRecords().smtpServers)
+      yield { data, file: null };
+  }
+  // A server can serve accounts outside the scope, so a scoped import omits
+  // it.
+  accepts() {
+    return false;
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/subjects-stream.js
+var SubjectsStream = class extends MailTableStream {
+  name = "subjects";
+  constructor() {
+    super(subjectsTable, "One record per distinct subject text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.subject refers to id: join from messages to read a message's subject.", {
+      ROWID: "Local subject identifier; messages.subject refers to it within this source.",
+      subject: "Subject text Mail stores for its messages, passed through as collected."
+    });
+  }
+  accepts(record, selection) {
+    return selection.subject(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/streams/summaries-stream.js
+var SummariesStream = class extends MailTableStream {
+  name = "summaries";
+  constructor() {
+    super(summariesTable, "One record per distinct summary text in the local Mail index; the captured index schema stores each text once. Primary key id. messages.summary refers to id: join from messages to read a message's summary.", {
+      ROWID: "Local summary identifier; messages.summary refers to it within this source.",
+      summary: "Summary text Mail already stores, passed through as collected; this connector generates no summaries."
+    });
+  }
+  accepts(record, selection) {
+    return selection.summary(record.id);
+  }
+};
+
+// packages/sources/apple/mail/dist/apple-mail-source.js
+var readers = {
+  accounts: new AccountsStream(),
+  smtpServers: new SmtpServersStream(),
+  messages: new MessagesStream(),
+  mailboxes: new MailboxesStream(),
+  addresses: new AddressesStream(),
+  recipients: new RecipientsStream(),
+  indexedAttachments: new IndexedAttachmentsStream(),
+  messageMailboxes: new MessageMailboxesStream(),
+  serverMessages: new ServerMessagesStream(),
+  serverMessageMailboxes: new ServerMessageMailboxesStream(),
+  conversations: new ConversationsStream(),
+  conversationMessages: new ConversationMessagesStream(),
+  messageReferences: new MessageReferencesStream(),
+  messageGlobalData: new MessageGlobalDataStream(),
+  subjects: new SubjectsStream(),
+  summaries: new SummariesStream(),
+  generatedSummaries: new GeneratedSummariesStream(),
+  messageMetadata: new MessageMetadataStream(),
+  dataDetectionResults: new DataDetectionResultsStream(),
+  richLinks: new RichLinksStream(),
+  messageRichLinks: new MessageRichLinksStream(),
+  protectedMessageData: new ProtectedMessageDataStream(),
+  brandIndicators: new BrandIndicatorsStream(),
+  brandIndicatorEvidence: new BrandIndicatorEvidenceStream(),
+  addressMetadata: new AddressMetadataStream(),
+  businesses: new BusinessesStream(),
+  businessAddresses: new BusinessAddressesStream(),
+  businessCategories: new BusinessCategoriesStream(),
+  senders: new SendersStream(),
+  senderAddresses: new SenderAddressesStream(),
+  events: new EventsStream(),
+  mailboxProperties: new MailboxPropertiesStream(),
+  rules: new RulesStream(),
+  ruleConditions: new RuleConditionsStream(),
+  smartMailboxes: new SmartMailboxesStream(),
+  smartMailboxConditions: new SmartMailboxConditionsStream(),
+  signatures: new SignaturesStream(),
+  configuration: new ConfigurationStream(),
+  messageFiles: new MessageFilesStream(),
+  messageHeaders: new MessageHeadersStream(),
+  messageParts: new MessagePartsStream(),
+  attachments: new AttachmentsStream()
+};
+var catalog = new Catalog(Object.values(readers).map((reader) => reader.describe()));
+var readersByName = new Map(Object.values(readers).map((reader) => [reader.name, reader]));
+var accountStreams = /* @__PURE__ */ new Set([
+  readers.accounts.name,
+  readers.smtpServers.name
 ]);
-var isTableName = (name) => Object.hasOwn(mailTables, name);
-var isStreamName = (name) => Object.hasOwn(accountStreams, name) || isTableName(name) || Object.hasOwn(fileStreams, name);
-var messageStreams = [
-  "messageFiles",
-  "messageHeaders",
-  "messageParts",
-  "attachments"
-];
-var isMessageStream = (name) => messageStreams.some((listed) => listed === name);
-var messageParserVersion = 1;
-function requiredString(object, key) {
-  const value = object[key];
-  if (typeof value !== "string" || value === "")
-    throw new MailSchemaError(`Mail configuration has no ${key}`);
-  return value;
-}
-function list(value) {
-  if (!Array.isArray(value))
-    throw new MailSchemaError("Mail configuration is not a list");
-  return value;
-}
+var pollIntervalMs = 1e3;
 var restrictedMailStreams = [
   "messageMetadata",
   "dataDetectionResults",
@@ -26586,525 +28046,98 @@ var restrictedMailStreams = [
   "smartMailboxConditions",
   "signatures"
 ];
-function mailSelection(store, scope) {
-  if (Object.keys(scope).length === 0)
-    return () => true;
-  const rows = (name) => store.database.prepare(mailTables[name].sql).all();
-  const mailboxes = new Set(rows("mailboxes").filter((row) => {
-    const account = typeof row.url === "string" ? URL.parse(row.url)?.hostname : void 0;
-    return selected(scope.accountIds, account) && selected(scope.collectionIds, row.id);
-  }).map((row) => row.id));
-  const labelled = new Set(rows("messageMailboxes").filter((row) => mailboxes.has(row.mailboxId)).map((row) => row.messageId));
-  const messages = rows("messages").filter((row) => (mailboxes.has(row.mailbox) || mailboxes.has(row.remoteMailbox) || labelled.has(row.id)) && withinDates(scope, row.dateReceived ?? row.dateSent));
-  const ids = new Set(messages.map((row) => row.id));
-  const hashes = new Set(messages.map((row) => row.messageId));
-  const globals = new Set(messages.map((row) => row.globalMessageId));
-  const recipients = rows("recipients").filter((row) => ids.has(row.message));
-  const addresses = /* @__PURE__ */ new Set([
-    ...messages.map((row) => row.sender),
-    ...recipients.map((row) => row.address)
-  ]);
-  const addressText = new Set(rows("addresses").filter((row) => addresses.has(row.id)).map((row) => row.address));
-  const servers = new Set(rows("serverMessages").filter((row) => ids.has(row.message) && mailboxes.has(row.mailbox)).map((row) => row.id));
-  const conversations = new Set(rows("conversationMessages").filter((row) => hashes.has(row.messageId)).map((row) => row.conversationId));
-  const links = new Set(rows("messageRichLinks").filter((row) => globals.has(row.globalMessageId)).map((row) => row.richLink));
-  const summaries = new Set(rows("messageGlobalData").filter((row) => globals.has(row.id)).map((row) => row.generatedSummary));
-  const brands = new Set(messages.map((row) => row.brandIndicator));
-  const businesses = new Set(rows("businessAddresses").filter((row) => addresses.has(row.address)).map((row) => row.business));
-  const senders = new Set(rows("senderAddresses").filter((row) => addresses.has(row.address)).map((row) => row.sender));
-  const subjects = new Set(messages.map((row) => row.subject));
-  const texts = new Set(messages.map((row) => row.summary));
-  return (name, row) => {
-    switch (name) {
-      case "accounts":
-        return selected(scope.accountIds, row.id);
-      case "mailboxes":
-        return mailboxes.has(row.id);
-      case "messages":
-        return ids.has(row.id);
-      case "recipients":
-      case "indexedAttachments":
-      case "messageReferences":
-        return ids.has(row.message);
-      case "messageFiles":
-      case "messageHeaders":
-      case "messageParts":
-      case "attachments":
-      case "events":
-        return ids.has(row.messageId);
-      case "messageMailboxes":
-        return ids.has(row.messageId) && mailboxes.has(row.mailboxId);
-      case "serverMessages":
-        return servers.has(row.id);
-      case "serverMessageMailboxes":
-        return servers.has(row.serverMessage) && mailboxes.has(row.label);
-      case "conversationMessages":
-        return hashes.has(row.messageId);
-      case "conversations":
-        return conversations.has(row.conversationId);
-      case "messageGlobalData":
-        return globals.has(row.id);
-      case "addresses":
-        return addresses.has(row.id);
-      case "addressMetadata":
-        return addressText.has(row.address);
-      case "subjects":
-        return subjects.has(row.id);
-      case "summaries":
-        return texts.has(row.id);
-      case "generatedSummaries":
-        return summaries.has(row.id);
-      case "messageRichLinks":
-        return globals.has(row.globalMessageId);
-      case "richLinks":
-        return links.has(row.id);
-      case "brandIndicators":
-        return brands.has(row.id);
-      case "brandIndicatorEvidence":
-        return brands.has(row.brandIndicator);
-      case "businessAddresses":
-        return addresses.has(row.address);
-      case "businesses":
-        return businesses.has(row.id);
-      case "businessCategories":
-        return businesses.has(row.business);
-      case "senderAddresses":
-        return addresses.has(row.address);
-      case "senders":
-        return senders.has(row.id);
-      default:
-        return false;
-    }
-  };
-}
-var MailScan = class {
-  accepts;
-  #accountsStore;
-  #accounts = null;
-  #inputs = null;
-  store;
-  constructor(store, accounts2, scope) {
-    this.store = store;
-    this.#accountsStore = accounts2;
-    this.accepts = mailSelection(store, scope);
-  }
-  // Each message's inputs besides its .emlx, gathered once per scan: detached
-  // files by part, and the attachment rows the index knows for it.
-  #messageInputs() {
-    this.#inputs ??= (() => {
-      const detached = /* @__PURE__ */ new Map();
-      for (const [key, files] of [...this.store.attachments].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
-        const id = key.slice(0, key.indexOf(":"));
-        detached.set(id, [...detached.get(id) ?? [], [key, files]]);
-      }
-      const indexed = /* @__PURE__ */ new Map();
-      for (const row of this.store.database.prepare("SELECT CAST(message AS TEXT) AS message, attachment_id, name FROM attachments ORDER BY ROWID").all()) {
-        if (!this.accepts("indexedAttachments", row))
-          continue;
-        const message = String(row.message);
-        indexed.set(message, [
-          ...indexed.get(message) ?? [],
-          { ...row, message }
-        ]);
-      }
-      return { detached, indexed };
-    })();
-    return this.#inputs;
-  }
-  // Everything a message's records are read from. The .emlx and detached
-  // files are identified by their stat (device, inode, size, and mtime and
-  // ctime in nanoseconds); a rewrite within one timestamp tick still changes
-  // ctime, and a file that changes while it is read fails the read, so a
-  // matching fingerprint means the saved records came from these bytes.
-  #fingerprint(id, file) {
-    const { detached, indexed } = this.#messageInputs();
-    const identity = ({ path, version }) => [
-      relative2(this.store.path, path),
-      version
-    ];
-    return createHash3("sha256").update(JSON.stringify([
-      messageParserVersion,
-      file === void 0 ? null : identity(file),
-      (detached.get(id) ?? []).map(([key, files]) => [
-        key,
-        files.map(identity)
-      ]),
-      (indexed.get(id) ?? []).map((row) => [row.attachment_id, row.name])
-    ])).digest("base64url");
-  }
-  // One group per selected message, in index order. Selection runs on every
-  // scan; only reading a message whose inputs are unchanged is skipped.
-  async *groups(name) {
-    const { indexed } = this.#messageInputs();
-    const listed = /* @__PURE__ */ new Set();
-    for (const row of this.store.database.prepare("SELECT CAST(ROWID AS TEXT) AS id FROM messages ORDER BY ROWID").iterate()) {
-      if (!this.accepts("messages", row))
-        continue;
-      const id = String(row.id);
-      listed.add(id);
-      const file = this.store.messages.get(id);
-      if (file === void 0 && (name === "messageHeaders" || name === "messageParts" || name === "attachments" && !indexed.has(id)))
-        continue;
-      yield {
-        key: id,
-        fingerprint: this.#fingerprint(id, file),
-        records: () => this.#messageEntries(name, id, file)
-      };
-    }
-    if (name !== "attachments")
-      return;
-    for (const [id, rows] of indexed)
-      if (!listed.has(id))
-        yield {
-          key: id,
-          fingerprint: this.#fingerprint(id, void 0),
-          records: () => this.#indexedEntries(rows)
-        };
-  }
-  async *#messageEntries(name, id, file) {
-    if (name === "messageFiles") {
-      const data = {
-        messageId: id,
-        relativePath: file === void 0 ? null : relative2(this.store.path, file.path),
-        availableLocally: file !== void 0,
-        partial: file === void 0 ? null : file.path.endsWith(".partial.emlx"),
-        size: file === void 0 ? null : file.size,
-        sha256: file === void 0 ? null : await hashMailFile(file)
-      };
-      yield { data, file: file === void 0 ? null : file.path };
-      if (file !== void 0)
-        await assertMailFile(file);
-      return;
-    }
-    const unclaimed = new Map((this.#messageInputs().indexed.get(id) ?? []).map((row) => [
-      String(row.attachment_id),
-      row
-    ]));
-    if (file !== void 0) {
-      const { headers, parts } = await readMailMime(this.store, id, file, name === "messageHeaders", name === "attachments", (part) => name === "messageParts" || part.isAttachment || unclaimed.has(part.partId));
-      try {
-        if (name === "messageHeaders")
-          for (const header of headers)
-            yield { data: { ...header }, file: null };
-        else
-          for (const part of parts) {
-            const indexed = unclaimed.delete(part.record.partId);
-            part.record.isAttachment ||= indexed;
-            if (name === "messageParts")
-              yield { data: { ...part.record, text: part.text }, file: null };
-            else if (part.record.isAttachment)
-              yield { data: { ...part.record }, file: part.path };
-          }
-      } finally {
-        for (const part of parts)
-          if (part.path !== null)
-            await rm2(part.path);
-      }
-    }
-    if (name === "attachments")
-      yield* this.#indexedEntries(unclaimed.values());
-  }
-  // Attachments the index knows before their message or MIME file arrives.
-  async *#indexedEntries(rows) {
-    for (const row of rows) {
-      const key = `${row.message}:${row.attachment_id}`;
-      if (typeof row.attachment_id !== "string" || !/^\d+(?:\.\d+)*$/.test(row.attachment_id))
-        throw new MailSchemaError(`Invalid indexed Mail attachment part ${key}`);
-      const candidates = this.store.attachments.get(key);
-      if (candidates !== void 0 && candidates.length !== 1)
-        throw new MailSchemaError(`Ambiguous indexed Mail attachment ${key}`);
-      const file = candidates?.[0];
-      const record = {
-        messageId: row.message,
-        partId: row.attachment_id,
-        parentPartId: null,
-        contentType: null,
-        charset: null,
-        transferEncoding: null,
-        disposition: null,
-        filename: row.name,
-        contentId: null,
-        isMultipart: false,
-        isAttachment: true,
-        declaredBytes: null,
-        decodedBytes: file === void 0 ? null : file.size,
-        availableLocally: file !== void 0,
-        sha256: file === void 0 ? null : await hashMailFile(file)
-      };
-      let path = null;
-      if (file !== void 0) {
-        path = join4(this.store.scratch.path, `indexed-${row.message}-${row.attachment_id}${extname2(file.path)}`);
-        await assertMailFile(file);
-        await copyFile2(file.path, path);
-        await assertMailFile(file);
-      }
-      try {
-        yield { data: record, file: path };
-      } finally {
-        if (path !== null)
-          await rm2(path);
-      }
-    }
-  }
-  // Read once per scan, and only by the two account streams: a store this
-  // process cannot open fails those copies, not the rest of Mail.
-  #accountRecords() {
-    var _stack = [];
-    try {
-      if (this.#accounts !== null)
-        return this.#accounts;
-      const hosts = /* @__PURE__ */ new Map();
-      for (const row of this.store.database.prepare("SELECT url FROM mailboxes ORDER BY ROWID").iterate()) {
-        const url = new URL(String(row.url));
-        if (!hosts.has(url.hostname))
-          hosts.set(url.hostname, url.protocol.slice(0, -1));
-      }
-      const snapshot = __using(_stack, this.#accountsStore.open());
-      const accounts2 = new MailAccounts(snapshot.accounts());
-      this.#accounts = {
-        accounts: accounts2.accounts(hosts, this.store.path),
-        smtpServers: accounts2.smtpServers()
-      };
-      return this.#accounts;
-    } catch (_) {
-      var _error = _, _hasError = true;
-    } finally {
-      __callDispose(_stack, _error, _hasError);
-    }
-  }
-  async *read(name) {
-    if (isTableName(name)) {
-      const definition = mailTables[name];
-      for (const row of this.store.database.prepare(definition.sql).iterate()) {
-        if (!this.accepts(name, row))
-          continue;
-        for (const column of definition.blobs)
-          if (row[column] instanceof Uint8Array)
-            row[column] = Buffer.from(row[column]).toString("base64");
-        yield { data: { ...row }, file: null };
-      }
-      return;
-    }
-    if (name === "accounts" || name === "smtpServers") {
-      for (const data of this.#accountRecords()[name])
-        if (this.accepts(name, data))
-          yield { data, file: null };
-      return;
-    }
-    if (isMessageStream(name)) {
-      for await (const group of this.groups(name))
-        yield* group.records();
-      return;
-    }
-    if (name === "mailboxProperties" || name === "configuration") {
-      for (const path of [...this.store.plists.keys()].sort()) {
-        const mailbox = path.endsWith("/Info.plist") && path.split("/").some((part) => part.endsWith(".mbox"));
-        const configuration = /(^|\/)(Signatures|MailData)\//.test(path) && !/(RemoteContentURLCache|BiomeStream)\//.test(path);
-        if (name === "mailboxProperties" && !mailbox || name === "configuration" && !configuration)
-          continue;
-        const value2 = await this.store.plist(path);
-        if (value2 === null)
-          throw new MailSchemaError(`Mail configuration disappeared: ${path}`);
-        yield {
-          data: { relativePath: path, properties: plistJSON(value2) },
-          file: null
-        };
-      }
-      return;
-    }
-    if (name === "signatures") {
-      for (const file of this.store.signatures)
-        yield { data: await this.store.signature(file), file: null };
-      return;
-    }
-    if (name === "rules" || name === "ruleConditions") {
-      const activeValue = await this.store.plist("MailData/RulesActiveState.plist");
-      const active = activeValue === null ? null : plistObject(activeValue);
-      for (const scope of ["Synced", "Unsynced"]) {
-        const value2 = await this.store.plist(`MailData/${scope}Rules.plist`);
-        if (value2 === null)
-          continue;
-        for (const entry of list(value2)) {
-          const rule = plistObject(entry);
-          const id = requiredString(rule, "RuleId");
-          const enabled = active === null ? void 0 : active[id];
-          if (name === "rules")
-            yield {
-              data: {
-                scope,
-                id,
-                properties: plistJSON(rule),
-                enabled: enabled === void 0 ? null : enabled
-              },
-              file: null
-            };
-          else if (rule.Criteria !== void 0)
-            for (const [position, condition] of list(rule.Criteria).entries())
-              yield {
-                data: {
-                  scope,
-                  ownerId: id,
-                  position,
-                  properties: plistJSON(condition)
-                },
-                file: null
-              };
-        }
-      }
-      return;
-    }
-    const value = await this.store.plist("MailData/SyncedSmartMailboxes.plist");
-    if (value === null)
-      return;
-    function* smart(entries, parentId) {
-      for (const entry of entries) {
-        const mailbox = plistObject(entry);
-        const id = requiredString(mailbox, "MailboxID");
-        if (name === "smartMailboxes")
-          yield { id, parentId, properties: plistJSON(mailbox) };
-        else if (mailbox.MailboxCriteria !== void 0)
-          for (const [position, criterion] of list(mailbox.MailboxCriteria).entries())
-            yield {
-              scope: "Synced",
-              ownerId: id,
-              position,
-              properties: plistJSON(criterion)
-            };
-        if (mailbox.MailboxChildren !== void 0)
-          yield* smart(list(mailbox.MailboxChildren), id);
-      }
-    }
-    for (const data of smart(list(value), null))
-      yield { data, file: null };
-  }
-  async [Symbol.asyncDispose]() {
-    await this.store[Symbol.asyncDispose]();
-  }
-};
 var AppleMailSource = class extends Source {
-  indexedAttachments = catalog.get("indexedAttachments");
-  serverMessages = catalog.get("serverMessages");
-  serverMessageMailboxes = catalog.get("serverMessageMailboxes");
-  conversationMessages = catalog.get("conversationMessages");
-  messageReferences = catalog.get("messageReferences");
-  messageGlobalData = catalog.get("messageGlobalData");
-  subjects = catalog.get("subjects");
-  summaries = catalog.get("summaries");
-  generatedSummaries = catalog.get("generatedSummaries");
-  messageMetadata = catalog.get("messageMetadata");
-  dataDetectionResults = catalog.get("dataDetectionResults");
-  richLinks = catalog.get("richLinks");
-  messageRichLinks = catalog.get("messageRichLinks");
-  protectedMessageData = catalog.get("protectedMessageData");
-  brandIndicators = catalog.get("brandIndicators");
-  brandIndicatorEvidence = catalog.get("brandIndicatorEvidence");
-  addressMetadata = catalog.get("addressMetadata");
-  businesses = catalog.get("businesses");
-  businessAddresses = catalog.get("businessAddresses");
-  businessCategories = catalog.get("businessCategories");
-  senders = catalog.get("senders");
-  senderAddresses = catalog.get("senderAddresses");
-  events = catalog.get("events");
-  smtpServers = catalog.get("smtpServers");
-  mailboxProperties = catalog.get("mailboxProperties");
-  smartMailboxConditions = catalog.get("smartMailboxConditions");
-  configuration = catalog.get("configuration");
   identity;
   catalog = catalog;
-  accounts = catalog.get("accounts");
-  messages = catalog.get("messages");
-  mailboxes = catalog.get("mailboxes");
-  messageMailboxes = catalog.get("messageMailboxes");
-  addresses = catalog.get("addresses");
-  recipients = catalog.get("recipients");
-  conversations = catalog.get("conversations");
-  messageFiles = catalog.get("messageFiles");
-  messageHeaders = catalog.get("messageHeaders");
-  messageParts = catalog.get("messageParts");
-  attachments = catalog.get("attachments");
-  rules = catalog.get("rules");
-  ruleConditions = catalog.get("ruleConditions");
-  smartMailboxes = catalog.get("smartMailboxes");
-  signatures = catalog.get("signatures");
+  accounts = readers.accounts.describe();
+  smtpServers = readers.smtpServers.describe();
+  messages = readers.messages.describe();
+  mailboxes = readers.mailboxes.describe();
+  addresses = readers.addresses.describe();
+  recipients = readers.recipients.describe();
+  indexedAttachments = readers.indexedAttachments.describe();
+  messageMailboxes = readers.messageMailboxes.describe();
+  serverMessages = readers.serverMessages.describe();
+  serverMessageMailboxes = readers.serverMessageMailboxes.describe();
+  conversations = readers.conversations.describe();
+  conversationMessages = readers.conversationMessages.describe();
+  messageReferences = readers.messageReferences.describe();
+  messageGlobalData = readers.messageGlobalData.describe();
+  subjects = readers.subjects.describe();
+  summaries = readers.summaries.describe();
+  generatedSummaries = readers.generatedSummaries.describe();
+  messageMetadata = readers.messageMetadata.describe();
+  dataDetectionResults = readers.dataDetectionResults.describe();
+  richLinks = readers.richLinks.describe();
+  messageRichLinks = readers.messageRichLinks.describe();
+  protectedMessageData = readers.protectedMessageData.describe();
+  brandIndicators = readers.brandIndicators.describe();
+  brandIndicatorEvidence = readers.brandIndicatorEvidence.describe();
+  addressMetadata = readers.addressMetadata.describe();
+  businesses = readers.businesses.describe();
+  businessAddresses = readers.businessAddresses.describe();
+  businessCategories = readers.businessCategories.describe();
+  senders = readers.senders.describe();
+  senderAddresses = readers.senderAddresses.describe();
+  events = readers.events.describe();
+  mailboxProperties = readers.mailboxProperties.describe();
+  rules = readers.rules.describe();
+  ruleConditions = readers.ruleConditions.describe();
+  smartMailboxes = readers.smartMailboxes.describe();
+  smartMailboxConditions = readers.smartMailboxConditions.describe();
+  signatures = readers.signatures.describe();
+  configuration = readers.configuration.describe();
+  messageFiles = readers.messageFiles.describe();
+  messageHeaders = readers.messageHeaders.describe();
+  messageParts = readers.messageParts.describe();
+  attachments = readers.attachments.describe();
   path;
   scope;
+  #store;
   #accounts;
   constructor({ path, accounts: accounts2, scope = {} }) {
     super();
     this.path = path;
+    this.#store = new MailStore(path);
     this.#accounts = accounts2;
     this.scope = scope;
     this.identity = `apple-mail:${path}`;
     Object.freeze(this);
   }
-  async open() {
-    return new MailScan(await MailStore.open(this.path, Object.fromEntries(Object.values(mailTables).map((table2) => [table2.name, table2.columns]))), this.#accounts, this.scope);
+  open() {
+    return MailScan.open(this.#store, this.#accounts, this.scope);
   }
   async *extract(configuration, state, _partition, scan) {
-    const { stream } = configuration;
-    const { name } = stream;
-    if (!isStreamName(name))
+    const { name } = configuration.stream;
+    const reader = readersByName.get(name);
+    if (reader === void 0)
       throw new TypeError(`Unknown Mail stream ${name}`);
-    let file = null;
-    const records = async function* (entries) {
-      for await (const entry of entries) {
-        if (!scan.accepts(name, entry.data))
-          continue;
-        file = entry.file;
-        yield* validateRecords(stream, [entry.data], "Mail");
-      }
-    };
-    async function* groups(from) {
-      for await (const group of scan.groups(from))
-        yield {
-          key: group.key,
-          fingerprint: group.fingerprint,
-          records: () => records(group.records())
-        };
-    }
-    const messages = configuration.syncMode !== "incremental" ? (async function* () {
-      for await (const data of records(scan.read(name)))
-        yield { stream: stream.name, data };
-    })() : isMessageStream(name) ? diffGroupedSnapshot(stream, groups(name), state) : diffSnapshot(stream, records(scan.read(name)), state);
-    for await (const message of messages)
-      yield "type" in message || configuration.fileReads.length === 0 ? message : { ...message, file };
+    yield* reader.extract(configuration, state, scan);
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
+  // Polls the store's version, which reports index commits and file changes,
+  // and, while an account stream is selected, the Accounts store's; a change
+  // there refreshes only the account streams.
   async *observe({ streams: selected2, signal }) {
     var _stack = [];
     try {
       if (signal.aborted)
         return;
-      const path = await mailVersionDirectory(this.path);
-      const database = __using(_stack, new DatabaseSync2(join4(path, "MailData/Envelope Index"), {
-        readOnly: true
-      }));
-      const version = database.prepare("PRAGMA data_version");
-      let seen = version.get()?.data_version;
-      const accountsSelected = selected2.filter(({ name }) => Object.hasOwn(accountStreams, name));
+      const version = __using(_stack, await this.#store.version());
+      let seen = version.current;
+      const accountsSelected = selected2.filter(({ name }) => accountStreams.has(name));
       const accounts2 = __using(_stack, accountsSelected.length === 0 ? null : this.#accountsVersion());
       let accountsSeen = accounts2?.current;
-      let changed = false;
-      let failure2 = null;
-      const resources = __using(_stack, new DisposableStack());
-      const watcher = watch(this.path, { recursive: true, signal }, () => {
-        changed = true;
-      });
-      resources.defer(() => watcher.close());
-      watcher.on("error", (error) => {
-        failure2 = error;
-      });
       yield selected2;
       try {
-        for await (const _2 of setInterval(1e3, void 0, { signal })) {
-          if (failure2 !== null)
-            throw failure2;
-          const current = version.get()?.data_version;
+        for await (const _2 of setInterval(pollIntervalMs, void 0, {
+          signal
+        })) {
+          const current = version.current;
           const accountsCurrent = accounts2?.current;
-          if (changed || current !== seen) {
-            changed = false;
+          if (current !== seen) {
             seen = current;
             accountsSeen = accountsCurrent;
             yield selected2;

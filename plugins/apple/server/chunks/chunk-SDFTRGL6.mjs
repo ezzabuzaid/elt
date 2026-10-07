@@ -47,6 +47,10 @@ var AppDatabase = class {
   all(sql, ...parameters) {
     return this.#database.prepare(sql).all(...parameters);
   }
+  // Rows one at a time, for a table too large to hold whole.
+  iterate(sql, ...parameters) {
+    return this.#database.prepare(sql).iterate(...parameters);
+  }
   [Symbol.dispose]() {
     if (!this.#database.isOpen)
       return;

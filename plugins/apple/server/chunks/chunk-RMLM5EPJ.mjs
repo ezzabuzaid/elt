@@ -6,7 +6,7 @@ import {
 import {
   AppDatabase,
   AppDatabaseVersion
-} from "./chunk-ZN2QKR65.mjs";
+} from "./chunk-SDFTRGL6.mjs";
 
 // packages/sdks/apple/accounts/dist/accounts-store.js
 import { homedir } from "node:os";
