@@ -1,4 +1,3 @@
-import type { PlistValue } from '@workspace/codec-plist';
 import type { FieldSchema } from '@workspace/elt';
 import type {
   MailColumnKind,
@@ -121,16 +120,6 @@ export function tableRecord(
   );
 }
 
-// A property list as JSON text: data as Base64, big integers as decimal
-// strings, dates as ISO 8601 and archiver UIDs as {"value":N}.
-export function plistJSON(value: PlistValue): string {
-  return JSON.stringify(value, (_, item: unknown) => {
-    if (typeof item === 'bigint') return item.toString();
-    if (item instanceof Uint8Array) return Buffer.from(item).toString('base64');
-    return item;
-  });
-}
-
 // Each stream describes every field for readers; the mapped type makes a
 // missing description a compile error.
 export function described<
@@ -197,7 +186,7 @@ export const fileFields = {
 export const plistFields = { relativePath: text, properties: text } as const;
 
 export const plistProperties =
-  'The property list converted to JSON: data values become Base64 strings, dates ISO 8601 strings and integers beyond 2^53 decimal strings. Kept as data; this source does not interpret its keys.';
+  'The property list converted to JSON: data values become Base64 strings, dates ISO 8601 strings, integers beyond 2^53 decimal strings and archiver references {"$uid":N}. Kept as data; this source does not interpret its keys.';
 export const localMessageId =
   'Refers to messages.id within this source (the local id, not the Message-ID hash in messages.messageId).';
 export const partId =

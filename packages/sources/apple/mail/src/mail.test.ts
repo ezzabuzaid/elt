@@ -1645,7 +1645,7 @@ test('Mail’s undated numbers keep the values Mail stored', async () => {
   );
 });
 
-test('A configuration plist keeps archiver UIDs as {"value":N}, data as Base64, big integers as text and dates in ISO 8601', async () => {
+test('A configuration plist keeps archiver UIDs as {"$uid":N}, data as Base64, big integers as text and dates in ISO 8601', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
   const store = await fixture(join(dir.path, 'Mail'));
   // As Mail's recentSearches.plist holds them: keyed archiver references.
@@ -1666,7 +1666,7 @@ test('A configuration plist keeps archiver UIDs as {"value":N}, data as Base64, 
     configuration.find(
       ({ relativePath }) => relativePath === 'MailData/recentSearches.plist',
     )?.properties,
-    '{"Searches":[{"value":7},"9223372036854775807","AQID","2025-01-02T03:04:05.000Z"]}',
+    '{"Searches":[{"$uid":7},"9223372036854775807","AQID","2025-01-02T03:04:05.000Z"]}',
   );
 });
 

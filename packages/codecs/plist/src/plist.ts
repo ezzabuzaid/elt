@@ -232,7 +232,8 @@ function decodeClass(
   return fields;
 }
 
-// A plist value as JSON text: bytes as base64, dates as ISO, big integers as strings.
+// A plist value as JSON text: bytes as base64, dates as ISO, big integers as
+// strings, and archiver references as {"$uid":N}.
 export function plistJSON(value: PlistValue): string {
   return JSON.stringify(value, (_, field: unknown) =>
     field instanceof Uint8Array

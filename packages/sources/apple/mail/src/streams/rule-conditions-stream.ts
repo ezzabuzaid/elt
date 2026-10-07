@@ -1,14 +1,11 @@
+import { plistJSON } from '@workspace/codec-plist';
+
 import {
   AppleMailStream,
   type MailEntry,
   mailSchema,
 } from '../apple-mail-stream.ts';
-import {
-  conditionFields,
-  described,
-  plistJSON,
-  plistProperties,
-} from '../mail-fields.ts';
+import { conditionFields, described, plistProperties } from '../mail-fields.ts';
 import type { MailScan } from '../mail-scan.ts';
 
 export class RuleConditionsStream extends AppleMailStream {

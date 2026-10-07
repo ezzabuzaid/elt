@@ -1,3 +1,5 @@
+import { plistJSON } from '@workspace/codec-plist';
+
 import {
   AppleMailStream,
   type MailEntry,
@@ -7,7 +9,6 @@ import {
   described,
   metadata,
   nullableText,
-  plistJSON,
   plistProperties,
 } from '../mail-fields.ts';
 import type { MailScan } from '../mail-scan.ts';
