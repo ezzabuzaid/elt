@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -30,6 +31,15 @@ import {
 import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
 import { AppleMessagesSource } from './apple-messages-source.ts';
+
+// A file column's chunk table, by the documented rule: _elt_files_ and the
+// first 40 hex digits of SHA-256 over the JSON of [table, column], both in
+// ASCII lower case.
+const chunkTable = (table: string, column: string) =>
+  `"_elt_files_${createHash('sha256')
+    .update(JSON.stringify([table.toLowerCase(), column.toLowerCase()]))
+    .digest('hex')
+    .slice(0, 40)}"`;
 
 // Test support shared by the Apple source packages' tests.
 
@@ -744,7 +754,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   assert.deepEqual(
     messagesRows(
       out,
-      'SELECT a.guid, a.availableLocally, a.content, (SELECT c.bytes FROM "_elt_files_attachments_bytes" c WHERE c.file = a.bytes) AS bytes FROM attachments a ORDER BY a.guid',
+      `SELECT a.guid, a.availableLocally, a.content, (SELECT c.bytes FROM ${chunkTable('attachments', 'bytes')} c WHERE c.file = a.bytes) AS bytes FROM attachments a ORDER BY a.guid`,
     ),
     [
       {

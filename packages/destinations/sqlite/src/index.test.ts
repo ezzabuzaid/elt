@@ -2588,12 +2588,21 @@ class FileSource extends Source {
 const sha256 = (bytes: Uint8Array) =>
   createHash('sha256').update(bytes).digest('hex');
 
+// A file column's chunk table, by the documented rule: _elt_files_ and the
+// first 40 hex digits of SHA-256 over the JSON of [table, column], both in
+// ASCII lower case.
+const chunkTable = (table: string, column: string) =>
+  `"_elt_files_${createHash('sha256')
+    .update(JSON.stringify([table.toLowerCase(), column.toLowerCase()]))
+    .digest('hex')
+    .slice(0, 40)}"`;
+
 // Each loaded file's chunk sizes and reassembled hash, plus chunks no row references.
 const storedFiles = (path: string) => {
   using database = new DatabaseSync(path, { readOnly: true });
   const chunks = database
     .prepare(
-      'SELECT f.id, c.bytes FROM files f JOIN "_elt_files_files_bytes" c ON c.file = f.bytes ORDER BY f.id, c.n',
+      `SELECT f.id, c.bytes FROM files f JOIN ${chunkTable('files', 'bytes')} c ON c.file = f.bytes ORDER BY f.id, c.n`,
     )
     .all()
     .map(({ id, bytes }) => {
@@ -2611,7 +2620,7 @@ const storedFiles = (path: string) => {
   );
   const orphans = database
     .prepare(
-      'SELECT count(*) AS n FROM "_elt_files_files_bytes" WHERE file NOT IN (SELECT bytes FROM files WHERE bytes IS NOT NULL)',
+      `SELECT count(*) AS n FROM ${chunkTable('files', 'bytes')} WHERE file NOT IN (SELECT bytes FROM files WHERE bytes IS NOT NULL)`,
     )
     .get()?.n;
   return { files, orphans };
@@ -3733,6 +3742,119 @@ test('renamed file columns keep their original bytes and stored files through la
   assert.equal(await readFile(String(stored?.ref), 'utf8'), 'original');
 });
 
+test('two file columns whose table and column names join alike keep their own chunks', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-chunks-'));
+  const path = join(scratch.path, 'source.txt');
+  await writeFile(path, 'original');
+  const described = (name: string) =>
+    new Stream({
+      name,
+      jsonSchema: {
+        type: 'object',
+        description: `One row per ${name} file.`,
+        properties: { id: { type: 'string', description: 'Id.' } },
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      sourceDefinedCursor: true,
+      emitsDeletes: true,
+      supportsFileTransfer: true,
+    });
+  const left = described('left');
+  const right = described('right');
+  let messages: Record<string, SourceMessage[]> = {};
+  class Files extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'files';
+    protected readonly catalog = new Catalog([left, right]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(configuration: CopyConfiguration) {
+      const { name } = configuration.stream;
+      yield* messages[name] ?? [];
+      yield checkpoint(name, {});
+    }
+  }
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  installSQLiteCatalog(destination);
+  const selection = {
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  } as const;
+  // Table a_b with column c, and table a with column b_c.
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Files(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(
+            left,
+            destination
+              .table('a_b', (c) => [c.text('id'), c.blob('c').from(left.file)])
+              .withReaderView('left_files'),
+            { id: 'left', ...selection },
+          ),
+          new Copy(
+            right,
+            destination
+              .table('a', (c) => [c.text('id'), c.blob('b_c').from(right.file)])
+              .withReaderView('right_files'),
+            { id: 'right', ...selection },
+          ),
+        ],
+      }),
+    ],
+    history,
+  });
+
+  messages = {
+    left: [{ stream: 'left', data: { id: 'l' }, file: path }],
+    right: [{ stream: 'right', data: { id: 'r' }, file: path }],
+  };
+  await pipeline.run();
+  // A later commit of the left target alone.
+  messages = { left: [{ stream: 'left', data: { id: 'l2' }, file: null }] };
+  await pipeline.run();
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  // Each file is read as its column's catalog entry tells a reader to.
+  const original = (view: string, column: string, id: string) => {
+    const entry = database
+      .prepare('SELECT description FROM catalog WHERE name = ?')
+      .get(`${view}.${column}`);
+    const chunks = /Join ("[^"]+") on file/.exec(
+      String(entry?.description),
+    )?.[1];
+    assert.ok(chunks, String(entry?.description));
+    return database
+      .prepare(
+        `SELECT c.bytes FROM ${view} v JOIN ${chunks} c ON c.file = v.${column} WHERE v.id = ? ORDER BY c.n`,
+      )
+      .all(id)
+      .map(({ bytes }) => Buffer.from(Object(bytes)).toString())
+      .join('');
+  };
+  assert.equal(original('left_files', 'c', 'l'), 'original');
+  assert.equal(original('right_files', 'b_c', 'r'), 'original');
+});
+
 test('a reset of a partition named by a renamed field replaces only that partition', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-renamed-part-'),
@@ -4009,7 +4131,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     using database = new DatabaseSync(destination.path, { readOnly: true });
     return database
       .prepare(
-        `SELECT t.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM "_elt_files_${table}_bytes" c WHERE c.file = t.bytes) AS bytes FROM ${table} t ORDER BY t.id`,
+        `SELECT t.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM ${chunkTable(table, 'bytes')} c WHERE c.file = t.bytes) AS bytes FROM ${table} t ORDER BY t.id`,
       )
       .all()
       .map(({ id, bytes }) => `${id}=${bytes}`);
@@ -4018,7 +4140,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     using database = new DatabaseSync(destination.path, { readOnly: true });
     return database
       .prepare(
-        `SELECT count(*) AS n FROM "_elt_files_${table}_bytes" WHERE file NOT IN (SELECT bytes FROM ${table} WHERE bytes IS NOT NULL)`,
+        `SELECT count(*) AS n FROM ${chunkTable(table, 'bytes')} WHERE file NOT IN (SELECT bytes FROM ${table} WHERE bytes IS NOT NULL)`,
       )
       .get()?.n;
   };
@@ -4175,13 +4297,13 @@ for (const { outcome, next, expected } of leftBehind)
       using database = new DatabaseSync(destination.path, { readOnly: true });
       const loaded = database
         .prepare(
-          `SELECT d.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM "_elt_files_docs_bytes" c WHERE c.file = d.bytes) AS bytes FROM docs d ORDER BY d.id`,
+          `SELECT d.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM ${chunkTable('docs', 'bytes')} c WHERE c.file = d.bytes) AS bytes FROM docs d ORDER BY d.id`,
         )
         .all()
         .map(({ id, bytes }) => `${id}=${bytes}`);
       const orphans = database
         .prepare(
-          'SELECT count(*) AS n FROM "_elt_files_docs_bytes" WHERE file NOT IN (SELECT bytes FROM docs WHERE bytes IS NOT NULL)',
+          `SELECT count(*) AS n FROM ${chunkTable('docs', 'bytes')} WHERE file NOT IN (SELECT bytes FROM docs WHERE bytes IS NOT NULL)`,
         )
         .get()?.n;
       return { loaded, orphans };

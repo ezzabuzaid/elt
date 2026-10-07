@@ -52,6 +52,15 @@ import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-documen
 
 import { AppleMailSource } from './apple-mail-source.ts';
 
+// A file column's chunk table, by the documented rule: _elt_files_ and the
+// first 40 hex digits of SHA-256 over the JSON of [table, column], both in
+// ASCII lower case.
+const chunkTable = (table: string, column: string) =>
+  `"_elt_files_${createHash('sha256')
+    .update(JSON.stringify([table.toLowerCase(), column.toLowerCase()]))
+    .digest('hex')
+    .slice(0, 40)}"`;
+
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
@@ -727,7 +736,7 @@ function bytes(path: string, table: string, file: unknown) {
   return Buffer.concat(
     rows(
       path,
-      `SELECT bytes FROM "_elt_files_${table}_bytes" WHERE file = ${Number(file)} ORDER BY n`,
+      `SELECT bytes FROM ${chunkTable(table, 'bytes')} WHERE file = ${Number(file)} ORDER BY n`,
     ).map((row) => {
       assert.ok(row.bytes instanceof Uint8Array);
       return row.bytes;

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 
 import type { FileContent } from '@workspace/elt';
@@ -51,8 +52,15 @@ export class SQLiteFileStore {
     );
   }
 
+  // A hash of the table and column, as SQLite compares them: joined as text,
+  // table a_b with column c and table a with column b_c would share chunks
+  // and prune each other's.
   static tableName(table: SQLiteTable, column: SQLiteColumn): string {
-    return `_elt_files_${table.location}_${identifiers.key(column.name)}`;
+    const key = createHash('sha256')
+      .update(JSON.stringify([table.location, identifiers.key(column.name)]))
+      .digest('hex')
+      .slice(0, 40);
+    return `_elt_files_${key}`;
   }
 
   // An empty file still stores one empty chunk, so its id stays reserved.

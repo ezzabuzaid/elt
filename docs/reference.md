@@ -438,10 +438,10 @@ The columns declare what to extract. `Copy` collects those declarations; `Source
 
 Use `c.blob('bytes').from(notes.attachments.file)` when the database should own the original bytes instead. This is independent of `.store(files)` and remains available for both SQL destinations. The file and row then commit together in the database.
 
-SQLite stores an original file in chunks, because one BLOB is capped at 1,000,000,000 bytes (`SQLITE_MAX_LENGTH` in Node's build) and a whole-file value would sit in memory. The `bytes` column holds an INTEGER file id, and the table `_elt_files_<table>_<column>` holds `(file, n, bytes)` rows of up to 4 MiB, `n` counting from 0. An empty file has one empty chunk. Triggers remove a row's chunks in the same transaction whenever the row is deleted, overwritten or replaced, and a record that a deduplication guard rejects stores none. Read a file back in order:
+SQLite stores an original file in chunks, because one BLOB is capped at 1,000,000,000 bytes (`SQLITE_MAX_LENGTH` in Node's build) and a whole-file value would sit in memory. The `bytes` column holds an INTEGER file id, and a per-column `_elt_files_<hash>` table holds `(file, n, bytes)` rows of up to 4 MiB, `n` counting from 0. The hash is the first 40 hex characters of SHA-256 over `JSON.stringify([table, column])`, with both names in ASCII lower case, so table `a_b` with column `c` and table `a` with column `b_c` keep their chunks apart. The column's description names its chunk table. An empty file has one empty chunk. Triggers remove a row's chunks in the same transaction whenever the row is deleted, overwritten or replaced, and a record that a deduplication guard rejects stores none. Read a file back in order, with the chunk table the description names:
 
 ```sql
-SELECT c.bytes FROM "_elt_files_attachments_bytes" AS c
+SELECT c.bytes FROM "_elt_files_<hash>" AS c
 WHERE c.file = (SELECT bytes FROM attachments WHERE id = ?)
 ORDER BY c.n;
 ```
