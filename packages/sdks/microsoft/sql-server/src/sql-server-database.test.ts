@@ -213,15 +213,23 @@ test('discovery shows only what the login may read, and a read refused later nam
 });
 
 // Every key page by page, each page read after the last key of the one before.
+// A page that reads a key again, as one that restarts or stands still does,
+// fails here naming that key rather than paging until the test times out.
 async function pagedBy(
   session: SqlServerSession,
   of: SqlServerTable,
   size: number,
 ) {
   const read: string[][] = [];
+  const seen = new Set<string>();
   let after: readonly string[] | null = null;
   for (;;) {
     const page = await keys(session.page(of, after, size));
+    for (const key of page) {
+      const text = JSON.stringify(key);
+      assert.ok(!seen.has(text), `${of.quoted} paged ${text} twice`);
+      seen.add(text);
+    }
     read.push(...page);
     if (page.length < size) return read;
     after = page.at(-1) ?? null;
@@ -390,8 +398,14 @@ test('rowversion reads stop below the oldest open write, so a row still being wr
     for (;;) {
       let count = 0;
       for await (const row of session.rowversions(events, last, below, 1)) {
-        ids.push(row.values[0]);
+        const previous = last;
         last = String(row.value(stamp));
+        // A page that does not resume above the last version never ends.
+        assert.ok(
+          BigInt(last) > BigInt(previous),
+          `version ${last} is not above ${previous}`,
+        );
+        ids.push(row.values[0]);
         count += 1;
       }
       if (count === 0) return { ids, last };
