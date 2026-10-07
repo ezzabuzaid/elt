@@ -24,6 +24,9 @@
       "path": "../reminders"
     },
     {
+      "path": "../notification-center"
+    },
+    {
       "path": "../notes"
     },
     {

@@ -1337,8 +1337,191 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
   });
   await assert.rejects(
     Array.fromAsync(diffSnapshot(plain, [], null)),
-    /must declare sourceDefinedCursor and emitsDeletes/,
+    /must declare sourceDefinedCursor to diff snapshots/,
   );
+});
+
+test('a snapshot stream that emits no deletions keeps the rows of keys its upstream forgot', async () => {
+  let rows: Record<string, unknown>[] = [];
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, name: { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+  });
+  class ForgetfulSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'forgetful-snapshot-test';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      yield* diffSnapshot(configuration.stream, rows, state);
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-forget-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const copy = new Copy(items, destination.table('items'), {
+    id: 'items',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new ForgetfulSource(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [copy],
+      }),
+    ],
+  });
+  const names = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT id, name FROM items ORDER BY id')
+      .all()
+      .map(({ id, name }) => `${id}:${name}`);
+  };
+
+  rows = [
+    { id: 'a', name: 'A' },
+    { id: 'b', name: 'B' },
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+
+  rows = [
+    { id: 'b', name: 'B2' },
+    { id: 'c', name: 'C' },
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+  assert.deepEqual(names(), ['a:A', 'b:B2', 'c:C']);
+
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+
+  // a left the snapshot when the upstream forgot it, so the state holds only
+  // what the upstream keeps: a returning a loads again, though unchanged.
+  rows = [
+    { id: 'a', name: 'A' },
+    { id: 'b', name: 'B2' },
+    { id: 'c', name: 'C' },
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 0 }]);
+  assert.deepEqual(names(), ['a:A', 'b:B2', 'c:C']);
+});
+
+test('a grouped snapshot stream that emits no deletions keeps the rows of a group its upstream forgot', async () => {
+  type Group = { key: string; rows: { id: string; name: string }[] };
+  let groups: Group[] = [];
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, name: { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+  });
+  class ForgetfulGroups extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'forgetful-grouped-test';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      yield* diffGroupedSnapshot(
+        configuration.stream,
+        groups.map(({ key, rows }) => ({
+          key,
+          fingerprint: null,
+          records: () => rows,
+        })),
+        state,
+      );
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-forget-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const copy = new Copy(items, destination.table('items'), {
+    id: 'items',
+    syncMode: 'incremental',
+    destinationSyncMode: 'append_dedup',
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new ForgetfulGroups(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [copy],
+      }),
+    ],
+  });
+  const names = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT id, name FROM items ORDER BY id')
+      .all()
+      .map(({ id, name }) => `${id}:${name}`);
+  };
+
+  groups = [
+    { key: 'one', rows: [{ id: 'a', name: 'A' }] },
+    { key: 'two', rows: [{ id: 'b', name: 'B' }] },
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 2, deleted: 0 }]);
+
+  groups = [{ key: 'two', rows: [{ id: 'b', name: 'B' }] }];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
+  assert.deepEqual(names(), ['a:A', 'b:B']);
+
+  // one left the state with its group, so its return loads a again, though
+  // unchanged.
+  groups = [
+    { key: 'one', rows: [{ id: 'a', name: 'A' }] },
+    { key: 'two', rows: [{ id: 'b', name: 'B' }] },
+  ];
+  assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 0 }]);
+  assert.deepEqual(names(), ['a:A', 'b:B']);
 });
 
 test('grouped snapshot diffs keep unchanged groups without reading them, and still delete what no group produced', async () => {

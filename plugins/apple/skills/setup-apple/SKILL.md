@@ -1,6 +1,6 @@
 ---
 name: setup-apple
-description: Connect or reconfigure Apple Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, call history, Mac accounts and Mac activity for the Apple plugin on a Mac.
+description: Connect or reconfigure Apple Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, call history, notifications, Mac accounts and Mac activity for the Apple plugin on a Mac.
 ---
 
 # Set up Apple
@@ -22,7 +22,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
 
 ## Set up in chat
 
-1. Take the current selection from the Apple status in context, or read it as `$query-apple` describes, then ask which connectors the user wants to set up. Present Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, Call History and Activity in plain language. Reconfiguration starts from the current selection. Do not call `apple_options` for connectors they have not selected.
+1. Take the current selection from the Apple status in context, or read it as `$query-apple` describes, then ask which connectors the user wants to set up. Present Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, Call History, Notification Center and Activity in plain language. Reconfiguration starts from the current selection. Do not call `apple_options` for connectors they have not selected.
 2. For each chosen connector, call `apple_options` with its `connector` to discover real account and collection IDs. It reads metadata and may trigger a macOS prompt. Explain the returned permission guidance when access fails, then retry after the user changes access.
 3. Offer all content or a narrower selection where available:
    - Mail: accounts, mailboxes, received date (sent date if absent).
@@ -34,6 +34,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
    - Safari: profiles and visit dates. A narrowed Safari import leaves out bookmarks, the Reading List and iCloud Tabs, which belong to no profile. History and tabs from the user's other devices arrive only while Safari is open.
    - Books: everything; it has no accounts, collections or dates to choose. Books kept only in iCloud are listed without their files until the user opens them in Books.
    - Call History: call dates only; it has no accounts or collections. Phone calls arrive from the user's iPhone through iCloud. A call removed from Recents, or dropped by macOS, leaves the import too.
+   - Notification Center: delivery dates only; it has no accounts or collections. Notification Center keeps a notification only until its app withdraws it or the user clears it, often minutes; the import keeps every notification it saw after that, and sees the ones Notification Center holds when it imports.
    - Accounts: everything; it is one small store with nothing to choose.
    - Activity: everything; it has no accounts, collections or dates to choose. macOS keeps most activity for 28 days; the import keeps what it loaded after macOS drops it, so tell the user that history builds up from the first import, and that removing Activity or rebuilding its import loses whatever macOS has dropped since.
 4. Translate plain dates using the user's timezone into canonical UTC timestamps with milliseconds. `startAt` is inclusive and `endAt` exclusive; use the following midnight to include an end date. Do not invent account or collection IDs. Unspecified ID lists mean all; leave a connector out of `apple_configure`'s `connectors` to disconnect it. Attachments are copied by default; offer metadata only if the user prefers.

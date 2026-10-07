@@ -169,6 +169,15 @@
     },
     {
       "path": "./packages/codecs/segb"
+    },
+    {
+      "path": "./packages/connectors/apple/notification-center"
+    },
+    {
+      "path": "./packages/sources/apple/notification-center"
+    },
+    {
+      "path": "./packages/sdks/apple/notification-center"
     }
   ]
 }

@@ -244,6 +244,25 @@ Some upstreams keep records only for a while and then drop them without any dele
 - **Rows outlive the upstream:** clearing the copy, resetting its checkpoint, or a full-refresh overwrite loses every expired row for good, because no rerun can read it again. Nothing marks a loaded row as expired.
 - **Precedent:** [dlt's `delete-insert`](https://github.com/dlt-hub/dlt/blob/1.30.0/dlt/destinations/sql_jobs.py#L200-L234) and [`scd2` with a `merge_key`](https://github.com/dlt-hub/dlt/blob/1.30.0/dlt/destinations/sql_jobs.py#L969-L990) likewise retire only rows within what a load reloaded; Airbyte deletes only on change-data-capture markers, and its [refreshes guide](https://github.com/airbytehq/airbyte/blob/0eef98ff7f266392e6d1e1077e80d66971f2a378/docs/platform/operator-guides/refreshes.md#L36-L96) names a source that "does not retain all of its records" as the case where truncating loses data. Here the source scopes deletions by time instead, because it knows the upstream's retention.
 
+#### Forgetting upstreams
+
+Some upstreams drop records for reasons they do not record, so nothing tells a deletion apart from the rest. Notification Center deletes a notification when its app withdraws it, the user clears it, a newer one replaces it or it expires, all with the same `DELETE`. A stream over such an upstream leaves out `emitsDeletes`: the diff then never emits a `DELETE`, and every row it loaded stays.
+
+```ts
+// Notification Center forgets notifications: no emitsDeletes, so a vanished
+// one keeps its row. Its source diffs each scan as any snapshot stream does.
+const notifications = new Stream({
+  ...declaration,
+  sourceDefinedCursor: true,
+});
+```
+
+- **What changes:** only deletions. New and changed records load as in any snapshot stream, and an unchanged one writes nothing.
+- **Bounded state:** a vanished key leaves the state, so it holds what the upstream keeps now; a key that turns up again loads as new.
+- **No horizon:** such a stream takes no horizon, and `expiresBy` requires `emitsDeletes`: an expiring upstream deletes within its retention, a forgetting one never.
+- **Rows outlive the upstream**, as for expired rows: clearing the copy, resetting its checkpoint, a full-refresh overwrite, or a change to the stream's schema, which restarts the copy into a reload of what the upstream holds now, loses them for good. Nothing marks a loaded row as gone from the upstream.
+- **Airbyte:** destination rows are deleted only "if your source supports emitting deleting records (e.g. an CDC database source)" ([incremental append + deduped](https://docs.airbyte.com/platform/using-airbyte/core-concepts/sync-modes/incremental-append-deduped)); an incremental stream without deletion support keeps every row it loaded. Here that is a declaration on the stream rather than a property of the source.
+
 ### Partitioned streams
 
 One source can read a stream as several partitions, such as one per Search Console property or per account. The stream declares `partitionKey`, a subset of its `primaryKey`; the source lists the partitions from its configuration and receives each one in `extract`:
@@ -1667,6 +1686,93 @@ Checked live on 2026-10-06 against macOS 27.0 (26A428):
 - Two reads with no call in between hashed every table identically, so no value changes per read.
 
 Unverified: values of `emergencyMediaItems` and `saintDavidsCounts`. Both tables are empty here and are tested only against their declared shapes: emergency media exists only after media is shared during an emergency call, and Apple names neither the Saint Davids feature nor its type codes (`ZSAINT_DAVIDS_1` is 0 and `ZSAINT_DAVIDS_2` empty on every call here).
+
+## Apple Notification Center
+
+```ts
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+import { AppleNotificationCenterSource } from '@workspace/source-apple-notification-center/apple-notification-center-source';
+
+// ~/Library/Group Containers/group.com.apple.usernoted/db2/db
+const source = new AppleNotificationCenterSource();
+const destination = new SQLiteDestination({
+  path: './outputs/notifications.sqlite',
+});
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'apple-notification-center',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/notifications-state.sqlite',
+      }),
+      steps: [source.notifications, source.apps].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads `~/Library/Group Containers/group.com.apple.usernoted/db2/db`, the store usernoted keeps for Notification Center, with the `@workspace/sdk-apple-notification-center` SDK. No app needs to be open, and neither Notification Center nor the UserNotifications framework is used: the framework shows an app only its own notifications. `npx nx run apple-cli:start -- sync --connector notification-center` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views (`notifications`, `apps`, `categories`, `category_actions`). Every stream of a run reads one snapshot of the store, a read transaction on a read-only connection, never `immutable`, since usernoted keeps a write-ahead log.
+
+### Access
+
+The store needs [Full Disk Access](#full-disk-access). On 2026-10-07 a terminal with the grant read it, and a launchd job without it got SQLite's AUTH (23, `authorization denied`) and `Operation not permitted` listing `db2/`, as Mail's store did in the same job; the error becomes `NotificationCenterUnavailableError`, which names the grant, and fails every stream.
+
+### Streams
+
+| Stream            | Upstream                               | One record per                                                            |
+| ----------------- | -------------------------------------- | ------------------------------------------------------------------------- |
+| `notifications`   | `record`, its `data` property list     | notification Notification Center delivered while an import read the store |
+| `apps`            | `app`                                  | app that has posted to Notification Center, with its badge now            |
+| `categories`      | `categories`, one list per app         | notification category an app registered, in the order it gave them        |
+| `categoryActions` | the same lists, each category's `acts` | button a category puts on its notifications, such as Reply                |
+
+usernoted keeps each notification as a binary property list in `record.data`, under four-letter keys. The reader names the keys whose meaning usernoted's own strings or Apple's public API fix: `titl`, `subt` and `body`; `iden`, the identifier the app gave the request; `thre`, the thread; `cate`, the category; `durl`, the default action URL; `soun.nam`, the sound; `edat`, when usernoted removes it; `intrp`, the `UNNotificationInterruptionLevel` (0 passive, 1 active, 2 time-sensitive, 3 critical); `unct`, the communication content type; and `usda`, the app's own `userInfo`, an NSKeyedArchiver archive that names the record in the app's store (a Messages message GUID, a Mail message ID, a Calendar event, a Codex `conversation_id`). `payload` keeps every key as JSON, named or not, with nested archives decoded where they sit and data as Base64: the communication context `uncc` (a Messages sender's handle), and `orig`, `dest`, `srce`, `resp` and `trig`, whose codes Apple does not document. `style` is usernoted's code from `record.style`, 0 or 1 on macOS 27.
+
+A notification's `id` is the delivery's UUID (`record.uuid`) in uppercase, as `NSUUID` writes it: Activity's `notificationUsage.notificationId`. `requestId` is Activity's `notificationDeliveries.requestId`, matched with its bundle identifier ignoring case. `notifications.bundleId` keeps the app's own case, while `apps.bundleId` is lowercased as usernoted keys it. Notifications posted through the legacy API, such as Script Editor's, carry no request identifier, thread or category. `deliveredAt` and `expiresAt` are [`date-time` with `precision` 6](#string-formats): usernoted keeps seconds since 2001-01-01 in a double with a microsecond fraction.
+
+An app's categories are a list it registers whole, and its texts may be localized, stored as `[key, key, arguments]`; the reader loads the key, which the app's bundle resolves. Categories are keyed by their position in the list: on 2026-10-07 Wallet registered `PDUserNotificationTypeAccountPaymentDue` twice, with different options.
+
+Left out: `delivered` and `displayed`, which list each app's notification UUIDs and so index `record`; `requests`, empty on this Mac and so not typed; and `dbinfo`.
+
+### Date range
+
+An import's date range selects notifications by `deliveredAt`, from `startAt` inclusive to `endAt` exclusive. `apps`, `categories` and `categoryActions` have no date and load whole.
+
+### Changes and deletions
+
+`notifications` is a [forgetting upstream](#forgetting-upstreams): it declares no `emitsDeletes`, so a notification that leaves the store keeps its row, and the rows are a history rather than what Notification Center shows now. usernoted deletes a notification's row when its app withdraws it, the user clears it, a newer one with the same request identifier replaces it, it expires, the app clears its badge, a dismissal syncs from another device, or the app is uninstalled, always with the same `DELETE` under `secure_delete` and no record of why; only the unified log, kept about two days, names the cause. Over 2026-10-05 to 2026-10-07 apps withdrew most of them (cmux 105, Codex 27, Reminders 14, Teams 7). A notification the user cleared therefore stays in the import too. usernoted reuses a deleted row's `rec_id`, so the key is the delivery's UUID, and a replacement loads as a new row beside the one it replaced.
+
+`apps`, `categories` and `categoryActions` are [snapshot streams](#snapshot-streams) with deletions, since they describe the store now: an uninstalled app, removed with its records by usernoted's `app_deleted` trigger, and a category its app no longer registers are deleted. The SDK checks every column it reads when a snapshot opens: a store from a macOS whose layout lacks one fails every stream with `NotificationCenterSchemaError`, which names the missing columns, and leaves the import as it was.
+
+### Watching
+
+A watch polls the store's `data_version` every second through `NotificationCenterStore.version()`; usernoted commits through its WAL on every delivery, withdrawal and badge. One database cannot say which table a commit touched, so each commit wakes every selected stream, and the snapshot diff writes nothing for the unchanged ones. Notification Center holds many notifications for minutes: from 2026-10-06 07:00 to 2026-10-07 13:30 Biome's `Notification.Delivery` logged 168 deliveries (cmux 129, Bluetooth 22, Teams 12) that were gone from the store before a read. A watching pipeline loads each within a second. The Apple hosts import at setup and server start, without watching, so until they refresh an import holds what Notification Center held at each pass.
+
+### Notification Center export probe
+
+Checked live on 2026-10-07 against macOS 27.0 (26A428), usernoted database version 19:
+
+- The store held 59 to 64 notifications from 2026-10-06 07:14 on (usernoted recreated the file on 2026-10-02, and `rec_id` restarted at 1), 141 apps (136 without a badge) and 42 category lists holding 300 categories and 752 actions. Every `data`, `usda` and `uncc` blob decoded with `codec-plist`.
+- A load through `apple-cli` took 0.36 s and wrote 63 notifications, 141 apps, 300 categories and 752 actions; a second load wrote nothing. A load a minute later wrote 2 new notifications and kept the 1 usernoted had dropped meanwhile (65 loaded, 64 in the store), and loaded an app's re-registered categories (14 categories, 31 actions written, 8 deleted).
+- Expiry: a temporary calendar's event, ending a minute after its alert, posted a Calendar notification with `expiresAt` at the event's end. usernoted logged `Request uuid: … from com.apple.iCal expired` at that end and deleted the row; the next load deleted nothing and kept the notification. `requests` stayed empty throughout, so a Calendar alarm does not pass through it. The calendar was deleted afterwards.
+- A schema change restarted the copy: after `style` became nullable, the next load reloaded the 63 notifications the store held and dropped the one it had kept, as [forgetting upstreams](#forgetting-upstreams) describe.
+- Two reads a minute apart with no delivery returned byte-identical blobs, so no value changes per read.
+
+A dismissal synced from another device needs the user's other device and was not produced; it is a `DELETE` like the others, with no reason stored, so the import keeps the notification as it keeps every removal. `style`, `orig`, `dest` and the action `st` code stay unnamed: Apple does not document them, usernoted's strings list `none`, `banner` and `alert` for its notification style, but Calendar, whose alert style in `com.apple.ncprefs` is alerts, stored `style` 0 while apps set to banners stored 1, so the codes do not map to the setting. `requests` was empty, also while a Calendar alarm fired.
 
 ## Google Search Console
 

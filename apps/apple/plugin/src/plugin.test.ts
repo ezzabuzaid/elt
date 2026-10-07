@@ -408,6 +408,7 @@ test('the Settings page switches connectors on and off and describes each import
       activity: false,
       accounts: false,
       'call-history': false,
+      'notification-center': false,
     },
   );
   const [kept, mail] = plugin.status().connectors;

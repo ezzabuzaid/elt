@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-notification-center",
+  "sourceRoot": "packages/sources/apple/notification-center/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/notification-center/dist/*.test.js\""
+    }
+  }
+}

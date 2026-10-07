@@ -15,6 +15,7 @@
     "@workspace/connector-apple-manifest": "0.0.1",
     "@workspace/connector-apple-messages": "0.0.1",
     "@workspace/connector-apple-notes": "0.0.1",
+    "@workspace/connector-apple-notification-center": "0.0.1",
     "@workspace/connector-apple-reminders": "0.0.1",
     "@workspace/connector-apple-safari": "0.0.1",
     "@workspace/elt": "0.0.1",

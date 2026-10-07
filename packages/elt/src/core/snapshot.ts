@@ -24,6 +24,9 @@ export type SnapshotState = {
 // A stream that declares expiresBy takes the horizon the upstream keeps
 // records from: a key that vanished with an expiresBy before it expired, so it
 // leaves the snapshot without a DELETE and its row stays loaded.
+// A stream that does not declare emitsDeletes has an upstream that forgets
+// records rather than deleting them: every vanished key leaves the snapshot
+// without a DELETE, and its row stays loaded.
 export async function* diffSnapshot<Data extends Record<string, unknown>>(
   stream: Stream,
   records: AsyncIterable<Data> | Iterable<Data>,
@@ -35,7 +38,7 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
   | StateMessage
 > {
   assertSnapshotStream(stream);
-  const expired = expiry(stream, horizon);
+  const kept = keptRows(stream, horizon);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
   const current = new Map<string, SavedEntry>();
@@ -51,7 +54,7 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
       yield { stream: stream.name, data };
   }
   for (const [key, entry] of previous)
-    if (!current.has(key) && !expired(entry))
+    if (!current.has(key) && !kept(entry))
       yield {
         type: 'DELETE',
         stream: stream.name,
@@ -85,7 +88,7 @@ export type GroupedSnapshotState = {
 // scan keeps its records without reading them; every other group is read and
 // diffed record by record. Deletions still come from the complete scan: a key
 // no group produced, carried or read, is deleted, unless it expired before the
-// horizon, as in diffSnapshot.
+// horizon or the stream emits no deletions, as in diffSnapshot.
 export async function* diffGroupedSnapshot<
   Data extends Record<string, unknown>,
 >(
@@ -99,7 +102,7 @@ export async function* diffGroupedSnapshot<
   | StateMessage
 > {
   assertSnapshotStream(stream);
-  const expired = expiry(stream, horizon);
+  const kept = keptRows(stream, horizon);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what diffGroupedSnapshot wrote; own state is not re-validated
   const saved = state as GroupedSnapshotState | null;
@@ -156,7 +159,7 @@ export async function* diffGroupedSnapshot<
   }
   for (const { snapshot } of previous.values())
     for (const [key, entry] of Object.entries(snapshot))
-      if (!seen.has(key) && !expired(entry))
+      if (!seen.has(key) && !kept(entry))
         yield {
           type: 'DELETE',
           stream: stream.name,
@@ -170,9 +173,9 @@ export async function* diffGroupedSnapshot<
 }
 
 function assertSnapshotStream(stream: Stream): void {
-  if (!stream.sourceDefinedCursor || !stream.emitsDeletes)
+  if (!stream.sourceDefinedCursor)
     throw new TypeError(
-      `Stream ${stream.name} must declare sourceDefinedCursor and emitsDeletes to diff snapshots`,
+      `Stream ${stream.name} must declare sourceDefinedCursor to diff snapshots`,
     );
 }
 
@@ -185,10 +188,11 @@ function sortedObject<Value>(
   );
 }
 
-// Whether a vanished key expired upstream rather than being deleted: only a
-// stream that declares expiresBy expires keys, those whose saved expiresBy
-// falls before the horizon the upstream keeps records from.
-function expiry(
+// Whether a vanished key keeps its row: every key of a stream that emits no
+// deletions, whose upstream forgets records rather than deleting them, and,
+// for a stream that declares expiresBy, the keys whose saved expiresBy falls
+// before the horizon the upstream keeps records from.
+function keptRows(
   stream: Stream,
   horizon: string | undefined,
 ): (entry: SavedEntry) => boolean {
@@ -197,7 +201,8 @@ function expiry(
       throw new TypeError(
         `Stream ${stream.name} declares no expiresBy, so its snapshot diff takes no horizon`,
       );
-    return () => false;
+    const forgets = !stream.emitsDeletes;
+    return () => forgets;
   }
   if (!isTimestamp(horizon))
     throw new TypeError(

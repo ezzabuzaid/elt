@@ -32,6 +32,9 @@
       "path": "../../../packages/connectors/apple/reminders"
     },
     {
+      "path": "../../../packages/connectors/apple/notification-center"
+    },
+    {
       "path": "../../../packages/connectors/apple/notes"
     },
     {
@@ -50,10 +53,10 @@
       "path": "../../../packages/connectors/apple/connector"
     },
     {
-      "path": "../../../packages/connectors/apple/calendar"
+      "path": "../../../packages/connectors/apple/call-history"
     },
     {
-      "path": "../../../packages/connectors/apple/call-history"
+      "path": "../../../packages/connectors/apple/calendar"
     },
     {
       "path": "../../../packages/connectors/apple/books"

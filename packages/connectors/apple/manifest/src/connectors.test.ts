@@ -32,6 +32,7 @@ test('every connector folder loads as its connector for the host, and one that c
     'mail',
     'messages',
     'notes',
+    'notification-center',
     'photos',
     'reminders',
     'safari',
@@ -40,6 +41,14 @@ test('every connector folder loads as its connector for the host, and one that c
   assert.equal(
     callHistory?.guidance(),
     'Turn on Terminal in System Settings › Privacy & Security › Full Disk Access, then quit and reopen Terminal. macOS does not ask for this access. No app needs to be open: macOS keeps the calls from Phone, FaceTime and your iPhone in one store.',
+  );
+  const notificationCenter = connectors.find(
+    ({ name }) => name === 'notification-center',
+  );
+  assert.equal(notificationCenter?.title, 'Notification Center');
+  assert.equal(
+    notificationCenter?.guidance(),
+    'Turn on Terminal in System Settings › Privacy & Security › Full Disk Access, then quit and reopen Terminal. macOS does not ask for this access. No app needs to be open: macOS keeps every app’s notifications in one store while Notification Center holds them.',
   );
   const photos = connectors.find(({ name }) => name === 'photos');
   assert.equal(

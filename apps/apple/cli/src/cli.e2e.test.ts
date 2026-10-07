@@ -1807,3 +1807,81 @@ test('call history that macOS keeps behind Full Disk Access fails its sync namin
   assert.equal(pass.status, 'failed');
   assert.match(pass.error, /Full Disk Access/);
 });
+
+// The user's Notification Center, where usernoted keeps it under HOME: the
+// tables the reader reads, as macOS 27's usernoted declares them, holding a
+// notification from September and one from October.
+async function withNotificationCenter(mac: string) {
+  const directory = join(
+    mac,
+    'Library/Group Containers/group.com.apple.usernoted/db2',
+  );
+  mkdirSync(directory, { recursive: true });
+  const deliveries = [
+    [
+      '1A000000-0000-4000-8000-000000000001',
+      '2026-09-20T09:00:00Z',
+      'Old news',
+    ],
+    ['2B000000-0000-4000-8000-000000000002', '2026-10-06T09:00:00Z', 'Lunch?'],
+  ] as const;
+  using store = new DatabaseSync(join(directory, 'db'));
+  store.exec(`
+    CREATE TABLE app (app_id INTEGER PRIMARY KEY, identifier VARCHAR, badge INTEGER NULL);
+    CREATE TABLE record (rec_id INTEGER PRIMARY KEY, app_id INTEGER, uuid BLOB, data BLOB, request_date REAL, request_last_date REAL, delivered_date REAL, presented Bool, style INTEGER, snooze_fire_date REAL);
+    CREATE TABLE categories (app_id INTEGER PRIMARY KEY, categories BLOB);
+    INSERT INTO app VALUES (1, 'com.apple.mobilesms', 1);
+  `);
+  for (const [index, [id, delivered, title]] of deliveries.entries()) {
+    const uuid = Uint8Array.from(Buffer.from(id.replaceAll('-', ''), 'hex'));
+    store
+      .prepare(
+        'INSERT INTO record (rec_id, app_id, uuid, data, delivered_date, presented, style) VALUES (?, 1, ?, ?, ?, 0, 1)',
+      )
+      .run(
+        index + 1,
+        uuid,
+        await binaryPlist(directory, {
+          app: 'com.apple.MobileSMS',
+          uuid,
+          date: appleSeconds(delivered),
+          styl: 1,
+          req: { titl: title, body: 'From Sam', iden: `message-${index}` },
+        }),
+        appleSeconds(delivered),
+      );
+  }
+}
+
+test('notification center syncs from where usernoted keeps it, and --since keeps the notifications delivered from that day on', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withNotificationCenter(mac.path);
+
+  const setup = cli(
+    mac.path,
+    'setup',
+    '--connector',
+    'notification-center',
+    '--since',
+    '2026-10-01',
+  );
+  const synced = cli(mac.path, 'sync');
+  const notifications = cli(
+    mac.path,
+    'query',
+    'notification-center',
+    'SELECT id, bundleId, title FROM notifications',
+    '--json',
+  );
+
+  assert.equal(setup.status, 0, setup.stderr);
+  assert.equal(synced.status, 0, synced.stdout + synced.stderr);
+  assert.equal(lines(synced.stdout)[0].connector, 'notification-center');
+  assert.deepEqual(JSON.parse(notifications.stdout), [
+    {
+      id: '2B000000-0000-4000-8000-000000000002',
+      bundleId: 'com.apple.MobileSMS',
+      title: 'Lunch?',
+    },
+  ]);
+});
