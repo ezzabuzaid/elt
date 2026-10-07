@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 import {
   decodeArchive,
   isDictionary
-} from "./chunk-2VSN4436.mjs";
+} from "./chunk-GXPN73JS.mjs";
 import {
   AppDatabase,
   AppDatabaseVersion

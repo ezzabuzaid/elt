@@ -11,6 +11,7 @@ import {
   FileRead,
   FileReference,
   FileStorage,
+  Identifiers,
   LocalFiles,
   Pipeline,
   PipelineError,
@@ -33,9 +34,8 @@ import {
   readerCatalog,
   reloadMode,
   syncHistoryRelations,
-  undescribed,
   validateRecords
-} from "../chunks/chunk-WXJ5Y2PE.mjs";
+} from "../chunks/chunk-OC6XOTPF.mjs";
 import "../chunks/chunk-ZGXE7NZW.mjs";
 export {
   Catalog,
@@ -49,6 +49,7 @@ export {
   FileRead,
   FileReference,
   FileStorage,
+  Identifiers,
   LocalFiles,
   Pipeline,
   PipelineError,
@@ -71,6 +72,5 @@ export {
   readerCatalog,
   reloadMode,
   syncHistoryRelations,
-  undescribed,
   validateRecords
 };

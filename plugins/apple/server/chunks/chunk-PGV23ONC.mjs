@@ -7,6 +7,7 @@ import {
   Destination,
   FileContent,
   FileRead,
+  Identifiers,
   LocalFiles,
   StreamStatus,
   SyncHistory,
@@ -22,9 +23,8 @@ import {
   passStatus,
   readerCatalog,
   reloadMode,
-  syncHistoryRelations,
-  undescribed
-} from "./chunk-WXJ5Y2PE.mjs";
+  syncHistoryRelations
+} from "./chunk-OC6XOTPF.mjs";
 import {
   __callDispose,
   __using
@@ -37,6 +37,16 @@ import { join } from "node:path";
 // packages/destinations/sqlite/dist/sqlite-catalog.js
 import { DatabaseSync } from "node:sqlite";
 
+// packages/destinations/sqlite/dist/sqlite-identifiers.js
+var SQLiteIdentifiers = class extends Identifiers {
+  maxBytes = Infinity;
+  ownColumns = ["loaded_at"];
+  key(name) {
+    return name.replaceAll(/[A-Z]/g, (letter) => letter.toLowerCase());
+  }
+};
+var identifiers = Object.freeze(new SQLiteIdentifiers());
+
 // packages/destinations/sqlite/dist/sqlite-descriptions.js
 var descriptions = '"_elt_descriptions"';
 function createDescriptions(database) {
@@ -47,14 +57,14 @@ function describe(database, relation, description, columns) {
   database.exec(`DELETE FROM ${descriptions} WHERE "relation" NOT IN (SELECT "name" FROM sqlite_schema)`);
   database.prepare(`DELETE FROM ${descriptions} WHERE "relation" = ?`).run(relation);
   const declared = new Map(database.prepare('SELECT "name", "type" FROM pragma_table_info(?)').all(relation).map(({ name, type }) => [
-    String(name).toLowerCase(),
+    identifiers.key(String(name)),
     String(type).toLowerCase() || null
   ]));
   const insert = database.prepare(`INSERT INTO ${descriptions} ("relation", "column", "data_type", "description") VALUES (?, ?, ?, ?)`);
   insert.run(relation, "", null, description);
   for (const [column, { description: description2, dataType }] of Object.entries(columns))
     if (description2 !== null)
-      insert.run(relation, column, dataType ?? declared.get(column.toLowerCase()) ?? null, description2);
+      insert.run(relation, column, dataType ?? declared.get(identifiers.key(column)) ?? null, description2);
 }
 
 // packages/destinations/sqlite/dist/sqlite-views.js
@@ -252,6 +262,9 @@ function canonical(kind, name, format) {
   }
 }
 var SQLiteColumn = class _SQLiteColumn {
+  // The record field the column holds.
+  field;
+  // What SQLite calls the column, which the table it belongs to decides.
   name;
   kind;
   // The string format a schema-inferred column keeps, which refines its kind.
@@ -263,22 +276,23 @@ var SQLiteColumn = class _SQLiteColumn {
   // An array of kind, stored as a JSON array in TEXT.
   array;
   fileRead;
-  constructor(name, kind, options) {
-    if (!name || name.includes("\0"))
-      throw new TypeError("Invalid column name");
+  constructor(field, kind, options) {
+    if (typeof field !== "string")
+      throw new TypeError("A column holds a field named by a string");
     if (!Object.hasOwn(storageTypes, kind))
       throw new TypeError("Unsupported SQLite column type");
     const { format } = options;
     if (format === void 0 ? formatted.has(kind) : formatKinds[format.name] !== kind)
-      throw new TypeError(`Column ${name} kind ${kind} must match its format`);
+      throw new TypeError(`Column ${field} kind ${kind} must match its format`);
     this.format = format;
     this.array = options.array ?? false;
     if (this.array && (kind === "blob" || options.primaryKey))
       throw new TypeError("Array columns hold scalar values and cannot be keys");
     this.fileRead = options.fileRead;
-    if (this.fileRead !== void 0 && (!(this.fileRead instanceof FileRead) || this.fileRead.name !== name))
-      throw new TypeError("Column file read must match its name");
-    this.name = name;
+    if (this.fileRead !== void 0 && (!(this.fileRead instanceof FileRead) || this.fileRead.name !== field))
+      throw new TypeError("Column file read must match its field");
+    this.field = field;
+    this.name = options.name ?? field;
     this.kind = kind;
     this.isPrimaryKey = options.primaryKey;
     this.nullable = !options.primaryKey && options.nullable;
@@ -287,33 +301,36 @@ var SQLiteColumn = class _SQLiteColumn {
     Object.freeze(this);
   }
   primaryKey() {
-    return new _SQLiteColumn(this.name, this.kind, {
+    return new _SQLiteColumn(this.field, this.kind, {
       nullable: false,
       optional: false,
       primaryKey: true,
       array: this.array,
       fileRead: this.fileRead,
-      format: this.format
+      format: this.format,
+      name: this.name
     });
   }
   notNull() {
-    return new _SQLiteColumn(this.name, this.kind, {
+    return new _SQLiteColumn(this.field, this.kind, {
       nullable: false,
       optional: false,
       primaryKey: this.isPrimaryKey,
       array: this.array,
       fileRead: this.fileRead,
-      format: this.format
+      format: this.format,
+      name: this.name
     });
   }
   from(file) {
     if (this.array || this.kind !== "blob" && this.kind !== "text")
       throw new TypeError("Files require a BLOB column, parsed TEXT or a stored TEXT reference");
-    return new _SQLiteColumn(this.name, this.kind, {
+    return new _SQLiteColumn(this.field, this.kind, {
       nullable: this.nullable,
       optional: this.optional,
       primaryKey: this.isPrimaryKey,
-      fileRead: new FileRead(this.name, file, this.fileRead?.parser)
+      fileRead: new FileRead(this.field, file, this.fileRead?.parser),
+      name: this.name
     });
   }
   parse(parser) {
@@ -321,11 +338,24 @@ var SQLiteColumn = class _SQLiteColumn {
       throw new TypeError("Document parsing requires a TEXT column");
     if (this.fileRead === void 0)
       throw new TypeError("Select a source file before selecting a parser");
-    return new _SQLiteColumn(this.name, this.kind, {
+    return new _SQLiteColumn(this.field, this.kind, {
       nullable: this.nullable,
       optional: this.optional,
       primaryKey: this.isPrimaryKey,
-      fileRead: new FileRead(this.name, this.fileRead.file, parser)
+      fileRead: new FileRead(this.field, this.fileRead.file, parser),
+      name: this.name
+    });
+  }
+  // This column as the table names it.
+  named(name) {
+    return new _SQLiteColumn(this.field, this.kind, {
+      nullable: this.nullable,
+      optional: this.optional,
+      primaryKey: this.isPrimaryKey,
+      array: this.array,
+      fileRead: this.fileRead,
+      format: this.format,
+      name
     });
   }
   get quotedName() {
@@ -368,20 +398,20 @@ var SQLiteColumn = class _SQLiteColumn {
   }
   encode(record) {
     if (record === null || typeof record !== "object" || Array.isArray(record))
-      throw new TypeError(`Record is missing column "${this.name}"`);
-    if (!Object.hasOwn(record, this.name)) {
+      throw new TypeError(`Record is missing field ${JSON.stringify(this.field)}`);
+    if (!Object.hasOwn(record, this.field)) {
       if (this.optional)
         return null;
-      throw new TypeError(`Record is missing column "${this.name}"`);
+      throw new TypeError(`Record is missing field ${JSON.stringify(this.field)}`);
     }
-    const value = Reflect.get(record, this.name);
+    const value = Reflect.get(record, this.field);
     if (value === null && this.nullable)
       return null;
     const { format } = this;
     if (this.array) {
       if (Array.isArray(value) && value.every((element) => this.#element(element)))
         return JSON.stringify(value);
-      throw new TypeError(`Column "${this.name}" requires an array of ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
+      throw new TypeError(`Field ${JSON.stringify(this.field)} requires an array of ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
     }
     if (format !== void 0) {
       if (typeof value === "string" && format.accepts(value)) {
@@ -391,7 +421,7 @@ var SQLiteColumn = class _SQLiteColumn {
           return Buffer.from(value, "base64");
         return value;
       }
-      throw new TypeError(`Column "${this.name}" requires a canonical ${format.name} value${this.nullable ? " or null" : " (not null)"}`);
+      throw new TypeError(`Field ${JSON.stringify(this.field)} requires a canonical ${format.name} value${this.nullable ? " or null" : " (not null)"}`);
     }
     switch (this.kind) {
       case "text":
@@ -425,7 +455,7 @@ var SQLiteColumn = class _SQLiteColumn {
         } else if (value instanceof Uint8Array)
           return value;
     }
-    throw new TypeError(`Column "${this.name}" requires ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
+    throw new TypeError(`Field ${JSON.stringify(this.field)} requires ${this.kind}${this.nullable ? " or null" : " (not null)"}`);
   }
   // Whether a JSON array element keeps this kind's value exactly.
   #element(value) {
@@ -553,39 +583,77 @@ import { resolve as resolve2 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-writer.js
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-file-store.js
+import { createHash } from "node:crypto";
 var quote2 = (name) => `"${name.replaceAll('"', '""')}"`;
+var tablePrefix = "_elt_files_";
+var chunks = '("file" INTEGER NOT NULL, "n" INTEGER NOT NULL, "bytes" BLOB NOT NULL, PRIMARY KEY ("file", "n")) STRICT';
 var SQLiteFileStore = class _SQLiteFileStore {
   static chunkSize = 4 * 1024 * 1024;
   name;
-  #next;
-  #insert;
+  #database;
+  #table;
+  #column;
+  #staged;
   constructor(database, table, column) {
+    this.#database = database;
+    this.#table = table;
+    this.#column = column;
     this.name = _SQLiteFileStore.tableName(table, column);
-    const chunks = quote2(this.name);
-    database.exec(`CREATE TABLE IF NOT EXISTS ${chunks} ("file" INTEGER NOT NULL, "n" INTEGER NOT NULL, "bytes" BLOB NOT NULL, PRIMARY KEY ("file", "n")) STRICT`);
-    if (database.prepare(`SELECT 1 FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`).get(table.location)) {
-      database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_delete`)} AFTER DELETE ON ${table.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
-      database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_update`)} AFTER UPDATE OF ${column.quotedName} ON ${table.quotedName} WHEN old.${column.quotedName} IS NOT new.${column.quotedName} BEGIN DELETE FROM ${chunks} WHERE "file" = old.${column.quotedName}; END`);
-    }
-    this.#next = database.prepare(`SELECT coalesce(max("file"), 0) + 1 AS "file" FROM ${chunks}`);
-    this.#insert = database.prepare(`INSERT INTO ${chunks} ("file", "n", "bytes") VALUES (?, ?, ?)`);
+    this.#staged = quote2(`${tablePrefix}stage_${this.name.slice(tablePrefix.length)}`);
   }
+  // A hash of the table and column, as SQLite compares them: joined as text,
+  // table a_b with column c and table a with column b_c would share chunks
+  // and prune each other's.
   static tableName(table, column) {
-    return `_elt_files_${table.location}_${column.name.toLowerCase()}`;
+    const key = createHash("sha256").update(JSON.stringify([table.location, identifiers.key(column.name)])).digest("hex").slice(0, 40);
+    return `${tablePrefix}${key}`;
   }
-  // An empty file still stores one empty chunk, so its id stays reserved.
+  #exists(location) {
+    return this.#database.prepare(`SELECT 1 FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`).get(location) !== void 0;
+  }
+  get published() {
+    return this.#exists(this.name);
+  }
+  stage() {
+    this.#database.exec(`DROP TABLE IF EXISTS temp.${this.#staged}`);
+    this.#database.exec(`CREATE TEMP TABLE ${this.#staged} ${chunks}`);
+  }
+  // An empty file still stores one empty chunk, so its id stays reserved. Ids
+  // continue after both the published and the staged chunks.
   async save(content) {
-    const file = Number(this.#next.get()?.file);
+    const highest = (table) => Number(this.#database.prepare(`SELECT coalesce(max("file"), 0) AS "file" FROM ${table}`).get()?.file);
+    const file = Math.max(this.published ? highest(quote2(this.name)) : 0, highest(`temp.${this.#staged}`)) + 1;
+    const insert = this.#database.prepare(`INSERT INTO temp.${this.#staged} ("file", "n", "bytes") VALUES (?, ?, ?)`);
     let n = 0;
     for await (const chunk of content.chunks(_SQLiteFileStore.chunkSize))
-      this.#insert.run(file, n++, chunk);
+      insert.run(file, n++, chunk);
     if (n === 0)
-      this.#insert.run(file, 0, new Uint8Array());
+      insert.run(file, 0, new Uint8Array());
     return file;
+  }
+  // Moves the staged chunks into the store, inside a commit, and attaches the
+  // triggers to the target once it exists. A reload swaps in a table without
+  // them, which its next commit attaches again.
+  publish() {
+    const table = quote2(this.name);
+    const column = this.#column.quotedName;
+    this.#database.exec(`CREATE TABLE IF NOT EXISTS ${table} ${chunks}`);
+    if (this.#exists(this.#table.location)) {
+      this.#database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_delete`)} AFTER DELETE ON ${this.#table.quotedName} BEGIN DELETE FROM ${table} WHERE "file" = old.${column}; END`);
+      this.#database.exec(`CREATE TRIGGER IF NOT EXISTS ${quote2(`${this.name}_update`)} AFTER UPDATE OF ${column} ON ${this.#table.quotedName} WHEN old.${column} IS NOT new.${column} BEGIN DELETE FROM ${table} WHERE "file" = old.${column}; END`);
+    }
+    this.#database.exec(`INSERT INTO ${table} SELECT * FROM temp.${this.#staged}`);
+    this.discard();
+  }
+  discard() {
+    this.#database.exec(`DELETE FROM temp.${this.#staged}`);
+  }
+  unstage() {
+    this.#database.exec(`DROP TABLE IF EXISTS temp.${this.#staged}`);
   }
 };
 
@@ -616,9 +684,12 @@ var SQLiteWriter = class extends Writer {
     this.#description = describeTarget(configuration, table.columns, (column) => `Integer reference to the source file's original bytes. Join ${quote3(SQLiteFileStore.tableName(table, column))} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`);
     if (table.readerView === void 0)
       return;
-    const missing = undescribed(this.#description);
+    const { missing } = this.#description;
     if (missing.length > 0)
       throw new TypeError(`Reader view ${table.readerView} needs JSON Schema descriptions for ${missing.join(", ")} of stream ${this.stream.name}`);
+  }
+  // Refuses, before anything is read, stored rows the load cannot keep.
+  inspect(_database) {
   }
   // What a reload's hidden target needs once it is created, before the first
   // merge fills it, and once it takes the target's name.
@@ -639,7 +710,7 @@ var SQLiteWriter = class extends Writer {
     database.exec(`DELETE FROM ${this.table.quotedName}`);
   }
   get hash() {
-    return createHash("sha256").update(this.table.location).digest("hex");
+    return createHash2("sha256").update(this.table.location).digest("hex");
   }
   get dedupIndex() {
     return quote3(`_elt_dedup_${this.hash}`);
@@ -657,19 +728,25 @@ var SQLiteWriter = class extends Writer {
   deletionKeys(_key) {
     throw new TypeError("Only deduplicating loads can apply deletions");
   }
-  // The owner lives beside the table it guards and commits with the load. A
-  // dropped table releases it, since nothing it held remains.
+  // The owner lives beside the table it guards. A dropped table releases it,
+  // since nothing it held remains.
   writers(database) {
     database.exec('CREATE TABLE IF NOT EXISTS "_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT');
   }
+  // Refuses, before anything is read, a target another writer owns.
+  #refuse(database, writer) {
+    if (!this.exists(database, "_elt_writers"))
+      return;
+    const owner = database.prepare(`SELECT "writer" FROM "_elt_writers" WHERE "target" = ? AND "target" IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`).get(this.table.location)?.writer;
+    if (owner !== void 0 && owner !== writer)
+      throw new TargetOwnedError(this.table.name, String(owner), writer);
+  }
+  // Records the owner with the target's first commit; prepare refused any
+  // other, and the writer lock keeps one in until the load ends.
   own(database, writer) {
     this.writers(database);
     database.exec(`DELETE FROM "_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`);
-    const owner = database.prepare('SELECT "writer" FROM "_elt_writers" WHERE "target" = ?').get(this.table.location)?.writer;
-    if (owner === void 0)
-      database.prepare('INSERT INTO "_elt_writers" ("target", "writer") VALUES (?, ?)').run(this.table.location, writer);
-    else if (owner !== writer)
-      throw new TargetOwnedError(this.table.name, String(owner), writer);
+    database.prepare('INSERT INTO "_elt_writers" ("target", "writer") VALUES (?, ?) ON CONFLICT ("target") DO NOTHING').run(this.table.location, writer);
   }
   exists(database, location) {
     return database.prepare(`SELECT 1 FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = ?`).get(location) !== void 0;
@@ -679,11 +756,11 @@ var SQLiteWriter = class extends Writer {
   values(database, tables) {
     const { table } = this;
     return async function* (field) {
-      const column = table.columns.find((column2) => column2.name === field);
+      const column = table.columns.find((column2) => column2.field === field);
       if (column === void 0)
         throw new TypeError(`Unknown target field: ${field}`);
       for (const name of tables()) {
-        if (!database.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE").get(name, field))
+        if (!database.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE").get(name, column.name))
           continue;
         for (const row of database.prepare(`SELECT ${column.quotedName} AS value FROM ${quote3(name)}`).iterate())
           yield row.value;
@@ -705,9 +782,9 @@ var SQLiteWriter = class extends Writer {
           database.exec(`DELETE FROM ${this.table.quotedName}`);
           database.exec(`DROP TABLE IF EXISTS ${quote3(this.#hiddenName)}`);
           for (const column of this.table.columns) {
-            const chunks = SQLiteFileStore.tableName(this.table, column);
-            if (column.storesFile && this.exists(database, chunks))
-              database.exec(`DELETE FROM ${quote3(chunks)}`);
+            const chunks2 = SQLiteFileStore.tableName(this.table, column);
+            if (column.storesFile && this.exists(database, chunks2))
+              database.exec(`DELETE FROM ${quote3(chunks2)}`);
           }
         }
         database.prepare('DELETE FROM "_elt_writers" WHERE "target" = ?').run(this.table.location);
@@ -741,18 +818,33 @@ var SQLiteWriter = class extends Writer {
     if (this.table.readerView !== void 0)
       describe(database, this.table.readerView, this.#description.table, columns);
   }
-  // Created only when absent and never replaced inside the load: replacing a
-  // view readers can see would lock them out until this load commits. A view
-  // of other columns or another table is refused rather than adopted.
-  installReaderView(database, view) {
-    const definition = `CREATE VIEW ${quote3(view)} AS SELECT ${this.fields.join(", ")} FROM ${this.table.quotedName}`;
+  #viewDefinition(view) {
+    return `CREATE VIEW ${quote3(view)} AS SELECT ${this.fields.join(", ")} FROM ${this.table.quotedName}`;
+  }
+  // Refuses, before anything is read, a view of other columns or another
+  // table, rather than adopting it.
+  #refuseReaderView(database, view) {
     const existing = database.prepare('SELECT "type", "sql" FROM sqlite_schema WHERE lower("name") = lower(?)').get(view);
-    if (existing === void 0) {
-      database.exec(definition);
-      return;
-    }
-    if (existing.type !== "view" || existing.sql !== definition)
+    if (existing !== void 0 && (existing.type !== "view" || existing.sql !== this.#viewDefinition(view)))
       throw new TypeError(`${quote3(view)} is not a view of exactly ${this.table.quotedName}; drop it or delete the database`);
+  }
+  // Created only when absent and never replaced by a commit: replacing a view
+  // readers can see would lock them out. prepare refused any view not this
+  // load's own.
+  installReaderView(database, view) {
+    if (database.prepare('SELECT 1 FROM sqlite_schema WHERE lower("name") = lower(?)').get(view) === void 0)
+      database.exec(this.#viewDefinition(view));
+  }
+  // The target as its first commit makes it: its owner, the table and the
+  // index its mode owns, its reader view and its descriptions.
+  #create(database, writer, replacing) {
+    this.own(database, writer);
+    database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
+    database.exec(this.table.createTableSQL);
+    this.initialize(database, replacing);
+    if (this.table.readerView !== void 0)
+      this.installReaderView(database, this.table.readerView);
+    this.describe(database);
   }
   // The rows of one partition, or every row when the stream is not
   // partitioned, as a WHERE clause over the target's or the stage's columns.
@@ -760,7 +852,7 @@ var SQLiteWriter = class extends Writer {
     if (partition === null)
       return ["", []];
     const columns = Object.keys(partition).map((field) => {
-      const column = this.table.columns.find(({ name }) => name === field);
+      const column = this.table.columns.find((column2) => column2.field === field);
       if (column === void 0)
         throw new TypeError(`Resetting a partition requires destination column ${field}`);
       return column;
@@ -782,56 +874,54 @@ var SQLiteWriter = class extends Writer {
       return "missing";
     return stored === `CREATE TABLE ${this.table.definition(quote3(name))}` ? "fits" : "stale";
   }
-  // Refuses a target another writer owns and prepares it inside a savepoint,
-  // so a refused target leaves the shared transaction as it was. A load into
-  // the target creates or adopts it here; a reload leaves it to readers as it
-  // is, merges into a hidden target from its first commit, and swaps that in
-  // at complete().
+  // Refuses, in one short transaction, a target another writer owns, a
+  // reader view not its own and stored rows it cannot keep, and stages in
+  // TEMP. Nothing reaches the database until a commit. A load into the target
+  // creates it, or adopts the stored one, at its first commit; a reload
+  // leaves it to readers as it is, merges into a hidden target from its first
+  // commit, and swaps that in at complete().
   prepare(database, { writer, restart, reloading }, loadedAt) {
     const name = quote3(`_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
     const hidden = quote3(this.#hiddenName);
-    const files = this.table.columns.filter((column) => column.storesFile);
-    database.exec("SAVEPOINT prepare");
-    let stores = [];
+    const stores = this.table.columns.filter((column) => column.storesFile).map((column) => ({
+      column,
+      store: new SQLiteFileStore(database, this.table, column)
+    }));
     let mode;
     const open = () => mode === "reload" || mode === "continue";
     const into = () => open() ? hidden : this.table.quotedName;
-    const tables = () => [this.table.name, ...open() ? [this.#hiddenName] : []].filter((table) => this.exists(database, table.toLowerCase()));
+    const tables = () => [this.table.name, ...open() ? [this.#hiddenName] : []].filter((table) => this.exists(database, identifiers.key(table)));
     const referenced = (column) => tables().map((table) => `SELECT ${column.quotedName} FROM ${quote3(table)} WHERE ${column.quotedName} IS NOT NULL`).join(" UNION ") || "SELECT NULL WHERE 0";
     const prune = () => {
       for (const { column, store } of stores)
-        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" NOT IN (${referenced(column)})`);
+        if (store.published)
+          database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" NOT IN (${referenced(column)})`);
     };
+    database.exec("BEGIN IMMEDIATE");
     try {
-      this.own(database, writer);
+      this.#refuse(database, writer);
+      const target = this.#fit(database, this.table.name);
       mode = reloadMode({
         reloading,
         restart,
-        target: this.#fit(database, this.table.name),
+        target,
         hidden: this.#fit(database, this.#hiddenName)
       });
       if (mode !== "continue")
         database.exec(`DROP TABLE IF EXISTS ${hidden}`);
-      if (!open()) {
-        database.exec(`DROP INDEX IF EXISTS ${this.dedupIndex}`);
-        database.exec(this.table.createTableSQL);
-        this.initialize(database, this.replaces);
-        if (this.table.readerView !== void 0)
-          this.installReaderView(database, this.table.readerView);
-        this.describe(database);
-      }
-      stores = files.map((column) => ({
-        column,
-        store: new SQLiteFileStore(database, this.table, column)
-      }));
-      prune();
+      if (!open() && this.table.readerView !== void 0)
+        this.#refuseReaderView(database, this.table.readerView);
+      if (mode === "load" && !this.replaces)
+        this.inspect(database);
       database.exec(`DROP TABLE IF EXISTS ${stage}`);
       database.exec(`CREATE TEMP TABLE ${name} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(", ")})`);
-      database.exec("RELEASE prepare");
+      for (const { store } of stores)
+        store.stage();
+      database.exec("COMMIT");
     } catch (error) {
-      database.exec("ROLLBACK TO prepare");
-      database.exec("RELEASE prepare");
+      if (database.isTransaction)
+        database.exec("ROLLBACK");
       throw error;
     }
     const fresh = mode === "create" || mode === "reload";
@@ -841,27 +931,26 @@ var SQLiteWriter = class extends Writer {
     const staged = (column) => `SELECT ${column.quotedName} FROM ${stage} WHERE ${column.quotedName} IS NOT NULL`;
     let resets = [];
     const drop = () => {
-      for (const { column, store } of stores)
-        database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (${referenced(column)})`);
+      for (const { column, store } of stores) {
+        if (store.published)
+          database.exec(`DELETE FROM ${quote3(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (${referenced(column)})`);
+        store.discard();
+      }
       database.exec(`DELETE FROM ${stage}`);
       resets = [];
     };
     const commit = (work) => {
-      database.exec("SAVEPOINT merge");
+      database.exec("BEGIN IMMEDIATE");
       try {
         work();
-        database.exec("RELEASE merge");
+        database.exec("COMMIT");
       } catch (error) {
-        if (database.isTransaction) {
-          database.exec("ROLLBACK TO merge");
-          database.exec("RELEASE merge");
-        }
+        if (database.isTransaction)
+          database.exec("ROLLBACK");
         throw error;
       }
-      database.exec("COMMIT");
-      database.exec("BEGIN IMMEDIATE");
     };
-    let replaced = false;
+    let committed = false;
     return {
       fresh,
       get reloading() {
@@ -889,35 +978,43 @@ var SQLiteWriter = class extends Writer {
         }
         let data = operation.data;
         for (const { column, store } of stores) {
-          const content = Reflect.get(Object(data), column.name);
+          const content = Reflect.get(Object(data), column.field);
           if (content instanceof FileContent)
             data = {
               ...Object(data),
-              [column.name]: await store.save(content)
+              [column.field]: await store.save(content)
             };
         }
         record.run(...this.encode(data));
       },
       commit: async () => {
         commit(() => {
-          if (open() && !opened) {
-            database.exec(`DROP TABLE IF EXISTS ${hidden}`);
-            database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
-            this.build(database, hidden);
+          if (open()) {
+            if (!opened) {
+              database.exec(`DROP TABLE IF EXISTS ${hidden}`);
+              database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
+              this.build(database, hidden);
+            }
+            if (!committed)
+              this.own(database, writer);
+          } else if (!committed) {
+            this.#create(database, writer, this.replaces);
+            if (this.replaces)
+              this.replace(database);
           }
-          if (!open() && this.replaces && !replaced)
-            this.replace(database);
           for (const partition of resets) {
             const [rows, values] = this.#scope(partition);
             database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
           }
+          for (const { store } of stores)
+            store.publish();
           this.merge(database, stage, loadedAt, into());
           if (resets.length > 0)
             prune();
           drop();
         });
         opened = open();
-        replaced = true;
+        committed = true;
       },
       complete: async () => {
         if (!open())
@@ -940,6 +1037,8 @@ var SQLiteWriter = class extends Writer {
       [Symbol.asyncDispose]: async () => {
         drop();
         database.exec(`DROP TABLE ${stage}`);
+        for (const { store } of stores)
+          store.unstage();
       }
     };
   }
@@ -968,10 +1067,10 @@ var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
     this.deduplication = configuration.deduplication();
     const inferred = SQLiteColumns.fromSchema(configuration.stream.jsonSchema);
     const column = (field) => {
-      const selected = table.columns.find((column2) => column2.name === field);
+      const selected = table.columns.find((column2) => column2.field === field);
       if (selected === void 0)
         throw new TypeError(`Deduplication requires destination column ${field}`);
-      if (selected.dataType !== inferred.find((column2) => column2.name === field)?.dataType)
+      if (selected.dataType !== inferred.find((column2) => column2.field === field)?.dataType)
         throw new TypeError(`Deduplication column ${field} must preserve the source scalar type`);
       return selected;
     };
@@ -983,18 +1082,25 @@ var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
   get replaces() {
     return this.configuration.destinationSyncMode === "overwrite_dedup";
   }
-  initialize(database, replacing) {
+  // A stored table the load merges into must hold keys and cursors of the
+  // stream's types, none null, and no key twice, which its index will forbid.
+  inspect(database) {
     const existing = database.prepare(`PRAGMA table_info(${this.table.quotedName})`).all();
     const tracked = this.cursor === void 0 ? this.keys : [...this.keys, this.cursor];
     for (const column of tracked) {
       if (!existing.some((field) => field.name === column.name && field.type === column.storageType))
         throw new TypeError(`Existing deduplication column ${column.name} has an incompatible storage type`);
     }
-    if (replacing)
-      return;
     if (database.prepare(`SELECT 1 FROM ${this.table.quotedName} WHERE ${tracked.map((column) => `${column.quotedName} IS NULL`).join(" OR ")} LIMIT 1`).get())
       throw new TypeError("Existing deduplication keys and cursors must be non-null");
-    this.index(database);
+    if (database.prepare(`SELECT 1 FROM ${this.table.quotedName} GROUP BY ${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(", ")} HAVING count(*) > 1 LIMIT 1`).get())
+      throw new TypeError("Existing rows repeat a deduplication key; replace them with overwrite_dedup before deduplicating incrementally");
+  }
+  // A replacing load keeps none of the stored rows: its index is built once
+  // the commit has emptied the table.
+  initialize(database, replacing) {
+    if (!replacing)
+      this.index(database);
   }
   replace(database) {
     super.replace(database);
@@ -1028,7 +1134,7 @@ var SQLiteDeduplicatingWriter = class extends SQLiteWriter {
     const guarded = this.configuration.dedupPolicy !== "replace" && cursor !== void 0;
     const order = guarded ? `"staged".${cursor.quotedName} COLLATE BINARY DESC, "staged".${seq}` : `"staged".${seq} DESC`;
     const columns = this.table.columns.map((column) => column.quotedName);
-    database.prepare(`WITH "deleted" AS (SELECT ${keys.join(", ")}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(", ")}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(", ")} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) INSERT INTO ${into} AS "_elt_target" (${this.fields.join(", ")}) SELECT ${columns.join(", ")}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1) ORDER BY ${seq} ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(", ")}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(", ")}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_elt_target".${cursor.quotedName}` : ""}`).run(loadedAt);
+    database.prepare(`WITH "deleted" AS (SELECT ${keys.join(", ")}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(", ")}), "ranked" AS (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(", ")} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) INSERT INTO ${into} AS "_elt_target" (${this.fields.join(", ")}) SELECT ${columns.join(", ")}, ? FROM ${stage} WHERE ${seq} IN (SELECT ${seq} FROM "ranked" WHERE "_elt_rank" = 1) ORDER BY ${seq} ON CONFLICT (${keys.map((key) => `${key} COLLATE BINARY`).join(", ")}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(", ")}${guarded ? ` WHERE excluded.${cursor.quotedName} COLLATE BINARY > "_elt_target".${cursor.quotedName}` : ""}`).run(loadedAt);
   }
   encode(record) {
     this.deduplication.key(record);
@@ -1065,25 +1171,17 @@ var SQLiteTable = class _SQLiteTable extends Target {
   // The name readers query: a documented view of exactly this table.
   readerView;
   constructor(name, columns, readerView) {
-    if (!name || name.includes("\0"))
-      throw new TypeError("Invalid table name");
-    if (/^_elt_/i.test(name))
-      throw new TypeError("Table names starting with _elt_ are reserved");
-    if (readerView !== void 0) {
-      if (!readerView || readerView.includes("\0"))
-        throw new TypeError("Invalid view name");
-      if (/^_elt_/i.test(readerView))
-        throw new TypeError("View names starting with _elt_ are reserved");
-      if (readerView.toLowerCase() === name.toLowerCase())
-        throw new TypeError("A reader view needs a name of its own");
-    }
+    if (typeof name !== "string" || readerView !== void 0 && typeof readerView !== "string")
+      throw new TypeError("A table and its view are named by strings");
+    const table = identifiers.relation(name);
+    const view = readerView === void 0 ? void 0 : identifiers.relation(readerView);
+    if (view !== void 0 && identifiers.key(view) === identifiers.key(table))
+      throw new TypeError("A reader view needs a name of its own");
     if (columns !== void 0 && (!Array.isArray(columns) || columns.length === 0 || !columns.every((column) => column instanceof SQLiteColumn)))
       throw new TypeError("A table requires at least one SQLite column");
-    const names = (columns ?? []).map((column) => column.name.toLowerCase());
-    if (names.includes("loaded_at"))
-      throw new TypeError("loaded_at is reserved for load metadata");
-    if (new Set(names).size !== names.length)
-      throw new TypeError("Duplicate column names");
+    const fields = (columns ?? []).map((column) => column.field);
+    if (new Set(fields).size !== fields.length)
+      throw new TypeError("Two columns hold one field");
     if ((columns ?? []).filter((column) => column.isPrimaryKey).length > 1)
       throw new TypeError("Only one primary-key column is supported");
     const fileReads = (columns ?? []).flatMap((column) => column.fileRead === void 0 ? [] : [column.fileRead]);
@@ -1094,9 +1192,9 @@ var SQLiteTable = class _SQLiteTable extends Target {
         throw new TypeError("Original files require a BLOB column; parsed text and stored references require a TEXT column");
     }
     super(fileReads);
-    this.name = name;
-    this.columns = Object.freeze([...columns ?? []]);
-    this.readerView = readerView;
+    this.name = table;
+    this.columns = Object.freeze(identifiers.columns(columns ?? []).map(([column, stored]) => column.named(stored)));
+    this.readerView = view;
     Object.freeze(this);
   }
   // Loads also keep a view of this table under another name, created with the
@@ -1107,18 +1205,18 @@ var SQLiteTable = class _SQLiteTable extends Target {
   resolve(stream) {
     if (this.columns.length === 0)
       return new _SQLiteTable(this.name, SQLiteColumns.fromSchema(stream.jsonSchema), this.readerView);
-    const properties = stream.jsonSchema.properties;
-    if (properties !== null && typeof properties === "object" && !Array.isArray(properties)) {
-      for (const column of this.columns) {
-        if (column.fileRead === void 0 && !Object.hasOwn(properties, column.name))
-          throw new TypeError(`Stream ${stream.name} does not describe column ${column.name}`);
-      }
-    }
+    const { properties } = stream.jsonSchema;
+    if (properties === void 0)
+      return this;
+    for (const column of this.columns)
+      if (column.fileRead === void 0 && !Object.hasOwn(properties, column.field))
+        throw new TypeError(`Stream ${stream.name} does not describe field ${column.field}`);
     return this;
   }
-  // SQLite compares ASCII identifiers case-insensitively, so one table has one location.
+  // SQLite takes names that differ only in ASCII case for one, so one table
+  // has one location.
   get location() {
-    return this.name.replaceAll(/[A-Z]/g, (letter) => letter.toLowerCase());
+    return identifiers.key(this.name);
   }
   get quotedName() {
     return `"${this.name.replaceAll('"', '""')}"`;
@@ -1156,14 +1254,15 @@ var SQLiteDestination = class extends Destination {
   location(target) {
     return `${this.path}#${target.location}`;
   }
-  // The writer lock spans all commits; each stream still publishes separately.
+  // The writer lock spans all commits and keeps a competing load out; each
+  // stream's commit is its own short transaction, so no transaction stays
+  // open while the sources read.
   async load() {
     const resources = new DisposableStack();
     let database;
     try {
       resources.use(lockWriter(this.path));
       database = resources.use(new DatabaseSync4(this.path, { timeout: 3e4 }));
-      database.exec("BEGIN IMMEDIATE");
     } catch (error) {
       resources.dispose();
       throw error;

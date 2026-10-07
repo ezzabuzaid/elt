@@ -712,6 +712,46 @@ var Destination = class {
   }
 };
 
+// packages/elt/dist/core/identifiers.js
+import { createHash } from "node:crypto";
+function hash(name) {
+  return createHash("sha256").update(name).digest("hex").slice(0, 8);
+}
+function sanitize(name) {
+  const clean = name.normalize("NFKD").replace(new RegExp("\\p{M}", "gu"), "").replace(/\s+/gu, "_").replace(/[^A-Za-z0-9_]/gu, "_").replace(/^_(?=elt_)/i, "");
+  if (clean === "")
+    return "_";
+  return /^[0-9]/.test(clean) ? `_${clean}` : clean;
+}
+var Identifiers = class {
+  // Each column with its name, in field order: a sanitized name another
+  // field already took is tried again with `_1`, `_2` and so on after the
+  // field.
+  columns(columns) {
+    const taken = new Set(this.ownColumns.map((name) => this.key(name)));
+    return columns.map((column) => {
+      const { field } = column;
+      let name = this.#fit(sanitize(field), field);
+      for (let suffix = 1; taken.has(this.key(name)); suffix += 1)
+        name = this.#fit(sanitize(`${field}_${suffix}`), `${field}_${suffix}`);
+      taken.add(this.key(name));
+      return [column, name];
+    });
+  }
+  // A table or view sees no other name to collide with, so one that
+  // sanitizing changed keeps a hash of what it was asked for.
+  relation(name) {
+    const clean = sanitize(name);
+    return clean === name ? this.#fit(name, name) : this.#fit(`${clean}_${hash(name)}`, name);
+  }
+  // A sanitized name is ASCII, so cutting it by bytes keeps whole characters.
+  #fit(name, original) {
+    if (Buffer.byteLength(name) <= this.maxBytes)
+      return name;
+    return `${name.slice(0, this.maxBytes - 9)}_${hash(original)}`;
+  }
+};
+
 // packages/elt/dist/core/interleave.js
 async function* interleave(generators, concurrency) {
   const waiting = [...generators];
@@ -1212,14 +1252,14 @@ function selection(configuration) {
 }
 function shape(stream) {
   const { description: _, properties, ...schema } = stream.jsonSchema;
-  const undescribed2 = ({ description: __, ...rest }) => rest;
+  const undescribed = ({ description: __, ...rest }) => rest;
   return {
     ...stream,
     jsonSchema: {
       ...schema,
       properties: properties && Object.fromEntries(Object.entries(properties).map(([name, { items, ...field }]) => [
         name,
-        { ...undescribed2(field), items: items && undescribed2(items) }
+        { ...undescribed(field), items: items && undescribed(items) }
       ]))
     }
   };
@@ -1623,11 +1663,11 @@ function assertRecord(record, fields, stream, source) {
 }
 
 // packages/elt/dist/core/snapshot.js
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
 async function* diffSnapshot(stream, records, state, horizon) {
   assertSnapshotStream(stream);
-  const expired = expiry(stream, horizon);
+  const kept = keptRows(stream, horizon);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
   const current = /* @__PURE__ */ new Map();
@@ -1641,7 +1681,7 @@ async function* diffSnapshot(stream, records, state, horizon) {
       yield { stream: stream.name, data };
   }
   for (const [key, entry] of previous)
-    if (!current.has(key) && !expired(entry))
+    if (!current.has(key) && !kept(entry))
       yield {
         type: "DELETE",
         stream: stream.name,
@@ -1652,7 +1692,7 @@ async function* diffSnapshot(stream, records, state, horizon) {
 }
 async function* diffGroupedSnapshot(stream, groups, state, horizon) {
   assertSnapshotStream(stream);
-  const expired = expiry(stream, horizon);
+  const kept = keptRows(stream, horizon);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const saved = state;
   const previous = new Map(Object.entries(saved?.groups ?? {}));
@@ -1697,7 +1737,7 @@ async function* diffGroupedSnapshot(stream, groups, state, horizon) {
   }
   for (const { snapshot } of previous.values())
     for (const [key, entry] of Object.entries(snapshot))
-      if (!seen.has(key) && !expired(entry))
+      if (!seen.has(key) && !kept(entry))
         yield {
           type: "DELETE",
           stream: stream.name,
@@ -1710,17 +1750,18 @@ async function* diffGroupedSnapshot(stream, groups, state, horizon) {
   };
 }
 function assertSnapshotStream(stream) {
-  if (!stream.sourceDefinedCursor || !stream.emitsDeletes)
-    throw new TypeError(`Stream ${stream.name} must declare sourceDefinedCursor and emitsDeletes to diff snapshots`);
+  if (!stream.sourceDefinedCursor)
+    throw new TypeError(`Stream ${stream.name} must declare sourceDefinedCursor to diff snapshots`);
 }
 function sortedObject(entries) {
   return Object.fromEntries([...entries].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
 }
-function expiry(stream, horizon) {
+function keptRows(stream, horizon) {
   if (stream.expiresBy === void 0) {
     if (horizon !== void 0)
       throw new TypeError(`Stream ${stream.name} declares no expiresBy, so its snapshot diff takes no horizon`);
-    return () => false;
+    const forgets = !stream.emitsDeletes;
+    return () => forgets;
   }
   if (!isTimestamp(horizon))
     throw new TypeError(`Stream ${stream.name} expires by ${stream.expiresBy}, so its snapshot diff needs a horizon timestamp`);
@@ -1754,7 +1795,7 @@ function fingerprintOf(stream, record) {
   const serialized = JSON.parse(JSON.stringify(record));
   if (!isDeepStrictEqual3(serialized, record))
     throw new TypeError(`Stream ${stream.name} records must be losslessly JSON serializable to diff snapshots`);
-  return createHash("sha256").update(canonical(serialized)).digest("base64url");
+  return createHash2("sha256").update(canonical(serialized)).digest("base64url");
 }
 function canonical(value) {
   if (Array.isArray(value))
@@ -1788,40 +1829,44 @@ function describeTarget(configuration, columns, storedFile) {
   if (meaning !== null)
     lines.push(`Source record meaning: ${meaning}`);
   lines.push(`Extraction: ${configuration.syncMode}. Loading: ${configuration.destinationSyncMode}. ${loading[configuration.destinationSyncMode]}`);
+  const named = (field) => columns.find((column) => column.field === field)?.name ?? field;
   if (configuration.dedupPolicy !== void 0) {
     const deduplication = configuration.deduplication();
     const { primaryKey, cursorField } = deduplication;
-    lines.push(`Copy key: ${primaryKey.join(", ")}.`);
-    lines.push(configuration.dedupPolicy === "replace" || cursorField === void 0 ? "For a repeated key, the newest extracted record wins." : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare ${deduplication.format(cursorField)?.ordering ?? "by byte order"}.`);
+    lines.push(`Copy key: ${primaryKey.map(named).join(", ")}.`);
+    lines.push(configuration.dedupPolicy === "replace" || cursorField === void 0 ? "For a repeated key, the newest extracted record wins." : `For a repeated key, the greatest ${named(cursorField)} wins; equal cursors retain the first accepted record. Text cursors compare ${deduplication.format(cursorField)?.ordering ?? "by byte order"}.`);
   }
   const { properties } = stream.jsonSchema;
-  const described = Object.fromEntries(columns.map((column) => {
+  const missing = meaning === null ? ["the stream"] : [];
+  const describe = (column) => {
     if (column.storesFile)
-      return [column.name, storedFile(column)];
+      return storedFile(column);
     if (column.fileRead?.parser !== void 0)
-      return [
-        column.name,
-        `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`
-      ];
+      return `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`;
     if (column.fileRead?.file.storage !== void 0)
-      return [
-        column.name,
-        `${column.fileRead.file.storage.reference} NULL when the source file is unavailable.`
-      ];
-    return [column.name, annotation(properties?.[column.name]?.description)];
+      return `${column.fileRead.file.storage.reference} NULL when the source file is unavailable.`;
+    const description = annotation(properties?.[column.field]?.description);
+    if (description === null)
+      missing.push(column.field);
+    return description;
+  };
+  const described = Object.fromEntries(columns.map((column) => {
+    const description = describe(column);
+    if (column.name === column.field)
+      return [column.name, description];
+    const source = `Source field: ${JSON.stringify(column.field)}.`;
+    return [
+      column.name,
+      description === null ? source : `${description} ${source}`
+    ];
   }));
   described.loaded_at = "Start time of the load that last wrote this row, not the source modification time or the most recent successful sync.";
   return Object.freeze({
     meaning,
     table: lines.join("\n"),
-    columns: Object.freeze(described)
+    columns: Object.freeze(described),
+    missing: Object.freeze(missing)
   });
-}
-function undescribed({ meaning, columns }) {
-  const missing = Object.entries(columns).flatMap(([column, text]) => text === null ? [column] : []);
-  if (meaning === null)
-    missing.unshift("the stream");
-  return missing;
 }
 
 // packages/elt/dist/state/checkpoint-store.js
@@ -1982,7 +2027,7 @@ var syncHistoryRelations = {
 };
 
 // packages/elt/dist/storage/local-files.js
-import { createHash as createHash2, randomUUID } from "node:crypto";
+import { createHash as createHash3, randomUUID } from "node:crypto";
 import { link, lstat, mkdir, open as open2, readdir, rm } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 async function syncDirectory(path) {
@@ -2013,7 +2058,7 @@ var LocalFiles = class extends FileStorage {
     Object.freeze(this);
   }
   scopePath(scope) {
-    return join(this.directory, ".elt-files", createHash2("sha256").update(scope).digest("hex"));
+    return join(this.directory, ".elt-files", createHash3("sha256").update(scope).digest("hex"));
   }
   async inspect(path) {
     const info = await lstat(path).catch((error) => {
@@ -2042,13 +2087,13 @@ var LocalFiles = class extends FileStorage {
     }
     const temporary = join(directory, `.pending-${randomUUID()}`);
     try {
-      const hash = createHash2("sha256");
+      const hash2 = createHash3("sha256");
       {
         var _stack = [];
         try {
           const file = __using(_stack, await open2(temporary, "wx", 384), true);
           for await (const chunk of content.chunks(4 * 1024 * 1024)) {
-            hash.update(chunk);
+            hash2.update(chunk);
             await file.writeFile(chunk);
           }
           await file.sync();
@@ -2060,7 +2105,7 @@ var LocalFiles = class extends FileStorage {
         }
       }
       const extension = extname(content.path);
-      const path = join(directory, hash.digest("hex") + (/^\.[a-zA-Z0-9]{1,16}$/.test(extension) ? extension : ""));
+      const path = join(directory, hash2.digest("hex") + (/^\.[a-zA-Z0-9]{1,16}$/.test(extension) ? extension : ""));
       await link(temporary, path).catch(async (error) => {
         if (error.code !== "EEXIST")
           throw error;
@@ -2122,6 +2167,7 @@ export {
   Copy,
   Connection,
   Destination,
+  Identifiers,
   StreamStatus,
   Source,
   TargetOwnedError,
@@ -2134,7 +2180,6 @@ export {
   diffSnapshot,
   diffGroupedSnapshot,
   describeTarget,
-  undescribed,
   CheckpointStore,
   SyncHistory,
   copyStatus,

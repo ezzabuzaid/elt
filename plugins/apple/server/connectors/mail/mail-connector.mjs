@@ -4,13 +4,14 @@ import {
   AccountsUnavailableError,
   accountsStorePath,
   mailDataclass
-} from "../../chunks/chunk-RMLM5EPJ.mjs";
+} from "../../chunks/chunk-Y77BP7PN.mjs";
 import {
   isBinaryPlist,
   isDictionary,
   parseBinaryPlist,
+  plistJSON,
   readPlist
-} from "../../chunks/chunk-2VSN4436.mjs";
+} from "../../chunks/chunk-GXPN73JS.mjs";
 import {
   accounts,
   byId
@@ -20,15 +21,15 @@ import {
   withinDates
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
+  localAppleStoreCoverage
+} from "../../chunks/chunk-BRJ4TKR5.mjs";
+import {
   AppDatabase,
   AppDatabaseVersion
 } from "../../chunks/chunk-SDFTRGL6.mjs";
 import {
-  localAppleStoreCoverage
-} from "../../chunks/chunk-BRJ4TKR5.mjs";
-import {
   AppleConnector
-} from "../../chunks/chunk-TA2XBELF.mjs";
+} from "../../chunks/chunk-PGV23ONC.mjs";
 import {
   Catalog,
   Source,
@@ -36,7 +37,7 @@ import {
   diffGroupedSnapshot,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-WXJ5Y2PE.mjs";
+} from "../../chunks/chunk-OC6XOTPF.mjs";
 import {
   __callDispose,
   __commonJS,
@@ -26946,15 +26947,6 @@ function tableRecord(table, row) {
     encode(kind, row[column])
   ]));
 }
-function plistJSON(value) {
-  return JSON.stringify(value, (_, item) => {
-    if (typeof item === "bigint")
-      return item.toString();
-    if (item instanceof Uint8Array)
-      return Buffer.from(item).toString("base64");
-    return item;
-  });
-}
 function described(fields, descriptions) {
   const meaning = descriptions;
   return Object.fromEntries(Object.entries(fields).map(([name, field]) => [
@@ -27008,7 +27000,7 @@ var fileFields = {
   sha256: nullableText
 };
 var plistFields = { relativePath: text, properties: text };
-var plistProperties = "The property list converted to JSON: data values become Base64 strings, dates ISO 8601 strings and integers beyond 2^53 decimal strings. Kept as data; this source does not interpret its keys.";
+var plistProperties = 'The property list converted to JSON: data values become Base64 strings, dates ISO 8601 strings, integers beyond 2^53 decimal strings and archiver references {"$uid":N}. Kept as data; this source does not interpret its keys.';
 var localMessageId = "Refers to messages.id within this source (the local id, not the Message-ID hash in messages.messageId).";
 var partId2 = "Dotted MIME part number, such as 1 or 1.2. The root of a multipart message is TEXT; a single-part message is 1, as in the index. Equals indexedAttachments.attachmentId for attachments Mail indexes.";
 var sha256 = "SHA-256 of the bytes as lowercase hexadecimal";

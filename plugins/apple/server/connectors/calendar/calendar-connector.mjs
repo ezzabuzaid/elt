@@ -13,7 +13,7 @@ import {
 } from "../../chunks/chunk-FGFSL4M6.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-TA2XBELF.mjs";
+} from "../../chunks/chunk-PGV23ONC.mjs";
 import {
   Catalog,
   Source,
@@ -21,7 +21,7 @@ import {
   diffSnapshot,
   isTimestamp,
   validateRecords
-} from "../../chunks/chunk-WXJ5Y2PE.mjs";
+} from "../../chunks/chunk-OC6XOTPF.mjs";
 import {
   __callDispose,
   __using
@@ -1358,7 +1358,7 @@ var CalendarConnector = class extends AppleConnector {
       GOOGLE_DRIVE_READONLY_SCOPE,
       GMAIL_READONLY_SCOPE
     ]);
-    const { googleCalendarAttachments } = await import("../../chunks/google-calendar-attachments-G4BHT6DQ.mjs");
+    const { googleCalendarAttachments } = await import("../../chunks/google-calendar-attachments-OZZRMXLH.mjs");
     return this.#calendar(scope, googleCalendarAttachments(google));
   }
   #calendar(scope, attachments) {

@@ -5,10 +5,14 @@ import {
 import {
   decodeArchive,
   plistJSON
-} from "../../chunks/chunk-2VSN4436.mjs";
+} from "../../chunks/chunk-GXPN73JS.mjs";
+import {
+  AppDatabase,
+  AppDatabaseVersion
+} from "../../chunks/chunk-SDFTRGL6.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-TA2XBELF.mjs";
+} from "../../chunks/chunk-PGV23ONC.mjs";
 import {
   Catalog,
   Source,
@@ -16,7 +20,7 @@ import {
   diffGroupedSnapshot,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-WXJ5Y2PE.mjs";
+} from "../../chunks/chunk-OC6XOTPF.mjs";
 import {
   __callDispose,
   __using
@@ -25,205 +29,18 @@ import {
 // packages/sources/apple/activity/dist/apple-activity-source.js
 import { setInterval } from "node:timers/promises";
 
-// packages/sources/apple/activity/dist/activity-scan.js
-import { readdir } from "node:fs/promises";
-
-// packages/sources/apple/activity/dist/activity-store.js
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-var defaultActivityLocation = Object.freeze({
-  biome: join(homedir(), "Library/Biome"),
-  knowledge: join(homedir(), "Library/Application Support/Knowledge/knowledgeC.db")
-});
-var biomeStreams = ({ biome }) => join(biome, "streams/restricted");
-var biomeDevices = ({ biome }) => join(biome, "sync/sync.db");
-var ActivityUnavailableError = class extends Error {
-  name = "ActivityUnavailableError";
-  constructor(path, cause) {
-    super(`Activity data at ${path} cannot be read. Allow the process that runs the export Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it.`, { cause });
-  }
-};
-var ActivitySchemaError = class extends Error {
-  name = "ActivitySchemaError";
-  constructor(path, missing) {
-    super(`The activity store at ${path} has a layout this connector does not read (missing ${missing.join(", ")}).`);
-  }
-};
-var unavailableCodes = /* @__PURE__ */ new Set([14, 23]);
-var open = (path) => {
-  try {
-    return new DatabaseSync(path, { readOnly: true });
-  } catch (cause) {
-    if (cause instanceof Error && "errcode" in cause && unavailableCodes.has(Number(cause.errcode)))
-      throw new ActivityUnavailableError(path, cause);
-    throw cause;
-  }
-};
-var ActivityDatabaseVersion = class {
-  #database;
-  #version;
-  constructor(path) {
-    this.#database = open(path);
-    this.#version = this.#database.prepare("PRAGMA data_version");
-  }
-  get current() {
-    return Number(this.#version.get()?.data_version);
-  }
-  [Symbol.dispose]() {
-    this.#database.close();
-  }
-};
-var ActivityDatabase = class _ActivityDatabase {
-  path;
-  #database;
-  constructor(path, database) {
-    this.path = path;
-    this.#database = database;
-  }
-  static async open(path, required) {
-    const database = open(path);
-    try {
-      database.exec("BEGIN");
-      const missing = Object.entries(required).flatMap(([table, columns]) => {
-        const present = new Set(database.prepare("SELECT name FROM pragma_table_info(?)").all(table).map((column) => column.name));
-        return columns.filter((column) => !present.has(column)).map((column) => `${table}.${column}`);
-      });
-      if (missing.length > 0)
-        throw new ActivitySchemaError(path, missing);
-      return new _ActivityDatabase(path, database);
-    } catch (cause) {
-      database.close();
-      throw cause;
-    }
-  }
-  all(sql, ...parameters) {
-    return this.#database.prepare(sql).all(...parameters);
-  }
-  async [Symbol.asyncDispose]() {
-    if (this.#database.isTransaction)
-      this.#database.exec("COMMIT");
-    this.#database.close();
-  }
-};
-
-// packages/sources/apple/activity/dist/activity-scan.js
-var knowledgeColumns = {
-  ZOBJECT: [
-    "Z_PK",
-    "ZUUID",
-    "ZSTREAMNAME",
-    "ZSTARTDATE",
-    "ZENDDATE",
-    "ZCREATIONDATE",
-    "ZSECONDSFROMGMT",
-    "ZVALUESTRING",
-    "ZVALUEINTEGER",
-    "ZSTRUCTUREDMETADATA",
-    "ZSOURCE"
-  ],
-  ZSTRUCTUREDMETADATA: [
-    "Z_PK",
-    "Z_DKINTENTMETADATAKEY__INTENTCLASS",
-    "Z_DKINTENTMETADATAKEY__INTENTVERB",
-    "Z_DKINTENTMETADATAKEY__INTENTTYPE",
-    "Z_DKINTENTMETADATAKEY__INTENTHANDLINGSTATUS",
-    "Z_DKINTENTMETADATAKEY__DIRECTION",
-    "Z_DKINTENTMETADATAKEY__DONATEDBYSIRI",
-    "Z_DKINTENTMETADATAKEY__INTERACTIONIDENTIFIER",
-    "Z_DKINTENTMETADATAKEY__DERIVEDINTENTIDENTIFIER",
-    "Z_DKINTENTMETADATAKEY__RELATEDCONTACTIDENTIFIERS",
-    "Z_DKINTENTMETADATAKEY__SERIALIZEDINTERACTION",
-    "Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__OSBUILD",
-    "Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__USERINFO"
-  ],
-  ZSOURCE: ["Z_PK", "ZBUNDLEID", "ZDEVICEID", "ZITEMID", "ZGROUPID"]
-};
-var deviceColumns = {
-  DevicePeer: [
-    "device_identifier",
-    "me",
-    "name",
-    "model",
-    "platform",
-    "last_sync_date"
-  ]
-};
-var ActivityScan = class _ActivityScan {
-  startedAt;
-  #resources;
-  #stores;
-  constructor(startedAt, resources, stores) {
-    this.startedAt = startedAt;
-    this.#resources = resources;
-    this.#stores = stores;
-  }
-  static async open(location, stores) {
-    var _stack = [];
-    try {
-      const startedAt = /* @__PURE__ */ new Date();
-      const resources = __using(_stack, new AsyncDisposableStack(), true);
-      const open3 = async (store, value) => {
-        if (!stores.has(store))
-          return void 0;
-        try {
-          return { value: await value() };
-        } catch (error) {
-          return { error };
-        }
-      };
-      const opened = {
-        // Each stream lists its own segments; this proves the folder is readable.
-        biome: await open3("biome", async () => {
-          const root = biomeStreams(location);
-          try {
-            await readdir(root);
-          } catch (cause) {
-            throw new ActivityUnavailableError(root, cause);
-          }
-          return root;
-        }),
-        knowledge: await open3("knowledge", async () => resources.use(await ActivityDatabase.open(location.knowledge, knowledgeColumns))),
-        devices: await open3("devices", async () => resources.use(await ActivityDatabase.open(biomeDevices(location), deviceColumns)))
-      };
-      return new _ActivityScan(startedAt, resources.move(), opened);
-    } catch (_) {
-      var _error = _, _hasError = true;
-    } finally {
-      var _promise = __callDispose(_stack, _error, _hasError);
-      _promise && await _promise;
-    }
-  }
-  // The folder holding every Biome stream.
-  get biome() {
-    return this.#value("biome");
-  }
-  get knowledge() {
-    return this.#value("knowledge");
-  }
-  get devices() {
-    return this.#value("devices");
-  }
-  #value(store) {
-    const opened = this.#stores[store];
-    if (opened === void 0)
-      throw new Error(`Activity ${store} was not opened for this run`);
-    if ("error" in opened)
-      throw opened.error;
-    return opened.value;
-  }
-  [Symbol.asyncDispose]() {
-    return this.#resources.disposeAsync();
-  }
-};
-
-// packages/sources/apple/activity/dist/biome-stream.js
+// packages/sdks/apple/biome/dist/biome-store.js
 import { readdir as readdir2 } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join as join2 } from "node:path";
 
-// packages/sdks/apple/segb/dist/segb.js
+// packages/sdks/apple/biome/dist/biome-segment.js
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+
+// packages/codecs/segb/dist/segb.js
 import { createHash } from "node:crypto";
-import { open as open2, readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { crc32 } from "node:zlib";
 var headerLength = 32;
 var entryHeaderLength = 8;
@@ -242,7 +59,7 @@ var states = /* @__PURE__ */ new Map([
 async function segbFingerprint(path) {
   var _stack = [];
   try {
-    const file = __using(_stack, await open2(path), true);
+    const file = __using(_stack, await open(path), true);
     const header = new Uint8Array(headerLength);
     const { size } = await file.stat();
     await file.read(header, 0, headerLength, 0);
@@ -293,39 +110,676 @@ function slotCount(path, header, size) {
   return count;
 }
 
+// packages/sdks/apple/biome/dist/errors.js
+var BiomeUnavailableError = class extends Error {
+  name = "BiomeUnavailableError";
+  constructor(path, cause) {
+    super(`Biome's store at ${path} cannot be read. Allow the process that reads it Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it.`, { cause });
+  }
+};
+var BiomeSchemaError = class extends Error {
+  name = "BiomeSchemaError";
+  constructor(path, missing) {
+    super(`Biome's device list at ${path} has a layout this reader does not read (missing ${missing.join(", ")}).`);
+  }
+};
+
+// packages/sdks/apple/biome/dist/biome-segment.js
+var decodingVersion = 1;
+var BiomeSegment = class {
+  origin;
+  name;
+  #path;
+  #stream;
+  constructor(stream, origin, name, path) {
+    this.#stream = stream;
+    this.origin = origin;
+    this.name = name;
+    this.#path = path;
+  }
+  // Changes whenever Biome appends or deletes a record. Biome writes into a
+  // preallocated file in place, so neither its size nor its modification time
+  // does.
+  async fingerprint() {
+    return `${decodingVersion}:${await segbFingerprint(this.#path)}`;
+  }
+  // The intact records, in slot order. Biome zero-fills a deleted record in
+  // place and leaves some written slots zeroed; neither is a record.
+  async records() {
+    const records = [];
+    for (const { slot, writtenAt, payload } of await readSegb(this.#path)) {
+      if (payload === null)
+        continue;
+      records.push({
+        slot,
+        writtenAt,
+        payload,
+        event: this.#stream.decode(new ProtobufMessage(payload))
+      });
+    }
+    return records;
+  }
+};
+async function segments(streams, stream) {
+  const files = async (origin, directory) => (await entries(directory)).filter((entry) => entry.isFile() && !entry.name.startsWith(".")).map((entry) => new BiomeSegment(stream, origin, entry.name, join(directory, entry.name)));
+  const folder = join(streams, stream.name);
+  const devices = (await entries(join(folder, "remote"))).filter((entry) => entry.isDirectory());
+  return [
+    ...await files("local", join(folder, "local")),
+    ...(await Promise.all(devices.map((device) => files(device.name, join(folder, "remote", device.name))))).flat()
+  ];
+}
+async function entries(directory) {
+  try {
+    return await readdir(directory, { withFileTypes: true });
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      return [];
+    throw new BiomeUnavailableError(directory, cause);
+  }
+}
+
+// packages/sdks/apple/biome/dist/biome-sync.js
+var columns = {
+  DevicePeer: [
+    "device_identifier",
+    "me",
+    "name",
+    "model",
+    "platform",
+    "last_sync_date"
+  ]
+};
+var text = (value) => typeof value === "string" && value !== "" ? value : void 0;
+var BiomeSync = class {
+  #database;
+  constructor(path) {
+    this.#database = new AppDatabase(path, BiomeUnavailableError);
+    this.#database.requireColumns(columns, BiomeSchemaError);
+  }
+  devices() {
+    return this.#database.all("SELECT device_identifier, me, name, CAST(model AS TEXT) AS model, platform, last_sync_date FROM DevicePeer ORDER BY device_identifier").map((row) => ({
+      id: typeof row.device_identifier === "string" ? row.device_identifier : void 0,
+      thisMac: row.me === 1,
+      name: text(row.name),
+      model: text(row.model),
+      platform: typeof row.platform === "number" && Number.isSafeInteger(row.platform) ? row.platform : void 0,
+      lastSyncedAt: typeof row.last_sync_date === "number" && Number.isFinite(row.last_sync_date) ? new Date(Math.round(row.last_sync_date * 1e3)) : void 0
+    }));
+  }
+  [Symbol.dispose]() {
+    this.#database[Symbol.dispose]();
+  }
+};
+
+// packages/sdks/apple/biome/dist/biome-store.js
+var biomeDirectory = join2(homedir(), "Library/Biome");
+var BiomeStreams = class {
+  #path;
+  constructor(path) {
+    this.#path = path;
+  }
+  segments(stream) {
+    return segments(this.#path, stream);
+  }
+};
+var BiomeStore = class {
+  #streams;
+  #sync;
+  constructor(root) {
+    this.#streams = join2(root, "streams/restricted");
+    this.#sync = join2(root, "sync/sync.db");
+  }
+  async streams() {
+    try {
+      await readdir2(this.#streams);
+    } catch (cause) {
+      throw new BiomeUnavailableError(this.#streams, cause);
+    }
+    return new BiomeStreams(this.#streams);
+  }
+  // The device list in one snapshot. Hold it only while reading: an open read
+  // stops Biome checkpointing the database's WAL.
+  sync() {
+    return new BiomeSync(this.#sync);
+  }
+  // What changes when a stream does: its segment listing and each segment's
+  // fingerprint. FSEvents reports nothing, since Biome writes in place.
+  async version(stream) {
+    const found = await segments(this.#streams, stream);
+    return (await Promise.all(found.map(async (segment) => `${segment.origin}/${segment.name}=${await segment.fingerprint()}`))).join("|");
+  }
+  // Biome commits the device list through a WAL it keeps open.
+  syncVersion() {
+    return new AppDatabaseVersion(this.#sync, BiomeUnavailableError);
+  }
+};
+
+// packages/sdks/apple/biome/dist/biome-stream.js
+var BiomeStream = class {
+};
+
+// packages/sdks/apple/biome/dist/streams/app-document-interaction.js
+var AppDocumentInteraction = class extends BiomeStream {
+  name = "App.DocumentInteraction";
+  maximumAgeDays = 28;
+  decode(message) {
+    const file = message.message(2);
+    const app = message.message(4);
+    return {
+      interactionType: message.uint(1),
+      path: file?.string(1),
+      contentType: message.string(3),
+      bundleId: app?.string(1),
+      appUrl: app?.string(2)
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/biome-values.js
+var appleEpochSeconds = 978307200;
+var instant = (seconds) => new Date(Math.round(seconds * 1e3));
+var finite = (value) => value !== void 0 && Number.isFinite(value);
+var appleDate = (seconds) => finite(seconds) ? instant(seconds + appleEpochSeconds) : void 0;
+var unixDate = (seconds) => finite(seconds) ? instant(seconds) : void 0;
+var optionalText = (value) => value === "" ? void 0 : value;
+var flag = (value) => value === void 0 ? void 0 : value !== 0;
+var archive = (bytes) => bytes !== void 0 && bytes.length > 0 ? decodeArchive(bytes) : void 0;
+
+// packages/sdks/apple/biome/dist/streams/app-in-focus.js
+var AppInFocus = class extends BiomeStream {
+  name = "App.InFocus";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      started: flag(message.uint(3)),
+      occurredAt: appleDate(message.double(4)),
+      bundleId: message.string(6),
+      launchReason: optionalText(message.string(1)),
+      eventType: message.uint(2),
+      shortVersion: optionalText(message.string(9)),
+      bundleVersion: optionalText(message.string(10)),
+      platform: message.uint(11),
+      nativeArchitecture: flag(message.uint(12)),
+      displayType: message.uint(13)
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/app-intent.js
+var AppIntent = class extends BiomeStream {
+  name = "App.Intent";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      occurredAt: appleDate(message.double(1)),
+      bundleId: message.string(2),
+      sourceId: message.string(3),
+      intentClass: message.string(4),
+      intentVerb: message.string(5),
+      intentType: message.uint(6),
+      handlingStatus: message.uint(7),
+      direction: message.uint(11),
+      donatedBySiri: flag(message.uint(10)),
+      itemId: message.string(9),
+      groupId: optionalText(message.string(12)),
+      interaction: archive(message.bytes(8))
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/app-media-usage.js
+var AppMediaUsage = class extends BiomeStream {
+  name = "App.MediaUsage";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      usageId: message.string(8),
+      started: flag(message.uint(1)),
+      occurredAt: unixDate(message.double(6)),
+      bundleId: message.string(2),
+      usageTrusted: flag(message.uint(5))
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/app-menu-item.js
+var AppMenuItem = class extends BiomeStream {
+  name = "App.MenuItem";
+  maximumAgeDays = 28;
+  decode(message) {
+    return { bundleId: message.string(1) };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/app-web-usage.js
+var AppWebUsage = class extends BiomeStream {
+  name = "App.WebUsage";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      usageId: message.string(1),
+      occurredAt: appleDate(message.double(2)),
+      usageState: message.uint(3),
+      url: message.string(4),
+      domain: message.string(5),
+      bundleId: message.string(6),
+      usageTrusted: flag(message.uint(8)),
+      safariProfileId: optionalText(message.string(9))
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/device-wireless-bluetooth.js
+var DeviceWirelessBluetooth = class extends BiomeStream {
+  name = "Device.Wireless.Bluetooth";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      address: message.string(1),
+      deviceName: optionalText(message.string(2)),
+      connected: flag(message.uint(4)),
+      vendorId: message.uint(11),
+      productId: message.uint(3),
+      deviceType: message.uint(5),
+      appleAudioDevice: flag(message.uint(9)),
+      userWearing: flag(message.uint(10)),
+      batteryCase: message.uint(6),
+      batteryLeft: message.uint(8),
+      batteryRight: message.uint(7)
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/media-now-playing.js
+var unknownDuration = 4294967295;
+var MediaNowPlaying = class extends BiomeStream {
+  name = "Media.NowPlaying";
+  maximumAgeDays = 28;
+  decode(message) {
+    const duration = message.uint(6);
+    return {
+      occurredAt: appleDate(message.double(2)),
+      playbackState: message.uint(3),
+      title: optionalText(message.string(8)),
+      artist: optionalText(message.string(5)),
+      album: optionalText(message.string(4)),
+      durationSeconds: duration === unknownDuration ? void 0 : duration,
+      mediaType: optionalText(message.string(10)),
+      airPlayVideo: flag(message.uint(13)),
+      bundleId: optionalText(message.string(15)),
+      outputDeviceIds: message.messages(14).flatMap((device) => optionalText(device.string(3)) ?? [])
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/notification-delivery.js
+var NotificationDelivery = class extends BiomeStream {
+  name = "Notification.Delivery";
+  maximumAgeDays = 3;
+  decode(message) {
+    return {
+      requestId: message.string(1),
+      bundleId: message.string(2),
+      occurredAt: unixDate(message.double(3))
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/notification-usage.js
+var NotificationUsage = class extends BiomeStream {
+  name = "Notification.Usage";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      notificationId: message.string(5),
+      occurredAt: appleDate(message.double(2)),
+      usageType: message.uint(3),
+      bundleId: message.string(4)
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/safari-navigations.js
+var SafariNavigations = class extends BiomeStream {
+  name = "Safari.Navigations";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      host: message.string(1),
+      url: message.string(8),
+      countryCode: message.string(5),
+      periodEndsAt: unixDate(message.double(2))
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/screen-time-app-usage.js
+var ScreenTimeAppUsage = class extends BiomeStream {
+  name = "ScreenTime.AppUsage";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      started: flag(message.uint(1)),
+      occurredAt: unixDate(message.double(2)),
+      bundleId: message.string(3),
+      usageTrusted: flag(message.uint(5))
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/screenshots-screenshot.js
+var ScreenshotsScreenshot = class extends BiomeStream {
+  name = "Screenshots.Screenshot";
+  maximumAgeDays = 1;
+  decode(message) {
+    const screenshot = message.message(1);
+    return {
+      path: screenshot?.message(4)?.string(1),
+      screenshotSource: screenshot?.uint(1),
+      screenshotLocation: screenshot?.uint(2),
+      screenshotStyle: screenshot?.uint(6)
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/user-focus-computed-mode.js
+var UserFocusComputedMode = class extends BiomeStream {
+  name = "UserFocus.ComputedMode";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      modeId: message.string(1),
+      semanticModeId: message.string(6),
+      started: flag(message.uint(2)),
+      semanticType: message.uint(4),
+      updateReason: message.uint(3),
+      updateSource: message.uint(5)
+    };
+  }
+};
+
+// packages/sdks/apple/biome/dist/streams/user-focus-inferred-mode.js
+var UserFocusInferredMode = class extends BiomeStream {
+  name = "UserFocus.InferredMode";
+  maximumAgeDays = 28;
+  decode(message) {
+    return {
+      suggestionId: message.string(7),
+      occurredAt: appleDate(message.double(1)),
+      started: flag(message.uint(6)),
+      modeId: optionalText(message.string(2)),
+      modeName: optionalText(message.string(14)),
+      modeType: message.uint(12),
+      origin: message.uint(3),
+      automationEnabled: flag(message.uint(5)),
+      uiLocation: message.uint(9),
+      confidence: message.double(10),
+      shouldSuggestTriggers: flag(message.uint(13)),
+      triggers: archive(message.bytes(11))
+    };
+  }
+};
+
+// packages/sdks/apple/knowledge/dist/errors.js
+var KnowledgeUnavailableError = class extends Error {
+  name = "KnowledgeUnavailableError";
+  constructor(path, cause) {
+    super(`knowledgeC at ${path} cannot be read. Allow the process that reads it Full Disk Access in System Settings > Privacy & Security; macOS attributes a child process to the app or launchd job that started it.`, { cause });
+  }
+};
+var KnowledgeSchemaError = class extends Error {
+  name = "KnowledgeSchemaError";
+  constructor(path, missing) {
+    super(`knowledgeC at ${path} has a layout this reader does not read (missing ${missing.join(", ")}).`);
+  }
+};
+
+// packages/sdks/apple/knowledge/dist/knowledge-store.js
+import { homedir as homedir2 } from "node:os";
+import { join as join3 } from "node:path";
+
+// packages/sdks/apple/knowledge/dist/knowledge-values.js
+var appleEpochSeconds2 = 978307200;
+var text2 = (value) => typeof value === "string" ? value : void 0;
+var optionalText2 = (value) => typeof value === "string" && value !== "" ? value : void 0;
+var integer = (value) => typeof value === "number" && Number.isSafeInteger(value) ? value : void 0;
+var flag2 = (value) => typeof value === "number" ? value !== 0 : void 0;
+var appleDate2 = (value) => typeof value === "number" && Number.isFinite(value) ? new Date(Math.round((value + appleEpochSeconds2) * 1e3)) : void 0;
+var archive2 = (value) => value instanceof Uint8Array && value.length > 0 ? decodeArchive(value) : void 0;
+
+// packages/sdks/apple/knowledge/dist/knowledge-store.js
+var knowledgeStorePath = join3(homedir2(), "Library/Application Support/Knowledge/knowledgeC.db");
+var tables = [
+  { name: "ZOBJECT", alias: "o" },
+  { name: "ZSTRUCTUREDMETADATA", alias: "m" },
+  { name: "ZSOURCE", alias: "s" }
+];
+var eventColumns = {
+  ZOBJECT: [
+    "ZUUID",
+    "ZSTARTDATE",
+    "ZENDDATE",
+    "ZCREATIONDATE",
+    "ZSECONDSFROMGMT"
+  ]
+};
+var queryColumns = {
+  ZOBJECT: ["Z_PK", "ZSTREAMNAME", "ZSTRUCTUREDMETADATA", "ZSOURCE"],
+  ZSTRUCTUREDMETADATA: ["Z_PK"],
+  ZSOURCE: ["Z_PK"]
+};
+var columnsOf = (sets, table) => sets.flatMap((set) => set[table] ?? []);
+var KnowledgeSnapshot = class {
+  #database;
+  constructor(path) {
+    this.#database = new AppDatabase(path, KnowledgeUnavailableError);
+  }
+  // A stream's events in the order knowledgeC stored them. Each read checks
+  // only the columns it reads, so a layout change fails only the streams it
+  // touches.
+  events(stream) {
+    const missing = this.#database.missingColumns(Object.fromEntries(tables.map(({ name }) => [
+      name,
+      columnsOf([queryColumns, eventColumns, stream.columns], name)
+    ])));
+    if (missing.length > 0)
+      throw new KnowledgeSchemaError(this.#database.path, missing);
+    const selected = tables.flatMap(({ name, alias }) => columnsOf([eventColumns, stream.columns], name).map((column) => `${alias}.${column}`));
+    return this.#database.all(`SELECT ${selected.join(", ")}
+         FROM ZOBJECT o
+         LEFT JOIN ZSTRUCTUREDMETADATA m ON m.Z_PK = o.ZSTRUCTUREDMETADATA
+         LEFT JOIN ZSOURCE s ON s.Z_PK = o.ZSOURCE
+         WHERE o.ZSTREAMNAME = ? ORDER BY o.Z_PK`, stream.name).map((row) => ({
+      id: text2(row.ZUUID),
+      startedAt: appleDate2(row.ZSTARTDATE),
+      endedAt: appleDate2(row.ZENDDATE),
+      createdAt: appleDate2(row.ZCREATIONDATE),
+      utcOffsetSeconds: integer(row.ZSECONDSFROMGMT),
+      ...stream.decode(row)
+    }));
+  }
+  [Symbol.dispose]() {
+    this.#database[Symbol.dispose]();
+  }
+};
+var KnowledgeStore = class {
+  #path;
+  constructor(path) {
+    this.#path = path;
+  }
+  open() {
+    return new KnowledgeSnapshot(this.#path);
+  }
+  // knowledgeC commits through a WAL it keeps open.
+  version() {
+    return new AppDatabaseVersion(this.#path, KnowledgeUnavailableError);
+  }
+};
+
+// packages/sdks/apple/knowledge/dist/knowledge-stream.js
+var KnowledgeStream = class {
+};
+
+// packages/sdks/apple/knowledge/dist/streams/app-intents.js
+var AppIntents = class extends KnowledgeStream {
+  name = "/app/intents";
+  maximumAgeDays = 28;
+  columns = {
+    ZOBJECT: ["ZVALUESTRING"],
+    ZSOURCE: ["ZBUNDLEID", "ZDEVICEID", "ZITEMID", "ZGROUPID"],
+    ZSTRUCTUREDMETADATA: [
+      "Z_DKINTENTMETADATAKEY__INTENTCLASS",
+      "Z_DKINTENTMETADATAKEY__INTENTVERB",
+      "Z_DKINTENTMETADATAKEY__INTENTTYPE",
+      "Z_DKINTENTMETADATAKEY__INTENTHANDLINGSTATUS",
+      "Z_DKINTENTMETADATAKEY__DIRECTION",
+      "Z_DKINTENTMETADATAKEY__DONATEDBYSIRI",
+      "Z_DKINTENTMETADATAKEY__INTERACTIONIDENTIFIER",
+      "Z_DKINTENTMETADATAKEY__DERIVEDINTENTIDENTIFIER",
+      "Z_DKINTENTMETADATAKEY__RELATEDCONTACTIDENTIFIERS",
+      "Z_DKINTENTMETADATAKEY__SERIALIZEDINTERACTION"
+    ]
+  };
+  decode(row) {
+    return {
+      category: optionalText2(row.ZVALUESTRING),
+      bundleId: text2(row.ZBUNDLEID),
+      deviceId: optionalText2(row.ZDEVICEID),
+      itemId: optionalText2(row.ZITEMID),
+      groupId: optionalText2(row.ZGROUPID),
+      intentClass: text2(row.Z_DKINTENTMETADATAKEY__INTENTCLASS),
+      intentVerb: optionalText2(row.Z_DKINTENTMETADATAKEY__INTENTVERB),
+      intentType: integer(row.Z_DKINTENTMETADATAKEY__INTENTTYPE),
+      handlingStatus: integer(row.Z_DKINTENTMETADATAKEY__INTENTHANDLINGSTATUS),
+      direction: integer(row.Z_DKINTENTMETADATAKEY__DIRECTION),
+      donatedBySiri: flag2(row.Z_DKINTENTMETADATAKEY__DONATEDBYSIRI),
+      interactionId: text2(row.Z_DKINTENTMETADATAKEY__INTERACTIONIDENTIFIER),
+      derivedIntentId: optionalText2(row.Z_DKINTENTMETADATAKEY__DERIVEDINTENTIDENTIFIER),
+      relatedContactIds: optionalText2(row.Z_DKINTENTMETADATAKEY__RELATEDCONTACTIDENTIFIERS),
+      interaction: archive2(row.Z_DKINTENTMETADATAKEY__SERIALIZEDINTERACTION)
+    };
+  }
+};
+
+// packages/sdks/apple/knowledge/dist/streams/discoverability-signals.js
+var DiscoverabilitySignals = class extends KnowledgeStream {
+  name = "/discoverability/signals";
+  maximumAgeDays = 730;
+  columns = {
+    ZOBJECT: ["ZVALUESTRING"],
+    ZSOURCE: ["ZBUNDLEID"],
+    ZSTRUCTUREDMETADATA: [
+      "Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__OSBUILD",
+      "Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__USERINFO"
+    ]
+  };
+  decode(row) {
+    return {
+      signal: optionalText2(row.ZVALUESTRING),
+      bundleId: optionalText2(row.ZBUNDLEID),
+      osBuild: optionalText2(row.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__OSBUILD),
+      userInfo: archive2(row.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__USERINFO)
+    };
+  }
+};
+
+// packages/sdks/apple/knowledge/dist/streams/display-is-backlit.js
+var DisplayIsBacklit = class extends KnowledgeStream {
+  name = "/display/isBacklit";
+  maximumAgeDays = 28;
+  columns = { ZOBJECT: ["ZVALUEINTEGER"] };
+  decode(row) {
+    return { backlit: flag2(row.ZVALUEINTEGER) };
+  }
+};
+
+// packages/sources/apple/activity/dist/activity-scan.js
+var ActivityScan = class _ActivityScan {
+  startedAt;
+  #resources;
+  #stores;
+  constructor(startedAt, resources, stores) {
+    this.startedAt = startedAt;
+    this.#resources = resources;
+    this.#stores = stores;
+  }
+  static async open(location, stores) {
+    var _stack = [];
+    try {
+      const startedAt = /* @__PURE__ */ new Date();
+      const resources = __using(_stack, new AsyncDisposableStack(), true);
+      const open2 = async (store, value) => {
+        if (!stores.has(store))
+          return void 0;
+        try {
+          return { value: await value() };
+        } catch (error) {
+          return { error };
+        }
+      };
+      const biome = new BiomeStore(location.biome);
+      const opened = {
+        biome: await open2("biome", () => biome.streams()),
+        knowledge: await open2("knowledge", () => resources.use(new KnowledgeStore(location.knowledge).open())),
+        devices: await open2("devices", () => resources.use(biome.sync()))
+      };
+      return new _ActivityScan(startedAt, resources.move(), opened);
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise = __callDispose(_stack, _error, _hasError);
+      _promise && await _promise;
+    }
+  }
+  get biome() {
+    return this.#value("biome");
+  }
+  get knowledge() {
+    return this.#value("knowledge");
+  }
+  get devices() {
+    return this.#value("devices");
+  }
+  #value(store) {
+    const opened = this.#stores[store];
+    if (opened === void 0)
+      throw new Error(`Activity ${store} was not opened for this run`);
+    if ("error" in opened)
+      throw opened.error;
+    return opened.value;
+  }
+  [Symbol.asyncDispose]() {
+    return this.#resources.disposeAsync();
+  }
+};
+
 // packages/sources/apple/activity/dist/activity-values.js
-var text = { type: "string" };
+var text3 = { type: "string" };
 var nullableText = { type: ["string", "null"] };
 var activityFields = {
-  text,
+  text: text3,
   nullableText,
   integer: { type: "integer" },
   nullableInteger: { type: ["integer", "null"] },
   number: { type: "number" },
   boolean: { type: "boolean" },
   nullableBoolean: { type: ["boolean", "null"] },
-  timestamp: { ...text, format: "date-time" },
+  timestamp: { ...text3, format: "date-time" },
   nullableTimestamp: { ...nullableText, format: "date-time" },
   bundleId: {
-    ...text,
+    ...text3,
     minLength: 1,
     description: "Bundle identifier of the app, such as com.apple.Safari."
   }
 };
-var appleEpochSeconds = 978307200;
-var instant = (seconds) => new Date(Math.round(seconds * 1e3)).toISOString();
-var finite = (value) => typeof value === "number" && Number.isFinite(value);
-var appleTime = (value) => finite(value) ? instant(value + appleEpochSeconds) : null;
-var unixTime = (value) => finite(value) ? instant(value) : null;
-var nonEmpty = (value) => typeof value === "string" && value !== "" ? value : null;
-var integer = (value) => typeof value === "number" && Number.isSafeInteger(value) ? value : null;
-var flag = (value) => typeof value === "number" ? value !== 0 : null;
+var isoTime = (at) => at?.toISOString() ?? null;
+var plistText = (value) => value === void 0 ? null : plistJSON(value);
 var dayMs = 864e5;
 var marginMs = 36e5;
 var retainedSince = (startedAt, retentionDays) => new Date(startedAt.getTime() - retentionDays * dayMs + marginMs).toISOString();
-var archiveJSON = (value) => value instanceof Uint8Array && value.length > 0 ? plistJSON(decodeArchive(value)) : null;
 
-// packages/sources/apple/activity/dist/biome-stream.js
+// packages/sources/apple/activity/dist/biome-activity-stream.js
 var parserVersion = 1;
 var biomeAddress = {
   origin: {
@@ -353,30 +807,7 @@ var biomeAddress = {
     description: "The record's protobuf exactly as Biome stores it, base64. Biome's format is private: fields this stream does not name stay readable here."
   }
 };
-async function segments(root, biomeName) {
-  const files = async (origin, directory) => (await entries(directory)).filter((entry) => entry.isFile() && !entry.name.startsWith(".")).map((entry) => ({
-    origin,
-    name: entry.name,
-    path: join2(directory, entry.name)
-  }));
-  const stream = join2(root, biomeName);
-  const devices = (await entries(join2(stream, "remote"))).filter((entry) => entry.isDirectory());
-  return [
-    ...await files("local", join2(stream, "local")),
-    ...(await Promise.all(devices.map((device) => files(device.name, join2(stream, "remote", device.name))))).flat()
-  ];
-}
-async function entries(directory) {
-  try {
-    return await readdir2(directory, { withFileTypes: true });
-  } catch (cause) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      return [];
-    throw new ActivityUnavailableError(directory, cause);
-  }
-}
-var segmentFingerprint = async (segment) => `${parserVersion}:${await segbFingerprint(segment.path)}`;
-var BiomeStream = class {
+var BiomeActivityStream = class {
   store = "biome";
   primaryKey = Object.freeze([
     "origin",
@@ -391,14 +822,17 @@ var BiomeStream = class {
   emitsDeletes = true;
   expiresBy = "recordedAt";
   #stream;
+  get retentionDays() {
+    return this.biome.maximumAgeDays;
+  }
   describe() {
     this.#stream ??= new Stream(this);
     return this.#stream;
   }
-  // Incremental copies read only the segments whose trailer changed, and keep
-  // the rows of records macOS expired.
+  // Incremental copies read only the segments whose fingerprint changed, and
+  // keep the rows of records macOS expired.
   async *messages(configuration, state, scan) {
-    const found = await segments(scan.biome, this.biomeName);
+    const found = await scan.biome.segments(this.biome);
     if (configuration.syncMode === "full_refresh") {
       for (const segment of found)
         for await (const data of this.#read(segment))
@@ -407,21 +841,19 @@ var BiomeStream = class {
     }
     const groups = await Promise.all(found.map(async (segment) => ({
       key: `${segment.origin}/${segment.name}`,
-      fingerprint: await segmentFingerprint(segment),
+      fingerprint: `${parserVersion}:${await segment.fingerprint()}`,
       records: () => this.#read(segment)
     })));
     yield* diffGroupedSnapshot(configuration.stream, groups, state, retainedSince(scan.startedAt, this.retentionDays));
   }
   async *#read(segment) {
-    const drafts = (await readSegb(segment.path)).flatMap((record) => record.payload === null ? [] : [
-      this.record(new ProtobufMessage(record.payload), {
-        origin: segment.origin,
-        segment: segment.name,
-        slot: record.slot,
-        recordedAt: record.writtenAt.toISOString(),
-        payload: Buffer.from(record.payload).toString("base64")
-      })
-    ]);
+    const drafts = (await segment.records()).map((record) => this.record(record.event, {
+      origin: segment.origin,
+      segment: segment.name,
+      slot: record.slot,
+      recordedAt: record.writtenAt.toISOString(),
+      payload: Buffer.from(record.payload).toString("base64")
+    }));
     yield* validateRecords(this, drafts, "Activity");
   }
 };
@@ -468,35 +900,34 @@ var properties = {
     description: "Biome display type as stored."
   }
 };
-var AppFocusStream = class extends BiomeStream {
+var AppFocusStream = class extends BiomeActivityStream {
   name = "appFocus";
-  biomeName = "App.InFocus";
-  retentionDays = 28;
+  biome = new AppInFocus();
   jsonSchema = {
     type: "object",
     description: "One source record per app focus change (Biome App.InFocus) on this Mac and the devices it syncs with: an app coming into the foreground, or leaving it. A session runs from a start to the next end of the same app and origin.",
     properties,
     required: Object.keys(properties)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      started: flag(payload.uint(3)),
-      occurredAt: appleTime(payload.double(4)),
-      bundleId: payload.string(6),
-      launchReason: nonEmpty(payload.string(1)),
-      eventType: integer(payload.uint(2)),
-      shortVersion: nonEmpty(payload.string(9)),
-      bundleVersion: nonEmpty(payload.string(10)),
-      platform: integer(payload.uint(11)),
-      nativeArchitecture: flag(payload.uint(12)),
-      displayType: integer(payload.uint(13))
+      started: event.started ?? null,
+      occurredAt: isoTime(event.occurredAt),
+      bundleId: event.bundleId,
+      launchReason: event.launchReason ?? null,
+      eventType: event.eventType ?? null,
+      shortVersion: event.shortVersion ?? null,
+      bundleVersion: event.bundleVersion ?? null,
+      platform: event.platform ?? null,
+      nativeArchitecture: event.nativeArchitecture ?? null,
+      displayType: event.displayType ?? null
     };
   }
 };
 
 // packages/sources/apple/activity/dist/streams/app-intents-stream.js
-var { text: text2, integer: integerField, nullableText: nullableText3 } = activityFields;
+var { text: text4, integer: integerField, nullableText: nullableText3 } = activityFields;
 var properties2 = {
   ...biomeAddress,
   occurredAt: {
@@ -507,13 +938,13 @@ var properties2 = {
     ...activityFields.bundleId,
     description: "Bundle identifier of the app that donated the interaction."
   },
-  sourceId: { ...text2, description: "Biome intent source as stored." },
+  sourceId: { ...text4, description: "Biome intent source as stored." },
   intentClass: {
-    ...text2,
+    ...text4,
     description: "SiriKit intent class, such as INSendMessageIntent."
   },
   intentVerb: {
-    ...text2,
+    ...text4,
     description: "SiriKit intent verb, such as SendMessage."
   },
   intentType: { ...integerField, description: "Biome intent type as stored." },
@@ -530,7 +961,7 @@ var properties2 = {
     description: "Whether Siri donated the interaction rather than the app."
   },
   itemId: {
-    ...text2,
+    ...text4,
     description: "Identifier of the donated item, a UUID."
   },
   groupId: {
@@ -542,31 +973,30 @@ var properties2 = {
     description: "The donated INInteraction, decoded from its keyed archive to JSON: its intent, response, date interval and participants."
   }
 };
-var AppIntentsStream = class extends BiomeStream {
+var AppIntentsStream = class extends BiomeActivityStream {
   name = "appIntents";
-  biomeName = "App.Intent";
-  retentionDays = 28;
+  biome = new AppIntent();
   jsonSchema = {
     type: "object",
     description: "One source record per interaction an app donated to the system on this Mac (Biome App.Intent), such as a message sent or received through a messaging app.",
     properties: properties2,
     required: Object.keys(properties2)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      occurredAt: appleTime(payload.double(1)),
-      bundleId: payload.string(2),
-      sourceId: payload.string(3),
-      intentClass: payload.string(4),
-      intentVerb: payload.string(5),
-      intentType: integer(payload.uint(6)),
-      handlingStatus: integer(payload.uint(7)),
-      direction: integer(payload.uint(11)),
-      donatedBySiri: flag(payload.uint(10)),
-      itemId: payload.string(9),
-      groupId: nonEmpty(payload.string(12)),
-      interaction: archiveJSON(payload.bytes(8))
+      occurredAt: isoTime(event.occurredAt),
+      bundleId: event.bundleId,
+      sourceId: event.sourceId,
+      intentClass: event.intentClass,
+      intentVerb: event.intentVerb,
+      intentType: event.intentType ?? null,
+      handlingStatus: event.handlingStatus ?? null,
+      direction: event.direction ?? null,
+      donatedBySiri: event.donatedBySiri ?? null,
+      itemId: event.itemId,
+      groupId: event.groupId ?? null,
+      interaction: plistText(event.interaction)
     };
   }
 };
@@ -579,18 +1009,20 @@ var properties3 = {
     description: "Bundle identifier of the app whose menu was used."
   }
 };
-var AppMenuItemsStream = class extends BiomeStream {
+var AppMenuItemsStream = class extends BiomeActivityStream {
   name = "appMenuItems";
-  biomeName = "App.MenuItem";
-  retentionDays = 28;
+  biome = new AppMenuItem();
   jsonSchema = {
     type: "object",
     description: "One source record per use of an app's menu bar on this Mac (Biome App.MenuItem). Biome records which app, not which item.",
     properties: properties3,
     required: Object.keys(properties3)
   };
-  record(payload, address) {
-    return { ...address, bundleId: payload.string(1) };
+  record(event, address) {
+    return {
+      ...address,
+      bundleId: event.bundleId
+    };
   }
 };
 
@@ -637,30 +1069,29 @@ var properties4 = {
   batteryLeft: battery("left headphone"),
   batteryRight: battery("right headphone")
 };
-var BluetoothConnectionsStream = class extends BiomeStream {
+var BluetoothConnectionsStream = class extends BiomeActivityStream {
   name = "bluetoothConnections";
-  biomeName = "Device.Wireless.Bluetooth";
-  retentionDays = 28;
+  biome = new DeviceWirelessBluetooth();
   jsonSchema = {
     type: "object",
     description: "One source record per Bluetooth device connecting or disconnecting on this Mac and the devices it syncs with (Biome Device.Wireless.Bluetooth).",
     properties: properties4,
     required: Object.keys(properties4)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      address: payload.string(1),
-      deviceName: nonEmpty(payload.string(2)),
-      connected: flag(payload.uint(4)),
-      vendorId: integer(payload.uint(11)),
-      productId: integer(payload.uint(3)),
-      deviceType: integer(payload.uint(5)),
-      appleAudioDevice: flag(payload.uint(9)),
-      userWearing: flag(payload.uint(10)),
-      batteryCase: integer(payload.uint(6)),
-      batteryLeft: integer(payload.uint(8)),
-      batteryRight: integer(payload.uint(7))
+      address: event.address,
+      deviceName: event.deviceName ?? null,
+      connected: event.connected ?? null,
+      vendorId: event.vendorId ?? null,
+      productId: event.productId ?? null,
+      deviceType: event.deviceType ?? null,
+      appleAudioDevice: event.appleAudioDevice ?? null,
+      userWearing: event.userWearing ?? null,
+      batteryCase: event.batteryCase ?? null,
+      batteryLeft: event.batteryLeft ?? null,
+      batteryRight: event.batteryRight ?? null
     };
   }
 };
@@ -724,21 +1155,21 @@ var DevicesStream = class {
       yield* diffSnapshot(configuration.stream, records, state);
   }
   #read(scan) {
-    return validateRecords(this, scan.devices.all("SELECT device_identifier, me, name, CAST(model AS TEXT) AS model, platform, last_sync_date FROM DevicePeer ORDER BY device_identifier").map((row) => this.#record(row)), "Activity");
+    return validateRecords(this, scan.devices.devices().map((device) => this.#record(device)), "Activity");
   }
-  #record(row) {
+  #record(device) {
     return {
-      deviceId: row.device_identifier,
-      thisMac: row.me === 1,
-      name: nonEmpty(row.name),
-      model: nonEmpty(row.model),
-      platform: integer(row.platform),
-      lastSyncedAt: unixTime(row.last_sync_date)
+      deviceId: device.id,
+      thisMac: device.thisMac,
+      name: device.name ?? null,
+      model: device.model ?? null,
+      platform: device.platform ?? null,
+      lastSyncedAt: isoTime(device.lastSyncedAt)
     };
   }
 };
 
-// packages/sources/apple/activity/dist/knowledge-stream.js
+// packages/sources/apple/activity/dist/knowledge-activity-stream.js
 var knowledgeEvent = {
   id: {
     ...activityFields.text,
@@ -762,8 +1193,14 @@ var knowledgeEvent = {
     description: "The device\u2019s offset from UTC when the event happened."
   }
 };
-var eventColumns = "o.ZUUID, o.ZSTARTDATE, o.ZENDDATE, o.ZCREATIONDATE, o.ZSECONDSFROMGMT";
-var KnowledgeStream = class {
+var knowledgeEventRecord = (event) => ({
+  id: event.id,
+  startedAt: isoTime(event.startedAt),
+  endedAt: isoTime(event.endedAt),
+  createdAt: isoTime(event.createdAt),
+  utcOffsetSeconds: event.utcOffsetSeconds
+});
+var KnowledgeActivityStream = class {
   store = "knowledge";
   primaryKey = Object.freeze(["id"]);
   supportedSyncModes = Object.freeze([
@@ -774,6 +1211,9 @@ var KnowledgeStream = class {
   emitsDeletes = true;
   expiresBy = "startedAt";
   #stream;
+  get retentionDays() {
+    return this.knowledge.maximumAgeDays;
+  }
   describe() {
     this.#stream ??= new Stream(this);
     return this.#stream;
@@ -786,12 +1226,7 @@ var KnowledgeStream = class {
       yield* diffSnapshot(configuration.stream, records, state, retainedSince(scan.startedAt, this.retentionDays));
   }
   #read(scan) {
-    const rows = scan.knowledge.all(`SELECT ${eventColumns}, ${this.columns}
-       FROM ZOBJECT o
-       LEFT JOIN ZSTRUCTUREDMETADATA m ON m.Z_PK = o.ZSTRUCTUREDMETADATA
-       LEFT JOIN ZSOURCE s ON s.Z_PK = o.ZSOURCE
-       WHERE o.ZSTREAMNAME = ? ORDER BY o.Z_PK`, this.streamName);
-    return validateRecords(this, rows.map((row) => this.record(row)), "Activity");
+    return validateRecords(this, scan.knowledge.events(this.knowledge).map((event) => this.record(event)), "Activity");
   }
 };
 
@@ -816,29 +1251,22 @@ var properties6 = {
     description: "Extra data the signal carried, decoded from its property list to JSON; NULL when none."
   }
 };
-var DiscoverabilitySignalsStream = class extends KnowledgeStream {
+var DiscoverabilitySignalsStream = class extends KnowledgeActivityStream {
   name = "discoverabilitySignals";
-  streamName = "/discoverability/signals";
-  retentionDays = 730;
+  knowledge = new DiscoverabilitySignals();
   jsonSchema = {
     type: "object",
     description: "One source record per feature-discovery signal on this Mac (knowledgeC /discoverability/signals), the events macOS uses to time its tips. macOS keeps these for two years.",
     properties: properties6,
     required: Object.keys(properties6)
   };
-  columns = `o.ZVALUESTRING, s.ZBUNDLEID,
-    m.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__OSBUILD, m.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__USERINFO`;
-  record(row) {
+  record(event) {
     return {
-      id: row.ZUUID,
-      startedAt: appleTime(row.ZSTARTDATE),
-      endedAt: appleTime(row.ZENDDATE),
-      createdAt: appleTime(row.ZCREATIONDATE),
-      utcOffsetSeconds: row.ZSECONDSFROMGMT,
-      signal: nonEmpty(row.ZVALUESTRING),
-      bundleId: nonEmpty(row.ZBUNDLEID),
-      osBuild: nonEmpty(row.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__OSBUILD),
-      userInfo: archiveJSON(row.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__USERINFO)
+      ...knowledgeEventRecord(event),
+      signal: event.signal ?? null,
+      bundleId: event.bundleId ?? null,
+      osBuild: event.osBuild ?? null,
+      userInfo: plistText(event.userInfo)
     };
   }
 };
@@ -851,82 +1279,73 @@ var properties7 = {
     description: "Whether the display was lit between startedAt and endedAt (false: off or asleep)."
   }
 };
-var DisplayBacklightStream = class extends KnowledgeStream {
+var DisplayBacklightStream = class extends KnowledgeActivityStream {
   name = "displayBacklight";
-  streamName = "/display/isBacklit";
-  retentionDays = 28;
+  knowledge = new DisplayIsBacklit();
   jsonSchema = {
     type: "object",
     description: "One source record per span the display stayed lit or dark on this Mac (knowledgeC /display/isBacklit): when the screen was on.",
     properties: properties7,
     required: Object.keys(properties7)
   };
-  columns = "o.ZVALUEINTEGER";
-  record(row) {
+  record(event) {
     return {
-      id: row.ZUUID,
-      startedAt: appleTime(row.ZSTARTDATE),
-      endedAt: appleTime(row.ZENDDATE),
-      createdAt: appleTime(row.ZCREATIONDATE),
-      utcOffsetSeconds: row.ZSECONDSFROMGMT,
-      backlit: flag(row.ZVALUEINTEGER)
+      ...knowledgeEventRecord(event),
+      backlit: event.backlit ?? null
     };
   }
 };
 
 // packages/sources/apple/activity/dist/streams/document-interactions-stream.js
-var { text: text3 } = activityFields;
+var { text: text5 } = activityFields;
 var properties8 = {
   ...biomeAddress,
   interactionType: {
     ...activityFields.integer,
     description: "Biome document interaction type as stored (1 observed)."
   },
-  path: { ...text3, description: "Path of the document." },
+  path: { ...text5, description: "Path of the document." },
   contentType: {
-    ...text3,
+    ...text5,
     description: "Uniform type identifier of the document, such as com.adobe.pdf."
   },
   bundleId: {
     ...activityFields.bundleId,
     description: "Bundle identifier of the app the document was used in."
   },
-  appUrl: { ...text3, description: "File URL of that app." }
+  appUrl: { ...text5, description: "File URL of that app." }
 };
-var DocumentInteractionsStream = class extends BiomeStream {
+var DocumentInteractionsStream = class extends BiomeActivityStream {
   name = "documentInteractions";
-  biomeName = "App.DocumentInteraction";
-  retentionDays = 28;
+  biome = new AppDocumentInteraction();
   jsonSchema = {
     type: "object",
     description: "One source record per document an app opened or used on this Mac (Biome App.DocumentInteraction). The file\u2019s bookmark data stays in payload.",
     properties: properties8,
     required: Object.keys(properties8)
   };
-  record(payload, address) {
-    const file = payload.message(2);
-    const app = payload.message(4);
+  record(event, address) {
     return {
       ...address,
-      interactionType: integer(payload.uint(1)),
-      path: file?.string(1),
-      contentType: payload.string(3),
-      bundleId: app?.string(1),
-      appUrl: app?.string(2)
+      interactionType: event.interactionType ?? null,
+      path: event.path,
+      contentType: event.contentType,
+      bundleId: event.bundleId,
+      appUrl: event.appUrl
     };
   }
 };
 
 // packages/sources/apple/activity/dist/streams/focus-modes-stream.js
-var { text: text4, integer: integerField3 } = activityFields;
+var { text: text6, integer: integerField3 } = activityFields;
 var properties9 = {
   ...biomeAddress,
   modeId: {
-    ...text4,
+    ...text6,
     description: "Identifier of the configured Focus, a UUID."
   },
   semanticModeId: {
-    ...text4,
+    ...text6,
     description: "What kind of Focus it is, such as com.apple.focus.work or com.apple.sleep.sleep-mode."
   },
   started: {
@@ -946,35 +1365,34 @@ var properties9 = {
     description: "What changed the Focus, as stored."
   }
 };
-var FocusModesStream = class extends BiomeStream {
+var FocusModesStream = class extends BiomeActivityStream {
   name = "focusModes";
-  biomeName = "UserFocus.ComputedMode";
-  retentionDays = 28;
+  biome = new UserFocusComputedMode();
   jsonSchema = {
     type: "object",
     description: "One source record per Focus turning on or off on this Mac (Biome UserFocus.ComputedMode).",
     properties: properties9,
     required: Object.keys(properties9)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      modeId: payload.string(1),
-      semanticModeId: payload.string(6),
-      started: flag(payload.uint(2)),
-      semanticType: integer(payload.uint(4)),
-      updateReason: integer(payload.uint(3)),
-      updateSource: integer(payload.uint(5))
+      modeId: event.modeId,
+      semanticModeId: event.semanticModeId,
+      started: event.started ?? null,
+      semanticType: event.semanticType ?? null,
+      updateReason: event.updateReason ?? null,
+      updateSource: event.updateSource ?? null
     };
   }
 };
 
 // packages/sources/apple/activity/dist/streams/focus-suggestions-stream.js
-var { text: text5, nullableText: nullableText6, integer: integerField4 } = activityFields;
+var { text: text7, nullableText: nullableText6, integer: integerField4 } = activityFields;
 var properties10 = {
   ...biomeAddress,
   suggestionId: {
-    ...text5,
+    ...text7,
     description: "Identifier of one suggestion; the records that start and end it share it."
   },
   occurredAt: {
@@ -1019,37 +1437,36 @@ var properties10 = {
     description: "The triggers behind the suggestion, decoded from their keyed archive to JSON; NULL when none."
   }
 };
-var FocusSuggestionsStream = class extends BiomeStream {
+var FocusSuggestionsStream = class extends BiomeActivityStream {
   name = "focusSuggestions";
-  biomeName = "UserFocus.InferredMode";
-  retentionDays = 28;
+  biome = new UserFocusInferredMode();
   jsonSchema = {
     type: "object",
     description: "One source record per start or end of a Focus the system inferred and suggested on this Mac (Biome UserFocus.InferredMode).",
     properties: properties10,
     required: Object.keys(properties10)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      suggestionId: payload.string(7),
-      occurredAt: appleTime(payload.double(1)),
-      started: flag(payload.uint(6)),
-      modeId: nonEmpty(payload.string(2)),
-      modeName: nonEmpty(payload.string(14)),
-      modeType: integer(payload.uint(12)),
-      origin: integer(payload.uint(3)),
-      automationEnabled: flag(payload.uint(5)),
-      uiLocation: integer(payload.uint(9)),
-      confidence: payload.double(10),
-      shouldSuggestTriggers: flag(payload.uint(13)),
-      triggers: archiveJSON(payload.bytes(11))
+      suggestionId: event.suggestionId,
+      occurredAt: isoTime(event.occurredAt),
+      started: event.started ?? null,
+      modeId: event.modeId ?? null,
+      modeName: event.modeName ?? null,
+      modeType: event.modeType ?? null,
+      origin: event.origin ?? null,
+      automationEnabled: event.automationEnabled ?? null,
+      uiLocation: event.uiLocation ?? null,
+      confidence: event.confidence,
+      shouldSuggestTriggers: event.shouldSuggestTriggers ?? null,
+      triggers: plistText(event.triggers)
     };
   }
 };
 
 // packages/sources/apple/activity/dist/streams/knowledge-intents-stream.js
-var { text: text6, nullableText: nullableText7, integer: integerField5 } = activityFields;
+var { text: text8, nullableText: nullableText7, integer: integerField5 } = activityFields;
 var properties11 = {
   ...knowledgeEvent,
   category: {
@@ -1073,7 +1490,7 @@ var properties11 = {
     description: "Group the interaction belongs to, such as a conversation; NULL when the app gave none."
   },
   intentClass: {
-    ...text6,
+    ...text8,
     description: "SiriKit intent class, such as INSendMessageIntent."
   },
   intentVerb: {
@@ -1094,7 +1511,7 @@ var properties11 = {
     description: "Whether Siri donated the interaction rather than the app."
   },
   interactionId: {
-    ...text6,
+    ...text8,
     description: "Identifier of the INInteraction."
   },
   derivedIntentId: {
@@ -1110,44 +1527,33 @@ var properties11 = {
     description: "The donated INInteraction, decoded from its keyed archive to JSON: its intent, response, date interval and participants."
   }
 };
-var KnowledgeIntentsStream = class extends KnowledgeStream {
+var KnowledgeIntentsStream = class extends KnowledgeActivityStream {
   name = "knowledgeIntents";
-  streamName = "/app/intents";
-  retentionDays = 28;
+  knowledge = new AppIntents();
   jsonSchema = {
     type: "object",
     description: "One source record per app interaction in knowledgeC (/app/intents), such as a message or call in a messaging app. On a Mac these arrive from the user\u2019s iPhone through knowledge sync.",
     properties: properties11,
     required: Object.keys(properties11)
   };
-  columns = `o.ZVALUESTRING, s.ZBUNDLEID, s.ZDEVICEID, s.ZITEMID, s.ZGROUPID,
-    m.Z_DKINTENTMETADATAKEY__INTENTCLASS, m.Z_DKINTENTMETADATAKEY__INTENTVERB,
-    m.Z_DKINTENTMETADATAKEY__INTENTTYPE, m.Z_DKINTENTMETADATAKEY__INTENTHANDLINGSTATUS,
-    m.Z_DKINTENTMETADATAKEY__DIRECTION, m.Z_DKINTENTMETADATAKEY__DONATEDBYSIRI,
-    m.Z_DKINTENTMETADATAKEY__INTERACTIONIDENTIFIER, m.Z_DKINTENTMETADATAKEY__DERIVEDINTENTIDENTIFIER,
-    m.Z_DKINTENTMETADATAKEY__RELATEDCONTACTIDENTIFIERS, m.Z_DKINTENTMETADATAKEY__SERIALIZEDINTERACTION`;
-  record(row) {
+  record(event) {
     return {
-      id: row.ZUUID,
-      startedAt: appleTime(row.ZSTARTDATE),
-      endedAt: appleTime(row.ZENDDATE),
-      createdAt: appleTime(row.ZCREATIONDATE),
-      utcOffsetSeconds: row.ZSECONDSFROMGMT,
-      category: nonEmpty(row.ZVALUESTRING),
-      bundleId: row.ZBUNDLEID,
-      deviceId: nonEmpty(row.ZDEVICEID),
-      itemId: nonEmpty(row.ZITEMID),
-      groupId: nonEmpty(row.ZGROUPID),
-      intentClass: row.Z_DKINTENTMETADATAKEY__INTENTCLASS,
-      intentVerb: nonEmpty(row.Z_DKINTENTMETADATAKEY__INTENTVERB),
-      intentType: integer(row.Z_DKINTENTMETADATAKEY__INTENTTYPE),
-      handlingStatus: integer(row.Z_DKINTENTMETADATAKEY__INTENTHANDLINGSTATUS),
-      direction: integer(row.Z_DKINTENTMETADATAKEY__DIRECTION),
-      donatedBySiri: flag(row.Z_DKINTENTMETADATAKEY__DONATEDBYSIRI),
-      interactionId: row.Z_DKINTENTMETADATAKEY__INTERACTIONIDENTIFIER,
-      derivedIntentId: nonEmpty(row.Z_DKINTENTMETADATAKEY__DERIVEDINTENTIDENTIFIER),
-      relatedContactIds: nonEmpty(row.Z_DKINTENTMETADATAKEY__RELATEDCONTACTIDENTIFIERS),
-      interaction: archiveJSON(row.Z_DKINTENTMETADATAKEY__SERIALIZEDINTERACTION)
+      ...knowledgeEventRecord(event),
+      category: event.category ?? null,
+      bundleId: event.bundleId,
+      deviceId: event.deviceId ?? null,
+      itemId: event.itemId ?? null,
+      groupId: event.groupId ?? null,
+      intentClass: event.intentClass,
+      intentVerb: event.intentVerb ?? null,
+      intentType: event.intentType ?? null,
+      handlingStatus: event.handlingStatus ?? null,
+      direction: event.direction ?? null,
+      donatedBySiri: event.donatedBySiri ?? null,
+      interactionId: event.interactionId,
+      derivedIntentId: event.derivedIntentId ?? null,
+      relatedContactIds: event.relatedContactIds ?? null,
+      interaction: plistText(event.interaction)
     };
   }
 };
@@ -1176,24 +1582,23 @@ var properties12 = {
     description: "Whether Screen Time counts this usage as trusted."
   }
 };
-var MediaUsageStream = class extends BiomeStream {
+var MediaUsageStream = class extends BiomeActivityStream {
   name = "mediaUsage";
-  biomeName = "App.MediaUsage";
-  retentionDays = 28;
+  biome = new AppMediaUsage();
   jsonSchema = {
     type: "object",
     description: "One source record per start or stop of media an app played on this Mac, as Screen Time counts it (Biome App.MediaUsage).",
     properties: properties12,
     required: Object.keys(properties12)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      usageId: payload.string(8),
-      started: flag(payload.uint(1)),
-      occurredAt: unixTime(payload.double(6)),
-      bundleId: payload.string(2),
-      usageTrusted: flag(payload.uint(5))
+      usageId: event.usageId,
+      started: event.started ?? null,
+      occurredAt: isoTime(event.occurredAt),
+      bundleId: event.bundleId,
+      usageTrusted: event.usageTrusted ?? null
     };
   }
 };
@@ -1214,22 +1619,21 @@ var properties13 = {
     description: "When it was delivered; it can precede recordedAt by hours."
   }
 };
-var NotificationDeliveriesStream = class extends BiomeStream {
+var NotificationDeliveriesStream = class extends BiomeActivityStream {
   name = "notificationDeliveries";
-  biomeName = "Notification.Delivery";
-  retentionDays = 3;
+  biome = new NotificationDelivery();
   jsonSchema = {
     type: "object",
     description: "One source record per notification delivered on this Mac (Biome Notification.Delivery). macOS keeps these for three days.",
     properties: properties13,
     required: Object.keys(properties13)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      requestId: payload.string(1),
-      bundleId: payload.string(2),
-      occurredAt: unixTime(payload.double(3))
+      requestId: event.requestId,
+      bundleId: event.bundleId,
+      occurredAt: isoTime(event.occurredAt)
     };
   }
 };
@@ -1254,30 +1658,28 @@ var properties14 = {
     description: "Bundle identifier of the app that posted it, or a system section name."
   }
 };
-var NotificationUsageStream = class extends BiomeStream {
+var NotificationUsageStream = class extends BiomeActivityStream {
   name = "notificationUsage";
-  biomeName = "Notification.Usage";
-  retentionDays = 28;
+  biome = new NotificationUsage();
   jsonSchema = {
     type: "object",
     description: "One source record per notification event on this Mac (Biome Notification.Usage): which app notified, and when. Biome keeps no title or body here.",
     properties: properties14,
     required: Object.keys(properties14)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      notificationId: payload.string(5),
-      occurredAt: appleTime(payload.double(2)),
-      usageType: integer(payload.uint(3)),
-      bundleId: payload.string(4)
+      notificationId: event.notificationId,
+      occurredAt: isoTime(event.occurredAt),
+      usageType: event.usageType ?? null,
+      bundleId: event.bundleId
     };
   }
 };
 
 // packages/sources/apple/activity/dist/streams/now-playing-stream.js
 var { nullableText: nullableText8, nullableInteger: nullableInteger3 } = activityFields;
-var unknownDuration = 4294967295;
 var properties15 = {
   ...biomeAddress,
   occurredAt: {
@@ -1313,42 +1715,40 @@ var properties15 = {
     description: "Identifiers of the audio routes playback went to, as recorded on an iPhone; empty when none were recorded."
   }
 };
-var NowPlayingStream = class extends BiomeStream {
+var NowPlayingStream = class extends BiomeActivityStream {
   name = "nowPlaying";
-  biomeName = "Media.NowPlaying";
-  retentionDays = 28;
+  biome = new MediaNowPlaying();
   jsonSchema = {
     type: "object",
     description: "One source record per Now Playing change on this Mac and the devices it syncs with (Biome Media.NowPlaying): what played, in which app, and whether it played, paused or stopped.",
     properties: properties15,
     required: Object.keys(properties15)
   };
-  record(payload, address) {
-    const duration = integer(payload.uint(6));
+  record(event, address) {
     return {
       ...address,
-      occurredAt: appleTime(payload.double(2)),
-      playbackState: integer(payload.uint(3)),
-      title: nonEmpty(payload.string(8)),
-      artist: nonEmpty(payload.string(5)),
-      album: nonEmpty(payload.string(4)),
-      durationSeconds: duration === unknownDuration ? null : duration,
-      mediaType: nonEmpty(payload.string(10)),
-      airPlayVideo: flag(payload.uint(13)),
-      bundleId: nonEmpty(payload.string(15)),
-      outputDeviceIds: payload.messages(14).flatMap((device) => nonEmpty(device.string(3)) ?? [])
+      occurredAt: isoTime(event.occurredAt),
+      playbackState: event.playbackState ?? null,
+      title: event.title ?? null,
+      artist: event.artist ?? null,
+      album: event.album ?? null,
+      durationSeconds: event.durationSeconds ?? null,
+      mediaType: event.mediaType ?? null,
+      airPlayVideo: event.airPlayVideo ?? null,
+      bundleId: event.bundleId ?? null,
+      outputDeviceIds: event.outputDeviceIds
     };
   }
 };
 
 // packages/sources/apple/activity/dist/streams/safari-navigations-stream.js
-var { text: text7 } = activityFields;
+var { text: text9 } = activityFields;
 var properties16 = {
   ...biomeAddress,
-  host: { ...text7, description: "Host of the page navigated to." },
-  url: { ...text7, description: "URL of the page navigated to." },
+  host: { ...text9, description: "Host of the page navigated to." },
+  url: { ...text9, description: "URL of the page navigated to." },
   countryCode: {
-    ...text7,
+    ...text9,
     description: "Two-letter country code Biome stores with the navigation."
   },
   periodEndsAt: {
@@ -1356,23 +1756,22 @@ var properties16 = {
     description: "The navigation time rounded up to the next half hour, as stored; recordedAt is the exact time."
   }
 };
-var SafariNavigationsStream = class extends BiomeStream {
+var SafariNavigationsStream = class extends BiomeActivityStream {
   name = "safariNavigations";
-  biomeName = "Safari.Navigations";
-  retentionDays = 28;
+  biome = new SafariNavigations();
   jsonSchema = {
     type: "object",
     description: "One source record per page navigation Safari reports to Biome on this Mac (Biome Safari.Navigations). Clearing Safari history deletes these records. Its other fields are unnamed and stay in payload.",
     properties: properties16,
     required: Object.keys(properties16)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      host: payload.string(1),
-      url: payload.string(8),
-      countryCode: payload.string(5),
-      periodEndsAt: unixTime(payload.double(2))
+      host: event.host,
+      url: event.url,
+      countryCode: event.countryCode,
+      periodEndsAt: isoTime(event.periodEndsAt)
     };
   }
 };
@@ -1394,23 +1793,22 @@ var properties17 = {
     description: "Whether Screen Time counts this usage as trusted."
   }
 };
-var ScreenTimeAppUsageStream = class extends BiomeStream {
+var ScreenTimeAppUsageStream = class extends BiomeActivityStream {
   name = "screenTimeAppUsage";
-  biomeName = "ScreenTime.AppUsage";
-  retentionDays = 28;
+  biome = new ScreenTimeAppUsage();
   jsonSchema = {
     type: "object",
     description: "One source record per start or end of app usage that Screen Time counts (Biome ScreenTime.AppUsage) on this Mac. It follows appFocus without system interface such as the Dock or the login window.",
     properties: properties17,
     required: Object.keys(properties17)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      started: flag(payload.uint(1)),
-      occurredAt: unixTime(payload.double(2)),
-      bundleId: payload.string(3),
-      usageTrusted: flag(payload.uint(5))
+      started: event.started ?? null,
+      occurredAt: isoTime(event.occurredAt),
+      bundleId: event.bundleId,
+      usageTrusted: event.usageTrusted ?? null
     };
   }
 };
@@ -1436,34 +1834,32 @@ var properties18 = {
     description: "Screenshot style as stored."
   }
 };
-var ScreenshotsStream = class extends BiomeStream {
+var ScreenshotsStream = class extends BiomeActivityStream {
   name = "screenshots";
-  biomeName = "Screenshots.Screenshot";
-  retentionDays = 1;
+  biome = new ScreenshotsScreenshot();
   jsonSchema = {
     type: "object",
     description: "One source record per screenshot taken on this Mac (Biome Screenshots.Screenshot). macOS keeps these for one day.",
     properties: properties18,
     required: Object.keys(properties18)
   };
-  record(payload, address) {
-    const screenshot = payload.message(1);
+  record(event, address) {
     return {
       ...address,
-      path: screenshot?.message(4)?.string(1) ?? null,
-      screenshotSource: integer(screenshot?.uint(1)),
-      screenshotLocation: integer(screenshot?.uint(2)),
-      screenshotStyle: integer(screenshot?.uint(6))
+      path: event.path ?? null,
+      screenshotSource: event.screenshotSource ?? null,
+      screenshotLocation: event.screenshotLocation ?? null,
+      screenshotStyle: event.screenshotStyle ?? null
     };
   }
 };
 
 // packages/sources/apple/activity/dist/streams/web-usage-stream.js
-var { text: text8 } = activityFields;
+var { text: text10 } = activityFields;
 var properties19 = {
   ...biomeAddress,
   usageId: {
-    ...text8,
+    ...text10,
     description: "Identifier of one visit; the records that start and end it share it."
   },
   occurredAt: {
@@ -1474,8 +1870,8 @@ var properties19 = {
     ...activityFields.integer,
     description: "Biome web usage state as stored (1, 2 and 3 observed; a visit starts and ends with different states)."
   },
-  url: { ...text8, description: "The page URL." },
-  domain: { ...text8, description: "The web domain Screen Time counts." },
+  url: { ...text10, description: "The page URL." },
+  domain: { ...text10, description: "The web domain Screen Time counts." },
   bundleId: {
     ...activityFields.bundleId,
     description: "Bundle identifier of the browser."
@@ -1489,27 +1885,26 @@ var properties19 = {
     description: "The Safari profile the page was open in; NULL when none."
   }
 };
-var WebUsageStream = class extends BiomeStream {
+var WebUsageStream = class extends BiomeActivityStream {
   name = "webUsage";
-  biomeName = "App.WebUsage";
-  retentionDays = 28;
+  biome = new AppWebUsage();
   jsonSchema = {
     type: "object",
     description: "One source record per change of a web page\u2019s usage that Screen Time counts on this Mac (Biome App.WebUsage). Clearing browsing history deletes these records.",
     properties: properties19,
     required: Object.keys(properties19)
   };
-  record(payload, address) {
+  record(event, address) {
     return {
       ...address,
-      usageId: payload.string(1),
-      occurredAt: appleTime(payload.double(2)),
-      usageState: integer(payload.uint(3)),
-      url: payload.string(4),
-      domain: payload.string(5),
-      bundleId: payload.string(6),
-      usageTrusted: flag(payload.uint(8)),
-      safariProfileId: nonEmpty(payload.string(9))
+      usageId: event.usageId,
+      occurredAt: isoTime(event.occurredAt),
+      usageState: event.usageState ?? null,
+      url: event.url,
+      domain: event.domain,
+      bundleId: event.bundleId,
+      usageTrusted: event.usageTrusted ?? null,
+      safariProfileId: event.safariProfileId ?? null
     };
   }
 };
@@ -1570,7 +1965,7 @@ var AppleActivitySource = class extends Source {
   // How often a watch checks the stores. App focus records arrive with every
   // switch between apps, so a minute gathers them into one pass.
   pollIntervalMs;
-  constructor({ biome = defaultActivityLocation.biome, knowledge = defaultActivityLocation.knowledge, pollIntervalMs = 6e4 } = {}) {
+  constructor({ biome = biomeDirectory, knowledge = knowledgeStorePath, pollIntervalMs = 6e4 } = {}) {
     super();
     this.location = Object.freeze({ biome, knowledge });
     this.pollIntervalMs = pollIntervalMs;
@@ -1589,31 +1984,33 @@ var AppleActivitySource = class extends Source {
   }
   // Biome writes into preallocated segment files in place, so neither their
   // size, their modification time nor FSEvents report a new record; each
-  // segment's trailer does. Databases report commits through data_version.
+  // segment's fingerprint does. Databases report commits through data_version.
   async *observe({ streams, signal }) {
     var _stack = [];
     try {
       if (signal.aborted)
         return;
       const versions = __using(_stack, new DisposableStack());
-      const version = (path) => {
-        const database = versions.use(new ActivityDatabaseVersion(path));
-        return async () => String(database.current);
+      const biome = new BiomeStore(this.location.biome);
+      const databases = {
+        knowledge: () => new KnowledgeStore(this.location.knowledge).version(),
+        devices: () => biome.syncVersion()
       };
       const probes = /* @__PURE__ */ new Map();
-      const databases = /* @__PURE__ */ new Map();
+      const opened = /* @__PURE__ */ new Map();
       for (const stream of streams) {
         const reader = readerOf(stream);
-        if (reader instanceof BiomeStream) {
-          const root = biomeStreams(this.location);
-          probes.set(stream, async () => (await Promise.all((await segments(root, reader.biomeName)).map(async (segment) => `${segment.origin}/${segment.name}=${await segmentFingerprint(segment)}`))).join("|"));
+        if (reader.store === "biome") {
+          probes.set(stream, () => biome.version(reader.biome));
           continue;
         }
-        if (!databases.has(reader.store))
-          databases.set(reader.store, version(reader.store === "knowledge" ? this.location.knowledge : biomeDevices(this.location)));
-        const probe = databases.get(reader.store);
-        if (probe !== void 0)
-          probes.set(stream, probe);
+        let probe = opened.get(reader.store);
+        if (probe === void 0) {
+          const version = versions.use(databases[reader.store]());
+          probe = async () => String(version.current);
+          opened.set(reader.store, probe);
+        }
+        probes.set(stream, probe);
       }
       const seen = /* @__PURE__ */ new Map();
       for (const [stream, probe] of probes)
