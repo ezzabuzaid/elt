@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
 
-import type postgres from 'postgres';
-
 import {
   type CopyConfiguration,
   type FieldValues,
@@ -10,7 +8,6 @@ import {
   type Partition,
   type ReloadMode,
   type Stage,
-  type StoredFit,
   TargetOwnedError,
   Writer,
   describeTarget,
@@ -19,12 +16,13 @@ import {
 
 import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
+import { TargetComments } from './postgres-comments.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
+import { storedFit } from './postgres-fit.ts';
+import type { PostgresLoad, Transaction } from './postgres-load.ts';
+import { TargetReaderView } from './postgres-reader-view.ts';
 import { PostgresSession, schemaLock } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
-
-// The load's one connection, inside one commit's transaction or on its own.
-export type Transaction = postgres.Sql;
 
 const batchSize = 1000;
 // A batch also flushes once its JSON reaches this size, so rows of large text
@@ -40,72 +38,13 @@ export const op = '"_elt_op"';
 // copy gives up until the next run.
 const swapTimeout = '3s';
 
-// A run's one connection to a schema. The schema lock keeps every other load
-// out until it closes, as SQLite's BEGIN IMMEDIATE does per file; readers
-// never wait on it. No transaction stays open between commits, so reading the
-// source holds no locks on the targets and keeps nothing from vacuum.
-export class PostgresLoad implements AsyncDisposable {
-  readonly #connection: PostgresSession;
-  readonly schema: string;
-  readonly loadedAt: string;
-
-  private constructor(
-    connection: PostgresSession,
-    schema: string,
-    loadedAt: string,
-  ) {
-    this.#connection = connection;
-    this.schema = schema;
-    this.loadedAt = loadedAt;
-  }
-
-  get sql(): Transaction {
-    return this.#connection.sql;
-  }
-
-  static async open(url: string, schema: string): Promise<PostgresLoad> {
-    const connection = new PostgresSession(url, 'elt');
-    try {
-      const [clock] = await connection.sql.unsafe(
-        'SELECT clock_timestamp()::text AS "loadedAt"',
-      );
-      // Closing this connection releases the session lock, including on errors.
-      await connection.sql.unsafe(
-        'SELECT pg_advisory_lock(hashtextextended($1, 0))',
-        [schemaLock(schema)],
-      );
-      return new PostgresLoad(connection, schema, String(clock?.loadedAt));
-    } catch (error) {
-      await connection[Symbol.asyncDispose]();
-      throw error;
-    }
-  }
-
-  // What work does becomes durable and visible together, or not at all.
-  async transaction<T>(work: (sql: Transaction) => Promise<T>): Promise<T> {
-    await this.sql.unsafe('BEGIN');
-    try {
-      const result = await work(this.sql);
-      await this.sql.unsafe('COMMIT');
-      return result;
-    } catch (error) {
-      await this.sql.unsafe('ROLLBACK');
-      throw error;
-    }
-  }
-
-  async [Symbol.asyncDispose](): Promise<void> {
-    await this.#connection[Symbol.asyncDispose]();
-  }
-}
-
 export abstract class PostgresWriter extends Writer {
   readonly configuration: CopyConfiguration;
   protected readonly url: string;
   readonly schema: string;
   readonly table: PostgresTable;
-  readonly #tableComment: string;
-  readonly #columnComments: Readonly<Record<string, string | null>>;
+  readonly #comments: TargetComments;
+  readonly #view: TargetReaderView | undefined;
 
   constructor(
     configuration: CopyConfiguration,
@@ -124,8 +63,15 @@ export abstract class PostgresWriter extends Writer {
       (column) =>
         `UUID reference to the source file's original bytes. Join ${new PostgresFileStore(schema, table, column).qualifiedName} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
     );
-    this.#tableComment = description.table;
-    this.#columnComments = description.columns;
+    this.#comments = new TargetComments(description.table, description.columns);
+    this.#view =
+      table.readerView &&
+      new TargetReaderView(
+        table.readerView,
+        this.qualifiedName,
+        [...table.columns.map(({ name }) => name), 'loaded_at'],
+        this.fields,
+      );
     if (table.readerView === undefined) return;
     const { missing } = description;
     if (missing.length > 0)
@@ -262,8 +208,8 @@ export abstract class PostgresWriter extends Writer {
     await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quote(this.schema)}`);
     await this.#own(sql, writer);
     await this.initialize(sql, replacing);
-    await this.#comment(sql, 'TABLE', this.schema, this.table.name);
-    await this.#describeReaderView(sql);
+    await this.#comments.write(sql, 'TABLE', this.schema, this.table.name);
+    await this.#view?.describe(sql, this.#comments);
   }
 
   // The field's values in each of the tables, which while a reload is open
@@ -347,80 +293,6 @@ export abstract class PostgresWriter extends Writer {
     await committed?.(this.values(connection.sql, () => [this.table.name]));
   }
 
-  // COMMENT does not accept bind parameters. Let Postgres quote identifiers
-  // and literals, including NULL to clear annotations removed from the schema.
-  async #comment(
-    sql: Transaction,
-    kind: 'TABLE' | 'VIEW',
-    schema: string,
-    name: string,
-  ): Promise<void> {
-    const comments = await sql.unsafe<{ statement: string }[]>(
-      `SELECT format('COMMENT ON ${kind} %I.%I IS %L', $1::text, $2::text, $3::text) AS statement
-       UNION ALL
-       SELECT format('COMMENT ON COLUMN %I.%I.%I IS %L', $1::text, $2::text, key, value)
-       FROM jsonb_each_text($4::jsonb)`,
-      [schema, name, this.#tableComment, sql.json(this.#columnComments)],
-    );
-    await sql.unsafe(comments.map(({ statement }) => statement).join(';'));
-  }
-
-  get #readerViewName(): string | undefined {
-    const reader = this.table.readerView;
-    return reader && `${quote(reader.schema)}.${quote(reader.name)}`;
-  }
-
-  // Refuses, before anything is read, a reader view this load did not make:
-  // not a view, or a view of other columns or another table. A stale
-  // target's view still shows the stored columns, which its rebuild replaces.
-  async #refuseReaderView(sql: Transaction, stale: boolean): Promise<void> {
-    const view = this.#readerViewName;
-    if (view === undefined) return;
-    const [existing] = await sql.unsafe<
-      { relkind: string; columns: string[]; reads: boolean }[]
-    >(
-      `SELECT c.relkind,
-         ARRAY(SELECT attname::text FROM pg_attribute
-           WHERE attrelid = c.oid AND attnum > 0 AND NOT attisdropped ORDER BY attnum) AS columns,
-         EXISTS (SELECT 1 FROM pg_rewrite r JOIN pg_depend d
-           ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
-           WHERE r.ev_class = c.oid AND d.refobjid = to_regclass($2)) AS reads
-       FROM pg_class c WHERE c.oid = to_regclass($1)`,
-      [view, this.qualifiedName],
-    );
-    if (existing === undefined) return;
-    const expected = [
-      ...this.table.columns.map(({ name }) => name),
-      'loaded_at',
-    ];
-    if (
-      existing.relkind !== 'v' ||
-      !existing.reads ||
-      (!stale && existing.columns.join('\0') !== expected.join('\0'))
-    )
-      throw new TypeError(
-        `${view} is not a view of exactly ${this.qualifiedName}; drop it or reset the warehouse`,
-      );
-  }
-
-  // Created only when absent and never replaced by a commit: replacing a view
-  // readers can see would lock them out. prepare refused any view not this
-  // load's own.
-  async #describeReaderView(sql: Transaction): Promise<void> {
-    const view = this.#readerViewName;
-    const reader = this.table.readerView;
-    if (view === undefined || reader === undefined) return;
-    const [existing] = await sql.unsafe(
-      'SELECT to_regclass($1) IS NOT NULL AS "exists"',
-      [view],
-    );
-    if (existing?.exists !== true)
-      await sql.unsafe(
-        `CREATE VIEW ${view} AS SELECT ${this.fields.join(', ')} FROM ${this.qualifiedName}`,
-      );
-    await this.#comment(sql, 'VIEW', reader.schema, reader.name);
-  }
-
   get #hash(): string {
     return createHash('sha256')
       .update(this.qualifiedName)
@@ -466,54 +338,20 @@ export abstract class PostgresWriter extends Writer {
     return `${quote(this.schema)}.${quote(this.#hiddenName)}`;
   }
 
-  // Whether a stored table has the columns, types and NOT NULL the stream
-  // needs. The stage is built from the same column declarations, so Postgres
-  // spells both alike.
-  async #fit(
-    sql: Transaction,
-    table: string,
-    stage: string,
-  ): Promise<StoredFit> {
-    const columns = (relation: string) =>
-      sql.unsafe<{ name: string; type: string; required: boolean }[]>(
-        'SELECT attname AS name, format_type(atttypid, atttypmod) AS type, attnotnull AS required FROM pg_attribute WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped',
-        [relation],
-      );
-    const stored = await columns(table);
-    if (stored.length === 0) return 'missing';
-    const types = new Map(
-      (await columns(`pg_temp.${stage}`)).map(({ name, type }) => [name, type]),
-    );
-    const needed = [
-      ...this.table.columns.map(
-        (column) =>
-          `${column.name} ${types.get(column.name)} ${column.required || column.isPrimaryKey}`,
-      ),
-      'loaded_at timestamp with time zone true',
-    ];
-    const has = stored.map(
-      ({ name, type, required }) => `${name} ${type} ${required}`,
-    );
-    return needed.sort().join('\0') === has.sort().join('\0')
-      ? 'fits'
-      : 'stale';
-  }
-
   // Swaps a completed reload's hidden target in last, so readers of the
   // stored table wait only for the swap, not the reload. A reader that holds
   // it past the timeout fails the copy until the next run. Whatever else
   // depends on the target, such as marts, refuses the swap.
   async #swap(sql: Transaction): Promise<void> {
     await sql.unsafe(`SET LOCAL lock_timeout = '${swapTimeout}'`);
-    const view = this.#readerViewName;
-    if (view !== undefined) await sql.unsafe(`DROP VIEW IF EXISTS ${view}`);
+    await this.#view?.drop(sql);
     await sql.unsafe(`DROP TABLE IF EXISTS ${this.qualifiedName}`);
     await sql.unsafe(
       `ALTER TABLE ${this.#hidden} RENAME TO ${this.table.quotedName}`,
     );
     await this.adopt(sql);
-    await this.#comment(sql, 'TABLE', this.schema, this.table.name);
-    await this.#describeReaderView(sql);
+    await this.#comments.write(sql, 'TABLE', this.schema, this.table.name);
+    await this.#view?.describe(sql, this.#comments);
   }
 
   // The rows of one partition, or every row when the stream is not
@@ -563,13 +401,18 @@ export abstract class PostgresWriter extends Writer {
         `CREATE TEMP TABLE ${stage} (${seq} BIGINT PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')})`,
       );
       for (const store of stores) await store.stage(sql);
-      const target = await this.#fit(sql, this.qualifiedName, stage);
-      const hidden = await this.#fit(sql, this.#hidden, stage);
+      const target = await storedFit(
+        sql,
+        this.table,
+        this.qualifiedName,
+        stage,
+      );
+      const hidden = await storedFit(sql, this.table, this.#hidden, stage);
       const decided = reloadMode({ reloading, restart, target, hidden });
       // A hidden target no reload continues is a leftover readers never saw.
       if (decided !== 'continue')
         await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
-      await this.#refuseReaderView(sql, target === 'stale');
+      await this.#view?.refuse(sql, target === 'stale');
       if (decided === 'load' && !this.replaces) await this.inspect(sql);
       return decided;
     });

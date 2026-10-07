@@ -9,13 +9,9 @@ import type {
 import { quote } from './identifier.ts';
 import type { EncodedValue, PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
+import type { Transaction } from './postgres-load.ts';
 import type { PostgresTable } from './postgres-table.ts';
-import {
-  PostgresWriter,
-  type Transaction,
-  op,
-  seq,
-} from './postgres-writer.ts';
+import { PostgresWriter, op, seq } from './postgres-writer.ts';
 
 export class PostgresDeduplicatingWriter extends PostgresWriter {
   readonly deduplication: Deduplication;

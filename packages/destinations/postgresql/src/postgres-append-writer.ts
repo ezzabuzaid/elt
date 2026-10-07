@@ -1,5 +1,6 @@
 import { quote } from './identifier.ts';
-import { PostgresWriter, type Transaction } from './postgres-writer.ts';
+import type { Transaction } from './postgres-load.ts';
+import { PostgresWriter } from './postgres-writer.ts';
 
 export class PostgresAppendWriter extends PostgresWriter {
   protected override async initialize(transaction: Transaction): Promise<void> {

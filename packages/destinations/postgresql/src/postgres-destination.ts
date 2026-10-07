@@ -5,10 +5,11 @@ import { PostgresAppendWriter } from './postgres-append-writer.ts';
 import type { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
 import { PostgresDeduplicatingWriter } from './postgres-deduplicating-writer.ts';
+import { PostgresLoad } from './postgres-load.ts';
 import { PostgresOverwriteWriter } from './postgres-overwrite-writer.ts';
 import { schemaName, server } from './postgres-session.ts';
 import { PostgresTable } from './postgres-table.ts';
-import { PostgresLoad, type PostgresWriter } from './postgres-writer.ts';
+import type { PostgresWriter } from './postgres-writer.ts';
 
 // Loads into one schema of one database. The URL carries credentials, so it
 // stays private and out of identity(), which is persisted with checkpoints.
