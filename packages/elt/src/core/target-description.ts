@@ -3,6 +3,9 @@ import type { FileRead } from './file-read.ts';
 
 // A destination column as its description needs it.
 export type DescribedColumn = {
+  // The record field the column holds.
+  readonly field: string;
+  // What the destination calls the column.
   readonly name: string;
   readonly fileRead?: FileRead;
   readonly storesFile: boolean;
@@ -12,8 +15,12 @@ export type TargetDescription = {
   // The stream's own meaning, or null when its schema gives none.
   readonly meaning: string | null;
   readonly table: string;
-  // Null where the stream's schema leaves a column undescribed.
+  // Each column's comment; null where the stream's schema leaves its field
+  // undescribed and the column keeps the field's name.
   readonly columns: Readonly<Record<string, string | null>>;
+  // What a reader view still lacks: the stream's meaning, and each field the
+  // stream's schema leaves undescribed.
+  readonly missing: readonly string[];
 };
 
 // JSON Schema annotations are optional; absent ones describe nothing.
@@ -53,31 +60,39 @@ export function describeTarget<Column extends DescribedColumn>(
   lines.push(
     `Extraction: ${configuration.syncMode}. Loading: ${configuration.destinationSyncMode}. ${loading[configuration.destinationSyncMode]}`,
   );
+  const named = (field: string) =>
+    columns.find((column) => column.field === field)?.name ?? field;
   if (configuration.dedupPolicy !== undefined) {
     const deduplication = configuration.deduplication();
     const { primaryKey, cursorField } = deduplication;
-    lines.push(`Copy key: ${primaryKey.join(', ')}.`);
+    lines.push(`Copy key: ${primaryKey.map(named).join(', ')}.`);
     lines.push(
       configuration.dedupPolicy === 'replace' || cursorField === undefined
         ? 'For a repeated key, the newest extracted record wins.'
-        : `For a repeated key, the greatest ${cursorField} wins; equal cursors retain the first accepted record. Text cursors compare ${deduplication.format(cursorField)?.ordering ?? 'by byte order'}.`,
+        : `For a repeated key, the greatest ${named(cursorField)} wins; equal cursors retain the first accepted record. Text cursors compare ${deduplication.format(cursorField)?.ordering ?? 'by byte order'}.`,
     );
   }
   const { properties } = stream.jsonSchema;
+  const missing = meaning === null ? ['the stream'] : [];
+  const describe = (column: Column): string | null => {
+    if (column.storesFile) return storedFile(column);
+    if (column.fileRead?.parser !== undefined)
+      return `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`;
+    if (column.fileRead?.file.storage !== undefined)
+      return `${column.fileRead.file.storage.reference} NULL when the source file is unavailable.`;
+    const description = annotation(properties?.[column.field]?.description);
+    if (description === null) missing.push(column.field);
+    return description;
+  };
   const described: Record<string, string | null> = Object.fromEntries(
     columns.map((column) => {
-      if (column.storesFile) return [column.name, storedFile(column)];
-      if (column.fileRead?.parser !== undefined)
-        return [
-          column.name,
-          `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`,
-        ];
-      if (column.fileRead?.file.storage !== undefined)
-        return [
-          column.name,
-          `${column.fileRead.file.storage.reference} NULL when the source file is unavailable.`,
-        ];
-      return [column.name, annotation(properties?.[column.name]?.description)];
+      const description = describe(column);
+      if (column.name === column.field) return [column.name, description];
+      const source = `Source field: ${JSON.stringify(column.field)}.`;
+      return [
+        column.name,
+        description === null ? source : `${description} ${source}`,
+      ];
     }),
   );
   described.loaded_at =
@@ -86,15 +101,6 @@ export function describeTarget<Column extends DescribedColumn>(
     meaning,
     table: lines.join('\n'),
     columns: Object.freeze(described),
+    missing: Object.freeze(missing),
   });
-}
-
-// The parts a reader view still lacks: every column, and the stream itself,
-// must be described before readers see it.
-export function undescribed({ meaning, columns }: TargetDescription): string[] {
-  const missing = Object.entries(columns).flatMap(([column, text]) =>
-    text === null ? [column] : [],
-  );
-  if (meaning === null) missing.unshift('the stream');
-  return missing;
 }

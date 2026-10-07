@@ -156,9 +156,30 @@ A string property can declare its spelling, so values that a JSON number or a Ja
 
 SQLite inference maps flat JSON Schema fields: `string` → `TEXT`, `integer` → `INTEGER`, `number` → `REAL`, `boolean` → `INTEGER` with a 0/1 constraint, and an array → `TEXT` holding a JSON array, checked by `json_valid` and `json_type(...) = 'array'` and read with `json_each`. Of the [string formats](#string-formats), `int64` loads as `INTEGER`, base64 as `BLOB`, `decimal` as `TEXT`, and the four temporal formats as `TEXT` with a `CHECK` that keeps the canonical spelling and width; the catalog's `data_type` names each with its precision and scale, such as `timestamp(7)` or `decimal(19,4)` (a millisecond `date-time` stays `timestamp`). Nullable scalars and arrays are supported for ordinary fields. Missing optional fields become SQL `NULL`. Explicit columns support `text`, `integer`, `real`, `blob`, and `boolean`; they allow null unless marked `.notNull()` or `.primaryKey()`. Missing/undefined explicit fields fail. An explicit projection can omit unsupported nested fields.
 
-SQLite creates strict tables. Existing SQL constraints remain authoritative; there are no schema migrations: when a table's stored definition no longer matches the stream's columns, its copy reloads from no checkpoint into a hidden `_elt_next_<hash>` table, which replaces the table and its reader view when the stream ends without a failure ([resets](#resets)); readers keep the old table until then. Table names starting with `_elt_` are reserved. Deduplication additionally verifies stored key/cursor column types and rejects null keys/cursors. It uses native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html) and a reserved `_elt_dedup_*` unique index. Changing to ordinary append/overwrite removes that mode-owned index while retaining explicit constraints. An existing append-history table with repeated keys must be replaced with `overwrite_dedup` before incremental deduplication can start.
+SQLite creates strict tables. Existing SQL constraints remain authoritative; there are no schema migrations: when a table's stored definition no longer matches the stream's columns, its copy reloads from no checkpoint into a hidden `_elt_next_<hash>` table, which replaces the table and its reader view when the stream ends without a failure ([resets](#resets)); readers keep the old table until then. Table and column names follow the [naming rule](#names). Deduplication additionally verifies stored key/cursor column types and rejects null keys/cursors. It uses native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html) and a reserved `_elt_dedup_*` unique index. Changing to ordinary append/overwrite removes that mode-owned index while retaining explicit constraints. An existing append-history table with repeated keys must be replaced with `overwrite_dedup` before incremental deduplication can start.
 
-Every SQLite copy adds `loaded_at`, a reserved UTC load timestamp. The `count` returned for a committed copy is the number of accepted input observations, including deduplication no-ops, and `deleted` is the number of accepted deletions, including keys that were already absent; neither is the final row count.
+Every SQLite copy adds `loaded_at`, the UTC start time of the load. A field with that name gets another column name ([names](#names)). The `count` returned for a committed copy is the number of accepted input observations, including deduplication no-ops, and `deleted` is the number of accepted deletions, including keys that were already absent; neither is the final row count.
+
+### Names
+
+A SQL destination gives each column, table and reader view a name that it can hold. It uses the rule that Airbyte uses, so a field with any name loads:
+
+1. Unicode decomposition separates each mark, and the mark is removed (`spécial` becomes `special`).
+2. Each run of whitespace becomes one `_`.
+3. Each other character outside `[A-Za-z0-9_]` becomes `_` (`名前` becomes `__`). The case stays.
+4. A name that starts with a digit gets a `_` in front (`1st` becomes `_1st`).
+5. A name that starts with `_elt_` loses its first `_` (`_elt_seq` becomes `elt_seq`), because elt names its own tables and columns with `_elt_`.
+6. An empty name becomes `_`.
+
+Columns get their names in field order. When an earlier column already has the name, the field gets `_1`, then `_2`, and so on after it (`a b` becomes `a_b`, and a later `a_b` becomes `a_b_1`). The names that the destination writes itself come first: `loaded_at` in both destinations, and the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid` in Postgres (`loaded_at` becomes `loaded_at_1`). Postgres compares names with their case. SQLite compares names without ASCII case, so `Foo` and `foo` become `Foo` and `foo_1`.
+
+A table or view does not see the names of other tables. When the rule changes its name, the name gets `_` and the first 8 hex digits of the SHA-256 of the requested name (`dbo.a b` becomes `dbo_a_b_<hash>`). Thus two requested names never share a table.
+
+Postgres keeps only 63 bytes of a name. A longer name keeps its first 54 bytes, then `_` and the first 8 hex digits of the SHA-256 of the field or requested name. SQLite has no length limit.
+
+When the rule changes a column name, the column description ends with `Source field: "<field>".` The catalog shows that description, so a reader can find the field. The names depend only on the stream's fields, so each run gives the same names. A change of fields starts the copy again ([resets](#resets)).
+
+Schema names and the names of published views do not change, because the caller's SQL uses them. A destination refuses such a name when it cannot hold it.
 
 ## Incremental extraction and checkpoints
 
@@ -648,7 +669,7 @@ Postgres keeps time to the microsecond, so a time with more fraction digits, suc
 
 Arrays keep their element order and load a JSON `null` as SQL `NULL`; readers use `= ANY(...)`, `unnest()` and `cardinality()`, and `marts.catalog` shows the element type. ISO dates count years astronomically and Postgres does not, so year `0000` loads as `0001 BC`, the same day; every other year is written as given.
 
-Explicit columns use `columns.text/integer/real/boolean/date/timestamp/blob(field)` with `.notNull()` and `.primaryKey()`. A plain `blob()` stores BYTEA; `blob().from(file)` streams originals into chunk tables, and `text().from(file).parse(parser)` stores parsed text. See [attachment storage](#attachment-files-and-document-parsing). Identifiers are case-sensitive and limited to 63 bytes, because Postgres would silently truncate a longer one; `_elt_` names and a `loaded_at` column are reserved, and `pg_` schemas are refused.
+Explicit columns use `columns.text/integer/real/boolean/date/timestamp/blob(field)` with `.notNull()` and `.primaryKey()`. A plain `blob()` stores BYTEA; `blob().from(file)` streams originals into chunk tables, and `text().from(file).parse(parser)` stores parsed text. See [attachment storage](#attachment-files-and-document-parsing). Table, view and column names follow the [naming rule](#names). A schema name must have at most 63 bytes, must not contain NUL, and must not start with `pg_`.
 
 Connectors describe their data with JSON Schema's `description`: at the root for the source record's meaning, and on each property for the field's meaning, nulls, units and source-local relationships. These annotations belong to the connector; they contain no destination table names. Notes describes all five of its streams and their fields this way.
 
@@ -1940,11 +1961,10 @@ Pages compare the whole primary key as a tuple, each part cast to its column's d
 
 ### SQL Server host
 
-`apps/sql-server` lists the databases to load in `connectors.ts`; each reads `SQLSERVER_<NAME>_CONNECTION_STRING` from the workspace `.env`. A database loads into its own raw schema, `sql_server_<name>`, with its checkpoints, and each table keeps its own name there (`dbo.Order Items`); a name past Postgres's 63 bytes keeps a hash of the whole in its last nine. Readers see each table as `marts.<name>_<schema>_<table>` in snake case; a name the snake case changes keeps a hash of the original (`local_sales_order_items_80f28272`). Two tables that still land on one view name, such as `dbo_order.items` and `dbo.order_items`, do not merge: the second's load refuses the view the first made. Column names keep their SQL Server spelling, so a mixed-case column is quoted (`"orderId"`). A table dropped upstream leaves its raw table and view as they were.
+`apps/sql-server` lists the databases to load in `connectors.ts`; each reads `SQLSERVER_<NAME>_CONNECTION_STRING` from the workspace `.env`. A database loads into its own raw schema, `sql_server_<name>`, with its checkpoints, and each table gets its name from the [naming rule](#names) (`dbo.Order Items` becomes `dbo_Order_Items_<hash>`). Readers see each table as `marts.<name>_<schema>_<table>` in snake case; a name the snake case changes keeps a hash of the original (`local_sales_order_items_80f28272`). Two tables that still land on one view name, such as `dbo_order.items` and `dbo.order_items`, do not merge: the second's load refuses the view the first made. Column names follow the same rule. They keep their case, so a mixed-case column is quoted (`"orderId"`), and the description of a renamed column names the SQL Server column. A table dropped upstream leaves its raw table and view as they were.
 
 ### SQL Server limitations
 
-- A column name past 63 bytes, or a column named `loaded_at`, fails its table's copy.
 - Rowversion tables never see deletions; CDC is not read.
 - A truncate, or tracking turned off and on, goes unnoticed in one case: when the table's tracking began at the very version the last sync read and nothing tracked changed anywhere in the database since. No metadata a read-only login can see changes then.
 - A single value larger than JavaScript's longest string (about 512 million characters) fails its stream.

@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 
+import { identifiers } from './sqlite-identifiers.ts';
+
 // SQLite has no COMMENT ON. Relation and column meanings live here instead,
 // beside what they describe, and the catalog view shows them to readers.
 export const descriptions = '"_elt_descriptions"';
@@ -38,7 +40,7 @@ export function describe(
       .prepare('SELECT "name", "type" FROM pragma_table_info(?)')
       .all(relation)
       .map(({ name, type }) => [
-        String(name).toLowerCase(),
+        identifiers.key(String(name)),
         String(type).toLowerCase() || null,
       ]),
   );
@@ -51,7 +53,7 @@ export function describe(
       insert.run(
         relation,
         column,
-        dataType ?? declared.get(column.toLowerCase()) ?? null,
+        dataType ?? declared.get(identifiers.key(column)) ?? null,
         description,
       );
 }

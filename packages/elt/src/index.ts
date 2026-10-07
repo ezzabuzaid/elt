@@ -26,6 +26,7 @@ export {
   declaredFormat,
 } from './core/formats/declared-format.ts';
 export { isTimestamp } from './core/formats/timestamp-format.ts';
+export { Identifiers } from './core/identifiers.ts';
 export type { Partition, PartitionState } from './core/partition.ts';
 export { type Pass, Pipeline, PipelineError } from './core/pipeline.ts';
 export { type ReaderRelation, readerCatalog } from './core/reader-relation.ts';
@@ -69,7 +70,6 @@ export {
   type DescribedColumn,
   describeTarget,
   type TargetDescription,
-  undescribed,
 } from './core/target-description.ts';
 export {
   type FieldValues,

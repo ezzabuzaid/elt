@@ -17,12 +17,12 @@ import {
   Writer,
   describeTarget,
   reloadMode,
-  undescribed,
 } from '@workspace/elt';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { describe } from './sqlite-descriptions.ts';
 import { SQLiteFileStore } from './sqlite-file-store.ts';
+import { identifiers } from './sqlite-identifiers.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
 // Keep competing loads out across commits, including while other streams have
@@ -71,7 +71,7 @@ export abstract class SQLiteWriter extends Writer {
         `Integer reference to the source file's original bytes. Join ${quote(SQLiteFileStore.tableName(table, column))} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
     );
     if (table.readerView === undefined) return;
-    const missing = undescribed(this.#description);
+    const { missing } = this.#description;
     if (missing.length > 0)
       throw new TypeError(
         `Reader view ${table.readerView} needs JSON Schema descriptions for ${missing.join(', ')} of stream ${this.stream.name}`,
@@ -193,7 +193,7 @@ export abstract class SQLiteWriter extends Writer {
   ): FieldValues {
     const { table } = this;
     return async function* (field) {
-      const column = table.columns.find((column) => column.name === field);
+      const column = table.columns.find((column) => column.field === field);
       if (column === undefined)
         throw new TypeError(`Unknown target field: ${field}`);
       for (const name of tables()) {
@@ -203,7 +203,7 @@ export abstract class SQLiteWriter extends Writer {
             .prepare(
               'SELECT 1 FROM pragma_table_info(?) WHERE name = ? COLLATE NOCASE',
             )
-            .get(name, field)
+            .get(name, column.name)
         )
           continue;
         for (const row of database
@@ -306,7 +306,9 @@ export abstract class SQLiteWriter extends Writer {
   #scope(partition: Partition | null): [string, SQLInputValue[]] {
     if (partition === null) return ['', []];
     const columns = Object.keys(partition).map((field) => {
-      const column = this.table.columns.find(({ name }) => name === field);
+      const column = this.table.columns.find(
+        (column) => column.field === field,
+      );
       if (column === undefined)
         throw new TypeError(
           `Resetting a partition requires destination column ${field}`,
@@ -363,7 +365,7 @@ export abstract class SQLiteWriter extends Writer {
     const into = () => (open() ? hidden : this.table.quotedName);
     const tables = () =>
       [this.table.name, ...(open() ? [this.#hiddenName] : [])].filter((table) =>
-        this.exists(database, table.toLowerCase()),
+        this.exists(database, identifiers.key(table)),
       );
     // Every stored file a row of the tables refers to.
     const referenced = (column: SQLiteColumn) =>
@@ -489,11 +491,11 @@ export abstract class SQLiteWriter extends Writer {
         // Each file is read here, before the source advances past it.
         let data = operation.data;
         for (const { column, store } of stores) {
-          const content: unknown = Reflect.get(Object(data), column.name);
+          const content: unknown = Reflect.get(Object(data), column.field);
           if (content instanceof FileContent)
             data = {
               ...Object(data),
-              [column.name]: await store.save(content),
+              [column.field]: await store.save(content),
             };
         }
         record.run(...this.encode(data));

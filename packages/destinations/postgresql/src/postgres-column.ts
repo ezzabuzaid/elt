@@ -7,7 +7,7 @@ import {
   isTimestamp,
 } from '@workspace/elt';
 
-import { identifier, quote } from './identifier.ts';
+import { quote } from './identifier.ts';
 
 const storageTypes = {
   text: 'TEXT',
@@ -72,6 +72,9 @@ function postgresYear(value: string): string {
 }
 
 export class PostgresColumn {
+  // The record field the column holds.
+  readonly field: string;
+  // What Postgres calls the column, which the table it belongs to decides.
   readonly name: string;
   readonly kind: Kind;
   // The string format a schema-inferred column keeps, which refines its kind.
@@ -85,7 +88,7 @@ export class PostgresColumn {
   readonly fileRead?: FileRead;
 
   constructor(
-    name: string,
+    field: string,
     kind: Kind,
     options: {
       nullable: boolean;
@@ -94,9 +97,11 @@ export class PostgresColumn {
       array?: boolean;
       fileRead?: FileRead;
       format?: DeclaredFormat;
+      name?: string;
     },
   ) {
-    identifier(name, 'column name');
+    if (typeof field !== 'string')
+      throw new TypeError('A column holds a field named by a string');
     if (!Object.hasOwn(storageTypes, kind))
       throw new TypeError('Unsupported Postgres column type');
     const { format } = options;
@@ -105,7 +110,7 @@ export class PostgresColumn {
         ? formatted.has(kind)
         : formatKinds[format.name] !== kind
     )
-      throw new TypeError(`Column ${name} kind ${kind} must match its format`);
+      throw new TypeError(`Column ${field} kind ${kind} must match its format`);
     this.format = format;
     this.array = options.array ?? false;
     if (this.array && (kind === 'blob' || options.primaryKey))
@@ -115,10 +120,11 @@ export class PostgresColumn {
     this.fileRead = options.fileRead;
     if (
       this.fileRead !== undefined &&
-      (!(this.fileRead instanceof FileRead) || this.fileRead.name !== name)
+      (!(this.fileRead instanceof FileRead) || this.fileRead.name !== field)
     )
-      throw new TypeError('Column file read must match its name');
-    this.name = name;
+      throw new TypeError('Column file read must match its field');
+    this.field = field;
+    this.name = options.name ?? field;
     this.kind = kind;
     this.isPrimaryKey = options.primaryKey;
     this.nullable = !options.primaryKey && options.nullable;
@@ -128,24 +134,26 @@ export class PostgresColumn {
   }
 
   primaryKey(): PostgresColumn {
-    return new PostgresColumn(this.name, this.kind, {
+    return new PostgresColumn(this.field, this.kind, {
       nullable: false,
       optional: false,
       primaryKey: true,
       array: this.array,
       fileRead: this.fileRead,
       format: this.format,
+      name: this.name,
     });
   }
 
   notNull(): PostgresColumn {
-    return new PostgresColumn(this.name, this.kind, {
+    return new PostgresColumn(this.field, this.kind, {
       nullable: false,
       optional: false,
       primaryKey: this.isPrimaryKey,
       array: this.array,
       fileRead: this.fileRead,
       format: this.format,
+      name: this.name,
     });
   }
 
@@ -154,11 +162,12 @@ export class PostgresColumn {
       throw new TypeError(
         'Files require a BLOB column, parsed TEXT or a stored TEXT reference',
       );
-    return new PostgresColumn(this.name, this.kind, {
+    return new PostgresColumn(this.field, this.kind, {
       nullable: this.nullable,
       optional: this.optional,
       primaryKey: this.isPrimaryKey,
-      fileRead: new FileRead(this.name, file, this.fileRead?.parser),
+      fileRead: new FileRead(this.field, file, this.fileRead?.parser),
+      name: this.name,
     });
   }
 
@@ -167,11 +176,25 @@ export class PostgresColumn {
       throw new TypeError('Document parsing requires a TEXT column');
     if (this.fileRead === undefined)
       throw new TypeError('Select a source file before selecting a parser');
-    return new PostgresColumn(this.name, this.kind, {
+    return new PostgresColumn(this.field, this.kind, {
       nullable: this.nullable,
       optional: this.optional,
       primaryKey: this.isPrimaryKey,
-      fileRead: new FileRead(this.name, this.fileRead.file, parser),
+      fileRead: new FileRead(this.field, this.fileRead.file, parser),
+      name: this.name,
+    });
+  }
+
+  // This column as the table names it.
+  named(name: string): PostgresColumn {
+    return new PostgresColumn(this.field, this.kind, {
+      nullable: this.nullable,
+      optional: this.optional,
+      primaryKey: this.isPrimaryKey,
+      array: this.array,
+      fileRead: this.fileRead,
+      format: this.format,
+      name,
     });
   }
 
@@ -228,12 +251,16 @@ export class PostgresColumn {
 
   encode(record: unknown): EncodedValue {
     if (record === null || typeof record !== 'object' || Array.isArray(record))
-      throw new TypeError(`Record is missing column "${this.name}"`);
-    if (!Object.hasOwn(record, this.name)) {
+      throw new TypeError(
+        `Record is missing field ${JSON.stringify(this.field)}`,
+      );
+    if (!Object.hasOwn(record, this.field)) {
       if (this.optional) return null;
-      throw new TypeError(`Record is missing column "${this.name}"`);
+      throw new TypeError(
+        `Record is missing field ${JSON.stringify(this.field)}`,
+      );
     }
-    const value: unknown = Reflect.get(record, this.name);
+    const value: unknown = Reflect.get(record, this.field);
     if (value === null && this.nullable) return null;
     if (this.array) {
       if (Array.isArray(value)) {
@@ -241,13 +268,13 @@ export class PostgresColumn {
         if (elements.every((element) => element !== undefined)) return elements;
       }
       throw new TypeError(
-        `Column "${this.name}" requires an array of ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
+        `Field ${JSON.stringify(this.field)} requires an array of ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
       );
     }
     const encoded = this.#scalar(value);
     if (encoded !== undefined) return encoded;
     throw new TypeError(
-      `Column "${this.name}" requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
+      `Field ${JSON.stringify(this.field)} requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
     );
   }
 

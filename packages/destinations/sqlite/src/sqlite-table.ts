@@ -3,8 +3,11 @@ import { Target } from '@workspace/elt';
 
 import { SQLiteColumn, canonical } from './sqlite-column.ts';
 import { SQLiteColumns } from './sqlite-columns.ts';
+import { identifiers } from './sqlite-identifiers.ts';
 
-// A reusable target definition. Empty columns mean infer from the Copy's stream.
+// A reusable target definition. Empty columns mean infer from the Copy's
+// stream. Its own name, its view's and its columns' follow the destination's
+// naming rule, so a field SQLite would take for another still loads.
 export class SQLiteTable extends Target {
   readonly name: string;
   readonly columns: readonly SQLiteColumn[];
@@ -16,17 +19,16 @@ export class SQLiteTable extends Target {
     columns?: readonly SQLiteColumn[],
     readerView?: string,
   ) {
-    if (!name || name.includes('\0')) throw new TypeError('Invalid table name');
-    if (/^_elt_/i.test(name))
-      throw new TypeError('Table names starting with _elt_ are reserved');
-    if (readerView !== undefined) {
-      if (!readerView || readerView.includes('\0'))
-        throw new TypeError('Invalid view name');
-      if (/^_elt_/i.test(readerView))
-        throw new TypeError('View names starting with _elt_ are reserved');
-      if (readerView.toLowerCase() === name.toLowerCase())
-        throw new TypeError('A reader view needs a name of its own');
-    }
+    if (
+      typeof name !== 'string' ||
+      (readerView !== undefined && typeof readerView !== 'string')
+    )
+      throw new TypeError('A table and its view are named by strings');
+    const table = identifiers.relation(name);
+    const view =
+      readerView === undefined ? undefined : identifiers.relation(readerView);
+    if (view !== undefined && identifiers.key(view) === identifiers.key(table))
+      throw new TypeError('A reader view needs a name of its own');
     if (
       columns !== undefined &&
       (!Array.isArray(columns) ||
@@ -34,11 +36,9 @@ export class SQLiteTable extends Target {
         !columns.every((column) => column instanceof SQLiteColumn))
     )
       throw new TypeError('A table requires at least one SQLite column');
-    const names = (columns ?? []).map((column) => column.name.toLowerCase());
-    if (names.includes('loaded_at'))
-      throw new TypeError('loaded_at is reserved for load metadata');
-    if (new Set(names).size !== names.length)
-      throw new TypeError('Duplicate column names');
+    const fields = (columns ?? []).map((column) => column.field);
+    if (new Set(fields).size !== fields.length)
+      throw new TypeError('Two columns hold one field');
     if ((columns ?? []).filter((column) => column.isPrimaryKey).length > 1)
       throw new TypeError('Only one primary-key column is supported');
     const fileReads = (columns ?? []).flatMap((column) =>
@@ -56,9 +56,13 @@ export class SQLiteTable extends Target {
         );
     }
     super(fileReads);
-    this.name = name;
-    this.columns = Object.freeze([...(columns ?? [])]);
-    this.readerView = readerView;
+    this.name = table;
+    this.columns = Object.freeze(
+      identifiers
+        .columns(columns ?? [])
+        .map(([column, stored]) => column.named(stored)),
+    );
+    this.readerView = view;
     Object.freeze(this);
   }
 
@@ -89,19 +93,20 @@ export class SQLiteTable extends Target {
       for (const column of this.columns) {
         if (
           column.fileRead === undefined &&
-          !Object.hasOwn(properties, column.name)
+          !Object.hasOwn(properties, column.field)
         )
           throw new TypeError(
-            `Stream ${stream.name} does not describe column ${column.name}`,
+            `Stream ${stream.name} does not describe field ${column.field}`,
           );
       }
     }
     return this;
   }
 
-  // SQLite compares ASCII identifiers case-insensitively, so one table has one location.
+  // SQLite takes names that differ only in ASCII case for one, so one table
+  // has one location.
   get location(): string {
-    return this.name.replaceAll(/[A-Z]/g, (letter) => letter.toLowerCase());
+    return identifiers.key(this.name);
   }
 
   get quotedName(): string {

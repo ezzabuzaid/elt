@@ -82,6 +82,9 @@ export function canonical(
 }
 
 export class SQLiteColumn {
+  // The record field the column holds.
+  readonly field: string;
+  // What SQLite calls the column, which the table it belongs to decides.
   readonly name: string;
   readonly kind: Kind;
   // The string format a schema-inferred column keeps, which refines its kind.
@@ -95,7 +98,7 @@ export class SQLiteColumn {
   readonly fileRead?: FileRead;
 
   constructor(
-    name: string,
+    field: string,
     kind: Kind,
     options: {
       nullable: boolean;
@@ -104,10 +107,11 @@ export class SQLiteColumn {
       array?: boolean;
       fileRead?: FileRead;
       format?: DeclaredFormat;
+      name?: string;
     },
   ) {
-    if (!name || name.includes('\0'))
-      throw new TypeError('Invalid column name');
+    if (typeof field !== 'string')
+      throw new TypeError('A column holds a field named by a string');
     if (!Object.hasOwn(storageTypes, kind))
       throw new TypeError('Unsupported SQLite column type');
     const { format } = options;
@@ -116,7 +120,7 @@ export class SQLiteColumn {
         ? formatted.has(kind)
         : formatKinds[format.name] !== kind
     )
-      throw new TypeError(`Column ${name} kind ${kind} must match its format`);
+      throw new TypeError(`Column ${field} kind ${kind} must match its format`);
     this.format = format;
     this.array = options.array ?? false;
     if (this.array && (kind === 'blob' || options.primaryKey))
@@ -126,10 +130,11 @@ export class SQLiteColumn {
     this.fileRead = options.fileRead;
     if (
       this.fileRead !== undefined &&
-      (!(this.fileRead instanceof FileRead) || this.fileRead.name !== name)
+      (!(this.fileRead instanceof FileRead) || this.fileRead.name !== field)
     )
-      throw new TypeError('Column file read must match its name');
-    this.name = name;
+      throw new TypeError('Column file read must match its field');
+    this.field = field;
+    this.name = options.name ?? field;
     this.kind = kind;
     this.isPrimaryKey = options.primaryKey;
     this.nullable = !options.primaryKey && options.nullable;
@@ -139,24 +144,26 @@ export class SQLiteColumn {
   }
 
   primaryKey(): SQLiteColumn {
-    return new SQLiteColumn(this.name, this.kind, {
+    return new SQLiteColumn(this.field, this.kind, {
       nullable: false,
       optional: false,
       primaryKey: true,
       array: this.array,
       fileRead: this.fileRead,
       format: this.format,
+      name: this.name,
     });
   }
 
   notNull(): SQLiteColumn {
-    return new SQLiteColumn(this.name, this.kind, {
+    return new SQLiteColumn(this.field, this.kind, {
       nullable: false,
       optional: false,
       primaryKey: this.isPrimaryKey,
       array: this.array,
       fileRead: this.fileRead,
       format: this.format,
+      name: this.name,
     });
   }
 
@@ -165,11 +172,12 @@ export class SQLiteColumn {
       throw new TypeError(
         'Files require a BLOB column, parsed TEXT or a stored TEXT reference',
       );
-    return new SQLiteColumn(this.name, this.kind, {
+    return new SQLiteColumn(this.field, this.kind, {
       nullable: this.nullable,
       optional: this.optional,
       primaryKey: this.isPrimaryKey,
-      fileRead: new FileRead(this.name, file, this.fileRead?.parser),
+      fileRead: new FileRead(this.field, file, this.fileRead?.parser),
+      name: this.name,
     });
   }
 
@@ -178,11 +186,25 @@ export class SQLiteColumn {
       throw new TypeError('Document parsing requires a TEXT column');
     if (this.fileRead === undefined)
       throw new TypeError('Select a source file before selecting a parser');
-    return new SQLiteColumn(this.name, this.kind, {
+    return new SQLiteColumn(this.field, this.kind, {
       nullable: this.nullable,
       optional: this.optional,
       primaryKey: this.isPrimaryKey,
-      fileRead: new FileRead(this.name, this.fileRead.file, parser),
+      fileRead: new FileRead(this.field, this.fileRead.file, parser),
+      name: this.name,
+    });
+  }
+
+  // This column as the table names it.
+  named(name: string): SQLiteColumn {
+    return new SQLiteColumn(this.field, this.kind, {
+      nullable: this.nullable,
+      optional: this.optional,
+      primaryKey: this.isPrimaryKey,
+      array: this.array,
+      fileRead: this.fileRead,
+      format: this.format,
+      name,
     });
   }
 
@@ -236,12 +258,16 @@ export class SQLiteColumn {
 
   encode(record: unknown): SQLInputValue {
     if (record === null || typeof record !== 'object' || Array.isArray(record))
-      throw new TypeError(`Record is missing column "${this.name}"`);
-    if (!Object.hasOwn(record, this.name)) {
+      throw new TypeError(
+        `Record is missing field ${JSON.stringify(this.field)}`,
+      );
+    if (!Object.hasOwn(record, this.field)) {
       if (this.optional) return null;
-      throw new TypeError(`Record is missing column "${this.name}"`);
+      throw new TypeError(
+        `Record is missing field ${JSON.stringify(this.field)}`,
+      );
     }
-    const value: unknown = Reflect.get(record, this.name);
+    const value: unknown = Reflect.get(record, this.field);
     if (value === null && this.nullable) return null;
     const { format } = this;
     if (this.array) {
@@ -251,7 +277,7 @@ export class SQLiteColumn {
       )
         return JSON.stringify(value);
       throw new TypeError(
-        `Column "${this.name}" requires an array of ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
+        `Field ${JSON.stringify(this.field)} requires an array of ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
       );
     }
     if (format !== undefined) {
@@ -261,7 +287,7 @@ export class SQLiteColumn {
         return value;
       }
       throw new TypeError(
-        `Column "${this.name}" requires a canonical ${format.name} value${this.nullable ? ' or null' : ' (not null)'}`,
+        `Field ${JSON.stringify(this.field)} requires a canonical ${format.name} value${this.nullable ? ' or null' : ' (not null)'}`,
       );
     }
     switch (this.kind) {
@@ -296,7 +322,7 @@ export class SQLiteColumn {
         } else if (value instanceof Uint8Array) return value;
     }
     throw new TypeError(
-      `Column "${this.name}" requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
+      `Field ${JSON.stringify(this.field)} requires ${this.kind}${this.nullable ? ' or null' : ' (not null)'}`,
     );
   }
 

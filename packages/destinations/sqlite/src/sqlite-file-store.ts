@@ -3,6 +3,7 @@ import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { FileContent } from '@workspace/elt';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
+import { identifiers } from './sqlite-identifiers.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
@@ -51,7 +52,7 @@ export class SQLiteFileStore {
   }
 
   static tableName(table: SQLiteTable, column: SQLiteColumn): string {
-    return `_elt_files_${table.location}_${column.name.toLowerCase()}`;
+    return `_elt_files_${table.location}_${identifiers.key(column.name)}`;
   }
 
   // An empty file still stores one empty chunk, so its id stays reserved.

@@ -15,7 +15,6 @@ import {
   Writer,
   describeTarget,
   reloadMode,
-  undescribed,
 } from '@workspace/elt';
 
 import { quote } from './identifier.ts';
@@ -128,7 +127,7 @@ export abstract class PostgresWriter extends Writer {
     this.#tableComment = description.table;
     this.#columnComments = description.columns;
     if (table.readerView === undefined) return;
-    const missing = undescribed(description);
+    const { missing } = description;
     if (missing.length > 0)
       throw new TypeError(
         `Reader view ${table.readerView.schema}.${table.readerView.name} needs JSON Schema descriptions for ${missing.join(', ')} of stream ${this.stream.name}`,
@@ -275,13 +274,13 @@ export abstract class PostgresWriter extends Writer {
   ): FieldValues {
     const { table, schema } = this;
     return async function* (field) {
-      const column = table.columns.find((column) => column.name === field);
+      const column = table.columns.find((column) => column.field === field);
       if (column === undefined)
         throw new TypeError(`Unknown target field: ${field}`);
       for (const name of tables()) {
         const present = await sql.unsafe(
           'SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3',
-          [schema, name, field],
+          [schema, name, column.name],
         );
         if (present.length === 0) continue;
         for await (const rows of sql
@@ -442,7 +441,7 @@ export abstract class PostgresWriter extends Writer {
     if (text !== undefined && Buffer.byteLength(text) <= rowBytes) return text;
     const { columns } = this.table;
     const sizes = columns.map((column) => {
-      const value = Reflect.get(Object(record), column.name);
+      const value = Reflect.get(Object(record), column.field);
       return typeof value === 'string' ? Buffer.byteLength(value) : 0;
     });
     const largestSize = Math.max(...sizes);
@@ -522,7 +521,9 @@ export abstract class PostgresWriter extends Writer {
   #scope(partition: Partition | null): [string, string[]] {
     if (partition === null) return ['', []];
     const columns = Object.keys(partition).map((field) => {
-      const column = this.table.columns.find(({ name }) => name === field);
+      const column = this.table.columns.find(
+        (column) => column.field === field,
+      );
       if (column === undefined)
         throw new TypeError(
           `Resetting a partition requires destination column ${field}`,
@@ -631,11 +632,14 @@ export abstract class PostgresWriter extends Writer {
         }
         let data = operation.type === 'RECORD' ? operation.data : undefined;
         for (const store of stores) {
-          const content: unknown = Reflect.get(Object(data), store.column.name);
+          const content: unknown = Reflect.get(
+            Object(data),
+            store.column.field,
+          );
           if (content instanceof FileContent)
             data = {
               ...Object(data),
-              [store.column.name]: await store.save(sql, content),
+              [store.column.field]: await store.save(sql, content),
             };
         }
         const row =

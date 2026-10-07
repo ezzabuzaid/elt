@@ -21,32 +21,19 @@ const databases: readonly {
   readonly schemas?: readonly string[];
 }[] = [{ name: 'local' }];
 
-// Postgres keeps only the first 63 bytes of a name, so a longer one keeps a
-// hash of the whole in its last nine.
-function fitted(name: string): string {
-  if (Buffer.byteLength(name) <= 63) return name;
-  const hash = createHash('sha256').update(name).digest('hex').slice(0, 8);
-  let kept = '';
-  for (const character of name) {
-    if (Buffer.byteLength(`${kept}${character}_${hash}`) > 63) break;
-    kept += character;
-  }
-  return `${kept}_${hash}`;
-}
-
-// A reader view's name, in the snake case marts use. A name the snake case
-// changes keeps a hash of the original. Two tables that still land on one
-// name, such as dbo_order.items and dbo.order_items, do not merge: the load of
-// the second refuses the view the first made.
+// A name in the snake case marts use. A name the snake case changes keeps a
+// hash of the original. Two tables that still land on one name, such as
+// dbo_order.items and dbo.order_items, do not merge: the load of the second
+// refuses the view the first made. The destination fits a long one.
 function readerName(parts: readonly string[]): string {
   const original = parts.join('_');
   const snake = original.toLowerCase().replaceAll(/[^a-z0-9_]+/g, '_');
-  if (snake === original) return fitted(snake);
+  if (snake === original) return snake;
   const hash = createHash('sha256')
     .update(parts.join('\0'))
     .digest('hex')
     .slice(0, 8);
-  return fitted(`${snake}_${hash}`);
+  return `${snake}_${hash}`;
 }
 
 export default databases.map(({ name, schemas }) => ({
@@ -83,12 +70,12 @@ export default databases.map(({ name, schemas }) => ({
             url: warehouseUrl,
             schema: raw,
           }),
-          // Raw tables keep each table's own <schema>.<table>; readers see
-          // marts.<name>_<schema>_<table>.
+          // Raw tables are named after <schema>.<table> by the
+          // destination's rule; readers see marts.<name>_<schema>_<table>.
           steps: sqlServerCopies(source, (stream) => {
             const [schema = '', table = ''] = stream.split(/\.(.*)/s);
             return destination
-              .table(fitted(stream))
+              .table(stream)
               .withReaderView('marts', readerName([name, schema, table]));
           }),
         }),

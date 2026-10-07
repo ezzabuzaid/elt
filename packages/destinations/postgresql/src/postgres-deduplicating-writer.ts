@@ -34,14 +34,14 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
       configuration.stream.jsonSchema,
     );
     const column = (field: string): PostgresColumn => {
-      const selected = table.columns.find((column) => column.name === field);
+      const selected = table.columns.find((column) => column.field === field);
       if (selected === undefined)
         throw new TypeError(
           `Deduplication requires destination column ${field}`,
         );
       if (
         selected.storageType !==
-        inferred.find((column) => column.name === field)?.storageType
+        inferred.find((column) => column.field === field)?.storageType
       )
         throw new TypeError(
           `Deduplication column ${field} must preserve the source scalar type`,
@@ -164,7 +164,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
       : `"staged".${seq} DESC`;
     const columns = this.table.columns.map((column) => column.quotedName);
     await sql.unsafe(
-      `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".*, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."last" IS NULL OR "staged".${seq} > "deleted"."last")) ` +
+      `WITH "deleted" AS (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}), "ranked" AS (SELECT "staged".*, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN "deleted" ON ${same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) ` +
         `INSERT INTO ${into} AS "_elt_target" (${this.fields.join(', ')}) SELECT ${columns.join(', ')}, $1::text::timestamptz FROM "ranked" WHERE "_elt_rank" = 1 ORDER BY ${seq} ` +
         `ON CONFLICT (${keys.join(', ')}) DO UPDATE SET ${this.fields.map((field) => `${field} = excluded.${field}`).join(', ')}${guarded ? ` WHERE excluded.${cursor.quotedName}${collate} > "_elt_target".${cursor.quotedName}${collate}` : ''}`,
       [loadedAt],

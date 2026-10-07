@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   mkdtempDisposable,
   readFile,
@@ -441,6 +441,95 @@ test('Postgres stores per-field attachment references and reconciles only the fi
   }
 });
 
+test('renamed file columns keep their original bytes and stored files through later commits', async () => {
+  const scratch = await mkdtempDisposable(join(tmpdir(), 'elt-renamed-pg-'));
+  try {
+    await using database = await scratchDatabase(server);
+    const { sql } = database;
+    const path = join(scratch.path, 'source.txt');
+    await writeFile(path, 'original');
+    const directory = join(scratch.path, 'files');
+    const store = new LocalFiles({ directory });
+    const stream = new Stream({
+      name: 'docs',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      emitsDeletes: true,
+      supportsFileTransfer: true,
+    });
+    const source = new Messages(stream);
+    const destination = new PostgresDestination({
+      url: database.url,
+      schema: 'raw',
+    });
+    const pipeline = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new PostgresCheckpointStore({
+            url: database.url,
+            schema: 'raw',
+          }),
+          steps: [
+            new Copy(
+              stream,
+              destination.table('docs', (c) => [
+                c.text('id'),
+                c.integer('version'),
+                c.text('Stored Ref').from(stream.file.store(store)),
+                c.blob('Original Bytes').from(stream.file),
+              ]),
+              {
+                id: 'docs',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+                cursorField: 'version',
+              },
+            ),
+          ],
+        }),
+      ],
+    });
+    // Original bytes are read as the column's comment tells a reader to.
+    const original = async (id: string) => {
+      const [comment] =
+        await sql`SELECT col_description('raw.docs'::regclass, attnum) AS text
+          FROM pg_attribute WHERE attrelid = 'raw.docs'::regclass AND attname = 'Original_Bytes'`;
+      const chunks = /Join (\S+) on file/.exec(String(comment?.text))?.[1];
+      assert.ok(chunks, String(comment?.text));
+      const [row] = await sql.unsafe(
+        `SELECT convert_from(string_agg(c.bytes, ''::bytea ORDER BY c.n), 'UTF8') AS text
+          FROM raw.docs d JOIN ${chunks} c ON c.file = d."Original_Bytes" WHERE d.id = $1`,
+        [id],
+      );
+      return row?.text;
+    };
+    const stored = async (id: string) =>
+      (await sql`SELECT "Stored_Ref" AS ref FROM raw.docs WHERE id = ${id}`)[0]
+        ?.ref;
+
+    source.messages = [
+      { stream: 'docs', data: { id: 'a', version: 1 }, file: path },
+    ];
+    await pipeline.run();
+    source.messages = [
+      { stream: 'docs', data: { id: 'b', version: 1 }, file: null },
+    ];
+    await pipeline.run();
+
+    assert.equal(await original('a'), 'original');
+    assert.equal(await readFile(String(await stored('a')), 'utf8'), 'original');
+  } finally {
+    await scratch[Symbol.asyncDispose]();
+  }
+});
+
 test('schema annotations follow each copy, including projections, append history and removed descriptions', async () => {
   await using database = await scratchDatabase(server);
   const titleDescription =
@@ -535,7 +624,7 @@ test('schema annotations follow each copy, including projections, append history
   );
   assert.equal(
     (
-      await database.sql`SELECT count(*)::int AS n FROM "note""data"."note""titles"`
+      await database.sql`SELECT count(*)::int AS n FROM "note""data".${database.sql(titles.name)}`
     )[0]?.n,
     2,
   );
@@ -590,7 +679,7 @@ test('schema annotations follow each copy, including projections, append history
   assert.equal(plainComments.columns.title, null);
   assert.equal(
     (
-      await database.sql`SELECT count(*)::int AS n FROM "note""data"."note""titles"`
+      await database.sql`SELECT count(*)::int AS n FROM "note""data".${database.sql(titles.name)}`
     )[0]?.n,
     1,
   );
@@ -1418,14 +1507,84 @@ test('declarations are checked before any connection', () => {
     () => new PostgresDestination({ url, schema: 'pg_raw' }),
     /reserved/,
   );
-  const destination = new PostgresDestination({ url, schema: 'raw' });
-  assert.throws(() => destination.table('_ELT_writers'), /reserved/);
-  assert.throws(() => destination.table('x'.repeat(64)), /Invalid table name/);
+  // A schema is named by the caller's own SQL, so it is refused, not renamed.
   assert.throws(
-    () => destination.table('items', (columns) => [columns.text('loaded_at')]),
-    /reserved/,
+    () => new PostgresDestination({ url, schema: 'x'.repeat(64) }),
+    /Invalid schema name/,
+  );
+  const destination = new PostgresDestination({ url, schema: 'raw' });
+  const sha8 = (name: string) =>
+    createHash('sha256').update(name).digest('hex').slice(0, 8);
+  // A table name sanitizing changes keeps a hash of the name asked for; one
+  // past 63 bytes keeps its first 54 bytes and a hash.
+  assert.equal(
+    destination.table('_ELT_writers').name,
+    `ELT_writers_${sha8('_ELT_writers')}`,
+  );
+  assert.equal(
+    destination.table('x'.repeat(64)).name,
+    `${'x'.repeat(54)}_${sha8('x'.repeat(64))}`,
+  );
+  assert.deepEqual(
+    destination
+      .table('items', (columns) => [columns.text('loaded_at')])
+      .columns.map(({ name }) => name),
+    ['loaded_at_1'],
+  );
+  assert.throws(
+    () =>
+      destination.table('items', (columns) => [
+        columns.text('a'),
+        columns.text('a'),
+      ]),
+    /Two columns hold one field/,
   );
   assert.doesNotMatch(JSON.stringify(destination), /u:p/);
+});
+
+test('a reader view over an undescribed field it renamed names the field, before any connection', async () => {
+  const stream = new Stream({
+    name: 'odd',
+    jsonSchema: {
+      type: 'object',
+      description: 'One row per odd record.',
+      properties: {
+        id: { type: 'string', description: 'Id.' },
+        'Order Items': { type: 'string' },
+      },
+      required: ['id', 'Order Items'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  const destination = new PostgresDestination({
+    url: 'postgres://u:p@127.0.0.1:1/db',
+    schema: 'raw',
+  });
+
+  await assert.rejects(
+    new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new ScriptedSource([stream], {}),
+          destination,
+          steps: [
+            new Copy(
+              stream,
+              destination.table('odd').withReaderView('marts', 'odd'),
+              {
+                id: 'odd',
+                syncMode: 'full_refresh',
+                destinationSyncMode: 'overwrite',
+              },
+            ),
+          ],
+        }),
+      ],
+    }).run(),
+    /needs JSON Schema descriptions for Order Items of stream odd/,
+  );
 });
 
 // One copy's checkpoint binding, as a run of that copy alone passes it.
@@ -2109,6 +2268,422 @@ test('a staged unit merges like its operations applied one at a time, under repl
   // keeps each key's last record, cursor_newer its greatest cursor.
   assert.deepEqual(await loaded(database, 'replacing'), ['a:2', 'c:3', 'd:4']);
   assert.deepEqual(await loaded(database, 'guarded'), ['a:2', 'c:5', 'd:4']);
+});
+
+test('every field name is sanitized as Airbyte does, around the names Postgres keeps for itself, and each value lands under its column, whose comment names the source field', async () => {
+  await using database = await scratchDatabase(server);
+  const { sql } = database;
+  await sql`CREATE SCHEMA marts`;
+  // A name past 63 bytes keeps its first 54, then `_` and the first 8 hex
+  // digits of the SHA-256 of the field name.
+  const fitted = (field: string) =>
+    `${field.slice(0, 54)}_${createHash('sha256').update(field).digest('hex').slice(0, 8)}`;
+  const long = 'x'.repeat(100);
+  const sharing = `${'x'.repeat(60)}${'y'.repeat(10)}`;
+  // Each field, in field order, and the column the documented rule gives it.
+  const names: (readonly [string, string])[] = [
+    ['id', 'id'],
+    ['Order Items', 'Order_Items'],
+    // Airbyte's own function gives Foo_Bar, _1foo and special for these.
+    ['Foo.Bar', 'Foo_Bar'],
+    ['c  d', 'c_d'],
+    ['e\tf', 'e_f'],
+    ['x-y', 'x_y'],
+    ['0th', '_0th'],
+    ['Foo', 'Foo'],
+    ['foo', 'foo'],
+    ['spécial', 'special'],
+    ['名前', '__'],
+    ['氏名', '___1'],
+    ['1st', '_1st'],
+    ['a b', 'a_b'],
+    ['a_b', 'a_b_1'],
+    ['a_b_1', 'a_b_1_1'],
+    ['loaded_at', 'loaded_at_1'],
+    ['_elt_seq', 'elt_seq'],
+    ['_elt_op', 'elt_op'],
+    ['_elt_rank', 'elt_rank'],
+    ['_ELT_seq', 'ELT_seq'],
+    ['xmin', 'xmin_1'],
+    ['xmax', 'xmax_1'],
+    ['cmin', 'cmin_1'],
+    ['cmax', 'cmax_1'],
+    ['ctid', 'ctid_1'],
+    ['tableoid', 'tableoid_1'],
+    ['', '_'],
+    // A field already holding the name a long field fits to sends that long
+    // field on to its `_1`.
+    [fitted(long), fitted(long)],
+    [long, fitted(`${long}_1`)],
+    [sharing, fitted(sharing)],
+  ];
+  const odd = new Stream({
+    name: 'odd',
+    jsonSchema: {
+      type: 'object',
+      description: 'One row per odd record.',
+      properties: Object.fromEntries(
+        names.map(([field], index) => [
+          field,
+          { type: 'string', description: `Field ${index}.` },
+        ]),
+      ),
+      required: names.map(([field]) => field),
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const source = new ScriptedSource([odd], {
+    odd: [
+      {
+        stream: 'odd',
+        data: Object.fromEntries(
+          names.map(([field], index) => [field, `v${index}`]),
+        ),
+      },
+    ],
+  });
+
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            odd,
+            destination.table('odd').withReaderView('marts', 'odd'),
+            {
+              id: 'odd',
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite',
+            },
+          ),
+        ],
+      }),
+    ],
+  }).run();
+
+  const described = async (relation: string) => [
+    ...(await sql`SELECT a.attname AS name, col_description(a.attrelid, a.attnum) AS description
+      FROM pg_attribute a WHERE a.attrelid = ${relation}::regclass AND a.attnum > 0 ORDER BY a.attnum`),
+  ];
+  const view = await described('marts.odd');
+  assert.deepEqual(
+    view.map(({ name }) => name),
+    [...names.map(([, column]) => column), 'loaded_at'],
+  );
+  assert.deepEqual(
+    view.slice(0, -1).map(({ description }) => description),
+    names.map(([field, column], index) =>
+      field === column
+        ? `Field ${index}.`
+        : `Field ${index}. Source field: ${JSON.stringify(field)}.`,
+    ),
+  );
+  assert.match(String(view.at(-1)?.description), /^Start time of the load/);
+  assert.deepEqual(await described('raw.odd'), view);
+  const [row] = await sql.unsafe(
+    `SELECT ${names.map(([, column]) => `"${column}"`).join(', ')} FROM marts.odd`,
+  );
+  assert.deepEqual(
+    names.map(([, column]) => row?.[column]),
+    names.map((_, index) => `v${index}`),
+  );
+});
+
+test('a key named last merges like its operations applied one at a time', async () => {
+  await using database = await scratchDatabase(server);
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const keyed = (name: string, snapshot: boolean) =>
+    new Stream({
+      name,
+      jsonSchema: {
+        type: 'object',
+        properties: { last: { type: 'string' }, version: { type: 'integer' } },
+        required: ['last', 'version'],
+      },
+      primaryKey: ['last'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      sourceDefinedCursor: snapshot ? true : undefined,
+      emitsDeletes: true,
+    });
+  const script = (stream: string) => {
+    const put = (last: string, version: number) => ({
+      stream,
+      data: { last, version },
+    });
+    const remove = (last: string) => ({
+      type: 'DELETE' as const,
+      stream,
+      key: { last },
+    });
+    return [
+      put('a', 1),
+      remove('a'),
+      put('a', 2),
+      put('b', 1),
+      remove('b'),
+      put('c', 5),
+      put('c', 3),
+      checkpoint(stream, { page: 1 }),
+    ];
+  };
+  const replacing = keyed('replacing', true);
+  const guarded = keyed('guarded', false);
+  const source = new ScriptedSource([replacing, guarded], {
+    replacing: script('replacing'),
+    guarded: script('guarded'),
+  });
+
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(
+            replacing,
+            destination.table('replacing'),
+            incremental('replacing'),
+          ),
+          new Copy(guarded, destination.table('guarded'), {
+            ...incremental('guarded'),
+            cursorField: 'version',
+            dedupPolicy: 'cursor_newer',
+          }),
+        ],
+      }),
+    ],
+  }).run();
+
+  const rows = async (table: string) =>
+    (
+      await database.sql.unsafe(
+        `SELECT "last", version::int FROM raw.${table} ORDER BY "last" COLLATE "C"`,
+      )
+    ).map(({ last, version }) => `${last}:${version}`);
+  // a is deleted, then loaded again at 2; b ends deleted.
+  assert.deepEqual(await rows('replacing'), ['a:2', 'c:3']);
+  assert.deepEqual(await rows('guarded'), ['a:2', 'c:5']);
+});
+
+test('renamed columns keep their table across runs, and a field added upstream reloads it under the same reader view', async () => {
+  await using database = await scratchDatabase(server);
+  const { sql } = database;
+  await sql`CREATE SCHEMA marts`;
+  const shaped = (fields: readonly string[]) =>
+    new Stream({
+      name: 'odd',
+      jsonSchema: {
+        type: 'object',
+        description: 'One row per odd record.',
+        properties: Object.fromEntries(
+          fields.map((field) => [
+            field,
+            { type: 'string', description: `${field}.` },
+          ]),
+        ),
+        required: [...fields],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      sourceDefinedCursor: true,
+      emitsDeletes: true,
+    });
+  const before = ['id', 'Order Items', 'loaded_at', 'x'.repeat(70)];
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const checkpoints = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
+  });
+  const run = (stream: Stream, script: readonly Scripted[]) =>
+    new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new ScriptedSource([stream], { odd: script }),
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(
+              stream,
+              destination.table('odd').withReaderView('marts', 'odd'),
+              incremental('odd'),
+            ),
+          ],
+        }),
+      ],
+    }).run();
+  const row = (fields: readonly string[], id: string) => ({
+    stream: 'odd',
+    data: Object.fromEntries(fields.map((field) => [field, `${id}:${field}`])),
+  });
+  const table = async () =>
+    (await sql`SELECT 'raw.odd'::regclass::oid AS oid`)[0]?.oid;
+  const viewOid = async () =>
+    (await sql`SELECT 'marts.odd'::regclass::oid AS oid`)[0]?.oid;
+  const view = async () => [
+    ...(await sql.unsafe(`SELECT * FROM marts.odd ORDER BY id`)),
+  ];
+
+  await run(shaped(before), [row(before, 'a'), checkpoint('odd', { n: 1 })]);
+  const first = await table();
+  const firstView = await viewOid();
+  const loaded = await view();
+  await run(shaped(before), [checkpoint('odd', { n: 1 })]);
+
+  // Nothing changed, so nothing was rebuilt or rewritten.
+  assert.equal(await table(), first);
+  assert.equal(await viewOid(), firstView);
+  assert.deepEqual(await view(), loaded);
+
+  const after = [...before, 'New Field'];
+  await run(shaped(after), [row(after, 'a'), checkpoint('odd', { n: 2 })]);
+
+  assert.notEqual(await table(), first);
+  const [reloaded] = await view();
+  assert.equal(reloaded?.New_Field, 'a:New Field');
+  assert.equal(reloaded?.Order_Items, 'a:Order Items');
+  assert.equal(reloaded?.loaded_at_1, 'a:loaded_at');
+});
+
+test('a key and cursor past 63 bytes merge under their renamed columns, which the table comment names', async () => {
+  await using database = await scratchDatabase(server);
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const part = 'k'.repeat(70);
+  const cursor = 'c'.repeat(70);
+  // A name past 63 bytes keeps its first 54, then `_` and the first 8 hex
+  // digits of the SHA-256 of the field name.
+  const column = (field: string) =>
+    `${field.slice(0, 54)}_${createHash('sha256').update(field).digest('hex').slice(0, 8)}`;
+  const keyed = (name: string, snapshot: boolean) =>
+    new Stream({
+      name,
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          last: { type: 'string' },
+          [part]: { type: 'string' },
+          [cursor]: { type: 'integer' },
+        },
+        required: ['last', part, cursor],
+      },
+      primaryKey: ['last', part],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      sourceDefinedCursor: snapshot ? true : undefined,
+      emitsDeletes: true,
+    });
+  const script = (stream: string) => {
+    const put = (last: string, version: number) => ({
+      stream,
+      data: { last, [part]: 'p', [cursor]: version },
+    });
+    const remove = (last: string) => ({
+      type: 'DELETE' as const,
+      stream,
+      key: { last, [part]: 'p' },
+    });
+    return [
+      put('a', 1),
+      remove('a'),
+      put('a', 2),
+      put('b', 1),
+      remove('b'),
+      put('c', 5),
+      put('c', 3),
+      checkpoint(stream, { page: 1 }),
+    ];
+  };
+  const replacing = keyed('replacing', true);
+  const guarded = keyed('guarded', false);
+  const source = new ScriptedSource([replacing, guarded], {
+    replacing: script('replacing'),
+    guarded: script('guarded'),
+  });
+
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(
+            replacing,
+            destination.table('replacing'),
+            incremental('replacing'),
+          ),
+          new Copy(guarded, destination.table('guarded'), {
+            ...incremental('guarded'),
+            cursorField: cursor,
+            dedupPolicy: 'cursor_newer',
+          }),
+        ],
+      }),
+    ],
+  });
+  await pipeline.run();
+
+  const rows = async (table: string) =>
+    (
+      await database.sql.unsafe(
+        `SELECT "last", "${column(part)}" AS part, "${column(cursor)}"::int AS version FROM raw.${table} ORDER BY "last" COLLATE "C"`,
+      )
+    ).map(({ last, part, version }) => `${last}:${part}:${version}`);
+  // a is deleted, then loaded again at 2; b ends deleted.
+  assert.deepEqual(await rows('replacing'), ['a:p:2', 'c:p:3']);
+  assert.deepEqual(await rows('guarded'), ['a:p:2', 'c:p:5']);
+  const comment = async (table: string) =>
+    String(
+      (
+        await database.sql`SELECT obj_description(${`raw.${table}`}::regclass) AS comment`
+      )[0]?.comment,
+    );
+  assert.match(
+    await comment('replacing'),
+    new RegExp(`Copy key: last, ${column(part)}\\.`),
+  );
+  assert.match(
+    await comment('guarded'),
+    new RegExp(`the greatest ${column(cursor)} wins`),
+  );
+
+  // Against the rows the first run left: a deletion by the renamed key, and
+  // a record older than the stored cursor.
+  const later = (stream: string) => [
+    { type: 'DELETE' as const, stream, key: { last: 'a', [part]: 'p' } },
+    { stream, data: { last: 'c', [part]: 'p', [cursor]: 4 } },
+    checkpoint(stream, { page: 2 }),
+  ];
+  source.scripts = { replacing: later('replacing'), guarded: later('guarded') };
+  await pipeline.run();
+
+  assert.deepEqual(await rows('replacing'), ['c:p:4']);
+  assert.deepEqual(await rows('guarded'), ['c:p:5']);
 });
 
 test('a checkpoint lost between commit and save replays to the same rows', async () => {
@@ -3314,6 +3889,178 @@ test('string formats load exactly: microsecond times typed, finer ones as text t
     ),
     ['1'],
   );
+});
+
+test('tables and reader views whose names sanitize alike, or pass 63 bytes, stay apart, and a rerun adopts its own views', async () => {
+  await using database = await scratchDatabase(server);
+  const { sql } = database;
+  await sql`CREATE SCHEMA marts`;
+  const sha8 = (name: string) =>
+    createHash('sha256').update(name).digest('hex').slice(0, 8);
+  const long = 'x'.repeat(70);
+  const sharing = `${'x'.repeat(60)}${'y'.repeat(10)}`;
+  // Each name a host asks for, and the one the documented rule gives it: a
+  // name sanitizing changes keeps a hash of itself; one past 63 bytes keeps
+  // its first 54 bytes and a hash.
+  const names: (readonly [string, string])[] = [
+    ['dbo.a b', `dbo_a_b_${sha8('dbo.a b')}`],
+    ['dbo.a_b', `dbo_a_b_${sha8('dbo.a_b')}`],
+    ['_elt_items', `elt_items_${sha8('_elt_items')}`],
+    [long, `${'x'.repeat(54)}_${sha8(long)}`],
+    [sharing, `${'x'.repeat(54)}_${sha8(sharing)}`],
+  ];
+  const tables = names.map(([name, stored], index) => ({
+    name,
+    stored,
+    stream: new Stream({
+      name: `s${index}`,
+      jsonSchema: {
+        type: 'object',
+        description: `Stream ${index}.`,
+        properties: { id: { type: 'string', description: 'Id.' } },
+        required: ['id'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh'],
+    }),
+  }));
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new ScriptedSource(
+          tables.map(({ stream }) => stream),
+          Object.fromEntries(
+            tables.map(({ stream }) => [
+              stream.name,
+              [{ stream: stream.name, data: { id: stream.name } }],
+            ]),
+          ),
+        ),
+        destination,
+        steps: tables.map(
+          ({ name, stream }) =>
+            new Copy(
+              stream,
+              destination.table(name).withReaderView('marts', name),
+              {
+                id: stream.name,
+                syncMode: 'full_refresh',
+                destinationSyncMode: 'overwrite',
+              },
+            ),
+        ),
+      }),
+    ],
+  });
+
+  await pipeline.run();
+  await pipeline.run();
+
+  for (const { stored, stream } of tables) {
+    const read = async (schema: string) =>
+      (await sql`SELECT id FROM ${sql(schema)}.${sql(stored)}`).map(
+        ({ id }) => id,
+      );
+    assert.deepEqual(await read('raw'), [stream.name]);
+    assert.deepEqual(await read('marts'), [stream.name]);
+  }
+});
+
+test('a reset of a partition named by a renamed field replaces only that partition', async () => {
+  await using database = await scratchDatabase(server);
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { 'Account Id': { type: 'string' }, id: { type: 'string' } },
+    },
+    primaryKey: ['Account Id', 'id'],
+    partitionKey: ['Account Id'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  let script: Record<string, SourceMessage[]> = {};
+  class Accounts extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'accounts';
+    protected readonly catalog = new Catalog([items]);
+    protected override partitions() {
+      return [{ 'Account Id': 'a' }, { 'Account Id': 'b' }];
+    }
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      _state: unknown,
+      partition: Partition | null,
+    ) {
+      yield* script[String(partition?.['Account Id'])] ?? [];
+    }
+  }
+  const item = (account: string, id: string) => ({
+    stream: 'items',
+    data: { 'Account Id': account, id },
+  });
+  const state = (pass: number) => ({
+    type: 'STATE' as const,
+    stream: 'items',
+    state: { pass },
+  });
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Accounts(),
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(items, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+  const loaded = async () =>
+    (
+      await database.sql`SELECT "Account_Id" AS account, id FROM raw.items ORDER BY 1, 2`
+    ).map(({ account, id }) => `${account}${id}`);
+
+  script = {
+    a: [item('a', '1'), item('a', '2'), state(1)],
+    b: [item('b', '1'), state(1)],
+  };
+  await pipeline.run();
+  script = {
+    a: [{ type: 'RESET', stream: 'items' }, item('a', '3'), state(2)],
+    b: [state(2)],
+  };
+  await pipeline.run();
+
+  assert.deepEqual(await loaded(), ['a3', 'b1']);
 });
 
 test('a reset replaces its partition, or the whole table, at the next commit; a failure before the checkpoint keeps rows and checkpoint', async () => {

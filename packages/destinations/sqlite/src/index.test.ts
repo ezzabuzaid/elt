@@ -206,6 +206,191 @@ test('the macOS sqlite3 shell reads the catalog of a loaded file: every describe
   assert.ok(column('stream_status.status').description);
 });
 
+test('every name is sanitized as Airbyte does, around the names SQLite takes as one, and the catalog names each source field', async () => {
+  const sha8 = (name: string) =>
+    createHash('sha256').update(name).digest('hex').slice(0, 8);
+  const long = 'z'.repeat(200);
+  // Each field, in field order, and the column the documented rule gives it.
+  // SQLite compares names without ASCII case, and keeps names of any length.
+  const before: (readonly [string, string])[] = [
+    ['id', 'id'],
+    ['Order Items', 'Order_Items'],
+    ['c  d', 'c_d'],
+    ['x-y', 'x_y'],
+    ['0th', '_0th'],
+    ['', '_'],
+    ['LOADED_AT', 'LOADED_AT_1'],
+    ['_ELT_op', 'ELT_op'],
+    ['Foo', 'Foo'],
+    ['foo', 'foo_1'],
+    ['spécial', 'special'],
+    [long, long],
+  ];
+  const shaped = (names: readonly (readonly [string, string])[]) =>
+    new Stream({
+      name: 'odd',
+      jsonSchema: {
+        type: 'object',
+        description: 'One row per odd record.',
+        properties: Object.fromEntries(
+          names.map(([field], index) => [
+            field,
+            { type: 'string', description: `Field ${index}.` },
+          ]),
+        ),
+        required: names.map(([field]) => field),
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      sourceDefinedCursor: true,
+      emitsDeletes: true,
+    });
+  const pair = (name: string) =>
+    new Stream({
+      name,
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh'],
+    });
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-names-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  installSQLiteCatalog(destination);
+  const spaced = pair('spaced');
+  const underscored = pair('underscored');
+  const run = (names: readonly (readonly [string, string])[], pass: number) => {
+    const odd = shaped(names);
+    return new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new ScriptedSource([odd, spaced, underscored], {
+            odd: [
+              ...(pass === 2
+                ? []
+                : [
+                    {
+                      stream: 'odd',
+                      data: Object.fromEntries(
+                        names.map(([field]) => [field, `a:${field}`]),
+                      ),
+                    },
+                  ]),
+              checkpoint('odd', { pass }),
+            ],
+            spaced: [{ stream: 'spaced', data: { id: 'spaced' } }],
+            underscored: [
+              { stream: 'underscored', data: { id: 'underscored' } },
+            ],
+          }),
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(
+              odd,
+              destination.table('_ELT_items').withReaderView('odd'),
+              {
+                id: 'odd',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              },
+            ),
+            new Copy(spaced, destination.table('dbo.a b'), {
+              id: 'spaced',
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite',
+            }),
+            new Copy(underscored, destination.table('dbo.a_b'), {
+              id: 'underscored',
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite',
+            }),
+          ],
+        }),
+      ],
+      history,
+    }).run();
+  };
+  const view = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT * FROM odd')
+      .all()
+      .map((row) => ({ ...row }));
+  };
+
+  await run(before, 1);
+  const loaded = view();
+  await run(before, 2);
+
+  // Nothing changed upstream, so nothing was rewritten.
+  assert.deepEqual(view(), loaded);
+  const [row] = loaded;
+  assert.deepEqual(
+    before.map(([, column]) => row?.[column]),
+    before.map(([field]) => `a:${field}`),
+  );
+  {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    const ids = (table: string) =>
+      database
+        .prepare(`SELECT id FROM "${table}"`)
+        .all()
+        .map(({ id }) => id);
+    assert.deepEqual(ids(`ELT_items_${sha8('_ELT_items')}`), ['a:id']);
+    assert.deepEqual(ids(`dbo_a_b_${sha8('dbo.a b')}`), ['spaced']);
+    assert.deepEqual(ids(`dbo_a_b_${sha8('dbo.a_b')}`), ['underscored']);
+  }
+  const { stdout, stderr } = spawnSync(
+    '/usr/bin/sqlite3',
+    [
+      '-readonly',
+      '-json',
+      destination.path,
+      "SELECT name, data_type, description FROM catalog WHERE kind = 'column' AND name LIKE 'odd.%'",
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(stderr, '');
+  const described = new Map(
+    JSON.parse(stdout).map(
+      ({ name, description }: { name: string; description: string }) => [
+        name,
+        description,
+      ],
+    ),
+  );
+  assert.equal(
+    JSON.parse(stdout).find(
+      ({ name }: { name: string }) => name === 'odd.Order_Items',
+    )?.data_type,
+    'text',
+  );
+  for (const [index, [field, column]] of before.entries())
+    assert.equal(
+      described.get(`odd.${column}`),
+      field === column
+        ? `Field ${index}.`
+        : `Field ${index}. Source field: ${JSON.stringify(field)}.`,
+    );
+
+  await run([...before, ['New Field', 'New_Field']], 3);
+
+  const [reloaded] = view();
+  assert.equal(reloaded?.New_Field, 'a:New Field');
+  assert.equal(reloaded?.LOADED_AT_1, 'a:LOADED_AT');
+});
+
 test('array fields load as JSON arrays that SQLite checks and reads element by element', async () => {
   class ListSource extends Source {
     override coverage() {
@@ -1743,7 +1928,30 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
       .map((row) => row.id),
     ['second'],
   );
-  assert.throws(() => destination.table('_ELT_writers'), /reserved/);
+  // A table named like elt's own leaves elt's `_elt_` names.
+  assert.equal(
+    destination.table('_ELT_writers').name,
+    `ELT_writers_${createHash('sha256').update('_ELT_writers').digest('hex').slice(0, 8)}`,
+  );
+});
+
+test('a table refuses two columns of one field, and a reader view SQLite would take for the table', () => {
+  const destination = new SQLiteDestination({
+    path: '/nonexistent/out.sqlite',
+  });
+
+  assert.throws(
+    () =>
+      destination.table('items', (columns) => [
+        columns.text('a'),
+        columns.text('a'),
+      ]),
+    /Two columns hold one field/,
+  );
+  assert.throws(
+    () => destination.table('Items').withReaderView('items'),
+    /A reader view needs a name of its own/,
+  );
 });
 
 test('a pipeline refuses two writers of one target before running any', async () => {
@@ -3193,6 +3401,383 @@ test('a staged unit merges like its operations applied one at a time, under repl
   // keeps each key's last record, cursor_newer its greatest cursor.
   assert.deepEqual(rows('replacing'), ['a:2', 'c:3', 'd:4']);
   assert.deepEqual(rows('guarded'), ['a:2', 'c:5', 'd:4']);
+});
+
+test('a key named last merges like its operations applied one at a time', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-last-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const keyed = (name: string, snapshot: boolean) =>
+    new Stream({
+      name,
+      jsonSchema: {
+        type: 'object',
+        properties: { last: { type: 'string' }, version: { type: 'integer' } },
+        required: ['last', 'version'],
+      },
+      primaryKey: ['last'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      sourceDefinedCursor: snapshot ? true : undefined,
+      emitsDeletes: true,
+    });
+  const script = (stream: string) => {
+    const put = (last: string, version: number) => ({
+      stream,
+      data: { last, version },
+    });
+    const remove = (last: string) => ({
+      type: 'DELETE' as const,
+      stream,
+      key: { last },
+    });
+    return [
+      put('a', 1),
+      remove('a'),
+      put('a', 2),
+      put('b', 1),
+      remove('b'),
+      put('c', 5),
+      put('c', 3),
+      checkpoint(stream, { page: 1 }),
+    ];
+  };
+  const replacing = keyed('replacing', true);
+  const guarded = keyed('guarded', false);
+  const source = new ScriptedSource([replacing, guarded], {
+    replacing: script('replacing'),
+    guarded: script('guarded'),
+  });
+
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(replacing, destination.table('replacing'), {
+            id: 'replacing',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+          new Copy(guarded, destination.table('guarded'), {
+            id: 'guarded',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+            dedupPolicy: 'cursor_newer',
+          }),
+        ],
+      }),
+    ],
+  }).run();
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  const rows = (table: string) =>
+    database
+      .prepare(`SELECT "last", version FROM ${table} ORDER BY "last"`)
+      .all()
+      .map(({ last, version }) => `${last}:${version}`);
+  // a is deleted, then loaded again at 2; b ends deleted.
+  assert.deepEqual(rows('replacing'), ['a:2', 'c:3']);
+  assert.deepEqual(rows('guarded'), ['a:2', 'c:5']);
+});
+
+test('a key and cursor that sanitizing renames merge under their renamed columns', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-renamed-key-'),
+  );
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const keyed = (name: string, snapshot: boolean) =>
+    new Stream({
+      name,
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          'Line Id': { type: 'string' },
+          'Version No': { type: 'integer' },
+        },
+        required: ['Line Id', 'Version No'],
+      },
+      primaryKey: ['Line Id'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      sourceDefinedCursor: snapshot ? true : undefined,
+      emitsDeletes: true,
+    });
+  const script = (stream: string) => {
+    const put = (line: string, version: number) => ({
+      stream,
+      data: { 'Line Id': line, 'Version No': version },
+    });
+    const remove = (line: string) => ({
+      type: 'DELETE' as const,
+      stream,
+      key: { 'Line Id': line },
+    });
+    return [
+      put('a', 1),
+      remove('a'),
+      put('a', 2),
+      put('b', 1),
+      remove('b'),
+      put('c', 5),
+      put('c', 3),
+      checkpoint(stream, { page: 1 }),
+    ];
+  };
+  const replacing = keyed('replacing', true);
+  const guarded = keyed('guarded', false);
+
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new ScriptedSource([replacing, guarded], {
+          replacing: script('replacing'),
+          guarded: script('guarded'),
+        }),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(replacing, destination.table('replacing'), {
+            id: 'replacing',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+          new Copy(guarded, destination.table('guarded'), {
+            id: 'guarded',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'Version No',
+            dedupPolicy: 'cursor_newer',
+          }),
+        ],
+      }),
+    ],
+  }).run();
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  const rows = (table: string) =>
+    database
+      .prepare(
+        `SELECT Line_Id AS line, Version_No AS version FROM ${table} ORDER BY Line_Id`,
+      )
+      .all()
+      .map(({ line, version }) => `${line}:${version}`);
+  // a is deleted, then loaded again at 2; b ends deleted.
+  assert.deepEqual(rows('replacing'), ['a:2', 'c:3']);
+  assert.deepEqual(rows('guarded'), ['a:2', 'c:5']);
+});
+
+test('renamed file columns keep their original bytes and stored files through later commits, in a table and view whose names the rule changes', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-renamed-files-'),
+  );
+  const path = join(scratch.path, 'source.txt');
+  await writeFile(path, 'original');
+  const store = new LocalFiles({ directory: join(scratch.path, 'files') });
+  const docs = new Stream({
+    name: 'docs',
+    jsonSchema: {
+      type: 'object',
+      description: 'One row per document.',
+      properties: {
+        id: { type: 'string', description: 'Id.' },
+        version: { type: 'integer', description: 'Version.' },
+      },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    emitsDeletes: true,
+    supportsFileTransfer: true,
+  });
+  let messages: SourceMessage[] = [];
+  class Documents extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'documents';
+    protected readonly catalog = new Catalog([docs]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract() {
+      yield* messages;
+      yield checkpoint('docs', {});
+    }
+  }
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  installSQLiteCatalog(destination);
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Documents(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(
+            docs,
+            destination
+              .table('Été docs', (c) => [
+                c.text('id'),
+                c.integer('version'),
+                c.blob('Original Bytes').from(docs.file),
+                c.text('Stored Ref').from(docs.file.store(store)),
+              ])
+              .withReaderView('Docs View'),
+            {
+              id: 'docs',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              cursorField: 'version',
+            },
+          ),
+        ],
+      }),
+    ],
+    history,
+  });
+
+  messages = [{ stream: 'docs', data: { id: 'a', version: 1 }, file: path }];
+  await pipeline.run();
+  messages = [{ stream: 'docs', data: { id: 'b', version: 1 }, file: null }];
+  await pipeline.run();
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  // A view name the rule changes keeps a hash of the name asked for.
+  const view = `Docs_View_${createHash('sha256').update('Docs View').digest('hex').slice(0, 8)}`;
+  // Original bytes are read as the column's catalog entry tells a reader to.
+  const entry = database
+    .prepare('SELECT description FROM catalog WHERE name = ?')
+    .get(`${view}.Original_Bytes`);
+  const chunks = /Join ("[^"]+") on file/.exec(String(entry?.description))?.[1];
+  assert.ok(chunks, String(entry?.description));
+  const original = database
+    .prepare(
+      `SELECT c.bytes FROM ${view} d JOIN ${chunks} c ON c.file = d.Original_Bytes WHERE d.id = 'a' ORDER BY c.n`,
+    )
+    .all()
+    .map(({ bytes }) => Buffer.from(Object(bytes)).toString());
+  assert.equal(original.join(''), 'original');
+  const stored = database
+    .prepare(`SELECT Stored_Ref AS ref FROM ${view} WHERE id = 'a'`)
+    .get();
+  assert.equal(await readFile(String(stored?.ref), 'utf8'), 'original');
+});
+
+test('a reset of a partition named by a renamed field replaces only that partition', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-renamed-part-'),
+  );
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { 'Account Id': { type: 'string' }, id: { type: 'string' } },
+    },
+    primaryKey: ['Account Id', 'id'],
+    partitionKey: ['Account Id'],
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  let script: Record<string, SourceMessage[]> = {};
+  class Accounts extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'accounts';
+    protected readonly catalog = new Catalog([items]);
+    protected override partitions() {
+      return [{ 'Account Id': 'a' }, { 'Account Id': 'b' }];
+    }
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      _state: unknown,
+      partition: Partition | null,
+    ) {
+      yield* script[String(partition?.['Account Id'])] ?? [];
+    }
+  }
+  const item = (account: string, id: string) => ({
+    stream: 'items',
+    data: { 'Account Id': account, id },
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Accounts(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(items, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  script = {
+    a: [item('a', '1'), item('a', '2'), checkpoint('items', { pass: 1 })],
+    b: [item('b', '1'), checkpoint('items', { pass: 1 })],
+  };
+  await pipeline.run();
+  script = {
+    a: [
+      { type: 'RESET', stream: 'items' },
+      item('a', '3'),
+      checkpoint('items', { pass: 2 }),
+    ],
+    b: [checkpoint('items', { pass: 2 })],
+  };
+  await pipeline.run();
+
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare('SELECT Account_Id AS account, id FROM items ORDER BY 1, 2')
+      .all()
+      .map(({ account, id }) => `${account}${id}`),
+    ['a3', 'b1'],
+  );
 });
 
 test('a native transaction rollback retains the original merge error and committed rows', async () => {

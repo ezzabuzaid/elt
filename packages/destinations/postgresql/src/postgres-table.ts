@@ -1,8 +1,9 @@
 import { type Stream, Target } from '@workspace/elt';
 
-import { identifier, quote } from './identifier.ts';
+import { quote } from './identifier.ts';
 import { PostgresColumn } from './postgres-column.ts';
 import { PostgresColumns } from './postgres-columns.ts';
+import { identifiers } from './postgres-identifiers.ts';
 import { schemaName } from './postgres-session.ts';
 
 // Where readers see the table: a documented view of exactly its columns.
@@ -11,7 +12,9 @@ export type PostgresReaderView = {
   readonly name: string;
 };
 
-// A reusable target definition. Empty columns mean infer from the Copy's stream.
+// A reusable target definition. Empty columns mean infer from the Copy's
+// stream. Its own name, its view's and its columns' follow the destination's
+// naming rule, so a field Postgres cannot hold as it is still loads.
 export class PostgresTable extends Target {
   readonly name: string;
   readonly columns: readonly PostgresColumn[];
@@ -22,13 +25,12 @@ export class PostgresTable extends Target {
     columns?: readonly PostgresColumn[],
     readerView?: PostgresReaderView,
   ) {
-    identifier(name, 'table name');
-    if (readerView !== undefined) {
-      schemaName(readerView.schema);
-      identifier(readerView.name, 'view name');
-    }
-    if (/^_elt_/i.test(name))
-      throw new TypeError('Table names starting with _elt_ are reserved');
+    if (
+      typeof name !== 'string' ||
+      (readerView !== undefined && typeof readerView.name !== 'string')
+    )
+      throw new TypeError('A table and its view are named by strings');
+    if (readerView !== undefined) schemaName(readerView.schema);
     if (
       columns !== undefined &&
       (!Array.isArray(columns) ||
@@ -36,12 +38,9 @@ export class PostgresTable extends Target {
         !columns.every((column) => column instanceof PostgresColumn))
     )
       throw new TypeError('A table requires at least one Postgres column');
-    // Quoted identifiers are case-sensitive in Postgres.
-    const names = (columns ?? []).map((column) => column.name);
-    if (names.includes('loaded_at'))
-      throw new TypeError('loaded_at is reserved for load metadata');
-    if (new Set(names).size !== names.length)
-      throw new TypeError('Duplicate column names');
+    const fields = (columns ?? []).map((column) => column.field);
+    if (new Set(fields).size !== fields.length)
+      throw new TypeError('Two columns hold one field');
     if ((columns ?? []).filter((column) => column.isPrimaryKey).length > 1)
       throw new TypeError('Only one primary-key column is supported');
     const fileReads = (columns ?? []).flatMap((column) =>
@@ -59,9 +58,18 @@ export class PostgresTable extends Target {
         );
     }
     super(fileReads);
-    this.name = name;
-    this.columns = Object.freeze([...(columns ?? [])]);
-    this.readerView = readerView && Object.freeze({ ...readerView });
+    this.name = identifiers.relation(name);
+    this.columns = Object.freeze(
+      identifiers
+        .columns(columns ?? [])
+        .map(([column, stored]) => column.named(stored)),
+    );
+    this.readerView =
+      readerView &&
+      Object.freeze({
+        schema: readerView.schema,
+        name: identifiers.relation(readerView.name),
+      });
     Object.freeze(this);
   }
 
@@ -91,10 +99,10 @@ export class PostgresTable extends Target {
       for (const column of this.columns) {
         if (
           column.fileRead === undefined &&
-          !Object.hasOwn(properties, column.name)
+          !Object.hasOwn(properties, column.field)
         )
           throw new TypeError(
-            `Stream ${stream.name} does not describe column ${column.name}`,
+            `Stream ${stream.name} does not describe field ${column.field}`,
           );
       }
     }

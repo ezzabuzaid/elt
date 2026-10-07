@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
 import sql from 'mssql';
@@ -214,6 +214,87 @@ for (const snapshot of [false, true])
       [[0, 0]],
     );
   });
+
+test('tables and columns named as Postgres cannot hold them load whole, under names Airbyte would give, and changes apply by their renamed key', async () => {
+  await using server = await scratchSqlServer();
+  await using warehouse = await scratchWarehouse();
+  const sha8 = (name: string) =>
+    createHash('sha256').update(name).digest('hex').slice(0, 8);
+  // A name past 63 bytes keeps its first 54, `_` and a hash of the name.
+  const fitted = (name: string) => `${name.slice(0, 54)}_${sha8(name)}`;
+  const part = 'k'.repeat(100);
+  const placed = 'd'.repeat(60);
+  const longTable = 't'.repeat(100);
+  await server.run(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.[Line Items] (
+      [last] int NOT NULL,
+      [${part}] int NOT NULL,
+      loaded_at nvarchar(20) NOT NULL,
+      [Unit Price] money NOT NULL,
+      [${placed}] datetimeoffset(0) NOT NULL,
+      xmin float NOT NULL,
+      PRIMARY KEY ([last], [${part}]));
+    ALTER TABLE dbo.[Line Items] ENABLE CHANGE_TRACKING;
+    INSERT dbo.[Line Items] VALUES
+      (1, 1, N'one', 1.50, '2025-01-02T03:04:05+02:00', 0.5),
+      (2, 1, N'two', 2.50, '2025-01-02T03:04:05-01:00', 1.5);
+    CREATE TABLE dbo.[${longTable}] (id int PRIMARY KEY);
+    INSERT dbo.[${longTable}] VALUES (7);`);
+  const reader = await server.login(
+    'GRANT VIEW CHANGE TRACKING ON dbo.[Line Items] TO {user};',
+  );
+  const sync = syncer(reader.connectionString, warehouse.url);
+  // The syncer names each raw table <schema>_<table>; the destination then
+  // keeps a hash of a name sanitizing changed, and fits a long one.
+  const items = `dbo_Line_Items_${sha8('dbo_Line Items')}`;
+  const loaded = async () =>
+    (
+      await warehouse.sql.unsafe(
+        `SELECT "last"::int AS last, loaded_at_1, "Unit_Price"::text AS price,
+          "${fitted(`${placed}_offset`)}"::int AS offset, xmin_1
+          FROM raw."${items}" ORDER BY 1`,
+      )
+    ).map((row) => ({ ...row }));
+
+  const first = await sync();
+
+  assert.deepEqual(await loaded(), [
+    { last: 1, loaded_at_1: 'one', price: '1.5000', offset: 120, xmin_1: 0.5 },
+    { last: 2, loaded_at_1: 'two', price: '2.5000', offset: -60, xmin_1: 1.5 },
+  ]);
+  assert.deepEqual(
+    [
+      ...(await warehouse.sql.unsafe(
+        `SELECT id::int AS id FROM raw."${fitted(`dbo_${longTable}`)}"`,
+      )),
+    ].map(({ id }) => id),
+    [7],
+  );
+  const [comment] =
+    await warehouse.sql`SELECT col_description(${`raw."${items}"`}::regclass, attnum) AS text
+    FROM pg_attribute WHERE attrelid = ${`raw."${items}"`}::regclass AND attname = 'loaded_at_1'`;
+  assert.match(String(comment?.text), /Source field: "loaded_at"\.$/);
+  assert.equal(
+    first.results.find(({ copy }) => copy.id === 'dbo.Line Items')?.count,
+    2,
+  );
+
+  await server.run(
+    "UPDATE dbo.[Line Items] SET loaded_at = N'uno' WHERE [last] = 1; DELETE dbo.[Line Items] WHERE [last] = 2;",
+  );
+  const second = await sync();
+
+  assert.deepEqual(await loaded(), [
+    { last: 1, loaded_at_1: 'uno', price: '1.5000', offset: 120, xmin_1: 0.5 },
+  ]);
+  const changes = (run: typeof first) =>
+    run.results
+      .filter(({ copy }) => copy.id === 'dbo.Line Items')
+      .map(({ count, deleted }) => [count, deleted]);
+  assert.deepEqual(changes(second), [[1, 1]]);
+  assert.deepEqual(changes(await sync()), [[0, 0]]);
+});
 
 test('a truncated Change Tracking table, whose history no longer reaches the last sync, is loaded again in full', async () => {
   await using server = await scratchSqlServer();
