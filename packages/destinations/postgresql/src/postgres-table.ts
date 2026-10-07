@@ -90,22 +90,17 @@ export class PostgresTable extends Target {
         PostgresColumns.fromSchema(stream.jsonSchema),
         this.readerView,
       );
-    const properties = stream.jsonSchema.properties;
-    if (
-      properties !== null &&
-      typeof properties === 'object' &&
-      !Array.isArray(properties)
-    ) {
-      for (const column of this.columns) {
-        if (
-          column.fileRead === undefined &&
-          !Object.hasOwn(properties, column.field)
-        )
-          throw new TypeError(
-            `Stream ${stream.name} does not describe field ${column.field}`,
-          );
-      }
-    }
+    const { properties } = stream.jsonSchema;
+    // Explicit columns of a stream that declares no properties stand alone.
+    if (properties === undefined) return this;
+    for (const column of this.columns)
+      if (
+        column.fileRead === undefined &&
+        !Object.hasOwn(properties, column.field)
+      )
+        throw new TypeError(
+          `Stream ${stream.name} does not describe field ${column.field}`,
+        );
     return this;
   }
 

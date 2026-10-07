@@ -1935,6 +1935,53 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
   );
 });
 
+test('an explicit column naming a field the stream does not declare fails before any read', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'elt-undeclared-'),
+  );
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, 'Order Id': { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+
+  await assert.rejects(
+    new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new ScriptedSource([stream], {}),
+          destination,
+          steps: [
+            new Copy(
+              stream,
+              // Order Id is declared and stored as Order_Id; Missing Field is not.
+              destination.table('items', (c) => [
+                c.text('id'),
+                c.text('Order Id'),
+                c.text('Missing Field'),
+              ]),
+              {
+                id: 'items',
+                syncMode: 'full_refresh',
+                destinationSyncMode: 'overwrite',
+              },
+            ),
+          ],
+        }),
+      ],
+    }).run(),
+    /Stream items does not describe field Missing Field/,
+  );
+});
+
 test('a table refuses two columns of one field, and a reader view SQLite would take for the table', () => {
   const destination = new SQLiteDestination({
     path: '/nonexistent/out.sqlite',

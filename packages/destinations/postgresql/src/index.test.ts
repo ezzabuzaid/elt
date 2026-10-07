@@ -1542,6 +1542,51 @@ test('declarations are checked before any connection', () => {
   assert.doesNotMatch(JSON.stringify(destination), /u:p/);
 });
 
+test('an explicit column naming a field the stream does not declare fails before any connection', async () => {
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, 'Order Id': { type: 'string' } },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  const destination = new PostgresDestination({
+    url: 'postgres://u:p@127.0.0.1:1/db',
+    schema: 'raw',
+  });
+
+  await assert.rejects(
+    new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new ScriptedSource([stream], {}),
+          destination,
+          steps: [
+            new Copy(
+              stream,
+              // Order Id is declared and stored as Order_Id; Missing Field is not.
+              destination.table('items', (c) => [
+                c.text('id'),
+                c.text('Order Id'),
+                c.text('Missing Field'),
+              ]),
+              {
+                id: 'items',
+                syncMode: 'full_refresh',
+                destinationSyncMode: 'overwrite',
+              },
+            ),
+          ],
+        }),
+      ],
+    }).run(),
+    /Stream items does not describe field Missing Field/,
+  );
+});
+
 test('a reader view over an undescribed field it renamed names the field, before any connection', async () => {
   const stream = new Stream({
     name: 'odd',
