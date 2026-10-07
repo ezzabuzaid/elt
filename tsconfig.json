@@ -154,6 +154,15 @@
     },
     {
       "path": "./packages/sdks/apple/mail"
+    },
+    {
+      "path": "./packages/sdks/microsoft/sql-server"
+    },
+    {
+      "path": "./packages/sources/microsoft/sql-server"
+    },
+    {
+      "path": "./apps/sql-server"
     }
   ]
 }

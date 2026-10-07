@@ -1,0 +1,13 @@
+{
+  "name": "sdk-microsoft-sql-server",
+  "sourceRoot": "packages/sdks/microsoft/sql-server/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/microsoft/sql-server/dist/*.test.js\""
+    }
+  }
+}

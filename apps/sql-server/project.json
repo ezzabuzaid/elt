@@ -1,0 +1,12 @@
+{
+  "name": "sql-server",
+  "sourceRoot": "apps/sql-server/src",
+  "projectType": "application",
+  "targets": {
+    "format": {},
+    "start": {
+      "dependsOn": ["build"],
+      "command": "node apps/sql-server/dist/main.js"
+    }
+  }
+}

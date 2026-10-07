@@ -1,0 +1,26 @@
+{
+  "name": "@workspace/source-microsoft-sql-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./sql-server-copies": {
+      "types": "./dist/sql-server-copies.d.ts",
+      "default": "./dist/sql-server-copies.js"
+    },
+    "./sql-server-source": {
+      "types": "./dist/sql-server-source.d.ts",
+      "default": "./dist/sql-server-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/sdk-microsoft-sql-server": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/mssql": "^12.3.0",
+    "@workspace/elt-postgresql": "0.0.1",
+    "mssql": "^12.7.4",
+    "postgres": "^3.4.9"
+  }
+}

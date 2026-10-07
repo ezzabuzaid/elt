@@ -1873,3 +1873,92 @@ Not exercised live: `watch()` over a real polling interval, Markdown destination
 ### Row ceiling
 
 Two limits apply, and only one loses data. A request returns at most 25000 rows; the connector pages past that with `startRow`, so nothing is lost. Separately, Google keeps at most 50000 rows per day per report type for a property and states the API "does not guarantee to return all data rows"; beyond that, rows are dropped with no signal. This is documented by Google, not observed: the live property's busiest day had 39 query rows.
+
+## SQL Server
+
+`SqlServerSource` reads one SQL Server database: every user table its login can read becomes a stream named `<schema>.<table>`. The streams are the database's own tables, so the source is discovered, and a host discovers it again on every run; a table whose columns changed reaches the pipeline as a changed stream, which [starts its copy over](#checkpoint-stores). `sqlServerCopies` makes each stream a copy: an incremental `append_dedup` copy for a stream that reads changes, a full-refresh `overwrite` for one that reads every row.
+
+```ts
+import { SqlServerDatabase } from '@workspace/sdk-microsoft-sql-server';
+import { sqlServerCopies } from '@workspace/source-microsoft-sql-server/sql-server-copies';
+import { SqlServerSource } from '@workspace/source-microsoft-sql-server/sql-server-source';
+
+const database = new SqlServerDatabase(
+  'Server=sql.example.com,1433;Database=shop;User Id=reader;Password=...;Encrypt=true',
+);
+const source = await SqlServerSource.discover(database, { schemas: ['dbo'] });
+const steps = sqlServerCopies(source, (stream) => destination.table(stream));
+```
+
+`@workspace/sdk-microsoft-sql-server` owns the database: the ADO.NET connection string, which [mssql](https://github.com/tediousjs/node-mssql) parses (it reads no `mssql://` URL), discovery, exact reads, Change Tracking and the change signal. The source owns the streams, their schemas and the sync strategy. SQL Server 2016 or later is required, or Azure SQL Database or Managed Instance.
+
+### Access
+
+A read-only login is enough: `db_datareader`, plus `VIEW CHANGE TRACKING` on each tracked table whose changes and deletions it should read. Nothing has to be enabled on the server. The source uses Change Tracking and snapshot isolation where an administrator turned them on, and reads every other table in full or by its rowversion. A connection string that names no `Database` is refused, so a read never lands in the login's default database. A server that cannot be opened fails with `SqlServerUnavailableError`, naming the server and database but never the credentials.
+
+A column the login cannot read (a column-level `DENY`) is left out, and the table's description names it; a primary key with such a column identifies nothing, so its table reads in full. A table with no readable column is not a stream. A grant revoked after discovery fails only that table's stream, with `SqlServerPermissionError` naming the grant (`SELECT ON [dbo].[orders]`, `VIEW CHANGE TRACKING ON [dbo].[orders]`). Columns under dynamic data masking load as the login reads them, masked unless it holds `UNMASK`, and their description says so.
+
+### Streams
+
+Discovery lists `sys.tables`: user tables, not views, not system or external tables, and not the change tables CDC keeps in `cdc`. A host can keep only some schemas (`{ schemas }`), named exactly as `sys.schemas` spells them; a schema named there that holds no table the login can read fails discovery, so a misspelling, a casing the database does not use, or a missing grant never loads less in silence. A column of an alias type (`CREATE TYPE ... FROM nvarchar(20)`) reads as the system type it is built on, even when the login cannot see the alias type. The stream key is the table's primary key in key order, plus the `_type` sibling of a `sql_variant` key column. Descriptions come from `MS_Description` extended properties, or are generated from the column's name and type; the table's description also says how the stream reads it and which grant would read only changes.
+
+| SQL Server                                                                                 | Field                                                                                                               |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `tinyint`, `smallint`, `int`                                                               | `integer`                                                                                                           |
+| `bigint`, `rowversion`                                                                     | `int64`                                                                                                             |
+| `bit`                                                                                      | `boolean`                                                                                                           |
+| `real`, `float`                                                                            | `number` (the IEEE value, exactly)                                                                                  |
+| `decimal(p, s)`, `numeric(p, s)`                                                           | `decimal`, precision `p`, scale `s`                                                                                 |
+| `money`, `smallmoney`                                                                      | `decimal` (19, 4) and (10, 4)                                                                                       |
+| `date`                                                                                     | `date`                                                                                                              |
+| `datetime2(p)`, `datetime`, `smalldatetime`                                                | `date-time-local`, precision `p`, 3 and 0                                                                           |
+| `datetimeoffset(p)`                                                                        | `date-time`, precision `p`: the UTC instant; beside it `<column>_offset`, the offset it was written with in minutes |
+| `time(p)`                                                                                  | `time-local`, precision `p`                                                                                         |
+| `char`, `varchar`, `nchar`, `nvarchar`, `text`, `ntext`, `xml`, `uniqueidentifier`, `json` | `string` (a uniqueidentifier in upper case)                                                                         |
+| `hierarchyid`                                                                              | `string`, its path (`/1/2/`)                                                                                        |
+| `geography`, `geometry`                                                                    | `string`, `SRID=<id>;` then the shape as text with its Z and M (`SRID=4326;POINT (-122.349 47.651 10 3)`)           |
+| `sql_variant`                                                                              | `string`, the value as text; beside it `<column>_type`, its base type                                               |
+| `binary`, `varbinary`, `image`, CLR types                                                  | `string`, base64                                                                                                    |
+
+The driver hands `decimal` and `money` over as JavaScript numbers, `datetime2` as a millisecond `Date`, and drops a `datetimeoffset`'s offset, so every such column is selected as the text SQL Server spells it and decoded into its canonical form. A table with a column already named `<column>_offset` or `<column>_type` fails discovery, naming the table, rather than having one overwrite the other.
+
+### Sync strategies
+
+Each table reads the first way it can, decided at discovery:
+
+- **Change Tracking**, for a keyed table that tracks changes when the login holds `VIEW CHANGE TRACKING`. The first read loads every row, 10,000 rows per checkpoint in primary key order, from the position in the table's change history read before it began; a load that fails resumes after its last checkpoint. Later reads apply each key that changed since: its row as it is now, or a `DELETE`. With `ALLOW_SNAPSHOT_ISOLATION` on, the position, the check and the changes come from one short snapshot transaction per table; without it, the position is read first, so a change made during the read is read again next time, and the history is checked again after the read.
+- **Rowversion**, for a keyed table with a `rowversion` column: each read takes the rows above the last rowversion it read and below `MIN_ACTIVE_ROWVERSION()`, so a row still being written waits for a later read. Deletions are not seen; a deleted row stays loaded.
+- **Full refresh** for everything else: every read takes every row and the copy replaces its target.
+
+A position in a table's change history is a Change Tracking version and the table's tracking generation: its `begin_version`, which a `TRUNCATE` moves to the current version, and the creation time of its change table, which re-enabling tracking renews. When the saved position is below the table's minimum valid version, ahead of the database's current version, or of another generation, the history no longer covers it: the stream sends `RESET` and loads every row again into a [hidden target](#resets) that replaces the table when the stream ends. The generation catches the case the minimum valid version cannot: a truncate right after a sync, with nothing changed in between, leaves the minimum valid version equal to the saved one.
+
+Pages compare the whole primary key as a tuple, each part cast to its column's declared type and collation, so a page neither skips nor repeats rows that share a leading key value, and a `varchar` key under a SQL collation orders as the column sorts.
+
+### Watching
+
+`observe()` polls every 30 seconds: a moved Change Tracking version (`CHANGE_TRACKING_CURRENT_VERSION()`) wakes the Change Tracking streams, a moved last rowversion (`@@DBTS`) the rowversion streams. Full-refresh streams have no change signal a read-only login can see, and refresh once an hour.
+
+### SQL Server host
+
+`apps/sql-server` lists the databases to load in `connectors.ts`; each reads `SQLSERVER_<NAME>_CONNECTION_STRING` from the workspace `.env`. A database loads into its own raw schema, `sql_server_<name>`, with its checkpoints, and each table keeps its own name there (`dbo.Order Items`); a name past Postgres's 63 bytes keeps a hash of the whole in its last nine. Readers see each table as `marts.<name>_<schema>_<table>` in snake case; a name the snake case changes keeps a hash of the original (`local_sales_order_items_80f28272`). Two tables that still land on one view name, such as `dbo_order.items` and `dbo.order_items`, do not merge: the second's load refuses the view the first made. Column names keep their SQL Server spelling, so a mixed-case column is quoted (`"orderId"`). A table dropped upstream leaves its raw table and view as they were.
+
+### SQL Server limitations
+
+- A column name past 63 bytes, or a column named `loaded_at`, fails its table's copy.
+- Rowversion tables never see deletions; CDC is not read.
+- A truncate, or tracking turned off and on, goes unnoticed in one case: when the table's tracking began at the very version the last sync read and nothing tracked changed anywhere in the database since. No metadata a read-only login can see changes then.
+- A single value larger than JavaScript's longest string (about 512 million characters) fails its stream.
+
+### SQL Server live checks
+
+Run on 2026-10-06 against SQL Server 2022 CU27 (16.0.4295.3) Developer, in the compose `sqlserver` service on linux/amd64, emulated on Apple silicon, through mssql 12.7.4 and tedious 20.3.3:
+
+- Style 126 leaves out a zero fraction (`2025-01-02T03:04:05`) and keeps every digit of any other (`.1200000`); `time(p)` keeps exactly `p` digits; style 2 spells money with four.
+- `CHANGE_TRACKING_MIN_VALID_VERSION` returns 0, not NULL, to a login without `VIEW CHANGE TRACKING`, whose `CHANGETABLE` read fails with error 229; `sys.change_tracking_tables` and `MS_Description` stay visible to `db_datareader`.
+- `TRUNCATE` sets the table's minimum valid version and `begin_version` to the current version; re-enabling tracking renews the change table's `create_date` in `sys.internal_tables`, which `VIEW CHANGE TRACKING` makes visible.
+- A column-level `DENY` makes `HAS_PERMS_BY_NAME` report the whole table unreadable, so readability is checked per column; a column of an alias type the login cannot see disappears from an inner join with `sys.types`.
+- A key bound as an `nvarchar` parameter and compared with a `varchar` column under `SQL_Latin1_General_CP1_CI_AS` skips rows (`co-op` before `Coat`): the two sort hyphens differently.
+- `varbinary` keys ignore trailing zero bytes (`0x00`, `0x0000` and `0x` are one key).
+- tedious 20.0.0 refused to connect to an IP address over TLS; 20.3.3 connects.
+- `sql_variant` text under style 126 keeps times exact; floating point needs style 3 for 17 digits.
+- An end-to-end run of `nx run sql-server:start` loaded a seeded database read by a `db_datareader` login, wrote nothing to its Change Tracking and rowversion tables on a second run, and applied an update, a deletion, a truncate and an added column on a third.

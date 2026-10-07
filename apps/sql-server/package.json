@@ -1,0 +1,11 @@
+{
+  "name": "@workspace/sql-server",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/elt-postgresql": "0.0.1",
+    "@workspace/sdk-microsoft-sql-server": "0.0.1",
+    "@workspace/source-microsoft-sql-server": "0.0.1"
+  }
+}

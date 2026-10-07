@@ -59,11 +59,11 @@ export type DeleteMessage = {
   readonly key: Readonly<Record<string, KeyValue>>;
 };
 
-// Starts the stream over, as when the upstream's change history expired: at
-// the next commit the destination drops every row the stream loaded (for a
-// partitioned stream, every row of the partition being read) and keeps only
-// what follows. Only a stream that emits deletions may send it; a full
-// refresh starts over anyway.
+// Starts the stream over, as when the upstream's change history expired:
+// what follows loads into a hidden target that replaces every row the stream
+// loaded once the stream ends without a failure; for a partitioned stream,
+// the next commit replaces the partition being read. Only a stream that
+// emits deletions may send it; a full refresh starts over anyway.
 export type ResetMessage = {
   readonly type: 'RESET';
   readonly stream: string;
