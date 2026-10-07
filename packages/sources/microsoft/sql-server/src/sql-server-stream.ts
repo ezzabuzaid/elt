@@ -12,12 +12,7 @@ import type {
   SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 
-import {
-  primaryKey,
-  properties,
-  record,
-  sentence,
-} from './sql-server-fields.ts';
+import { TableFields, sentence } from './sql-server-fields.ts';
 
 // Rows per page of a resumable read: each page ends in a checkpoint, so a
 // read that fails resumes after the last page it committed.
@@ -36,11 +31,13 @@ type SyncTraits = {
 // turns rows into records; a subclass declares how it syncs and reads.
 export abstract class SqlServerStream {
   readonly table: SqlServerTable;
+  readonly fields: TableFields;
   readonly stream: Stream;
 
   constructor(table: SqlServerTable, traits: SyncTraits) {
     this.table = table;
-    const fields = properties(table);
+    this.fields = new TableFields(table);
+    const { properties } = this.fields;
     this.stream = new Stream({
       name: `${table.schema}.${table.name}`,
       jsonSchema: {
@@ -56,10 +53,10 @@ export abstract class SqlServerStream {
         ]
           .filter((part) => part !== undefined)
           .join(' '),
-        properties: fields,
-        required: Object.keys(fields),
+        properties,
+        required: Object.keys(properties),
       },
-      primaryKey: primaryKey(table),
+      primaryKey: this.fields.primaryKey,
       supportedSyncModes: traits.supportedSyncModes,
       sourceDefinedCursor: traits.sourceDefinedCursor,
       emitsDeletes: traits.emitsDeletes,
@@ -75,7 +72,11 @@ export abstract class SqlServerStream {
   ): AsyncIterable<SourceMessage>;
 
   protected message(row: SqlServerRow): SourceMessage {
-    const [data] = validateRecords(this.stream, [record(row)], 'SQL Server');
+    const [data] = validateRecords(
+      this.stream,
+      [this.fields.record(row)],
+      'SQL Server',
+    );
     return { stream: this.stream.name, data };
   }
 

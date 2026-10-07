@@ -654,16 +654,15 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
   );
 });
 
-test('discovery keeps only the schemas asked for, refuses a schema asked for that holds no readable table, and refuses a table whose column already holds a name its offset or base type needs', async () => {
+test('discovery keeps only the schemas asked for, and refuses a schema asked for that holds no readable table', async () => {
   await using server = await scratchSqlServer();
   await server.run(`
     EXEC('CREATE SCHEMA sales');
     EXEC('CREATE SCHEMA audit');
-    EXEC('CREATE SCHEMA typed');
     CREATE TABLE sales.orders (id int PRIMARY KEY);
     CREATE TABLE audit.events (id int PRIMARY KEY);
-    CREATE TABLE dbo.clashing (id int PRIMARY KEY, placed datetimeoffset, placed_offset int);
-    CREATE TABLE typed.clashing (id int PRIMARY KEY, anything sql_variant, anything_type int);`);
+    -- Outside the schemas asked for, so a filter that keeps it is caught.
+    CREATE TABLE dbo.other (id int PRIMARY KEY);`);
   const reader = await server.login();
   const database = new SqlServerDatabase(reader.connectionString);
 
@@ -679,13 +678,75 @@ test('discovery keeps only the schemas asked for, refuses a schema asked for tha
     SqlServerSource.discover(database, { schemas: ['sales', 'Audit'] }),
     /The schemas to keep name Audit, which holds no table this login can read in /,
   );
-  await assert.rejects(
-    SqlServerSource.discover(database, { schemas: ['dbo'] }),
-    /\[dbo\]\.\[clashing\] has a column placed_offset, the name its placed needs for its offset/,
+});
+
+test('a column already named as a datetimeoffset or sql_variant sibling would be leaves the sibling the next free name, and changes still apply by key', async () => {
+  await using server = await scratchSqlServer();
+  await using warehouse = await scratchWarehouse();
+  await server.run(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.clashing (
+      anything sql_variant PRIMARY KEY,
+      anything_type int NOT NULL,
+      placed datetimeoffset(0) NOT NULL,
+      placed_offset int NOT NULL,
+      placed_offset_1 int NOT NULL,
+      PLACED_OFFSET_2 int NOT NULL);
+    ALTER TABLE dbo.clashing ENABLE CHANGE_TRACKING;
+    -- One row each: a VALUES list gives a column one type across its rows.
+    INSERT dbo.clashing VALUES (CAST(1 AS int), 7, '2025-01-02T03:04:05+02:00', 8, 9, 10);
+    INSERT dbo.clashing VALUES (CAST(N'two' AS nvarchar(10)), 70, '2025-01-02T03:04:05-01:00', 80, 90, 100);`);
+  const reader = await server.login(
+    'GRANT VIEW CHANGE TRACKING ON dbo.clashing TO {user};',
   );
-  await assert.rejects(
-    SqlServerSource.discover(database, { schemas: ['typed'] }),
-    /\[typed\]\.\[clashing\] has a column anything_type, the name its anything needs for its base type/,
+  const sync = syncer(reader.connectionString, warehouse.url);
+  const loaded = async () =>
+    (
+      await warehouse.sql`SELECT anything, anything_type::int, anything_type_1,
+        placed_offset::int, placed_offset_1::int, "PLACED_OFFSET_2"::int AS upper, placed_offset_3::int
+        FROM raw.dbo_clashing ORDER BY anything`
+    ).map((row) => ({ ...row }));
+
+  await sync();
+
+  assert.deepEqual(await loaded(), [
+    {
+      anything: '1',
+      anything_type: 7,
+      anything_type_1: 'int',
+      placed_offset: 8,
+      placed_offset_1: 9,
+      upper: 10,
+      placed_offset_3: 120,
+    },
+    {
+      anything: 'two',
+      anything_type: 70,
+      anything_type_1: 'nvarchar',
+      placed_offset: 80,
+      placed_offset_1: 90,
+      upper: 100,
+      placed_offset_3: -60,
+    },
+  ]);
+  const [placed] =
+    await warehouse.sql`SELECT col_description('raw.dbo_clashing'::regclass, attnum) AS text
+    FROM pg_attribute WHERE attrelid = 'raw.dbo_clashing'::regclass AND attname = 'placed'`;
+  assert.match(String(placed?.text), /placed_offset_3 holds the offset/);
+
+  await server.run(
+    "DELETE dbo.clashing WHERE anything = CAST(N'two' AS nvarchar(10));",
+  );
+  const { results } = await sync();
+
+  // Applied by Change Tracking as one deletion, not by reading the table again.
+  assert.deepEqual(
+    results.map(({ count, deleted }) => [count, deleted]),
+    [[0, 1]],
+  );
+  assert.deepEqual(
+    (await loaded()).map(({ anything }) => anything),
+    ['1'],
   );
 });
 

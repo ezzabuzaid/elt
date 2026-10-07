@@ -10,7 +10,6 @@ import {
   type SqlServerTable,
 } from '@workspace/sdk-microsoft-sql-server';
 
-import { key } from './sql-server-fields.ts';
 import { SqlServerStream, pageSize } from './sql-server-stream.ts';
 
 // Where a read stands: loading every row from a position in the table's
@@ -161,7 +160,7 @@ export class ChangeTrackingStream extends SqlServerStream {
       for await (const change of set)
         yield change.type === 'upsert'
           ? this.message(change.row)
-          : { type: 'DELETE', stream: name, key: key(this.table, change.key) };
+          : { type: 'DELETE', stream: name, key: this.fields.key(change.key) };
       reached = set.position;
     }
     yield { type: 'STATE', stream: name, state: { from: reached } };

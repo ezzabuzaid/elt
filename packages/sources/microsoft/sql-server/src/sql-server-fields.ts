@@ -66,7 +66,7 @@ export function sentence(text: string): string {
   return /[.!?]$/.test(text.trimEnd()) ? text.trimEnd() : `${text.trimEnd()}.`;
 }
 
-function described(column: SqlServerColumn): string {
+function described(column: SqlServerColumn, sibling?: string): string {
   const type =
     column.type === 'timestamp'
       ? 'rowversion, which SQL Server raises on every insert and update of the row'
@@ -77,7 +77,7 @@ function described(column: SqlServerColumn): string {
       : sentence(column.description);
   const notes = [
     column.codec.value.kind === 'timestamp'
-      ? `The UTC instant; ${column.name}_offset holds the offset it was written with.`
+      ? `The UTC instant; ${sibling} holds the offset it was written with.`
       : undefined,
     column.codec.value.kind === 'spatial'
       ? 'Extended well-known text: SRID=<id>; then the shape with its Z and M.'
@@ -101,109 +101,124 @@ function field(
   };
 }
 
-// The sibling a column adds beside itself, which no column of the table may
-// already be called.
-function sibling(column: SqlServerColumn): string | undefined {
+// What a column adds beside itself: the offset of a datetimeoffset, and the
+// base type of a sql_variant.
+function suffix(column: SqlServerColumn): string | undefined {
   switch (column.codec.value.kind) {
     case 'timestamp':
-      return `${column.name}_offset`;
+      return '_offset';
     case 'variant':
-      return `${column.name}_type`;
+      return '_type';
     default:
       return undefined;
   }
 }
 
-// The properties of a table's records: one per readable column, plus the
-// offset beside a datetimeoffset and the base type beside a sql_variant.
-export function properties(table: SqlServerTable): Properties {
-  const fields: Record<string, FieldSchema> = {};
-  for (const column of table.columns) {
-    fields[column.name] = field(
-      scalar(column),
-      column.nullable,
-      described(column),
-    );
-    const name = sibling(column);
-    if (name === undefined) continue;
-    if (
-      table.columns.some(
-        (other) => other.name.toLowerCase() === name.toLowerCase(),
-      )
-    )
-      throw new TypeError(
-        `${table.quoted} has a column ${name}, the name its ${column.name} needs for its ${column.codec.value.kind === 'timestamp' ? 'offset' : 'base type'}`,
-      );
-    fields[name] =
-      column.codec.value.kind === 'timestamp'
-        ? field(
-            { type: 'integer' },
-            column.nullable,
-            `The offset from UTC, in minutes, ${column.name} was written with.`,
-          )
-        : field(
-            { type: 'string' },
-            column.nullable,
-            `The SQL Server type of the value ${column.name} holds.`,
-          );
-  }
-  return fields;
-}
+// A table's record fields: one per readable column, plus the field a
+// datetimeoffset or sql_variant column adds beside itself, named once for
+// the table. A column may already hold <column>_offset, so the sibling takes
+// the next free name: <column>_offset_1, then _2. Names compare without case,
+// as SQL Server's default collation compares them.
+export class TableFields {
+  readonly #table: SqlServerTable;
+  readonly #siblings: ReadonlyMap<SqlServerColumn, string>;
 
-// The stream's key: the table's primary key, with the base type of a
-// sql_variant key column, since its text alone can repeat across types.
-export function primaryKey(table: SqlServerTable): string[] {
-  return table.primaryKey.flatMap((column) =>
-    column.codec.value.kind === 'variant'
-      ? [column.name, `${column.name}_type`]
-      : [column.name],
-  );
-}
-
-function plain(
-  column: SqlServerColumn,
-  value: SqlServerValue,
-): Record<string, unknown> {
-  if (value instanceof OffsetTimestamp)
-    return {
-      [column.name]: value.instant,
-      [`${column.name}_offset`]: value.offset,
-    };
-  if (value instanceof VariantValue)
-    return { [column.name]: value.text, [`${column.name}_type`]: value.type };
-  const name = sibling(column);
-  return name === undefined
-    ? { [column.name]: value }
-    : { [column.name]: null, [name]: null };
-}
-
-export function record(row: SqlServerRow): Record<string, unknown> {
-  return Object.assign(
-    {},
-    ...row.table.columns.map((column, index) =>
-      plain(column, row.values[index] ?? null),
-    ),
-  );
-}
-
-// A deleted row's key fields, from its primary key values in key order.
-export function key(
-  table: SqlServerTable,
-  values: readonly SqlServerValue[],
-): Record<string, KeyValue> {
-  const fields: Record<string, KeyValue> = {};
-  for (const [index, column] of table.primaryKey.entries()) {
-    const value = values[index] ?? null;
-    for (const [name, part] of Object.entries(plain(column, value))) {
-      if (
-        typeof part !== 'string' &&
-        typeof part !== 'number' &&
-        typeof part !== 'boolean'
-      )
-        throw new TypeError(`${table.quoted} key ${column.name} has no value`);
-      if (name === column.name || column.codec.value.kind === 'variant')
-        fields[name] = part;
+  constructor(table: SqlServerTable) {
+    this.#table = table;
+    const taken = new Set(table.columns.map(({ name }) => name.toLowerCase()));
+    const siblings = new Map<SqlServerColumn, string>();
+    for (const column of table.columns) {
+      const added = suffix(column);
+      if (added === undefined) continue;
+      const base = `${column.name}${added}`;
+      let name = base;
+      for (let next = 1; taken.has(name.toLowerCase()); next += 1)
+        name = `${base}_${next}`;
+      taken.add(name.toLowerCase());
+      siblings.set(column, name);
     }
+    this.#siblings = siblings;
+    Object.freeze(this);
   }
-  return fields;
+
+  get properties(): Properties {
+    const fields: Record<string, FieldSchema> = {};
+    for (const column of this.#table.columns) {
+      const sibling = this.#siblings.get(column);
+      fields[column.name] = field(
+        scalar(column),
+        column.nullable,
+        described(column, sibling),
+      );
+      if (sibling === undefined) continue;
+      fields[sibling] =
+        column.codec.value.kind === 'timestamp'
+          ? field(
+              { type: 'integer' },
+              column.nullable,
+              `The offset from UTC, in minutes, ${column.name} was written with.`,
+            )
+          : field(
+              { type: 'string' },
+              column.nullable,
+              `The SQL Server type of the value ${column.name} holds.`,
+            );
+    }
+    return fields;
+  }
+
+  // The stream's key: the table's primary key, with the base type of a
+  // sql_variant key column, since its text alone can repeat across types.
+  get primaryKey(): string[] {
+    return this.#table.primaryKey.flatMap((column) => {
+      const type =
+        column.codec.value.kind === 'variant'
+          ? this.#siblings.get(column)
+          : undefined;
+      return type === undefined ? [column.name] : [column.name, type];
+    });
+  }
+
+  record(row: SqlServerRow): Record<string, unknown> {
+    return Object.assign(
+      {},
+      ...this.#table.columns.map((column, index) =>
+        this.#plain(column, row.values[index] ?? null),
+      ),
+    );
+  }
+
+  // A deleted row's key fields, from its primary key values in key order.
+  key(values: readonly SqlServerValue[]): Record<string, KeyValue> {
+    const fields: Record<string, KeyValue> = {};
+    for (const [index, column] of this.#table.primaryKey.entries()) {
+      const value = values[index] ?? null;
+      for (const [name, part] of Object.entries(this.#plain(column, value))) {
+        if (
+          typeof part !== 'string' &&
+          typeof part !== 'number' &&
+          typeof part !== 'boolean'
+        )
+          throw new TypeError(
+            `${this.#table.quoted} key ${column.name} has no value`,
+          );
+        if (name === column.name || column.codec.value.kind === 'variant')
+          fields[name] = part;
+      }
+    }
+    return fields;
+  }
+
+  #plain(
+    column: SqlServerColumn,
+    value: SqlServerValue,
+  ): Record<string, unknown> {
+    const sibling = this.#siblings.get(column);
+    if (sibling === undefined) return { [column.name]: value };
+    if (value instanceof OffsetTimestamp)
+      return { [column.name]: value.instant, [sibling]: value.offset };
+    if (value instanceof VariantValue)
+      return { [column.name]: value.text, [sibling]: value.type };
+    return { [column.name]: null, [sibling]: null };
+  }
 }

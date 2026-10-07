@@ -1941,7 +1941,7 @@ Discovery lists `sys.tables`: user tables, not views, not system or external tab
 | `sql_variant`                                                                              | `string`, the value as text; beside it `<column>_type`, its base type                                               |
 | `binary`, `varbinary`, `image`, CLR types                                                  | `string`, base64                                                                                                    |
 
-The driver hands `decimal` and `money` over as JavaScript numbers, `datetime2` as a millisecond `Date`, and drops a `datetimeoffset`'s offset, so every such column is selected as the text SQL Server spells it and decoded into its canonical form. A table with a column already named `<column>_offset` or `<column>_type` fails discovery, naming the table, rather than having one overwrite the other.
+The driver hands `decimal` and `money` over as JavaScript numbers, `datetime2` as a millisecond `Date`, and drops a `datetimeoffset`'s offset, so every such column is selected as the text SQL Server spells it and decoded into its canonical form. When a column of the table already has the name `<column>_offset` or `<column>_type`, the added field gets the next free name: `_1` follows, then `_2`. The column's description names the field that holds its offset.
 
 ### Sync strategies
 
