@@ -49,10 +49,9 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
     return this.configuration.destinationSyncMode === 'overwrite_dedup';
   }
 
-  protected override initialize(
-    database: DatabaseSync,
-    replacing: boolean,
-  ): void {
+  // A stored table the load merges into must hold keys and cursors of the
+  // stream's types, none null, and no key twice, which its index will forbid.
+  protected override inspect(database: DatabaseSync): void {
     const existing = database
       .prepare(`PRAGMA table_info(${this.table.quotedName})`)
       .all();
@@ -69,9 +68,6 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
           `Existing deduplication column ${column.name} has an incompatible storage type`,
         );
     }
-    // A replacing load keeps none of these rows: its index is built once the
-    // commit has emptied the table.
-    if (replacing) return;
     if (
       database
         .prepare(
@@ -82,7 +78,25 @@ export class SQLiteDeduplicatingWriter extends SQLiteWriter {
       throw new TypeError(
         'Existing deduplication keys and cursors must be non-null',
       );
-    this.index(database);
+    if (
+      database
+        .prepare(
+          `SELECT 1 FROM ${this.table.quotedName} GROUP BY ${this.keys.map((column) => `${column.quotedName} COLLATE BINARY`).join(', ')} HAVING count(*) > 1 LIMIT 1`,
+        )
+        .get()
+    )
+      throw new TypeError(
+        'Existing rows repeat a deduplication key; replace them with overwrite_dedup before deduplicating incrementally',
+      );
+  }
+
+  // A replacing load keeps none of the stored rows: its index is built once
+  // the commit has emptied the table.
+  protected override initialize(
+    database: DatabaseSync,
+    replacing: boolean,
+  ): void {
+    if (!replacing) this.index(database);
   }
 
   protected override replace(database: DatabaseSync): void {

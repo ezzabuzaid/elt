@@ -36,18 +36,19 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     return `${this.path}#${target.location}`;
   }
 
-  // The writer lock spans all commits; each stream still publishes separately.
+  // The writer lock spans all commits and keeps a competing load out; each
+  // stream's commit is its own short transaction, so no transaction stays
+  // open while the sources read.
   override async load(): Promise<Load<SQLiteTable>> {
     const resources = new DisposableStack();
     let database: DatabaseSync;
     try {
       resources.use(lockWriter(this.path));
       // A commit waits for readers, such as an agent's sqlite3 -readonly
-      // query, to finish; the writer lock already refuses a competing load.
+      // query, to finish.
       database = resources.use(
         new DatabaseSync(this.path, { timeout: 30_000 }),
       );
-      database.exec('BEGIN IMMEDIATE');
     } catch (error) {
       resources.dispose();
       throw error;

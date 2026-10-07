@@ -3742,6 +3742,153 @@ test('renamed file columns keep their original bytes and stored files through la
   assert.equal(await readFile(String(stored?.ref), 'utf8'), 'original');
 });
 
+test('a load holds no write transaction while the source reads, and a stream that fails before its first commit leaves nothing while its sibling commits', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-short-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const kept = scripted('kept');
+  const failing = scripted('failing');
+  // Another writer, between this load's commits, as a second connection.
+  const write = () => {
+    using other = new DatabaseSync(destination.path, { timeout: 0 });
+    other.exec('BEGIN IMMEDIATE');
+    other.exec('COMMIT');
+  };
+  let wroteWhileReading = false;
+  class Interleaved extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'interleaved';
+    protected readonly catalog = new Catalog([kept, failing]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(configuration: CopyConfiguration) {
+      const { name } = configuration.stream;
+      if (name === 'kept') {
+        yield record('kept', 'a', 1);
+        yield checkpoint('kept', { page: 1 });
+        write();
+        wroteWhileReading = true;
+        return;
+      }
+      yield record('failing', 'b', 1);
+      throw new Error('source broke');
+    }
+  }
+
+  const error = await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Interleaved(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(kept, destination.table('kept'), {
+            id: 'kept',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+          new Copy(failing, destination.table('failing'), {
+            id: 'failing',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  })
+    .run()
+    .then(
+      () => assert.fail('the failing stream should fail the run'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.equal(wroteWhileReading, true);
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  const tables = database
+    .prepare(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('kept', 'failing') ORDER BY name`,
+    )
+    .all()
+    .map(({ name }) => name);
+  assert.deepEqual(tables, ['kept']);
+  assert.deepEqual(
+    database
+      .prepare('SELECT id FROM kept')
+      .all()
+      .map(({ id }) => id),
+    ['a'],
+  );
+});
+
+test('deduplicating a table whose history repeats a key is refused before the source is read', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-repeats-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, version: { type: 'integer' } },
+      required: ['id', 'version'],
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['incremental'],
+  });
+  const source = new ScriptedSource([items], {
+    items: [record('items', 'a', 1), record('items', 'a', 2)],
+  });
+  // One copy that first keeps a history, then deduplicates it from a reset
+  // checkpoint, which a changed copy needs.
+  const run = (destinationSyncMode: 'append' | 'append_dedup') =>
+    new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, `${destinationSyncMode}.sqlite`),
+          }),
+          steps: [
+            new Copy(items, destination.table('items'), {
+              id: 'items',
+              syncMode: 'incremental',
+              cursorField: 'version',
+              destinationSyncMode,
+            }),
+          ],
+        }),
+      ],
+    }).run();
+  await run('append');
+  source.scripts = { items: [new Error('the source was read')] };
+
+  const error = await run('append_dedup').then(
+    () => assert.fail('deduplicating repeated keys should be refused'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.match(
+    String(error.results[0]?.failures[0]?.error),
+    /Existing rows repeat a deduplication key/,
+  );
+});
+
 test('two file columns whose table and column names join alike keep their own chunks', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-chunks-'));
   const path = join(scratch.path, 'source.txt');
@@ -4156,7 +4303,18 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     () => assert.fail('a should fail the run'),
     (error: unknown) => error,
   );
-  const afterFailure = { a: loaded('a'), b: loaded('b'), saved: saved() };
+  const exists = (table: string) => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return (
+      database
+        .prepare(
+          `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?`,
+        )
+        .get(table) !== undefined
+    );
+  };
+  // a failed before its first commit, so it made no table at all.
+  const afterFailure = { a: exists('a'), b: loaded('b'), saved: saved() };
   source.failing = false;
   await pipeline.run();
 
@@ -4174,7 +4332,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     ],
   );
   assert.deepEqual(afterFailure, {
-    a: [],
+    a: false,
     b: ['b1=b1 bytes', 'b2=b2 bytes'],
     saved: ['b'],
   });
@@ -4188,19 +4346,18 @@ const leftBehind: {
   expected: { loaded: string[]; orphans: number };
 }[] = [
   {
-    outcome:
-      'swept when its target is next prepared, and loaded files stay intact',
+    outcome: 'its next run loads every file whole',
     next: 'rerun',
     expected: { loaded: ['d1=d1 bytes', 'd2=d2 bytes'], orphans: 0 },
   },
   {
-    outcome: 'removed when its target is cleared',
+    outcome: 'a clear empties its target',
     next: 'clear',
     expected: { loaded: [], orphans: 0 },
   },
 ];
 for (const { outcome, next, expected } of leftBehind)
-  test(`chunks a failed stream left behind in a sibling's commit are ${outcome}`, async () => {
+  test(`a failed stream's staged files never reach the database while its sibling commits, and ${outcome}`, async () => {
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-sweep-'));
     const staging = join(scratch.path, 'staging');
     await mkdir(staging);
@@ -4223,6 +4380,9 @@ for (const { outcome, next, expected } of leftBehind)
       protected override readonly concurrency = 2;
       files: string[] = [];
       failing = false;
+      // What a reader sees once notes committed, while docs still runs.
+      atSiblingCommit: () => unknown = () => undefined;
+      seen: unknown;
       #stored = Promise.withResolvers<void>();
       #committed = Promise.withResolvers<void>();
 
@@ -4252,6 +4412,7 @@ for (const { outcome, next, expected } of leftBehind)
         this.#stored.resolve();
         if (this.failing) {
           await this.#committed.promise;
+          this.seen = this.atSiblingCommit();
           throw new Error('docs upstream');
         }
         yield checkpoint('docs', { files: this.files });
@@ -4308,6 +4469,7 @@ for (const { outcome, next, expected } of leftBehind)
         .get()?.n;
       return { loaded, orphans };
     };
+    source.atSiblingCommit = stored;
     source.files = ['d1'];
     await pipeline.run();
     source.files = ['d2'];
@@ -4334,8 +4496,10 @@ for (const { outcome, next, expected } of leftBehind)
         ['notes', 1, 0],
       ],
     );
-    // The arrange really left d2's chunk behind, unreferenced.
-    assert.deepEqual(afterFailure, { loaded: ['d1=d1 bytes'], orphans: 1 });
+    // docs's chunks of d2 stayed in its own TEMP stage when notes committed,
+    // and left with it.
+    assert.deepEqual(source.seen, { loaded: ['d1=d1 bytes'], orphans: 0 });
+    assert.deepEqual(afterFailure, { loaded: ['d1=d1 bytes'], orphans: 0 });
     assert.deepEqual(stored(), expected);
   });
 
@@ -4436,7 +4600,13 @@ test('text with a lone surrogate fails its stream instead of loading as a replac
     ],
   );
   using database = new DatabaseSync(destination.path, { readOnly: true });
-  assert.equal(database.prepare('SELECT count(*) AS n FROM notes').get()?.n, 0);
+  // The failed stream never committed, so it left no table at all.
+  assert.equal(
+    database
+      .prepare(`SELECT count(*) AS n FROM sqlite_schema WHERE name = 'notes'`)
+      .get()?.n,
+    0,
+  );
 });
 
 test('string formats load exactly into checked columns, and int64 cursors and keys work by value', async () => {
