@@ -3771,3 +3771,87 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
     { at: 'd1' },
   ]);
 });
+
+test('rows past one JSON string stage in batches by size, and a record too large to send fails its stream naming its column and key', async () => {
+  await using database = await scratchDatabase(server);
+  const docs = new Stream({
+    name: 'docs',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        body: { type: 'string' },
+        notes: { type: 'string' },
+      },
+    },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh'],
+  });
+  let records: Record<string, string>[] = [];
+  class Documents extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'documents';
+    protected readonly catalog = new Catalog([docs]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract() {
+      for (const data of records) yield { stream: 'docs', data };
+    }
+  }
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Documents(),
+        destination,
+        steps: [
+          new Copy(docs, destination.table('docs'), {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'overwrite',
+          }),
+        ],
+      }),
+    ],
+  });
+  const stored = async () =>
+    [
+      ...(await database.sql`SELECT count(*)::int AS rows, min(length(body)) AS shortest FROM raw.docs`),
+    ][0];
+
+  // 600 rows of 1 MB add up past V8's longest string, so they cannot travel
+  // as one batch.
+  const megabyte = 'x'.repeat(2 ** 20);
+  records = Array.from({ length: 600 }, (_, index) => ({
+    id: String(index),
+    body: megabyte,
+    notes: '',
+  }));
+  await pipeline.run();
+  assert.deepEqual({ ...(await stored()) }, { rows: 600, shortest: 2 ** 20 });
+
+  // Two 270 MB values make one row longer than any string V8 can build.
+  const huge = 'x'.repeat(270_000_000);
+  records = [{ id: 'huge', body: huge, notes: huge }];
+  const error = await pipeline.run().then(
+    () => assert.fail('the huge record should fail its stream'),
+    (error: unknown) => error,
+  );
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.match(
+    String(error.results[0]?.failures[0]?.error),
+    /"raw"\."docs" with key \{"id":"huge"\} is too large to stage: its largest value, in column body, is 270000000 bytes/,
+  );
+  assert.deepEqual({ ...(await stored()) }, { rows: 600, shortest: 2 ** 20 });
+});

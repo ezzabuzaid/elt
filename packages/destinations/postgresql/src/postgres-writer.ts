@@ -28,6 +28,12 @@ import type { PostgresTable } from './postgres-table.ts';
 export type Transaction = postgres.Sql;
 
 const batchSize = 1000;
+// A batch also flushes once its JSON reaches this size, so rows of large text
+// or binary values are sent a few at a time rather than a thousand at once.
+const batchBytes = 16 * 2 ** 20;
+// Postgres takes at most 1 GB in one message (PQ_LARGE_MESSAGE_LIMIT), less
+// a margin for the batch's brackets and the message framing.
+const rowBytes = 2 ** 30 - 2 ** 20;
 export const seq = '"_elt_seq"';
 export const op = '"_elt_op"';
 
@@ -423,6 +429,35 @@ export abstract class PostgresWriter extends Writer {
       .slice(0, 40);
   }
 
+  // One staged row as JSON. A row too large to send even alone, past V8's
+  // longest string or Postgres's largest message, fails its stream, naming the
+  // column that holds the most and the record's key.
+  #serialize(row: EncodedValue[], record: unknown): string {
+    let text: string | undefined;
+    try {
+      text = JSON.stringify(row);
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+    }
+    if (text !== undefined && Buffer.byteLength(text) <= rowBytes) return text;
+    const { columns } = this.table;
+    const sizes = columns.map((column) => {
+      const value = Reflect.get(Object(record), column.name);
+      return typeof value === 'string' ? Buffer.byteLength(value) : 0;
+    });
+    const largestSize = Math.max(...sizes);
+    const largest = columns[sizes.indexOf(largestSize)];
+    const key = Object.fromEntries(
+      this.stream.primaryKey.map((field) => [
+        field,
+        Reflect.get(Object(record), field),
+      ]),
+    );
+    throw new RangeError(
+      `A record of ${this.qualifiedName} with key ${JSON.stringify(key)} is too large to stage: its largest value, in column ${largest?.name}, is ${largestSize} bytes, and Postgres takes at most 1 GB in one message`,
+    );
+  }
+
   // A reload's hidden target, beside the target and invisible to readers.
   get #hiddenName(): string {
     return `_elt_next_${this.#hash}`;
@@ -548,19 +583,23 @@ export abstract class PostgresWriter extends Writer {
     // One JSON parameter per batch, cast back per column: no bind-parameter
     // limit. Declared text so the driver sends it as given.
     const insert = `INSERT INTO ${stage} (${seq}, ${op}, ${columns.map((column) => column.quotedName).join(', ')}) SELECT (row->>0)::bigint, row->>1, ${columns.map((column, index) => column.valueFrom('row', index + 2)).join(', ')} FROM json_array_elements($1::text::json) AS row`;
-    let pending: EncodedValue[][] = [];
+    // Each staged row as its JSON, and how many bytes they add up to.
+    let pending: string[] = [];
+    let pendingBytes = 0;
     let next = 0;
     const flush = async () => {
       if (pending.length === 0) return;
       const rows = pending;
       pending = [];
-      await sql.unsafe(insert, [JSON.stringify(rows)]);
+      pendingBytes = 0;
+      await sql.unsafe(insert, [`[${rows.join(',')}]`]);
     };
     // Partitions the stage dropped, which the next commit empties in the
     // table it merges into.
     let resets: Partition[] = [];
     const drop = async () => {
       pending = [];
+      pendingBytes = 0;
       resets = [];
       await sql.unsafe(`TRUNCATE ${stage}`);
       for (const store of stores) await store.discard(sql);
@@ -603,8 +642,16 @@ export abstract class PostgresWriter extends Writer {
           operation.type === 'RECORD'
             ? this.encode(data)
             : this.deletionRow(operation.key);
-        pending.push([next++, operation.type === 'RECORD' ? 'R' : 'D', ...row]);
-        if (pending.length >= batchSize) await flush();
+        const text = this.#serialize(
+          [next++, operation.type === 'RECORD' ? 'R' : 'D', ...row],
+          data,
+        );
+        const bytes = Buffer.byteLength(text);
+        if (pendingBytes + bytes > batchBytes) await flush();
+        pending.push(text);
+        pendingBytes += bytes;
+        if (pending.length >= batchSize || pendingBytes >= batchBytes)
+          await flush();
       },
       commit: async () => {
         await flush();
