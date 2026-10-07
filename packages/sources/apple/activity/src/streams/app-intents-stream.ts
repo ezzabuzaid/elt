@@ -1,19 +1,12 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
+import { AppIntent, type AppIntentEvent } from '@workspace/sdk-apple-biome';
 
+import { activityFields, isoTime, plistText } from '../activity-values.ts';
 import {
-  activityFields,
-  appleTime,
-  archiveJSON,
-  flag,
-  integer,
-  nonEmpty,
-} from '../activity-values.ts';
-import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { text, integer: integerField, nullableText } = activityFields;
 
@@ -67,10 +60,12 @@ const properties = {
   },
 } as const;
 
-export class AppIntentsStream extends BiomeStream<typeof properties> {
+export class AppIntentsStream extends BiomeActivityStream<
+  typeof properties,
+  AppIntentEvent
+> {
   readonly name = 'appIntents';
-  readonly biomeName = 'App.Intent';
-  readonly retentionDays = 28;
+  readonly biome = new AppIntent();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -80,23 +75,23 @@ export class AppIntentsStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: AppIntentEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      occurredAt: appleTime(payload.double(1)),
-      bundleId: payload.string(2),
-      sourceId: payload.string(3),
-      intentClass: payload.string(4),
-      intentVerb: payload.string(5),
-      intentType: integer(payload.uint(6)),
-      handlingStatus: integer(payload.uint(7)),
-      direction: integer(payload.uint(11)),
-      donatedBySiri: flag(payload.uint(10)),
-      itemId: payload.string(9),
-      groupId: nonEmpty(payload.string(12)),
-      interaction: archiveJSON(payload.bytes(8)),
+      occurredAt: isoTime(event.occurredAt),
+      bundleId: event.bundleId,
+      sourceId: event.sourceId,
+      intentClass: event.intentClass,
+      intentVerb: event.intentVerb,
+      intentType: event.intentType ?? null,
+      handlingStatus: event.handlingStatus ?? null,
+      direction: event.direction ?? null,
+      donatedBySiri: event.donatedBySiri ?? null,
+      itemId: event.itemId,
+      groupId: event.groupId ?? null,
+      interaction: plistText(event.interaction),
     };
   }
 }

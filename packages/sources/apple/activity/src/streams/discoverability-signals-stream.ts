@@ -1,13 +1,16 @@
 import type { RecordDraft } from '@workspace/elt';
-
 import {
-  type Row,
-  activityFields,
-  appleTime,
-  archiveJSON,
-  nonEmpty,
-} from '../activity-values.ts';
-import { KnowledgeStream, knowledgeEvent } from '../knowledge-stream.ts';
+  DiscoverabilitySignals,
+  type DiscoverabilitySignalsEvent,
+  type KnowledgeEvent,
+} from '@workspace/sdk-apple-knowledge';
+
+import { activityFields, plistText } from '../activity-values.ts';
+import {
+  KnowledgeActivityStream,
+  knowledgeEvent,
+  knowledgeEventRecord,
+} from '../knowledge-activity-stream.ts';
 
 const { nullableText } = activityFields;
 
@@ -33,12 +36,12 @@ const properties = {
   },
 } as const;
 
-export class DiscoverabilitySignalsStream extends KnowledgeStream<
-  typeof properties
+export class DiscoverabilitySignalsStream extends KnowledgeActivityStream<
+  typeof properties,
+  DiscoverabilitySignalsEvent
 > {
   readonly name = 'discoverabilitySignals';
-  readonly streamName = '/discoverability/signals';
-  readonly retentionDays = 730;
+  readonly knowledge = new DiscoverabilitySignals();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -47,22 +50,15 @@ export class DiscoverabilitySignalsStream extends KnowledgeStream<
     required: Object.keys(properties),
   } as const;
 
-  protected readonly columns = `o.ZVALUESTRING, s.ZBUNDLEID,
-    m.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__OSBUILD, m.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__USERINFO`;
-
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(
+    event: KnowledgeEvent & DiscoverabilitySignalsEvent,
+  ): RecordDraft<typeof properties> {
     return {
-      id: row.ZUUID,
-      startedAt: appleTime(row.ZSTARTDATE),
-      endedAt: appleTime(row.ZENDDATE),
-      createdAt: appleTime(row.ZCREATIONDATE),
-      utcOffsetSeconds: row.ZSECONDSFROMGMT,
-      signal: nonEmpty(row.ZVALUESTRING),
-      bundleId: nonEmpty(row.ZBUNDLEID),
-      osBuild: nonEmpty(row.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__OSBUILD),
-      userInfo: archiveJSON(
-        row.Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__USERINFO,
-      ),
+      ...knowledgeEventRecord(event),
+      signal: event.signal ?? null,
+      bundleId: event.bundleId ?? null,
+      osBuild: event.osBuild ?? null,
+      userInfo: plistText(event.userInfo),
     };
   }
 }

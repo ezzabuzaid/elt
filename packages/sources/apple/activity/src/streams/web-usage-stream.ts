@@ -1,18 +1,12 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
+import { AppWebUsage, type AppWebUsageEvent } from '@workspace/sdk-apple-biome';
 
+import { activityFields, isoTime } from '../activity-values.ts';
 import {
-  activityFields,
-  appleTime,
-  flag,
-  integer,
-  nonEmpty,
-} from '../activity-values.ts';
-import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { text } = activityFields;
 
@@ -48,10 +42,12 @@ const properties = {
   },
 } as const;
 
-export class WebUsageStream extends BiomeStream<typeof properties> {
+export class WebUsageStream extends BiomeActivityStream<
+  typeof properties,
+  AppWebUsageEvent
+> {
   readonly name = 'webUsage';
-  readonly biomeName = 'App.WebUsage';
-  readonly retentionDays = 28;
+  readonly biome = new AppWebUsage();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -61,19 +57,19 @@ export class WebUsageStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: AppWebUsageEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      usageId: payload.string(1),
-      occurredAt: appleTime(payload.double(2)),
-      usageState: integer(payload.uint(3)),
-      url: payload.string(4),
-      domain: payload.string(5),
-      bundleId: payload.string(6),
-      usageTrusted: flag(payload.uint(8)),
-      safariProfileId: nonEmpty(payload.string(9)),
+      usageId: event.usageId,
+      occurredAt: isoTime(event.occurredAt),
+      usageState: event.usageState ?? null,
+      url: event.url,
+      domain: event.domain,
+      bundleId: event.bundleId,
+      usageTrusted: event.usageTrusted ?? null,
+      safariProfileId: event.safariProfileId ?? null,
     };
   }
 }

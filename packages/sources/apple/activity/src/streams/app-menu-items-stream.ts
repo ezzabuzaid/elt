@@ -1,12 +1,12 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
+import { AppMenuItem, type AppMenuItemEvent } from '@workspace/sdk-apple-biome';
 
 import { activityFields } from '../activity-values.ts';
 import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const properties = {
   ...biomeAddress,
@@ -16,10 +16,12 @@ const properties = {
   },
 } as const;
 
-export class AppMenuItemsStream extends BiomeStream<typeof properties> {
+export class AppMenuItemsStream extends BiomeActivityStream<
+  typeof properties,
+  AppMenuItemEvent
+> {
   readonly name = 'appMenuItems';
-  readonly biomeName = 'App.MenuItem';
-  readonly retentionDays = 28;
+  readonly biome = new AppMenuItem();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -29,9 +31,12 @@ export class AppMenuItemsStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: AppMenuItemEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
-    return { ...address, bundleId: payload.string(1) };
+    return {
+      ...address,
+      bundleId: event.bundleId,
+    };
   }
 }

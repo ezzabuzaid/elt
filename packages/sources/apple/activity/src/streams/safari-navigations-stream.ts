@@ -1,12 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-
-import { activityFields, unixTime } from '../activity-values.ts';
 import {
+  SafariNavigations,
+  type SafariNavigationsEvent,
+} from '@workspace/sdk-apple-biome';
+
+import { activityFields, isoTime } from '../activity-values.ts';
+import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { text } = activityFields;
 
@@ -25,10 +28,12 @@ const properties = {
   },
 } as const;
 
-export class SafariNavigationsStream extends BiomeStream<typeof properties> {
+export class SafariNavigationsStream extends BiomeActivityStream<
+  typeof properties,
+  SafariNavigationsEvent
+> {
   readonly name = 'safariNavigations';
-  readonly biomeName = 'Safari.Navigations';
-  readonly retentionDays = 28;
+  readonly biome = new SafariNavigations();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -38,15 +43,15 @@ export class SafariNavigationsStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: SafariNavigationsEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      host: payload.string(1),
-      url: payload.string(8),
-      countryCode: payload.string(5),
-      periodEndsAt: unixTime(payload.double(2)),
+      host: event.host,
+      url: event.url,
+      countryCode: event.countryCode,
+      periodEndsAt: isoTime(event.periodEndsAt),
     };
   }
 }

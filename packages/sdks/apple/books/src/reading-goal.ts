@@ -4,7 +4,7 @@ import {
   type PlistValue,
   isBinaryPlist,
   parseBinaryPlist,
-} from '@workspace/sdk-apple-plist';
+} from '@workspace/codec-plist';
 
 import { dictionary, integer, plistTime } from './books-values.ts';
 import { BooksSchemaError, BooksUnavailableError } from './errors.ts';

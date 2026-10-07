@@ -1,8 +1,4 @@
-import type { SQLOutputValue } from 'node:sqlite';
-
-import { decodeArchive, plistJSON } from '@workspace/sdk-apple-plist';
-
-export type Row = Record<string, SQLOutputValue>;
+import { type PlistValue, plistJSON } from '@workspace/codec-plist';
 
 const text = { type: 'string' } as const;
 const nullableText = { type: ['string', 'null'] } as const;
@@ -24,32 +20,12 @@ export const activityFields = {
   },
 } as const;
 
-const appleEpochSeconds = 978_307_200;
+export const isoTime = (at: Date | undefined) => at?.toISOString() ?? null;
 
-const instant = (seconds: number) =>
-  new Date(Math.round(seconds * 1000)).toISOString();
-
-const finite = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value);
-
-// Seconds since 2001-01-01, as Core Data and most Biome payloads store times.
-export const appleTime = (value: unknown) =>
-  finite(value) ? instant(value + appleEpochSeconds) : null;
-
-// Seconds since 1970, as a few Biome payloads store times.
-export const unixTime = (value: unknown) =>
-  finite(value) ? instant(value) : null;
-
-// Biome writes absent strings as empty ones.
-export const nonEmpty = (value: unknown) =>
-  typeof value === 'string' && value !== '' ? value : null;
-
-export const integer = (value: unknown) =>
-  typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
-
-// A protobuf or SQLite boolean; absent stays null.
-export const flag = (value: unknown) =>
-  typeof value === 'number' ? value !== 0 : null;
+// A decoded archive or property list as JSON text; an archive of nil is
+// "null", an absent one NULL.
+export const plistText = (value: PlistValue | undefined) =>
+  value === undefined ? null : plistJSON(value);
 
 const dayMs = 86_400_000;
 // macOS drops a record no sooner than its stream's maximum age: every Biome
@@ -63,9 +39,3 @@ export const retainedSince = (startedAt: Date, retentionDays: number) =>
   new Date(
     startedAt.getTime() - retentionDays * dayMs + marginMs,
   ).toISOString();
-
-// An NSKeyedArchiver or plain property list, as JSON text.
-export const archiveJSON = (value: unknown) =>
-  value instanceof Uint8Array && value.length > 0
-    ? plistJSON(decodeArchive(value))
-    : null;

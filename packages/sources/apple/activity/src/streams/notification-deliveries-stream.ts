@@ -1,12 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-
-import { activityFields, unixTime } from '../activity-values.ts';
 import {
+  NotificationDelivery,
+  type NotificationDeliveryEvent,
+} from '@workspace/sdk-apple-biome';
+
+import { activityFields, isoTime } from '../activity-values.ts';
+import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const properties = {
   ...biomeAddress,
@@ -24,12 +27,12 @@ const properties = {
   },
 } as const;
 
-export class NotificationDeliveriesStream extends BiomeStream<
-  typeof properties
+export class NotificationDeliveriesStream extends BiomeActivityStream<
+  typeof properties,
+  NotificationDeliveryEvent
 > {
   readonly name = 'notificationDeliveries';
-  readonly biomeName = 'Notification.Delivery';
-  readonly retentionDays = 3;
+  readonly biome = new NotificationDelivery();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -39,14 +42,14 @@ export class NotificationDeliveriesStream extends BiomeStream<
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: NotificationDeliveryEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      requestId: payload.string(1),
-      bundleId: payload.string(2),
-      occurredAt: unixTime(payload.double(3)),
+      requestId: event.requestId,
+      bundleId: event.bundleId,
+      occurredAt: isoTime(event.occurredAt),
     };
   }
 }

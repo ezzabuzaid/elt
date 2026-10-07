@@ -6,7 +6,7 @@ import {
   isBinaryPlist,
   parseBinaryPlist,
   readPlist,
-} from '@workspace/sdk-apple-plist';
+} from '@workspace/codec-plist';
 
 import { MailSchemaError, MailUnavailableError } from './errors.ts';
 import { plistObject } from './mail-plists.ts';

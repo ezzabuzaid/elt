@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { copyFile, readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join, relative, sep } from 'node:path';
 
-import { type PlistValue, readPlist } from '@workspace/sdk-apple-plist';
+import { type PlistValue, readPlist } from '@workspace/codec-plist';
 
 import type { IndexedAttachment } from './envelope-index.ts';
 import { MailChangingError, MailSchemaError } from './errors.ts';

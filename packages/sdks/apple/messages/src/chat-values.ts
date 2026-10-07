@@ -7,7 +7,7 @@ import {
   decodeArchive,
   isBinaryPlist,
   isDictionary,
-} from '@workspace/sdk-apple-plist';
+} from '@workspace/codec-plist';
 
 import { attributedText } from './typedstream.ts';
 

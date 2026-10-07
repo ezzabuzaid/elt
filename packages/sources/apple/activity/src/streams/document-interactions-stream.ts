@@ -1,12 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-
-import { activityFields, integer } from '../activity-values.ts';
 import {
+  AppDocumentInteraction,
+  type AppDocumentInteractionEvent,
+} from '@workspace/sdk-apple-biome';
+
+import { activityFields } from '../activity-values.ts';
+import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { text } = activityFields;
 
@@ -29,10 +32,12 @@ const properties = {
   appUrl: { ...text, description: 'File URL of that app.' },
 } as const;
 
-export class DocumentInteractionsStream extends BiomeStream<typeof properties> {
+export class DocumentInteractionsStream extends BiomeActivityStream<
+  typeof properties,
+  AppDocumentInteractionEvent
+> {
   readonly name = 'documentInteractions';
-  readonly biomeName = 'App.DocumentInteraction';
-  readonly retentionDays = 28;
+  readonly biome = new AppDocumentInteraction();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -42,18 +47,16 @@ export class DocumentInteractionsStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: AppDocumentInteractionEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
-    const file = payload.message(2);
-    const app = payload.message(4);
     return {
       ...address,
-      interactionType: integer(payload.uint(1)),
-      path: file?.string(1),
-      contentType: payload.string(3),
-      bundleId: app?.string(1),
-      appUrl: app?.string(2),
+      interactionType: event.interactionType ?? null,
+      path: event.path,
+      contentType: event.contentType,
+      bundleId: event.bundleId,
+      appUrl: event.appUrl,
     };
   }
 }

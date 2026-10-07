@@ -1,0 +1,9 @@
+{
+  "name": "codec-plist",
+  "sourceRoot": "packages/codecs/plist/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:codec"],
+  "targets": {
+    "format": {}
+  }
+}

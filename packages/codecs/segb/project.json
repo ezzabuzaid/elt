@@ -1,0 +1,9 @@
+{
+  "name": "codec-segb",
+  "sourceRoot": "packages/codecs/segb/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:codec"],
+  "targets": {
+    "format": {}
+  }
+}

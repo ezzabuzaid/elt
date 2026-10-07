@@ -405,10 +405,11 @@ packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-s
 packages/destinations/markdown/   Markdown destination (elt-markdown)
 packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
-packages/sdks/apple/      SDKs, one per Apple store or format (sdk-apple-<name>): accounts,
-                          app-database, books, call-history, contacts, eventkit,
-                          mail, messages, notes, plist, safari, segb
-packages/codecs/          Formats several SDKs decode: protobuf (codec-protobuf)
+packages/sdks/apple/      SDKs, one per Apple store (sdk-apple-<name>): accounts, biome,
+                          books, call-history, contacts, eventkit, knowledge, mail,
+                          messages, notes, safari; and app-database, the shared reader
+                          of another app's SQLite file
+packages/codecs/          One package per format (codec-<format>): plist, protobuf, segb
 packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared
                           source-apple-macos (readers, document parser)
 packages/sources/google/  The Search Console source (source-google-search-console)

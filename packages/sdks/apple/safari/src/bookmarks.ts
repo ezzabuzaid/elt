@@ -1,4 +1,4 @@
-import type { PlistValue } from '@workspace/sdk-apple-plist';
+import type { PlistValue } from '@workspace/codec-plist';
 
 import {
   type Dictionary,

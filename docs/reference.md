@@ -1400,7 +1400,7 @@ The source reads what macOS records about the user's activity; no app needs to b
 | `knowledgeC.db` (Core Data, WAL)   | `~/Library/Application Support/Knowledge`     | `knowledgeIntents`, `displayBacklight`, `discoverabilitySignals` |
 | `sync.db` (SQLite, WAL)            | `~/Library/Biome/sync`                        | `devices`                                                        |
 
-A run opens only the stores its selected streams read, pins each database in one read transaction, and opens them read-only, never as `immutable`. A store that cannot be opened fails only its own streams.
+`sdk-apple-biome` reads Biome's streams and `sync.db`, and `sdk-apple-knowledge` reads knowledgeC. A run opens only the stores its selected streams read, pins each database in one read transaction, and opens them read-only, never as `immutable`. A store that cannot be opened fails only its own streams, and a knowledgeC layout that lacks a column fails only the streams that read it.
 
 ### Access
 
@@ -1445,7 +1445,7 @@ Activity ships [presets](#connectors-and-their-hosts) that pair each start with 
 
 ### Records and identity
 
-A Biome stream folder holds `local/` for this Mac and `remote/<device>/` for each synced device; `tombstone/` folders beside them hold Biome's deletion log. Each file is a preallocated SEGB v2 segment ([CCL's reader](https://github.com/cclgroupltd/ccl-segb/blob/23c3f7d3d969a79627b738ba0a2486c31d675753/ccl_segb/ccl_segb2.py) and Cellebrite's write-up describe it): a 32-byte header whose int32 at byte 4 counts the slots, the records from byte 32 each led by a CRC-32 and an int32, and 16-byte trailer slots counted back from the end of the file, slot k at `size − 16·(k+1)`, holding the record's end offset, state (1 written, 3 deleted, 4 empty) and write time. Biome never compacts a segment, so `(origin, segment, slot)` identifies a record. `packages/sdks/apple/segb` reads them. Only written slots whose CRC matches are records: Biome zero-fills a deleted record in place, and some slots marked written hold zeroes (240 of them across this Mac's files).
+A Biome stream folder holds `local/` for this Mac and `remote/<device>/` for each synced device; `tombstone/` folders beside them hold Biome's deletion log. Each file is a preallocated SEGB v2 segment ([CCL's reader](https://github.com/cclgroupltd/ccl-segb/blob/23c3f7d3d969a79627b738ba0a2486c31d675753/ccl_segb/ccl_segb2.py) and Cellebrite's write-up describe it): a 32-byte header whose int32 at byte 4 counts the slots, the records from byte 32 each led by a CRC-32 and an int32, and 16-byte trailer slots counted back from the end of the file, slot k at `size − 16·(k+1)`, holding the record's end offset, state (1 written, 3 deleted, 4 empty) and write time. Biome never compacts a segment, so `(origin, segment, slot)` identifies a record. `codec-segb` (`packages/codecs/segb`) reads the format; `sdk-apple-biome` lists each stream's segments and decodes their records' fields. Only written slots whose CRC matches are records: Biome zero-fills a deleted record in place, and some slots marked written hold zeroes (240 of them across this Mac's files).
 
 ### Changes, expiry and deletions
 
@@ -1465,7 +1465,7 @@ A watch polls every minute (`pollIntervalMs`): each selected Biome stream's segm
 
 Checked live on 2026-10-05 against macOS 27.0 (26A428):
 
-- All 818 Biome files were SEGB v2; `sdk-apple-segb` read the 280 segments of every stream with 447,013 intact, 216,461 deleted and 245 unreadable slots, matching an independent reader.
+- All 818 Biome files were SEGB v2; `codec-segb` read the 280 segments of every stream with 447,013 intact, 216,461 deleted and 245 unreadable slots, matching an independent reader.
 - Field meanings follow each Biome event class's initializer in the dyld shared cache, whose argument order matched the protobuf field numbers wherever the data could check it; `App.MenuItem`, `App.DocumentInteraction`, `Safari.Navigations` and `Notification.Delivery` are named from the data.
 - Only the iPhone of 11 remote device folders wrote within the week; its records spanned 27.95 days. `sync.db` names no device.
 - `knowledgeIntents` rows all came from the iPhone through knowledge sync; `discoverabilitySignals` reached back to 2025-02.

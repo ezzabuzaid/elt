@@ -1,65 +1,28 @@
-import { readdir } from 'node:fs/promises';
-
 import {
-  ActivityDatabase,
-  type ActivityLocation,
-  ActivityUnavailableError,
-  biomeDevices,
-  biomeStreams,
-} from './activity-store.ts';
+  BiomeStore,
+  type BiomeStreams,
+  type BiomeSync,
+} from '@workspace/sdk-apple-biome';
+import {
+  type KnowledgeSnapshot,
+  KnowledgeStore,
+} from '@workspace/sdk-apple-knowledge';
 
-// Where macOS keeps each kind of activity: Biome's stream folders, the
-// knowledgeC database, and Biome's list of synced devices.
-export type ActivityStore = 'biome' | 'knowledge' | 'devices';
+// Where macOS keeps activity: the Biome folder, with its streams and device
+// list, and the knowledgeC database.
+export type ActivityLocation = {
+  readonly biome: string;
+  readonly knowledge: string;
+};
 
-// The columns the streams read; opening a database checks them all.
-const knowledgeColumns = {
-  ZOBJECT: [
-    'Z_PK',
-    'ZUUID',
-    'ZSTREAMNAME',
-    'ZSTARTDATE',
-    'ZENDDATE',
-    'ZCREATIONDATE',
-    'ZSECONDSFROMGMT',
-    'ZVALUESTRING',
-    'ZVALUEINTEGER',
-    'ZSTRUCTUREDMETADATA',
-    'ZSOURCE',
-  ],
-  ZSTRUCTUREDMETADATA: [
-    'Z_PK',
-    'Z_DKINTENTMETADATAKEY__INTENTCLASS',
-    'Z_DKINTENTMETADATAKEY__INTENTVERB',
-    'Z_DKINTENTMETADATAKEY__INTENTTYPE',
-    'Z_DKINTENTMETADATAKEY__INTENTHANDLINGSTATUS',
-    'Z_DKINTENTMETADATAKEY__DIRECTION',
-    'Z_DKINTENTMETADATAKEY__DONATEDBYSIRI',
-    'Z_DKINTENTMETADATAKEY__INTERACTIONIDENTIFIER',
-    'Z_DKINTENTMETADATAKEY__DERIVEDINTENTIDENTIFIER',
-    'Z_DKINTENTMETADATAKEY__RELATEDCONTACTIDENTIFIERS',
-    'Z_DKINTENTMETADATAKEY__SERIALIZEDINTERACTION',
-    'Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__OSBUILD',
-    'Z_DKDISCOVERABILITYSIGNALSMETADATAKEY__USERINFO',
-  ],
-  ZSOURCE: ['Z_PK', 'ZBUNDLEID', 'ZDEVICEID', 'ZITEMID', 'ZGROUPID'],
-} as const;
-
-const deviceColumns = {
-  DevicePeer: [
-    'device_identifier',
-    'me',
-    'name',
-    'model',
-    'platform',
-    'last_sync_date',
-  ],
-} as const;
+// The store each stream reads: Biome's stream folders, knowledgeC, or
+// Biome's device list.
+type ActivityStore = 'biome' | 'knowledge' | 'devices';
 
 type Opened = {
-  biome: string;
-  knowledge: ActivityDatabase;
-  devices: ActivityDatabase;
+  biome: BiomeStreams;
+  knowledge: KnowledgeSnapshot;
+  devices: BiomeSync;
 };
 
 // A store's contents, or why it could not be opened.
@@ -93,7 +56,7 @@ export class ActivityScan implements AsyncDisposable {
     await using resources = new AsyncDisposableStack();
     const open = async <S extends ActivityStore>(
       store: S,
-      value: () => Promise<Opened[S]>,
+      value: () => Promise<Opened[S]> | Opened[S],
     ): Promise<Result<Opened[S]> | undefined> => {
       if (!stores.has(store)) return undefined;
       try {
@@ -102,41 +65,26 @@ export class ActivityScan implements AsyncDisposable {
         return { error };
       }
     };
+    const biome = new BiomeStore(location.biome);
     const opened: OpenedStores = {
-      // Each stream lists its own segments; this proves the folder is readable.
-      biome: await open('biome', async () => {
-        const root = biomeStreams(location);
-        try {
-          await readdir(root);
-        } catch (cause) {
-          throw new ActivityUnavailableError(root, cause);
-        }
-        return root;
-      }),
-      knowledge: await open('knowledge', async () =>
-        resources.use(
-          await ActivityDatabase.open(location.knowledge, knowledgeColumns),
-        ),
+      biome: await open('biome', () => biome.streams()),
+      knowledge: await open('knowledge', () =>
+        resources.use(new KnowledgeStore(location.knowledge).open()),
       ),
-      devices: await open('devices', async () =>
-        resources.use(
-          await ActivityDatabase.open(biomeDevices(location), deviceColumns),
-        ),
-      ),
+      devices: await open('devices', () => resources.use(biome.sync())),
     };
     return new ActivityScan(startedAt, resources.move(), opened);
   }
 
-  // The folder holding every Biome stream.
-  get biome(): string {
+  get biome(): BiomeStreams {
     return this.#value('biome');
   }
 
-  get knowledge(): ActivityDatabase {
+  get knowledge(): KnowledgeSnapshot {
     return this.#value('knowledge');
   }
 
-  get devices(): ActivityDatabase {
+  get devices(): BiomeSync {
     return this.#value('devices');
   }
 

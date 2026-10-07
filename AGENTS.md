@@ -56,6 +56,7 @@ An SDK is the agnostic package that speaks one vendor store or API, such as `~/L
 - **The source owns the pipeline:** streams, field names, JSON Schema, descriptions, scope, checkpoints, and which streams `observe()` refreshes when an SDK reports a change.
 - **Enforced by the `layer:sdk` tag:** `eslint.config.mjs` stops a `layer:sdk` project from reaching `layer:elt` (`packages/elt`), directly or through a source, destination or connector. An SDK is also an island.
 - **Named** `packages/sdks/<platform>/<surface>`, `@workspace/sdk-<platform>-<name>`, so `sdk-apple-mail`, `source-apple-mail` and `connector-apple-mail` read as one stack. `packages/google-auth` keeps its name until it moves there.
+- **A format is a codec, not an SDK.** Ask whether the package knows where the data lives or what it means. If it does, it is an SDK. If it knows only how the bytes are laid out, it is a codec: it takes bytes or a path the caller gives and returns the format's own shapes, such as protobuf fields, plist values or SEGB slots. A codec lives in `packages/codecs/<format>`, `@workspace/codec-<format>`, whether one package decodes it or many. `sdk-apple-biome` reads Biome's segment files through `codec-segb` and says what each record's fields mean. The `layer:codec` tag lets a codec depend only on other codecs.
 
 ## Fake only what cannot run for real
 

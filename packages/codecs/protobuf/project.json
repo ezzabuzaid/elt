@@ -2,7 +2,7 @@
   "name": "codec-protobuf",
   "sourceRoot": "packages/codecs/protobuf/src",
   "projectType": "library",
-  "tags": ["layer:island"],
+  "tags": ["layer:island", "layer:codec"],
   "targets": {
     "format": {}
   }

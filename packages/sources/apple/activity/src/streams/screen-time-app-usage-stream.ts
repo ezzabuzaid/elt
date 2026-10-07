@@ -1,12 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-
-import { activityFields, flag, unixTime } from '../activity-values.ts';
 import {
+  ScreenTimeAppUsage,
+  type ScreenTimeAppUsageEvent,
+} from '@workspace/sdk-apple-biome';
+
+import { activityFields, isoTime } from '../activity-values.ts';
+import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const properties = {
   ...biomeAddress,
@@ -25,10 +28,12 @@ const properties = {
   },
 } as const;
 
-export class ScreenTimeAppUsageStream extends BiomeStream<typeof properties> {
+export class ScreenTimeAppUsageStream extends BiomeActivityStream<
+  typeof properties,
+  ScreenTimeAppUsageEvent
+> {
   readonly name = 'screenTimeAppUsage';
-  readonly biomeName = 'ScreenTime.AppUsage';
-  readonly retentionDays = 28;
+  readonly biome = new ScreenTimeAppUsage();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -38,15 +43,15 @@ export class ScreenTimeAppUsageStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: ScreenTimeAppUsageEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      started: flag(payload.uint(1)),
-      occurredAt: unixTime(payload.double(2)),
-      bundleId: payload.string(3),
-      usageTrusted: flag(payload.uint(5)),
+      started: event.started ?? null,
+      occurredAt: isoTime(event.occurredAt),
+      bundleId: event.bundleId,
+      usageTrusted: event.usageTrusted ?? null,
     };
   }
 }

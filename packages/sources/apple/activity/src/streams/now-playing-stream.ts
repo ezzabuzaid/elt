@@ -1,23 +1,17 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
+import {
+  MediaNowPlaying,
+  type MediaNowPlayingEvent,
+} from '@workspace/sdk-apple-biome';
 
+import { activityFields, isoTime } from '../activity-values.ts';
 import {
-  activityFields,
-  appleTime,
-  flag,
-  integer,
-  nonEmpty,
-} from '../activity-values.ts';
-import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { nullableText, nullableInteger } = activityFields;
-
-// MediaRemote's "unknown duration".
-const unknownDuration = 4_294_967_295;
 
 const properties = {
   ...biomeAddress,
@@ -59,10 +53,12 @@ const properties = {
   },
 } as const;
 
-export class NowPlayingStream extends BiomeStream<typeof properties> {
+export class NowPlayingStream extends BiomeActivityStream<
+  typeof properties,
+  MediaNowPlayingEvent
+> {
   readonly name = 'nowPlaying';
-  readonly biomeName = 'Media.NowPlaying';
-  readonly retentionDays = 28;
+  readonly biome = new MediaNowPlaying();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -72,24 +68,21 @@ export class NowPlayingStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: MediaNowPlayingEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
-    const duration = integer(payload.uint(6));
     return {
       ...address,
-      occurredAt: appleTime(payload.double(2)),
-      playbackState: integer(payload.uint(3)),
-      title: nonEmpty(payload.string(8)),
-      artist: nonEmpty(payload.string(5)),
-      album: nonEmpty(payload.string(4)),
-      durationSeconds: duration === unknownDuration ? null : duration,
-      mediaType: nonEmpty(payload.string(10)),
-      airPlayVideo: flag(payload.uint(13)),
-      bundleId: nonEmpty(payload.string(15)),
-      outputDeviceIds: payload
-        .messages(14)
-        .flatMap((device) => nonEmpty(device.string(3)) ?? []),
+      occurredAt: isoTime(event.occurredAt),
+      playbackState: event.playbackState ?? null,
+      title: event.title ?? null,
+      artist: event.artist ?? null,
+      album: event.album ?? null,
+      durationSeconds: event.durationSeconds ?? null,
+      mediaType: event.mediaType ?? null,
+      airPlayVideo: event.airPlayVideo ?? null,
+      bundleId: event.bundleId ?? null,
+      outputDeviceIds: event.outputDeviceIds,
     };
   }
 }

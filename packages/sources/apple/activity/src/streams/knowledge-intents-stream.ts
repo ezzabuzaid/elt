@@ -1,15 +1,16 @@
 import type { RecordDraft } from '@workspace/elt';
-
 import {
-  type Row,
-  activityFields,
-  appleTime,
-  archiveJSON,
-  flag,
-  integer,
-  nonEmpty,
-} from '../activity-values.ts';
-import { KnowledgeStream, knowledgeEvent } from '../knowledge-stream.ts';
+  AppIntents,
+  type AppIntentsEvent,
+  type KnowledgeEvent,
+} from '@workspace/sdk-apple-knowledge';
+
+import { activityFields, plistText } from '../activity-values.ts';
+import {
+  KnowledgeActivityStream,
+  knowledgeEvent,
+  knowledgeEventRecord,
+} from '../knowledge-activity-stream.ts';
 
 const { text, nullableText, integer: integerField } = activityFields;
 
@@ -79,10 +80,12 @@ const properties = {
   },
 } as const;
 
-export class KnowledgeIntentsStream extends KnowledgeStream<typeof properties> {
+export class KnowledgeIntentsStream extends KnowledgeActivityStream<
+  typeof properties,
+  AppIntentsEvent
+> {
   readonly name = 'knowledgeIntents';
-  readonly streamName = '/app/intents';
-  readonly retentionDays = 28;
+  readonly knowledge = new AppIntents();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -91,41 +94,26 @@ export class KnowledgeIntentsStream extends KnowledgeStream<typeof properties> {
     required: Object.keys(properties),
   } as const;
 
-  protected readonly columns = `o.ZVALUESTRING, s.ZBUNDLEID, s.ZDEVICEID, s.ZITEMID, s.ZGROUPID,
-    m.Z_DKINTENTMETADATAKEY__INTENTCLASS, m.Z_DKINTENTMETADATAKEY__INTENTVERB,
-    m.Z_DKINTENTMETADATAKEY__INTENTTYPE, m.Z_DKINTENTMETADATAKEY__INTENTHANDLINGSTATUS,
-    m.Z_DKINTENTMETADATAKEY__DIRECTION, m.Z_DKINTENTMETADATAKEY__DONATEDBYSIRI,
-    m.Z_DKINTENTMETADATAKEY__INTERACTIONIDENTIFIER, m.Z_DKINTENTMETADATAKEY__DERIVEDINTENTIDENTIFIER,
-    m.Z_DKINTENTMETADATAKEY__RELATEDCONTACTIDENTIFIERS, m.Z_DKINTENTMETADATAKEY__SERIALIZEDINTERACTION`;
-
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(
+    event: KnowledgeEvent & AppIntentsEvent,
+  ): RecordDraft<typeof properties> {
     return {
-      id: row.ZUUID,
-      startedAt: appleTime(row.ZSTARTDATE),
-      endedAt: appleTime(row.ZENDDATE),
-      createdAt: appleTime(row.ZCREATIONDATE),
-      utcOffsetSeconds: row.ZSECONDSFROMGMT,
-      category: nonEmpty(row.ZVALUESTRING),
-      bundleId: row.ZBUNDLEID,
-      deviceId: nonEmpty(row.ZDEVICEID),
-      itemId: nonEmpty(row.ZITEMID),
-      groupId: nonEmpty(row.ZGROUPID),
-      intentClass: row.Z_DKINTENTMETADATAKEY__INTENTCLASS,
-      intentVerb: nonEmpty(row.Z_DKINTENTMETADATAKEY__INTENTVERB),
-      intentType: integer(row.Z_DKINTENTMETADATAKEY__INTENTTYPE),
-      handlingStatus: integer(row.Z_DKINTENTMETADATAKEY__INTENTHANDLINGSTATUS),
-      direction: integer(row.Z_DKINTENTMETADATAKEY__DIRECTION),
-      donatedBySiri: flag(row.Z_DKINTENTMETADATAKEY__DONATEDBYSIRI),
-      interactionId: row.Z_DKINTENTMETADATAKEY__INTERACTIONIDENTIFIER,
-      derivedIntentId: nonEmpty(
-        row.Z_DKINTENTMETADATAKEY__DERIVEDINTENTIDENTIFIER,
-      ),
-      relatedContactIds: nonEmpty(
-        row.Z_DKINTENTMETADATAKEY__RELATEDCONTACTIDENTIFIERS,
-      ),
-      interaction: archiveJSON(
-        row.Z_DKINTENTMETADATAKEY__SERIALIZEDINTERACTION,
-      ),
+      ...knowledgeEventRecord(event),
+      category: event.category ?? null,
+      bundleId: event.bundleId,
+      deviceId: event.deviceId ?? null,
+      itemId: event.itemId ?? null,
+      groupId: event.groupId ?? null,
+      intentClass: event.intentClass,
+      intentVerb: event.intentVerb ?? null,
+      intentType: event.intentType ?? null,
+      handlingStatus: event.handlingStatus ?? null,
+      direction: event.direction ?? null,
+      donatedBySiri: event.donatedBySiri ?? null,
+      interactionId: event.interactionId,
+      derivedIntentId: event.derivedIntentId ?? null,
+      relatedContactIds: event.relatedContactIds ?? null,
+      interaction: plistText(event.interaction),
     };
   }
 }

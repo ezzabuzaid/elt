@@ -14,10 +14,10 @@
       "path": "../../../sdks/apple/messages"
     },
     {
-      "path": "../../../sdks/apple/plist"
+      "path": "../../../elt"
     },
     {
-      "path": "../../../elt"
+      "path": "../../../codecs/plist"
     },
     {
       "path": "../../../destinations/sqlite"

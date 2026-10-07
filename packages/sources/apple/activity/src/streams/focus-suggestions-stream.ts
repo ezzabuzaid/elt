@@ -1,19 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
+import {
+  UserFocusInferredMode,
+  type UserFocusInferredModeEvent,
+} from '@workspace/sdk-apple-biome';
 
+import { activityFields, isoTime, plistText } from '../activity-values.ts';
 import {
-  activityFields,
-  appleTime,
-  archiveJSON,
-  flag,
-  integer,
-  nonEmpty,
-} from '../activity-values.ts';
-import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { text, nullableText, integer: integerField } = activityFields;
 
@@ -70,10 +66,12 @@ const properties = {
   },
 } as const;
 
-export class FocusSuggestionsStream extends BiomeStream<typeof properties> {
+export class FocusSuggestionsStream extends BiomeActivityStream<
+  typeof properties,
+  UserFocusInferredModeEvent
+> {
   readonly name = 'focusSuggestions';
-  readonly biomeName = 'UserFocus.InferredMode';
-  readonly retentionDays = 28;
+  readonly biome = new UserFocusInferredMode();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -83,23 +81,23 @@ export class FocusSuggestionsStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: UserFocusInferredModeEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      suggestionId: payload.string(7),
-      occurredAt: appleTime(payload.double(1)),
-      started: flag(payload.uint(6)),
-      modeId: nonEmpty(payload.string(2)),
-      modeName: nonEmpty(payload.string(14)),
-      modeType: integer(payload.uint(12)),
-      origin: integer(payload.uint(3)),
-      automationEnabled: flag(payload.uint(5)),
-      uiLocation: integer(payload.uint(9)),
-      confidence: payload.double(10),
-      shouldSuggestTriggers: flag(payload.uint(13)),
-      triggers: archiveJSON(payload.bytes(11)),
+      suggestionId: event.suggestionId,
+      occurredAt: isoTime(event.occurredAt),
+      started: event.started ?? null,
+      modeId: event.modeId ?? null,
+      modeName: event.modeName ?? null,
+      modeType: event.modeType ?? null,
+      origin: event.origin ?? null,
+      automationEnabled: event.automationEnabled ?? null,
+      uiLocation: event.uiLocation ?? null,
+      confidence: event.confidence,
+      shouldSuggestTriggers: event.shouldSuggestTriggers ?? null,
+      triggers: plistText(event.triggers),
     };
   }
 }

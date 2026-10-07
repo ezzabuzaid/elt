@@ -10,9 +10,9 @@
     }
   },
   "dependencies": {
+    "@workspace/codec-plist": "0.0.1",
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-apple-accounts": "0.0.1",
-    "@workspace/sdk-apple-plist": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1"
   },
   "devDependencies": {

@@ -1,12 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-
-import { activityFields, flag, integer, nonEmpty } from '../activity-values.ts';
 import {
+  DeviceWirelessBluetooth,
+  type DeviceWirelessBluetoothEvent,
+} from '@workspace/sdk-apple-biome';
+
+import { activityFields } from '../activity-values.ts';
+import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { integer: integerField } = activityFields;
 const battery = (part: string) =>
@@ -53,10 +56,12 @@ const properties = {
   batteryRight: battery('right headphone'),
 } as const;
 
-export class BluetoothConnectionsStream extends BiomeStream<typeof properties> {
+export class BluetoothConnectionsStream extends BiomeActivityStream<
+  typeof properties,
+  DeviceWirelessBluetoothEvent
+> {
   readonly name = 'bluetoothConnections';
-  readonly biomeName = 'Device.Wireless.Bluetooth';
-  readonly retentionDays = 28;
+  readonly biome = new DeviceWirelessBluetooth();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -66,22 +71,22 @@ export class BluetoothConnectionsStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: DeviceWirelessBluetoothEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      address: payload.string(1),
-      deviceName: nonEmpty(payload.string(2)),
-      connected: flag(payload.uint(4)),
-      vendorId: integer(payload.uint(11)),
-      productId: integer(payload.uint(3)),
-      deviceType: integer(payload.uint(5)),
-      appleAudioDevice: flag(payload.uint(9)),
-      userWearing: flag(payload.uint(10)),
-      batteryCase: integer(payload.uint(6)),
-      batteryLeft: integer(payload.uint(8)),
-      batteryRight: integer(payload.uint(7)),
+      address: event.address,
+      deviceName: event.deviceName ?? null,
+      connected: event.connected ?? null,
+      vendorId: event.vendorId ?? null,
+      productId: event.productId ?? null,
+      deviceType: event.deviceType ?? null,
+      appleAudioDevice: event.appleAudioDevice ?? null,
+      userWearing: event.userWearing ?? null,
+      batteryCase: event.batteryCase ?? null,
+      batteryLeft: event.batteryLeft ?? null,
+      batteryRight: event.batteryRight ?? null,
     };
   }
 }

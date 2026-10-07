@@ -8,17 +8,14 @@ import type {
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source } from '@workspace/elt';
+import { BiomeStore, biomeDirectory } from '@workspace/sdk-apple-biome';
+import {
+  KnowledgeStore,
+  knowledgeStorePath,
+} from '@workspace/sdk-apple-knowledge';
 
 import type { ActivityReader } from './activity-reader.ts';
-import { ActivityScan, type ActivityStore } from './activity-scan.ts';
-import {
-  ActivityDatabaseVersion,
-  type ActivityLocation,
-  biomeDevices,
-  biomeStreams,
-  defaultActivityLocation,
-} from './activity-store.ts';
-import { BiomeStream, segmentFingerprint, segments } from './biome-stream.ts';
+import { type ActivityLocation, ActivityScan } from './activity-scan.ts';
 import { AppFocusStream } from './streams/app-focus-stream.ts';
 import { AppIntentsStream } from './streams/app-intents-stream.ts';
 import { AppMenuItemsStream } from './streams/app-menu-items-stream.ts';
@@ -107,8 +104,8 @@ export class AppleActivitySource extends Source<ActivityScan> {
   readonly pollIntervalMs: number;
 
   constructor({
-    biome = defaultActivityLocation.biome,
-    knowledge = defaultActivityLocation.knowledge,
+    biome = biomeDirectory,
+    knowledge = knowledgeStorePath,
     pollIntervalMs = 60_000,
   }: { biome?: string; knowledge?: string; pollIntervalMs?: number } = {}) {
     super();
@@ -138,46 +135,33 @@ export class AppleActivitySource extends Source<ActivityScan> {
 
   // Biome writes into preallocated segment files in place, so neither their
   // size, their modification time nor FSEvents report a new record; each
-  // segment's trailer does. Databases report commits through data_version.
+  // segment's fingerprint does. Databases report commits through data_version.
   protected override async *observe({
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
     if (signal.aborted) return;
     using versions = new DisposableStack();
-    const version = (path: string) => {
-      const database = versions.use(new ActivityDatabaseVersion(path));
-      return async () => String(database.current);
+    const biome = new BiomeStore(this.location.biome);
+    const databases = {
+      knowledge: () => new KnowledgeStore(this.location.knowledge).version(),
+      devices: () => biome.syncVersion(),
     };
     const probes = new Map<Stream, () => Promise<string>>();
-    const databases = new Map<ActivityStore, () => Promise<string>>();
+    const opened = new Map<keyof typeof databases, () => Promise<string>>();
     for (const stream of streams) {
       const reader = readerOf(stream);
-      if (reader instanceof BiomeStream) {
-        const root = biomeStreams(this.location);
-        probes.set(stream, async () =>
-          (
-            await Promise.all(
-              (await segments(root, reader.biomeName)).map(
-                async (segment) =>
-                  `${segment.origin}/${segment.name}=${await segmentFingerprint(segment)}`,
-              ),
-            )
-          ).join('|'),
-        );
+      if (reader.store === 'biome') {
+        probes.set(stream, () => biome.version(reader.biome));
         continue;
       }
-      if (!databases.has(reader.store))
-        databases.set(
-          reader.store,
-          version(
-            reader.store === 'knowledge'
-              ? this.location.knowledge
-              : biomeDevices(this.location),
-          ),
-        );
-      const probe = databases.get(reader.store);
-      if (probe !== undefined) probes.set(stream, probe);
+      let probe = opened.get(reader.store);
+      if (probe === undefined) {
+        const version = versions.use(databases[reader.store]());
+        probe = async () => String(version.current);
+        opened.set(reader.store, probe);
+      }
+      probes.set(stream, probe);
     }
     const seen = new Map<Stream, string>();
     for (const [stream, probe] of probes) seen.set(stream, await probe());

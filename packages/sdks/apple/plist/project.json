@@ -1,9 +1,0 @@
-{
-  "name": "sdk-apple-plist",
-  "sourceRoot": "packages/sdks/apple/plist/src",
-  "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
-}

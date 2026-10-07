@@ -1,12 +1,16 @@
 import type { RecordDraft } from '@workspace/elt';
-
 import {
-  type Row,
-  activityFields,
-  appleTime,
-  flag,
-} from '../activity-values.ts';
-import { KnowledgeStream, knowledgeEvent } from '../knowledge-stream.ts';
+  DisplayIsBacklit,
+  type DisplayIsBacklitEvent,
+  type KnowledgeEvent,
+} from '@workspace/sdk-apple-knowledge';
+
+import { activityFields } from '../activity-values.ts';
+import {
+  KnowledgeActivityStream,
+  knowledgeEvent,
+  knowledgeEventRecord,
+} from '../knowledge-activity-stream.ts';
 
 const properties = {
   ...knowledgeEvent,
@@ -17,10 +21,12 @@ const properties = {
   },
 } as const;
 
-export class DisplayBacklightStream extends KnowledgeStream<typeof properties> {
+export class DisplayBacklightStream extends KnowledgeActivityStream<
+  typeof properties,
+  DisplayIsBacklitEvent
+> {
   readonly name = 'displayBacklight';
-  readonly streamName = '/display/isBacklit';
-  readonly retentionDays = 28;
+  readonly knowledge = new DisplayIsBacklit();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -29,16 +35,12 @@ export class DisplayBacklightStream extends KnowledgeStream<typeof properties> {
     required: Object.keys(properties),
   } as const;
 
-  protected readonly columns = 'o.ZVALUEINTEGER';
-
-  protected record(row: Row): RecordDraft<typeof properties> {
+  protected record(
+    event: KnowledgeEvent & DisplayIsBacklitEvent,
+  ): RecordDraft<typeof properties> {
     return {
-      id: row.ZUUID,
-      startedAt: appleTime(row.ZSTARTDATE),
-      endedAt: appleTime(row.ZENDDATE),
-      createdAt: appleTime(row.ZCREATIONDATE),
-      utcOffsetSeconds: row.ZSECONDSFROMGMT,
-      backlit: flag(row.ZVALUEINTEGER),
+      ...knowledgeEventRecord(event),
+      backlit: event.backlit ?? null,
     };
   }
 }

@@ -1,12 +1,12 @@
 import {
-  AppDatabase,
-  type AppDatabaseColumns,
-} from '@workspace/sdk-apple-app-database';
-import {
   type PlistValue,
   decodeArchive,
   isDictionary,
-} from '@workspace/sdk-apple-plist';
+} from '@workspace/codec-plist';
+import {
+  AppDatabase,
+  type AppDatabaseColumns,
+} from '@workspace/sdk-apple-app-database';
 
 import { Account } from './account.ts';
 import { AccountsSchemaError, AccountsUnavailableError } from './errors.ts';

@@ -9,9 +9,13 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
+import type {
+  KnowledgeEvent,
+  KnowledgeStream,
+} from '@workspace/sdk-apple-knowledge';
 
 import type { ActivityScan } from './activity-scan.ts';
-import { type Row, activityFields, retainedSince } from './activity-values.ts';
+import { activityFields, isoTime, retainedSince } from './activity-values.ts';
 
 export const knowledgeEvent = {
   id: {
@@ -38,20 +42,21 @@ export const knowledgeEvent = {
   },
 } as const;
 
-// The ZOBJECT columns every event row carries, read as knowledgeEvent fields.
-const eventColumns =
-  'o.ZUUID, o.ZSTARTDATE, o.ZENDDATE, o.ZCREATIONDATE, o.ZSECONDSFROMGMT';
+// The fields every knowledgeC row carries, as knowledgeEvent names them.
+export const knowledgeEventRecord = (event: KnowledgeEvent) => ({
+  id: event.id,
+  startedAt: isoTime(event.startedAt),
+  endedAt: isoTime(event.endedAt),
+  createdAt: isoTime(event.createdAt),
+  utcOffsetSeconds: event.utcOffsetSeconds,
+});
 
-// A knowledgeC stream: one ZSTREAMNAME, with its metadata (ZSTRUCTUREDMETADATA)
-// and source (ZSOURCE) joined. Streams supply the extra columns they read and
-// how a row becomes a record.
-export abstract class KnowledgeStream<P extends Properties> {
+// An Activity stream over one knowledgeC stream: its description, and how one
+// event becomes a row.
+export abstract class KnowledgeActivityStream<P extends Properties, E> {
   readonly store = 'knowledge';
   abstract readonly name: string;
-  // knowledgeC's name for the stream, ZOBJECT.ZSTREAMNAME.
-  abstract readonly streamName: string;
-  // The stream's maximum age, compiled into macOS's BiomeLibrary.
-  abstract readonly retentionDays: number;
+  abstract readonly knowledge: KnowledgeStream<E>;
   abstract readonly jsonSchema: {
     readonly type: 'object';
     readonly description: string;
@@ -66,8 +71,11 @@ export abstract class KnowledgeStream<P extends Properties> {
   readonly sourceDefinedCursor = true;
   readonly emitsDeletes = true;
   readonly expiresBy = 'startedAt';
-  protected abstract readonly columns: string;
   #stream?: Stream;
+
+  get retentionDays(): number {
+    return this.knowledge.maximumAgeDays;
+  }
 
   describe(): Stream {
     this.#stream ??= new Stream(this);
@@ -92,20 +100,12 @@ export abstract class KnowledgeStream<P extends Properties> {
   }
 
   #read(scan: ActivityScan): SchemaRecord<P>[] {
-    const rows = scan.knowledge.all(
-      `SELECT ${eventColumns}, ${this.columns}
-       FROM ZOBJECT o
-       LEFT JOIN ZSTRUCTUREDMETADATA m ON m.Z_PK = o.ZSTRUCTUREDMETADATA
-       LEFT JOIN ZSOURCE s ON s.Z_PK = o.ZSOURCE
-       WHERE o.ZSTREAMNAME = ? ORDER BY o.Z_PK`,
-      this.streamName,
-    );
     return validateRecords(
       this,
-      rows.map((row) => this.record(row)),
+      scan.knowledge.events(this.knowledge).map((event) => this.record(event)),
       'Activity',
     );
   }
 
-  protected abstract record(row: Row): RecordDraft<P>;
+  protected abstract record(event: KnowledgeEvent & E): RecordDraft<P>;
 }

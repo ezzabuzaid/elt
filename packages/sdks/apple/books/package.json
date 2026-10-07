@@ -10,8 +10,8 @@
     }
   },
   "dependencies": {
+    "@workspace/codec-plist": "0.0.1",
     "@workspace/codec-protobuf": "0.0.1",
-    "@workspace/sdk-apple-app-database": "0.0.1",
-    "@workspace/sdk-apple-plist": "0.0.1"
+    "@workspace/sdk-apple-app-database": "0.0.1"
   }
 }

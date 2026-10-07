@@ -1,18 +1,12 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
+import { AppInFocus, type AppInFocusEvent } from '@workspace/sdk-apple-biome';
 
+import { activityFields, isoTime } from '../activity-values.ts';
 import {
-  activityFields,
-  appleTime,
-  flag,
-  integer,
-  nonEmpty,
-} from '../activity-values.ts';
-import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { nullableText, nullableInteger, nullableBoolean } = activityFields;
 
@@ -61,10 +55,12 @@ const properties = {
   },
 } as const;
 
-export class AppFocusStream extends BiomeStream<typeof properties> {
+export class AppFocusStream extends BiomeActivityStream<
+  typeof properties,
+  AppInFocusEvent
+> {
   readonly name = 'appFocus';
-  readonly biomeName = 'App.InFocus';
-  readonly retentionDays = 28;
+  readonly biome = new AppInFocus();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -74,21 +70,21 @@ export class AppFocusStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: AppInFocusEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      started: flag(payload.uint(3)),
-      occurredAt: appleTime(payload.double(4)),
-      bundleId: payload.string(6),
-      launchReason: nonEmpty(payload.string(1)),
-      eventType: integer(payload.uint(2)),
-      shortVersion: nonEmpty(payload.string(9)),
-      bundleVersion: nonEmpty(payload.string(10)),
-      platform: integer(payload.uint(11)),
-      nativeArchitecture: flag(payload.uint(12)),
-      displayType: integer(payload.uint(13)),
+      started: event.started ?? null,
+      occurredAt: isoTime(event.occurredAt),
+      bundleId: event.bundleId,
+      launchReason: event.launchReason ?? null,
+      eventType: event.eventType ?? null,
+      shortVersion: event.shortVersion ?? null,
+      bundleVersion: event.bundleVersion ?? null,
+      platform: event.platform ?? null,
+      nativeArchitecture: event.nativeArchitecture ?? null,
+      displayType: event.displayType ?? null,
     };
   }
 }

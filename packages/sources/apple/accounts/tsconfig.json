@@ -11,13 +11,13 @@
       "path": "../macos"
     },
     {
-      "path": "../../../sdks/apple/plist"
-    },
-    {
       "path": "../../../sdks/apple/accounts"
     },
     {
       "path": "../../../elt"
+    },
+    {
+      "path": "../../../codecs/plist"
     },
     {
       "path": "../../../destinations/sqlite"

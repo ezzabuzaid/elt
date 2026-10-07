@@ -1,9 +1,9 @@
-import { AppDatabase } from '@workspace/sdk-apple-app-database';
 import {
   type PlistValue,
   decodeArchive,
   parseBinaryPlist,
-} from '@workspace/sdk-apple-plist';
+} from '@workspace/codec-plist';
+import { AppDatabase } from '@workspace/sdk-apple-app-database';
 
 import { SafariSchemaError, SafariUnavailableError } from './errors.ts';
 import {

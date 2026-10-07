@@ -8,13 +8,13 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../../../codecs/protobuf"
-    },
-    {
       "path": "../app-database"
     },
     {
-      "path": "../plist"
+      "path": "../../../codecs/protobuf"
+    },
+    {
+      "path": "../../../codecs/plist"
     }
   ]
 }

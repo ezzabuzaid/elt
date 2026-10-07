@@ -8,15 +8,10 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
+import type { BiomeDevice } from '@workspace/sdk-apple-biome';
 
 import type { ActivityScan } from '../activity-scan.ts';
-import {
-  type Row,
-  activityFields,
-  integer,
-  nonEmpty,
-  unixTime,
-} from '../activity-values.ts';
+import { activityFields, isoTime } from '../activity-values.ts';
 
 const { nullableText, nullableInteger } = activityFields;
 
@@ -92,23 +87,19 @@ export class DevicesStream {
   #read(scan: ActivityScan): SchemaRecord<typeof properties>[] {
     return validateRecords(
       this,
-      scan.devices
-        .all(
-          'SELECT device_identifier, me, name, CAST(model AS TEXT) AS model, platform, last_sync_date FROM DevicePeer ORDER BY device_identifier',
-        )
-        .map((row) => this.#record(row)),
+      scan.devices.devices().map((device) => this.#record(device)),
       'Activity',
     );
   }
 
-  #record(row: Row): RecordDraft<typeof properties> {
+  #record(device: BiomeDevice): RecordDraft<typeof properties> {
     return {
-      deviceId: row.device_identifier,
-      thisMac: row.me === 1,
-      name: nonEmpty(row.name),
-      model: nonEmpty(row.model),
-      platform: integer(row.platform),
-      lastSyncedAt: unixTime(row.last_sync_date),
+      deviceId: device.id,
+      thisMac: device.thisMac,
+      name: device.name ?? null,
+      model: device.model ?? null,
+      platform: device.platform ?? null,
+      lastSyncedAt: isoTime(device.lastSyncedAt),
     };
   }
 }

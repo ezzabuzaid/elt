@@ -6,9 +6,6 @@
       "path": "./packages/sdks/apple/accounts"
     },
     {
-      "path": "./packages/sdks/apple/plist"
-    },
-    {
       "path": "./packages/destinations/postgresql"
     },
     {
@@ -117,9 +114,6 @@
       "path": "./packages/sources/apple/activity"
     },
     {
-      "path": "./packages/sdks/apple/segb"
-    },
-    {
       "path": "./packages/connectors/apple/accounts"
     },
     {
@@ -163,6 +157,18 @@
     },
     {
       "path": "./apps/sql-server"
+    },
+    {
+      "path": "./packages/sdks/apple/knowledge"
+    },
+    {
+      "path": "./packages/sdks/apple/biome"
+    },
+    {
+      "path": "./packages/codecs/plist"
+    },
+    {
+      "path": "./packages/codecs/segb"
     }
   ]
 }

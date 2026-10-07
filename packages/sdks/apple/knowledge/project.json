@@ -1,0 +1,13 @@
+{
+  "name": "sdk-apple-knowledge",
+  "sourceRoot": "packages/sdks/apple/knowledge/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/apple/knowledge/dist/*.test.js\""
+    }
+  }
+}

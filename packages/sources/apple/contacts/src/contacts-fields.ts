@@ -1,3 +1,4 @@
+import { plistJSON } from '@workspace/codec-plist';
 import type { FieldSchema } from '@workspace/elt';
 import {
   type CalendarDate,
@@ -7,7 +8,6 @@ import {
   type ContactsValues,
   type ContactsView,
 } from '@workspace/sdk-apple-contacts';
-import { plistJSON } from '@workspace/sdk-apple-plist';
 import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 
 const { text, nullableText, nullableTimestamp } = eventKitFields;

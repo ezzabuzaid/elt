@@ -1,12 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-
-import { activityFields, flag, unixTime } from '../activity-values.ts';
 import {
+  AppMediaUsage,
+  type AppMediaUsageEvent,
+} from '@workspace/sdk-apple-biome';
+
+import { activityFields, isoTime } from '../activity-values.ts';
+import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const properties = {
   ...biomeAddress,
@@ -33,10 +36,12 @@ const properties = {
   },
 } as const;
 
-export class MediaUsageStream extends BiomeStream<typeof properties> {
+export class MediaUsageStream extends BiomeActivityStream<
+  typeof properties,
+  AppMediaUsageEvent
+> {
   readonly name = 'mediaUsage';
-  readonly biomeName = 'App.MediaUsage';
-  readonly retentionDays = 28;
+  readonly biome = new AppMediaUsage();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -46,16 +51,16 @@ export class MediaUsageStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: AppMediaUsageEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      usageId: payload.string(8),
-      started: flag(payload.uint(1)),
-      occurredAt: unixTime(payload.double(6)),
-      bundleId: payload.string(2),
-      usageTrusted: flag(payload.uint(5)),
+      usageId: event.usageId,
+      started: event.started ?? null,
+      occurredAt: isoTime(event.occurredAt),
+      bundleId: event.bundleId,
+      usageTrusted: event.usageTrusted ?? null,
     };
   }
 }

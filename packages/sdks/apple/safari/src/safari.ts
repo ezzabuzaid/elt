@@ -7,7 +7,7 @@ import {
   isDictionary,
   parseBinaryPlist,
   readPlist,
-} from '@workspace/sdk-apple-plist';
+} from '@workspace/codec-plist';
 
 import { Bookmarks } from './bookmarks.ts';
 import { CloudTabs } from './cloud-tabs.ts';

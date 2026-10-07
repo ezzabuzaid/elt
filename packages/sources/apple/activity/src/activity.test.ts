@@ -1053,7 +1053,7 @@ test('Activity names Full Disk Access for unreadable Biome folders, refuses an u
     assert.equal(failed.devices, undefined);
     assert.match(
       failed.appMenuItems ?? '',
-      /restricted cannot be read\. Allow the process that runs the export Full Disk Access/,
+      /restricted cannot be read\. Allow the process that reads it Full Disk Access/,
     );
     assert.match(
       failed.displayBacklight ?? '',
@@ -1065,6 +1065,174 @@ test('Activity names Full Disk Access for unreadable Biome folders, refuses an u
   } finally {
     await chmod(restricted, 0o755);
   }
+});
+
+test('Activity rounds payload and knowledgeC times to the millisecond, and truncates Biome’s write time', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  const location = await activityFixture(scratch.path);
+  const at = new Date('2026-10-01T09:00:00.000Z');
+  await writeSegment(scratch.path, 'App.InFocus', 'local', '810000000000000', [
+    {
+      at,
+      payload: protobuf([
+        [2, 'varint', 1],
+        [3, 'varint', 1],
+        [4, 'double', appleSeconds(at) + 0.0006],
+        [6, 'string', 'com.apple.Notes'],
+      ]),
+    },
+  ]);
+  const path = join(
+    location.biome,
+    'streams/restricted/App.InFocus/local/810000000000000',
+  );
+  const bytes = await readFile(path);
+  new DataView(bytes.buffer, bytes.byteOffset, bytes.length).setFloat64(
+    bytes.length - 16 + 8,
+    appleSeconds(at) + 0.0006,
+    true,
+  );
+  await writeFile(path, bytes);
+  {
+    using knowledge = new DatabaseSync(location.knowledge);
+    insertEvent(knowledge, {
+      id: 'BACKLIGHT-1',
+      stream: '/display/isBacklit',
+      start: at,
+      end: at,
+      value: { integer: 1 },
+    });
+    knowledge.exec(
+      'UPDATE ZOBJECT SET ZSTARTDATE = ZSTARTDATE + 0.0006, ZENDDATE = ZENDDATE + 0.0004',
+    );
+  }
+  const activity = await appleImport(
+    new AppleActivitySource(location),
+    join(scratch.path, 'import'),
+  );
+
+  await activity.load();
+
+  assert.deepEqual(
+    activity.read('SELECT "recordedAt", "occurredAt" FROM app_focus'),
+    [
+      {
+        recordedAt: at.toISOString(),
+        occurredAt: new Date(at.getTime() + 1).toISOString(),
+      },
+    ],
+  );
+  assert.deepEqual(
+    activity.read('SELECT "startedAt", "endedAt" FROM display_backlight'),
+    [
+      {
+        startedAt: new Date(at.getTime() + 1).toISOString(),
+        endedAt: at.toISOString(),
+      },
+    ],
+  );
+});
+
+test('Activity reads only segment files under local/ and remote/<device>/, not Biome’s tombstones or Finder’s files', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  const location = await activityFixture(scratch.path);
+  const record = (bundleId: string): Slot => ({
+    at: daysAgo(1),
+    payload: protobuf([[1, 'string', bundleId]]),
+  });
+  await writeSegment(scratch.path, 'App.MenuItem', 'local', '810000000000000', [
+    record('com.apple.Notes'),
+  ]);
+  await writeSegment(
+    scratch.path,
+    'App.MenuItem',
+    'PHONE-1',
+    '810000000000000',
+    [record('com.apple.MobileNotes')],
+  );
+  const stream = join(location.biome, 'streams/restricted/App.MenuItem');
+  await mkdir(join(stream, 'tombstone'));
+  await writeFile(
+    join(stream, 'tombstone/810000000000000'),
+    segb([record('com.apple.Tombstoned')]),
+  );
+  for (const finder of ['local', 'remote', 'remote/PHONE-1'])
+    await writeFile(join(stream, finder, '.DS_Store'), 'Bud1');
+  const activity = await appleImport(
+    new AppleActivitySource(location),
+    join(scratch.path, 'import'),
+  );
+
+  const loaded = await activity.load();
+
+  assert.deepEqual(loaded.appMenuItems, { count: 2, deleted: 0 });
+  assert.deepEqual(
+    activity.read(
+      'SELECT origin, "bundleId" FROM app_menu_items ORDER BY origin',
+    ),
+    [
+      { origin: 'PHONE-1', bundleId: 'com.apple.MobileNotes' },
+      { origin: 'local', bundleId: 'com.apple.Notes' },
+    ],
+  );
+});
+
+test('Activity keeps an interaction archive whose root is nil as JSON null, not as a missing interaction', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  const location = await activityFixture(scratch.path);
+  const archive = await binaryPlist(
+    scratch.path,
+    '<dict><key>$archiver</key><string>NSKeyedArchiver</string><key>$version</key><integer>100000</integer><key>$top</key><dict><key>root</key><dict><key>CF$UID</key><integer>0</integer></dict></dict><key>$objects</key><array><string>$null</string></array></dict>',
+  );
+  await writeSegment(scratch.path, 'App.Intent', 'local', '810000000000000', [
+    {
+      at: daysAgo(1),
+      payload: protobuf([
+        [1, 'double', appleSeconds(daysAgo(1))],
+        [2, 'string', 'net.whatsapp.WhatsApp'],
+        [3, 'string', 'intents'],
+        [4, 'string', 'INSendMessageIntent'],
+        [5, 'string', 'SendMessage'],
+        [6, 'varint', 1],
+        [7, 'varint', 4],
+        [8, 'bytes', archive],
+        [9, 'string', 'ITEM-1'],
+        [10, 'varint', 0],
+        [11, 'varint', 3],
+      ]),
+    },
+    {
+      at: daysAgo(1),
+      payload: protobuf([
+        [1, 'double', appleSeconds(daysAgo(1))],
+        [2, 'string', 'net.whatsapp.WhatsApp'],
+        [3, 'string', 'intents'],
+        [4, 'string', 'INSendMessageIntent'],
+        [5, 'string', 'SendMessage'],
+        [6, 'varint', 1],
+        [7, 'varint', 4],
+        [9, 'string', 'ITEM-2'],
+        [10, 'varint', 0],
+        [11, 'varint', 3],
+      ]),
+    },
+  ]);
+  const activity = await appleImport(
+    new AppleActivitySource(location),
+    join(scratch.path, 'import'),
+  );
+
+  await activity.load();
+
+  assert.deepEqual(
+    activity.read(
+      'SELECT "itemId", interaction FROM app_intents ORDER BY "itemId"',
+    ),
+    [
+      { itemId: 'ITEM-1', interaction: 'null' },
+      { itemId: 'ITEM-2', interaction: null },
+    ],
+  );
 });
 
 test('an Activity watch wakes only the streams whose segments or database changed', async () => {
@@ -1149,8 +1317,8 @@ test('Activity reads this Mac’s activity into SQLite', async (t) => {
   );
   if (
     outcome instanceof PipelineError &&
-    JSON.stringify(outcome, Object.getOwnPropertyNames(outcome)).includes(
-      'ActivityUnavailableError',
+    /(Biome|Knowledge)UnavailableError/.test(
+      JSON.stringify(outcome, Object.getOwnPropertyNames(outcome)),
     )
   )
     return t.skip('no Full Disk Access to Biome and knowledgeC');

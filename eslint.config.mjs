@@ -74,6 +74,12 @@ export default [
             // pipeline: no path from it may reach elt, so no source,
             // destination or connector either (Nx checks this transitively).
             { sourceTag: 'layer:sdk', notDependOnLibsWithTags: ['layer:elt'] },
+            // A codec speaks one format and knows no store, so it builds
+            // only on other formats.
+            {
+              sourceTag: 'layer:codec',
+              onlyDependOnLibsWithTags: ['layer:codec'],
+            },
           ],
         },
       ],

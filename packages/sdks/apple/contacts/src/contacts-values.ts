@@ -5,7 +5,7 @@ import {
   type PlistValue,
   decodeArchive,
   isBinaryPlist,
-} from '@workspace/sdk-apple-plist';
+} from '@workspace/codec-plist';
 
 import type { ContactsAttributeKind } from './contacts-tables.ts';
 

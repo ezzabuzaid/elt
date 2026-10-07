@@ -1,10 +1,10 @@
+import type { PlistValue } from '@workspace/codec-plist';
 import type { FieldSchema } from '@workspace/elt';
 import type {
   MailColumnKind,
   MailStoredValue,
   MailTable,
 } from '@workspace/sdk-apple-mail';
-import type { PlistValue } from '@workspace/sdk-apple-plist';
 
 // How each kind of index column loads: its field type, the suffix its field
 // name takes, and what a reader gets. Only confirmed Unix dates convert;

@@ -10,8 +10,8 @@
     }
   },
   "dependencies": {
+    "@workspace/codec-plist": "0.0.1",
     "@workspace/sdk-apple-app-database": "0.0.1",
-    "@workspace/sdk-apple-plist": "0.0.1",
     "@zone-eu/mailsplit": "5.4.19",
     "libmime": "5.4.6"
   },

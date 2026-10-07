@@ -1,9 +1,0 @@
-{
-  "name": "sdk-apple-segb",
-  "sourceRoot": "packages/sdks/apple/segb/src",
-  "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"],
-  "targets": {
-    "format": {}
-  }
-}

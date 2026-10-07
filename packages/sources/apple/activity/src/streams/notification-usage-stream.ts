@@ -1,12 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-
-import { activityFields, appleTime, integer } from '../activity-values.ts';
 import {
+  NotificationUsage,
+  type NotificationUsageEvent,
+} from '@workspace/sdk-apple-biome';
+
+import { activityFields, isoTime } from '../activity-values.ts';
+import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const properties = {
   ...biomeAddress,
@@ -30,10 +33,12 @@ const properties = {
   },
 } as const;
 
-export class NotificationUsageStream extends BiomeStream<typeof properties> {
+export class NotificationUsageStream extends BiomeActivityStream<
+  typeof properties,
+  NotificationUsageEvent
+> {
   readonly name = 'notificationUsage';
-  readonly biomeName = 'Notification.Usage';
-  readonly retentionDays = 28;
+  readonly biome = new NotificationUsage();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -43,15 +48,15 @@ export class NotificationUsageStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: NotificationUsageEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      notificationId: payload.string(5),
-      occurredAt: appleTime(payload.double(2)),
-      usageType: integer(payload.uint(3)),
-      bundleId: payload.string(4),
+      notificationId: event.notificationId,
+      occurredAt: isoTime(event.occurredAt),
+      usageType: event.usageType ?? null,
+      bundleId: event.bundleId,
     };
   }
 }

@@ -11,7 +11,7 @@
       "path": "../app-database"
     },
     {
-      "path": "../plist"
+      "path": "../../../codecs/plist"
     }
   ]
 }

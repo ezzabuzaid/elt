@@ -1,12 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-
-import { activityFields, flag, integer } from '../activity-values.ts';
 import {
+  UserFocusComputedMode,
+  type UserFocusComputedModeEvent,
+} from '@workspace/sdk-apple-biome';
+
+import { activityFields } from '../activity-values.ts';
+import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { text, integer: integerField } = activityFields;
 
@@ -40,10 +43,12 @@ const properties = {
   },
 } as const;
 
-export class FocusModesStream extends BiomeStream<typeof properties> {
+export class FocusModesStream extends BiomeActivityStream<
+  typeof properties,
+  UserFocusComputedModeEvent
+> {
   readonly name = 'focusModes';
-  readonly biomeName = 'UserFocus.ComputedMode';
-  readonly retentionDays = 28;
+  readonly biome = new UserFocusComputedMode();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -53,17 +58,17 @@ export class FocusModesStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: UserFocusComputedModeEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
     return {
       ...address,
-      modeId: payload.string(1),
-      semanticModeId: payload.string(6),
-      started: flag(payload.uint(2)),
-      semanticType: integer(payload.uint(4)),
-      updateReason: integer(payload.uint(3)),
-      updateSource: integer(payload.uint(5)),
+      modeId: event.modeId,
+      semanticModeId: event.semanticModeId,
+      started: event.started ?? null,
+      semanticType: event.semanticType ?? null,
+      updateReason: event.updateReason ?? null,
+      updateSource: event.updateSource ?? null,
     };
   }
 }

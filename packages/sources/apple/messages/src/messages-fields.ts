@@ -1,3 +1,4 @@
+import { plistJSON } from '@workspace/codec-plist';
 import type { FieldSchema } from '@workspace/elt';
 import {
   type ChatColumnKind,
@@ -6,7 +7,6 @@ import {
   type ChatValue,
   type ChatValues,
 } from '@workspace/sdk-apple-messages';
-import { plistJSON } from '@workspace/sdk-apple-plist';
 import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 
 const { text, id, nullableText, boolean, nullableTimestamp } = eventKitFields;

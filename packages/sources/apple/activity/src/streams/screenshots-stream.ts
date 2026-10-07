@@ -1,12 +1,15 @@
-import type { ProtobufMessage } from '@workspace/codec-protobuf';
 import type { RecordDraft } from '@workspace/elt';
-
-import { activityFields, integer } from '../activity-values.ts';
 import {
+  ScreenshotsScreenshot,
+  type ScreenshotsScreenshotEvent,
+} from '@workspace/sdk-apple-biome';
+
+import { activityFields } from '../activity-values.ts';
+import {
+  BiomeActivityStream,
   type BiomeAddress,
-  BiomeStream,
   biomeAddress,
-} from '../biome-stream.ts';
+} from '../biome-activity-stream.ts';
 
 const { integer: integerField } = activityFields;
 
@@ -31,10 +34,12 @@ const properties = {
   },
 } as const;
 
-export class ScreenshotsStream extends BiomeStream<typeof properties> {
+export class ScreenshotsStream extends BiomeActivityStream<
+  typeof properties,
+  ScreenshotsScreenshotEvent
+> {
   readonly name = 'screenshots';
-  readonly biomeName = 'Screenshots.Screenshot';
-  readonly retentionDays = 1;
+  readonly biome = new ScreenshotsScreenshot();
   readonly jsonSchema = {
     type: 'object',
     description:
@@ -44,16 +49,15 @@ export class ScreenshotsStream extends BiomeStream<typeof properties> {
   } as const;
 
   protected record(
-    payload: ProtobufMessage,
+    event: ScreenshotsScreenshotEvent,
     address: BiomeAddress,
   ): RecordDraft<typeof properties> {
-    const screenshot = payload.message(1);
     return {
       ...address,
-      path: screenshot?.message(4)?.string(1) ?? null,
-      screenshotSource: integer(screenshot?.uint(1)),
-      screenshotLocation: integer(screenshot?.uint(2)),
-      screenshotStyle: integer(screenshot?.uint(6)),
+      path: event.path ?? null,
+      screenshotSource: event.screenshotSource ?? null,
+      screenshotLocation: event.screenshotLocation ?? null,
+      screenshotStyle: event.screenshotStyle ?? null,
     };
   }
 }
