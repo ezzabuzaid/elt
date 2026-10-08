@@ -2986,12 +2986,64 @@ test('a checkpoint store keeps each acknowledged state, durable at once, and hol
     );
     await assert.rejects(
       store.run(bindings, async () => {}),
-      /database is locked/,
+      /Checkpoint copy is in use by another run/,
     );
   });
   await run([]);
 
   assert.deepEqual(received, [null, { page: 2 }, { page: 2 }, { page: 4 }]);
+});
+
+test('replications checkpoint in parallel, and one already running is refused', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-state-'));
+  const path = join(scratch.path, 'state.sqlite');
+  const store = new SQLiteCheckpointStore({ path });
+  // A second store on the same file stands in for another process.
+  const other = new SQLiteCheckpointStore({ path });
+  const { promise: bothStarted, resolve: release } =
+    Promise.withResolvers<void>();
+  let started = 0;
+  const waiting = (runner: SQLiteCheckpointStore, id: string) =>
+    runner.run(bound([[id, {}]]), async (checkpoints) => {
+      if (++started === 2) release();
+      await bothStarted;
+      await checkpoints.save(id, { done: true }, false);
+    });
+
+  // Both runs wait until the other has started, so both keys are held at once.
+  await Promise.all([waiting(store, 'a'), waiting(other, 'b')]);
+  const { promise: holding, resolve: held } = Promise.withResolvers<void>();
+  const { promise: hold, resolve: finish } = Promise.withResolvers<void>();
+  const running = store.run(bound([['b', {}]]), async () => {
+    held();
+    await hold;
+  });
+  await holding;
+  // A run of a and b fails on b and releases a, which a later run can take.
+  await assert.rejects(
+    other.run(
+      bound([
+        ['a', {}],
+        ['b', {}],
+      ]),
+      async () => {},
+    ),
+    /Checkpoint b is in use by another run/,
+  );
+  await other.run(bound([['a', {}]]), async () => {});
+  finish();
+  await running;
+
+  assert.deepEqual(
+    await store.run(
+      bound([
+        ['a', {}],
+        ['b', {}],
+      ]),
+      async (checkpoints) => [checkpoints.state('a'), checkpoints.state('b')],
+    ),
+    [{ done: true }, { done: true }],
+  );
 });
 
 test('one checkpoint run holds every copy of a run, each with its own state', async () => {

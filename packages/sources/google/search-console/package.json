@@ -21,6 +21,7 @@
     "@workspace/elt": "0.0.1",
     "@workspace/elt-postgresql": "0.0.1",
     "@workspace/google-auth": "0.0.1",
+    "@zukhruf/mutex": "^0.3.11",
     "fast-xml-parser": "^5.11.1",
     "postgres": "^3.4.9"
   }

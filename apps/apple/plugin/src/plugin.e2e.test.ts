@@ -248,6 +248,7 @@ type SelectedConnector = {
   connection_error: string | null;
   sync:
     | {
+        latest_attempt_id: number;
         status: string;
         error: string | null;
         last_successful_sync_at: string | null;
@@ -394,7 +395,7 @@ test(
         ...row,
         sync: read(
           row.database,
-          'SELECT status, error, last_successful_sync_at FROM sync_status',
+          'SELECT latest_attempt_id, status, error, last_successful_sync_at FROM sync_status',
         ).rows[0],
       }));
     // Waits for the leading server until the selected connectors reach the
@@ -638,6 +639,15 @@ test(
       assert.deepEqual(
         selected().map(({ connector }) => connector),
         ['messages'],
+      );
+      // The selection change imports again what no pass loaded: Messages
+      // fails once more.
+      await settled(
+        'retried Messages',
+        ([retried]) =>
+          retried?.sync?.latest_attempt_id !==
+            messages.sync?.latest_attempt_id &&
+          retried?.sync?.status === 'failed',
       );
       // A chat that never got the start-of-chat status gets it on its next prompt.
       assert.match(

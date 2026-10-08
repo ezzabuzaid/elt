@@ -1,3 +1,5 @@
+import { MemoryStore, Mutex } from '@zukhruf/mutex';
+
 import {
   Catalog,
   type CopyConfiguration,
@@ -152,7 +154,7 @@ export class SearchConsoleSource extends Source {
   // Inspection streams read at once take turns per property to plan and
   // inspect, so each sees what the one before it inspected and no URL is
   // inspected twice; different properties never wait on each other.
-  readonly #inspecting = new Map<string, Promise<unknown>>();
+  readonly #inspecting = new Mutex(new MemoryStore());
 
   constructor(options: SearchConsoleOptions) {
     super();
@@ -650,7 +652,7 @@ export class SearchConsoleSource extends Source {
   ): AsyncGenerator<SourceMessage> {
     const saved = readInspectionState(state);
     const universe = await this.#universe(siteUrl, stream.name);
-    const { plan, inspections } = await this.#inspectionTurn(
+    const { plan, inspections } = await this.#inspecting.acquire(
       siteUrl,
       async () => {
         const cached = this.#inspected.get(siteUrl) ?? new Map();
@@ -734,14 +736,6 @@ export class SearchConsoleSource extends Source {
         ),
       },
     };
-  }
-
-  // Runs work after the property's previous turn settles, whether it failed.
-  #inspectionTurn<T>(siteUrl: string, work: () => Promise<T>): Promise<T> {
-    const previous = this.#inspecting.get(siteUrl) ?? Promise.resolve();
-    const turn = previous.then(work);
-    this.#inspecting.set(siteUrl, Promise.allSettled([turn]));
-    return turn;
   }
 
   #inspectionRows(
