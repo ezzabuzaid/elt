@@ -4,19 +4,12 @@ import {
   type CopyOutcome,
   type CopyProgress,
   type DeclaredCopy,
-  Pipeline,
   type RecordedPass,
   type SyncStatus,
   passError,
   passStatus,
 } from '@workspace/elt';
-import {
-  type SQLiteDestination,
-  SQLiteSyncHistory,
-  type SQLiteTable,
-  installSQLiteCatalog,
-} from '@workspace/elt-sqlite';
-import type { ImportStore, Selection } from '@workspace/import-store';
+import { SQLiteSyncHistory, type SQLiteTable } from '@workspace/elt-sqlite';
 
 // How one pass of one connector ended, as sync reports it.
 export type PassSummary = {
@@ -43,7 +36,7 @@ export type PassObserver = {
 
 // Records every pass in each connector's data.sqlite, as any SQLite load
 // does, and shows the observer each pass while it runs and once it ends.
-class ObservedHistory extends SQLiteSyncHistory {
+export class ObservedHistory extends SQLiteSyncHistory {
   readonly #connectors: readonly AppleConnector[];
   readonly #observer: PassObserver;
 
@@ -102,7 +95,7 @@ function summarize(
   };
 }
 
-function failed(
+export function failed(
   connector: AppleConnector,
   error: unknown,
   seconds: number,
@@ -118,45 +111,3 @@ function failed(
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
-
-// One pass of each connector's selected import. The caller holds the store's
-// lease throughout.
-export async function syncImports(
-  store: ImportStore,
-  imports: readonly { connector: AppleConnector; selection: Selection }[],
-  observer: PassObserver,
-): Promise<void> {
-  const connections: Connection<SQLiteTable>[] = [];
-  const destinations: SQLiteDestination[] = [];
-  for (const { connector, selection } of imports) {
-    try {
-      const { connection, destination } = await connector.connection(
-        store.directory(selection),
-        selection,
-      );
-      store.clearConnectionFailure(selection);
-      connections.push(connection);
-      destinations.push(destination);
-    } catch (error) {
-      // No pipeline exists to record it, so the store keeps it for status.
-      store.saveConnectionFailure(selection, message(error));
-      observer.passed(connector, failed(connector, error, 0));
-    }
-  }
-  if (connections.length === 0) return;
-  const history = new ObservedHistory(
-    imports.map(({ connector }) => connector),
-    observer,
-  );
-  await history.install(destinations);
-  for (const { path } of destinations) installSQLiteCatalog({ path });
-  const pipeline = new Pipeline({ connections, history });
-  // Failures reach the observer through the history; the rest is a wiring
-  // mistake and propagates.
-  await pipeline.run().catch(rethrowUnrecorded);
-}
-
-function rethrowUnrecorded(error: unknown): void {
-  if (error instanceof AggregateError) return;
-  throw error;
-}

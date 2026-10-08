@@ -4,7 +4,7 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-import type { Selection } from '@workspace/import-store';
+import type { Selection } from '@workspace/settings';
 
 import { type ApplePlugin, connectorSchema } from './apple-plugin.ts';
 import {
@@ -24,12 +24,12 @@ export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 // saved; the server then imports them in the background.
 export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   const previous = new Map(
-    plugin
-      .status()
-      .connectors.map(({ connector, scope, includeAttachments }) => [
+    (await plugin.status()).connectors.map(
+      ({ connector, scope, includeAttachments }) => [
         connector,
         { connector, scope, includeAttachments },
-      ]),
+      ],
+    ),
   );
   const picked = await ask({
     mode: 'form',
@@ -55,7 +55,8 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       required: ['connectors'],
     },
   });
-  if (picked.action !== 'accept') return { changed: false, ...plugin.status() };
+  if (picked.action !== 'accept')
+    return { changed: false, ...(await plugin.status()) };
   const chosen = z.array(connectorSchema).parse(picked.content?.connectors);
   const behindFullDiskAccess = chosen.filter(
     (name) => plugin.connector(name).fullDiskAccess,
@@ -97,7 +98,7 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       if (kept !== undefined) configuration.push(kept);
     }
   }
-  const saved = plugin.configure({ connectors: configuration });
+  const saved = await plugin.configure({ connectors: configuration });
   if (blocked.length === 0) return { changed: true, unavailable, ...saved };
   return {
     changed: true,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, renameSync } from 'node:fs';
 import {
   mkdir,
   mkdtempDisposable,
@@ -15,6 +15,8 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify, stripVTControlCharacters } from 'node:util';
 import { deflateSync, gzipSync } from 'node:zlib';
+
+import { SQLitePasses } from '@workspace/elt-sqlite';
 
 // NoteStore.sqlite's tables as macOS 26.6.2 creates them (schema only, no
 // data), in WAL mode like the real store.
@@ -1130,29 +1132,23 @@ test('a connector whose app macOS will not open fails alone, named with the acce
   );
 });
 
-test('a second sync is refused while another holds the store, and nothing it imported is touched', async () => {
+test('a sync skips and reports an import another sync is importing, and nothing it imported is touched', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
   cli(mac.path, 'setup', '--connector', 'notes');
   cli(mac.path, 'sync');
-  // Stands in for a running sync, which holds this lock for its whole run.
-  mkdirSync(join(mac.path, 'outputs/cli'), { recursive: true });
-  using held = new DatabaseSync(join(mac.path, 'outputs/cli/lease.sqlite'));
-  held.exec('BEGIN EXCLUSIVE');
+  const [{ database }] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
 
-  const second = cli(mac.path, 'sync');
-  const rescoped = cli(
-    mac.path,
-    'setup',
-    '--connector',
-    'notes',
-    '--collection',
-    'FOLDER-NOTES',
+  // Stands in for another sync, which runs the import's pass.
+  const second = await new SQLitePasses(database).run(async () =>
+    cli(mac.path, 'sync'),
   );
 
-  assert.equal(second.status, 1);
-  assert.match(second.stderr, /Another sync is using this store/);
-  assert.equal(rescoped.status, 1);
+  assert.ok(second.acquired);
+  assert.equal(second.value.status, 1);
+  assert.deepEqual(lines(second.value.stdout), [
+    { connector: 'notes', status: 'busy' },
+  ]);
   const notes = cli(
     mac.path,
     'query',
@@ -1210,26 +1206,52 @@ test('status reports a pass a killed sync left running, and each stream in it, a
   );
 });
 
-test('a sync that starts while status checks the store waits for the check, then loads', async () => {
+test('a setup that removes a connector stops the sync importing it, whose import is then gone, while the rest loads', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
-  cli(mac.path, 'setup', '--connector', 'notes');
-  // Stands in for a status check, which takes the store's lease for a moment
-  // to learn whether a sync holds it.
-  mkdirSync(join(mac.path, 'outputs/cli'), { recursive: true });
-  const check = new DatabaseSync(join(mac.path, 'outputs/cli/lease.sqlite'));
-  check.exec('BEGIN EXCLUSIVE');
-
+  await withConnectors(mac.path);
+  // A pipe the test writes only after the removal: the Photos read waits on
+  // it, so its pass is running when another setup removes Photos.
+  const pictures = join(mac.path, 'Pictures/photos.json');
+  await rm(pictures);
+  spawnSync('/usr/bin/mkfifo', [pictures]);
+  cli(mac.path, 'setup', '--connector', 'notes', '--connector', 'photos');
   const sync = started(mac.path, 'sync', '--json');
   try {
-    await Promise.race([sync.exited, sleep(3_000)]);
-  } finally {
-    check.close();
-  }
-  const synced = await sync.exited;
+    let imported: string | undefined;
+    const deadline = Date.now() + 60_000;
+    while (imported === undefined) {
+      const photos = JSON.parse(cli(mac.path, 'status', '--json').stdout).find(
+        ({ connector }: { connector: string }) => connector === 'photos',
+      );
+      if (photos?.state === 'running') imported = photos.database;
+      else if (Date.now() > deadline)
+        assert.fail('the Photos pass did not start within a minute');
+      else await sleep(100);
+    }
 
-  assert.equal(synced.status, 0, synced.stderr);
-  assert.equal(lines(synced.stdout)[0].status, 'succeeded');
+    const removed = cli(mac.path, 'setup', '--connector', 'notes');
+    // Longer than the sync takes to hear of the removal; then the Photos read
+    // gets its next message.
+    await sleep(3_000);
+    await writeFile(pictures, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+    const synced = await sync.exited;
+
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.equal(synced.status, 0, synced.stderr);
+    assert.deepEqual(
+      lines(synced.stdout).map(({ connector, status }) => [connector, status]),
+      [
+        ['notes', 'succeeded'],
+        ['photos', 'removed'],
+      ],
+    );
+    assert.equal(existsSync(dirname(String(imported))), false);
+  } finally {
+    // A sync still waiting on the pipe exits only when killed.
+    sync.child.kill('SIGKILL');
+    await sync.exited;
+  }
 });
 
 test("status waits out a write to the store's settings instead of printing nothing", async () => {

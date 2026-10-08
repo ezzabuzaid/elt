@@ -13,14 +13,13 @@ import type {
   Connectors,
 } from '@workspace/connector-apple-manifest/connectors';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
+import { type PassStatus, SQLitePasses } from '@workspace/elt-sqlite';
 import {
   type ConnectorFacts,
-  ImportStore,
   NewerLayoutError,
-  type Pass,
   type Selection,
-  leaseHeld,
-} from '@workspace/import-store';
+  Settings,
+} from '@workspace/settings';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 const ids = z.array(z.string().min(1).max(1024)).max(1000);
@@ -34,7 +33,7 @@ export const connectorSchema = z
     'A connector the user chose, by the name the Apple status or apple_options uses.',
   );
 
-// The shape of a selection as tools receive it; ImportStore.select checks it
+// The shape of a selection as tools receive it; Settings.select checks it
 // against what each connector can be narrowed by.
 export const configurationSchema = z.strictObject({
   connectors: z
@@ -88,14 +87,6 @@ export class PluginUpdatedError extends Error {
     );
   }
 }
-
-// An import's latest pass, as its status reports it. interrupted: running
-// while no server holds the import's lock to finish it.
-export type ImportSync =
-  | Pass
-  | (Omit<Extract<Pass, { state: 'running' }>, 'state'> & {
-      state: 'interrupted';
-    });
 
 // Setup and status for the Codex plugin. importPending writes each
 // connector's data.sqlite; agents read those files directly.
@@ -165,11 +156,11 @@ export class ApplePlugin {
   // The store, refused once another plugin version replaced this one: Codex
   // deleted this version's folder, or that version rewrote the settings in a
   // layout this code predates.
-  #open(): ImportStore {
+  #open(): Settings {
     if (!existsSync(join(this.install, '.codex-plugin/plugin.json')))
       throw new PluginUpdatedError();
     try {
-      return new ImportStore(this.directory);
+      return new Settings(this.directory);
     } catch (error) {
       if (error instanceof NewerLayoutError)
         throw new PluginUpdatedError({ cause: error });
@@ -187,33 +178,33 @@ export class ApplePlugin {
     }
   }
 
-  status() {
-    using store = this.#open();
+  async status() {
+    using settings = this.#open();
     return {
-      connectors: store.selections().map((item) => {
-        const database = store.database(item);
-        const pass = store.latestPass(item);
-        const failure = store.connectionFailure(item);
-        const sync: ImportSync | null =
-          failure !== undefined
-            ? {
-                state: 'failed',
-                startedAt: failure.failedAt,
-                completedAt: failure.failedAt,
-                lastSucceededAt: pass?.lastSucceededAt ?? null,
-                error: failure.error,
-              }
-            : pass?.state === 'running' && !leaseHeld(store.directory(item))
-              ? { ...pass, state: 'interrupted' }
-              : pass;
-        return {
-          ...item,
-          title: this.#loaded(item.connector)?.title ?? item.connector,
-          database: existsSync(database) ? database : null,
-          sync,
-          permissions: this.#permissions(item.connector),
-        };
-      }),
+      connectors: await Promise.all(
+        settings.selections().map(async (item) => {
+          const database = settings.database(item);
+          const { pass } = await new SQLitePasses(database).status();
+          const failure = settings.connectionFailure(item);
+          const sync: PassStatus | null =
+            failure === undefined
+              ? pass
+              : {
+                  state: 'failed',
+                  startedAt: failure.failedAt,
+                  completedAt: failure.failedAt,
+                  lastSucceededAt: pass?.lastSucceededAt ?? null,
+                  error: failure.error,
+                };
+          return {
+            ...item,
+            title: this.#loaded(item.connector)?.title ?? item.connector,
+            database: existsSync(database) ? database : null,
+            sync,
+            permissions: this.#permissions(item.connector),
+          };
+        }),
+      ),
     };
   }
 
@@ -221,11 +212,11 @@ export class ApplePlugin {
   // previous one is removed, so nothing reads an import that is not selected.
   // A selected connector that is not loaded keeps only the selection it has,
   // so a connector broken while it is edited loses nothing.
-  configure(requested: { readonly connectors: readonly Selection[] }) {
+  async configure(requested: { readonly connectors: readonly Selection[] }) {
     {
-      using store = this.#open();
-      const stored = store.selections();
-      store.select(
+      using settings = this.#open();
+      const stored = settings.selections();
+      await settings.select(
         requested.connectors.map((item) => {
           const connector = this.#loaded(item.connector);
           return connector === undefined

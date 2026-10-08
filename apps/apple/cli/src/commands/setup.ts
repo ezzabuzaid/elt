@@ -19,7 +19,7 @@ import type {
   AppleConnector,
   ChoiceOptions,
 } from '@workspace/connector-apple-connector/apple-connector';
-import { selectionProblems } from '@workspace/import-store';
+import { selectionProblems } from '@workspace/settings';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import type { Selection } from '../imports.ts';
@@ -140,7 +140,7 @@ export class SetupCommand extends Command {
         includeAttachments,
       }),
     );
-    this.imports.select(selections);
+    await this.imports.select(selections);
     // A sync reports itself.
     if (sync) {
       await this.imports.sync(undefined, new SyncReport(interactive));
@@ -233,7 +233,7 @@ export class SetupCommand extends Command {
       if (scope === null) return cancelled();
       selections.push({ connector: connector.name, scope, includeAttachments });
     }
-    this.imports.select(selections);
+    await this.imports.select(selections);
 
     const sync = await confirm({ message: 'Sync now?' });
     outro(

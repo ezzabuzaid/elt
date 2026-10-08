@@ -11,7 +11,7 @@
       "path": "../../../sources/apple/macos"
     },
     {
-      "path": "../../../import-store"
+      "path": "../../../settings"
     },
     {
       "path": "../../../google-auth"

@@ -1,13 +1,15 @@
 import { relative } from 'node:path';
 
-import type { ApplePlugin, ImportSync } from './apple-plugin.ts';
+import type { PassStatus } from '@workspace/elt-sqlite';
+
+import type { ApplePlugin } from './apple-plugin.ts';
 
 // What a chat's hooks add to the model's context: each selected connector,
 // where its import lives, how its last pass went and the presets a reader can
 // load. A chat keeps it until it changes, so times are instants, not "minutes
 // ago".
 
-const progress = (sync: ImportSync | null, guidance: string): string => {
+const progress = (sync: PassStatus | null, guidance: string): string => {
   if (sync === null) return 'waiting for its first import';
   const since =
     sync.lastSucceededAt === null
@@ -20,6 +22,8 @@ const progress = (sync: ImportSync | null, guidance: string): string => {
       return `importing since ${sync.startedAt}; ${since}`;
     case 'interrupted':
       return `its last pass stopped unfinished and resumes when Codex runs the Apple plugin; ${since}`;
+    case 'cancelled':
+      return `its last pass was stopped and resumes when Codex runs the Apple plugin; ${since}`;
     case 'partial':
       return `partly synced at ${sync.completedAt}: ${sync.error} ${guidance}`;
     case 'failed':
@@ -30,7 +34,7 @@ const progress = (sync: ImportSync | null, guidance: string): string => {
 // What a reader can do with a connector: wait for its first import, read it, or
 // not reach it. A pass starting or finishing over data already there changes
 // nothing a reader does.
-const readiness = (sync: ImportSync | null) => {
+const readiness = (sync: PassStatus | null) => {
   if (sync === null) return 'importing';
   if (sync.state === 'failed' || sync.state === 'partial')
     return [sync.state, sync.error];
@@ -40,11 +44,11 @@ const readiness = (sync: ImportSync | null) => {
 
 // state changes only when the selection, an import's file, what a reader
 // can do with it, its presets, or the connectors that could not load change.
-export function chatStatus(plugin: ApplePlugin): {
+export async function chatStatus(plugin: ApplePlugin): Promise<{
   state: string;
   text: string;
-} {
-  const selected = plugin.status().connectors;
+}> {
+  const selected = (await plugin.status()).connectors;
   const broken = plugin.broken.map(
     ({ title, error }) => `- ${title} could not be loaded: ${error}`,
   );
@@ -98,8 +102,10 @@ export function chatStatus(plugin: ApplePlugin): {
 // last sent.
 export function chatContext(plugin: ApplePlugin) {
   let sent: string | undefined;
-  return (event: 'SessionStart' | 'UserPromptSubmit'): string | null => {
-    const status = chatStatus(plugin);
+  return async (
+    event: 'SessionStart' | 'UserPromptSubmit',
+  ): Promise<string | null> => {
+    const status = await chatStatus(plugin);
     if (event === 'UserPromptSubmit' && status.state === sent) return null;
     sent = status.state;
     return status.text;

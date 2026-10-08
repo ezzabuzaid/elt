@@ -11,8 +11,8 @@ import { json } from './table.ts';
 const count = new Intl.NumberFormat('en');
 
 // Shows a sync as it runs: one spinner naming every stream still reading with
-// what it has read so far and a line per connector as each pass ends. Without a
-// terminal, one JSON line per pass.
+// what it has read so far and a line per connector as each pass ends or is
+// skipped. Without a terminal, one JSON line per pass or skipped import.
 export class SyncReport implements SyncObserver {
   readonly interactive: boolean;
   readonly #reading = new Map<string, string>();
@@ -46,6 +46,8 @@ export class SyncReport implements SyncObserver {
   }
 
   passed({ title }: AppleConnector, summary: PassSummary): void {
+    // A cancelled pass is a removed connector; skipped reports it.
+    if (summary.status === 'cancelled') return;
     if (summary.status !== 'succeeded') this.#incomplete = true;
     if (!this.interactive) {
       process.stdout.write(`${json(summary, 0)}\n`);
@@ -60,6 +62,23 @@ export class SyncReport implements SyncObserver {
     const line = `${title.padEnd(10)} ${written === 0 ? 'no changes' : `${count.format(written)} rows`} · ${summary.streams.length} streams · ${summary.seconds}s`;
     if (summary.status === 'succeeded') log.success(line);
     else log.warn(`${title.padEnd(10)} ${summary.status} · ${summary.error}`);
+    if (this.#reading.size > 0) this.#spin();
+  }
+
+  skipped({ name, title }: AppleConnector, why: 'busy' | 'removed'): void {
+    if (why === 'busy') this.#incomplete = true;
+    if (!this.interactive) {
+      process.stdout.write(`${json({ connector: name, status: why }, 0)}\n`);
+      return;
+    }
+    this.#spinner?.clear();
+    this.#spinner = undefined;
+    if (why === 'busy')
+      log.warn(`${title.padEnd(10)} skipped · another sync is importing it`);
+    else
+      log.info(
+        `${title.padEnd(10)} stopped · removed from the selection by another setup`,
+      );
     if (this.#reading.size > 0) this.#spin();
   }
 

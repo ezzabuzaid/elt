@@ -18,9 +18,6 @@
       "path": "./packages/google-auth"
     },
     {
-      "path": "./packages/import-store"
-    },
-    {
       "path": "./packages/settings"
     },
     {

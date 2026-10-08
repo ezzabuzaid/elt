@@ -127,7 +127,7 @@ mcpServer.registerTool(
   },
   async (input) => {
     await plugin.refresh();
-    const saved = plugin.configure(input);
+    const saved = await plugin.configure(input);
     void importPending(plugin);
     return structured(saved);
   },
@@ -172,7 +172,7 @@ mcpServer.registerTool(
   },
   async () => {
     await plugin.refresh();
-    return { content: [], structuredContent: settingsRead(plugin) };
+    return { content: [], structuredContent: await settingsRead(plugin) };
   },
 );
 mcpServer.registerTool(
@@ -196,7 +196,7 @@ mcpServer.registerTool(
     if (Object.keys(set).length === 0)
       throw new Error('Set at least one connector.');
     await plugin.refresh();
-    const saved = settingsUpdate(plugin, set);
+    const saved = await settingsUpdate(plugin, set);
     void importPending(plugin);
     return { content: [], structuredContent: saved };
   },
@@ -228,7 +228,7 @@ mcpServer.registerTool(
         content: [{ type: 'text', text: new PluginUpdatedError().message }],
       };
     await plugin.refresh();
-    const text = contextFor(event);
+    const text = await contextFor(event);
     return { content: text === null ? [] : [{ type: 'text', text }] };
   },
 );
