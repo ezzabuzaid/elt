@@ -17,6 +17,7 @@ import {
   PipelineError,
   Source,
   Stream,
+  StreamChangeError,
   StreamStatus,
   SyncHistory,
   Target,
@@ -35,7 +36,7 @@ import {
   reloadMode,
   syncHistoryRelations,
   validateRecords
-} from "../chunks/chunk-6A6J3LDP.mjs";
+} from "../chunks/chunk-AHY2RO53.mjs";
 import "../chunks/chunk-ZGXE7NZW.mjs";
 export {
   Catalog,
@@ -55,6 +56,7 @@ export {
   PipelineError,
   Source,
   Stream,
+  StreamChangeError,
   StreamStatus,
   SyncHistory,
   Target,

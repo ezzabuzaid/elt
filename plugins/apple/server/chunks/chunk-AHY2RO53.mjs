@@ -1026,7 +1026,6 @@ var Replicated = class {
   broken = false;
   started = false;
   ended = false;
-  restart = false;
   // The copy's last run left a reload open.
   reloading = false;
   // The run's signal stopped the copy before it ended.
@@ -1125,7 +1124,6 @@ async function transfer(source, destination, run, replications, signal) {
         const { run: run2, id } = checkpoint(replication);
         states.set(replication.stream.name, run2.state(id));
         replication.saved = run2.state(id);
-        replication.restart = run2.restart(id);
         replication.reloading = run2.reloading(id);
         reading.push(replication);
       } catch (error) {
@@ -1141,7 +1139,6 @@ async function transfer(source, destination, run, replications, signal) {
       try {
         replication.stage = await load.prepare(replication.copy.configuration, replication.copy.to, {
           writer: replication.copy.writer(source),
-          restart: replication.restart,
           reloading: replication.reloading
         });
         if (replication.stage.fresh) {
@@ -1617,14 +1614,38 @@ var readerCatalog = Object.freeze({
 });
 
 // packages/elt/dist/core/reload-mode.js
-function reloadMode({ reloading, restart, target, hidden }) {
+function reloadMode({ reloading, destinationSyncMode, target, hidden }) {
   if (reloading)
     return hidden === "fits" ? "continue" : "reload";
   if (target === "missing")
     return "create";
-  if (restart || target === "stale")
-    return "reload";
+  if (target === "stale") {
+    const overwrites = destinationSyncMode === "overwrite" || destinationSyncMode === "overwrite_dedup";
+    return overwrites ? "reload" : "evolve";
+  }
   return "load";
+}
+
+// packages/elt/dist/core/stream-change.js
+import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
+var declarations = [
+  "name",
+  "primaryKey",
+  "partitionKey",
+  "supportedSyncModes",
+  "supportsFileTransfer",
+  "sourceDefinedCursor",
+  "emitsDeletes",
+  "expiresBy"
+];
+var StreamChangeError = class extends TypeError {
+  name = "StreamChangeError";
+  constructor(id, changed) {
+    super(`Stream of copy ${id} changed its ${changed.join(", ")}; reset the copy to keep its rows, or clear it to drop them`);
+  }
+};
+function changedDeclarations(saved, current) {
+  return declarations.filter((declaration) => !isDeepStrictEqual3(Reflect.get(Object(saved), declaration), Reflect.get(Object(current), declaration)));
 }
 
 // packages/elt/dist/core/record-validation.js
@@ -1687,7 +1708,7 @@ function assertRecord(record, fields, stream, source) {
 
 // packages/elt/dist/core/snapshot.js
 import { createHash as createHash2 } from "node:crypto";
-import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
+import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
 async function* diffSnapshot(stream, records, state, horizon) {
   assertSnapshotStream(stream);
   const kept = keptRows(stream, horizon);
@@ -1816,7 +1837,7 @@ function keyObject(stream, key) {
 }
 function fingerprintOf(stream, record) {
   const serialized = JSON.parse(JSON.stringify(record));
-  if (!isDeepStrictEqual3(serialized, record))
+  if (!isDeepStrictEqual4(serialized, record))
     throw new TypeError(`Stream ${stream.name} records must be losslessly JSON serializable to diff snapshots`);
   return createHash2("sha256").update(canonical(serialized)).digest("base64url");
 }
@@ -1893,7 +1914,7 @@ function describeTarget(configuration, columns, storedFile) {
 }
 
 // packages/elt/dist/state/checkpoint-store.js
-import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
+import { isDeepStrictEqual as isDeepStrictEqual5 } from "node:util";
 var CheckpointStore = class {
   // Holds every replication's lock for the whole run.
   async run(bindings, work) {
@@ -1905,27 +1926,31 @@ var CheckpointStore = class {
         const saved = await session.read(id);
         const [savedCopy, savedShape] = saved === void 0 ? [] : JSON.parse(saved.binding);
         const [currentCopy, currentShape] = JSON.parse(binding);
-        const changed = saved !== void 0 && !isDeepStrictEqual4(savedCopy, currentCopy);
-        const restart = saved !== void 0 && !changed && !isDeepStrictEqual4(savedShape, currentShape);
+        let refused;
+        if (saved !== void 0) {
+          const declarations2 = changedDeclarations(savedShape, currentShape);
+          if (!isDeepStrictEqual5(savedCopy, currentCopy))
+            refused = new TypeError(`Checkpoint binding changed for ${id}; reset it or use a new copy ID`);
+          else if (declarations2.length > 0)
+            refused = new StreamChangeError(id, declarations2);
+        }
         checkpoints.set(id, {
           binding,
-          saved: saved === void 0 || changed || restart ? { state: null, reloading: false } : JSON.parse(saved.state),
-          changed,
-          restart
+          saved: saved === void 0 || refused !== void 0 ? { state: null, reloading: false } : JSON.parse(saved.state),
+          refused
         });
       }
       const checkpoint = (id) => {
         const found = checkpoints.get(id);
         if (found === void 0)
           throw new TypeError(`Checkpoint ${id} is not part of this run`);
-        if (found.changed)
-          throw new TypeError(`Checkpoint binding changed for ${id}; reset it or use a new copy ID`);
+        if (found.refused !== void 0)
+          throw found.refused;
         return found;
       };
       return work({
         // A source may mutate its input state, but only an acknowledged message may advance it.
         state: (id) => structuredClone(checkpoint(id).saved.state),
-        restart: (id) => checkpoint(id).restart,
         reloading: (id) => checkpoint(id).saved.reloading,
         save: async (id, state, reloading) => {
           const { binding } = checkpoint(id);
@@ -1940,7 +1965,8 @@ var CheckpointStore = class {
     });
   }
   // Forgets progress but keeps the loaded rows: the next run reloads
-  // everything, as Airbyte's refresh that keeps records.
+  // everything, as Airbyte's refresh that keeps records. It also accepts a
+  // stream whose declarations changed, keeping its rows under them.
   async reset(id) {
     await this.session([id], (session) => session.remove(id));
   }
@@ -2203,6 +2229,7 @@ export {
   Pipeline,
   readerCatalog,
   reloadMode,
+  StreamChangeError,
   validateRecords,
   diffSnapshot,
   diffGroupedSnapshot,

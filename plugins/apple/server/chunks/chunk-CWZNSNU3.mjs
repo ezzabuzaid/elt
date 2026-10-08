@@ -26,7 +26,7 @@ import {
   readerCatalog,
   reloadMode,
   syncHistoryRelations
-} from "./chunk-6A6J3LDP.mjs";
+} from "./chunk-AHY2RO53.mjs";
 import {
   __callDispose,
   __using
@@ -1185,7 +1185,6 @@ var SQLiteColumn = class _SQLiteColumn {
   kind;
   // The string format a schema-inferred column keeps, which refines its kind.
   format;
-  required;
   isPrimaryKey;
   nullable;
   optional;
@@ -1213,7 +1212,6 @@ var SQLiteColumn = class _SQLiteColumn {
     this.isPrimaryKey = options.primaryKey;
     this.nullable = !options.primaryKey && options.nullable;
     this.optional = !options.primaryKey && options.optional;
-    this.required = !this.nullable && !this.optional;
     Object.freeze(this);
   }
   primaryKey() {
@@ -1310,7 +1308,7 @@ var SQLiteColumn = class _SQLiteColumn {
   }
   get definition() {
     const check = this.array ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')` : canonical(this.kind, this.quotedName, this.format);
-    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? " PRIMARY KEY" : ""}${this.required ? " NOT NULL" : ""}${check}`;
+    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? " PRIMARY KEY NOT NULL" : ""}${check}`;
   }
   encode(record) {
     if (record === null || typeof record !== "object" || Array.isArray(record))
@@ -1738,10 +1736,15 @@ var SQLiteWriter = class extends Writer {
     return `CREATE VIEW ${quote3(view)} AS SELECT ${this.fields.join(", ")} FROM ${this.table.quotedName}`;
   }
   // Refuses, before anything is read, a view of other columns or another
-  // table, rather than adopting it.
-  #refuseReaderView(database, view) {
+  // table, rather than adopting it. A stale table's view still selects the
+  // stored columns, which evolving the table replaces.
+  #refuseReaderView(database, view, stale) {
     const existing = database.prepare('SELECT "type", "sql" FROM sqlite_schema WHERE lower("name") = lower(?)').get(view);
-    if (existing !== void 0 && (existing.type !== "view" || existing.sql !== this.#viewDefinition(view)))
+    if (existing === void 0)
+      return;
+    const sql = String(existing.sql);
+    const ours = stale ? sql.startsWith(`CREATE VIEW ${quote3(view)} AS SELECT `) && sql.endsWith(` FROM ${this.table.quotedName}`) : sql === this.#viewDefinition(view);
+    if (existing.type !== "view" || !ours)
       throw new TypeError(`${quote3(view)} is not a view of exactly ${this.table.quotedName}; drop it or delete the database`);
   }
   // Created only when absent and never replaced by a commit: replacing a view
@@ -1790,13 +1793,41 @@ var SQLiteWriter = class extends Writer {
       return "missing";
     return stored === `CREATE TABLE ${this.table.definition(quote3(name))}` ? "fits" : "stale";
   }
+  // Brings a stored table the stream no longer fits to its shape, keeping
+  // every row: SQLite cannot change a column's type or constraints in place,
+  // so the rows move into a table of the new definition, column by name, a
+  // column the stream added reading NULL and one it dropped left behind. A
+  // value the new definition refuses fails the load, naming the column, and
+  // the transaction leaves the table as it was.
+  #evolve(database, into) {
+    const stored = new Map(database.prepare('SELECT "name" FROM pragma_table_info(?)').all(this.table.name).map(({ name }) => [
+      identifiers.key(String(name)),
+      quote3(String(name))
+    ]));
+    const sources = [...this.table.columns.map(({ name }) => name), "loaded_at"].map((name) => stored.get(identifiers.key(name)) ?? "NULL").join(", ");
+    if (this.table.readerView !== void 0)
+      database.exec(`DROP VIEW IF EXISTS ${quote3(this.table.readerView)}`);
+    database.exec(`CREATE TABLE ${this.table.definition(into)}`);
+    try {
+      database.exec(`INSERT INTO ${into} (${this.fields.join(", ")}) SELECT ${sources} FROM ${this.table.quotedName}`);
+    } catch (cause) {
+      throw new TypeError(`The rows stored in ${this.table.quotedName} do not fit the new shape of stream ${this.stream.name}: ${cause instanceof Error ? cause.message : String(cause)}. Clear the copy to load it again, or change the stream so they fit.`, { cause });
+    }
+    database.exec(`DROP TABLE ${this.table.quotedName}`);
+    database.exec(`ALTER TABLE ${into} RENAME TO ${this.table.quotedName}`);
+    this.initialize(database, false);
+    if (this.table.readerView !== void 0)
+      this.installReaderView(database, this.table.readerView);
+    this.describe(database);
+  }
   // Refuses, in one short transaction, a target another writer owns, a
-  // reader view not its own and stored rows it cannot keep, and stages in
-  // TEMP. Nothing reaches the database until a commit. A load into the target
-  // creates it, or adopts the stored one, at its first commit; a reload
+  // reader view not its own and stored rows it cannot keep, evolves a stored
+  // table the stream no longer fits unless the load overwrites it, and stages
+  // in TEMP. Nothing else reaches the database until a commit. A load into the
+  // target creates it, or adopts the stored one, at its first commit; a reload
   // leaves it to readers as it is, merges into a hidden target from its first
   // commit, and swaps that in at complete().
-  prepare(database, { writer, restart, reloading }, loadedAt) {
+  prepare(database, { writer, reloading }, loadedAt) {
     const name = quote3(`_elt_stage_${this.hash}`);
     const stage = `temp.${name}`;
     const hidden = quote3(this.#hiddenName);
@@ -1820,14 +1851,18 @@ var SQLiteWriter = class extends Writer {
       const target = this.#fit(database, this.table.name);
       mode = reloadMode({
         reloading,
-        restart,
+        destinationSyncMode: this.configuration.destinationSyncMode,
         target,
         hidden: this.#fit(database, this.#hiddenName)
       });
       if (mode !== "continue")
         database.exec(`DROP TABLE IF EXISTS ${hidden}`);
       if (!open3() && this.table.readerView !== void 0)
-        this.#refuseReaderView(database, this.table.readerView);
+        this.#refuseReaderView(database, this.table.readerView, target === "stale");
+      if (mode === "evolve") {
+        this.#evolve(database, hidden);
+        mode = "load";
+      }
       if (mode === "load" && !this.replaces)
         this.inspect(database);
       database.exec(`DROP TABLE IF EXISTS ${stage}`);

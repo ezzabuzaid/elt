@@ -3,6 +3,7 @@ import {
   $ZodObject,
   $ZodType,
   $constructor,
+  ProactiveStore,
   ZodOptional,
   _enum,
   _null,
@@ -33,15 +34,15 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunks/chunk-KFOK7EIP.mjs";
+} from "./chunks/chunk-4DVLIKSL.mjs";
 import {
   AppleConnector,
   NewerLayoutError,
   SQLitePasses,
   SQLiteSyncHistory,
   Settings
-} from "./chunks/chunk-JBAER3C2.mjs";
-import "./chunks/chunk-6A6J3LDP.mjs";
+} from "./chunks/chunk-CWZNSNU3.mjs";
+import "./chunks/chunk-AHY2RO53.mjs";
 import {
   __callDispose,
   __commonJS,
@@ -17688,6 +17689,66 @@ mcpServer.registerTool(
     await plugin.refresh();
     const text = await contextFor(event);
     return { content: text === null ? [] : [{ type: "text", text }] };
+  }
+);
+mcpServer.registerTool(
+  "apple_meeting_chat",
+  {
+    title: "Record a meeting chat",
+    description: "Record the chat you created for a meeting the Meeting prep heartbeat handed over, by the meeting\u2019s Calendar eventId and the chat\u2019s threadId, so the meeting\u2019s later changes and its archiving reach that chat.",
+    inputSchema: {
+      eventId: external_exports.string().min(1),
+      threadId: external_exports.string().min(1)
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async ({ eventId, threadId }) => {
+    var _stack = [];
+    try {
+      const store = __using(_stack, new ProactiveStore(plugin.directory));
+      store.recordChat(eventId, threadId);
+      return structured({ eventId, threadId });
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
+  }
+);
+mcpServer.registerTool(
+  "apple_person_note",
+  {
+    title: "Save a person note",
+    description: "Save the short note the Apple gardener keeps about a person, by their email, for later meeting briefs. Replaces that person\u2019s previous note.",
+    inputSchema: {
+      email: external_exports.email(),
+      name: external_exports.string().min(1),
+      note: external_exports.string().min(1).max(2e3)
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async ({ email, name, note }) => {
+    var _stack = [];
+    try {
+      const store = __using(_stack, new ProactiveStore(plugin.directory));
+      const person = { email: email.toLowerCase(), name };
+      store.saveNote(person, note, (/* @__PURE__ */ new Date()).toISOString());
+      return structured(person);
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      __callDispose(_stack, _error, _hasError);
+    }
   }
 );
 await mcpServer.connect(new StdioServerTransport());
