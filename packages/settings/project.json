@@ -1,0 +1,12 @@
+{
+  "name": "settings",
+  "sourceRoot": "packages/settings/src",
+  "projectType": "library",
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test packages/settings/dist/*.test.js"
+    }
+  }
+}

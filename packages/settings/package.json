@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/settings",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt-sqlite": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  }
+}
