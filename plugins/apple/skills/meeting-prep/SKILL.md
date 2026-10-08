@@ -100,9 +100,10 @@ The Apple plugin decides when there is work. It lets the heartbeat reach this ch
   1. Call `create_thread` with `target` `{"type": "projectless"}`, `title` the meeting's name and local start time, and `prompt` `Brief <name> (<local start>) with $meeting-prep, from its step 2. Its step 1 row: <the item as JSON>`.
   2. Move the new chat into the sidebar section named Apple with `move_thread_to_sidebar_section`, finding the section's id with `list_threads`.
   3. Call `apple_meeting_chat` with the item's `eventId` and the new chat's `threadId`.
+  4. Wait for the new chat's brief with `wait_threads`, `timeoutMs` 120000.
 - **Moved meetings**: send each item's `threadId` `The meeting moved: it now runs <local start> to <local end>. Update the brief.` with `send_message_to_thread`.
 - **Cancelled meetings**: send each item's `threadId` `This meeting was cancelled or deleted in Calendar.` with `send_message_to_thread`.
-- End with `<heartbeat><automation_id>…</automation_id><decision>DONT_NOTIFY</decision><message>…</message></heartbeat>`, the message saying what you did in one line. Each meeting chat's own reply notifies the user.
+- End with `<heartbeat><automation_id>…</automation_id><decision>NOTIFY</decision><message>…</message></heartbeat>`, the message naming each meeting, its local start time, and whether its brief is ready or what changed. ChatGPT does not notify the user of a reply in a chat you created or messaged, so this is the user's only notification.
 - With no sections in context, the plugin's gate did not run. Do nothing else and end with the `DONT_NOTIFY` block, the message `The Apple meeting gate did not run.`
 - Never invent another tag.
 
@@ -125,4 +126,4 @@ The first message names the meeting and carries its step 1 row. Brief it from st
 - Each brief rests on rows you read and names which connectors had nothing and which are not set up.
 - Times are the user's local time, and only the meetings the user asked about, or the plugin handed over, are briefed.
 - Each handed-over meeting has its own chat in the Apple section, recorded with `apple_meeting_chat`.
-- A heartbeat run ends with exactly one `<heartbeat>` block whose `<decision>` is `DONT_NOTIFY`.
+- A heartbeat run ends with exactly one `<heartbeat>` block whose `<decision>` is `NOTIFY`, or `DONT_NOTIFY` only when the gate did not run.
