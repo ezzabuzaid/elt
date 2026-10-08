@@ -886,7 +886,9 @@ var Source = class {
   // Each checkpoint is a commit point. A full refresh carries none, so it
   // loads all or nothing; an incremental read that fails keeps what earlier
   // checkpoints committed. states holds each incremental stream's saved state.
-  async *read(catalog, states) {
+  // signal is the run's: each extract receives it, so one waiting on its
+  // upstream can stop once the run is cancelled.
+  async *read(catalog, states, signal) {
     var _stack = [];
     try {
       for (const configuration of catalog)
@@ -896,7 +898,7 @@ var Source = class {
       const context = __using(_stack, await this.open(catalog.map(({ stream }) => stream)), true);
       if (!Number.isSafeInteger(this.concurrency) || this.concurrency < 1)
         throw new TypeError("Source concurrency must be a positive integer");
-      yield* interleave(catalog.map((configuration) => this.#stream(configuration, states.get(configuration.stream.name) ?? null, context)), this.concurrency);
+      yield* interleave(catalog.map((configuration) => this.#stream(configuration, states.get(configuration.stream.name) ?? null, context, signal)), this.concurrency);
     } catch (_) {
       var _error = _, _hasError = true;
     } finally {
@@ -904,15 +906,15 @@ var Source = class {
       _promise && await _promise;
     }
   }
-  async *#stream(configuration, state, context) {
+  async *#stream(configuration, state, context, signal) {
     const { name } = configuration.stream;
     yield new StreamStatus(name, "STARTED");
     if (configuration.stream.partitionKey !== void 0)
-      yield* this.partitioned(configuration, state, context);
+      yield* this.partitioned(configuration, state, context, signal);
     else {
       const incremental = configuration.syncMode === "incremental";
       try {
-        for await (const message2 of this.resolved(configuration, this.extract(configuration, state, null, context)))
+        for await (const message2 of this.resolved(configuration, this.extract(configuration, state, null, context, signal)))
           if (!("type" in message2) || message2.type === "DELETE")
             yield message2;
           else if (incremental)
@@ -968,7 +970,7 @@ var Source = class {
   // checkpoint carries all listed partitions' latest states, so a partition
   // not yet read, or one that failed, keeps what it had. Partitions no longer
   // listed drop out of the next checkpoint; their rows stay loaded.
-  async *partitioned(configuration, state, context) {
+  async *partitioned(configuration, state, context, signal) {
     const { stream } = configuration;
     const incremental = configuration.syncMode === "incremental";
     const saved = incremental ? readPartitionStates(stream, state) : /* @__PURE__ */ new Map();
@@ -977,7 +979,7 @@ var Source = class {
     const latest = new Map(saved);
     for (const { key, partition } of listed) {
       try {
-        for await (const message2 of this.resolved(configuration, this.extract(configuration, saved.get(key)?.state ?? null, partition, context))) {
+        for await (const message2 of this.resolved(configuration, this.extract(configuration, saved.get(key)?.state ?? null, partition, context, signal))) {
           if ("type" in message2 && message2.type === "STATE") {
             if (!incremental)
               continue;
@@ -1027,6 +1029,8 @@ var Replicated = class {
   restart = false;
   // The copy's last run left a reload open.
   reloading = false;
+  // The run's signal stopped the copy before it ended.
+  cancelled = false;
   // The state last saved, which completing a reload saves again.
   saved = null;
   settled = false;
@@ -1042,7 +1046,12 @@ var Replicated = class {
     return this.copy.from;
   }
   outcome() {
-    return { copy: this.copy, ...this.committed, failures: this.failures };
+    return {
+      copy: this.copy,
+      ...this.committed,
+      failures: this.failures,
+      cancelled: this.cancelled
+    };
   }
   report() {
     if (!this.settled)
@@ -1066,7 +1075,7 @@ var Replicated = class {
     }
   }
 };
-async function replicate(source, destination, checkpoints, copies, observe) {
+async function replicate(source, destination, checkpoints, copies, observe, signal) {
   const replications = copies.map((copy) => new Replicated(copy, source, destination, observe));
   const bindings = /* @__PURE__ */ new Map();
   for (const { copy } of replications)
@@ -1081,19 +1090,21 @@ async function replicate(source, destination, checkpoints, copies, observe) {
       });
   try {
     if (checkpoints === void 0 || bindings.size === 0)
-      await transfer(source, destination, null, replications);
+      await transfer(source, destination, null, replications, signal);
     else
-      await checkpoints.run(bindings, (run) => transfer(source, destination, run, replications));
+      await checkpoints.run(bindings, (run) => transfer(source, destination, run, replications, signal));
   } catch (error) {
     for (const replication of replications)
-      if (!replication.ended)
+      if (!replication.ended) {
+        replication.cancelled = cancelledBy(signal, error);
         fail(replication, error);
+      }
   }
   for (const replication of replications)
     replication.settle();
   return replications.map((replication) => replication.outcome());
 }
-async function transfer(source, destination, run, replications) {
+async function transfer(source, destination, run, replications, signal) {
   var _stack = [];
   try {
     const byStream = new Map(replications.map((replication) => [replication.stream.name, replication]));
@@ -1123,6 +1134,7 @@ async function transfer(source, destination, run, replications) {
     }
     if (reading.length === 0)
       return;
+    signal?.throwIfAborted();
     const load = __using(_stack, await destination.load(), true);
     const prepared = [];
     for (const replication of reading)
@@ -1147,7 +1159,8 @@ async function transfer(source, destination, run, replications) {
     if (prepared.length === 0)
       return;
     try {
-      for await (const message2 of source.read(prepared.map(({ copy }) => copy.configuration), states)) {
+      for await (const message2 of source.read(prepared.map(({ copy }) => copy.configuration), states, signal)) {
+        signal?.throwIfAborted();
         const replication = byStream.get(validStream(message2));
         if (replication === void 0 || !prepared.includes(replication))
           throw new TypeError(`Source emitted an unselected stream: ${message2.stream}`);
@@ -1229,8 +1242,10 @@ async function transfer(source, destination, run, replications) {
           await breakStage(replication, new TypeError(`Source did not end stream ${replication.stream.name}`));
     } catch (error) {
       for (const replication of prepared)
-        if (!replication.ended && !replication.broken)
+        if (!replication.ended && !replication.broken) {
+          replication.cancelled = cancelledBy(signal, error);
           await breakStage(replication, error);
+        }
     }
   } catch (_) {
     var _error = _, _hasError = true;
@@ -1238,6 +1253,9 @@ async function transfer(source, destination, run, replications) {
     var _promise = __callDispose(_stack, _error, _hasError);
     _promise && await _promise;
   }
+}
+function cancelledBy(signal, error) {
+  return signal?.aborted === true && error === signal.reason;
 }
 function selection(configuration) {
   const { stream, fileReads, syncMode, destinationSyncMode, cursorField, primaryKey, dedupPolicy } = configuration;
@@ -1413,14 +1431,19 @@ var Pipeline = class {
       await copy.clear(connection.source, connection.destination, connection.checkpoints);
     }
   }
-  async run() {
+  // Once signal aborts, each pass stops at its next message and is recorded as
+  // cancelled, and the run rejects with the signal's reason, as fetch does.
+  async run(options) {
+    const signal = options?.signal;
     await this.#declare();
-    const passes = await Promise.all(this.connections.map((connection) => this.#pass(connection, connection.steps).then(({ outcomes }) => outcomes, (error) => connectionError(connection, error))));
+    const passes = await Promise.all(this.connections.map((connection) => this.#pass(connection, connection.steps, signal).then(({ outcomes }) => outcomes, (error) => connectionError(connection, error))));
     const unrun = passes.filter((pass) => pass instanceof Error);
     const results = passes.filter((pass) => !(pass instanceof Error)).flat();
+    if (results.some(({ cancelled }) => cancelled))
+      throw signal?.reason;
     if (unrun.length > 0 || results.some(({ failures }) => failures.length > 0))
       throw new PipelineError(results, unrun);
-    return results.map(({ failures: _, ...result }) => result);
+    return results.map(({ failures: _, cancelled: __, ...result }) => result);
   }
   // Each connection watches its own source and runs a pass for what changed.
   // A connection whose watcher fails stops alone, and its failure is recorded;
@@ -1496,7 +1519,7 @@ var Pipeline = class {
         const steps = connection.steps.filter((copy) => pending.has(copy.from.name));
         pending.clear();
         wake = Promise.withResolvers();
-        yield await this.#pass(connection, steps);
+        yield await this.#pass(connection, steps, void 0);
       }
       if (failed)
         throw failure;
@@ -1510,14 +1533,14 @@ var Pipeline = class {
   }
   // One read per pass, never held between watch passes: a long read can
   // block the upstream's own maintenance, such as SQLite WAL checkpoints.
-  async #pass(connection, steps) {
+  async #pass(connection, steps, signal) {
     const record = await this.history?.begin(connection, steps.map((copy) => ({
       copy,
       coverage: connection.source.coverage(copy.from)
     })));
     let outcomes;
     try {
-      outcomes = await replicate(connection.source, connection.destination, connection.checkpoints, steps, record?.progress?.bind(record));
+      outcomes = await replicate(connection.source, connection.destination, connection.checkpoints, steps, record?.progress?.bind(record), signal);
     } catch (error) {
       await record?.fail(error);
       throw error;
@@ -1938,12 +1961,16 @@ var SyncHistory = class {
   validate(_connection) {
   }
 };
-function copyStatus({ count, deleted, failures }) {
+function copyStatus({ count, deleted, failures, cancelled }) {
+  if (cancelled)
+    return "cancelled";
   if (failures.length === 0)
     return "succeeded";
   return count + deleted > 0 ? "partial" : "failed";
 }
 function passStatus(outcomes) {
+  if (outcomes.some(({ cancelled }) => cancelled))
+    return "cancelled";
   if (outcomes.every(({ failures }) => failures.length === 0))
     return "succeeded";
   return outcomes.some((outcome) => copyStatus(outcome) !== "failed") ? "partial" : "failed";
@@ -1962,7 +1989,7 @@ var attempt = {
   source: "Source identity, not credentials or a record identifier.",
   started_at: "Database time when the attempt and its declared coverage were recorded, before the pass read anything. Not a source record modification or row load time.",
   completed_at: "Database time when the pass outcomes were recorded. NULL means no completion was recorded; this is not evidence that a process is alive.",
-  status: "running: no completion recorded; succeeded: all selected copies completed, including empty or unchanged reads; partial: failures with some successful copies or committed writes/deletes; failed: failures without that progress. No watcher health is implied.",
+  status: "running: no completion recorded; succeeded: all selected copies completed, including empty or unchanged reads; partial: failures with some successful copies or committed writes/deletes; failed: failures without that progress; cancelled: the run was stopped on request, and error says why; what it committed before stays. No watcher health is implied.",
   error: "Pipeline error message, or NULL after success or before completion. Per-copy failures and partitions are in extraction_coverage."
 };
 var syncHistoryRelations = {
@@ -1988,7 +2015,7 @@ var syncHistoryRelations = {
       destination_sync_mode: "Requested load mode, such as append_dedup. Partial passes can leave previously committed changes in the destination.",
       description: "Connector-owned explanation of the scope, date boundaries, selection keys and source limitations for this stream.",
       selection: "Structured configured selection, interpreted using description. Not computed from rows. Empty object means no additional configured selection, not unlimited upstream history.",
-      status: "running: no outcome recorded; succeeded: copy completed with no failures, even with zero changes; partial: failures after committed writes/deletes; failed: failures without committed row changes, or an error without outcomes. Consult failures for affected partitions.",
+      status: "running: no outcome recorded; succeeded: copy completed with no failures, even with zero changes; partial: failures after committed writes/deletes; failed: failures without committed row changes, or an error without outcomes; cancelled: the run was stopped on request before this copy ended, keeping what it committed. Consult failures for affected partitions.",
       written_count: "Accepted record operations committed by this copy during this pass, including deduplication no-ops. Not changed-row or total-record counts. Zero is valid after success. NULL means no counts were reported.",
       deleted_count: "Accepted deletion operations committed by this copy during this pass, including already-absent keys. Not a count of rows actually removed. NULL means no counts were reported.",
       failures: "Array of {partition, error} from pass outcomes. A null partition denotes a whole-stream or non-partition-specific failure. Empty array means none recorded; check status before assuming success."
@@ -2019,7 +2046,7 @@ var syncHistoryRelations = {
       latest_attempt_id: "Most recently started attempt that declared this stream; join extraction_coverage by attempt_id and stream.",
       started_at: attempt.started_at,
       completed_at: attempt.completed_at,
-      status: "This stream's copy status in the latest attempt: running, succeeded, partial or failed. Other streams of the same attempt may differ.",
+      status: "This stream's copy status in the latest attempt: running, succeeded, partial, failed or cancelled. Other streams of the same attempt may differ.",
       last_successful_attempt_id: "Most recent completed attempt in which this stream's copy succeeded; NULL if none.",
       last_successful_sync_at: "Completion time of that attempt, advanced even if no rows changed. NULL if this stream never succeeded. Never inferred from loaded_at or record modification dates."
     }

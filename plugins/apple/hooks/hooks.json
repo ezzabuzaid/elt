@@ -24,6 +24,14 @@
             "statusMessage": "Reading Apple status"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/meeting-prep-gate\""
+          }
+        ]
       }
     ]
   }

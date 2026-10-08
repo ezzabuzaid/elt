@@ -3,9 +3,6 @@ import {
   RemindersStore
 } from "../../chunks/chunk-TWJG64VL.mjs";
 import {
-  eventKitFields
-} from "../../chunks/chunk-YUEL2AIL.mjs";
-import {
   accounts,
   collections,
   name
@@ -14,15 +11,18 @@ import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
+  eventKitFields
+} from "../../chunks/chunk-YUEL2AIL.mjs";
+import {
   AppleConnector
-} from "../../chunks/chunk-PGV23ONC.mjs";
+} from "../../chunks/chunk-JBAER3C2.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-OC6XOTPF.mjs";
+} from "../../chunks/chunk-6A6J3LDP.mjs";
 import "../../chunks/chunk-ZGXE7NZW.mjs";
 
 // packages/sources/apple/reminders/dist/reminders-scan.js

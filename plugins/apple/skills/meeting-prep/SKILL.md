@@ -1,6 +1,6 @@
 ---
 name: meeting-prep
-description: Prepare the user for a meeting from their Apple Calendar, Mail, Messages, Contacts and Notes imported by the Apple plugin. Use for the next meeting, today's meetings, a named meeting, or when a meeting-prep or meeting-brief heartbeat runs.
+description: Prepare the user for a meeting from their Apple Calendar, Mail, Messages, Contacts and Notes imported by the Apple plugin. Use for the next meeting, today's meetings, a named meeting, or when the Meeting prep heartbeat hands meetings over.
 ---
 
 # Prepare for a meeting
@@ -18,7 +18,7 @@ description: Prepare the user for a meeting from their Apple Calendar, Mail, Mes
 ## Prepare
 
 1. Find the meetings in Calendar's `database`.
-   - The next ones: set `@minutes` to how far ahead to look (a heartbeat says how far; otherwise 240) and run
+   - The next ones: set `@minutes` to how far ahead to look (240 unless the user says) and run
      ```sql
      SELECT e.name, e.startAt, e.endAt, c.name AS calendar, e.location, e.url, e.body, e.externalId,
        (SELECT json_group_array(json_object('name', a.name, 'email', substr(a.url, 8), 'kind', a.kind, 'status', a.status, 'role', a.role))
@@ -94,9 +94,9 @@ description: Prepare the user for a meeting from their Apple Calendar, Mail, Mes
 
 ## When a heartbeat runs this skill
 
-- Meeting prep: find the meetings starting within the window the heartbeat names. Prepare each one this thread has not already prepared; earlier briefs in this thread show which. Notify with the briefs when at least one has something to prepare from: attendees, a link, or related mail, messages or notes. Otherwise, or with no meetings, do not notify.
-- Meeting brief: prepare today's remaining meetings in one message, with meetings that have nothing to prepare from listed last in one line each, and notify.
-- End every heartbeat turn with the block its instructions require: `<heartbeat><automation_id>…</automation_id><decision>NOTIFY</decision><message>…</message></heartbeat>`, or `DONT_NOTIFY` with a short quiet status. Never invent another tag.
+- The Apple plugin decides when a meeting is due: it lets the Meeting prep heartbeat reach you only with the meetings it hands over in context, one JSON row each, already the result of step 1. Brief exactly those, from step 2, in one message. End with `<heartbeat><automation_id>…</automation_id><decision>NOTIFY</decision><message>…</message></heartbeat>`, the message naming each meeting and its local start time.
+- A Meeting prep heartbeat with no meetings handed over in context means the plugin's gate did not run. Prepare nothing and end with the `DONT_NOTIFY` block, the message `The Apple meeting gate did not run.`
+- Never invent another tag.
 
 ## Gotchas
 
@@ -111,5 +111,5 @@ description: Prepare the user for a meeting from their Apple Calendar, Mail, Mes
 ## Done when
 
 - Each brief rests on rows you read and names which connectors had nothing and which are not set up.
-- Times are the user's local time, and no meeting outside the requested window or already prepared in this thread is repeated.
+- Times are the user's local time, and only the meetings the user asked about, or the plugin handed over, are briefed.
 - A heartbeat run ends with exactly one `<heartbeat>` block whose `<decision>` is `NOTIFY` or `DONT_NOTIFY`.
