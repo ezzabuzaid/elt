@@ -330,7 +330,12 @@ test('the gardener asks for a note about everyone the user meets over its runs, 
   const invited = ['Ann', 'Bob', 'Dan', 'Eve', 'Fay', 'Gil'];
   await importCalendar([
     occurrence('Old sync', now - 10 * dayMs, {
-      attendees: [participant('Carol')],
+      attendees: [
+        participant('Carol'),
+        participant('Unknown Organizer', {
+          url: 'mailto:unknownorganizer@calendar.google.com',
+        }),
+      ],
     }),
     occurrence('Design review', now + 35 * minute, {
       attendees: invited.map((name) => participant(name)),

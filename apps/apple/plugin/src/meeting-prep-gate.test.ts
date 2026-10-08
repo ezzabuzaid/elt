@@ -251,7 +251,16 @@ test('a Meeting prep heartbeat hands over each meeting due once, with someone in
     occurrence('Zoom call', now + 30 * minute, {
       location: 'https://zoom.us/j/123',
     }),
-    occurrence('Focus block', now + 20 * minute),
+    // Google lists a stand-in organizer on events it imported; nobody is
+    // invited.
+    occurrence('Focus block', now + 20 * minute, {
+      attendees: [
+        participant({
+          name: 'Unknown Organizer',
+          url: 'mailto:unknownorganizer@calendar.google.com',
+        }),
+      ],
+    }),
     occurrence('Gym class', now + 25 * minute, { location: 'Hive Gym' }),
     occurrence('Later sync', now + 90 * minute, {
       attendees: [participant()],
