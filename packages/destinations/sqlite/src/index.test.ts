@@ -633,8 +633,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     changes.emit('change', [source.records]);
   });
   assert.deepEqual((await watching.next()).value?.outcomes, [
-    { copy, count: 1, deleted: 0, failures: [] },
-    { copy: other, count: 1, deleted: 0, failures: [] },
+    { copy, count: 1, deleted: 0, failures: [], cancelled: false },
+    { copy: other, count: 1, deleted: 0, failures: [], cancelled: false },
   ]);
   using database = new DatabaseSync(destination.path, { readOnly: true });
   using state = new DatabaseSync(checkpoints.path, { readOnly: true });
@@ -651,7 +651,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   assert.equal(loadedVersion(), 1);
   assert.deepEqual(savedVersion(), { version: 1 });
   assert.deepEqual((await watching.next()).value?.outcomes, [
-    { copy, count: 1, deleted: 0, failures: [] },
+    { copy, count: 1, deleted: 0, failures: [], cancelled: false },
   ]);
   assert.equal(loadedVersion(), 2);
   assert.deepEqual(savedVersion(), { version: 2 });
@@ -661,7 +661,9 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   version = 3;
   changes.emit('change', [source.records]);
   for await (const { outcomes } of watching) {
-    assert.deepEqual(outcomes, [{ copy, count: 1, deleted: 0, failures: [] }]);
+    assert.deepEqual(outcomes, [
+      { copy, count: 1, deleted: 0, failures: [], cancelled: false },
+    ]);
     assert.equal(loadedVersion(), 3);
     assert.deepEqual(savedVersion(), { version: 3 });
     break;
@@ -732,8 +734,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const inFlight = pipeline.watch({ signal: stopping.signal });
   reads.once('read', () => stopping.abort());
   assert.deepEqual((await inFlight.next()).value?.outcomes, [
-    { copy, count: 1, deleted: 0, failures: [] },
-    { copy: other, count: 1, deleted: 0, failures: [] },
+    { copy, count: 1, deleted: 0, failures: [], cancelled: false },
+    { copy: other, count: 1, deleted: 0, failures: [], cancelled: false },
   ]);
   assert.equal(loadedVersion(), 5);
   assert.deepEqual(savedVersion(), { version: 5 });

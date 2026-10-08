@@ -518,7 +518,7 @@ test('watching invalidates only when the property actually changed', async () =>
 
   try {
     assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 1, deleted: 0, failures: [] },
+      { copy, count: 1, deleted: 0, failures: [], cancelled: false },
     ]);
     const afterFirst = calls.length;
     // The property is unchanged, so ticks probe without ever extracting.
@@ -526,7 +526,7 @@ test('watching invalidates only when the property actually changed', async () =>
     assert.ok(calls.length > afterFirst, 'the watcher keeps probing');
     clicks = 19;
     assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 1, deleted: 0, failures: [] },
+      { copy, count: 1, deleted: 0, failures: [], cancelled: false },
     ]);
     const [row] = await sql`SELECT clicks::int FROM rows`;
     assert.equal(row?.clicks, 19);
@@ -1029,7 +1029,7 @@ test(
     });
 
     assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 1, deleted: 0, failures: [] },
+      { copy, count: 1, deleted: 0, failures: [], cancelled: false },
     ]);
     loaded = true;
     await limited.promise;
@@ -1400,7 +1400,7 @@ test('watching invalidates when only one of several properties changed', async (
 
   try {
     assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 2, deleted: 0, failures: [] },
+      { copy, count: 2, deleted: 0, failures: [], cancelled: false },
     ]);
     const probed = calls.length;
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1411,7 +1411,7 @@ test('watching invalidates when only one of several properties changed', async (
     );
     clicks[B] = 9;
     assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 2, deleted: 0, failures: [] },
+      { copy, count: 2, deleted: 0, failures: [], cancelled: false },
     ]);
     assert.deepEqual(
       (

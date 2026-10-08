@@ -98,11 +98,16 @@ export class Pipeline<Target extends DestinationTarget> {
     }
   }
 
-  async run(): Promise<CopyResult<Target>[]> {
+  // Once signal aborts, each pass stops at its next message and is recorded as
+  // cancelled, and the run rejects with the signal's reason, as fetch does.
+  async run(options?: {
+    readonly signal?: AbortSignal;
+  }): Promise<CopyResult<Target>[]> {
+    const signal = options?.signal;
     await this.#declare();
     const passes = await Promise.all(
       this.connections.map((connection) =>
-        this.#pass(connection, connection.steps).then(
+        this.#pass(connection, connection.steps, signal).then(
           ({ outcomes }) => outcomes,
           (error: unknown) => connectionError(connection, error),
         ),
@@ -112,9 +117,10 @@ export class Pipeline<Target extends DestinationTarget> {
     const results = passes
       .filter((pass): pass is CopyOutcome<Target>[] => !(pass instanceof Error))
       .flat();
+    if (results.some(({ cancelled }) => cancelled)) throw signal?.reason;
     if (unrun.length > 0 || results.some(({ failures }) => failures.length > 0))
       throw new PipelineError(results, unrun);
-    return results.map(({ failures: _, ...result }) => result);
+    return results.map(({ failures: _, cancelled: __, ...result }) => result);
   }
 
   // Each connection watches its own source and runs a pass for what changed.
@@ -221,7 +227,7 @@ export class Pipeline<Target extends DestinationTarget> {
         wake = Promise.withResolvers<void>();
         // Like a schedule after a failed sync, watching goes on: each pass
         // reports what did not load, and a later invalidation retries it.
-        yield await this.#pass(connection, steps);
+        yield await this.#pass(connection, steps, undefined);
       }
       if (failed) throw failure;
     } catch (error) {
@@ -240,6 +246,7 @@ export class Pipeline<Target extends DestinationTarget> {
   async #pass(
     connection: Connection<Target>,
     steps: readonly Copy<Target>[],
+    signal: AbortSignal | undefined,
   ): Promise<Pass<Target>> {
     const record = await this.history?.begin(
       connection,
@@ -256,6 +263,7 @@ export class Pipeline<Target extends DestinationTarget> {
         connection.checkpoints,
         steps,
         record?.progress?.bind(record),
+        signal,
       );
     } catch (error) {
       await record?.fail(error);

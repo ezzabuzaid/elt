@@ -12,10 +12,13 @@ export type CopyResult<Target extends DestinationTarget> = WriteCount & {
   readonly copy: Copy<Target>;
 };
 
-// What one copy committed, and what did not load; complete when failures is empty.
+// What one copy committed, and what did not load; complete when failures is
+// empty. A copy the run's signal stopped is cancelled, as Airbyte cancels a
+// sync, and its failures hold the signal's reason.
 export type CopyOutcome<Target extends DestinationTarget> =
   CopyResult<Target> & {
     readonly failures: readonly LoadFailure[];
+    readonly cancelled: boolean;
   };
 
 // One copy of a running pass so far, counted as Airbyte's sync stats tracker

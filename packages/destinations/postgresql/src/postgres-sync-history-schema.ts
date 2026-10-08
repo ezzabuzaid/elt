@@ -49,7 +49,7 @@ export const syncHistoryTables = [
     connector text NOT NULL CHECK (btrim(connector) <> ''), source text NOT NULL,
     started_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     completed_at timestamptz,
-    status text NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'succeeded', 'partial', 'failed')),
+    status text NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
     error text,
     CHECK ((status = 'running') = (completed_at IS NULL))
   )`,
@@ -59,7 +59,7 @@ export const syncHistoryTables = [
     stream text NOT NULL, target_schema text NOT NULL, target_table text NOT NULL,
     sync_mode text NOT NULL, destination_sync_mode text NOT NULL,
     description text NOT NULL CHECK (btrim(description) <> ''), selection jsonb NOT NULL,
-    status text NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'succeeded', 'partial', 'failed')),
+    status text NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
     written_count bigint CHECK (written_count >= 0), deleted_count bigint CHECK (deleted_count >= 0),
     failures jsonb NOT NULL DEFAULT '[]', PRIMARY KEY (attempt_id, stream)
   )`,

@@ -11,7 +11,7 @@ const attempt = {
   completed_at:
     'Database time when the pass outcomes were recorded. NULL means no completion was recorded; this is not evidence that a process is alive.',
   status:
-    'running: no completion recorded; succeeded: all selected copies completed, including empty or unchanged reads; partial: failures with some successful copies or committed writes/deletes; failed: failures without that progress. No watcher health is implied.',
+    'running: no completion recorded; succeeded: all selected copies completed, including empty or unchanged reads; partial: failures with some successful copies or committed writes/deletes; failed: failures without that progress; cancelled: the run was stopped on request, and error says why; what it committed before stays. No watcher health is implied.',
   error:
     'Pipeline error message, or NULL after success or before completion. Per-copy failures and partitions are in extraction_coverage.',
 };
@@ -50,7 +50,7 @@ export const syncHistoryRelations = {
       selection:
         'Structured configured selection, interpreted using description. Not computed from rows. Empty object means no additional configured selection, not unlimited upstream history.',
       status:
-        'running: no outcome recorded; succeeded: copy completed with no failures, even with zero changes; partial: failures after committed writes/deletes; failed: failures without committed row changes, or an error without outcomes. Consult failures for affected partitions.',
+        'running: no outcome recorded; succeeded: copy completed with no failures, even with zero changes; partial: failures after committed writes/deletes; failed: failures without committed row changes, or an error without outcomes; cancelled: the run was stopped on request before this copy ended, keeping what it committed. Consult failures for affected partitions.',
       written_count:
         'Accepted record operations committed by this copy during this pass, including deduplication no-ops. Not changed-row or total-record counts. Zero is valid after success. NULL means no counts were reported.',
       deleted_count:
@@ -92,7 +92,7 @@ export const syncHistoryRelations = {
       started_at: attempt.started_at,
       completed_at: attempt.completed_at,
       status:
-        "This stream's copy status in the latest attempt: running, succeeded, partial or failed. Other streams of the same attempt may differ.",
+        "This stream's copy status in the latest attempt: running, succeeded, partial, failed or cancelled. Other streams of the same attempt may differ.",
       last_successful_attempt_id:
         "Most recent completed attempt in which this stream's copy succeeded; NULL if none.",
       last_successful_sync_at:

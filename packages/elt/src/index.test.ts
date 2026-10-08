@@ -1318,6 +1318,78 @@ test('one connection failing leaves the others loaded, and every pass is recorde
   ]);
 });
 
+test('a run its signal stops keeps each commit and checkpoint, drops what was staged, is recorded cancelled and rejects with the reason, which the extract sees', async () => {
+  const waiting = Promise.withResolvers<void>();
+  const seen: unknown[] = [];
+  class Waiting extends ContextSource {
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      _state: unknown,
+      _partition: null,
+      _context: ReadContext,
+      signal?: AbortSignal,
+    ) {
+      const stream = configuration.stream.name;
+      yield record(stream, 'committed');
+      yield checkpoint(stream, 1);
+      yield record(stream, 'staged');
+      waiting.resolve();
+      await new Promise((resolve) =>
+        signal?.addEventListener('abort', resolve, { once: true }),
+      );
+      seen.push(signal?.reason);
+    }
+  }
+  const source = new Waiting();
+  const destination = new DrainingDestination();
+  const checkpoints = new MemoryCheckpoints(destination.log);
+  const history = new MemoryHistory();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(source.left, new NamedTarget('left'), {
+            id: 'left',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append',
+          }),
+        ],
+      }),
+    ],
+  });
+  const controller = new AbortController();
+  const reason = new Error('the user removed this connector');
+
+  const run = pipeline.run({ signal: controller.signal });
+  await waiting.promise;
+  controller.abort(reason);
+  const error = await run.then(
+    () => assert.fail('a cancelled run must reject'),
+    (error: unknown) => error,
+  );
+
+  assert.equal(error, reason);
+  assert.deepEqual(seen, [reason]);
+  assert.deepEqual(destination.log, [
+    'open',
+    'apply {"id":"committed"}',
+    'commit',
+    `save ${JSON.stringify({ state: { at: 1 }, reloading: false })}`,
+    'apply {"id":"staged"}',
+    'close',
+  ]);
+  assert.deepEqual(history.log, [
+    'begin test left:test',
+    'finish test cancelled',
+  ]);
+  assert.deepEqual(source.closed, [1]);
+});
+
 test("connections read side by side, so one connection's pass never waits for another's", async () => {
   const history = new MemoryHistory();
   class Slow extends ContextSource {

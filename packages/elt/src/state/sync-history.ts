@@ -8,7 +8,7 @@ import {
 import type { ExtractionCoverage } from '../core/source.ts';
 import type { Target as DestinationTarget } from '../core/target.ts';
 
-export type SyncStatus = 'succeeded' | 'partial' | 'failed';
+export type SyncStatus = 'succeeded' | 'partial' | 'failed' | 'cancelled';
 
 export type DeclaredCopy<Target extends DestinationTarget> = {
   readonly copy: Copy<Target>;
@@ -45,7 +45,9 @@ export function copyStatus({
   count,
   deleted,
   failures,
+  cancelled,
 }: CopyOutcome<DestinationTarget>): SyncStatus {
+  if (cancelled) return 'cancelled';
   if (failures.length === 0) return 'succeeded';
   return count + deleted > 0 ? 'partial' : 'failed';
 }
@@ -53,6 +55,7 @@ export function copyStatus({
 export function passStatus(
   outcomes: readonly CopyOutcome<DestinationTarget>[],
 ): SyncStatus {
+  if (outcomes.some(({ cancelled }) => cancelled)) return 'cancelled';
   if (outcomes.every(({ failures }) => failures.length === 0))
     return 'succeeded';
   return outcomes.some((outcome) => copyStatus(outcome) !== 'failed')

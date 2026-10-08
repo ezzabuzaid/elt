@@ -176,9 +176,12 @@ export abstract class Source<
   // Each checkpoint is a commit point. A full refresh carries none, so it
   // loads all or nothing; an incremental read that fails keeps what earlier
   // checkpoints committed. states holds each incremental stream's saved state.
+  // signal is the run's: each extract receives it, so one waiting on its
+  // upstream can stop once the run is cancelled.
   async *read(
     catalog: readonly CopyConfiguration[],
     states: ReadonlyMap<string, unknown>,
+    signal?: AbortSignal,
   ): AsyncGenerator<ReadMessage> {
     for (const configuration of catalog) this.validate(configuration);
     if (
@@ -194,6 +197,7 @@ export abstract class Source<
           configuration,
           states.get(configuration.stream.name) ?? null,
           context,
+          signal,
         ),
       ),
       this.concurrency,
@@ -204,17 +208,18 @@ export abstract class Source<
     configuration: CopyConfiguration,
     state: unknown,
     context: Context,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<ReadMessage> {
     const { name } = configuration.stream;
     yield new StreamStatus(name, 'STARTED');
     if (configuration.stream.partitionKey !== undefined)
-      yield* this.partitioned(configuration, state, context);
+      yield* this.partitioned(configuration, state, context, signal);
     else {
       const incremental = configuration.syncMode === 'incremental';
       try {
         for await (const message of this.resolved(
           configuration,
-          this.extract(configuration, state, null, context),
+          this.extract(configuration, state, null, context, signal),
         ))
           if (!('type' in message) || message.type === 'DELETE') yield message;
           else if (incremental)
@@ -305,6 +310,7 @@ export abstract class Source<
     configuration: CopyConfiguration,
     state: unknown,
     context: Context,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<ReadMessage> {
     const { stream } = configuration;
     const incremental = configuration.syncMode === 'incremental';
@@ -325,6 +331,7 @@ export abstract class Source<
             saved.get(key)?.state ?? null,
             partition,
             context,
+            signal,
           ),
         )) {
           if ('type' in message && message.type === 'STATE') {
@@ -365,5 +372,6 @@ export abstract class Source<
     state: unknown,
     partition: Partition | null,
     context: Context,
+    signal: AbortSignal | undefined,
   ): AsyncIterable<SourceMessage>;
 }

@@ -40,6 +40,8 @@ class Replicated<Target extends DestinationTarget> {
   restart = false;
   // The copy's last run left a reload open.
   reloading = false;
+  // The run's signal stopped the copy before it ended.
+  cancelled = false;
   // The state last saved, which completing a reload saves again.
   saved: unknown = null;
   settled = false;
@@ -68,7 +70,12 @@ class Replicated<Target extends DestinationTarget> {
   }
 
   outcome(): CopyOutcome<Target> {
-    return { copy: this.copy, ...this.committed, failures: this.failures };
+    return {
+      copy: this.copy,
+      ...this.committed,
+      failures: this.failures,
+      cancelled: this.cancelled,
+    };
   }
 
   report(): void {
@@ -97,13 +104,16 @@ class Replicated<Target extends DestinationTarget> {
 
 // Airbyte's replication worker: one read covers every copy's stream, each
 // stream's messages go to its own stage, and a checkpoint is saved only after
-// its stage committed. A copy that fails does not stop the others.
+// its stage committed. A copy that fails does not stop the others. Once signal
+// aborts, as Airbyte's worker stops a cancelled sync, no further message is
+// applied: each copy still open keeps what it committed and is cancelled.
 export async function replicate<Target extends DestinationTarget>(
   source: Source,
   destination: Destination<Target>,
   checkpoints: CheckpointStore | undefined,
   copies: readonly Copy<Target>[],
-  observe?: (progress: CopyProgress<Target>) => void,
+  observe: ((progress: CopyProgress<Target>) => void) | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<CopyOutcome<Target>[]> {
   const replications = copies.map(
     (copy) => new Replicated(copy, source, destination, observe),
@@ -121,14 +131,17 @@ export async function replicate<Target extends DestinationTarget>(
       });
   try {
     if (checkpoints === undefined || bindings.size === 0)
-      await transfer(source, destination, null, replications);
+      await transfer(source, destination, null, replications, signal);
     else
       await checkpoints.run(bindings, (run) =>
-        transfer(source, destination, run, replications),
+        transfer(source, destination, run, replications, signal),
       );
   } catch (error) {
     for (const replication of replications)
-      if (!replication.ended) fail(replication, error);
+      if (!replication.ended) {
+        replication.cancelled = cancelledBy(signal, error);
+        fail(replication, error);
+      }
   }
   // A broken stream the source never ended settles here, after the read.
   for (const replication of replications) replication.settle();
@@ -140,6 +153,7 @@ async function transfer<Target extends DestinationTarget>(
   destination: Destination<Target>,
   run: CheckpointRun | null,
   replications: readonly Replicated<Target>[],
+  signal: AbortSignal | undefined,
 ): Promise<void> {
   const byStream = new Map(
     replications.map((replication) => [replication.stream.name, replication]),
@@ -172,6 +186,7 @@ async function transfer<Target extends DestinationTarget>(
     }
   }
   if (reading.length === 0) return;
+  signal?.throwIfAborted();
   await using load = await destination.load();
   // Every target is prepared before anything is read; a copy whose target is
   // refused reads nothing.
@@ -203,7 +218,9 @@ async function transfer<Target extends DestinationTarget>(
     for await (const message of source.read(
       prepared.map(({ copy }) => copy.configuration),
       states,
+      signal,
     )) {
+      signal?.throwIfAborted();
       const replication = byStream.get(validStream(message));
       if (replication === undefined || !prepared.includes(replication))
         throw new TypeError(
@@ -297,9 +314,16 @@ async function transfer<Target extends DestinationTarget>(
         );
   } catch (error) {
     for (const replication of prepared)
-      if (!replication.ended && !replication.broken)
+      if (!replication.ended && !replication.broken) {
+        replication.cancelled = cancelledBy(signal, error);
         await breakStage(replication, error);
+      }
   }
+}
+
+// Whether error is the abort of the run's signal, not a failure.
+function cancelledBy(signal: AbortSignal | undefined, error: unknown): boolean {
+  return signal?.aborted === true && error === signal.reason;
 }
 
 // What a copy selects of its stream, apart from the stream's shape: changing

@@ -6,7 +6,7 @@ export const attempts = '"_elt_sync_attempts"';
 export const coverage = '"_elt_extraction_coverage"';
 export const now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
-const status = `"status" TEXT NOT NULL DEFAULT 'running' CHECK ("status" IN ('running', 'succeeded', 'partial', 'failed'))`;
+const status = `"status" TEXT NOT NULL DEFAULT 'running' CHECK ("status" IN ('running', 'succeeded', 'partial', 'failed', 'cancelled'))`;
 
 export const syncHistoryTables = [
   `CREATE TABLE IF NOT EXISTS ${attempts} (
