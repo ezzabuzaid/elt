@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { z } from 'zod';
@@ -21,6 +20,8 @@ import {
   Settings,
 } from '@workspace/settings';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+
+import { appleDirectory } from './apple-directory.ts';
 
 const ids = z.array(z.string().min(1).max(1024)).max(1000);
 
@@ -103,10 +104,7 @@ export class ApplePlugin {
     discovery: Connectors,
     host: AppleHost,
     install: string,
-    directory = join(
-      homedir(),
-      'Library/Application Support/Context Compiler/Apple',
-    ),
+    directory = appleDirectory(),
   ) {
     this.#discovery = discovery;
     this.#host = host;
