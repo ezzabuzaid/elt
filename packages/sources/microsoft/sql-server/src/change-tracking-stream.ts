@@ -14,15 +14,16 @@ import { SqlServerStream, pageSize } from './sql-server-stream.ts';
 
 // Where a read stands: loading every row from a position in the table's
 // change history, up to and including the key `after`; or loaded, reading
-// what changed since the position.
-type ChangeTrackingState =
+// what changed since the position. Either way, the fields it read.
+type ChangeTrackingState = (
   | {
       readonly initial: {
         readonly from: ChangePosition;
         readonly after: readonly string[];
       };
     }
-  | { readonly from: ChangePosition };
+  | { readonly from: ChangePosition }
+) & { readonly fields: readonly string[] };
 
 function position(value: unknown): ChangePosition | undefined {
   return typeof value === 'object' &&
@@ -37,9 +38,20 @@ function position(value: unknown): ChangePosition | undefined {
 
 function parse(state: unknown): ChangeTrackingState | null {
   if (state === null) return null;
+  const fields =
+    typeof state === 'object' &&
+    'fields' in state &&
+    Array.isArray(state.fields) &&
+    state.fields.every((field) => typeof field === 'string')
+      ? state.fields
+      : undefined;
+  if (fields === undefined)
+    throw new TypeError(
+      `Unknown Change Tracking state ${JSON.stringify(state)}`,
+    );
   if (typeof state === 'object' && 'from' in state) {
     const from = position(state.from);
-    if (from !== undefined) return { from };
+    if (from !== undefined) return { from, fields };
   }
   if (
     typeof state === 'object' &&
@@ -53,7 +65,7 @@ function parse(state: unknown): ChangeTrackingState | null {
   ) {
     const from = position(state.initial.from);
     if (from !== undefined)
-      return { initial: { from, after: state.initial.after } };
+      return { initial: { from, after: state.initial.after }, fields };
   }
   throw new TypeError(`Unknown Change Tracking state ${JSON.stringify(state)}`);
 }
@@ -63,7 +75,8 @@ function parse(state: unknown): ChangeTrackingState | null {
 // began; later reads apply what changed since, deletions included. When the
 // history no longer reaches back to the saved position (cleanup, a truncate,
 // tracking turned off and on), the stream starts over with a RESET and loads
-// every row again.
+// every row again, as it does for a column the table gained: Change Tracking
+// reports no change for the rows it was added to.
 export class ChangeTrackingStream extends SqlServerStream {
   constructor(table: SqlServerTable) {
     super(table, {
@@ -93,11 +106,12 @@ export class ChangeTrackingStream extends SqlServerStream {
     }
     const saved = parse(state);
     if (saved === null) {
-      yield* this.#load(
-        session,
-        await session.changeTrackingPosition(this.table),
-        null,
-      );
+      yield* this.#loadEveryRow(session);
+      return;
+    }
+    if (this.gained(saved.fields)) {
+      yield { type: 'RESET', stream: this.stream.name };
+      yield* this.#loadEveryRow(session);
       return;
     }
     if ('initial' in saved) {
@@ -110,12 +124,19 @@ export class ChangeTrackingStream extends SqlServerStream {
       if (!(error instanceof ChangeHistoryExpiredError)) throw error;
       // Whatever the expired read already yielded, the reset drops.
       yield { type: 'RESET', stream: this.stream.name };
-      yield* this.#load(
-        session,
-        await session.changeTrackingPosition(this.table),
-        null,
-      );
+      yield* this.#loadEveryRow(session);
     }
+  }
+
+  // Every row, from where the table's change history stands now.
+  async *#loadEveryRow(
+    session: SqlServerSession,
+  ): AsyncGenerator<SourceMessage> {
+    yield* this.#load(
+      session,
+      await session.changeTrackingPosition(this.table),
+      null,
+    );
   }
 
   // Every row, from a position read before the first page, so a change made
@@ -126,9 +147,10 @@ export class ChangeTrackingStream extends SqlServerStream {
     after: readonly string[] | null,
   ): AsyncGenerator<SourceMessage> {
     const { name } = this.stream;
+    const fields = this.fieldNames;
     if (!this.table.pageable) {
       yield* this.everyRow(session);
-      yield { type: 'STATE', stream: name, state: { from } };
+      yield { type: 'STATE', stream: name, state: { from, fields } };
       return;
     }
     let last = after;
@@ -143,10 +165,10 @@ export class ChangeTrackingStream extends SqlServerStream {
       yield {
         type: 'STATE',
         stream: name,
-        state: { initial: { from, after: last } },
+        state: { initial: { from, after: last }, fields },
       };
     }
-    yield { type: 'STATE', stream: name, state: { from } };
+    yield { type: 'STATE', stream: name, state: { from, fields } };
   }
 
   async *#changes(
@@ -163,6 +185,10 @@ export class ChangeTrackingStream extends SqlServerStream {
           : { type: 'DELETE', stream: name, key: this.fields.key(change.key) };
       reached = set.position;
     }
-    yield { type: 'STATE', stream: name, state: { from: reached } };
+    yield {
+      type: 'STATE',
+      stream: name,
+      state: { from: reached, fields: this.fieldNames },
+    };
   }
 }

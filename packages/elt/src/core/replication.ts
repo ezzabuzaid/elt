@@ -37,7 +37,6 @@ class Replicated<Target extends DestinationTarget> {
   broken = false;
   started = false;
   ended = false;
-  restart = false;
   // The copy's last run left a reload open.
   reloading = false;
   // The run's signal stopped the copy before it ended.
@@ -178,7 +177,6 @@ async function transfer<Target extends DestinationTarget>(
       const { run, id } = checkpoint(replication);
       states.set(replication.stream.name, run.state(id));
       replication.saved = run.state(id);
-      replication.restart = run.restart(id);
       replication.reloading = run.reloading(id);
       reading.push(replication);
     } catch (error) {
@@ -198,7 +196,6 @@ async function transfer<Target extends DestinationTarget>(
         replication.copy.to,
         {
           writer: replication.copy.writer(source),
-          restart: replication.restart,
           reloading: replication.reloading,
         },
       );
@@ -349,7 +346,8 @@ function selection(configuration: CopyConfiguration): object {
 }
 
 // The stream as it shapes the target, without the descriptions that only
-// annotate it; a change to it starts the copy over.
+// annotate it. A changed field evolves the target; a changed declaration
+// stops the copy (see stream-change.ts).
 function shape(stream: Stream): object {
   const { description: _, properties, ...schema } = stream.jsonSchema;
   const undescribed = <F extends FieldSchema | ItemSchema>({

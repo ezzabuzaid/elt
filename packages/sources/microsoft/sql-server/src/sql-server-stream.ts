@@ -65,6 +65,19 @@ export abstract class SqlServerStream {
 
   abstract coverage(): ExtractionCoverage;
 
+  // The fields a read carries. A cursor's state records them, since a field
+  // the table gains later reaches only rows changed after it unless every row
+  // is read again: elt keeps a stream's checkpoint and rows through a change
+  // of its fields, and leaves filling them in to the source.
+  protected get fieldNames(): readonly string[] {
+    return Object.keys(this.fields.properties);
+  }
+
+  // Whether this stream carries a field a state was read without.
+  protected gained(read: readonly string[]): boolean {
+    return this.fieldNames.some((field) => !read.includes(field));
+  }
+
   abstract extract(
     configuration: CopyConfiguration,
     state: unknown,

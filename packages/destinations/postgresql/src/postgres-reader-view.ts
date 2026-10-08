@@ -31,7 +31,7 @@ export class TargetReaderView {
 
   // Refuses, before anything is read, a reader view this load did not make:
   // not a view, or a view of other columns or another table. A stale
-  // target's view still shows the stored columns, which its rebuild replaces.
+  // target's view still shows the stored columns, which evolving it replaces.
   async refuse(sql: Transaction, stale: boolean): Promise<void> {
     const view = this.qualifiedName;
     const [existing] = await sql.unsafe<

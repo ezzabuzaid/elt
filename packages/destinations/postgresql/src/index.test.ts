@@ -266,7 +266,6 @@ test("a competing load cannot reconcile pending files between another load's com
   try {
     const stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
-      restart: false,
       reloading: false,
     });
     try {
@@ -964,19 +963,19 @@ test('a copy creates its schema and a table typed from the stream schema', async
       (columns) => columns.map((column) => ({ ...column })),
     ),
     [
-      { column_name: 'id', data_type: 'text', is_nullable: 'NO' },
-      { column_name: 'count', data_type: 'bigint', is_nullable: 'NO' },
+      { column_name: 'id', data_type: 'text', is_nullable: 'YES' },
+      { column_name: 'count', data_type: 'bigint', is_nullable: 'YES' },
       {
         column_name: 'ratio',
         data_type: 'double precision',
         is_nullable: 'YES',
       },
-      { column_name: 'done', data_type: 'boolean', is_nullable: 'NO' },
-      { column_name: 'on', data_type: 'date', is_nullable: 'NO' },
+      { column_name: 'done', data_type: 'boolean', is_nullable: 'YES' },
+      { column_name: 'on', data_type: 'date', is_nullable: 'YES' },
       {
         column_name: 'at',
         data_type: 'timestamp with time zone',
-        is_nullable: 'NO',
+        is_nullable: 'YES',
       },
       { column_name: 'note', data_type: 'text', is_nullable: 'YES' },
       {
@@ -1433,7 +1432,7 @@ test('a table has one writer, even when another loads only its own partitions', 
   assert.equal(late.extracted, 1);
 });
 
-test('a key column stored as another type rebuilds the table, and a changed key rebuilds the index', async () => {
+test('an overwrite rebuilds a table whose key column is stored as another type rather than converting it, and a changed key rebuilds the index', async () => {
   await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
@@ -1485,9 +1484,16 @@ test('a key column stored as another type rebuilds the table, and a changed key 
   await dedup(['id']);
   assert.deepEqual(await indexes(), ['(id)']);
 
+  // A table typed by hand, which no operation makes, stands in for one an
+  // earlier stream shape left. The overwrite replaces its rows anyway, so it
+  // loads a new table in its place.
   await database.sql`DROP TABLE raw.items`;
   await database.sql`CREATE TABLE raw.items (id bigint, kind text, version bigint, loaded_at timestamptz NOT NULL)`;
+  const oid = async () =>
+    (await database.sql`SELECT 'raw.items'::regclass::oid AS oid`)[0]?.oid;
+  const stored = await oid();
   await dedup(['id']);
+  assert.notEqual(await oid(), stored);
   assert.deepEqual(
     await database.sql`SELECT data_type FROM information_schema.columns WHERE table_schema = 'raw' AND table_name = 'items' AND column_name = 'id'`.then(
       (columns) => columns.map((column) => column.data_type),
@@ -1495,6 +1501,69 @@ test('a key column stored as another type rebuilds the table, and a changed key 
     ['text'],
   );
   assert.deepEqual(await indexes(), ['(id)']);
+});
+
+test('a stored column that is NOT NULL where the stream allows null is relaxed in place, so a null value loads beside the kept rows', async () => {
+  await using database = await scratchDatabase(server);
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        note: { type: ['string', 'null'] },
+      },
+      required: ['id', 'note'],
+    },
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+  });
+  const source = new Messages(stream);
+  source.messages = rows(stream, [{ id: 'b', note: null }]);
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  // A table typed by hand, which no operation makes, stands in for one an
+  // earlier stream shape left, when note could not be null.
+  await database.sql`CREATE SCHEMA raw`;
+  await database.sql`CREATE TABLE raw.items (id text, note text NOT NULL, loaded_at timestamptz NOT NULL)`;
+  await database.sql`INSERT INTO raw.items VALUES ('a', 'kept', now())`;
+  const oid = async () =>
+    (await database.sql`SELECT 'raw.items'::regclass::oid AS oid`)[0]?.oid;
+  const stored = await oid();
+
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({
+          url: database.url,
+          schema: 'raw',
+        }),
+        steps: [
+          new Copy(stream, destination.table('items'), {
+            id: 'items',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append',
+          }),
+        ],
+      }),
+    ],
+  }).run();
+
+  assert.equal(await oid(), stored);
+  assert.deepEqual(
+    (await database.sql`SELECT id, note FROM raw.items ORDER BY id`).map(
+      (row) => ({ ...row }),
+    ),
+    [
+      { id: 'a', note: 'kept' },
+      { id: 'b', note: null },
+    ],
+  );
 });
 
 test('declarations are checked before any connection', () => {
@@ -2526,7 +2595,7 @@ test('a key named last merges like its operations applied one at a time', async 
   assert.deepEqual(await rows('guarded'), ['a:2', 'c:5']);
 });
 
-test('renamed columns keep their table across runs, and a field added upstream reloads it under the same reader view', async () => {
+test('renamed columns keep their table across runs, and a field added upstream is added to it in place under the same reader view', async () => {
   await using database = await scratchDatabase(server);
   const { sql } = database;
   await sql`CREATE SCHEMA marts`;
@@ -2602,7 +2671,8 @@ test('renamed columns keep their table across runs, and a field added upstream r
   const after = [...before, 'New Field'];
   await run(shaped(after), [row(after, 'a'), checkpoint('odd', { n: 2 })]);
 
-  assert.notEqual(await table(), first);
+  // The new field is added to the stored table in place, keeping its rows.
+  assert.equal(await table(), first);
   const [reloaded] = await view();
   assert.equal(reloaded?.New_Field, 'a:New Field');
   assert.equal(reloaded?.Order_Items, 'a:Order Items');
@@ -2897,7 +2967,7 @@ test('array fields load as native arrays of their item type, in order, and an un
         column_name: 'counts',
         data_type: 'ARRAY',
         udt_name: '_int8',
-        is_nullable: 'NO',
+        is_nullable: 'YES',
       },
       {
         column_name: 'words',
@@ -2909,25 +2979,25 @@ test('array fields load as native arrays of their item type, in order, and an un
         column_name: 'ratios',
         data_type: 'ARRAY',
         udt_name: '_float8',
-        is_nullable: 'NO',
+        is_nullable: 'YES',
       },
       {
         column_name: 'flags',
         data_type: 'ARRAY',
         udt_name: '_bool',
-        is_nullable: 'NO',
+        is_nullable: 'YES',
       },
       {
         column_name: 'days',
         data_type: 'ARRAY',
         udt_name: '_date',
-        is_nullable: 'NO',
+        is_nullable: 'YES',
       },
       {
         column_name: 'times',
         data_type: 'ARRAY',
         udt_name: '_timestamptz',
-        is_nullable: 'NO',
+        is_nullable: 'YES',
       },
     ],
   );
@@ -3733,7 +3803,6 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
     try {
       await using stage = await load.prepare(copy.configuration, copy.to, {
         writer: copy.writer(source),
-        restart: false,
         reloading: false,
       });
       assert.ok(stage);
@@ -4256,7 +4325,7 @@ test('a reset replaces its partition, or the whole table, at the next commit; a 
   ]);
 });
 
-test('a stream whose shape changes reloads into a table rebuilt and swapped in under its reader view; a description edit only updates comments', async () => {
+test('a stream whose shape changes is evolved in place under its reader view, keeping its rows and checkpoint; a value that will not cast fails by column, and a reader holding the view delays the change to the next run', async () => {
   await using database = await scratchDatabase(server);
   await database.sql`CREATE SCHEMA marts`;
   const destination = new PostgresDestination({
@@ -4269,10 +4338,19 @@ test('a stream whose shape changes reloads into a table rebuilt and swapped in u
   });
   const received: unknown[] = [];
   // Each run discovers its stream anew, as a database source does.
-  const run = (properties: Properties, data: readonly object[]) => {
+  const pipeline = (
+    properties: Properties,
+    data: readonly object[],
+    required: string[] = [],
+  ) => {
     const stream = new Stream({
       name: 'items',
-      jsonSchema: { type: 'object', description: 'Items.', properties },
+      jsonSchema: {
+        type: 'object',
+        description: 'Items.',
+        properties,
+        required,
+      },
       primaryKey: ['id'],
       supportedSyncModes: ['incremental'],
       sourceDefinedCursor: true,
@@ -4309,16 +4387,21 @@ test('a stream whose shape changes reloads into a table rebuilt and swapped in u
           ],
         }),
       ],
-    }).run();
+    });
   };
+  const run = (...args: Parameters<typeof pipeline>) => pipeline(...args).run();
   const id = { type: 'string', description: 'Id.' } as const;
   const name = { type: 'string', description: 'Name.' } as const;
   const shape = async () =>
     (
-      await database.sql`SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS type, col_description('marts.items'::regclass, a.attnum) AS description FROM pg_attribute a WHERE a.attrelid = 'marts.items'::regclass AND a.attnum > 0 ORDER BY a.attnum`
+      await database.sql`SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull, col_description('marts.items'::regclass, a.attnum) AS description FROM pg_attribute a WHERE a.attrelid = 'marts.items'::regclass AND a.attnum > 0 ORDER BY a.attnum`
     ).map(
       ({ attname, type, description }) => `${attname} ${type} ${description}`,
     );
+  const nullable = async (column: string) =>
+    (
+      await database.sql`SELECT NOT attnotnull AS nullable FROM pg_attribute WHERE attrelid = 'raw.items'::regclass AND attname = ${column}`
+    )[0]?.nullable;
   const loaded = async () =>
     (await database.sql`SELECT * FROM marts.items ORDER BY id`).map(
       ({ loaded_at: _, ...row }) => ({ ...row }),
@@ -4331,35 +4414,68 @@ test('a stream whose shape changes reloads into a table rebuilt and swapped in u
   assert.deepEqual(received.splice(0), [null, {}]);
   assert.ok((await shape()).includes('name text Display name.'));
 
-  // A column added, then retyped: each reload starts from no checkpoint.
+  // A column added keeps the row the upstream no longer sends, then a
+  // retype casts it in place; the checkpoint carries on through both.
   const size = { type: ['integer', 'null'], description: 'Size.' } as const;
-  await run({ id, name, size }, [{ id: '1', name: 'one', size: 3 }]);
-  assert.deepEqual(await loaded(), [{ id: '1', name: 'one', size: '3' }]);
+  await run({ id, name, size }, [{ id: '2', name: 'two', size: 3 }]);
+  assert.deepEqual(await loaded(), [
+    { id: '1', name: 'one', size: null },
+    { id: '2', name: 'two', size: '3' },
+  ]);
   const text = { type: ['string', 'null'], description: 'Size.' } as const;
-  await run({ id, name, size: text }, [{ id: '1', name: 'one', size: 'L' }]);
   await run({ id, name, size: text }, []);
-  assert.deepEqual(received.splice(0), [null, null, {}]);
-  assert.deepEqual(await loaded(), [{ id: '1', name: 'one', size: 'L' }]);
+  assert.deepEqual(await loaded(), [
+    { id: '1', name: 'one', size: null },
+    { id: '2', name: 'two', size: '3' },
+  ]);
   assert.ok((await shape()).includes('size text Size.'));
+  const note = { type: 'string', description: 'Note.' } as const;
+  await run(
+    { id, name, size: text, note },
+    [{ id: '3', name: 'three', size: 'L', note: 'n' }],
+    ['id', 'name', 'note'],
+  );
+  assert.equal(await nullable('note'), true);
+  assert.deepEqual(received.splice(0), [{}, {}, {}]);
 
-  // A reader that holds the view outlasts the swap's wait; the reload stays
-  // hidden, and the next run continues it from its checkpoint and swaps.
+  // 'L' will not cast back to an integer.
+  for (const _ of [1, 2])
+    await assert.rejects(run({ id, name, size, note }, []), (error) => {
+      assert.ok(error instanceof PipelineError);
+      assert.match(String(error.errors[0]), /raw"\."items"/);
+      assert.match(String(error.errors[0]), /bigint/);
+      return true;
+    });
+  assert.equal((await loaded()).length, 3);
+
+  // A reader that holds the view outlasts the change's wait; the next run
+  // evolves the table, dropping the fields the stream removed, and keeps
+  // every row.
   const reader = postgres(database.url, { max: 1, onnotice: () => {} });
   try {
     await reader.begin(async (sql) => {
       await sql`SELECT * FROM marts.items`;
-      await assert.rejects(
-        run({ id, name }, [{ id: '1', name: 'one' }]),
-        /lock timeout/,
-      );
+      await assert.rejects(run({ id, name }, []), /lock timeout/);
     });
   } finally {
     await reader.end();
   }
-  assert.deepEqual(await loaded(), [{ id: '1', name: 'one', size: 'L' }]);
-  await run({ id, name }, [{ id: '1', name: 'one' }]);
-  assert.deepEqual(await loaded(), [{ id: '1', name: 'one' }]);
-  assert.deepEqual(received.splice(0), [null, {}]);
+  assert.ok((await shape()).includes('size text Size.'));
+  await run({ id, name }, []);
+  assert.deepEqual(await loaded(), [
+    { id: '1', name: 'one' },
+    { id: '2', name: 'two' },
+    { id: '3', name: 'three' },
+  ]);
+  assert.deepEqual(
+    (
+      await database.sql`SELECT attname FROM pg_attribute WHERE attrelid = 'raw.items'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum`
+    ).map(({ attname }) => attname),
+    ['id', 'name', 'loaded_at'],
+  );
+  await pipeline({ id, name, size }, []).clear();
+  await run({ id, name, size }, [{ id: '4', name: 'four', size: 4 }]);
+  assert.deepEqual(await loaded(), [{ id: '4', name: 'four', size: '4' }]);
 });
 
 test('a load holds no transaction while the source reads, so a run over many tables holds none of their locks', async () => {

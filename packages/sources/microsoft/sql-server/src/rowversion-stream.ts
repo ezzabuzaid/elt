@@ -10,21 +10,31 @@ import type {
 
 import { SqlServerStream, pageSize } from './sql-server-stream.ts';
 
-function parse(state: unknown): string {
-  if (state === null) return '0';
+// Where a read stands: the last rowversion it read, and the fields it read.
+type RowversionState = {
+  readonly above: string;
+  readonly fields: readonly string[];
+};
+
+function parse(state: unknown): RowversionState | null {
+  if (state === null) return null;
   if (
     typeof state === 'object' &&
     'above' in state &&
-    typeof state.above === 'string'
+    typeof state.above === 'string' &&
+    'fields' in state &&
+    Array.isArray(state.fields) &&
+    state.fields.every((field) => typeof field === 'string')
   )
-    return state.above;
+    return { above: state.above, fields: state.fields };
   throw new TypeError(`Unknown rowversion state ${JSON.stringify(state)}`);
 }
 
 // A keyed table with a rowversion column and no Change Tracking the login
 // can read: each read takes the rows inserted or updated since the last,
 // in rowversion order, up to the oldest write still open. A deleted row is
-// never seen, so it stays loaded.
+// never seen, so it stays loaded. Adding a column bumps no rowversion, so a
+// table that gained one is read again from its first row.
 export class RowversionStream extends SqlServerStream {
   constructor(table: SqlServerTable) {
     super(table, {
@@ -52,7 +62,9 @@ export class RowversionStream extends SqlServerStream {
     }
     const column = this.#column();
     const below = await session.minActiveRowversion();
-    let above = parse(state);
+    const saved = parse(state);
+    let above = saved === null || this.gained(saved.fields) ? '0' : saved.above;
+    const fields = this.fieldNames;
     for (;;) {
       let count = 0;
       for await (const row of session.rowversions(
@@ -66,7 +78,11 @@ export class RowversionStream extends SqlServerStream {
         count += 1;
       }
       if (count === 0) return;
-      yield { type: 'STATE', stream: this.stream.name, state: { above } };
+      yield {
+        type: 'STATE',
+        stream: this.stream.name,
+        state: { above, fields },
+      };
       if (count < pageSize) return;
     }
   }

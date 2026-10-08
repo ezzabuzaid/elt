@@ -45,13 +45,14 @@ export type FieldValues = (field: string) => AsyncIterable<unknown>;
 // becomes durable and visible together, or not at all.
 export type Stage = AsyncDisposable & {
   // The target holds none of the copy's earlier rows: this load creates it,
-  // or reloads it from scratch, so the copy reloads from no checkpoint.
+  // or starts a reload over, so the copy reads from no checkpoint. A target
+  // evolved to a changed shape keeps its rows and is not fresh.
   readonly fresh: boolean;
   // A reload is open: commits go to a hidden target that readers cannot see
   // until complete() swaps it in, so a reload that fails resumes from its
-  // checkpoints. It opens at prepare, for a restart, a resumed reload or a
-  // stored target that no longer fits, or when a RESET of the whole stream
-  // arrives.
+  // checkpoints. A RESET of the whole stream opens one, as does prepare for an
+  // overwrite whose stored target no longer fits; prepare also continues the
+  // one a copy's last run left open.
   readonly reloading: boolean;
   // The stream ended without a failure: an open reload replaces the target.
   complete(): Promise<void>;

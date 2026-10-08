@@ -89,7 +89,6 @@ export class SQLiteColumn {
   readonly kind: Kind;
   // The string format a schema-inferred column keeps, which refines its kind.
   readonly format?: DeclaredFormat;
-  readonly required: boolean;
   readonly isPrimaryKey: boolean;
   readonly nullable: boolean;
   readonly optional: boolean;
@@ -139,7 +138,6 @@ export class SQLiteColumn {
     this.isPrimaryKey = options.primaryKey;
     this.nullable = !options.primaryKey && options.nullable;
     this.optional = !options.primaryKey && options.optional;
-    this.required = !this.nullable && !this.optional;
     Object.freeze(this);
   }
 
@@ -253,7 +251,10 @@ export class SQLiteColumn {
     const check = this.array
       ? ` CHECK (json_valid(${this.quotedName}) AND json_type(${this.quotedName}) = 'array')`
       : canonical(this.kind, this.quotedName, this.format);
-    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? ' PRIMARY KEY' : ''}${this.required ? ' NOT NULL' : ''}${check}`;
+    // A field the stream requires stays nullable in storage: rows loaded
+    // before it was added have no value for it. Records are still checked for
+    // it when they are written (encode).
+    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? ' PRIMARY KEY NOT NULL' : ''}${check}`;
   }
 
   encode(record: unknown): SQLInputValue {

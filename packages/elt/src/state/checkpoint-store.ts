@@ -1,5 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 
+import {
+  StreamChangeError,
+  changedDeclarations,
+} from '../core/stream-change.ts';
+
 // A replication's saved binding and state, as the JSON text a store keeps.
 export type StoredCheckpoint = {
   readonly binding: string;
@@ -9,14 +14,17 @@ export type StoredCheckpoint = {
 export type CheckpointSession = {
   read(id: string): Promise<StoredCheckpoint | undefined>;
   // Durable when it resolves. Stores the binding with the state, since a
-  // replication that started over saves the shape it started over for.
+  // replication whose stream changed shape saves the shape it loads.
   save(id: string, checkpoint: StoredCheckpoint): Promise<void>;
   remove(id: string): Promise<void>;
 };
 
 // What a checkpoint belongs to: the copy (its source, target and selection),
-// which must not change, and the shape of the stream it loads, whose change
-// starts the replication over. A store keeps both as one JSON text.
+// which must not change, and the shape of the stream it loads. A changed field
+// keeps the checkpoint, as Airbyte keeps a connection's state through a
+// non-breaking schema change, and the destination evolves its target; a
+// changed declaration (see changedDeclarations) does not. A store keeps both
+// as one JSON text.
 export type CheckpointBinding = {
   readonly copy: object;
   readonly shape: object;
@@ -24,11 +32,9 @@ export type CheckpointBinding = {
 
 // The checkpoints of one run's replications.
 export type CheckpointRun = {
-  // The saved state, or null for a replication never saved or starting over.
-  // Throws when the replication's copy changed since it was saved.
+  // The saved state, or null for a replication never saved. Throws when the
+  // replication's copy, or a declaration of its stream, changed since.
   state(id: string): unknown;
-  // Whether the stream's shape changed since the checkpoint was saved.
-  restart(id: string): boolean;
   // Whether the checkpoint was saved inside a reload that has not completed.
   reloading(id: string): boolean;
   save(id: string, state: unknown, reloading: boolean): Promise<void>;
@@ -55,8 +61,7 @@ export abstract class CheckpointStore {
         {
           binding: string;
           saved: SavedState;
-          changed: boolean;
-          restart: boolean;
+          refused: Error | undefined;
         }
       >();
       for (const [id, { copy, shape }] of bindings) {
@@ -65,36 +70,35 @@ export abstract class CheckpointStore {
         const [savedCopy, savedShape]: unknown[] =
           saved === undefined ? [] : JSON.parse(saved.binding);
         const [currentCopy, currentShape]: unknown[] = JSON.parse(binding);
-        const changed =
-          saved !== undefined && !isDeepStrictEqual(savedCopy, currentCopy);
-        const restart =
-          saved !== undefined &&
-          !changed &&
-          !isDeepStrictEqual(savedShape, currentShape);
+        let refused: Error | undefined;
+        if (saved !== undefined) {
+          const declarations = changedDeclarations(savedShape, currentShape);
+          if (!isDeepStrictEqual(savedCopy, currentCopy))
+            refused = new TypeError(
+              `Checkpoint binding changed for ${id}; reset it or use a new copy ID`,
+            );
+          else if (declarations.length > 0)
+            refused = new StreamChangeError(id, declarations);
+        }
         checkpoints.set(id, {
           binding,
           saved:
-            saved === undefined || changed || restart
+            saved === undefined || refused !== undefined
               ? { state: null, reloading: false }
               : JSON.parse(saved.state),
-          changed,
-          restart,
+          refused,
         });
       }
       const checkpoint = (id: string) => {
         const found = checkpoints.get(id);
         if (found === undefined)
           throw new TypeError(`Checkpoint ${id} is not part of this run`);
-        if (found.changed)
-          throw new TypeError(
-            `Checkpoint binding changed for ${id}; reset it or use a new copy ID`,
-          );
+        if (found.refused !== undefined) throw found.refused;
         return found;
       };
       return work({
         // A source may mutate its input state, but only an acknowledged message may advance it.
         state: (id) => structuredClone(checkpoint(id).saved.state),
-        restart: (id) => checkpoint(id).restart,
         reloading: (id) => checkpoint(id).saved.reloading,
         save: async (id, state, reloading) => {
           const { binding } = checkpoint(id);
@@ -113,7 +117,8 @@ export abstract class CheckpointStore {
   }
 
   // Forgets progress but keeps the loaded rows: the next run reloads
-  // everything, as Airbyte's refresh that keeps records.
+  // everything, as Airbyte's refresh that keeps records. It also accepts a
+  // stream whose declarations changed, keeping its rows under them.
   async reset(id: string): Promise<void> {
     await this.session([id], (session) => session.remove(id));
   }

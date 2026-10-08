@@ -8,6 +8,9 @@
     "up-sqlserver": {
       "command": "docker compose -f infra/docker-compose.yml --profile sqlserver up -d --wait sqlserver"
     },
+    "down-sqlserver": {
+      "command": "docker compose -f infra/docker-compose.yml --profile sqlserver stop sqlserver"
+    },
     "down": {
       "command": "docker compose -f infra/docker-compose.yml --profile sqlserver down"
     },

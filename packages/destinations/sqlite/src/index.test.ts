@@ -33,6 +33,7 @@ import {
   type SourceMessage,
   type SourceWatchOptions,
   Stream,
+  StreamChangeError,
   StreamStatus,
   type Target,
   TargetOwnedError,
@@ -3190,7 +3191,6 @@ test('the SQLite writer lock spans commits, permits readers and releases after d
   try {
     const stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
-      restart: false,
       reloading: false,
     });
     try {
@@ -3249,7 +3249,6 @@ test('a commit waits for a reader in another process instead of failing', async 
   await using load = await destination.load();
   const stage = await load.prepare(copy.configuration, copy.to, {
     writer: 'writer',
-    restart: false,
     reloading: false,
   });
   try {
@@ -3277,7 +3276,6 @@ test('a clear waits for a reader in another process instead of failing', async (
     await using load = await destination.load();
     await using stage = await load.prepare(copy.configuration, copy.to, {
       writer: 'writer',
-      restart: false,
       reloading: false,
     });
     await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
@@ -5141,24 +5139,49 @@ test('a reset replaces only its partition at the next commit, and one a failure 
   assert.deepEqual(await loaded(), ['a2', 'b1', 'b2']);
 });
 
-test('a stream whose shape changes reloads into a rebuilt table, even when only a CHECK differs', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-drift-'));
+// A stream discovered anew each run, as a database source rediscovers its
+// tables, diffed as a snapshot into SQLite under a reader view.
+function shapeChanges(
+  directory: string,
+  declaration: Partial<
+    Pick<
+      ConstructorParameters<typeof Stream>[0],
+      'name' | 'emitsDeletes' | 'expiresBy' | 'supportedSyncModes'
+    >
+  >,
+) {
   const destination = new SQLiteDestination({
-    path: join(scratch.path, 'items.sqlite'),
+    path: join(directory, 'items.sqlite'),
   });
   const checkpoints = new SQLiteCheckpointStore({
-    path: join(scratch.path, 'state.sqlite'),
+    path: join(directory, 'state.sqlite'),
   });
   const received: unknown[] = [];
-  // Each run discovers its stream anew, as a database source does.
-  const run = (properties: Properties, data: readonly object[]) => {
+  const pipeline = (
+    properties: Properties,
+    rows: readonly Record<string, unknown>[],
+    {
+      required = [],
+      primaryKey = ['id'],
+      horizon,
+    }: {
+      required?: string[];
+      primaryKey?: string[];
+      horizon?: string;
+    } = {},
+  ) => {
     const stream = new Stream({
-      name: 'items',
-      jsonSchema: { type: 'object', description: 'Items.', properties },
-      primaryKey: ['id'],
-      supportedSyncModes: ['incremental'],
+      jsonSchema: {
+        type: 'object',
+        description: 'Items.',
+        properties,
+        required,
+      },
+      primaryKey,
       sourceDefinedCursor: true,
-      emitsDeletes: true,
+      ...declaration,
+      name: declaration.name ?? 'items',
+      supportedSyncModes: declaration.supportedSyncModes ?? ['incremental'],
     });
     class Discovered extends Source {
       override coverage() {
@@ -5175,12 +5198,11 @@ test('a stream whose shape changes reloads into a rebuilt table, even when only 
         yield streams;
       }
       protected override async *extract(
-        _configuration: CopyConfiguration,
+        configuration: CopyConfiguration,
         state: unknown,
       ) {
         received.push(state);
-        for (const row of data) yield { stream: 'items', data: row };
-        yield { type: 'STATE' as const, stream: 'items', state: {} };
+        yield* diffSnapshot(configuration.stream, rows, state, horizon);
       }
     }
     return new Pipeline({
@@ -5203,16 +5225,178 @@ test('a stream whose shape changes reloads into a rebuilt table, even when only 
           ],
         }),
       ],
-    }).run();
+    });
   };
+  const run = async (...args: Parameters<typeof pipeline>) =>
+    (await pipeline(...args).run()).map(({ count, deleted }) => ({
+      count,
+      deleted,
+    }));
   const loaded = () => {
     using database = new DatabaseSync(destination.path, { readOnly: true });
     return database
-      .prepare('SELECT * FROM items')
+      .prepare('SELECT * FROM items ORDER BY id')
       .all()
       .map(({ loaded_at: _, ...row }) => ({ ...row }));
   };
-  const id = { type: 'string', description: 'Id.' } as const;
+  const tables = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare(
+        `SELECT "name" FROM sqlite_schema WHERE "type" = 'table' ORDER BY "name"`,
+      )
+      .all()
+      .map(({ name }) => String(name));
+  };
+  const columns = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare(`SELECT "name" FROM pragma_table_info('raw_items')`)
+      .all()
+      .map(({ name }) => String(name));
+  };
+  // What the copy's checkpoint holds, as the store saved it.
+  const saved = () => {
+    using database = new DatabaseSync(join(directory, 'state.sqlite'), {
+      readOnly: true,
+    });
+    const row = database
+      .prepare('SELECT binding, state FROM checkpoints')
+      .get();
+    return {
+      binding: String(row?.binding),
+      state: JSON.parse(String(row?.state)).state,
+    };
+  };
+  return {
+    checkpoints,
+    received,
+    pipeline,
+    run,
+    loaded,
+    tables,
+    columns,
+    saved,
+  };
+}
+
+const shape = {
+  id: { type: 'string', description: 'Id.' },
+  title: { type: 'string', description: 'Title.' },
+  nullableTitle: { type: ['string', 'null'], description: 'Title.' },
+  added: { type: ['string', 'null'], description: 'Added.' },
+  requiredAdded: { type: 'string', description: 'Added.' },
+  seenAt: { type: 'string', format: 'date-time', description: 'Seen.' },
+} as const;
+
+test('a stream whose upstream forgets records keeps every row when a field is added, removed or made nullable, and its source resumes from its state', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const { run, loaded, received, tables, columns, saved } = shapeChanges(
+    scratch.path,
+    {},
+  );
+  await run(
+    { id: shape.id, title: shape.title, old: shape.title },
+    [
+      { id: 'a', title: 'A', old: 'x' },
+      { id: 'b', title: 'B', old: 'y' },
+    ],
+    { required: ['id', 'title', 'old'] },
+  );
+  const first = saved().state;
+
+  // a left the upstream; b is still there, untitled, with the new field.
+  const evolved = await run(
+    { id: shape.id, title: shape.nullableTitle, added: shape.added },
+    [{ id: 'b', title: null, added: 'z' }],
+  );
+
+  assert.deepEqual(evolved, [{ count: 1, deleted: 0 }]);
+  assert.deepEqual(loaded(), [
+    { id: 'a', title: 'A', added: null },
+    { id: 'b', title: null, added: 'z' },
+  ]);
+  assert.deepEqual(columns(), ['id', 'title', 'added', 'loaded_at']);
+  assert.deepEqual(received[1], first);
+  assert.equal(
+    tables().some((name) => name.startsWith('_elt_next_')),
+    false,
+  );
+});
+
+test('a mirror stream whose shape changes still deletes the rows its upstream deleted meanwhile', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const { run, loaded } = shapeChanges(scratch.path, { emitsDeletes: true });
+  await run({ id: shape.id, title: shape.title }, [
+    { id: 'a', title: 'A' },
+    { id: 'b', title: 'B' },
+  ]);
+
+  const evolved = await run(
+    { id: shape.id, title: shape.title, added: shape.added },
+    [{ id: 'b', title: 'B', added: 'z' }],
+  );
+
+  assert.deepEqual(evolved, [{ count: 1, deleted: 1 }]);
+  assert.deepEqual(loaded(), [{ id: 'b', title: 'B', added: 'z' }]);
+});
+
+test('an expiring stream whose shape changes keeps a row older than the horizon and deletes one its upstream still kept', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const { run, loaded } = shapeChanges(scratch.path, {
+    emitsDeletes: true,
+    expiresBy: 'seenAt',
+  });
+  await run(
+    { id: shape.id, seenAt: shape.seenAt },
+    [
+      { id: 'old', seenAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'recent', seenAt: '2026-06-01T00:00:00.000Z' },
+    ],
+    { horizon: '2025-12-01T00:00:00.000Z' },
+  );
+
+  // Both vanish while the upstream keeps records from March on: old expired,
+  // recent was deleted.
+  const evolved = await run(
+    { id: shape.id, seenAt: shape.seenAt, added: shape.added },
+    [],
+    { horizon: '2026-03-01T00:00:00.000Z' },
+  );
+
+  assert.deepEqual(evolved, [{ count: 0, deleted: 1 }]);
+  assert.deepEqual(loaded(), [
+    { id: 'old', seenAt: '2026-01-01T00:00:00.000Z', added: null },
+  ]);
+});
+
+test('a required field added to a stored stream reads null on rows written before it, and a new record still has to carry it', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const { run, loaded } = shapeChanges(scratch.path, {});
+  await run({ id: shape.id }, [{ id: 'a' }, { id: 'b' }]);
+  const fields = { id: shape.id, added: shape.requiredAdded };
+  const required = ['id', 'added'];
+
+  const evolved = await run(fields, [{ id: 'b', added: 'z' }], { required });
+
+  assert.deepEqual(evolved, [{ count: 1, deleted: 0 }]);
+  assert.deepEqual(loaded(), [
+    { id: 'a', added: null },
+    { id: 'b', added: 'z' },
+  ]);
+  await assert.rejects(run(fields, [{ id: 'c' }], { required }), (error) => {
+    assert.ok(error instanceof PipelineError);
+    assert.match(String(error.errors[0]), /Record is missing field "added"/);
+    return true;
+  });
+});
+
+test('stored rows the new shape cannot hold fail the copy by column, leave the table and checkpoint as they were, and a clear reloads', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const { run, pipeline, loaded, received, saved } = shapeChanges(
+    scratch.path,
+    { emitsDeletes: true },
+  );
   const at = (precision: number) =>
     ({
       type: 'string',
@@ -5220,24 +5404,227 @@ test('a stream whose shape changes reloads into a rebuilt table, even when only 
       precision,
       description: 'When.',
     }) as const;
-
-  await run({ id, at: at(3) }, [{ id: '1', at: '2025-01-02T03:04:05.006Z' }]);
-  await run({ id, at: at(3) }, []);
-  // Both columns stay TEXT; only the CHECK on at's width changes.
-  await run({ id, at: at(7) }, [
-    { id: '1', at: '2025-01-02T03:04:05.1234567Z' },
+  await run({ id: shape.id, at: at(3) }, [
+    { id: '1', at: '2025-01-02T03:04:05.006Z' },
   ]);
-  assert.deepEqual(loaded(), [{ id: '1', at: '2025-01-02T03:04:05.1234567Z' }]);
-  const note = { type: ['string', 'null'], description: 'Note.' } as const;
-  await run({ id, at: at(7), note }, [
-    { id: '1', at: '2025-01-02T03:04:05.1234567Z', note: 'n' },
-  ]);
-  await run({ id, at: at(7), note }, []);
+  const wider = { id: shape.id, at: at(7) };
+  const rows = [{ id: '1', at: '2025-01-02T03:04:05.1234567Z' }];
+  const before = saved();
 
-  assert.deepEqual(received, [null, {}, null, null, {}]);
+  // The stored value keeps three digits, which the seven-digit column refuses.
+  for (const _ of [1, 2])
+    await assert.rejects(run(wider, rows), (error) => {
+      assert.ok(error instanceof PipelineError);
+      assert.match(String(error.errors[0]), /raw_items/);
+      assert.match(String(error.errors[0]), /"at"/);
+      return true;
+    });
+  assert.deepEqual(loaded(), [{ id: '1', at: '2025-01-02T03:04:05.006Z' }]);
+  assert.deepEqual(saved(), before);
+  await pipeline(wider, rows).clear();
+  await run(wider, rows);
+
+  assert.deepEqual(loaded(), rows);
+  assert.deepEqual(received.at(-1), null);
+});
+
+test('a stale table whose reader view was replaced by another is refused before it evolves, and is left as it was', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const { run, columns } = shapeChanges(scratch.path, {});
+  await run({ id: shape.id }, [{ id: 'a' }]);
+  // Someone else's view takes the reader view's name.
+  {
+    using database = new DatabaseSync(join(scratch.path, 'items.sqlite'));
+    database.exec('DROP VIEW items; CREATE VIEW items AS SELECT 1 AS one');
+  }
+
+  await assert.rejects(
+    run({ id: shape.id, added: shape.added }, [{ id: 'a', added: 'z' }]),
+    (error) => {
+      assert.ok(error instanceof PipelineError);
+      assert.match(String(error.errors[0]), /is not a view of exactly/);
+      return true;
+    },
+  );
+
+  assert.deepEqual(columns(), ['id', 'loaded_at']);
+  using database = new DatabaseSync(join(scratch.path, 'items.sqlite'), {
+    readOnly: true,
+  });
+  assert.deepEqual(
+    database
+      .prepare('SELECT * FROM items')
+      .all()
+      .map((row) => ({ ...row })),
+    [{ one: 1 }],
+  );
+});
+
+test('a changed declaration stops the copy with StreamChangeError naming it, and loads nothing', async () => {
+  const fields = { id: shape.id, seenAt: shape.seenAt };
+  const changes = [
+    [{ emitsDeletes: true }, {}, /emitsDeletes/],
+    [
+      { emitsDeletes: true },
+      { emitsDeletes: true, expiresBy: 'seenAt' },
+      /expiresBy/,
+    ],
+    [
+      {},
+      { supportedSyncModes: ['full_refresh', 'incremental'] },
+      /supportedSyncModes/,
+    ],
+    [{}, { name: 'things' }, /name/],
+  ] as const;
+
+  for (const [before, after, named] of changes) {
+    await using scratch = await mkdtempDisposable(
+      join(tmpdir(), 'elt-evolve-'),
+    );
+    await shapeChanges(scratch.path, before).run(fields, [
+      { id: 'a', seenAt: '2026-01-01T00:00:00.000Z' },
+    ]);
+    const changed = shapeChanges(scratch.path, after);
+
+    await assert.rejects(
+      changed.run(fields, [{ id: 'b', seenAt: '2026-06-01T00:00:00.000Z' }], {
+        horizon: '2025-01-01T00:00:00.000Z',
+      }),
+      (error) => {
+        assert.ok(error instanceof PipelineError);
+        assert.ok(error.errors[0] instanceof StreamChangeError);
+        assert.match(String(error.errors[0]), named);
+        return true;
+      },
+    );
+    assert.deepEqual(changed.loaded(), [
+      { id: 'a', seenAt: '2026-01-01T00:00:00.000Z' },
+    ]);
+  }
+});
+
+test('a changed primary key fails the copy until it is reset, which keeps and re-keys the rows', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const { run, loaded, checkpoints } = shapeChanges(scratch.path, {
+    emitsDeletes: true,
+  });
+  const fields = { id: shape.id, title: shape.title };
+  await run(fields, [
+    { id: 'a', title: 'A' },
+    { id: 'b', title: 'B' },
+  ]);
+  const byTitle = { primaryKey: ['title'] };
+
+  await assert.rejects(run(fields, [], byTitle), (error) => {
+    assert.ok(error instanceof PipelineError);
+    assert.ok(error.errors[0] instanceof StreamChangeError);
+    assert.match(String(error.errors[0]), /primaryKey/);
+    assert.match(String(error.errors[0]), /reset/);
+    return true;
+  });
+  await checkpoints.reset('items');
+  const rekeyed = await run(fields, [{ id: 'c', title: 'A' }], byTitle);
+
+  assert.deepEqual(rekeyed, [{ count: 1, deleted: 0 }]);
   assert.deepEqual(loaded(), [
-    { id: '1', at: '2025-01-02T03:04:05.1234567Z', note: 'n' },
+    { id: 'b', title: 'B' },
+    { id: 'c', title: 'A' },
   ]);
+});
+
+test('rows that repeat a new primary key fail its reset loudly, and a clear reloads', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const { run, pipeline, loaded, checkpoints } = shapeChanges(scratch.path, {
+    emitsDeletes: true,
+  });
+  const fields = { id: shape.id, title: shape.title };
+  await run(fields, [
+    { id: 'a', title: 'A' },
+    { id: 'b', title: 'A' },
+  ]);
+  const byTitle = { primaryKey: ['title'] };
+  await checkpoints.reset('items');
+
+  await assert.rejects(run(fields, [], byTitle), (error) => {
+    assert.ok(error instanceof PipelineError);
+    assert.match(String(error.errors[0]), /repeat a deduplication key/);
+    return true;
+  });
+  assert.deepEqual(loaded(), [
+    { id: 'a', title: 'A' },
+    { id: 'b', title: 'A' },
+  ]);
+  await pipeline(fields, [], byTitle).clear();
+  await run(fields, [{ id: 'e', title: 'E' }], byTitle);
+
+  assert.deepEqual(loaded(), [{ id: 'e', title: 'E' }]);
+});
+
+test('an overwrite whose stored table no longer fits reloads it rather than evolving it, so a stored value the new shape refuses is replaced', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'items.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  // Each run discovers its stream anew and replaces every row.
+  const run = (properties: Properties, rows: readonly object[]) => {
+    const items = new Stream({
+      name: 'items',
+      jsonSchema: { type: 'object', properties },
+      supportedSyncModes: ['full_refresh'],
+    });
+    class Snapshot extends Source {
+      override coverage() {
+        return { description: 'test', selection: {} };
+      }
+
+      protected override async open() {
+        return new AsyncDisposableStack();
+      }
+
+      readonly identity = 'snapshot';
+      protected readonly catalog = new Catalog([items]);
+      protected override async *observe({ streams }: SourceWatchOptions) {
+        yield streams;
+      }
+      protected override async *extract() {
+        for (const data of rows) yield { stream: 'items', data };
+      }
+    }
+    return new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new Snapshot(),
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(items, destination.table('items'), {
+              id: 'items',
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite',
+            }),
+          ],
+        }),
+      ],
+    }).run();
+  };
+  await run({ size: { type: 'string' } }, [{ size: 'L' }]);
+
+  // An INTEGER column refuses the stored 'L', which this run replaces anyway.
+  const [reloaded] = await run({ size: { type: 'integer' } }, [{ size: 3 }]);
+
+  assert.equal(reloaded?.count, 1);
+  using database = new DatabaseSync(destination.path, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare('SELECT size FROM items')
+      .all()
+      .map((row) => ({ ...row })),
+    [{ size: 3 }],
+  );
 });
 
 test('a reset reloads into a hidden table: readers keep the old rows until the stream ends, a failed reload resumes, and a new reset discards it', async () => {
@@ -5359,7 +5746,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
   ]);
 });
 
-test('a reload keeps every file its rows refer to, and the swapped-in table drops a row with its file', async () => {
+test('a stored table that no longer fits evolves without a reload, keeping every file its rows refer to, and a deleted row drops its file', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
   const source = new FileSource(scratch.path, {
     a: { version: 1, bytes: Buffer.from('aye') },
@@ -5389,15 +5776,27 @@ test('a reload keeps every file its rows refer to, and the swapped-in table drop
   });
   await pipeline.run();
   const loaded = storedFiles(destination.path);
-  // A column added by hand makes the stored table stale, so the next run
-  // reloads it into a hidden table and swaps that in.
+  // A column added by hand makes the stored table stale; the next run brings
+  // it back to the stream's shape with its rows and their files.
   {
     using database = new DatabaseSync(destination.path);
     database.exec('ALTER TABLE files ADD COLUMN extra TEXT');
   }
 
-  await pipeline.run();
+  const evolved = (await pipeline.run()).map(({ count }) => count);
   const reloaded = storedFiles(destination.path);
+  {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    assert.equal(
+      database
+        .prepare(
+          `SELECT 1 FROM pragma_table_info('files') WHERE "name" = 'extra'`,
+        )
+        .get(),
+      undefined,
+    );
+  }
+  assert.deepEqual(evolved, [0]);
   source.contents = { a: { version: 1, bytes: Buffer.from('aye') } };
   await pipeline.run();
 

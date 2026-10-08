@@ -13,8 +13,10 @@ export type DestinationSyncMode =
 // commits only its own stream's operations, so a failed stream never publishes
 // rows. prepare refuses a target another writer owns (writer names the copy
 // across runs) before anything is read, and publishes nothing: a target
-// appears no later than its first commit. restart opens a reload, as the
-// stream's shape changed since its checkpoint; reloading continues the reload
+// appears no later than its first commit. A stored target the stream no longer
+// fits is evolved to it, keeping its rows, as Airbyte's destinations alter a
+// table rather than reload it, unless an overwrite would replace those rows
+// anyway, which reloads it (see reloadMode); reloading continues the reload
 // the copy's last run left open.
 export type Load<Target extends DestinationTarget> = AsyncDisposable & {
   prepare(
@@ -22,7 +24,6 @@ export type Load<Target extends DestinationTarget> = AsyncDisposable & {
     target: Target,
     binding: {
       readonly writer: string;
-      readonly restart: boolean;
       readonly reloading: boolean;
     },
   ): Promise<Stage>;

@@ -299,17 +299,25 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   // Refuses, before anything is read, a view of other columns or another
-  // table, rather than adopting it.
-  #refuseReaderView(database: DatabaseSync, view: string): void {
+  // table, rather than adopting it. A stale table's view still selects the
+  // stored columns, which evolving the table replaces.
+  #refuseReaderView(
+    database: DatabaseSync,
+    view: string,
+    stale: boolean,
+  ): void {
     const existing = database
       .prepare(
         'SELECT "type", "sql" FROM sqlite_schema WHERE lower("name") = lower(?)',
       )
       .get(view);
-    if (
-      existing !== undefined &&
-      (existing.type !== 'view' || existing.sql !== this.#viewDefinition(view))
-    )
+    if (existing === undefined) return;
+    const sql = String(existing.sql);
+    const ours = stale
+      ? sql.startsWith(`CREATE VIEW ${quote(view)} AS SELECT `) &&
+        sql.endsWith(` FROM ${this.table.quotedName}`)
+      : sql === this.#viewDefinition(view);
+    if (existing.type !== 'view' || !ours)
       throw new TypeError(
         `${quote(view)} is not a view of exactly ${this.table.quotedName}; drop it or delete the database`,
       );
@@ -379,19 +387,56 @@ export abstract class SQLiteWriter extends Writer {
       : 'stale';
   }
 
+  // Brings a stored table the stream no longer fits to its shape, keeping
+  // every row: SQLite cannot change a column's type or constraints in place,
+  // so the rows move into a table of the new definition, column by name, a
+  // column the stream added reading NULL and one it dropped left behind. A
+  // value the new definition refuses fails the load, naming the column, and
+  // the transaction leaves the table as it was.
+  #evolve(database: DatabaseSync, into: string): void {
+    const stored = new Map(
+      database
+        .prepare('SELECT "name" FROM pragma_table_info(?)')
+        .all(this.table.name)
+        .map(({ name }) => [
+          identifiers.key(String(name)),
+          quote(String(name)),
+        ]),
+    );
+    const sources = [...this.table.columns.map(({ name }) => name), 'loaded_at']
+      .map((name) => stored.get(identifiers.key(name)) ?? 'NULL')
+      .join(', ');
+    if (this.table.readerView !== undefined)
+      database.exec(`DROP VIEW IF EXISTS ${quote(this.table.readerView)}`);
+    database.exec(`CREATE TABLE ${this.table.definition(into)}`);
+    try {
+      database.exec(
+        `INSERT INTO ${into} (${this.fields.join(', ')}) SELECT ${sources} FROM ${this.table.quotedName}`,
+      );
+    } catch (cause) {
+      throw new TypeError(
+        `The rows stored in ${this.table.quotedName} do not fit the new shape of stream ${this.stream.name}: ${cause instanceof Error ? cause.message : String(cause)}. Clear the copy to load it again, or change the stream so they fit.`,
+        { cause },
+      );
+    }
+    database.exec(`DROP TABLE ${this.table.quotedName}`);
+    database.exec(`ALTER TABLE ${into} RENAME TO ${this.table.quotedName}`);
+    this.initialize(database, false);
+    if (this.table.readerView !== undefined)
+      this.installReaderView(database, this.table.readerView);
+    this.describe(database);
+  }
+
   // Refuses, in one short transaction, a target another writer owns, a
-  // reader view not its own and stored rows it cannot keep, and stages in
-  // TEMP. Nothing reaches the database until a commit. A load into the target
-  // creates it, or adopts the stored one, at its first commit; a reload
+  // reader view not its own and stored rows it cannot keep, evolves a stored
+  // table the stream no longer fits unless the load overwrites it, and stages
+  // in TEMP. Nothing else reaches the database until a commit. A load into the
+  // target creates it, or adopts the stored one, at its first commit; a reload
   // leaves it to readers as it is, merges into a hidden target from its first
   // commit, and swaps that in at complete().
   prepare(
     database: DatabaseSync,
-    {
-      writer,
-      restart,
-      reloading,
-    }: { writer: string; restart: boolean; reloading: boolean },
+    { writer, reloading }: { writer: string; reloading: boolean },
     loadedAt: string,
   ): Stage {
     const name = quote(`_elt_stage_${this.hash}`);
@@ -432,14 +477,22 @@ export abstract class SQLiteWriter extends Writer {
       const target = this.#fit(database, this.table.name);
       mode = reloadMode({
         reloading,
-        restart,
+        destinationSyncMode: this.configuration.destinationSyncMode,
         target,
         hidden: this.#fit(database, this.#hiddenName),
       });
       // A hidden target no reload continues is a leftover readers never saw.
       if (mode !== 'continue') database.exec(`DROP TABLE IF EXISTS ${hidden}`);
       if (!open() && this.table.readerView !== undefined)
-        this.#refuseReaderView(database, this.table.readerView);
+        this.#refuseReaderView(
+          database,
+          this.table.readerView,
+          target === 'stale',
+        );
+      if (mode === 'evolve') {
+        this.#evolve(database, hidden);
+        mode = 'load';
+      }
       if (mode === 'load' && !this.replaces) this.inspect(database);
       database.exec(`DROP TABLE IF EXISTS ${stage}`);
       database.exec(

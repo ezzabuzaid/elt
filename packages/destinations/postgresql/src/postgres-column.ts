@@ -79,7 +79,6 @@ export class PostgresColumn {
   readonly kind: Kind;
   // The string format a schema-inferred column keeps, which refines its kind.
   readonly format?: DeclaredFormat;
-  readonly required: boolean;
   readonly isPrimaryKey: boolean;
   readonly nullable: boolean;
   readonly optional: boolean;
@@ -129,7 +128,6 @@ export class PostgresColumn {
     this.isPrimaryKey = options.primaryKey;
     this.nullable = !options.primaryKey && options.nullable;
     this.optional = !options.primaryKey && options.optional;
-    this.required = !this.nullable && !this.optional;
     Object.freeze(this);
   }
 
@@ -245,8 +243,11 @@ export class PostgresColumn {
     return `CASE WHEN json_typeof(${row}->${index}) = 'array' THEN ARRAY(SELECT element.value::${this.#scalarType} FROM json_array_elements_text(${row}->${index}) WITH ORDINALITY AS element (value, position) ORDER BY element.position) END`;
   }
 
+  // A field the stream requires stays nullable in storage: rows loaded before
+  // it was added have no value for it. Records are still checked for it when
+  // they are written (encode).
   get definition(): string {
-    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? ' PRIMARY KEY' : ''}${this.required ? ' NOT NULL' : ''}`;
+    return `${this.quotedName} ${this.storageType}${this.isPrimaryKey ? ' PRIMARY KEY' : ''}`;
   }
 
   encode(record: unknown): EncodedValue {

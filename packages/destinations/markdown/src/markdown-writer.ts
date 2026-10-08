@@ -105,11 +105,9 @@ export abstract class MarkdownWriter extends Writer {
   // reload is open its hidden target, which complete() puts in its place.
   async prepare({
     writer,
-    restart,
     reloading,
   }: {
     writer: string;
-    restart: boolean;
     reloading: boolean;
   }): Promise<Stage> {
     const lock = await this.lock();
@@ -121,16 +119,16 @@ export abstract class MarkdownWriter extends Writer {
       // Markdown stores no shape, so a stored target always fits the stream.
       const fit = ({ owner }: { readonly owner?: string }): StoredFit =>
         owner === undefined ? 'missing' : 'fits';
+      const sync = this.configuration.destinationSyncMode;
       let mode: ReloadMode = reloadMode({
         reloading,
-        restart,
+        destinationSyncMode: sync,
         target: fit(target),
         hidden: fit(hidden),
       });
       // A hidden target no reload continues is a leftover readers never saw.
       if (mode !== 'continue') await this.removeHidden();
       const open = () => mode === 'reload' || mode === 'continue';
-      const sync = this.configuration.destinationSyncMode;
       // ponytail: Markdown reconciliation holds the target in memory; use an on-disk index if exports outgrow memory.
       let published = new Map<string, unknown>();
       // A reload keeps none of the target's rows; one it continues keeps the

@@ -323,7 +323,7 @@ test('a truncated Change Tracking table, whose history no longer reaches the las
   );
 });
 
-test('a column added upstream starts its table over, and every row arrives with it', async () => {
+test('a column added to a Change Tracking table reaches every row: the table loads again', async () => {
   await using server = await scratchSqlServer();
   await using warehouse = await scratchWarehouse();
   await server.run(`
@@ -350,6 +350,35 @@ test('a column added upstream starts its table over, and every row arrives with 
     [
       { id: 1, name: 'one', size: 'L' },
       { id: 2, name: 'two', size: null },
+    ],
+  );
+});
+
+test('a column added to a rowversion table reaches every stored row, and a row deleted upstream stays loaded', async () => {
+  await using server = await scratchSqlServer();
+  await using warehouse = await scratchWarehouse();
+  await server.run(`
+    CREATE TABLE dbo.events (id int PRIMARY KEY, kind varchar(10) NOT NULL, stamp rowversion);
+    INSERT dbo.events (id, kind) VALUES (1, 'open'), (2, 'open');`);
+  const reader = await server.login();
+  const sync = syncer(reader.connectionString, warehouse.url);
+  await sync();
+  // A default fills the existing row without bumping its rowversion, so only
+  // a read from the first row brings it.
+  await server.run(
+    "DELETE dbo.events WHERE id = 2; ALTER TABLE dbo.events ADD size char(1) NOT NULL DEFAULT 'M';",
+  );
+
+  const { results } = await sync();
+
+  assert.equal(results[0]?.count, 1);
+  assert.deepEqual(
+    [
+      ...(await warehouse.sql`SELECT id::int AS id, kind, size FROM raw.dbo_events ORDER BY id`),
+    ],
+    [
+      { id: 1, kind: 'open', size: 'M' },
+      { id: 2, kind: 'open', size: null },
     ],
   );
 });

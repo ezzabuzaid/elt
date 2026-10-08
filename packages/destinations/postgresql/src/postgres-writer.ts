@@ -18,7 +18,7 @@ import { quote } from './identifier.ts';
 import type { EncodedValue } from './postgres-column.ts';
 import { TargetComments } from './postgres-comments.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
-import { storedFit } from './postgres-fit.ts';
+import { storedColumns, storedFit } from './postgres-fit.ts';
 import type { PostgresLoad, Transaction } from './postgres-load.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
 import { PostgresSession, schemaLock } from './postgres-session.ts';
@@ -354,6 +354,64 @@ export abstract class PostgresWriter extends Writer {
     await this.#view?.describe(sql, this.#comments);
   }
 
+  // Brings a stored table the stream no longer fits to its shape in place,
+  // keeping every row, as Airbyte's Postgres destination does: a column the
+  // stream added is added nullable, one it dropped is dropped, a changed type
+  // is cast, and NOT NULL follows the primary key. A value that will not cast
+  // fails the load, naming the column, and the transaction leaves the table
+  // as it was. Readers wait for the change as they wait for a swap, and
+  // whatever else depends on the reader view refuses it.
+  async #evolve(sql: Transaction, stage: string): Promise<void> {
+    await sql.unsafe(`SET LOCAL lock_timeout = '${swapTimeout}'`);
+    const stored = new Map(
+      (await storedColumns(sql, this.qualifiedName)).map((column) => [
+        column.name,
+        column,
+      ]),
+    );
+    const types = new Map(
+      (await storedColumns(sql, `pg_temp.${stage}`)).map(({ name, type }) => [
+        name,
+        type,
+      ]),
+    );
+    const kept = new Set(['loaded_at']);
+    await this.#view?.drop(sql);
+    try {
+      for (const column of this.table.columns) {
+        kept.add(column.name);
+        const type = types.get(column.name);
+        const existing = stored.get(column.name);
+        if (existing === undefined) {
+          await sql.unsafe(
+            `ALTER TABLE ${this.qualifiedName} ADD COLUMN ${column.quotedName} ${type}`,
+          );
+          continue;
+        }
+        if (existing.type !== type)
+          await sql.unsafe(
+            `ALTER TABLE ${this.qualifiedName} ALTER COLUMN ${column.quotedName} TYPE ${type} USING ${column.quotedName}::${type}`,
+          );
+        if (existing.required !== column.isPrimaryKey)
+          await sql.unsafe(
+            `ALTER TABLE ${this.qualifiedName} ALTER COLUMN ${column.quotedName} ${column.isPrimaryKey ? 'SET' : 'DROP'} NOT NULL`,
+          );
+      }
+      for (const name of stored.keys())
+        if (!kept.has(name))
+          await sql.unsafe(
+            `ALTER TABLE ${this.qualifiedName} DROP COLUMN ${quote(name)}`,
+          );
+    } catch (cause) {
+      throw new TypeError(
+        `The rows stored in ${this.qualifiedName} do not fit the new shape of stream ${this.stream.name}: ${cause instanceof Error ? cause.message : String(cause)}. Clear the copy to load it again, or change the stream so they fit.`,
+        { cause },
+      );
+    }
+    await this.#comments.write(sql, 'TABLE', this.schema, this.table.name);
+    await this.#view?.describe(sql, this.#comments);
+  }
+
   // The rows of one partition, or every row when the stream is not
   // partitioned, as a WHERE clause over the target's or the stage's columns.
   #scope(partition: Partition | null): [string, string[]] {
@@ -376,18 +434,16 @@ export abstract class PostgresWriter extends Writer {
 
   // One stream's load. Operations wait in a session-private TEMP stage, so no
   // other session sees them and a crash leaves nothing behind. prepare only
-  // refuses and stages, so a run that fails before a commit leaves nothing.
+  // refuses, evolves a stored table the stream no longer fits unless the load
+  // overwrites it, and stages, so a run that fails before a commit leaves no
+  // rows behind.
   // Each commit is one transaction that merges the stage, with the result of
   // applying its operations one at a time, into the target, or into a
   // reload's hidden target until complete() swaps it in. The first commit
   // also creates the target, or the hidden target of a new reload.
   async prepare(
     load: PostgresLoad,
-    {
-      writer,
-      restart,
-      reloading,
-    }: { writer: string; restart: boolean; reloading: boolean },
+    { writer, reloading }: { writer: string; reloading: boolean },
   ): Promise<Stage> {
     const { sql } = load;
     const stage = quote(`_elt_stage_${this.#hash}`);
@@ -408,11 +464,20 @@ export abstract class PostgresWriter extends Writer {
         stage,
       );
       const hidden = await storedFit(sql, this.table, this.#hidden, stage);
-      const decided = reloadMode({ reloading, restart, target, hidden });
+      let decided = reloadMode({
+        reloading,
+        destinationSyncMode: this.configuration.destinationSyncMode,
+        target,
+        hidden,
+      });
       // A hidden target no reload continues is a leftover readers never saw.
       if (decided !== 'continue')
         await sql.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
       await this.#view?.refuse(sql, target === 'stale');
+      if (decided === 'evolve') {
+        await this.#evolve(sql, stage);
+        decided = 'load';
+      }
       if (decided === 'load' && !this.replaces) await this.inspect(sql);
       return decided;
     });

@@ -35,6 +35,7 @@ export {
   type StoredFit,
   reloadMode,
 } from './core/reload-mode.ts';
+export { StreamChangeError } from './core/stream-change.ts';
 export {
   type FieldSchema,
   type Properties,

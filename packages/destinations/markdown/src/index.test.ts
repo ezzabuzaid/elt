@@ -12,10 +12,12 @@ import {
   type Partition,
   Pipeline,
   PipelineError,
+  type Properties,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
   Stream,
+  diffSnapshot,
 } from '@workspace/elt';
 import { SQLiteCheckpointStore } from '@workspace/elt-sqlite';
 
@@ -970,6 +972,102 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
   await pipeline.run();
 
   assert.deepEqual(await ids(), ['1', '2']);
+});
+
+test('a stream whose shape changes keeps its records and resumes from its checkpoint', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const markdown = new MarkdownDestination({ path: join(scratch.path, 'md') });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const received: unknown[] = [];
+  // An upstream that forgets records: one it no longer holds keeps its record.
+  const run = (
+    properties: Properties,
+    rows: readonly Record<string, unknown>[],
+  ) => {
+    const items = new Stream({
+      name: 'items',
+      jsonSchema: { type: 'object', properties },
+      primaryKey: ['id'],
+      supportedSyncModes: ['incremental'],
+      sourceDefinedCursor: true,
+    });
+    class Discovered extends Source {
+      override coverage() {
+        return { description: 'test', selection: {} };
+      }
+
+      protected override async open() {
+        return new AsyncDisposableStack();
+      }
+
+      readonly identity = 'discovered';
+      protected readonly catalog = new Catalog([items]);
+      protected override async *observe({ streams }: SourceWatchOptions) {
+        yield streams;
+      }
+      protected override async *extract(
+        configuration: CopyConfiguration,
+        state: unknown,
+      ) {
+        received.push(state);
+        yield* diffSnapshot(configuration.stream, rows, state);
+      }
+    }
+    return new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new Discovered(),
+          destination: markdown,
+          checkpoints,
+          steps: [
+            new Copy(items, markdown.file('items.md'), {
+              id: 'items',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
+        }),
+      ],
+    }).run();
+  };
+  const records = async () =>
+    [
+      ...(
+        await readFile(join(scratch.path, 'md', 'items.md'), 'utf8')
+      ).matchAll(/elt-record:([A-Za-z0-9+/=]+)/g),
+    ].map(([, encoded]) =>
+      JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8')),
+    );
+  await run({ id: { type: 'string' }, title: { type: 'string' } }, [
+    { id: 'a', title: 'A' },
+    { id: 'b', title: 'B' },
+  ]);
+  const first = received[0];
+
+  const [evolved] = await run(
+    { id: { type: 'string' }, added: { type: ['string', 'null'] } },
+    [{ id: 'b', added: 'z' }],
+  );
+
+  assert.deepEqual(
+    { count: evolved?.count, deleted: evolved?.deleted },
+    { count: 1, deleted: 0 },
+  );
+  assert.deepEqual(
+    (await records()).sort((x, y) => String(x.id).localeCompare(y.id)),
+    [
+      { id: 'a', title: 'A' },
+      { id: 'b', added: 'z' },
+    ],
+  );
+  assert.equal(first, null);
+  assert.deepEqual(Object.keys(Object(received[1]).snapshot ?? {}), [
+    '["a"]',
+    '["b"]',
+  ]);
 });
 
 test('a reset reloads into a hidden file or folder: readers keep the old records until the stream ends, a failed reload resumes, and a new reset discards it', async () => {
