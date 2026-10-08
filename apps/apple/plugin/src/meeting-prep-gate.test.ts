@@ -6,6 +6,9 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+
 import type { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
 import { ConnectorManifest } from '@workspace/connector-apple-manifest/connector-manifest';
@@ -19,12 +22,13 @@ import { StubEventKitHelper } from '@workspace/sdk-apple-eventkit/test';
 import { Settings } from '@workspace/settings';
 
 // The Meeting prep heartbeat's gate, run the way Codex runs the plugin's
-// UserPromptSubmit command hook: the committed hooks/meeting-prep-gate with the
+// UserPromptSubmit command hook: the committed hooks/heartbeat-gate with the
 // hook's JSON on stdin, on the bundled server and Codex's bundled Node, under
-// a HOME whose Apple folder holds a real Calendar import.
+// a HOME whose Apple folder holds a real Calendar import. The dispatcher's
+// record of each meeting's chat goes through the plugin's own MCP tool.
 
 const root = resolve(import.meta.dirname, '../../../..');
-const gateCommand = join(root, 'plugins/apple/hooks/meeting-prep-gate');
+const plugin = join(root, 'plugins/apple');
 const runtime =
   process.env.CODEX_MCP_NODE_PATH ??
   join(
@@ -33,8 +37,8 @@ const runtime =
   );
 
 // The heartbeat prompt setup-apple tells the agent to create.
-const heartbeatPrompt = /`prompt` `([^`]+\$meeting-prep[^`]*)`/.exec(
-  readFileSync(join(root, 'plugins/apple/skills/setup-apple/SKILL.md'), 'utf8'),
+const meetingPrepPrompt = /`prompt` `([^`]+\$meeting-prep[^`]*)`/.exec(
+  readFileSync(join(plugin, 'skills/setup-apple/SKILL.md'), 'utf8'),
 )?.[1];
 
 // What ChatGPT sends the chat when a heartbeat wakes it.
@@ -42,7 +46,7 @@ const heartbeat = (instructions: string) =>
   `<heartbeat>\n  <automation_id>meeting-prep</automation_id>\n  <current_time_iso>${new Date().toISOString()}</current_time_iso>\n  <instructions>\n${instructions}\n  </instructions>\n</heartbeat>`;
 
 function runGate(home: string, prompt: string) {
-  const result = spawnSync(gateCommand, [], {
+  const result = spawnSync(join(plugin, 'hooks/heartbeat-gate'), [], {
     input: JSON.stringify({
       session_id: 'thread-1',
       turn_id: 'turn-1',
@@ -61,14 +65,35 @@ function runGate(home: string, prompt: string) {
   return result.stdout === '' ? undefined : JSON.parse(result.stdout);
 }
 
-// The meetings a gate output hands the model: the JSON line of its context.
-function handedOver(output: {
-  hookSpecificOutput: { additionalContext: string };
-}): string[] {
-  const rows: { name: string }[] = JSON.parse(
-    output.hookSpecificOutput.additionalContext.split('\n')[1] ?? '[]',
+// The items of one titled section of the work a gate hands over.
+function section(
+  output: { hookSpecificOutput?: { additionalContext: string } },
+  title: string,
+): Record<string, unknown>[] {
+  const block = output.hookSpecificOutput?.additionalContext
+    .split('\n\n')
+    .find((part) => part.startsWith(title));
+  return block === undefined
+    ? []
+    : JSON.parse(block.slice(block.indexOf('\n') + 1));
+}
+
+// The plugin's MCP server under this HOME, as Codex starts it.
+async function pluginTools(home: string) {
+  const client = new Client({ name: 'meeting-prep-gate-test', version: '1' });
+  await client.connect(
+    new StdioClientTransport({
+      command: join(plugin, 'launch_node'),
+      args: ['./server/main.mjs'],
+      cwd: plugin,
+      env: { HOME: home, CODEX_MCP_NODE_PATH: runtime, PATH: '' },
+    }),
   );
-  return rows.map(({ name }) => name);
+  return {
+    call: (name: string, args: Record<string, unknown>) =>
+      client.callTool({ name, arguments: args }),
+    [Symbol.asyncDispose]: () => client.close(),
+  };
 }
 
 const minute = 60_000;
@@ -118,24 +143,11 @@ const occurrence = (
   ...overrides,
 });
 
-test('a prompt other than a Meeting prep heartbeat passes the gate untouched', async () => {
-  await using home = await mkdtempDisposable(join(tmpdir(), 'meeting-gate-'));
-  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
-
-  assert.equal(runGate(home.path, 'what are my meetings today'), undefined);
-  assert.equal(
-    runGate(home.path, heartbeat('Check the deploy and report failures.')),
-    undefined,
-  );
-});
-
-test('a Meeting prep heartbeat reaches the model only with meetings due, each once, and a moved one again', async () => {
-  await using home = await mkdtempDisposable(join(tmpdir(), 'meeting-gate-'));
-  assert.ok(heartbeatPrompt, 'setup-apple names the Meeting prep prompt');
-  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
-  // EventKit cannot create attendees or cancel an event, so recorded
-  // documents reach the Calendar connector through a stub helper.
-  await using stub = await StubEventKitHelper.create();
+// Selects Calendar under HOME's Apple folder and returns a function that
+// imports the given occurrences into it, as the plugin imports Calendar.
+// EventKit cannot create attendees or cancel an event, so recorded documents
+// reach the Calendar connector through a stub helper.
+async function calendarUnder(home: string, stub: StubEventKitHelper) {
   const manifest = ConnectorManifest.read(join(builtInConnectors, 'calendar'));
   assert.ok(manifest);
   const connector: AppleConnector = await manifest.load({
@@ -143,22 +155,30 @@ test('a Meeting prep heartbeat reaches the model only with meetings due, each on
     eventKitHelper: stub.path,
   });
   const scope = connector.defaultScope();
-  const { startAt, endAt } = scope;
   const selection = {
     connector: connector.name,
     scope,
     includeAttachments: false,
   };
-  using settings = new Settings(
-    join(home.path, 'Library/Application Support/Context Compiler/Apple'),
+  const directory = join(
+    home,
+    'Library/Application Support/Context Compiler/Apple',
   );
-  await settings.select([selection], {
-    facts: () => connector,
-    permissions: () => connector.guidance(),
-  });
-  const importCalendar = async (occurrences: OccurrenceDocument[]) => {
+  {
+    using settings = new Settings(directory);
+    await settings.select([selection], {
+      facts: () => connector,
+      permissions: () => connector.guidance(),
+    });
+  }
+  return async (occurrences: OccurrenceDocument[]) => {
     stub.answer(
-      { entity: 'events', startAt, endAt, ics: true },
+      {
+        entity: 'events',
+        startAt: scope.startAt,
+        endAt: scope.endAt,
+        ics: true,
+      },
       {
         documents: [
           {
@@ -186,6 +206,7 @@ test('a Meeting prep heartbeat reaches the model only with meetings due, each on
         ],
       },
     );
+    using settings = new Settings(directory);
     const { connection, destination } = await connector.connection(
       settings.directory(selection),
       selection,
@@ -195,10 +216,38 @@ test('a Meeting prep heartbeat reaches the model only with meetings due, each on
     installSQLiteCatalog(destination);
     await new Pipeline({ connections: [connection], history }).run();
   };
+}
+
+test('a prompt other than a gated heartbeat passes the gate untouched', async () => {
+  await using home = await mkdtempDisposable(join(tmpdir(), 'meeting-gate-'));
+  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
+
+  assert.equal(runGate(home.path, 'what are my meetings today'), undefined);
+  assert.equal(
+    runGate(home.path, heartbeat('Check the deploy and report failures.')),
+    undefined,
+  );
+});
+
+test('a Meeting prep heartbeat is blocked while Calendar is not imported', async () => {
+  await using home = await mkdtempDisposable(join(tmpdir(), 'meeting-gate-'));
+  assert.ok(meetingPrepPrompt, 'setup-apple names the Meeting prep prompt');
+  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
+
+  const output = runGate(home.path, heartbeat(meetingPrepPrompt));
+
+  assert.equal(output.decision, 'block');
+});
+
+test('a Meeting prep heartbeat hands over each meeting due once, with someone invited or a link', async () => {
+  await using home = await mkdtempDisposable(join(tmpdir(), 'meeting-gate-'));
+  assert.ok(meetingPrepPrompt, 'setup-apple names the Meeting prep prompt');
+  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
+  await using stub = await StubEventKitHelper.create();
+  const importCalendar = await calendarUnder(home.path, stub);
   const now = Date.now();
-  const standup = (startMs: number) =>
-    occurrence('Standup', startMs, { attendees: [participant()] });
-  const others = [
+  await importCalendar([
+    occurrence('Standup', now + 35 * minute, { attendees: [participant()] }),
     occurrence('Zoom call', now + 30 * minute, {
       location: 'https://zoom.us/j/123',
     }),
@@ -222,26 +271,78 @@ test('a Meeting prep heartbeat reaches the model only with meetings due, each on
       status: 3,
       attendees: [participant()],
     }),
-  ];
-  await importCalendar([standup(now + 35 * minute), ...others]);
+  ]);
 
-  const first = runGate(home.path, heartbeat(heartbeatPrompt));
-  const second = runGate(home.path, heartbeat(heartbeatPrompt));
-  await importCalendar([standup(now + 38 * minute), ...others]);
-  const afterMove = runGate(home.path, heartbeat(heartbeatPrompt));
+  const first = runGate(home.path, heartbeat(meetingPrepPrompt));
+  const second = runGate(home.path, heartbeat(meetingPrepPrompt));
 
-  assert.equal(first.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
-  assert.deepEqual(handedOver(first), ['Zoom call', 'Standup']);
+  assert.deepEqual(
+    section(first, 'New meetings').map(({ name }) => name),
+    ['Zoom call', 'Standup'],
+  );
+  assert.deepEqual(section(first, 'New meetings')[1]?.attendees, [
+    {
+      name: 'Ann',
+      email: 'ann@example.com',
+      kind: 'attendee',
+      status: 2,
+      role: 1,
+      note: null,
+    },
+  ]);
   assert.equal(second.decision, 'block');
-  assert.deepEqual(handedOver(afterMove), ['Standup']);
 });
 
-test('a Meeting prep heartbeat is blocked while Calendar is not imported', async () => {
+test('a meeting chat recorded by the dispatcher hears once when its meeting moves, and once when it is cancelled', async () => {
   await using home = await mkdtempDisposable(join(tmpdir(), 'meeting-gate-'));
-  assert.ok(heartbeatPrompt, 'setup-apple names the Meeting prep prompt');
+  assert.ok(meetingPrepPrompt, 'setup-apple names the Meeting prep prompt');
   assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
+  await using stub = await StubEventKitHelper.create();
+  const importCalendar = await calendarUnder(home.path, stub);
+  const now = Date.now();
+  const standup = (startMs: number, status = 0) =>
+    occurrence('Standup', startMs, { status, attendees: [participant()] });
+  await importCalendar([standup(now + 35 * minute)]);
+  const [handed] = section(
+    runGate(home.path, heartbeat(meetingPrepPrompt)),
+    'New meetings',
+  );
+  assert.ok(handed);
+  await using tools = await pluginTools(home.path);
+  const unknown = await tools.call('apple_meeting_chat', {
+    eventId: 'no-such-event',
+    threadId: 'thread-x',
+  });
+  const recorded = await tools.call('apple_meeting_chat', {
+    eventId: handed.eventId,
+    threadId: 'thread-standup',
+  });
 
-  const output = runGate(home.path, heartbeat(heartbeatPrompt));
+  await importCalendar([standup(now + 38 * minute)]);
+  const afterMove = runGate(home.path, heartbeat(meetingPrepPrompt));
+  const quietAfterMove = runGate(home.path, heartbeat(meetingPrepPrompt));
+  await importCalendar([standup(now + 38 * minute, 3)]);
+  const afterCancel = runGate(home.path, heartbeat(meetingPrepPrompt));
+  const quietAfterCancel = runGate(home.path, heartbeat(meetingPrepPrompt));
 
-  assert.equal(output.decision, 'block');
+  assert.equal(unknown.isError, true);
+  assert.notEqual(recorded.isError, true, JSON.stringify(recorded.content));
+  assert.deepEqual(section(afterMove, 'Moved meetings'), [
+    {
+      threadId: 'thread-standup',
+      name: 'Standup',
+      startAt: new Date(now + 38 * minute).toISOString(),
+      endAt: new Date(now + 68 * minute).toISOString(),
+    },
+  ]);
+  assert.deepEqual(section(afterMove, 'New meetings'), []);
+  assert.equal(quietAfterMove.decision, 'block');
+  assert.deepEqual(section(afterCancel, 'Cancelled meetings'), [
+    {
+      threadId: 'thread-standup',
+      name: 'Standup',
+      startAt: new Date(now + 38 * minute).toISOString(),
+    },
+  ]);
+  assert.equal(quietAfterCancel.decision, 'block');
 });

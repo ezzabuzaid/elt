@@ -19,6 +19,7 @@ import {
 import { chatContext } from './chat-status.ts';
 import { importPending } from './importing.ts';
 import { settingsRead, settingsUpdate } from './native-settings.ts';
+import { ProactiveStore } from './proactive-store.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
 if (process.platform !== 'darwin')
@@ -230,6 +231,57 @@ mcpServer.registerTool(
     await plugin.refresh();
     const text = await contextFor(event);
     return { content: text === null ? [] : [{ type: 'text', text }] };
+  },
+);
+
+// The proactive agent's records, written here because the agent's sandbox
+// cannot write the Apple folder; the heartbeat gates read them.
+mcpServer.registerTool(
+  'apple_meeting_chat',
+  {
+    title: 'Record a meeting chat',
+    description:
+      'Record the chat you created for a meeting the Meeting prep heartbeat handed over, by the meeting’s Calendar eventId and the chat’s threadId, so the meeting’s later changes and its archiving reach that chat.',
+    inputSchema: {
+      eventId: z.string().min(1),
+      threadId: z.string().min(1),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async ({ eventId, threadId }) => {
+    using store = new ProactiveStore(plugin.directory);
+    store.recordChat(eventId, threadId);
+    return structured({ eventId, threadId });
+  },
+);
+mcpServer.registerTool(
+  'apple_person_note',
+  {
+    title: 'Save a person note',
+    description:
+      'Save the short note the Apple gardener keeps about a person, by their email, for later meeting briefs. Replaces that person’s previous note.',
+    inputSchema: {
+      email: z.email(),
+      name: z.string().min(1),
+      note: z.string().min(1).max(2000),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async ({ email, name, note }) => {
+    using store = new ProactiveStore(plugin.directory);
+    const person = { email: email.toLowerCase(), name };
+    store.saveNote(person, note, new Date().toISOString());
+    return structured(person);
   },
 );
 

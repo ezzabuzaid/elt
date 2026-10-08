@@ -451,7 +451,9 @@ test(
         [
           'apple_configure',
           'apple_context',
+          'apple_meeting_chat',
           'apple_options',
+          'apple_person_note',
           'apple_settings_read',
           'apple_settings_update',
           'apple_setup',

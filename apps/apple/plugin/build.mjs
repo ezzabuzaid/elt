@@ -1,10 +1,9 @@
 // Bundles the plugin's MCP server into plugins/apple/server: main.mjs, the
-// Meeting prep heartbeat's gate meeting-prep-gate.mjs, one folder per built-in
-// connector (its package.json manifest beside its entry point and its
-// presets), the host modules a user's connector imports, and the chunks they
-// all share, so every connector runs on the same elt and
-// AppleConnector as the server. @nx/esbuild cannot name each entry's output, so
-// this calls esbuild's API.
+// heartbeat gates' hook heartbeat-hook.mjs, one folder per built-in connector
+// (its package.json manifest beside its entry point and its presets), the
+// host modules a user's connector imports, and the chunks they all share, so
+// every connector runs on the same elt and AppleConnector as the server.
+// @nx/esbuild cannot name each entry's output, so this calls esbuild's API.
 import {
   copyFileSync,
   cpSync,
@@ -43,8 +42,8 @@ await build({
   entryPoints: [
     { in: 'apps/apple/plugin/src/main.ts', out: 'main' },
     {
-      in: 'apps/apple/plugin/src/meeting-prep-gate.ts',
-      out: 'meeting-prep-gate',
+      in: 'apps/apple/plugin/src/heartbeat-hook.ts',
+      out: 'heartbeat-hook',
     },
     ...builtIns.map(({ in: source, out }) => ({ in: source, out })),
     ...hostModules.map(({ specifier, file }) => ({
