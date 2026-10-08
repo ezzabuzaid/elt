@@ -3,7 +3,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtempDisposable, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -303,7 +303,9 @@ type ScratchReminder = {
 
 // A temporary reminders list in this Mac's EventKit store, in the first
 // account that accepts one (CalDAV before Exchange), deleted with the test.
-// Accounts sync, so it reaches the server until then.
+// Accounts sync, so it reaches the server until then. A run killed before it
+// can delete it leaves it behind, so its title names this Mac and the test
+// process, and the next one created here deletes those whose process is gone.
 class ScratchList implements AsyncDisposable {
   readonly id: string;
 
@@ -314,7 +316,12 @@ class ScratchList implements AsyncDisposable {
   // Null when no account on this Mac accepts a new reminders list.
   static async create(): Promise<ScratchList | null> {
     try {
-      return new ScratchList(await ScratchList.#run('create', {}));
+      return new ScratchList(
+        await ScratchList.#run('create', {
+          host: hostname(),
+          pid: process.pid,
+        }),
+      );
     } catch (error) {
       if (
         String(Reflect.get(Object(error), 'stderr')).includes(
@@ -380,8 +387,15 @@ function run([mode, payload]) {
     if (!store.saveReminderCommitError(reminder, true, null)) throw new Error('Reminder not saved');
   };
   if (mode === 'create') {
+    // kill(pid, 0) fails once no process of this user has the pid.
+    ObjC.bindFunction('kill', ['int', ['int', 'int']]);
+    for (const leftover of ObjC.unwrap(store.calendarsForEntityType(1))) {
+      const [prefix, test, host, pid] = ObjC.unwrap(leftover.title).split(' ');
+      if (prefix + ' ' + test === 'context-compiler test' && host === spec.host && $.kill(Number(pid), 0) !== 0)
+        store.removeCalendarCommitError(leftover, true, null);
+    }
     const created = $.EKCalendar.calendarForEntityTypeEventStore(1, store);
-    created.title = 'context-compiler test ' + ObjC.unwrap($.NSUUID.UUID.UUIDString);
+    created.title = ['context-compiler test', spec.host, spec.pid, ObjC.unwrap($.NSUUID.UUID.UUIDString)].join(' ');
     const sources = ObjC.unwrap(store.sources).toSorted(
       (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
     );

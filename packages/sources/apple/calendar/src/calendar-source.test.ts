@@ -8,7 +8,7 @@ import {
   readdir,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -352,8 +352,11 @@ type ScratchEvent = {
 
 // A temporary event calendar in this Mac's EventKit store, in the first
 // account that accepts one (CalDAV before Exchange), deleted with the test.
-// Accounts sync, so it reaches the server until then. EventKit writes run in
-// Asia/Amman, so an all-day event falls on an Amman day.
+// Accounts sync, so it reaches the server until then. A run killed before it
+// can delete it leaves it behind, so its title names this Mac and the test
+// process, and the next one created here deletes those whose process is gone.
+// EventKit writes run in Asia/Amman, so an all-day event falls on an Amman
+// day.
 class ScratchCalendar implements AsyncDisposable {
   readonly id: string;
   readonly title: string;
@@ -367,7 +370,12 @@ class ScratchCalendar implements AsyncDisposable {
   static async create(): Promise<ScratchCalendar | null> {
     try {
       return new ScratchCalendar(
-        JSON.parse(await ScratchCalendar.#run('create', {})),
+        JSON.parse(
+          await ScratchCalendar.#run('create', {
+            host: hostname(),
+            pid: process.pid,
+          }),
+        ),
       );
     } catch (error) {
       if (
@@ -472,8 +480,15 @@ function run([mode, payload]) {
     return found;
   };
   if (mode === 'create') {
+    // kill(pid, 0) fails once no process of this user has the pid.
+    ObjC.bindFunction('kill', ['int', ['int', 'int']]);
+    for (const leftover of ObjC.unwrap(store.calendarsForEntityType(0))) {
+      const [prefix, test, host, pid] = ObjC.unwrap(leftover.title).split(' ');
+      if (prefix + ' ' + test === 'context-compiler test' && host === spec.host && $.kill(Number(pid), 0) !== 0)
+        store.removeCalendarCommitError(leftover, true, null);
+    }
     const created = $.EKCalendar.calendarForEntityTypeEventStore(0, store);
-    created.title = 'context-compiler test ' + ObjC.unwrap($.NSUUID.UUID.UUIDString);
+    created.title = ['context-compiler test', spec.host, spec.pid, ObjC.unwrap($.NSUUID.UUID.UUIDString)].join(' ');
     const sources = ObjC.unwrap(store.sources).toSorted(
       (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
     );

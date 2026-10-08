@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
+import { hostname } from 'node:os';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -31,7 +32,10 @@ const january = {
 
 // Real EventKit data for one test: a temporary event calendar or reminders
 // list, with its items, in the first account that accepts one, CalDAV first.
-// Accounts sync, so it reaches the server until the test deletes it.
+// Accounts sync, so it reaches the server until the test deletes it. A run
+// killed before it can delete it, or one whose items fail to save, leaves it
+// behind, so its title names this Mac and the test process, and the next one
+// created here deletes those whose process is gone.
 class ScratchEventKit implements AsyncDisposable {
   readonly id: string;
 
@@ -48,7 +52,13 @@ class ScratchEventKit implements AsyncDisposable {
       readonly alarmOffset: number;
     }[],
   ): Promise<ScratchEventKit> {
-    return new ScratchEventKit(await ScratchEventKit.#run('events', events));
+    return new ScratchEventKit(
+      await ScratchEventKit.#run('events', {
+        host: hostname(),
+        pid: process.pid,
+        items: events,
+      }),
+    );
   }
 
   static async reminders(
@@ -58,7 +68,11 @@ class ScratchEventKit implements AsyncDisposable {
     }[],
   ): Promise<ScratchEventKit> {
     return new ScratchEventKit(
-      await ScratchEventKit.#run('reminders', reminders),
+      await ScratchEventKit.#run('reminders', {
+        host: hostname(),
+        pid: process.pid,
+        items: reminders,
+      }),
     );
   }
 
@@ -110,8 +124,15 @@ function run([mode, payload]) {
   }
   const date = (iso) => $.NSDate.dateWithTimeIntervalSince1970(Date.parse(iso) / 1000);
   const entity = mode === 'events' ? 0 : 1;
+  // kill(pid, 0) fails once no process of this user has the pid.
+  ObjC.bindFunction('kill', ['int', ['int', 'int']]);
+  for (const leftover of ObjC.unwrap(store.calendarsForEntityType(entity))) {
+    const [prefix, test, host, pid] = ObjC.unwrap(leftover.title).split(' ');
+    if (prefix + ' ' + test === 'context-compiler test' && host === spec.host && $.kill(Number(pid), 0) !== 0)
+      store.removeCalendarCommitError(leftover, true, null);
+  }
   const calendar = $.EKCalendar.calendarForEntityTypeEventStore(entity, store);
-  calendar.title = 'context-compiler test ' + ObjC.unwrap($.NSUUID.UUID.UUIDString);
+  calendar.title = ['context-compiler test', spec.host, spec.pid, ObjC.unwrap($.NSUUID.UUID.UUIDString)].join(' ');
   const sources = ObjC.unwrap(store.sources).toSorted(
     (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
   );
@@ -119,7 +140,7 @@ function run([mode, payload]) {
     calendar.source = source;
     return store.saveCalendarCommitError(calendar, true, null);
   })) throw new Error('${ScratchEventKit.#noAccount}');
-  for (const item of spec) {
+  for (const item of spec.items) {
     if (mode === 'events') {
       const event = $.EKEvent.eventWithEventStore(store);
       event.calendar = calendar;
