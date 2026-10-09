@@ -245,7 +245,7 @@ test('an Apple gardener heartbeat is blocked before Apple is set up, and other p
   assert.equal(other, undefined);
 });
 
-test('the gardener hands a meeting chat over for archiving once Calendar says its meeting is over', async () => {
+test('the gardener hands a meeting chat over for archiving once Calendar says its meeting is over, and the dispatcher stays quiet when that meeting is deleted', async () => {
   await using home = await mkdtempDisposable(join(tmpdir(), 'garden-gate-'));
   assert.ok(gardenPrompt && meetingPrepPrompt);
   assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
@@ -272,6 +272,8 @@ test('the gardener hands a meeting chat over for archiving once Calendar says it
   await importCalendar([standup(now - 3 * 60 * minute)]);
   const afterItEnds = runGate(home.path, heartbeat(gardenPrompt));
   const later = runGate(home.path, heartbeat(gardenPrompt));
+  await importCalendar([]);
+  const afterDelete = runGate(home.path, heartbeat(meetingPrepPrompt));
 
   assert.deepEqual(section(beforeItEnds, 'Meeting chats to archive'), []);
   assert.deepEqual(section(afterItEnds, 'Meeting chats to archive'), [
@@ -282,6 +284,7 @@ test('the gardener hands a meeting chat over for archiving once Calendar says it
     },
   ]);
   assert.equal(later.decision, 'block');
+  assert.equal(afterDelete.decision, 'block');
 });
 
 test('the gardener reports an import problem once, and again when it clears and comes back', async () => {

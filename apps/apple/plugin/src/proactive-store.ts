@@ -18,6 +18,8 @@ export type Meeting = {
 export type HandedMeeting = Meeting & {
   threadId: string | null;
   cancelled: boolean;
+  // Its chat was handed to the gardener for archiving.
+  archived: boolean;
 };
 
 export type Person = { email: string; name: string };
@@ -53,7 +55,7 @@ export class ProactiveStore implements Disposable {
   #select(where: string, ...values: string[]): HandedMeeting[] {
     return this.#database
       .prepare(
-        `SELECT event_id, name, start_at, end_at, thread_id, cancelled FROM meetings ${where}`,
+        `SELECT event_id, name, start_at, end_at, thread_id, cancelled, archive_handed_at FROM meetings ${where}`,
       )
       .all(...values)
       .map((row) => ({
@@ -63,6 +65,7 @@ export class ProactiveStore implements Disposable {
         endAt: String(row.end_at),
         threadId: row.thread_id === null ? null : String(row.thread_id),
         cancelled: row.cancelled === 1,
+        archived: row.archive_handed_at !== null,
       }));
   }
 

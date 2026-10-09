@@ -23,8 +23,12 @@ export class MeetingPrepGate extends HeartbeatGate {
     const fresh = calendar
       .due(now, new Date(now.getTime() + leadMinutes * 60_000))
       .filter(({ eventId }) => !known.has(eventId));
+    // A meeting that is over, or whose chat was archived, no longer needs
+    // news of moves or cancellations.
+    const nowIso = now.toISOString();
     const briefed = handed.filter(
-      ({ threadId, cancelled }) => threadId !== null && !cancelled,
+      ({ threadId, cancelled, archived, endAt }) =>
+        threadId !== null && !cancelled && !archived && endAt > nowIso,
     );
     const current = new Map(
       calendar
@@ -39,7 +43,7 @@ export class MeetingPrepGate extends HeartbeatGate {
         cancelled.push(meeting);
       else if (
         occurrence.startAt !== meeting.startAt &&
-        occurrence.startAt >= now.toISOString()
+        occurrence.startAt >= nowIso
       )
         moved.push({ ...meeting, ...occurrence });
     }
