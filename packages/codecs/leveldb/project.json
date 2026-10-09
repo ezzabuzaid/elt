@@ -1,0 +1,9 @@
+{
+  "name": "codec-leveldb",
+  "sourceRoot": "packages/codecs/leveldb/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:codec"],
+  "targets": {
+    "format": {}
+  }
+}

@@ -411,7 +411,8 @@ packages/sdks/apple/      SDKs, one per Apple store (sdk-apple-<name>): accounts
                           messages, notes, notification-center, safari; and
                           app-database, the shared reader
                           of another app's SQLite file
-packages/codecs/          One package per format (codec-<format>): plist, protobuf, segb
+packages/codecs/          One package per format (codec-<format>): plist, protobuf, segb,
+                          leveldb, v8-serialization, chromium-indexeddb
 packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared
                           source-apple-macos (readers, document parser)
 packages/sources/google/  The Search Console source (source-google-search-console)

@@ -1,0 +1,20 @@
+{
+  "name": "@workspace/codec-chromium-indexeddb",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "devDependencies": {
+    "@types/snappyjs": "0.7.1"
+  },
+  "dependencies": {
+    "@workspace/codec-leveldb": "0.0.1",
+    "@workspace/codec-v8-serialization": "0.0.1",
+    "snappyjs": "0.7.0"
+  }
+}

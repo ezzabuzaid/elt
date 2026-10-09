@@ -178,6 +178,15 @@
     },
     {
       "path": "./packages/sdks/apple/notification-center"
+    },
+    {
+      "path": "./packages/codecs/chromium-indexeddb"
+    },
+    {
+      "path": "./packages/codecs/v8-serialization"
+    },
+    {
+      "path": "./packages/codecs/leveldb"
     }
   ]
 }

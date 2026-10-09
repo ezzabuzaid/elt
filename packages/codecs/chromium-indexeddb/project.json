@@ -1,0 +1,9 @@
+{
+  "name": "codec-chromium-indexeddb",
+  "sourceRoot": "packages/codecs/chromium-indexeddb/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:codec"],
+  "targets": {
+    "format": {}
+  }
+}
