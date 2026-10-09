@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+
+import { readSQLite } from '@workspace/elt-sqlite';
 
 // The imports as readers see them: settings.sqlite's selected_connectors view
-// and each import's sync_status, opened read-only as $query-apple reads them.
-// The heartbeat gates read through this, never through the plugin's writers.
+// and each import's sync_status, opened read-only as $query-apple reads them,
+// waiting while a pass commits. The heartbeat gates read through this, never
+// through the plugin's writers.
 
 type Selected = {
   connector: string;
@@ -28,7 +30,7 @@ export class AppleImports {
 
   #selected(): Selected[] {
     if (!existsSync(this.#settings)) return [];
-    using settings = new DatabaseSync(this.#settings, { readOnly: true });
+    using settings = readSQLite(this.#settings);
     return settings
       .prepare(
         'SELECT connector, database, connection_error, permissions FROM selected_connectors',
@@ -68,7 +70,7 @@ export class AppleImports {
 
 function passProblem(database: string): string | null {
   if (!existsSync(database)) return null;
-  using reader = new DatabaseSync(database, { readOnly: true });
+  using reader = readSQLite(database);
   const latest = reader.prepare('SELECT status, error FROM sync_status').get();
   if (latest?.status !== 'failed' && latest?.status !== 'partial') return null;
   return `${String(latest.status)}: ${String(latest.error)}`;

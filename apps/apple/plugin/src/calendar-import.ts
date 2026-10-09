@@ -1,10 +1,10 @@
-import { DatabaseSync } from 'node:sqlite';
+import { readSQLite } from '@workspace/elt-sqlite';
 
 import type { Person } from './proactive-store.ts';
 
-// Calendar's import, read-only, for the heartbeat gates: which meetings come
-// due, what became of the meetings already handed over, and who the user
-// meets.
+// Calendar's import, read-only and waiting while a pass commits, for the
+// heartbeat gates: which meetings come due, what became of the meetings
+// already handed over, and who the user meets.
 
 // An attendee who is another person: not the user, not a room, and not one
 // of Google Calendar's own addresses, such as the stand-in organizer it lists
@@ -64,7 +64,7 @@ export class CalendarImport {
   }
 
   #all(sql: string, parameters: Record<string, string>) {
-    using reader = new DatabaseSync(this.database, { readOnly: true });
+    using reader = readSQLite(this.database);
     return reader.prepare(sql).all(parameters);
   }
 

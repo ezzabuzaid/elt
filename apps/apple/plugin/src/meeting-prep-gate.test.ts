@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { text } from 'node:stream/consumers';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -56,24 +60,50 @@ const dispatcher = 'thread-1';
 const heartbeat = (instructions: string) =>
   `<heartbeat>\n  <automation_id>meeting-prep</automation_id>\n  <current_time_iso>${new Date().toISOString()}</current_time_iso>\n  <instructions>\n${instructions}\n  </instructions>\n</heartbeat>`;
 
+// What Codex writes to the gate's stdin before the dispatcher's turn.
+const gateInput = (home: string, prompt: string) =>
+  JSON.stringify({
+    session_id: dispatcher,
+    turn_id: 'turn-1',
+    transcript_path: null,
+    cwd: home,
+    hook_event_name: 'UserPromptSubmit',
+    model: 'gpt-6',
+    permission_mode: 'default',
+    prompt,
+  });
+
+const gateEnv = (home: string) => ({
+  HOME: home,
+  CODEX_MCP_NODE_PATH: runtime,
+  PATH: '/usr/bin:/bin',
+});
+
 function runGate(home: string, prompt: string) {
   const result = spawnSync(join(plugin, 'hooks/heartbeat-gate'), [], {
-    input: JSON.stringify({
-      session_id: dispatcher,
-      turn_id: 'turn-1',
-      transcript_path: null,
-      cwd: home,
-      hook_event_name: 'UserPromptSubmit',
-      model: 'gpt-6',
-      permission_mode: 'default',
-      prompt,
-    }),
-    env: { HOME: home, CODEX_MCP_NODE_PATH: runtime, PATH: '/usr/bin:/bin' },
+    input: gateInput(home, prompt),
+    env: gateEnv(home),
     encoding: 'utf8',
   });
   assert.equal(result.stderr, '');
   assert.equal(result.status, 0);
   return result.stdout === '' ? undefined : JSON.parse(result.stdout);
+}
+
+// The gate started without waiting for it, so the test can act while it runs.
+async function startGate(home: string, prompt: string) {
+  const child = spawn(join(plugin, 'hooks/heartbeat-gate'), [], {
+    env: gateEnv(home),
+  });
+  child.stdin.end(gateInput(home, prompt));
+  const [stdout, stderr] = await Promise.all([
+    text(child.stdout),
+    text(child.stderr),
+  ]);
+  const [status] = await once(child, 'close');
+  assert.equal(stderr, '');
+  assert.equal(status, 0);
+  return stdout === '' ? undefined : JSON.parse(stdout);
 }
 
 // Whether the approval hook approves a codex_app call one chat makes; with no
@@ -492,5 +522,46 @@ test('a chat call before Meeting prep has handed anything over is left to ChatGP
   assert.equal(
     existsSync(join(home.path, 'Library/Application Support/Context Compiler')),
     false,
+  );
+});
+
+test('a Meeting prep check that runs while a Calendar pass commits waits for it, rather than failing', async () => {
+  await using home = await mkdtempDisposable(join(tmpdir(), 'meeting-gate-'));
+  assert.ok(meetingPrepPrompt, 'setup-apple names the Meeting prep prompt');
+  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
+  await using stub = await StubEventKitHelper.create();
+  const importCalendar = await calendarUnder(home.path, stub);
+  await importCalendar([
+    occurrence('Standup', Date.now() + 35 * minute, {
+      attendees: [participant()],
+    }),
+  ]);
+  const database = (() => {
+    using settings = new DatabaseSync(
+      join(
+        home.path,
+        'Library/Application Support/Context Compiler/Apple/settings.sqlite',
+      ),
+      { readOnly: true },
+    );
+    return String(
+      settings
+        .prepare(
+          "SELECT database FROM selected_connectors WHERE connector = 'calendar'",
+        )
+        .get()?.database,
+    );
+  })();
+  // A pass committing to the import holds it locked, as the next one does.
+  using pass = new DatabaseSync(database);
+  pass.exec('BEGIN EXCLUSIVE');
+
+  const output = startGate(home.path, heartbeat(meetingPrepPrompt));
+  await delay(1000);
+  pass.exec('COMMIT');
+
+  assert.deepEqual(
+    section(await output, 'New meetings').map(({ name }) => name),
+    ['Standup'],
   );
 });
