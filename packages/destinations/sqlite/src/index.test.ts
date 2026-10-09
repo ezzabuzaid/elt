@@ -15,7 +15,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { setTimeout } from 'node:timers/promises';
 
 import {
   Catalog,
@@ -4578,6 +4577,12 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
   const files = (name: string) =>
     new Stream({ ...scripted(name), supportsFileTransfer: true });
   const emitted: string[] = [];
+  // The streams take turns, each handing the next turn on once the reader
+  // asks it for more, so the order holds under any load.
+  const order = ['a1', 'b1', 'a2', 'b2'];
+  const turns = order.map(() => Promise.withResolvers<void>());
+  turns[0]?.resolve();
+  const checkpointed = Promise.withResolvers<void>();
   class Interleaved extends Source {
     override coverage() {
       return { description: 'test', selection: {} };
@@ -4601,7 +4606,8 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     protected override async *extract(configuration: CopyConfiguration) {
       const name = configuration.stream.name;
       for (const n of [1, 2]) {
-        await setTimeout(name === 'a' ? 3 : 5);
+        const turn = order.indexOf(`${name}${n}`);
+        await turns[turn]?.promise;
         const path = join(staging, `${name}${n}.bin`);
         await writeFile(path, `${name}${n} bytes`);
         emitted.push(`${name}${n}`);
@@ -4613,13 +4619,15 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
         // The consumer moved on: the staged file is gone at once, so a
         // destination that read it late would find nothing.
         rmSync(path);
+        turns[turn + 1]?.resolve();
       }
       if (name === 'b') {
         yield checkpoint('b', { page: 1 });
+        checkpointed.resolve();
         return;
       }
       // a still has staged rows and files when b commits.
-      await setTimeout(40);
+      await checkpointed.promise;
       if (this.failing) throw new Error('a upstream');
       yield checkpoint('a', { page: 1 });
     }
