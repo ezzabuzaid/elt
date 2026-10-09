@@ -5,7 +5,6 @@
   "workspaces": [
     "packages/*",
     "packages/destinations/*",
-    "packages/queue/*",
     "packages/sdks/*/*",
     "packages/codecs/*",
     "packages/connectors/*/*",

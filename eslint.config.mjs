@@ -125,13 +125,6 @@ export default [
     },
   },
   ...island({ libraries: ['packages/**/*.ts'] }),
-  // BackgroundQueue mirrors pg-boss's API: the queue islands implement it and
-  // the hosts call it, so it is no capability a host provides, and its generic
-  // work<TData> is pg-boss's own signature.
-  {
-    files: ['packages/queue/abstract/src/**/*.ts'],
-    rules: { 'island/no-generic-port': 'off' },
-  },
   {
     files: ['**/*.ts', '**/*.cts', '**/*.mts'],
     // A disable directive that no longer suppresses anything is an escape hatch
