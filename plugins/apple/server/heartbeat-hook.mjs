@@ -5,6 +5,10 @@ import {
   external_exports
 } from "./chunks/chunk-MBMOQFVV.mjs";
 import {
+  readSQLite
+} from "./chunks/chunk-XITEZF4E.mjs";
+import "./chunks/chunk-L4HYJU4U.mjs";
+import {
   __callDispose,
   __using
 } from "./chunks/chunk-ZGXE7NZW.mjs";
@@ -19,7 +23,6 @@ import { existsSync as existsSync2 } from "node:fs";
 // apps/apple/plugin/src/apple-imports.ts
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 var AppleImports = class {
   #settings;
   constructor(directory) {
@@ -29,7 +32,7 @@ var AppleImports = class {
     var _stack = [];
     try {
       if (!existsSync(this.#settings)) return [];
-      const settings = __using(_stack, new DatabaseSync(this.#settings, { readOnly: true }));
+      const settings = __using(_stack, readSQLite(this.#settings));
       return settings.prepare(
         "SELECT connector, database, connection_error, permissions FROM selected_connectors"
       ).all().map((row) => ({
@@ -67,7 +70,7 @@ function passProblem(database) {
   var _stack = [];
   try {
     if (!existsSync(database)) return null;
-    const reader = __using(_stack, new DatabaseSync(database, { readOnly: true }));
+    const reader = __using(_stack, readSQLite(database));
     const latest = reader.prepare("SELECT status, error FROM sync_status").get();
     if (latest?.status !== "failed" && latest?.status !== "partial") return null;
     return `${String(latest.status)}: ${String(latest.error)}`;
@@ -79,7 +82,6 @@ function passProblem(database) {
 }
 
 // apps/apple/plugin/src/calendar-import.ts
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 var otherPerson = `a.isCurrentUser = 0 AND a.type IS NOT 2 AND a.url NOT LIKE '%calendar.google.com'`;
 var dueMeetings = `SELECT e.eventId, e.name, e.startAt, e.endAt, c.name AS calendar, e.location, e.url, e.body, e.externalId,
     (SELECT json_group_array(json_object('name', a.name, 'email', substr(a.url, 8), 'kind', a.kind, 'status', a.status, 'role', a.role))
@@ -106,7 +108,7 @@ var CalendarImport = class {
   #all(sql, parameters) {
     var _stack = [];
     try {
-      const reader = __using(_stack, new DatabaseSync2(this.database, { readOnly: true }));
+      const reader = __using(_stack, readSQLite(this.database));
       return reader.prepare(sql).all(parameters);
     } catch (_) {
       var _error = _, _hasError = true;

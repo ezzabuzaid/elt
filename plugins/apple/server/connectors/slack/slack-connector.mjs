@@ -9,7 +9,8 @@ import {
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-TI6UOZR6.mjs";
+} from "../../chunks/chunk-7E5EMV4V.mjs";
+import "../../chunks/chunk-XITEZF4E.mjs";
 import {
   Catalog,
   Source,
@@ -442,6 +443,7 @@ var SlackDesktopFormatError = class extends Error {
 
 // packages/sdks/slack/desktop/dist/slack-desktop-store.js
 import { readdirSync, statSync } from "node:fs";
+import { readFile as readFile4 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join as join3 } from "node:path";
 
@@ -735,10 +737,10 @@ async function readLevelDB(directory) {
   const { tables, logs } = await liveFiles(directory);
   const newest = /* @__PURE__ */ new Map();
   const keep = (entry) => {
-    const id18 = Buffer.from(entry.key).toString("latin1");
-    const seen = newest.get(id18);
+    const id21 = Buffer.from(entry.key).toString("latin1");
+    const seen = newest.get(id21);
     if (seen === void 0 || entry.sequence > seen.sequence)
-      newest.set(id18, entry);
+      newest.set(id21, entry);
   };
   for (const path of tables)
     for (const entry of tableEntries(await readFile2(path), path))
@@ -892,10 +894,10 @@ var V8Reader = class {
         this.#varint();
         return this.#value();
       case "^": {
-        const id18 = this.#varint();
-        if (id18 >= this.#objects.length)
-          this.#fail(`it refers to object ${id18} before reading it`, start);
-        return this.#view(this.#objects[id18]);
+        const id21 = this.#varint();
+        if (id21 >= this.#objects.length)
+          this.#fail(`it refers to object ${id21} before reading it`, start);
+        return this.#view(this.#objects[id21]);
       }
       case "o":
         return this.#object();
@@ -914,10 +916,10 @@ var V8Reader = class {
       case "z":
         return this.#remember(this.#bigint());
       case "s": {
-        const id18 = this.#objects.length;
+        const id21 = this.#objects.length;
         this.#objects.push(void 0);
         const value = this.#value();
-        this.#objects[id18] = value;
+        this.#objects[id21] = value;
         return value;
       }
       case "R":
@@ -1005,7 +1007,7 @@ var V8Reader = class {
     return array;
   }
   #regExp() {
-    const id18 = this.#objects.length;
+    const id21 = this.#objects.length;
     this.#objects.push(void 0);
     const pattern = this.#value();
     if (typeof pattern !== "string")
@@ -1013,7 +1015,7 @@ var V8Reader = class {
     const bits = this.#varint();
     const flags = regExpFlags.filter(([, bit]) => bits & bit).map(([flag]) => flag).join("");
     const regExp = new RegExp(pattern, flags);
-    this.#objects[id18] = regExp;
+    this.#objects[id21] = regExp;
     return regExp;
   }
   #map() {
@@ -1056,7 +1058,7 @@ var V8Reader = class {
     return this.#remember(new View(value, byteOffset, byteLength / View.BYTES_PER_ELEMENT));
   }
   #error() {
-    const id18 = this.#objects.length;
+    const id21 = this.#objects.length;
     this.#objects.push(void 0);
     let Prototype = Error;
     let message2;
@@ -1083,7 +1085,7 @@ var V8Reader = class {
     const error = new Prototype(message2, hasCause ? { cause } : void 0);
     if (stack !== void 0)
       error.stack = String(stack);
-    this.#objects[id18] = error;
+    this.#objects[id21] = error;
     return error;
   }
   #string() {
@@ -1292,8 +1294,8 @@ async function read(directory) {
         continue;
       const origin = reader.stringWithLength();
       const name2 = reader.stringWithLength();
-      const id18 = new ByteReader2(entry.value, directory).int(entry.value.length);
-      databases.set(id18, { origin, name: name2 });
+      const id21 = new ByteReader2(entry.value, directory).int(entry.value.length);
+      databases.set(id21, { origin, name: name2 });
     } else if (objectStore === 0) {
       if (reader.byte() !== objectStoreMetadata)
         continue;
@@ -1442,6 +1444,14 @@ function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// packages/sdks/slack/desktop/dist/instants.js
+function seconds(value) {
+  return value === null || value === 0 ? null : new Date(value * 1e3).toISOString();
+}
+function milliseconds(value) {
+  return value === null || value === 0 ? null : new Date(value).toISOString();
+}
+
 // packages/sdks/slack/desktop/dist/slack-client-record.js
 function readSlackClient(state, record) {
   const root = new Fields(state, record, "state");
@@ -1457,6 +1467,8 @@ function readSlackClient(state, record) {
   const reactionLists = root.object("reactions");
   const reactions = new Map(root.values("reactions").map(([key]) => [key, reactionLists?.list(key).map(reaction) ?? []]));
   const held = history(root, record);
+  const pinLists = root.object("pins");
+  const pinsLoaded = new Set((pinLists?.values("loadingStateByChannel") ?? []).filter(([, state2]) => state2 === "loaded").map(([channelId]) => channelId));
   const existing = (fields) => fields.boolean("isNonExistent") !== true;
   const messagesByChannel = root.object("messages");
   const channelMessages = root.values("messages").flatMap(([channelId]) => (messagesByChannel?.entries(channelId) ?? []).map(([, fields]) => ({
@@ -1476,33 +1488,33 @@ function readSlackClient(state, record) {
       iconUrl: workspace.object("icon")?.string("image_230") ?? null
     },
     userId,
-    channels: root.entries("channels").filter(([, fields]) => existing(fields)).map(([id18, fields]) => channel(id18, fields, cursors.get(id18) ?? null, latests.get(id18) ?? null)),
-    members: root.entries("members").filter(([, fields]) => existing(fields)).map(([id18, fields]) => member(id18, fields)),
-    bots: root.entries("bots").map(([id18, fields]) => bot(id18, fields)),
-    apps: root.entries("apps").map(([id18, fields]) => app(id18, fields)),
+    channels: root.entries("channels").filter(([, fields]) => existing(fields)).map(([id21, fields]) => channel(id21, fields, cursors.get(id21) ?? null, latests.get(id21) ?? null)),
+    members: root.entries("members").filter(([, fields]) => existing(fields)).map(([id21, fields]) => member(id21, fields)),
+    bots: root.entries("bots").map(([id21, fields]) => bot(id21, fields)),
+    apps: root.entries("apps").map(([id21, fields]) => app(id21, fields)),
     messages: channelMessages.filter(({ fields }) => existing(fields) && fields.boolean("_hidden_reply") !== true).map(({ channelId, fields }) => message(channelId, fields, record, reactions)),
     threadReplies: channelMessages.filter(({ fields }) => existing(fields) && fields.boolean("_hidden_reply") === true).map(({ channelId, fields }) => message(channelId, fields, record, reactions)),
-    files: root.entries("files").filter(([, fields]) => existing(fields)).map(([id18, fields]) => file(id18, fields)),
+    files: root.entries("files").filter(([, fields]) => existing(fields)).map(([id21, fields]) => file(id21, fields)),
     listRecords: listRecords(root, existing, record),
+    pins: pins(root, pinLists),
     channelSections: sections(root),
     threadSubscriptions: root.entries("threadSub").map(([key, fields]) => threadSubscription(key, fields, record)),
+    userGroupMemberships: root.entries("userGroupMembership").map(([userGroupId, fields]) => ({
+      userGroupId,
+      isMember: fields.boolean("isMember")
+    })),
     preferences: preferences(root, workspaceId),
-    holds: (channelId, ts8) => gone.has(`${channelId} ${ts8}`) || (held.get(channelId) ?? []).some(({ start, end }) => compareTs(ts8, start) >= 0 && compareTs(ts8, end) <= 0)
+    holds: (channelId, ts9) => gone.has(`${channelId} ${ts9}`) || (held.get(channelId) ?? []).some(({ start, end }) => compareTs(ts9, start) >= 0 && compareTs(ts9, end) <= 0),
+    holdsPins: (channelId) => pinsLoaded.has(channelId)
   };
 }
 function fail(record, problem) {
   throw new SlackDesktopFormatError(record, problem);
 }
-function seconds(value) {
-  return value === null || value === 0 ? null : new Date(value * 1e3).toISOString();
-}
-function milliseconds(value) {
-  return value === null || value === 0 ? null : new Date(value).toISOString();
-}
-function instant(ts8, record) {
-  const match = /^(\d+)\.(\d{6})$/.exec(ts8);
+function instant(ts9, record) {
+  const match = /^(\d+)\.(\d{6})$/.exec(ts9);
   if (match?.[1] === void 0 || match[2] === void 0)
-    fail(record, `message ts ${ts8} is not seconds.microseconds`);
+    fail(record, `message ts ${ts9} is not seconds.microseconds`);
   return `${new Date(Number(match[1]) * 1e3).toISOString().slice(0, 19)}.${match[2]}Z`;
 }
 function compareTs(a, b) {
@@ -1533,9 +1545,9 @@ function kind(fields) {
     return "private";
   return "public";
 }
-function channel(id18, fields, lastReadTs, latestTs) {
+function channel(id21, fields, lastReadTs, latestTs) {
   return {
-    id: id18,
+    id: id21,
     name: fields.string("name"),
     kind: kind(fields),
     imUserId: fields.string("user"),
@@ -1555,10 +1567,10 @@ function channel(id18, fields, lastReadTs, latestTs) {
     latestTs: ts(latestTs)
   };
 }
-function member(id18, fields) {
+function member(id21, fields) {
   const profile = fields.object("profile");
   return {
-    id: id18,
+    id: id21,
     teamId: fields.string("team_id"),
     name: fields.string("name"),
     realName: fields.string("real_name") ?? profile?.string("real_name") ?? null,
@@ -1589,18 +1601,18 @@ function member(id18, fields) {
     updatedAt: seconds(fields.number("updated"))
   };
 }
-function bot(id18, fields) {
+function bot(id21, fields) {
   return {
-    id: id18,
+    id: id21,
     name: fields.string("name"),
     appId: fields.string("app_id"),
     isDeleted: fields.boolean("deleted"),
     updatedAt: seconds(fields.number("updated"))
   };
 }
-function app(id18, fields) {
+function app(id21, fields) {
   return {
-    id: id18,
+    id: id21,
     name: fields.string("name"),
     description: fields.string("desc"),
     developerName: fields.string("developer_name"),
@@ -1642,13 +1654,14 @@ function attachment(fields) {
   };
 }
 function message(channelId, fields, record, reactions) {
-  const ts8 = fields.requiredString("ts");
+  const ts9 = fields.requiredString("ts");
   const edited = fields.object("edited");
+  const saved = fields.object("saved");
   const reactionKey = fields.string("_rxn_key");
   return {
     channelId,
-    ts: ts8,
-    sentAt: instant(ts8, record),
+    ts: ts9,
+    sentAt: instant(ts9, record),
     type: fields.requiredString("type"),
     subtype: fields.string("subtype"),
     userId: fields.string("user"),
@@ -1663,16 +1676,19 @@ function message(channelId, fields, record, reactions) {
     clientMessageId: fields.string("client_msg_id"),
     isLocked: fields.boolean("is_locked"),
     isBeyondPlanLimit: fields.boolean("is_beyond_free_limit"),
+    savedState: saved?.string("state") ?? null,
+    savedTodoState: saved?.string("todo_state") ?? null,
+    isSavedArchived: saved?.boolean("is_archived") ?? null,
     blocksJson: fields.json("blocks"),
     attachments: fields.list("attachments").map(attachment),
     reactions: reactionKey === null ? [] : reactions.get(reactionKey) ?? [],
     fileIds: fields.strings("files")
   };
 }
-function file(id18, fields) {
+function file(id21, fields) {
   const shares = fields.object("shares");
   return {
-    id: id18,
+    id: id21,
     name: fields.string("name"),
     title: fields.string("title"),
     mimetype: fields.string("mimetype"),
@@ -1692,6 +1708,7 @@ function file(id18, fields) {
     urlPrivate: fields.string("url_private"),
     permalink: fields.string("permalink"),
     preview: fields.string("preview"),
+    content: fields.string("content"),
     lines: fields.number("lines"),
     durationMs: fields.number("duration_ms"),
     width: fields.number("original_w"),
@@ -1728,6 +1745,26 @@ function secondsText(value, record) {
     fail(record, `${value} is not a count of seconds`);
   return seconds(Number(value));
 }
+function pins(root, pinLists) {
+  const byChannel = pinLists?.object("pinsByChannel");
+  const channels = root.object("channels");
+  const messages = root.object("messages");
+  return (pinLists?.values("pinsByChannel") ?? []).flatMap(([channelId]) => {
+    const items = channels?.object(channelId)?.list("pinned_items") ?? [];
+    return (byChannel?.list(channelId) ?? []).map((pin) => {
+      const ts9 = pin.requiredString("ts");
+      const item = items.find((candidate) => candidate.object("message")?.string("ts") === ts9);
+      const info = messages?.object(channelId)?.object(ts9)?.object("pinned_info");
+      return {
+        channelId,
+        ts: ts9,
+        type: pin.requiredString("type"),
+        pinnedBy: item?.string("created_by") ?? info?.string("pinned_by") ?? null,
+        pinnedAt: seconds(item?.number("created") ?? info?.number("pinned_ts") ?? null)
+      };
+    });
+  });
+}
 function history(root, record) {
   return new Map(root.entries("channelHistory").map(([channelId, fields]) => [
     channelId,
@@ -1748,14 +1785,14 @@ function sections(root) {
     return [];
   const channelIds = state.object("channelIdsByChannelSectionId");
   return state.list("orderedChannelSectionList").map((section, position) => {
-    const id18 = section.requiredString("id");
+    const id21 = section.requiredString("id");
     return {
-      id: id18,
+      id: id21,
       type: section.requiredString("type"),
       name: section.string("name"),
       emoji: section.string("emoji"),
       position,
-      channelIds: channelIds?.strings(id18) ?? []
+      channelIds: channelIds?.strings(id21) ?? []
     };
   });
 }
@@ -1786,12 +1823,31 @@ function preferences(root, workspaceId) {
   ];
 }
 
+// packages/sdks/slack/desktop/dist/slack-downloads.js
+function readSlackDownloads(state, record) {
+  const root = new Fields(state, record, "state");
+  const byWorkspace = root.object("downloads");
+  return root.values("downloads").flatMap(([workspaceId]) => (byWorkspace?.entries(workspaceId) ?? []).map(([fileId, download]) => ({
+    workspaceId,
+    fileId,
+    url: download.string("url"),
+    userId: download.string("userId"),
+    appVersion: download.string("appVersion"),
+    state: download.string("downloadState"),
+    progress: download.number("progress"),
+    startedAt: milliseconds(download.number("startTime")),
+    endedAt: milliseconds(download.number("endTime")),
+    path: download.string("downloadPath")
+  })));
+}
+
 // packages/sdks/slack/desktop/dist/slack-desktop-store.js
 var slackDesktopDirectory = join3(homedir(), "Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack");
 var indexedDB = "IndexedDB/https_app.slack.com_0.indexeddb.leveldb";
 var reduxDatabase = "reduxPersistence";
 var reduxStore = "reduxPersistenceStore";
 var clientRecord = /^persist:slack-client-[A-Z0-9]+-[A-Z0-9]+$/;
+var rootState = "storage/root-state.json";
 var attempts = 3;
 var unreadable = /* @__PURE__ */ new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM"]);
 var SlackDesktopStore = class {
@@ -1806,16 +1862,46 @@ var SlackDesktopStore = class {
     const databases = await this.#read();
     return databases.filter(({ name: name2 }) => name2 === reduxDatabase).flatMap(({ objectStores }) => objectStores).filter(({ name: name2 }) => name2 === reduxStore).flatMap(({ records }) => records).flatMap(({ key, value }) => typeof key === "string" && clientRecord.test(key) ? [readSlackClient(value, key)] : []);
   }
-  // A value that changes whenever the app saves its state.
+  // The files the app downloaded, in every workspace: none until it has
+  // saved its own state.
+  async downloads() {
+    const text = await this.#rootState();
+    if (text === null)
+      return [];
+    let state;
+    try {
+      state = JSON.parse(text);
+    } catch (error) {
+      throw new SlackDesktopFormatError(rootState, "it is not JSON", error);
+    }
+    return readSlackDownloads(state, rootState);
+  }
+  // A value that changes whenever the app saves its state, a client's or its
+  // own.
   version() {
     const directory = join3(this.#directory, indexedDB);
     try {
-      return readdirSync(directory).sort().map((name2) => {
-        const { size, mtimeMs } = statSync(join3(directory, name2));
-        return `${name2}:${size}:${mtimeMs}`;
+      return [
+        ...readdirSync(directory).sort().map((name2) => join3(directory, name2)),
+        join3(this.#directory, rootState)
+      ].map((path) => {
+        const stats = statSync(path, { throwIfNoEntry: false });
+        return `${path}:${stats?.size}:${stats?.mtimeMs}`;
       }).join("\n");
     } catch (error) {
       throw new SlackDesktopUnavailableError(this.#directory, error);
+    }
+  }
+  async #rootState() {
+    try {
+      return await readFile4(join3(this.#directory, rootState), "utf8");
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === "ENOENT")
+        return null;
+      if (typeof code === "string" && unreadable.has(code))
+        throw new SlackDesktopUnavailableError(this.#directory, error);
+      throw error;
     }
   }
   async #read() {
@@ -1849,13 +1935,21 @@ function errorCode(error) {
 // packages/sources/slack/desktop/dist/slack-desktop-scan.js
 var toMilliseconds = (instant3) => `${instant3.slice(0, 23)}Z`;
 var SlackDesktopScan = class {
-  clients;
+  #clients;
+  #downloads;
   #scope;
   #kept;
-  constructor(clients, scope) {
+  constructor(clients, downloads, scope) {
+    this.#clients = clients;
+    this.#downloads = downloads;
     this.#scope = scope;
-    this.#kept = new Map(clients.map((client) => [client.workspace.id, client]));
-    this.clients = clients.filter(({ workspace }) => selected(scope.accountIds, workspace.id));
+    this.#kept = new Map(clients.status === "fulfilled" ? clients.value.map((client) => [client.workspace.id, client]) : []);
+  }
+  get clients() {
+    return settled(this.#clients).filter(({ workspace }) => selected(this.#scope.accountIds, workspace.id));
+  }
+  get downloads() {
+    return settled(this.#downloads).filter(({ workspaceId }) => selected(this.#scope.accountIds, workspaceId));
   }
   // Whether the app still keeps this workspace: one it no longer keeps, such
   // as one signed out of, says nothing about its rows, so they stay.
@@ -1864,10 +1958,17 @@ var SlackDesktopScan = class {
   }
   // Whether the app holds this part of a channel's history, so a message it
   // no longer lists there was deleted rather than dropped from its cache.
-  holds(workspaceId, channelId, ts8) {
+  holds(workspaceId, channelId, ts9) {
     if (typeof workspaceId !== "string" || typeof channelId !== "string")
       return false;
-    return typeof ts8 === "string" && (this.#kept.get(workspaceId)?.holds(channelId, ts8) ?? false);
+    return typeof ts9 === "string" && (this.#kept.get(workspaceId)?.holds(channelId, ts9) ?? false);
+  }
+  // Whether the app loaded this conversation's whole pin list, so a pin it no
+  // longer lists there was removed.
+  holdsPins(workspaceId, channelId) {
+    if (typeof workspaceId !== "string" || typeof channelId !== "string")
+      return false;
+    return this.#kept.get(workspaceId)?.holdsPins(channelId) ?? false;
   }
   channelSelected(channelId) {
     return selected(this.#scope.collectionIds, channelId);
@@ -1885,6 +1986,11 @@ var SlackDesktopScan = class {
   async [Symbol.asyncDispose]() {
   }
 };
+function settled(read2) {
+  if (read2.status === "rejected")
+    throw read2.reason;
+  return read2.value;
+}
 
 // packages/sources/slack/desktop/dist/slack-desktop-stream.js
 var slackFields = {
@@ -1893,6 +1999,7 @@ var slackFields = {
   nullableText: { type: ["string", "null"] },
   nullableBoolean: { type: ["boolean", "null"] },
   nullableInteger: { type: ["integer", "null"] },
+  nullableNumber: { type: ["number", "null"] },
   nullableTimestamp: { type: ["string", "null"], format: "date-time" },
   textList: { type: "array", items: { type: "string" } },
   // Slack's ts, seconds and microseconds, kept as the text Slack writes.
@@ -1923,6 +2030,10 @@ var SlackDesktopStream = class {
   // deleted: every row of a workspace the app still keeps.
   covers(scan, key) {
     return scan.keeps(key.workspaceId);
+  }
+  // The file a record carries, for streams that support file reads.
+  file(_record) {
+    return null;
   }
 };
 
@@ -2013,7 +2124,7 @@ var ChannelMembersStream = class extends SlackDesktopStream {
     required: Object.keys(properties3)
   };
   rows(scan) {
-    return scan.clients.flatMap(({ workspace, channels }) => channels.filter(({ id: id18 }) => scan.channelSelected(id18)).flatMap(({ id: channelId, memberIds }) => [...new Set(memberIds)].map((memberId) => ({
+    return scan.clients.flatMap(({ workspace, channels }) => channels.filter(({ id: id21 }) => scan.channelSelected(id21)).flatMap(({ id: channelId, memberIds }) => [...new Set(memberIds)].map((memberId) => ({
       workspaceId: workspace.id,
       channelId,
       memberId
@@ -2187,7 +2298,7 @@ var ChannelsStream = class extends SlackDesktopStream {
     required: Object.keys(properties6)
   };
   rows(scan) {
-    return scan.clients.flatMap(({ workspace, channels }) => channels.filter(({ id: id18 }) => scan.channelSelected(id18)).map((channel2) => ({ workspaceId: workspace.id, channel: channel2 })));
+    return scan.clients.flatMap(({ workspace, channels }) => channels.filter(({ id: id21 }) => scan.channelSelected(id21)).map((channel2) => ({ workspaceId: workspace.id, channel: channel2 })));
   }
   records({ workspaceId, channel: channel2 }) {
     return [
@@ -2219,13 +2330,80 @@ var ChannelsStream = class extends SlackDesktopStream {
   }
 };
 
-// packages/sources/slack/desktop/dist/streams/file-shares-stream.js
-var { id: id7, ts: ts2, nullableText: nullableText5 } = slackFields;
+// packages/sources/slack/desktop/dist/streams/downloads-stream.js
+import { statSync as statSync2 } from "node:fs";
+var { id: id7, nullableText: nullableText5, nullableNumber, nullableTimestamp: nullableTimestamp3 } = slackFields;
 var properties7 = {
   workspaceId: { ...id7, description: "The workspace (workspaces.id)." },
-  fileId: { ...id7, description: "The file (files.id)." },
-  channelId: {
+  fileId: {
     ...id7,
+    description: "The file downloaded (files.id), held by the app or not."
+  },
+  url: {
+    ...nullableText5,
+    description: "Where the app downloaded it from, which needs Slack\u2019s sign-in."
+  },
+  userId: { ...nullableText5, description: "Who downloaded it (members.id)." },
+  appVersion: {
+    ...nullableText5,
+    description: "The Slack app\u2019s version when it downloaded the file."
+  },
+  state: {
+    ...nullableText5,
+    description: "Slack\u2019s state for the download, such as completed."
+  },
+  progress: {
+    ...nullableNumber,
+    description: "How much of the file had downloaded, 1 when done."
+  },
+  startedAt: {
+    ...nullableTimestamp3,
+    description: "When the download started."
+  },
+  endedAt: { ...nullableTimestamp3, description: "When it finished." },
+  path: {
+    ...nullableText5,
+    description: "Where the app saved the file: its Downloads folder, ~/Library/Containers/com.tinyspeck.slackmacgap/Data/Downloads, unless the user chose another place."
+  }
+};
+var DownloadsStream = class extends SlackDesktopStream {
+  name = "downloads";
+  primaryKey = ["workspaceId", "fileId"];
+  emitsDeletes = void 0;
+  supportsFileTransfer = true;
+  jsonSchema = {
+    type: "object",
+    description: "One record per file the Slack app downloaded, with the file while it is still where the app saved it. Primary key workspaceId, fileId. A download stays after the user clears Slack\u2019s list of downloads.",
+    properties: properties7,
+    required: Object.keys(properties7)
+  };
+  rows(scan) {
+    return scan.downloads;
+  }
+  records(download) {
+    return [{ ...download }];
+  }
+  // The original file, not a copy: downloads reach gigabytes and readers
+  // only read it. One moved, deleted or out of this process's reach loads
+  // no bytes.
+  file({ path }) {
+    if (path === null)
+      return null;
+    try {
+      return statSync2(path).isFile() ? path : null;
+    } catch {
+      return null;
+    }
+  }
+};
+
+// packages/sources/slack/desktop/dist/streams/file-shares-stream.js
+var { id: id8, ts: ts2, nullableText: nullableText6 } = slackFields;
+var properties8 = {
+  workspaceId: { ...id8, description: "The workspace (workspaces.id)." },
+  fileId: { ...id8, description: "The file (files.id)." },
+  channelId: {
+    ...id8,
     description: "The conversation it was shared in (channels.id)."
   },
   ts: {
@@ -2236,7 +2414,7 @@ var properties7 = {
     type: "boolean",
     description: "Whether the conversation is private."
   },
-  sharedBy: { ...nullableText5, description: "Who shared it (members.id)." }
+  sharedBy: { ...nullableText6, description: "Who shared it (members.id)." }
 };
 var FileSharesStream = class extends SlackDesktopStream {
   name = "fileShares";
@@ -2245,8 +2423,8 @@ var FileSharesStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per place a file was shared: the conversation and the message that shared it, including messages the app does not hold. Primary key workspaceId, fileId, channelId, ts. Kept after the app drops the file.",
-    properties: properties7,
-    required: Object.keys(properties7)
+    properties: properties8,
+    required: Object.keys(properties8)
   };
   rows(scan) {
     return scan.clients.flatMap(({ workspace, files }) => files.flatMap(({ id: fileId, shares }) => shares.filter(({ channelId }) => scan.channelSelected(channelId)).map((share) => ({ workspaceId: workspace.id, fileId, share }))));
@@ -2257,33 +2435,33 @@ var FileSharesStream = class extends SlackDesktopStream {
 };
 
 // packages/sources/slack/desktop/dist/streams/files-stream.js
-var { id: id8, nullableText: nullableText6, nullableBoolean: nullableBoolean4, nullableInteger, nullableTimestamp: nullableTimestamp3 } = slackFields;
-var properties8 = {
-  workspaceId: { ...id8, description: "The workspace (workspaces.id)." },
-  id: { ...id8, description: "Slack\u2019s file ID, such as F0123ABCD." },
-  name: { ...nullableText6, description: "The file\u2019s name." },
-  title: { ...nullableText6, description: "The title shown for it." },
-  mimetype: { ...nullableText6, description: "Its MIME type." },
+var { id: id9, nullableText: nullableText7, nullableBoolean: nullableBoolean4, nullableInteger, nullableTimestamp: nullableTimestamp4 } = slackFields;
+var properties9 = {
+  workspaceId: { ...id9, description: "The workspace (workspaces.id)." },
+  id: { ...id9, description: "Slack\u2019s file ID, such as F0123ABCD." },
+  name: { ...nullableText7, description: "The file\u2019s name." },
+  title: { ...nullableText7, description: "The title shown for it." },
+  mimetype: { ...nullableText7, description: "Its MIME type." },
   filetype: {
-    ...nullableText6,
+    ...nullableText7,
     description: "Slack\u2019s file type, such as pdf, png, markdown or list."
   },
-  prettyType: { ...nullableText6, description: "The type as Slack shows it." },
+  prettyType: { ...nullableText7, description: "The type as Slack shows it." },
   mode: {
-    ...nullableText6,
+    ...nullableText7,
     description: "hosted (uploaded), external, snippet, post, canvas or list (a Slack List, its rows in list_records)."
   },
   size: { ...nullableInteger, description: "Its size in bytes." },
-  userId: { ...nullableText6, description: "Who shared it (members.id)." },
-  createdAt: { ...nullableTimestamp3, description: "When it was created." },
-  updatedAt: { ...nullableTimestamp3, description: "When it last changed." },
-  editedAt: { ...nullableTimestamp3, description: "When it was last edited." },
+  userId: { ...nullableText7, description: "Who shared it (members.id)." },
+  createdAt: { ...nullableTimestamp4, description: "When it was created." },
+  updatedAt: { ...nullableTimestamp4, description: "When it last changed." },
+  editedAt: { ...nullableTimestamp4, description: "When it was last edited." },
   isExternal: {
     ...nullableBoolean4,
     description: "Whether it lives in another service."
   },
   externalType: {
-    ...nullableText6,
+    ...nullableText7,
     description: "The service an external file lives in."
   },
   isPublic: {
@@ -2296,13 +2474,17 @@ var properties8 = {
     description: "Whether Slack keeps only a placeholder of it."
   },
   urlPrivate: {
-    ...nullableText6,
+    ...nullableText7,
     description: "Its download address, which needs Slack\u2019s sign-in; the app keeps no copy of the bytes."
   },
-  permalink: { ...nullableText6, description: "Its page in Slack." },
+  permalink: { ...nullableText7, description: "Its page in Slack." },
   preview: {
-    ...nullableText6,
+    ...nullableText7,
     description: "The first lines of a text file or snippet."
+  },
+  content: {
+    ...nullableText7,
+    description: "A snippet\u2019s whole text, which the app keeps with it; NULL for other files."
   },
   lines: { ...nullableInteger, description: "A text file\u2019s line count." },
   durationMs: {
@@ -2312,11 +2494,11 @@ var properties8 = {
   width: { ...nullableInteger, description: "An image or video\u2019s width." },
   height: { ...nullableInteger, description: "An image or video\u2019s height." },
   listMetadata: {
-    ...nullableText6,
+    ...nullableText7,
     description: "For a List, its columns (schema) and views as JSON, as Slack holds them."
   },
   transcription: {
-    ...nullableText6,
+    ...nullableText7,
     description: "For a recording, its transcript as JSON."
   }
 };
@@ -2327,8 +2509,8 @@ var FilesStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per file the app has held: uploads, snippets, canvases and Lists, metadata only (the app keeps no bytes). Primary key workspaceId, id. A file stays after the app drops it from its cache; one deleted while held reads isDeleted or isTombstoned.",
-    properties: properties8,
-    required: Object.keys(properties8)
+    properties: properties9,
+    required: Object.keys(properties9)
   };
   rows(scan) {
     return scan.clients.flatMap(({ workspace, files }) => files.map((file2) => ({ workspaceId: workspace.id, file: file2 })));
@@ -2357,6 +2539,7 @@ var FilesStream = class extends SlackDesktopStream {
         urlPrivate: file2.urlPrivate,
         permalink: file2.permalink,
         preview: file2.preview,
+        content: file2.content,
         lines: file2.lines,
         durationMs: file2.durationMs,
         width: file2.width,
@@ -2369,36 +2552,36 @@ var FilesStream = class extends SlackDesktopStream {
 };
 
 // packages/sources/slack/desktop/dist/streams/list-records-stream.js
-var { id: id9, nullableText: nullableText7, nullableBoolean: nullableBoolean5, nullableTimestamp: nullableTimestamp4, nullableTs: nullableTs2 } = slackFields;
-var properties9 = {
-  workspaceId: { ...id9, description: "The workspace (workspaces.id)." },
-  listId: { ...id9, description: "The List (files.id, mode list)." },
-  id: { ...id9, description: "Slack\u2019s row ID, such as Rec0123ABCD." },
+var { id: id10, nullableText: nullableText8, nullableBoolean: nullableBoolean5, nullableTimestamp: nullableTimestamp5, nullableTs: nullableTs2 } = slackFields;
+var properties10 = {
+  workspaceId: { ...id10, description: "The workspace (workspaces.id)." },
+  listId: { ...id10, description: "The List (files.id, mode list)." },
+  id: { ...id10, description: "Slack\u2019s row ID, such as Rec0123ABCD." },
   position: {
-    ...nullableText7,
+    ...nullableText8,
     description: "The row\u2019s sort key in the List; order rows by it as text."
   },
   parentRecordId: {
-    ...nullableText7,
+    ...nullableText8,
     description: "For a subtask, its parent row (list_records.id)."
   },
   threadTs: {
     ...nullableTs2,
     description: "The thread of comments on the row, as a ts."
   },
-  createdAt: { ...nullableTimestamp4, description: "When the row was added." },
-  createdBy: { ...nullableText7, description: "Who added it (members.id)." },
+  createdAt: { ...nullableTimestamp5, description: "When the row was added." },
+  createdBy: { ...nullableText8, description: "Who added it (members.id)." },
   updatedAt: {
-    ...nullableTimestamp4,
+    ...nullableTimestamp5,
     description: "When it last changed."
   },
   updatedBy: {
-    ...nullableText7,
+    ...nullableText8,
     description: "Who last changed it (members.id)."
   },
   isArchived: { ...nullableBoolean5, description: "Whether it was archived." },
   fields: {
-    ...nullableText7,
+    ...nullableText8,
     description: "Its cells as JSON keyed by column ID, as Slack holds them; files.listMetadata names each column under schema."
   }
 };
@@ -2409,8 +2592,8 @@ var ListRecordsStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per row of a Slack List the app has opened. Primary key workspaceId, listId, id. A row stays after the app drops it; one archived while held reads isArchived.",
-    properties: properties9,
-    required: Object.keys(properties9)
+    properties: properties10,
+    required: Object.keys(properties10)
   };
   rows(scan) {
     return scan.clients.flatMap(({ workspace, listRecords: listRecords2 }) => listRecords2.map((record) => ({ workspaceId: workspace.id, record })));
@@ -2436,46 +2619,46 @@ var ListRecordsStream = class extends SlackDesktopStream {
 };
 
 // packages/sources/slack/desktop/dist/streams/members-stream.js
-var { id: id10, nullableText: nullableText8, nullableBoolean: nullableBoolean6, nullableTimestamp: nullableTimestamp5 } = slackFields;
-var properties10 = {
-  workspaceId: { ...id10, description: "The workspace (workspaces.id)." },
-  id: { ...id10, description: "Slack\u2019s member ID, such as U0123ABCD." },
+var { id: id11, nullableText: nullableText9, nullableBoolean: nullableBoolean6, nullableTimestamp: nullableTimestamp6 } = slackFields;
+var properties11 = {
+  workspaceId: { ...id11, description: "The workspace (workspaces.id)." },
+  id: { ...id11, description: "Slack\u2019s member ID, such as U0123ABCD." },
   teamId: {
-    ...nullableText8,
+    ...nullableText9,
     description: "The workspace the member belongs to; another workspace\u2019s ID for someone from a shared channel."
   },
-  name: { ...nullableText8, description: "The member\u2019s username." },
-  realName: { ...nullableText8, description: "The member\u2019s full name." },
+  name: { ...nullableText9, description: "The member\u2019s username." },
+  realName: { ...nullableText9, description: "The member\u2019s full name." },
   displayName: {
-    ...nullableText8,
+    ...nullableText9,
     description: "The name the member chose to show."
   },
-  firstName: { ...nullableText8, description: "First name." },
-  lastName: { ...nullableText8, description: "Last name." },
-  title: { ...nullableText8, description: "Job title." },
-  email: { ...nullableText8, description: "Email address." },
-  phone: { ...nullableText8, description: "Phone number." },
-  pronouns: { ...nullableText8, description: "Pronouns." },
+  firstName: { ...nullableText9, description: "First name." },
+  lastName: { ...nullableText9, description: "Last name." },
+  title: { ...nullableText9, description: "Job title." },
+  email: { ...nullableText9, description: "Email address." },
+  phone: { ...nullableText9, description: "Phone number." },
+  pronouns: { ...nullableText9, description: "Pronouns." },
   timeZone: {
-    ...nullableText8,
+    ...nullableText9,
     description: "IANA time zone, such as Europe/London."
   },
-  statusText: { ...nullableText8, description: "Custom status text." },
+  statusText: { ...nullableText9, description: "Custom status text." },
   statusEmoji: {
-    ...nullableText8,
+    ...nullableText9,
     description: "Custom status emoji, such as :palm_tree:."
   },
   statusExpiresAt: {
-    ...nullableTimestamp5,
+    ...nullableTimestamp6,
     description: "When the custom status clears; NULL when it does not."
   },
-  avatarUrl: { ...nullableText8, description: "Profile picture URL, 192 px." },
+  avatarUrl: { ...nullableText9, description: "Profile picture URL, 192 px." },
   botId: {
-    ...nullableText8,
+    ...nullableText9,
     description: "For a bot user, its bot (bots.id)."
   },
   appId: {
-    ...nullableText8,
+    ...nullableText9,
     description: "For an app\u2019s user, its app (apps.id)."
   },
   isBot: { ...nullableBoolean6, description: "Whether it is a bot." },
@@ -2510,7 +2693,7 @@ var properties10 = {
     description: "Whether it is the signed-in user."
   },
   updatedAt: {
-    ...nullableTimestamp5,
+    ...nullableTimestamp6,
     description: "When Slack last changed the member\u2019s profile."
   }
 };
@@ -2520,8 +2703,8 @@ var MembersStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per person, bot or app user the app knows in a workspace. Primary key workspaceId, id. One the app stops listing is deleted; a deactivated member stays with isDeleted.",
-    properties: properties10,
-    required: Object.keys(properties10)
+    properties: properties11,
+    required: Object.keys(properties11)
   };
   rows(scan) {
     return scan.clients.flatMap(({ workspace, members }) => members.map((member2) => ({ workspaceId: workspace.id, member: member2 })));
@@ -2532,44 +2715,44 @@ var MembersStream = class extends SlackDesktopStream {
 };
 
 // packages/sources/slack/desktop/dist/streams/message-attachments-stream.js
-var { id: id11, ts: ts3, ordinal: ordinal3, nullableText: nullableText9, nullableBoolean: nullableBoolean7 } = slackFields;
-var properties11 = {
-  workspaceId: { ...id11, description: "The workspace (workspaces.id)." },
-  channelId: { ...id11, description: "The conversation (channels.id)." },
+var { id: id12, ts: ts3, ordinal: ordinal3, nullableText: nullableText10, nullableBoolean: nullableBoolean7 } = slackFields;
+var properties12 = {
+  workspaceId: { ...id12, description: "The workspace (workspaces.id)." },
+  channelId: { ...id12, description: "The conversation (channels.id)." },
   messageTs: { ...ts3, description: "The message it is under (messages.ts)." },
   position: {
     ...ordinal3,
     description: "Its place under the message, from 0."
   },
-  attachmentId: { ...nullableText9, description: "Slack\u2019s ID for it." },
+  attachmentId: { ...nullableText10, description: "Slack\u2019s ID for it." },
   fallback: {
-    ...nullableText9,
+    ...nullableText10,
     description: "Its plain-text summary."
   },
-  pretext: { ...nullableText9, description: "Text shown above it." },
-  text: { ...nullableText9, description: "Its text." },
+  pretext: { ...nullableText10, description: "Text shown above it." },
+  text: { ...nullableText10, description: "Its text." },
   fromUrl: {
-    ...nullableText9,
+    ...nullableText10,
     description: "The link it previews, for a link unfurl."
   },
   authorId: {
-    ...nullableText9,
+    ...nullableText10,
     description: "For a shared message, who wrote it (members.id)."
   },
-  authorName: { ...nullableText9, description: "Its author\u2019s name." },
-  authorLink: { ...nullableText9, description: "Its author\u2019s link." },
+  authorName: { ...nullableText10, description: "Its author\u2019s name." },
+  authorLink: { ...nullableText10, description: "Its author\u2019s link." },
   sharedChannelId: {
-    ...nullableText9,
+    ...nullableText10,
     description: "For a shared message, the conversation it came from."
   },
   sharedMessageTs: {
-    ...nullableText9,
+    ...nullableText10,
     description: "For a shared message, its ts there."
   },
-  footer: { ...nullableText9, description: "Its footer." },
-  color: { ...nullableText9, description: "The color of its side bar." },
-  appId: { ...nullableText9, description: "The app that added it (apps.id)." },
-  botId: { ...nullableText9, description: "The bot that added it (bots.id)." },
+  footer: { ...nullableText10, description: "Its footer." },
+  color: { ...nullableText10, description: "The color of its side bar." },
+  appId: { ...nullableText10, description: "The app that added it (apps.id)." },
+  botId: { ...nullableText10, description: "The bot that added it (bots.id)." },
   isMessageUnfurl: {
     ...nullableBoolean7,
     description: "Whether it previews another Slack message."
@@ -2579,11 +2762,11 @@ var properties11 = {
     description: "Whether an app added the preview."
   },
   fields: {
-    ...nullableText9,
+    ...nullableText10,
     description: "Its title/value fields as JSON, as Slack holds them."
   },
   blocks: {
-    ...nullableText9,
+    ...nullableText10,
     description: "Its Block Kit blocks as JSON, as Slack holds them."
   }
 };
@@ -2593,17 +2776,17 @@ var MessageAttachmentsStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per attachment Slack shows under a message: link previews, shared messages and integrations\u2019 cards. Primary key workspaceId, channelId, messageTs, position. Kept and deleted with their message.",
-    properties: properties11,
-    required: Object.keys(properties11)
+    properties: properties12,
+    required: Object.keys(properties12)
   };
   covers(scan, key) {
     return scan.holds(key.workspaceId, key.channelId, key.messageTs);
   }
   rows(scan) {
-    return scan.clients.flatMap((client) => scan.messages(client).flatMap(({ channelId, ts: ts8, attachments }) => attachments.map((attachment2, position) => ({
+    return scan.clients.flatMap((client) => scan.messages(client).flatMap(({ channelId, ts: ts9, attachments }) => attachments.map((attachment2, position) => ({
       workspaceId: client.workspace.id,
       channelId,
-      messageTs: ts8,
+      messageTs: ts9,
       position,
       attachment: attachment2
     }))));
@@ -2636,13 +2819,13 @@ var MessageAttachmentsStream = class extends SlackDesktopStream {
 };
 
 // packages/sources/slack/desktop/dist/streams/message-files-stream.js
-var { id: id12, ts: ts4, ordinal: ordinal4 } = slackFields;
-var properties12 = {
-  workspaceId: { ...id12, description: "The workspace (workspaces.id)." },
-  channelId: { ...id12, description: "The conversation (channels.id)." },
+var { id: id13, ts: ts4, ordinal: ordinal4 } = slackFields;
+var properties13 = {
+  workspaceId: { ...id13, description: "The workspace (workspaces.id)." },
+  channelId: { ...id13, description: "The conversation (channels.id)." },
   messageTs: { ...ts4, description: "The message (messages.ts)." },
   position: { ...ordinal4, description: "Its place in the message, from 0." },
-  fileId: { ...id12, description: "The file (files.id)." }
+  fileId: { ...id13, description: "The file (files.id)." }
 };
 var MessageFilesStream = class extends SlackDesktopStream {
   name = "messageFiles";
@@ -2650,17 +2833,17 @@ var MessageFilesStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per file a message shares, in the message\u2019s order. Primary key workspaceId, channelId, messageTs, position. Kept and deleted with their message.",
-    properties: properties12,
-    required: Object.keys(properties12)
+    properties: properties13,
+    required: Object.keys(properties13)
   };
   covers(scan, key) {
     return scan.holds(key.workspaceId, key.channelId, key.messageTs);
   }
   rows(scan) {
-    return scan.clients.flatMap((client) => scan.messages(client).flatMap(({ channelId, ts: ts8, fileIds }) => fileIds.map((fileId, position) => ({
+    return scan.clients.flatMap((client) => scan.messages(client).flatMap(({ channelId, ts: ts9, fileIds }) => fileIds.map((fileId, position) => ({
       workspaceId: client.workspace.id,
       channelId,
-      messageTs: ts8,
+      messageTs: ts9,
       position,
       fileId
     }))));
@@ -2671,17 +2854,17 @@ var MessageFilesStream = class extends SlackDesktopStream {
 };
 
 // packages/sources/slack/desktop/dist/streams/message-reactions-stream.js
-var { id: id13, ts: ts5, nullableText: nullableText10, textList: textList2 } = slackFields;
-var properties13 = {
-  workspaceId: { ...id13, description: "The workspace (workspaces.id)." },
-  channelId: { ...id13, description: "The conversation (channels.id)." },
+var { id: id14, ts: ts5, nullableText: nullableText11, textList: textList2 } = slackFields;
+var properties14 = {
+  workspaceId: { ...id14, description: "The workspace (workspaces.id)." },
+  channelId: { ...id14, description: "The conversation (channels.id)." },
   messageTs: { ...ts5, description: "The message (messages.ts)." },
   name: {
-    ...id13,
+    ...id14,
     description: "The emoji, as Slack names it, with any skin tone: thumbsup::skin-tone-2."
   },
   baseName: {
-    ...nullableText10,
+    ...nullableText11,
     description: "The emoji without its skin tone."
   },
   count: {
@@ -2700,17 +2883,17 @@ var MessageReactionsStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per emoji reaction on a message. Primary key workspaceId, channelId, messageTs, name. A reaction removed from a message the app still holds is deleted; reactions of a message the app dropped from its cache stay.",
-    properties: properties13,
-    required: Object.keys(properties13)
+    properties: properties14,
+    required: Object.keys(properties14)
   };
   covers(scan, key) {
     return scan.holds(key.workspaceId, key.channelId, key.messageTs);
   }
   rows(scan) {
-    return scan.clients.flatMap((client) => scan.messages(client).flatMap(({ channelId, ts: ts8, reactions }) => reactions.map((reaction2) => ({
+    return scan.clients.flatMap((client) => scan.messages(client).flatMap(({ channelId, ts: ts9, reactions }) => reactions.map((reaction2) => ({
       workspaceId: client.workspace.id,
       channelId,
-      messageTs: ts8,
+      messageTs: ts9,
       reaction: reaction2
     }))));
   }
@@ -2720,24 +2903,24 @@ var MessageReactionsStream = class extends SlackDesktopStream {
 };
 
 // packages/sources/slack/desktop/dist/streams/message-fields.js
-var { id: id14, ts: ts6, instant: instant2, nullableText: nullableText11, nullableBoolean: nullableBoolean8, nullableInteger: nullableInteger2, nullableTs: nullableTs3, textList: textList3 } = slackFields;
+var { id: id15, ts: ts6, instant: instant2, nullableText: nullableText12, nullableBoolean: nullableBoolean8, nullableInteger: nullableInteger2, nullableTs: nullableTs3, textList: textList3 } = slackFields;
 var messageProperties = {
-  workspaceId: { ...id14, description: "The workspace (workspaces.id)." },
-  channelId: { ...id14, description: "The conversation (channels.id)." },
+  workspaceId: { ...id15, description: "The workspace (workspaces.id)." },
+  channelId: { ...id15, description: "The conversation (channels.id)." },
   ts: {
     ...ts6,
     description: "Slack\u2019s ID for the message within its conversation, the time it was sent as seconds.microseconds, such as 1712345678.123456."
   },
   sentAt: { ...instant2, description: "When it was sent: ts as an instant." },
-  type: { ...id14, description: "Slack\u2019s message type, almost always message." },
+  type: { ...id15, description: "Slack\u2019s message type, almost always message." },
   subtype: {
-    ...nullableText11,
+    ...nullableText12,
     description: "What kind of message, such as channel_join or thread_broadcast (a reply also sent to the channel); NULL for an ordinary message."
   },
-  userId: { ...nullableText11, description: "Who sent it (members.id)." },
-  botId: { ...nullableText11, description: "The bot that sent it (bots.id)." },
+  userId: { ...nullableText12, description: "Who sent it (members.id)." },
+  botId: { ...nullableText12, description: "The bot that sent it (bots.id)." },
   text: {
-    ...nullableText11,
+    ...nullableText12,
     description: "The message in Slack\u2019s markup: <@U\u2026> mentions, <#C\u2026> channels, <url|label> links."
   },
   threadTs: {
@@ -2757,7 +2940,7 @@ var messageProperties = {
     description: "For a thread parent, its newest reply\u2019s ts."
   },
   editedBy: {
-    ...nullableText11,
+    ...nullableText12,
     description: "Who last edited it (members.id)."
   },
   editedTs: {
@@ -2765,7 +2948,7 @@ var messageProperties = {
     description: "When it was last edited, as a ts; NULL when never edited."
   },
   clientMessageId: {
-    ...nullableText11,
+    ...nullableText12,
     description: "The ID the sending app gave the message."
   },
   isLocked: {
@@ -2776,8 +2959,20 @@ var messageProperties = {
     ...nullableBoolean8,
     description: "Whether the workspace\u2019s plan hides it, past the free plan\u2019s history limit."
   },
+  savedState: {
+    ...nullableText12,
+    description: "For a message the user saved for later, its state in their Later list, such as in_progress; NULL when not saved."
+  },
+  savedTodoState: {
+    ...nullableText12,
+    description: "For a message saved for later, Slack\u2019s to-do state for it, such as saved."
+  },
+  isSavedArchived: {
+    ...nullableBoolean8,
+    description: "For a message saved for later, whether the user archived it in their Later list."
+  },
   blocks: {
-    ...nullableText11,
+    ...nullableText12,
     description: "The message\u2019s Block Kit blocks as JSON, as Slack holds them: rich text with its formatting, sections, buttons."
   }
 };
@@ -2801,6 +2996,9 @@ function messageRecord(workspaceId, message2) {
     clientMessageId: message2.clientMessageId,
     isLocked: message2.isLocked,
     isBeyondPlanLimit: message2.isBeyondPlanLimit,
+    savedState: message2.savedState,
+    savedTodoState: message2.savedTodoState,
+    isSavedArchived: message2.isSavedArchived,
     blocks: message2.blocksJson
   };
 }
@@ -2826,17 +3024,59 @@ var MessagesStream = class extends SlackDesktopStream {
   }
 };
 
+// packages/sources/slack/desktop/dist/streams/pins-stream.js
+var { id: id16, ts: ts7, nullableText: nullableText13, nullableTimestamp: nullableTimestamp7 } = slackFields;
+var properties15 = {
+  workspaceId: { ...id16, description: "The workspace (workspaces.id)." },
+  channelId: {
+    ...id16,
+    description: "The conversation it is pinned in (channels.id)."
+  },
+  ts: {
+    ...ts7,
+    description: "The pinned message (messages.ts), held by the app or not."
+  },
+  type: { ...id16, description: "What is pinned: message." },
+  pinnedBy: {
+    ...nullableText13,
+    description: "Who pinned it (members.id); NULL when the app holds neither the conversation\u2019s pin list with the message nor the message."
+  },
+  pinnedAt: {
+    ...nullableTimestamp7,
+    description: "When it was pinned; NULL as pinnedBy."
+  }
+};
+var PinsStream = class extends SlackDesktopStream {
+  name = "pins";
+  primaryKey = ["workspaceId", "channelId", "ts"];
+  jsonSchema = {
+    type: "object",
+    description: "One record per message pinned in a conversation, as far as the app knows the conversation\u2019s pins. Primary key workspaceId, channelId, ts. A pin removed from a conversation whose pin list the app loaded is deleted; pins of a conversation it never loaded the list of stay.",
+    properties: properties15,
+    required: Object.keys(properties15)
+  };
+  covers(scan, key) {
+    return scan.holdsPins(key.workspaceId, key.channelId);
+  }
+  rows(scan) {
+    return scan.clients.flatMap(({ workspace, pins: pins2 }) => pins2.filter(({ channelId }) => scan.channelSelected(channelId)).map((pin) => ({ workspaceId: workspace.id, pin })));
+  }
+  records({ workspaceId, pin }) {
+    return [{ workspaceId, ...pin }];
+  }
+};
+
 // packages/sources/slack/desktop/dist/streams/preferences-stream.js
-var { id: id15 } = slackFields;
-var properties14 = {
-  workspaceId: { ...id15, description: "The workspace (workspaces.id)." },
+var { id: id17 } = slackFields;
+var properties16 = {
+  workspaceId: { ...id17, description: "The workspace (workspaces.id)." },
   scope: {
     type: "string",
     enum: ["user", "team"],
     description: "user for the signed-in user\u2019s own preference, team for the workspace\u2019s as its admins set it."
   },
   name: {
-    ...id15,
+    ...id17,
     description: "Slack\u2019s name for the preference, such as tz or time24."
   },
   value: {
@@ -2850,8 +3090,8 @@ var PreferencesStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per preference the app holds for a workspace: the user\u2019s settings and the workspace\u2019s. Primary key workspaceId, scope, name. One the app stops holding is deleted.",
-    properties: properties14,
-    required: Object.keys(properties14)
+    properties: properties16,
+    required: Object.keys(properties16)
   };
   rows(scan) {
     return scan.clients.flatMap(({ workspace, preferences: preferences2 }) => preferences2.map((preference) => ({
@@ -2891,11 +3131,11 @@ var ThreadRepliesStream = class extends SlackDesktopStream {
 };
 
 // packages/sources/slack/desktop/dist/streams/thread-subscriptions-stream.js
-var { id: id16, ts: ts7, nullableBoolean: nullableBoolean9, nullableTs: nullableTs4 } = slackFields;
-var properties15 = {
-  workspaceId: { ...id16, description: "The workspace (workspaces.id)." },
-  channelId: { ...id16, description: "The conversation (channels.id)." },
-  threadTs: { ...ts7, description: "The thread\u2019s parent (messages.ts)." },
+var { id: id18, ts: ts8, nullableBoolean: nullableBoolean9, nullableTs: nullableTs4 } = slackFields;
+var properties17 = {
+  workspaceId: { ...id18, description: "The workspace (workspaces.id)." },
+  channelId: { ...id18, description: "The conversation (channels.id)." },
+  threadTs: { ...ts8, description: "The thread\u2019s parent (messages.ts)." },
   isSubscribed: {
     ...nullableBoolean9,
     description: "Whether the user follows the thread."
@@ -2911,8 +3151,8 @@ var ThreadSubscriptionsStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per thread the app knows whether the user follows. Primary key workspaceId, channelId, threadTs. One the app stops listing is deleted.",
-    properties: properties15,
-    required: Object.keys(properties15)
+    properties: properties17,
+    required: Object.keys(properties17)
   };
   rows(scan) {
     return scan.clients.flatMap(({ workspace, threadSubscriptions }) => threadSubscriptions.filter(({ channelId }) => scan.channelSelected(channelId)).map((subscription) => ({ workspaceId: workspace.id, subscription })));
@@ -2922,31 +3162,65 @@ var ThreadSubscriptionsStream = class extends SlackDesktopStream {
   }
 };
 
+// packages/sources/slack/desktop/dist/streams/user-group-memberships-stream.js
+var { id: id19, nullableBoolean: nullableBoolean10 } = slackFields;
+var properties18 = {
+  workspaceId: { ...id19, description: "The workspace (workspaces.id)." },
+  userGroupId: {
+    ...id19,
+    description: "Slack\u2019s user group ID, such as S0123ABCD."
+  },
+  isMember: {
+    ...nullableBoolean10,
+    description: "Whether the signed-in user is in the group."
+  }
+};
+var UserGroupMembershipsStream = class extends SlackDesktopStream {
+  name = "userGroupMemberships";
+  primaryKey = ["workspaceId", "userGroupId"];
+  emitsDeletes = void 0;
+  jsonSchema = {
+    type: "object",
+    description: "One record per user group the app checked the signed-in user\u2019s membership of. The app keeps neither the groups\u2019 names nor their members. Primary key workspaceId, userGroupId. A group stays after the app forgets its check.",
+    properties: properties18,
+    required: Object.keys(properties18)
+  };
+  rows(scan) {
+    return scan.clients.flatMap(({ workspace, userGroupMemberships }) => userGroupMemberships.map((membership) => ({
+      workspaceId: workspace.id,
+      membership
+    })));
+  }
+  records({ workspaceId, membership }) {
+    return [{ workspaceId, ...membership }];
+  }
+};
+
 // packages/sources/slack/desktop/dist/streams/workspaces-stream.js
-var { id: id17, nullableText: nullableText12, nullableTimestamp: nullableTimestamp6 } = slackFields;
-var properties16 = {
-  id: { ...id17, description: "Slack\u2019s workspace (team) ID, such as T0123ABCD." },
-  name: { ...id17, description: "The workspace\u2019s name." },
+var { id: id20, nullableText: nullableText14, nullableTimestamp: nullableTimestamp8 } = slackFields;
+var properties19 = {
+  id: { ...id20, description: "Slack\u2019s workspace (team) ID, such as T0123ABCD." },
+  name: { ...id20, description: "The workspace\u2019s name." },
   domain: {
-    ...id17,
+    ...id20,
     description: "The workspace\u2019s subdomain: <domain>.slack.com."
   },
-  url: { ...nullableText12, description: "The workspace\u2019s address." },
+  url: { ...nullableText14, description: "The workspace\u2019s address." },
   emailDomain: {
-    ...nullableText12,
+    ...nullableText14,
     description: "The email domain that may join the workspace on its own."
   },
   plan: {
-    ...nullableText12,
+    ...nullableText14,
     description: "Slack\u2019s code for the workspace\u2019s plan, such as plus; NULL for the free plan."
   },
   createdAt: {
-    ...nullableTimestamp6,
+    ...nullableTimestamp8,
     description: "When the workspace was created."
   },
-  iconUrl: { ...nullableText12, description: "The workspace icon\u2019s URL." },
+  iconUrl: { ...nullableText14, description: "The workspace icon\u2019s URL." },
   userId: {
-    ...id17,
+    ...id20,
     description: "The member ID this Mac is signed in to the workspace as."
   }
 };
@@ -2956,8 +3230,8 @@ var WorkspacesStream = class extends SlackDesktopStream {
   jsonSchema = {
     type: "object",
     description: "One record per Slack workspace the app is signed in to on this Mac and has saved. Primary key id. A workspace the app no longer keeps, such as one signed out of, stays.",
-    properties: properties16,
-    required: Object.keys(properties16)
+    properties: properties19,
+    required: Object.keys(properties19)
   };
   covers(scan, key) {
     return scan.keeps(key.id);
@@ -2983,13 +3257,16 @@ var readers = {
   messageAttachments: new MessageAttachmentsStream(),
   messageReactions: new MessageReactionsStream(),
   messageFiles: new MessageFilesStream(),
+  pins: new PinsStream(),
   files: new FilesStream(),
   fileShares: new FileSharesStream(),
   listRecords: new ListRecordsStream(),
   channelSections: new ChannelSectionsStream(),
   channelSectionChannels: new ChannelSectionChannelsStream(),
   threadSubscriptions: new ThreadSubscriptionsStream(),
-  preferences: new PreferencesStream()
+  preferences: new PreferencesStream(),
+  userGroupMemberships: new UserGroupMembershipsStream(),
+  downloads: new DownloadsStream()
 };
 var catalog = new Catalog(Object.values(readers).map((reader) => reader.describe()));
 var readersByName = new Map(Object.values(readers).map((reader) => [reader.name, reader]));
@@ -3008,6 +3285,7 @@ var SlackDesktopSource = class extends Source {
   messageAttachments = readers.messageAttachments.describe();
   messageReactions = readers.messageReactions.describe();
   messageFiles = readers.messageFiles.describe();
+  pins = readers.pins.describe();
   files = readers.files.describe();
   fileShares = readers.fileShares.describe();
   listRecords = readers.listRecords.describe();
@@ -3015,6 +3293,8 @@ var SlackDesktopSource = class extends Source {
   channelSectionChannels = readers.channelSectionChannels.describe();
   threadSubscriptions = readers.threadSubscriptions.describe();
   preferences = readers.preferences.describe();
+  userGroupMemberships = readers.userGroupMemberships.describe();
+  downloads = readers.downloads.describe();
   directory;
   scope;
   #store;
@@ -3027,11 +3307,15 @@ var SlackDesktopSource = class extends Source {
     Object.freeze(this);
   }
   async open() {
-    return new SlackDesktopScan(await this.#store.clients(), this.scope);
+    const [clients, downloads] = await Promise.allSettled([
+      this.#store.clients(),
+      this.#store.downloads()
+    ]);
+    return new SlackDesktopScan(clients, downloads, this.scope);
   }
   coverage(_stream) {
     return {
-      description: "What the Slack app keeps on this Mac for each signed-in workspace: its channels, members and apps, and only the messages the app has loaded. A workspace appears once the app has saved it, every few minutes while it is open and when it quits.",
+      description: "What the Slack app keeps on this Mac for each signed-in workspace: its channels, members and apps, only the messages the app has loaded, and the files it downloaded. A workspace appears once the app has saved it, every few minutes while it is open and when it quits.",
       selection: this.scope
     };
   }
@@ -3064,16 +3348,18 @@ var SlackDesktopSource = class extends Source {
     if (reader === void 0)
       throw new Error(`Slack has no stream ${stream.name}`);
     const records = reader.read(scan);
-    if (configuration.syncMode === "full_refresh")
-      yield* records.map((data) => ({ stream: stream.name, data }));
-    else
-      yield* diffSnapshot(stream, records, state, stream.emitsDeletes ? { covers: ({ key }) => reader.covers(scan, key) } : {});
+    const messages = configuration.syncMode === "full_refresh" ? records.map((data) => ({ stream: stream.name, data })) : diffSnapshot(stream, records, state, stream.emitsDeletes ? { covers: ({ key }) => reader.covers(scan, key) } : {});
+    for await (const message2 of messages)
+      if ("type" in message2 || configuration.fileReads.length === 0)
+        yield message2;
+      else
+        yield { ...message2, file: reader.file(message2.data) };
   }
 };
 
 // packages/connectors/apple/slack/dist/slack-connector.js
 var conversation = (row, rows) => {
-  const workspace = rows.get("workspaces")?.find(({ id: id18 }) => id18 === row.workspaceId);
+  const workspace = rows.get("workspaces")?.find(({ id: id21 }) => id21 === row.workspaceId);
   const label = conversationLabel(row);
   return workspace === void 0 ? label : `${name(workspace)} / ${label}`;
 };
