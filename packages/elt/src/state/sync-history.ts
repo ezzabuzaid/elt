@@ -5,7 +5,7 @@ import {
   type CopyProgress,
   describeFailures,
 } from '../core/copy.ts';
-import type { ExtractionCoverage } from '../core/source.ts';
+import type { ExtractionCoverage, FailureType } from '../core/source.ts';
 import type { Target as DestinationTarget } from '../core/target.ts';
 
 export type SyncStatus = 'succeeded' | 'partial' | 'failed' | 'cancelled';
@@ -23,7 +23,7 @@ export type RecordedPass<Target extends DestinationTarget> = {
   progress?(progress: CopyProgress<Target>): void;
   finish(outcomes: readonly CopyOutcome<Target>[]): Promise<void>;
   // The pass produced no outcomes, so what it committed is unknown.
-  fail(error: unknown): Promise<void>;
+  fail(error: unknown, failureType: FailureType): Promise<void>;
 };
 
 // As Airbyte's platform keeps each connection's jobs and attempts apart from
@@ -61,6 +61,20 @@ export function passStatus(
   return outcomes.some((outcome) => copyStatus(outcome) !== 'failed')
     ? 'partial'
     : 'failed';
+}
+
+// Whose a pass's failures are to fix: config when any one is the user's, null
+// when nothing failed or the run was stopped on request.
+export function passFailureType(
+  outcomes: readonly CopyOutcome<DestinationTarget>[],
+): FailureType | null {
+  const status = passStatus(outcomes);
+  if (status === 'succeeded' || status === 'cancelled') return null;
+  return outcomes.some(({ failures }) =>
+    failures.some(({ failureType }) => failureType === 'config'),
+  )
+    ? 'config'
+    : 'system';
 }
 
 // What did not load in a pass, or null when every copy loaded completely.

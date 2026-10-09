@@ -193,6 +193,7 @@ export class ApplePlugin {
                   completedAt: failure.failedAt,
                   lastSucceededAt: pass?.lastSucceededAt ?? null,
                   error: failure.error,
+                  failureType: failure.failureType,
                 };
           return {
             ...item,

@@ -4,6 +4,7 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
+  type FailureType,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -12,6 +13,7 @@ import {
 } from '@workspace/elt';
 import {
   SlackDesktopStore,
+  SlackDesktopUnavailableError,
   slackDesktopDirectory,
 } from '@workspace/sdk-slack-desktop';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -118,6 +120,10 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
       this.#store.downloads(),
     ]);
     return new SlackDesktopScan(clients, downloads, this.scope);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof SlackDesktopUnavailableError ? 'config' : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

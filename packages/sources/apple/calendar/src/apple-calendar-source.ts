@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -12,6 +13,7 @@ import type {
 import { Catalog, Source, diffSnapshot, isTimestamp } from '@workspace/elt';
 import {
   type CalendarStore,
+  CalendarUnavailableError,
   IcsExportUnavailableError,
 } from '@workspace/sdk-apple-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -131,6 +133,10 @@ export class AppleCalendarSource extends Source<CalendarScan> {
     this.endAt = endAt;
     this.scope = scope;
     Object.freeze(this);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof CalendarUnavailableError ? 'config' : 'system';
   }
 
   override coverage(stream: Stream): ExtractionCoverage {

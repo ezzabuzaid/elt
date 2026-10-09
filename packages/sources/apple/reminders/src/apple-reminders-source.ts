@@ -1,12 +1,14 @@
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import type { RemindersStore } from '@workspace/sdk-apple-eventkit';
+import { RemindersUnavailableError } from '@workspace/sdk-apple-eventkit';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -65,6 +67,10 @@ export class AppleRemindersSource extends Source<RemindersScan> {
     this.#store = store;
     this.scope = scope;
     Object.freeze(this);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof RemindersUnavailableError ? 'config' : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

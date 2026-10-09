@@ -894,6 +894,21 @@ function exec(path: string, sql: string) {
 // An EMLX file as Mail writes it: the message's byte count, then the message.
 const emlxOf = (message: string) => `${Buffer.byteLength(message)}\n${message}`;
 
+// Each kind of failure a run's copies reported, once.
+function failureTypes(error: {
+  readonly results: readonly {
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): string[] {
+  return [
+    ...new Set(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+    ),
+  ];
+}
+
 test('Mail yields server labels and sender addresses in the numeric order of their keys', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-'));
   const store = await fixture(join(dir.path, 'Mail'));
@@ -2026,7 +2041,8 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
             (f) =>
               f.error instanceof Error && f.error.name === 'MailSchemaError',
           ),
-      ),
+      ) &&
+      failureTypes(error).join() === 'system',
   );
   assert.equal(
     rows(
@@ -2052,7 +2068,8 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
     (error) =>
       error instanceof PipelineError &&
       error.cause instanceof Error &&
-      error.cause.name === 'MailSchemaError',
+      error.cause.name === 'MailSchemaError' &&
+      failureTypes(error).join() === 'system',
   );
   assert.deepEqual(
     parsedProperties(
@@ -2074,7 +2091,8 @@ test('Mail failures keep stored rows and checkpoints; absent stores and unknown 
       error instanceof PipelineError &&
       error.cause instanceof Error &&
       error.cause.name === 'MailUnavailableError' &&
-      /Full Disk Access/.test(error.cause.message),
+      /Full Disk Access/.test(error.cause.message) &&
+      failureTypes(error).join() === 'config',
   );
 });
 
@@ -2099,6 +2117,7 @@ test('An unreadable Accounts store fails only accounts and smtpServers, naming F
       assert.ok(cause instanceof AccountsUnavailableError);
       assert.match(cause.message, /Full Disk Access/);
     }
+    assert.deepEqual(failureTypes(error), ['config']);
     const loaded = error.results.filter(
       ({ failures }) => failures.length === 0,
     );
@@ -2230,9 +2249,10 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
 test('Mail watches index commits and file-only downloads, cancels, and exports readable Markdown', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-watch-'));
   const store = await fixture(join(dir.path, 'Mail'));
+  // Outside the Mail directory, as ~/Library/Accounts is.
   const source = new AppleMailSource({
     path: store.root,
-    accounts: store.accounts,
+    accounts: scratchAccounts(join(dir.path, 'Accounts4.sqlite')),
   });
   const abort = new AbortController();
   const watch = source.watch({
@@ -2243,7 +2263,14 @@ test('Mail watches index commits and file-only downloads, cancels, and exports r
     source.messages,
     source.attachments,
   ]);
+  // A first commit absorbs the fixture's last writes, which FSEvents can
+  // report just after the watch starts, so each change below is seen alone.
   using upstream = new DatabaseSync(store.index);
+  upstream.exec('UPDATE messages SET flagged=0 WHERE ROWID=1');
+  assert.deepEqual((await watch.next()).value, [
+    source.messages,
+    source.attachments,
+  ]);
   upstream.exec('UPDATE messages SET flagged=1 WHERE ROWID=1');
   assert.deepEqual((await watch.next()).value, [
     source.messages,

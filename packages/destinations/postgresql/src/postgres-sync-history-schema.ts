@@ -4,7 +4,7 @@ import type { PostgresView } from './postgres-views.ts';
 
 const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
   sync_attempts:
-    'SELECT id AS attempt_id, connector, source, started_at, completed_at, status, error FROM _warehouse.sync_attempts',
+    'SELECT id AS attempt_id, connector, source, started_at, completed_at, status, error, failure_type FROM _warehouse.sync_attempts',
   extraction_coverage: `SELECT c.attempt_id, a.connector, a.source, a.started_at, a.completed_at,
       c.stream, c.target_schema, c.target_table,
       EXISTS (SELECT FROM pg_class t JOIN pg_namespace n ON n.oid = t.relnamespace
@@ -13,7 +13,7 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
       c.status, c.written_count, c.deleted_count, c.failures
       FROM _warehouse.extraction_coverage c JOIN _warehouse.sync_attempts a ON a.id = c.attempt_id`,
   sync_status: `SELECT DISTINCT ON (a.connector) a.connector,
-      a.id AS latest_attempt_id, a.started_at, a.completed_at, a.status, a.error,
+      a.id AS latest_attempt_id, a.started_at, a.completed_at, a.status, a.error, a.failure_type,
       success.id AS last_successful_attempt_id, success.completed_at AS last_successful_sync_at
       FROM _warehouse.sync_attempts a
       LEFT JOIN LATERAL (
@@ -51,7 +51,9 @@ export const syncHistoryTables = [
     completed_at timestamptz,
     status text NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'succeeded', 'partial', 'failed', 'cancelled')),
     error text,
-    CHECK ((status = 'running') = (completed_at IS NULL))
+    failure_type text CHECK (failure_type IN ('config', 'system')),
+    CHECK ((status = 'running') = (completed_at IS NULL)),
+    CHECK ((status IN ('partial', 'failed')) = (failure_type IS NOT NULL))
   )`,
   'CREATE INDEX IF NOT EXISTS sync_attempts_connector ON _warehouse.sync_attempts (connector, id DESC)',
   `CREATE TABLE IF NOT EXISTS _warehouse.extraction_coverage (

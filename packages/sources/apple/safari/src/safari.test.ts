@@ -1011,6 +1011,26 @@ async function addFraction(path: string, at: Date, fraction: number) {
   await writeFile(path, bytes);
 }
 
+// The streams whose copies failed, sorted, under each kind of failure they
+// reported.
+function failedStreams(error: {
+  readonly results: readonly {
+    readonly copy: {
+      readonly configuration: { readonly stream: { readonly name: string } };
+    };
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): Record<string, string[]> {
+  const streams: Record<string, string[]> = {};
+  for (const { copy, failures } of error.results)
+    for (const failureType of new Set(
+      failures.map(({ failureType }) => failureType),
+    ))
+      (streams[failureType] ??= []).push(copy.configuration.stream.name);
+  for (const names of Object.values(streams)) names.sort();
+  return streams;
+}
+
 test('Safari reads history, iCloud Tabs, bookmarks and recently closed tabs as documented views', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'safari-'));
   const location = await safariFixture(scratch.path);
@@ -1980,6 +2000,16 @@ test('Safari names Full Disk Access for an unreadable store, refuses an unknown 
     /Bookmarks\.plist cannot be read\. Allow the process that runs the export Full Disk Access/,
   );
   assert.match(failed.historyVisits ?? '', /missing history_visits\.score/);
+  assert.deepEqual(failedStreams(failure), {
+    config: ['bookmarks', 'readingListItems'],
+    system: [
+      'historyItemTags',
+      'historyItems',
+      'historyTags',
+      'historyTombstones',
+      'historyVisits',
+    ],
+  });
   assert.deepEqual(
     rows(
       safari.read(`SELECT (SELECT count(*) FROM bookmarks) AS bookmarks,

@@ -1,5 +1,5 @@
 import type { Partition } from './partition.ts';
-import type { KeyValue } from './source.ts';
+import type { FailureType, KeyValue } from './source.ts';
 import type { Stream } from './stream.ts';
 
 // Accepted input: records (including deduplication no-ops) and deletions
@@ -25,6 +25,7 @@ export class TargetOwnedError extends TypeError {
 export type LoadFailure = {
   readonly partition: Partition | null;
   readonly error: unknown;
+  readonly failureType: FailureType;
 };
 
 // What a stage applies, in source order. A RESET of the whole stream opens a

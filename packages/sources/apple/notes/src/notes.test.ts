@@ -299,6 +299,21 @@ const noteStoreFixture = async (directory: string) => {
   return path;
 };
 
+// Each kind of failure a run's copies reported, once.
+function failureTypes(error: {
+  readonly results: readonly {
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): string[] {
+  return [
+    ...new Set(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+    ),
+  ];
+}
+
 test('Notes reads as documented views that follow edits and deletions', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'notes-views-'));
   const path = await noteStoreFixture(join(scratch.path, 'native'));
@@ -416,7 +431,14 @@ test('a Notes store that cannot be read publishes nothing, and an empty one publ
     join(scratch.path, 'empty'),
   );
 
-  await assert.rejects(missing.load(), PipelineError);
+  await assert.rejects(
+    missing.load(),
+    (error) =>
+      error instanceof PipelineError &&
+      error.cause instanceof Error &&
+      error.cause.name === 'NotesUnavailableError' &&
+      failureTypes(error).join() === 'config',
+  );
   await empty.load();
 
   assert.deepEqual(missing.views(), []);

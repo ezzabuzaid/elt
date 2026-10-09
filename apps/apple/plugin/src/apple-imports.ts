@@ -12,13 +12,15 @@ type Selected = {
   connector: string;
   database: string;
   connectionError: string | null;
+  connectionFailureType: string | null;
   permissions: string;
 };
 
+// A problem the user can fix by giving access carries what to grant.
 export type ImportProblem = {
   connector: string;
   problem: string;
-  permissions: string;
+  permissions: string | null;
 };
 
 export class AppleImports {
@@ -33,7 +35,7 @@ export class AppleImports {
     using settings = readSQLite(this.#settings);
     return settings
       .prepare(
-        'SELECT connector, database, connection_error, permissions FROM selected_connectors',
+        'SELECT connector, database, connection_error, connection_failure_type, permissions FROM selected_connectors',
       )
       .all()
       .map((row) => ({
@@ -41,6 +43,10 @@ export class AppleImports {
         database: String(row.database),
         connectionError:
           row.connection_error === null ? null : String(row.connection_error),
+        connectionFailureType:
+          row.connection_failure_type === null
+            ? null
+            : String(row.connection_failure_type),
         permissions: String(row.permissions),
       }));
   }
@@ -60,18 +66,43 @@ export class AppleImports {
   // failed or loaded only in part.
   problems(): ImportProblem[] {
     return this.#selected().flatMap(
-      ({ connector, database, connectionError, permissions }) => {
-        const problem = connectionError ?? passProblem(database);
-        return problem === null ? [] : [{ connector, problem, permissions }];
+      ({
+        connector,
+        database,
+        connectionError,
+        connectionFailureType,
+        permissions,
+      }) => {
+        const failure =
+          connectionError === null
+            ? passFailure(database)
+            : { problem: connectionError, failureType: connectionFailureType };
+        return failure === null
+          ? []
+          : [
+              {
+                connector,
+                problem: failure.problem,
+                permissions:
+                  failure.failureType === 'config' ? permissions : null,
+              },
+            ];
       },
     );
   }
 }
 
-function passProblem(database: string): string | null {
+function passFailure(
+  database: string,
+): { problem: string; failureType: string } | null {
   if (!existsSync(database)) return null;
   using reader = readSQLite(database);
-  const latest = reader.prepare('SELECT status, error FROM sync_status').get();
+  const latest = reader
+    .prepare('SELECT status, error, failure_type FROM sync_status')
+    .get();
   if (latest?.status !== 'failed' && latest?.status !== 'partial') return null;
-  return `${String(latest.status)}: ${String(latest.error)}`;
+  return {
+    problem: `${String(latest.status)}: ${String(latest.error)}`,
+    failureType: String(latest.failure_type),
+  };
 }

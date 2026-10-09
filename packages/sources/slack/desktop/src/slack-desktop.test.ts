@@ -1077,6 +1077,21 @@ async function scratch() {
   };
 }
 
+// Each kind of failure a run's copies reported, once.
+function failureTypes(error: {
+  readonly results: readonly {
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): string[] {
+  return [
+    ...new Set(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+    ),
+  ];
+}
+
 test('every stream loads what the Slack app keeps, ts exact and sent times to the microsecond', async () => {
   const { dir, store, out } = await scratch();
   await using _ = dir;
@@ -2158,6 +2173,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
         assert.ok(cause instanceof SlackDesktopUnavailableError);
         assert.match(cause.message, /Full Disk Access/);
       }
+      assert.deepEqual(failureTypes(error), ['config']);
       return true;
     });
   } finally {

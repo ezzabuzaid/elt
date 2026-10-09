@@ -8,6 +8,7 @@ import {
   SyncHistory,
   copyStatus,
   passError,
+  passFailureType,
   passStatus,
 } from '@workspace/elt';
 
@@ -61,15 +62,16 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     });
     return {
       finish: (outcomes) => this.#finish(id, outcomes),
-      fail: (error) =>
+      fail: (error, failureType) =>
         this.#write(async (transaction) => {
           await transaction`
             UPDATE _warehouse.extraction_coverage SET status = 'failed',
-              failures = ${transaction.json([{ partition: null, error: message(error) }])}
+              failures = ${transaction.json([{ partition: null, error: message(error), failure_type: failureType }])}
             WHERE attempt_id = ${id}`;
           await transaction`
             UPDATE _warehouse.sync_attempts SET status = 'failed',
-              completed_at = clock_timestamp(), error = ${message(error)}
+              completed_at = clock_timestamp(), error = ${message(error)},
+              failure_type = ${failureType}
             WHERE id = ${id}`;
         }),
     };
@@ -106,11 +108,12 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
           UPDATE _warehouse.extraction_coverage SET
             status = ${copyStatus(outcome)},
             written_count = ${outcome.count}, deleted_count = ${outcome.deleted},
-            failures = ${transaction.json(outcome.failures.map(({ partition, error }) => ({ partition, error: message(error) })))}
+            failures = ${transaction.json(outcome.failures.map(({ partition, error, failureType }) => ({ partition, error: message(error), failure_type: failureType })))}
           WHERE attempt_id = ${id} AND stream = ${outcome.copy.from.name}`;
       await transaction`
         UPDATE _warehouse.sync_attempts SET completed_at = clock_timestamp(),
-          status = ${passStatus(outcomes)}, error = ${passError(outcomes)}
+          status = ${passStatus(outcomes)}, error = ${passError(outcomes)},
+          failure_type = ${passFailureType(outcomes)}
         WHERE id = ${id}`;
     });
   }

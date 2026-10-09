@@ -266,7 +266,7 @@ export class Pipeline<Target extends DestinationTarget> {
         signal,
       );
     } catch (error) {
-      await record?.fail(error);
+      await record?.fail(error, connection.source.failureType(error));
       throw error;
     }
     await record?.finish(outcomes);
@@ -285,7 +285,7 @@ export class Pipeline<Target extends DestinationTarget> {
         coverage: connection.source.coverage(copy.from),
       })),
     );
-    await record.fail(error);
+    await record.fail(error, connection.source.failureType(error));
   }
 
   // Every declaration is checked before any connection reads, so a wiring

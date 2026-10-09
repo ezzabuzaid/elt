@@ -3437,6 +3437,7 @@ test('warehouse sync history distinguishes unchanged success, partial commits, f
   const first = await status();
   const [original] = await sql`SELECT loaded_at::text FROM raw.good`;
   assert.equal(first.status, 'succeeded');
+  assert.equal(first.failure_type, null);
   assert.equal(first.latest_attempt_id, first.last_successful_attempt_id);
   const [empty] =
     await sql`SELECT status, written_count::int, selection, target_exists FROM marts.extraction_coverage WHERE stream = 'bad'`;
@@ -3482,6 +3483,7 @@ test('warehouse sync history distinguishes unchanged success, partial commits, f
   await assert.rejects(run, PipelineError);
   const partial = await status();
   assert.equal(partial.status, 'partial');
+  assert.equal(partial.failure_type, 'system');
   assert.equal(partial.last_successful_attempt_id, second.latest_attempt_id);
   assert.deepEqual(await loaded(database, 'bad'), ['committed:1']);
   const [copy] =
@@ -3493,7 +3495,9 @@ test('warehouse sync history distinguishes unchanged success, partial commits, f
       status: 'partial',
       written_count: 1,
       deleted_count: 0,
-      failures: [{ partition: null, error: 'lost page' }],
+      failures: [
+        { partition: null, error: 'lost page', failure_type: 'system' },
+      ],
       selection: window,
     },
   );
@@ -3507,6 +3511,7 @@ test('warehouse sync history distinguishes unchanged success, partial commits, f
   };
   await assert.rejects(run, PipelineError);
   assert.equal((await status()).status, 'failed');
+  assert.equal((await status()).failure_type, 'system');
   assert.equal(
     (await status()).last_successful_attempt_id,
     second.latest_attempt_id,
@@ -3628,7 +3633,13 @@ test('warehouse records failed partitions and validation errors without fabricat
     {
       status: 'partial',
       written_count: 1,
-      failures: [{ partition: { site: 'b' }, error: 'property denied' }],
+      failures: [
+        {
+          partition: { site: 'b' },
+          error: 'property denied',
+          failure_type: 'system',
+        },
+      ],
       selection: { sites: ['a', 'b'] },
     },
   );

@@ -3,6 +3,7 @@ import { relative } from 'node:path';
 import type { PassStatus } from '@workspace/elt-sqlite';
 
 import type { ApplePlugin } from './apple-plugin.ts';
+import { passFailure } from './pass-failure.ts';
 
 // What a chat's hooks add to the model's context: each selected connector,
 // where its import lives, how its last pass went and the presets a reader can
@@ -25,9 +26,9 @@ const progress = (sync: PassStatus | null, guidance: string): string => {
     case 'cancelled':
       return `its last pass was stopped and resumes when Codex runs the Apple plugin; ${since}`;
     case 'partial':
-      return `partly synced at ${sync.completedAt}: ${sync.error} ${guidance}`;
+      return `partly synced at ${sync.completedAt}: ${passFailure(sync, guidance)}`;
     case 'failed':
-      return `last sync failed at ${sync.completedAt}: ${sync.error} ${guidance}; ${since}`;
+      return `last sync failed at ${sync.completedAt}: ${passFailure(sync, guidance)}; ${since}`;
   }
 };
 

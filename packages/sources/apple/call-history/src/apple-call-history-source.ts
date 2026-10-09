@@ -3,6 +3,7 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -10,6 +11,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   CallHistoryStore,
+  CallHistoryUnavailableError,
   callHistoryStorePath,
 } from '@workspace/sdk-apple-call-history';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -65,6 +67,10 @@ export class AppleCallHistorySource extends Source<CallHistoryScan> {
 
   protected override async open(): Promise<CallHistoryScan> {
     return new CallHistoryScan(this.#store.open(), this.scope);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof CallHistoryUnavailableError ? 'config' : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

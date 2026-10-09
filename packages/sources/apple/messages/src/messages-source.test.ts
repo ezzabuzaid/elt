@@ -902,6 +902,7 @@ test('Messages names Full Disk Access when chat.db cannot be opened', async () =
     assert.equal(error.name, 'MessagesUnavailableError');
     assert.match(error.message, /Full Disk Access/);
     assert.ok(error.cause instanceof Error);
+    assert.equal(source.failureType(error), 'config');
     return true;
   });
 });

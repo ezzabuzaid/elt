@@ -34,14 +34,7 @@ export class StatusCommand extends Command {
           return 'No connectors are set up. Run: setup';
         const failures = statuses
           .filter(({ error }) => error !== null)
-          .map(({ connector, title, error }) => {
-            // A selected connector that is not loaded has no guidance;
-            // its error says what to do.
-            const guidance = this.imports.connectors
-              .find(({ name }) => name === connector)
-              ?.guidance();
-            return `\n${title}: ${error}${guidance === undefined ? '' : `\n${guidance}`}`;
-          });
+          .map(({ title, error }) => `\n${title}: ${error}`);
         return [
           table(
             ['Connector', 'State', 'Last success', 'Scope', 'Database'],

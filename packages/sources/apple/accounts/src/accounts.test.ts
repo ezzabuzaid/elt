@@ -393,6 +393,21 @@ async function pipeline(source: AppleAccountsSource, directory: string) {
   });
 }
 
+// Each kind of failure a run's copies reported, once.
+function failureTypes(error: {
+  readonly results: readonly {
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): string[] {
+  return [
+    ...new Set(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+    ),
+  ];
+}
+
 test('every Accounts stream loads the store, without authentication material, and a second run writes nothing', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-accounts-'));
   const path = join(dir.path, 'Accounts4.sqlite');
@@ -610,6 +625,7 @@ test('an unreadable Accounts store fails every stream, naming Full Disk Access',
       assert.ok(cause instanceof AccountsUnavailableError);
       assert.match(cause.message, /Full Disk Access/);
     }
+    assert.deepEqual(failureTypes(error), ['config']);
     return true;
   });
 });

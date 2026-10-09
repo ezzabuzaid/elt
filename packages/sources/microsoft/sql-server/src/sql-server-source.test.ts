@@ -166,6 +166,21 @@ async function failing(run: () => Promise<unknown>) {
   return error;
 }
 
+// Each kind of failure a run's copies reported, once.
+function failureTypes(error: {
+  readonly results: readonly {
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): string[] {
+  return [
+    ...new Set(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+    ),
+  ];
+}
+
 for (const snapshot of [false, true])
   test(`a Change Tracking table loads every row, then applies what changed, deletions included, and writes nothing when nothing changed${snapshot ? ', in a database that allows snapshot isolation' : ''}`, async () => {
     await using server = await scratchSqlServer(
@@ -578,6 +593,7 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
       ['dbo.stamped', []],
     ],
   );
+  assert.deepEqual(failureTypes(error), ['config']);
   // The next sync no longer finds a table the login cannot read.
   const { source: rediscovered } = await sync();
   assert.deepEqual(

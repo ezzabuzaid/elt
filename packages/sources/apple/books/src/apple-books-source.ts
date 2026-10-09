@@ -6,6 +6,7 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -15,6 +16,7 @@ import {
   Books,
   type BooksLocation,
   type BooksStore,
+  BooksUnavailableError,
   type BooksVersion,
   booksContainer,
   booksGroupContainer,
@@ -112,6 +114,10 @@ export class AppleBooksSource extends Source<BooksScan> {
       this.#books,
       new Set(streams.map((stream) => readerOf(stream).store)),
     );
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof BooksUnavailableError ? 'config' : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

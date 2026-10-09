@@ -71,12 +71,15 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
     ({ connector }) =>
       !plugin.connectors.some(({ name }) => name === connector),
   );
+  // Connectors that could not be read; permissions says what to grant when
+  // macOS access is what is missing.
   const unavailable: {
     connector: string;
     error: string;
-    permissions: string;
+    permissions: string | null;
   }[] = [];
   for (const connector of chosen) {
+    const loaded = plugin.connector(connector);
     try {
       if (blocked.includes(connector))
         throw new Error('ChatGPT does not have Full Disk Access.');
@@ -92,7 +95,10 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       unavailable.push({
         connector,
         error: error instanceof Error ? error.message : String(error),
-        permissions: plugin.connector(connector).guidance(),
+        permissions:
+          blocked.includes(connector) || loaded.failureType(error) === 'config'
+            ? loaded.guidance()
+            : null,
       });
       const kept = previous.get(connector);
       if (kept !== undefined) configuration.push(kept);

@@ -316,6 +316,26 @@ async function activityFixture(root: string) {
 
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
 
+// The streams whose copies failed, sorted, under each kind of failure they
+// reported.
+function failedStreams(error: {
+  readonly results: readonly {
+    readonly copy: {
+      readonly configuration: { readonly stream: { readonly name: string } };
+    };
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): Record<string, string[]> {
+  const streams: Record<string, string[]> = {};
+  for (const { copy, failures } of error.results)
+    for (const failureType of new Set(
+      failures.map(({ failureType }) => failureType),
+    ))
+      (streams[failureType] ??= []).push(copy.configuration.stream.name);
+  for (const names of Object.values(streams)) names.sort();
+  return streams;
+}
+
 test('Activity reads every Biome stream, knowledgeC and the device list as documented views', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
   const location = await activityFixture(scratch.path);
@@ -1059,6 +1079,30 @@ test('Activity names Full Disk Access for unreadable Biome folders, refuses an u
       failed.displayBacklight ?? '',
       /missing ZOBJECT\.ZSECONDSFROMGMT/,
     );
+    assert.deepEqual(failedStreams(failure), {
+      config: [
+        'appFocus',
+        'appIntents',
+        'appMenuItems',
+        'bluetoothConnections',
+        'documentInteractions',
+        'focusModes',
+        'focusSuggestions',
+        'mediaUsage',
+        'notificationDeliveries',
+        'notificationUsage',
+        'nowPlaying',
+        'safariNavigations',
+        'screenTimeAppUsage',
+        'screenshots',
+        'webUsage',
+      ],
+      system: [
+        'discoverabilitySignals',
+        'displayBacklight',
+        'knowledgeIntents',
+      ],
+    });
     assert.deepEqual(activity.read('SELECT "bundleId" FROM app_menu_items'), [
       { bundleId: 'com.apple.Notes' },
     ]);

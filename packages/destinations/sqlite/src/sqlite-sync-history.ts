@@ -8,6 +8,7 @@ import {
   SyncHistory,
   copyStatus,
   passError,
+  passFailureType,
   passStatus,
 } from '@workspace/elt';
 
@@ -71,21 +72,27 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
     });
     return {
       finish: async (outcomes) => this.#finish(path, id, outcomes),
-      fail: async (error) =>
+      fail: async (error, failureType) =>
         write(path, (database) => {
           database
             .prepare(
               `UPDATE ${coverage} SET "status" = 'failed', "failures" = ? WHERE "attempt_id" = ?`,
             )
             .run(
-              JSON.stringify([{ partition: null, error: message(error) }]),
+              JSON.stringify([
+                {
+                  partition: null,
+                  error: message(error),
+                  failure_type: failureType,
+                },
+              ]),
               id,
             );
           database
             .prepare(
-              `UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ? WHERE "id" = ?`,
+              `UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ?, "failure_type" = ? WHERE "id" = ?`,
             )
-            .run(message(error), id);
+            .run(message(error), failureType, id);
         }),
     };
   }
@@ -123,9 +130,10 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
           outcome.count,
           outcome.deleted,
           JSON.stringify(
-            outcome.failures.map(({ partition, error }) => ({
+            outcome.failures.map(({ partition, error, failureType }) => ({
               partition,
               error: message(error),
+              failure_type: failureType,
             })),
           ),
           id,
@@ -133,9 +141,14 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
         );
       database
         .prepare(
-          `UPDATE ${attempts} SET "completed_at" = ${now}, "status" = ?, "error" = ? WHERE "id" = ?`,
+          `UPDATE ${attempts} SET "completed_at" = ${now}, "status" = ?, "error" = ?, "failure_type" = ? WHERE "id" = ?`,
         )
-        .run(passStatus(outcomes), passError(outcomes), id);
+        .run(
+          passStatus(outcomes),
+          passError(outcomes),
+          passFailureType(outcomes),
+          id,
+        );
     });
   }
 }

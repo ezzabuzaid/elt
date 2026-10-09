@@ -3,6 +3,7 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -10,6 +11,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   NotesStore,
+  NotesUnavailableError,
   launchNotesHidden,
   noteStorePath,
 } from '@workspace/sdk-apple-notes';
@@ -76,6 +78,10 @@ export class AppleNotesSource extends Source<NotesScan> {
 
   protected override async open(): Promise<NotesScan> {
     return new NotesScan(this.#store.open(), this.scope);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof NotesUnavailableError ? 'config' : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

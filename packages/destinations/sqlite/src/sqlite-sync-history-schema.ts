@@ -13,7 +13,9 @@ export const syncHistoryTables = [
     "id" INTEGER PRIMARY KEY,
     "connector" TEXT NOT NULL CHECK (trim("connector") <> ''), "source" TEXT NOT NULL,
     "started_at" TEXT NOT NULL, "completed_at" TEXT, ${status}, "error" TEXT,
-    CHECK (("status" = 'running') = ("completed_at" IS NULL))
+    "failure_type" TEXT CHECK ("failure_type" IN ('config', 'system')),
+    CHECK (("status" = 'running') = ("completed_at" IS NULL)),
+    CHECK (("status" IN ('partial', 'failed')) = ("failure_type" IS NOT NULL))
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS "_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
   `CREATE TABLE IF NOT EXISTS ${coverage} (
@@ -32,7 +34,7 @@ export const syncHistoryTables = [
 // The same relations Postgres publishes; SQLite ranks with window functions
 // where Postgres uses DISTINCT ON and LATERAL.
 const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
-  sync_attempts: `SELECT "id" AS "attempt_id", "connector", "source", "started_at", "completed_at", "status", "error" FROM ${attempts}`,
+  sync_attempts: `SELECT "id" AS "attempt_id", "connector", "source", "started_at", "completed_at", "status", "error", "failure_type" FROM ${attempts}`,
   extraction_coverage: `SELECT c."attempt_id", a."connector", a."source", a."started_at", a."completed_at",
       c."stream", c."target_schema", c."target_table",
       EXISTS (SELECT 1 FROM sqlite_schema t WHERE t."type" = 'table' AND lower(t."name") = lower(c."target_table")) AS "target_exists",
@@ -45,7 +47,7 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
       ), "latest" AS (
         SELECT *, row_number() OVER (PARTITION BY "connector" ORDER BY "id" DESC) AS "rank" FROM ${attempts}
       )
-      SELECT a."connector", a."id" AS "latest_attempt_id", a."started_at", a."completed_at", a."status", a."error",
+      SELECT a."connector", a."id" AS "latest_attempt_id", a."started_at", a."completed_at", a."status", a."error", a."failure_type",
         s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
       FROM "latest" a LEFT JOIN "success" s ON s."connector" = a."connector" AND s."rank" = 1
       WHERE a."rank" = 1 ORDER BY a."connector"`,

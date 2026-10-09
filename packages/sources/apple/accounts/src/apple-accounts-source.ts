@@ -3,6 +3,7 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -10,6 +11,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   AccountsStore,
+  AccountsUnavailableError,
   accountsStorePath,
 } from '@workspace/sdk-apple-accounts';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
@@ -71,6 +73,10 @@ export class AppleAccountsSource extends Source<AccountsScan> {
 
   protected override async open(): Promise<AccountsScan> {
     return new AccountsScan(this.#store.open());
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof AccountsUnavailableError ? 'config' : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

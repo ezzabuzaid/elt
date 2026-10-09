@@ -2,6 +2,7 @@ import type { PassStatus } from '@workspace/elt-sqlite';
 import type { Selection } from '@workspace/settings';
 
 import type { ApplePlugin } from './apple-plugin.ts';
+import { passFailure } from './pass-failure.ts';
 
 // The plugin page's native Settings section (the openai/settings MCP
 // extension): one switch per connector, described by that connector's import
@@ -44,9 +45,9 @@ function describe(
     case 'succeeded':
       return `Synced ${ago(sync.completedAt, now)} · ${plugin.connectors.find(({ name }) => name === item.connector)?.describe(item.scope) ?? 'its saved selection'}.`;
     case 'partial':
-      return `Partly synced ${ago(sync.completedAt, now)}: ${sync.error} ${permissions}`;
+      return `Partly synced ${ago(sync.completedAt, now)}: ${passFailure(sync, permissions)}`;
     case 'failed':
-      return `Last sync failed: ${sync.error} ${permissions}`;
+      return `Last sync failed: ${passFailure(sync, permissions)}`;
   }
 }
 

@@ -57,6 +57,7 @@ export {
 export {
   type DeleteMessage,
   type ExtractionCoverage,
+  type FailureType,
   type JsonValue,
   type KeyValue,
   type ReadMessage,
@@ -95,6 +96,7 @@ export {
   copyStatus,
   type DeclaredCopy,
   passError,
+  passFailureType,
   passStatus,
   type RecordedPass,
   SyncHistory,

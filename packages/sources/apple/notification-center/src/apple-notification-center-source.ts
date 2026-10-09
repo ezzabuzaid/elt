@@ -4,6 +4,7 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
+  type FailureType,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
@@ -12,6 +13,7 @@ import {
 } from '@workspace/elt';
 import {
   NotificationCenterStore,
+  NotificationCenterUnavailableError,
   notificationCenterStorePath,
 } from '@workspace/sdk-apple-notification-center';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -64,6 +66,12 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
 
   protected override async open(): Promise<NotificationCenterScan> {
     return new NotificationCenterScan(this.#store.open(), this.scope);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof NotificationCenterUnavailableError
+      ? 'config'
+      : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

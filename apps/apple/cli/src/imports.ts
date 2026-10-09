@@ -141,7 +141,7 @@ export class Imports {
         throw new Error(`${name} is not set up; run: setup`);
       const connector = this.#loaded(name);
       if (connector === undefined) {
-        settings.saveConnectionFailure(selection, unloaded(name));
+        settings.saveConnectionFailure(selection, unloaded(name), 'system');
         unsynced = true;
       } else imports.push({ connector, selection });
     }
@@ -149,8 +149,12 @@ export class Imports {
       process.exitCode = 130;
     };
     process.on('exit', interrupted);
-    process.once('SIGINT', () => process.exit(130));
-    process.once('SIGTERM', () => process.exit(130));
+    // The signal ends the process the default way: process.exit would first
+    // wait for a source stuck in a filesystem call, such as a pipe no one
+    // writes, and never return.
+    const stop = (signal: NodeJS.Signals) => process.kill(process.pid, signal);
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
     const passes: PassSummary[] = [];
     const passed = (connector: AppleConnector, summary: PassSummary) => {
       passes.push(summary);
@@ -220,7 +224,10 @@ export class Imports {
             ...never,
             state: 'failed' as const,
             completedAt: failure.failedAt,
-            error: connector.failure(new Error(failure.error)),
+            error: connector.failure(
+              new Error(failure.error),
+              failure.failureType,
+            ),
           };
         const { pass, streams } = await new SQLitePasses(path).status();
         // Not synced yet, or no pass began.
@@ -230,7 +237,10 @@ export class Imports {
           state: pass.state,
           completedAt: pass.completedAt,
           lastSuccessAt: pass.lastSucceededAt,
-          error: pass.error,
+          error:
+            pass.error === null
+              ? null
+              : connector.failure(new Error(pass.error), pass.failureType),
           streams: streams.map(({ stream, state, lastSucceededAt }) => ({
             stream,
             state,

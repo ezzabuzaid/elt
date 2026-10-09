@@ -282,13 +282,23 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
     await again.finish([]);
     assert.equal((await chatStatus(plugin)).state, synced.state);
 
-    await (await begin()).fail(new Error('Notes could not be opened.'));
+    await (
+      await begin()
+    ).fail(new Error('Notes could not be opened.'), 'config');
     const failed = await chatStatus(plugin);
-    assert.match(
+    await (await begin()).fail(new Error('Notes crashed.'), 'system');
+    const crashed = await chatStatus(plugin);
+    assert.ok(
+      failed.text.includes(
+        `: Notes could not be opened. ${plugin.connector('notes').guidance()}; data as of `,
+      ),
       failed.text,
-      /^- Notes: last sync failed at .*: Notes could not be opened\. .*; data as of /m,
     );
     assert.notEqual(failed.state, synced.state);
+    assert.match(
+      crashed.text,
+      /^- Notes: last sync failed at .*: Notes crashed\.; data as of /m,
+    );
   });
 });
 
@@ -375,11 +385,14 @@ test('the Settings page switches connectors on and off and describes each import
   await (await begin()).finish([]);
   assert.equal((await described()).notes, 'Synced just now · 1 folder.');
   // The page adds the connector's permissions guidance to the error once.
-  await (await begin()).fail(new Error('Notes could not be opened.'));
+  await (await begin()).fail(new Error('Notes could not be opened.'), 'config');
   assert.equal(
     (await described()).notes,
     `Last sync failed: Notes could not be opened. ${plugin.connector('notes').guidance()}`,
   );
+  // A failure granting access cannot fix shows only what went wrong.
+  await (await begin()).fail(new Error('Notes crashed.'), 'system');
+  assert.equal((await described()).notes, 'Last sync failed: Notes crashed.');
   await begin();
   assert.equal(
     (await described()).notes,

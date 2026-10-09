@@ -7,7 +7,7 @@ import type { Selection } from './selection.ts';
 // what is stored, such as a settings table or a table name a checkpoint binds
 // to, takes a new layout: every connector imports afresh, the settings file is
 // rebuilt, and processes running older code stop writing.
-export const storeLayout = 6;
+export const storeLayout = 7;
 
 // Thrown by a process whose code predates the layout of the settings file.
 export class NewerLayoutError extends Error {

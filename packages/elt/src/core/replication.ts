@@ -9,6 +9,7 @@ import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Copy, CopyOutcome, CopyProgress } from './copy.ts';
 import type { Destination } from './destination.ts';
 import { FileTransfer } from './file-transfer.ts';
+import type { Partition } from './partition.ts';
 import type { FieldSchema, ItemSchema } from './record-validation.ts';
 import {
   type KeyValue,
@@ -48,6 +49,7 @@ class Replicated<Target extends DestinationTarget> {
   readonly copy: Copy<Target>;
   readonly observe: ((progress: CopyProgress<Target>) => void) | undefined;
   readonly files: FileTransfer;
+  readonly #source: Source;
 
   constructor(
     copy: Copy<Target>,
@@ -57,6 +59,7 @@ class Replicated<Target extends DestinationTarget> {
   ) {
     this.copy = copy;
     this.observe = observe;
+    this.#source = source;
     this.files = new FileTransfer(
       copy.configuration.fileReads,
       destination.location(copy.to),
@@ -66,6 +69,15 @@ class Replicated<Target extends DestinationTarget> {
 
   get stream(): Stream {
     return this.copy.from;
+  }
+
+  // What did not load, of the kind the source says the error is.
+  recordFailure(partition: Partition | null, error: unknown): void {
+    this.failures.push({
+      partition,
+      error,
+      failureType: this.#source.failureType(error),
+    });
   }
 
   outcome(): CopyOutcome<Target> {
@@ -238,10 +250,7 @@ async function transfer<Target extends DestinationTarget>(
             replication.pending.count = 0;
             replication.pending.deleted = 0;
             replication.failed = true;
-            replication.failures.push({
-              partition: message.partition,
-              error: message.error,
-            });
+            replication.recordFailure(message.partition, message.error);
             await replication.files.reconcile(started(replication).values);
             replication.report();
           } else {
@@ -398,7 +407,7 @@ function fail<Target extends DestinationTarget>(
   replication: Replicated<Target>,
   error: unknown,
 ): void {
-  replication.failures.push({ partition: null, error });
+  replication.recordFailure(null, error);
   replication.broken = true;
   replication.ended = true;
   replication.settle();
@@ -411,14 +420,14 @@ async function breakStage<Target extends DestinationTarget>(
   replication: Replicated<Target>,
   error: unknown,
 ): Promise<void> {
-  replication.failures.push({ partition: null, error });
+  replication.recordFailure(null, error);
   replication.broken = true;
   const { stage } = replication;
   replication.stage = undefined;
   try {
     await stage?.[Symbol.asyncDispose]();
   } catch (cause) {
-    replication.failures.push({ partition: null, error: cause });
+    replication.recordFailure(null, cause);
   }
 }
 

@@ -35,6 +35,7 @@ export async function importPending(plugin: ApplePlugin): Promise<void> {
           settings.saveConnectionFailure(
             item,
             error instanceof Error ? error.message : String(error),
+            'system',
           );
           return;
         }

@@ -567,6 +567,21 @@ function copies(source: AppleContactsSource, destination: SQLiteDestination) {
   );
 }
 
+// Each kind of failure a run's copies reported, once.
+function failureTypes(error: {
+  readonly results: readonly {
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): string[] {
+  return [
+    ...new Set(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+    ),
+  ];
+}
+
 test('Contacts scope keeps only one container and its related records and images', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'contacts-scope-'),
@@ -1284,6 +1299,7 @@ test('Contacts refuses a store it cannot read instead of reading its account as 
       error.cause.message,
       /ACCOUNT-B.*Contacts access or Full Disk Access/,
     );
+    assert.deepEqual(failureTypes(error), ['config']);
     return true;
   });
   assert.equal(

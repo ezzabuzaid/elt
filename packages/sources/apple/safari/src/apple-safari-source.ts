@@ -3,6 +3,7 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SnapshotDiffOptions,
   SourceMessage,
   SourceWatchOptions,
@@ -13,6 +14,7 @@ import {
   Safari,
   type SafariLocation,
   type SafariStore,
+  SafariUnavailableError,
   type SafariVersion,
   safariContainer,
   safariDirectory,
@@ -146,6 +148,10 @@ export class AppleSafariSource extends Source<SafariScan> {
       new Set(streams.map((stream) => readerOf(stream).store)),
       this.scope,
     );
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof SafariUnavailableError ? 'config' : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

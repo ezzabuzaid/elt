@@ -359,7 +359,7 @@ test('a gate that cannot read the proactive records tells the chat why, rather t
   );
 });
 
-test('the gardener reports an import problem once, and again when it clears and comes back', async () => {
+test('the gardener reports an import problem once, and again when it clears and comes back, with what to grant only when access is what is missing', async () => {
   await using home = await mkdtempDisposable(join(tmpdir(), 'garden-gate-'));
   assert.ok(gardenPrompt);
   assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
@@ -376,13 +376,28 @@ test('the gardener reports an import problem once, and again when it clears and 
     permissions: () => 'Turn on Full Disk Access for ChatGPT.',
   });
 
-  settings.saveConnectionFailure(selection, 'Full Disk Access is off.');
+  settings.saveConnectionFailure(
+    selection,
+    'Full Disk Access is off.',
+    'config',
+  );
   const first = runGate(home.path, heartbeat(gardenPrompt));
   const second = runGate(home.path, heartbeat(gardenPrompt));
   settings.clearConnectionFailure(selection);
   const cleared = runGate(home.path, heartbeat(gardenPrompt));
-  settings.saveConnectionFailure(selection, 'Full Disk Access is off.');
+  settings.saveConnectionFailure(
+    selection,
+    'Full Disk Access is off.',
+    'config',
+  );
   const back = runGate(home.path, heartbeat(gardenPrompt));
+  // A failure granting access cannot fix comes with nothing to grant.
+  settings.saveConnectionFailure(
+    selection,
+    'The connector folder is broken.',
+    'system',
+  );
+  const broken = runGate(home.path, heartbeat(gardenPrompt));
 
   const problem = {
     connector: 'notes',
@@ -393,6 +408,13 @@ test('the gardener reports an import problem once, and again when it clears and 
   assert.equal(second.decision, 'block');
   assert.equal(cleared.decision, 'block');
   assert.deepEqual(section(back, 'Import problems to report'), [problem]);
+  assert.deepEqual(section(broken, 'Import problems to report'), [
+    {
+      connector: 'notes',
+      problem: 'The connector folder is broken.',
+      permissions: null,
+    },
+  ]);
 });
 
 test('the gardener asks for a note about everyone the user meets over its runs, and a saved note reaches the next brief', async () => {

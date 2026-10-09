@@ -111,12 +111,12 @@ test('readers find each selected import, where it lives and what access it needs
       [notes, { connector: 'books', scope: {}, includeAttachments: true }],
       options,
     );
-    store.saveConnectionFailure(notes, 'Notes could not be opened.');
+    store.saveConnectionFailure(notes, 'Notes could not be opened.', 'config');
   }
 
   const { rows, stderr } = shell(
     join(scratch.path, 'settings.sqlite'),
-    'SELECT connector, scope, include_attachments, database, connection_error, permissions FROM selected_connectors',
+    'SELECT connector, scope, include_attachments, database, connection_error, connection_failure_type, permissions FROM selected_connectors',
   );
 
   assert.equal(stderr, '');
@@ -128,6 +128,7 @@ test('readers find each selected import, where it lives and what access it needs
       include_attachments: 0,
       database: store.database(notes),
       connection_error: 'Notes could not be opened.',
+      connection_failure_type: 'config',
       permissions: 'Allow notes.',
     },
     {
@@ -140,6 +141,7 @@ test('readers find each selected import, where it lives and what access it needs
         includeAttachments: true,
       }),
       connection_error: null,
+      connection_failure_type: null,
       permissions: 'Allow books.',
     },
   ]);

@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+import type { FailureType } from '@workspace/elt';
 import {
   SQLitePasses,
   installSQLiteCatalog,
@@ -26,9 +27,13 @@ const writerWaitMs = 30_000;
 // as Airbyte's worker sends a heartbeat to learn its sync was cancelled.
 const heartbeatMs = 1_000;
 
-// Why a connector's import could not start: its pipeline never existed, so its
-// sync history in data.sqlite cannot say.
-type ConnectionFailure = { error: string; failedAt: string };
+// Why a connector's import could not start, and whose that is to fix: its
+// pipeline never existed, so its sync history in data.sqlite cannot say.
+type ConnectionFailure = {
+  error: string;
+  failedAt: string;
+  failureType: FailureType;
+};
 
 // The reason a running import stops when the user removes its connector.
 export class ConnectorRemovedError extends Error {
@@ -55,12 +60,14 @@ const selectedConnectors = {
       'Path of the SQLite file the import loads. It may not exist yet while the first import starts.',
     connection_error:
       'Why the import could not start, such as missing macOS access; NULL when it started. A connector with an error is inaccessible, not empty.',
+    connection_failure_type:
+      'config when the user can fix connection_error by giving access or changing what they set up, and permissions says how; system for any other reason; NULL when the import started.',
     connection_failed_at:
       'When the import last failed to start, as an ISO 8601 UTC timestamp; NULL when it started.',
     permissions: 'What the user can do in macOS to give access to this app.',
   },
   query: `SELECT s."connector", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",
-      f."error" AS "connection_error", f."failed_at" AS "connection_failed_at", s."permissions"
+      f."error" AS "connection_error", f."failure_type" AS "connection_failure_type", f."failed_at" AS "connection_failed_at", s."permissions"
     FROM "selections" s LEFT JOIN "connection_failures" f ON f."directory" = s."directory"
     ORDER BY s."position"`,
 };
@@ -83,7 +90,7 @@ export class Settings implements Disposable {
       chmodSync(path, 0o600);
       if (this.layout() !== storeLayout) this.rebuild();
       this.settings.exec(
-        'CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL);',
+        `CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failure_type TEXT NOT NULL CHECK (failure_type IN ('config', 'system')), failed_at TEXT NOT NULL);`,
       );
     } catch (error) {
       this.settings.close();
@@ -254,20 +261,28 @@ export class Settings implements Disposable {
   connectionFailure(selection: Selection): ConnectionFailure | undefined {
     const row = this.settings
       .prepare(
-        'SELECT error, failed_at FROM connection_failures WHERE directory=?',
+        'SELECT error, failure_type, failed_at FROM connection_failures WHERE directory=?',
       )
       .get(this.directory(selection));
     return row === undefined
       ? undefined
-      : { error: String(row.error), failedAt: String(row.failed_at) };
+      : {
+          error: String(row.error),
+          failedAt: String(row.failed_at),
+          failureType: row.failure_type === 'config' ? 'config' : 'system',
+        };
   }
 
-  saveConnectionFailure(selection: Selection, error: string) {
+  saveConnectionFailure(
+    selection: Selection,
+    error: string,
+    failureType: FailureType,
+  ) {
     this.settings
       .prepare(
-        "INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(directory) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at",
+        "INSERT INTO connection_failures (directory, error, failure_type, failed_at) VALUES(?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(directory) DO UPDATE SET error=excluded.error, failure_type=excluded.failure_type, failed_at=excluded.failed_at",
       )
-      .run(this.directory(selection), error);
+      .run(this.directory(selection), error, failureType);
   }
 
   clearConnectionFailure(selection: Selection) {

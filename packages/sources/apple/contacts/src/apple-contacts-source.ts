@@ -6,6 +6,7 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -13,6 +14,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   ContactsStore,
+  ContactsUnavailableError,
   addressBookDirectory,
 } from '@workspace/sdk-apple-contacts';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -126,6 +128,10 @@ export class AppleContactsSource extends Source<ContactsScan> {
 
   protected override async open(): Promise<ContactsScan> {
     return new ContactsScan(await this.#store.open(), this.scope);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof ContactsUnavailableError ? 'config' : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

@@ -43,6 +43,13 @@ export type ExtractionCoverage = {
   readonly selection: { readonly [field: string]: JsonValue };
 };
 
+// Whose a failure is to fix, as Airbyte's failure_type: config when the
+// upstream refused what the user set up or granted, so only they can fix it,
+// such as an app's store macOS keeps behind an access the user has not given;
+// system for every other failure. Airbyte's transient_error has no reader
+// here yet.
+export type FailureType = 'config' | 'system';
+
 export type JsonValue =
   | string
   | number
@@ -157,6 +164,13 @@ export abstract class Source<
 
   // Declares what a pass over this stream covers, from this source's configuration.
   abstract coverage(stream: Stream): ExtractionCoverage;
+
+  // What kind of failure an error from this source is. Only the source knows
+  // which of its upstream's errors mean the user must act; any other error,
+  // a destination's included, is system.
+  failureType(_error: unknown): FailureType {
+    return 'system';
+  }
 
   // Subscribe before yielding all selected streams once, then yield invalidations.
   // Keep receiving changes until signal aborts, including while extraction runs.

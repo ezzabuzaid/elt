@@ -777,6 +777,26 @@ const distantFuture = 63_113_904_000;
 const fromAppleSeconds = (seconds: number) =>
   new Date(Date.UTC(2001, 0, 1) + seconds * 1000);
 
+// The streams whose copies failed, sorted, under each kind of failure they
+// reported.
+function failedStreams(error: {
+  readonly results: readonly {
+    readonly copy: {
+      readonly configuration: { readonly stream: { readonly name: string } };
+    };
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): Record<string, string[]> {
+  const streams: Record<string, string[]> = {};
+  for (const { copy, failures } of error.results)
+    for (const failureType of new Set(
+      failures.map(({ failureType }) => failureType),
+    ))
+      (streams[failureType] ??= []).push(copy.configuration.stream.name);
+  for (const names of Object.values(streams)) names.sort();
+  return streams;
+}
+
 test('Books reads its library, annotations, synced reading state and reading history as documented views', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
   const location = await booksFixture(scratch.path);
@@ -1246,6 +1266,16 @@ test('Books names Full Disk Access for an unreadable store, refuses an unknown l
     failed.readingDays ?? '',
     /missing reading history format version 6/,
   );
+  assert.deepEqual(failedStreams(failure), {
+    config: ['readingGoal'],
+    system: [
+      'assetDetails',
+      'readingDays',
+      'readingMonths',
+      'reviews',
+      'streakRecords',
+    ],
+  });
   assert.deepEqual(
     rows(
       books.read(`SELECT (SELECT count(*) FROM asset_details) AS details,

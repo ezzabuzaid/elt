@@ -3,6 +3,7 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
@@ -12,7 +13,7 @@ import {
   type AccountsStore,
   AccountsUnavailableError,
 } from '@workspace/sdk-apple-accounts';
-import { MailStore } from '@workspace/sdk-apple-mail';
+import { MailStore, MailUnavailableError } from '@workspace/sdk-apple-mail';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -222,6 +223,15 @@ export class AppleMailSource extends Source<MailScan> {
     if (reader === undefined)
       throw new TypeError(`Unknown Mail stream ${name}`);
     yield* reader.extract(configuration, state, scan);
+  }
+
+  // Full Disk Access opens both stores Mail reads: its own and the system's
+  // Accounts store, which holds account settings.
+  override failureType(error: unknown): FailureType {
+    return error instanceof MailUnavailableError ||
+      error instanceof AccountsUnavailableError
+      ? 'config'
+      : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

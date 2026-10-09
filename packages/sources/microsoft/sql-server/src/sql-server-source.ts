@@ -4,6 +4,7 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
+  type FailureType,
   type Partition,
   Source,
   type SourceMessage,
@@ -14,6 +15,10 @@ import type {
   SqlServerDatabase,
   SqlServerSession,
   SqlServerTable,
+} from '@workspace/sdk-microsoft-sql-server';
+import {
+  SqlServerPermissionError,
+  SqlServerUnavailableError,
 } from '@workspace/sdk-microsoft-sql-server';
 
 import { ChangeTrackingStream } from './change-tracking-stream.ts';
@@ -89,6 +94,13 @@ export class SqlServerSource extends Source<SqlServerSession> {
 
   protected override open(): Promise<SqlServerSession> {
     return this.#database.open();
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof SqlServerPermissionError ||
+      error instanceof SqlServerUnavailableError
+      ? 'config'
+      : 'system';
   }
 
   coverage(stream: Stream): ExtractionCoverage {

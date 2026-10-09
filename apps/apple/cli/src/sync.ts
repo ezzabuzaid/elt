@@ -4,9 +4,11 @@ import {
   type CopyOutcome,
   type CopyProgress,
   type DeclaredCopy,
+  type FailureType,
   type RecordedPass,
   type SyncStatus,
   passError,
+  passFailureType,
   passStatus,
 } from '@workspace/elt';
 import { SQLiteSyncHistory, type SQLiteTable } from '@workspace/elt-sqlite';
@@ -67,9 +69,12 @@ export class ObservedHistory extends SQLiteSyncHistory {
           summarize(connector, outcomes, seconds()),
         );
       },
-      fail: async (error) => {
-        await pass.fail(error);
-        this.#observer.passed(connector, failed(connector, error, seconds()));
+      fail: async (error, failureType) => {
+        await pass.fail(error, failureType);
+        this.#observer.passed(
+          connector,
+          failed(connector, error, seconds(), failureType),
+        );
       },
     };
   }
@@ -91,7 +96,10 @@ function summarize(
       deleted,
       errors: failures.map(({ error }) => message(error)),
     })),
-    error: error === null ? null : connector.failure(error),
+    error:
+      error === null
+        ? null
+        : connector.failure(error, passFailureType(outcomes)),
   };
 }
 
@@ -99,13 +107,14 @@ export function failed(
   connector: AppleConnector,
   error: unknown,
   seconds: number,
+  failureType: FailureType = connector.failureType(error),
 ): PassSummary {
   return {
     connector: connector.name,
     status: 'failed',
     seconds,
     streams: [],
-    error: connector.failure(error),
+    error: connector.failure(error, failureType),
   };
 }
 

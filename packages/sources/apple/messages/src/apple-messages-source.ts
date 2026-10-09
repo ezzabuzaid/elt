@@ -3,12 +3,17 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
-import { MessagesStore, chatDatabasePath } from '@workspace/sdk-apple-messages';
+import {
+  MessagesStore,
+  MessagesUnavailableError,
+  chatDatabasePath,
+} from '@workspace/sdk-apple-messages';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -84,6 +89,10 @@ export class AppleMessagesSource extends Source<MessagesScan> {
 
   protected override async open(): Promise<MessagesScan> {
     return new MessagesScan(this.#store.open(), this.scope);
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof MessagesUnavailableError ? 'config' : 'system';
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {

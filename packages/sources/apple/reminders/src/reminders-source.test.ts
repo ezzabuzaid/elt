@@ -505,6 +505,21 @@ const liveSource = (list: ScratchList) =>
     scope: { collectionIds: [list.id] },
   });
 
+// Each kind of failure a run's copies reported, once.
+function failureTypes(error: {
+  readonly results: readonly {
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): string[] {
+  return [
+    ...new Set(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+    ),
+  ];
+}
+
 test(
   'Reminders extracts every stream of a list on this Mac into SQLite and Markdown',
   { timeout: 120_000 },
@@ -1069,7 +1084,8 @@ test('Reminders rejects malformed records and preserves its target on access or 
         error.cause instanceof Error &&
         error.cause.name === 'RemindersUnavailableError' &&
         /full Reminders access/.test(error.cause.message) &&
-        Reflect.get(Object(error.cause.cause), 'stderr') === stderr,
+        Reflect.get(Object(error.cause.cause), 'stderr') === stderr &&
+        failureTypes(error).join() === 'config',
     );
     assert.equal(await readFile(path, 'utf8'), previous);
   }
@@ -1081,7 +1097,8 @@ test('Reminders rejects malformed records and preserves its target on access or 
       error instanceof PipelineError &&
       error.cause instanceof Error &&
       error.cause.name !== 'RemindersUnavailableError' &&
-      /EventKit reminder query failed/.test(error.cause.message),
+      /EventKit reminder query failed/.test(error.cause.message) &&
+      failureTypes(error).join() === 'system',
   );
   assert.equal(await readFile(path, 'utf8'), previous);
 

@@ -3,14 +3,20 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  FailureType,
   SourceMessage,
   SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
 import { Catalog, Source } from '@workspace/elt';
-import { BiomeStore, biomeDirectory } from '@workspace/sdk-apple-biome';
+import {
+  BiomeStore,
+  BiomeUnavailableError,
+  biomeDirectory,
+} from '@workspace/sdk-apple-biome';
 import {
   KnowledgeStore,
+  KnowledgeUnavailableError,
   knowledgeStorePath,
 } from '@workspace/sdk-apple-knowledge';
 
@@ -120,6 +126,13 @@ export class AppleActivitySource extends Source<ActivityScan> {
       this.location,
       new Set(streams.map((stream) => readerOf(stream).store)),
     );
+  }
+
+  override failureType(error: unknown): FailureType {
+    return error instanceof BiomeUnavailableError ||
+      error instanceof KnowledgeUnavailableError
+      ? 'config'
+      : 'system';
   }
 
   override coverage(stream: Stream): ExtractionCoverage {

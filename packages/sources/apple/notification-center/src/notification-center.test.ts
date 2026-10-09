@@ -338,6 +338,21 @@ const counts = (results: readonly CopyResult<Target>[]) =>
     ]),
   );
 
+// Each kind of failure a run's copies reported, once.
+function failureTypes(error: {
+  readonly results: readonly {
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): string[] {
+  return [
+    ...new Set(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+    ),
+  ];
+}
+
 test('a notification Notification Center drops stays loaded, while the next run loads only what is new', async () => {
   await using dir = await mkdtempDisposable(
     join(tmpdir(), 'elt-notes-center-'),
@@ -735,6 +750,7 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
         assert.match(cause.message, /Full Disk Access/);
         assert.ok(cause.message.includes(path));
       }
+      assert.deepEqual(failureTypes(error), ['config']);
       return true;
     });
   } finally {

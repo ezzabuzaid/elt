@@ -3,7 +3,7 @@ import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 
 import { type Key, Modes, Mutex, SqliteStore } from '@zukhruf/mutex';
 
-import type { SyncStatus } from '@workspace/elt';
+import type { FailureType, SyncStatus } from '@workspace/elt';
 
 // How long a reader waits out a pass committing to the file.
 const busyTimeout = 30_000;
@@ -29,23 +29,33 @@ type Started = {
   readonly lastSucceededAt: string | null;
 };
 
-// Only a pass that ended has completedAt, and only one that did not load
-// completely has an error.
+// Only a pass that ended has completedAt, only one that did not load
+// completely has an error, and only one whose copies failed says whose the
+// failure is to fix.
 export type PassStatus =
   | (Started & {
       readonly state: 'running' | 'interrupted';
       readonly completedAt: null;
       readonly error: null;
+      readonly failureType: null;
     })
   | (Started & {
       readonly state: 'succeeded';
       readonly completedAt: string;
       readonly error: null;
+      readonly failureType: null;
     })
   | (Started & {
-      readonly state: 'partial' | 'failed' | 'cancelled';
+      readonly state: 'cancelled';
       readonly completedAt: string;
       readonly error: string;
+      readonly failureType: null;
+    })
+  | (Started & {
+      readonly state: 'partial' | 'failed';
+      readonly completedAt: string;
+      readonly error: string;
+      readonly failureType: FailureType;
     });
 
 export type StreamPassStatus = {
@@ -99,7 +109,7 @@ export class SQLitePasses {
     };
     const latest = data
       .prepare(
-        'SELECT status, started_at, completed_at, error, last_successful_sync_at FROM sync_status',
+        'SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at FROM sync_status',
       )
       .get();
     return {
@@ -132,13 +142,28 @@ function recorded(
   switch (state) {
     case 'running':
     case 'interrupted':
-      return { ...started, state, completedAt: null, error: null };
+      return {
+        ...started,
+        state,
+        completedAt: null,
+        error: null,
+        failureType: null,
+      };
     case 'succeeded':
       return {
         ...started,
         state,
         completedAt: String(row.completed_at),
         error: null,
+        failureType: null,
+      };
+    case 'cancelled':
+      return {
+        ...started,
+        state,
+        completedAt: String(row.completed_at),
+        error: String(row.error),
+        failureType: null,
       };
     default:
       return {
@@ -146,7 +171,18 @@ function recorded(
         state,
         completedAt: String(row.completed_at),
         error: String(row.error),
+        failureType: failureType(row.failure_type),
       };
+  }
+}
+
+function failureType(value: SQLOutputValue | undefined): FailureType {
+  switch (value) {
+    case 'config':
+    case 'system':
+      return value;
+    default:
+      throw new TypeError(`Unknown failure type ${String(value)}`);
   }
 }
 

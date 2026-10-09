@@ -14,6 +14,8 @@ const attempt = {
     'running: no completion recorded; succeeded: all selected copies completed, including empty or unchanged reads; partial: failures with some successful copies or committed writes/deletes; failed: failures without that progress; cancelled: the run was stopped on request, and error says why; what it committed before stays. No watcher health is implied.',
   error:
     'Pipeline error message, or NULL after success or before completion. Per-copy failures and partitions are in extraction_coverage.',
+  failure_type:
+    "Whose the failure is to fix, as the source classified it: config when at least one failure needs the user to change what they set up or granted, such as macOS access to the app's store; system for every other failure, which the user cannot fix by granting or configuring. NULL after success, before completion, or when cancelled.",
 };
 
 // How readers see the sync history: what each pass declared and loaded.
@@ -56,7 +58,7 @@ export const syncHistoryRelations = {
       deleted_count:
         'Accepted deletion operations committed by this copy during this pass, including already-absent keys. Not a count of rows actually removed. NULL means no counts were reported.',
       failures:
-        'Array of {partition, error} from pass outcomes. A null partition denotes a whole-stream or non-partition-specific failure. Empty array means none recorded; check status before assuming success.',
+        'Array of {partition, error, failure_type} from pass outcomes. A null partition denotes a whole-stream or non-partition-specific failure; failure_type is config or system, as in sync_attempts. Empty array means none recorded; check status before assuming success.',
     },
   },
   sync_status: {
@@ -71,6 +73,7 @@ export const syncHistoryRelations = {
       completed_at: attempt.completed_at,
       status: attempt.status,
       error: attempt.error,
+      failure_type: attempt.failure_type,
       last_successful_attempt_id:
         'Most recently completed all-copies-successful attempt; NULL if none. Its coverage may differ from the latest attempt.',
       last_successful_sync_at:

@@ -908,8 +908,12 @@ test('a read context that does not open fails every copy with its error, and not
       failures,
     ]),
     [
-      ['left', 0, [{ partition: null, error: refusal }]],
-      ['right', 0, [{ partition: null, error: refusal }]],
+      ['left', 0, [{ partition: null, error: refusal, failureType: 'system' }]],
+      [
+        'right',
+        0,
+        [{ partition: null, error: refusal, failureType: 'system' }],
+      ],
     ],
   );
   assert.deepEqual(source.readers, []);
@@ -995,7 +999,7 @@ test('a stage that fails to commit fails only its stream: its later messages are
       failures,
     ]),
     [
-      ['left', 0, [{ partition: null, error: refusal }]],
+      ['left', 0, [{ partition: null, error: refusal, failureType: 'system' }]],
       ['right', 1, []],
     ],
   );

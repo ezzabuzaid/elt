@@ -611,6 +611,21 @@ const liveEventId = (
   key: string | null = null,
 ) => JSON.stringify([calendar.id, itemId, key]);
 
+// Each kind of failure a run's copies reported, once.
+function failureTypes(error: {
+  readonly results: readonly {
+    readonly failures: readonly { readonly failureType: string }[];
+  }[];
+}): string[] {
+  return [
+    ...new Set(
+      error.results.flatMap(({ failures }) =>
+        failures.map(({ failureType }) => failureType),
+      ),
+    ),
+  ];
+}
+
 test(
   'Calendar extracts every scalar stream of a calendar on this Mac into SQLite and Markdown',
   { timeout: 120_000 },
@@ -1065,7 +1080,8 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
         error.cause instanceof Error &&
         error.cause.name === 'CalendarUnavailableError' &&
         /full Calendar access/.test(error.cause.message) &&
-        Reflect.get(Object(error.cause.cause), 'stderr') === failure.stderr,
+        Reflect.get(Object(error.cause.cause), 'stderr') === failure.stderr &&
+        failureTypes(error).join() === 'config',
     );
     assert.equal(await readFile(path, 'utf8'), previous);
   }
@@ -1078,7 +1094,8 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
       error instanceof PipelineError &&
       error.cause instanceof Error &&
       error.cause.name !== 'CalendarUnavailableError' &&
-      /native EventKit failure/.test(error.cause.message),
+      /native EventKit failure/.test(error.cause.message) &&
+      failureTypes(error).join() === 'system',
   );
   assert.equal(await readFile(path, 'utf8'), previous);
 });

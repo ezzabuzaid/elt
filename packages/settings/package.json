@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@workspace/elt": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1"
   }

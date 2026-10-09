@@ -737,12 +737,14 @@ test('Notes names Full Disk Access when its store cannot be opened and refuses a
     assert.equal(error.name, 'NotesUnavailableError');
     assert.match(error.message, /Full Disk Access/);
     assert.ok(error.cause instanceof Error);
+    assert.equal(missing.failureType(error), 'config');
     return true;
   });
   await assert.rejects(reading, (error) => {
     assert.ok(error instanceof Error);
     assert.equal(error.name, 'NotesSchemaError');
     assert.match(error.message, /ZICCLOUDSYNCINGOBJECT\.ZTITLE1/);
+    assert.equal(other.failureType(error), 'system');
     return true;
   });
 });
