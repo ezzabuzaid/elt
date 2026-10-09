@@ -4,6 +4,10 @@
   "projectType": "library",
   "tags": ["layer:island", "layer:codec"],
   "targets": {
-    "format": {}
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/codecs/plist/dist/*.test.js\""
+    }
   }
 }
