@@ -43,6 +43,7 @@ import {
 
 import {
   SQLiteCheckpointStore,
+  SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
   installSQLiteCatalog,
@@ -6033,4 +6034,144 @@ test('a file column the target drops takes its stored chunks with it, whether it
       [{ id: 'a', version: 1 }],
     );
   }
+});
+
+test('a copy that declares its columns from the stream and stores its files keeps its rows, checkpoint and files when a field is added and then removed', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
+  const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'docs.sqlite'),
+  });
+  const checkpoints = new SQLiteCheckpointStore({
+    path: join(scratch.path, 'state.sqlite'),
+  });
+  const received: unknown[] = [];
+  // As an Apple connector that keeps attachments declares its import: a
+  // column for each field of the stream, then the stored file's reference.
+  const run = async (
+    properties: Properties,
+    rows: readonly { id: string; [field: string]: unknown }[],
+  ) => {
+    const stream = new Stream({
+      name: 'docs',
+      jsonSchema: {
+        type: 'object',
+        description: 'Docs.',
+        properties,
+        required: ['id'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['incremental'],
+      sourceDefinedCursor: true,
+      emitsDeletes: true,
+      supportsFileTransfer: true,
+    });
+    class Attachments extends Source {
+      override coverage() {
+        return { description: 'test', selection: {} };
+      }
+
+      protected override async open() {
+        return new AsyncDisposableStack();
+      }
+
+      readonly identity = 'attachments';
+      protected readonly catalog = new Catalog([stream]);
+      protected override async *observe({ streams }: SourceWatchOptions) {
+        yield streams;
+      }
+      protected override async *extract(
+        configuration: CopyConfiguration,
+        state: unknown,
+      ) {
+        received.push(state);
+        for await (const message of diffSnapshot(
+          configuration.stream,
+          rows,
+          state,
+        )) {
+          if ('type' in message) {
+            yield message;
+            continue;
+          }
+          const path = join(scratch.path, `${message.data.id}.txt`);
+          await writeFile(path, `attachment of ${message.data.id}`);
+          yield { ...message, file: path };
+        }
+      }
+    }
+    const copy = new Copy(
+      stream,
+      destination
+        .table('raw_docs', (c) => [
+          ...SQLiteColumns.fromSchema(stream.jsonSchema),
+          c.text('attachmentRef').from(stream.file.store(files)),
+        ])
+        .withReaderView('docs'),
+      {
+        id: 'docs',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+      },
+    );
+    const results = await new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source: new Attachments(),
+          destination,
+          checkpoints,
+          steps: [copy],
+        }),
+      ],
+    }).run();
+    return results.map(({ count, deleted }) => ({ count, deleted }));
+  };
+  const loaded = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT * FROM docs ORDER BY id')
+      .all()
+      .map(({ loaded_at: _, ...row }) => ({ ...row }));
+  };
+  const saved = () => {
+    using database = new DatabaseSync(join(scratch.path, 'state.sqlite'), {
+      readOnly: true,
+    });
+    const row = database.prepare('SELECT state FROM checkpoints').get();
+    return JSON.parse(String(row?.state)).state;
+  };
+  const scopes = () => readdir(join(scratch.path, 'files', '.elt-files'));
+  await run({ id: shape.id, title: shape.title }, [{ id: 'a', title: 'A' }]);
+  const [first] = loaded();
+  const firstState = saved();
+
+  const added = await run(
+    { id: shape.id, title: shape.title, added: shape.added },
+    [
+      { id: 'a', title: 'A' },
+      { id: 'b', title: 'B', added: 'z' },
+    ],
+  );
+  const afterAdded = loaded();
+  const removed = await run({ id: shape.id, title: shape.title }, [
+    { id: 'a', title: 'A' },
+    { id: 'b', title: 'B' },
+  ]);
+
+  assert.deepEqual(added, [{ count: 1, deleted: 0 }]);
+  assert.deepEqual(received[1], firstState);
+  assert.deepEqual(afterAdded[0], { ...first, added: null });
+  assert.equal(afterAdded[1]?.added, 'z');
+  assert.deepEqual(removed, [{ count: 1, deleted: 0 }]);
+  assert.deepEqual(
+    loaded().map(({ id, attachmentRef }) => ({ id, attachmentRef })),
+    afterAdded.map(({ id, attachmentRef }) => ({ id, attachmentRef })),
+  );
+  assert.equal((await scopes()).length, 1);
+  for (const { attachmentRef } of loaded())
+    assert.match(
+      await readFile(String(attachmentRef), 'utf8'),
+      /^attachment of /,
+    );
 });

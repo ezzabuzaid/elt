@@ -109,7 +109,7 @@ export class Copy<Target extends DestinationTarget> {
     this.validate(source, destination, checkpoints);
     const files = new FileTransfer(
       this.configuration.fileReads,
-      destination.identity(this.to),
+      destination.location(this.to),
       this.writer(source),
     );
     const drop = () =>

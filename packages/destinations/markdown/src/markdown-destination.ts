@@ -28,10 +28,6 @@ export class MarkdownDestination extends Destination<
     Object.freeze(this);
   }
 
-  override identity(target: MarkdownFile | MarkdownFolder): string {
-    return JSON.stringify({ type: 'markdown', path: this.path, target });
-  }
-
   override location(target: MarkdownFile | MarkdownFolder): string {
     return join(this.path, target.name);
   }

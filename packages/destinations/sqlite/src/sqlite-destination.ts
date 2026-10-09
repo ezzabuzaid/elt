@@ -28,10 +28,6 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     Object.freeze(this);
   }
 
-  override identity(target: SQLiteTable): string {
-    return JSON.stringify({ type: 'sqlite', path: this.path, target });
-  }
-
   override location(target: SQLiteTable): string {
     return `${this.path}#${target.location}`;
   }

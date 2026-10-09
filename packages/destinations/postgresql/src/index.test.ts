@@ -1012,9 +1012,9 @@ test('a copy creates its schema and a table typed from the stream schema', async
       },
     ],
   );
-  const identity = destination.identity(destination.table('Items'));
-  assert.doesNotMatch(identity, /postgres:postgres|password/);
-  assert.match(identity, /"schema":"Raw Source"/);
+  const location = destination.location(destination.table('Items'));
+  assert.doesNotMatch(location, /postgres:postgres|password/);
+  assert.match(location, /"Raw Source"\."Items"$/);
 });
 
 test('overwrite replaces rows while readers keep seeing the previous load', async () => {

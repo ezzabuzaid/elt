@@ -59,7 +59,7 @@ class Replicated<Target extends DestinationTarget> {
     this.observe = observe;
     this.files = new FileTransfer(
       copy.configuration.fileReads,
-      destination.identity(copy.to),
+      destination.location(copy.to),
       copy.writer(source),
     );
   }
@@ -123,7 +123,7 @@ export async function replicate<Target extends DestinationTarget>(
       bindings.set(copy.id, {
         copy: {
           source: source.identity,
-          target: destination.identity(copy.to),
+          target: destination.location(copy.to),
           selection: selection(copy.configuration),
         },
         shape: shape(copy.from),

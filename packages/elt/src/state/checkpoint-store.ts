@@ -19,10 +19,11 @@ export type CheckpointSession = {
   remove(id: string): Promise<void>;
 };
 
-// What a checkpoint belongs to: the copy (its source, target and selection),
-// which must not change, and the shape of the stream it loads. A changed field
-// keeps the checkpoint, as Airbyte keeps a connection's state through a
-// non-breaking schema change, and the destination evolves its target; a
+// What a checkpoint belongs to: the copy (its source, its target's location
+// and its selection), which must not change, and the shape of the stream it
+// loads. A changed field keeps the checkpoint, as Airbyte keeps a connection's
+// state through a non-breaking schema change, and the destination evolves its
+// target, whether the target infers its columns or declares them; a
 // changed declaration (see changedDeclarations) does not. A store keeps both
 // as one JSON text.
 export type CheckpointBinding = {

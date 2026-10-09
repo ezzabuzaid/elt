@@ -505,10 +505,6 @@ class DrainingDestination extends Destination<NamedTarget> {
   // Targets whose stage commit throws the mapped error.
   readonly refusing = new Map<string, Error>();
 
-  override identity(target: NamedTarget): string {
-    return target.name;
-  }
-
   override location(target: NamedTarget): string {
     return target.name;
   }

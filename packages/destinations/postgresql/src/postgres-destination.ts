@@ -12,7 +12,7 @@ import { PostgresTable } from './postgres-table.ts';
 import type { PostgresWriter } from './postgres-writer.ts';
 
 // Loads into one schema of one database. The URL carries credentials, so it
-// stays private and out of identity(), which is persisted with checkpoints.
+// stays private and out of location(), which is persisted with checkpoints.
 export class PostgresDestination extends Destination<PostgresTable> {
   readonly supportedDestinationSyncModes = Object.freeze([
     'overwrite',
@@ -30,15 +30,6 @@ export class PostgresDestination extends Destination<PostgresTable> {
     this.schema = schemaName(schema);
     this.#url = url;
     Object.freeze(this);
-  }
-
-  override identity(target: PostgresTable): string {
-    return JSON.stringify({
-      type: 'postgres',
-      ...this.#server,
-      schema: this.schema,
-      target,
-    });
   }
 
   override location(target: PostgresTable): string {

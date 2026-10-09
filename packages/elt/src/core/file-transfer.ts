@@ -6,18 +6,18 @@ import type { FieldValues } from './writer.ts';
 // expose the scalar values their rows actually retain after deduplication.
 export class FileTransfer {
   readonly reads: readonly FileRead[];
-  readonly target: string;
+  readonly location: string;
   readonly writer: string;
 
-  constructor(reads: readonly FileRead[], target: string, writer: string) {
+  constructor(reads: readonly FileRead[], location: string, writer: string) {
     this.reads = reads;
-    this.target = target;
+    this.location = location;
     this.writer = writer;
   }
 
   private scope(read: FileRead): string {
     return JSON.stringify({
-      target: this.target,
+      location: this.location,
       writer: this.writer,
       field: read.name,
     });
