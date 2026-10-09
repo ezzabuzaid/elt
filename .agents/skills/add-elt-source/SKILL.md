@@ -13,7 +13,7 @@ Copy this checklist into your response and tick it off as you go:
 - [ ] Probing: every access method and change signal listed, live checks run
 - [ ] SDK written or reused: the store's location, read-only open, decoding, errors and change signal
 - [ ] Source written, sync strategy picked from the list
-- [ ] Black-box tests through source classes and real destinations
+- [ ] Tests written with the write-test skill, every one CAUGHT
 - [ ] README and docs/reference.md
 - [ ] Gotchas checked against the diff
 - [ ] Done when: e2e against the real upstream, backlog closed, report
@@ -91,11 +91,11 @@ Pick the first that fits:
 
 ## Writing tests
 
-Test the source the way a user runs it, as a black box. Do not write unit tests.
+Write the tests with the `write-test` skill (in the `coding` plugin). It owns the method: which tests earn their place, the claim ledger, and the proof that each test catches its break. This section gives it what is particular to sources.
 
-- Import source classes directly from their defining modules and load them through a real `Pipeline` into a real destination in temporary storage. Assert on what a consumer reads: rows or files, checkpoints, and what a second run writes.
-- Control only the upstream, at its outermost seam: a synthetic copy of the upstream's database, the HTTP requester, `nativeProcess.lines`, which yields the `eventkit` helper's stdout lines, or `osa`, which crosses into `osascript`. Never import or mock the source's own modules (scripts, parsers, decoders); they are covered through the streams that use them, by feeding bad input at the seam.
-- Models: the Messages tests in `packages/sources/apple/messages/src/messages-source.test.ts` (a synthetic `chat.db`, no mocks) and `packages/sources/google/search-console/src/warehouse.test.ts` (a fake requester, scratch Postgres, read back through the agent role).
+- Surface: import source classes from their defining modules and load them through a real `Pipeline` into a real destination in temporary storage. Assert on what a consumer reads: rows or files, checkpoints, and what a second run writes.
+- Seams, all at the upstream's outermost edge: a synthetic copy of the upstream's database, the HTTP requester (`GoogleRequester`), or `StubEventKitHelper` from `@workspace/sdk-apple-eventkit/test`, an executable the EventKit stores run in place of the compiled helper. Parsers, decoders and scripts are covered through the streams that use them, by feeding bad input at the seam. A new boundary that cannot run for real gets its fake the same way (see `AGENTS.md`, "Fake only what cannot run for real").
+- Precedents: the Messages tests in `packages/sources/apple/messages/src/messages-source.test.ts` (a synthetic `chat.db`, no mocks) and `packages/sources/google/search-console/src/warehouse.test.ts` (a fake requester, scratch Postgres, read back through the agent role).
 - Use controlled inputs, never personal data, except one live read-only test per native store that asserts shapes and counts, persists nothing outside a temporary directory, and skips without access (the Calendar and Reminders helper test). Put tests in the source package's top-level `src/*.test.ts`; the `test` target runs nothing in subfolders. Split a test that covers two sources (Calendar and Reminders) into one test per source package.
 
 ## Writing docs
@@ -125,6 +125,7 @@ Test the source the way a user runs it, as a black box. Do not write unit tests.
 - Every stream the upstream exposes is extracted and every attachment kind it holds is handled. Nothing is silently capped, sampled, or windowed.
 - A capability the source needed but `elt` lacked is added to `elt`, not worked around in the source. Finding those gaps is the point of each new source. Other changes stay specific to the requested source.
 - Typecheck and tests pass for every touched project, and for every project if `packages/elt` changed, because every destination and app depends on it.
+- Every test the change adds or alters meets the `write-test` skill's Done when.
 - The source works end to end against the real upstream, not only against the controlled upstream the tests use. Run the entry point a user runs (`nx run <app>:start`) into a real destination, then inspect the actual output: tables or files, checkpoints, and a second run with no upstream changes that behaves as the sync strategy promises (a snapshot stream writes nothing).
 - Live checks are run, not deferred. Behavior counts as unverified only when the environment cannot produce it, and a backlog item does not replace the check.
 - Every agent-backlog item opened during the work, and every open item related to the source, is closed.
