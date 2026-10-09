@@ -3,8 +3,8 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtempDisposable, readFile } from 'node:fs/promises';
-import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -301,28 +301,29 @@ type ScratchReminder = {
   };
 };
 
-// A temporary reminders list in this Mac's EventKit store, in the first
-// account that accepts one (CalDAV before Exchange), deleted with the test.
-// Accounts sync, so it reaches the server until then. A run killed before it
-// can delete it leaves it behind, so its title names this Mac and the test
-// process, and the next one created here deletes those whose process is gone.
+// The reminders list this Mac's live tests share, in the first account that
+// accepts one (CalDAV before Exchange), made once and never deleted: iCloud
+// brings a deleted list back, empty, hours later. A test holds it alone,
+// across processes, and empties it before and after, so it starts with no
+// reminders and leaves none, whatever a killed run left.
 class ScratchList implements AsyncDisposable {
   readonly id: string;
+  readonly #lock: DatabaseSync;
 
-  private constructor(id: string) {
+  private constructor(id: string, lock: DatabaseSync) {
     this.id = id;
+    this.#lock = lock;
   }
 
   // Null when no account on this Mac accepts a new reminders list.
   static async create(): Promise<ScratchList | null> {
+    const lock = ScratchList.#hold();
     try {
-      return new ScratchList(
-        await ScratchList.#run('create', {
-          host: hostname(),
-          pid: process.pid,
-        }),
-      );
+      const list = new ScratchList(await ScratchList.#run('open', {}), lock);
+      await list.#empty();
+      return list;
     } catch (error) {
+      lock.close();
       if (
         String(Reflect.get(Object(error), 'stderr')).includes(
           ScratchList.#noAccount,
@@ -331,6 +332,32 @@ class ScratchList implements AsyncDisposable {
         return null;
       throw error;
     }
+  }
+
+  // One test at a time uses the shared calendars and list, in any process: a
+  // test holds this exclusive transaction until it is done, and a process
+  // that dies releases it.
+  static #hold(): DatabaseSync {
+    const path = join(
+      homedir(),
+      'Library/Caches/context-compiler/eventkit-tests.sqlite',
+    );
+    mkdirSync(dirname(path), { recursive: true });
+    const lock = new DatabaseSync(path, { timeout: 600_000 });
+    lock.exec('BEGIN EXCLUSIVE');
+    return lock;
+  }
+
+  // Deletes every reminder the list holds, completed ones included, as the
+  // helper reads them.
+  async #empty(): Promise<void> {
+    const { reminders } = await new RemindersStore(helper).read({
+      calendarIds: [this.id],
+    });
+    if (reminders.length > 0)
+      await ScratchList.#run('empty', {
+        items: reminders.map((reminder) => reminder.id),
+      });
   }
 
   // The calendar item identifier of each reminder, in order.
@@ -349,7 +376,11 @@ class ScratchList implements AsyncDisposable {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    await ScratchList.#run('delete', { listId: this.id });
+    try {
+      await this.#empty();
+    } finally {
+      this.#lock.close();
+    }
   }
 
   static async #run(mode: string, payload: object): Promise<string> {
@@ -386,30 +417,30 @@ function run([mode, payload]) {
   const save = (reminder) => {
     if (!store.saveReminderCommitError(reminder, true, null)) throw new Error('Reminder not saved');
   };
-  if (mode === 'create') {
-    // kill(pid, 0) fails once no process of this user has the pid.
-    ObjC.bindFunction('kill', ['int', ['int', 'int']]);
-    for (const leftover of ObjC.unwrap(store.calendarsForEntityType(1))) {
-      const [prefix, test, host, pid] = ObjC.unwrap(leftover.title).split(' ');
-      if (prefix + ' ' + test === 'context-compiler test' && host === spec.host && $.kill(Number(pid), 0) !== 0)
-        store.removeCalendarCommitError(leftover, true, null);
+  if (mode === 'open') {
+    const title = 'context-compiler tests';
+    let shared = ObjC.unwrap(store.calendarsForEntityType(1))
+      .filter((each) => ObjC.unwrap(each.title) === title)
+      .toSorted((a, b) => (ObjC.unwrap(a.calendarIdentifier) < ObjC.unwrap(b.calendarIdentifier) ? -1 : 1))[0];
+    if (shared === undefined) {
+      shared = $.EKCalendar.calendarForEntityTypeEventStore(1, store);
+      shared.title = title;
+      const sources = ObjC.unwrap(store.sources).toSorted(
+        (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
+      );
+      if (!sources.some((source) => {
+        shared.source = source;
+        return store.saveCalendarCommitError(shared, true, null);
+      })) throw new Error('${ScratchList.#noAccount}');
     }
-    const created = $.EKCalendar.calendarForEntityTypeEventStore(1, store);
-    created.title = ['context-compiler test', spec.host, spec.pid, ObjC.unwrap($.NSUUID.UUID.UUIDString)].join(' ');
-    const sources = ObjC.unwrap(store.sources).toSorted(
-      (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
-    );
-    if (!sources.some((source) => {
-      created.source = source;
-      return store.saveCalendarCommitError(created, true, null);
-    })) throw new Error('${ScratchList.#noAccount}');
-    return ObjC.unwrap(created.calendarIdentifier);
+    return ObjC.unwrap(shared.calendarIdentifier);
   }
-  if (mode === 'delete') {
-    if (!ObjC.unwrap(list().title).startsWith('context-compiler test '))
-      throw new Error('Refusing to delete a list this test did not create');
-    if (!store.removeCalendarCommitError(list(), true, null))
-      throw new Error('Could not delete the test list');
+  if (mode === 'empty') {
+    for (const id of spec.items) {
+      const item = store.calendarItemWithIdentifier(id);
+      if (!item.isNil() && !store.removeReminderCommitError(item, true, null))
+        throw new Error('Could not delete a test reminder');
+    }
     return '';
   }
   if (mode === 'add')

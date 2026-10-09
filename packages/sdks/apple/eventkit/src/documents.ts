@@ -98,6 +98,11 @@ export type OccurrenceDocument = CalendarItemDocument & {
   readonly type: 'occurrence';
   readonly calendarId: string;
   readonly calendarItemId: string;
+  // The item of the series a moved (detached) occurrence belongs to, which
+  // EventKit gives an item of its own; absent for any other occurrence, and
+  // for a moved one whose series the helper cannot single out.
+  readonly seriesItemId?: string;
+  // The series' iCalendar UID, shared by every occurrence of the series.
   readonly externalId?: string;
   readonly nativeEventId?: string;
   readonly name?: string;

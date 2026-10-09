@@ -102,17 +102,8 @@ export class CalendarScan implements AsyncDisposable {
     return this.#contents.calendars;
   }
 
-  // The store lists an occurrence once for each read window it spans; its
-  // first copy is kept.
   get events(): readonly CalendarEvent[] {
-    if (this.#events === undefined) {
-      const events = new Map<string, CalendarEvent>();
-      for (const occurrence of this.#contents.occurrences) {
-        const event = identify(occurrence);
-        if (!events.has(event.eventId)) events.set(event.eventId, event);
-      }
-      this.#events = [...events.values()];
-    }
+    this.#events ??= this.#contents.occurrences.map(identify);
     return this.#events;
   }
 
@@ -159,9 +150,11 @@ function identify(occurrence: OccurrenceDocument): CalendarEvent {
     occurrenceKey = occurrence.allDay
       ? (occurrence.occurrenceDay ?? null)
       : timestamp(occurrence.occurrenceMs);
+  // A moved occurrence keeps the key of its series' item, so moving it
+  // updates its row.
   const eventId = JSON.stringify([
     occurrence.calendarId,
-    occurrence.calendarItemId,
+    occurrence.seriesItemId ?? occurrence.calendarItemId,
     occurrenceKey,
   ]);
   return { eventId, recurring, occurrence };

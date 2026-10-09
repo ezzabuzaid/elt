@@ -5,6 +5,10 @@ struct OccurrenceDocument: Encodable {
   let type = "occurrence"
   let calendarId: String
   let calendarItemId: String
+  // The item of the series a moved (detached) occurrence belongs to; nil for
+  // any other occurrence, whose own item holds its series.
+  let seriesItemId: String?
+  // The series' iCalendar UID, shared by every occurrence of the series.
   let externalId: String?
   let nativeEventId: String?
   let name: String?
@@ -31,10 +35,11 @@ struct OccurrenceDocument: Encodable {
   let alarms: [AlarmDocument]
   let recurrenceRules: [RecurrenceRuleDocument]
 
-  init(_ event: EKEvent, calendarId: String) {
+  init(_ event: EKEvent, calendarId: String, store: EKEventStore) {
     self.calendarId = calendarId
     calendarItemId = event.calendarItemIdentifier
-    externalId = event.calendarItemExternalIdentifier
+    seriesItemId = seriesItem(event, calendarId: calendarId, store: store)
+    externalId = event.calendarItemExternalIdentifier.map(seriesUid)
     nativeEventId = event.eventIdentifier
     name = event.title
     body = event.notes
@@ -73,7 +78,8 @@ struct IcsDocument: Encodable {
 
 // EventKit silently truncates queries longer than four years, so the interval
 // is read in one-year windows. An event overlapping several windows is written
-// once per window; Node keeps the first.
+// once, in the first: the window it starts in, or the first window when it
+// starts before the interval.
 private let windowMs: Int64 = 365 * 24 * 60 * 60 * 1000
 
 func readEvents(_ request: ReadRequest, store: EKEventStore, lines: Lines) throws {
@@ -91,10 +97,12 @@ func readEvents(_ request: ReadRequest, store: EKEventStore, lines: Lines) throw
     let rangeEnd = Date(timeIntervalSince1970: Double(windowEnd) / 1000)
     let predicate = store.predicateForEvents(withStart: rangeStart, end: rangeEnd, calendars: calendars)
     for event in store.events(matching: predicate)
-    where overlaps(event, milliseconds(rangeStart), milliseconds(rangeEnd)) {
+    where overlaps(event, milliseconds(rangeStart), milliseconds(rangeEnd))
+      && (windowStart == startAt || milliseconds(event.startDate) >= milliseconds(rangeStart))
+    {
       guard let calendarId = event.calendar?.calendarIdentifier, !event.calendarItemIdentifier.isEmpty
       else { throw HelperError("EventKit event has no calendar or item identifier") }
-      try lines.write(OccurrenceDocument(event, calendarId: calendarId))
+      try lines.write(OccurrenceDocument(event, calendarId: calendarId, store: store))
       if let export, exported.insert([calendarId, event.calendarItemIdentifier]).inserted {
         try lines.write(try export.document(event, calendarId: calendarId))
       }
@@ -107,6 +115,24 @@ private func epochMs(_ timestamp: String) -> Int64? {
   let formatter = ISO8601DateFormatter()
   formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
   return formatter.date(from: timestamp).map { Int64(milliseconds($0).rounded()) }
+}
+
+// A moved (detached) occurrence is an item of its own, whose external
+// identifier is the series' iCalendar UID plus "/RID=" and its original start.
+// Its series is the one item in the same calendar with recurrence rules under
+// that UID; without exactly one, it has none.
+private func seriesItem(_ event: EKEvent, calendarId: String, store: EKEventStore) -> String? {
+  guard event.isDetached, let external = event.calendarItemExternalIdentifier else { return nil }
+  let series = store.calendarItems(withExternalIdentifier: seriesUid(external)).filter {
+    $0.calendar?.calendarIdentifier == calendarId && $0.hasRecurrenceRules
+  }
+  return series.count == 1 ? series[0].calendarItemIdentifier : nil
+}
+
+// An external identifier without the "/RID=<original start>" EventKit adds
+// for a moved occurrence.
+private func seriesUid(_ externalId: String) -> String {
+  externalId.range(of: "/RID=").map { String(externalId[..<$0.lowerBound]) } ?? externalId
 }
 
 // A zero-duration event must start inside the window; others must overlap it.

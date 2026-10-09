@@ -8,8 +8,8 @@ import {
   readdir,
   writeFile,
 } from 'node:fs/promises';
-import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -350,34 +350,38 @@ type ScratchEvent = {
   };
 };
 
-// A temporary event calendar in this Mac's EventKit store, in the first
-// account that accepts one (CalDAV before Exchange), deleted with the test.
-// Accounts sync, so it reaches the server until then. A run killed before it
-// can delete it leaves it behind, so its title names this Mac and the test
-// process, and the next one created here deletes those whose process is gone.
-// EventKit writes run in Asia/Amman, so an all-day event falls on an Amman
-// day.
+// The event calendar this Mac's live tests share, in the first account that
+// accepts one (CalDAV before Exchange), made once and never deleted: iCloud
+// brings a deleted calendar back, empty, hours later. A test holds it alone,
+// across processes, and empties it before and after, so it starts with no
+// events and leaves none, whatever a killed run left. EventKit writes run in
+// Asia/Amman, so an all-day event falls on an Amman day.
 class ScratchCalendar implements AsyncDisposable {
   readonly id: string;
   readonly title: string;
+  readonly #lock: DatabaseSync;
 
-  private constructor({ id, title }: { id: string; title: string }) {
+  private constructor(
+    { id, title }: { id: string; title: string },
+    lock: DatabaseSync,
+  ) {
     this.id = id;
     this.title = title;
+    this.#lock = lock;
   }
 
   // Null when no account on this Mac accepts a new calendar.
   static async create(): Promise<ScratchCalendar | null> {
+    const lock = ScratchCalendar.#hold();
     try {
-      return new ScratchCalendar(
-        JSON.parse(
-          await ScratchCalendar.#run('create', {
-            host: hostname(),
-            pid: process.pid,
-          }),
-        ),
+      const calendar = new ScratchCalendar(
+        JSON.parse(await ScratchCalendar.#run('open', {})),
+        lock,
       );
+      await calendar.#empty();
+      return calendar;
     } catch (error) {
+      lock.close();
       if (
         String(Reflect.get(Object(error), 'stderr')).includes(
           ScratchCalendar.#noAccount,
@@ -386,6 +390,32 @@ class ScratchCalendar implements AsyncDisposable {
         return null;
       throw error;
     }
+  }
+
+  // One test at a time uses the shared calendar, in any process: a test holds
+  // this exclusive transaction until it is done, and a process that dies
+  // releases it.
+  static #hold(): DatabaseSync {
+    const path = join(
+      homedir(),
+      'Library/Caches/context-compiler/eventkit-tests.sqlite',
+    );
+    mkdirSync(dirname(path), { recursive: true });
+    const lock = new DatabaseSync(path, { timeout: 600_000 });
+    lock.exec('BEGIN EXCLUSIVE');
+    return lock;
+  }
+
+  // Deletes every event the calendar holds, as the helper reads them.
+  async #empty(): Promise<void> {
+    const { occurrences } = await new CalendarStore(helper).read({
+      startAt: '1990-01-01T00:00:00.000Z',
+      endAt: '2040-01-01T00:00:00.000Z',
+      ics: false,
+      calendarIds: [this.id],
+    });
+    const items = [...new Set(occurrences.map((item) => item.calendarItemId))];
+    if (items.length > 0) await ScratchCalendar.#run('empty', { items });
   }
 
   // The calendar item identifier of each event, in order.
@@ -434,7 +464,11 @@ class ScratchCalendar implements AsyncDisposable {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    await ScratchCalendar.#run('delete', { calendarId: this.id });
+    try {
+      await this.#empty();
+    } finally {
+      this.#lock.close();
+    }
   }
 
   static async #run(mode: string, payload: object): Promise<string> {
@@ -479,33 +513,30 @@ function run([mode, payload]) {
     if (found === undefined) throw new Error('No occurrence at ' + at);
     return found;
   };
-  if (mode === 'create') {
-    // kill(pid, 0) fails once no process of this user has the pid.
-    ObjC.bindFunction('kill', ['int', ['int', 'int']]);
-    for (const leftover of ObjC.unwrap(store.calendarsForEntityType(0))) {
-      const [prefix, test, host, pid] = ObjC.unwrap(leftover.title).split(' ');
-      if (prefix + ' ' + test === 'context-compiler test' && host === spec.host && $.kill(Number(pid), 0) !== 0)
-        store.removeCalendarCommitError(leftover, true, null);
+  if (mode === 'open') {
+    const title = 'context-compiler tests';
+    let shared = ObjC.unwrap(store.calendarsForEntityType(0))
+      .filter((each) => ObjC.unwrap(each.title) === title)
+      .toSorted((a, b) => (ObjC.unwrap(a.calendarIdentifier) < ObjC.unwrap(b.calendarIdentifier) ? -1 : 1))[0];
+    if (shared === undefined) {
+      shared = $.EKCalendar.calendarForEntityTypeEventStore(0, store);
+      shared.title = title;
+      const sources = ObjC.unwrap(store.sources).toSorted(
+        (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
+      );
+      if (!sources.some((source) => {
+        shared.source = source;
+        return store.saveCalendarCommitError(shared, true, null);
+      })) throw new Error('${ScratchCalendar.#noAccount}');
     }
-    const created = $.EKCalendar.calendarForEntityTypeEventStore(0, store);
-    created.title = ['context-compiler test', spec.host, spec.pid, ObjC.unwrap($.NSUUID.UUID.UUIDString)].join(' ');
-    const sources = ObjC.unwrap(store.sources).toSorted(
-      (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
-    );
-    if (!sources.some((source) => {
-      created.source = source;
-      return store.saveCalendarCommitError(created, true, null);
-    })) throw new Error('${ScratchCalendar.#noAccount}');
-    return JSON.stringify({
-      id: ObjC.unwrap(created.calendarIdentifier),
-      title: ObjC.unwrap(created.title),
-    });
+    return JSON.stringify({ id: ObjC.unwrap(shared.calendarIdentifier), title });
   }
-  if (mode === 'delete') {
-    if (!ObjC.unwrap(calendar().title).startsWith('context-compiler test '))
-      throw new Error('Refusing to delete a calendar this test did not create');
-    if (!store.removeCalendarCommitError(calendar(), true, null))
-      throw new Error('Could not delete the test calendar');
+  if (mode === 'empty') {
+    for (const id of spec.items) {
+      const item = store.calendarItemWithIdentifier(id);
+      if (!item.isNil() && !store.removeEventSpanCommitError(item, 1, true, null))
+        throw new Error('Could not delete a test event');
+    }
     return '';
   }
   if (mode === 'add')
@@ -1247,7 +1278,7 @@ test('Calendar snapshot incremental reconciles attendees who join and leave, whi
 });
 
 test(
-  'Calendar loads an occurrence of a calendar on this Mac once when the helper returns it for two adjacent windows',
+  'Calendar loads an occurrence of a calendar on this Mac that spans two of the helper read windows once',
   { timeout: 120_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
@@ -1272,16 +1303,6 @@ test(
       },
     );
     assert.ok(spanning && late);
-    const { occurrences } = await new CalendarStore(helper).read({
-      ...window,
-      ics: false,
-      calendarIds: [calendar.id],
-    });
-    assert.equal(
-      occurrences.filter(({ calendarItemId }) => calendarItemId === spanning)
-        .length,
-      2,
-    );
     const source = liveSource(calendar, window);
     await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-cal-'));
     const sqlite = new SQLiteDestination({
@@ -1321,38 +1342,6 @@ test(
     );
   },
 );
-
-test('Calendar keeps the first copy of a twice-returned occurrence with its attendees', async () => {
-  await using stub = await StubEventKitHelper.create();
-  const window = {
-    startAt: '2024-01-01T00:00:00.000Z',
-    endAt: '2026-01-01T00:00:00.000Z',
-  };
-  const source = new AppleCalendarSource({
-    store: new CalendarStore(stub.path),
-    ...window,
-  });
-  // Live copies are identical; these differ so the kept one shows, and only
-  // the stub can give the occurrence an attendee.
-  const spanning = occurrence({
-    calendarItemId: 'spanning',
-    attendees: [participant()],
-  });
-  stub.answer(eventsRead(window), {
-    documents: [spanning, { ...spanning, name: 'Second window copy' }],
-  });
-
-  const rows = await readRows(source, [source.events, source.attendees]);
-
-  assert.deepEqual(
-    rows(source.events).map(({ id, name }) => [id, name]),
-    [[eventId('spanning'), 'Synthetic standup']],
-  );
-  assert.deepEqual(
-    rows(source.attendees).map((row) => row.eventId),
-    [eventId('spanning')],
-  );
-});
 
 test(
   'Calendar links alarms, recurrence rules and rule values to their occurrence',
@@ -1475,13 +1464,9 @@ test('Calendar numbers attendees the same when EventKit reorders them or one rep
 
 test(
   'Calendar occurrence keys survive rescheduling',
-  {
-    timeout: 120_000,
-    // Found live on macOS 27 with an iCloud calendar: EventKit gives a moved
-    // (detached) occurrence its own calendarItemIdentifier, so its key, built
-    // from the series' item, changes and the old row is deleted.
-    todo: 'a detached occurrence has its own calendarItemIdentifier in EventKit',
-  },
+  // EventKit gives a moved (detached) occurrence its own
+  // calendarItemIdentifier; its key still names the series' item.
+  { timeout: 120_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
     await using calendar = await ScratchCalendar.create();
@@ -1542,6 +1527,15 @@ test(
           .get(rescheduled),
       },
       { id: rescheduled, startAt: '2025-01-12T08:00:00.000Z', detached: 1 },
+    );
+    // The moved occurrence still shares the series' iCalendar UID.
+    assert.equal(
+      database
+        .prepare(
+          'SELECT count(DISTINCT externalId) AS n FROM events WHERE externalId IS NOT NULL',
+        )
+        .get()?.n,
+      1,
     );
   },
 );

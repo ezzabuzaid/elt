@@ -24,8 +24,6 @@ export type CalendarQuery = EventKitQuery & {
 };
 
 export type CalendarContents = Collections & {
-  // The helper reads in one-year windows, so an occurrence that spans two
-  // windows is listed once for each.
   readonly occurrences: readonly OccurrenceDocument[];
   readonly icsExports: readonly IcsDocument[];
 };

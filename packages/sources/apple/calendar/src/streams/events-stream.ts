@@ -29,7 +29,7 @@ const properties = {
   eventId: {
     ...id,
     description:
-      'Occurrence identity: JSON [calendarId, calendarItemId, occurrenceKey]. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here.',
+      "Occurrence identity: JSON [calendarId, series item, occurrenceKey]. The series item is calendarItemId, or for a moved (detached) occurrence, which EventKit gives an item of its own, its series' calendarItemId. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here.",
   },
   calendarId: {
     ...id,
@@ -39,12 +39,12 @@ const properties = {
   calendarItemId: {
     ...id,
     description:
-      'EventKit EKCalendarItem.calendarItemIdentifier of the native item; every occurrence of a recurring series shares it. ICS rows relate on (calendarId, calendarItemId). Apple documents that a full sync can replace it.',
+      'EventKit EKCalendarItem.calendarItemIdentifier of the native item; every occurrence of a recurring series shares it, except a moved (detached) one, which EventKit gives an item of its own. ICS rows relate on (calendarId, calendarItemId). Apple documents that a full sync can replace it.',
   },
   externalId: {
     ...nullableText,
     description:
-      'EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier shared by every occurrence of a series; NULL when EventKit has none. Apple documents duplicates across calendars (imports, shared or delegated calendars), so it is not unique.',
+      'EventKit EKCalendarItem.calendarItemExternalIdentifier, the series iCalendar UID shared by every occurrence of a series, without the "/RID=" suffix EventKit adds for a moved occurrence; NULL when EventKit has none. Apple documents duplicates across calendars (imports, shared or delegated calendars), so it is not unique.',
   },
   nativeEventId: {
     ...nullableText,

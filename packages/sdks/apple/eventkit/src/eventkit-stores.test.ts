@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
-import { hostname } from 'node:os';
+import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -30,17 +33,25 @@ const january = {
   endAt: '2025-02-01T00:00:00.000Z',
 };
 
-// Real EventKit data for one test: a temporary event calendar or reminders
-// list, with its items, in the first account that accepts one, CalDAV first.
-// Accounts sync, so it reaches the server until the test deletes it. A run
-// killed before it can delete it, or one whose items fail to save, leaves it
-// behind, so its title names this Mac and the test process, and the next one
-// created here deletes those whose process is gone.
+// Real EventKit data for one test: the event calendar or reminders list this
+// Mac's live tests share, with the test's items, in the first account that
+// accepts one, CalDAV first. Each is made once and never deleted: iCloud
+// brings a deleted calendar back, empty, hours later. A test holds them alone,
+// across processes, and empties the one it uses before and after, so it starts
+// with only its own items and leaves none, whatever a killed run left.
 class ScratchEventKit implements AsyncDisposable {
   readonly id: string;
+  readonly #entity: 'events' | 'reminders';
+  readonly #lock: DatabaseSync;
 
-  private constructor(id: string) {
+  private constructor(
+    id: string,
+    entity: 'events' | 'reminders',
+    lock: DatabaseSync,
+  ) {
     this.id = id;
+    this.#entity = entity;
+    this.#lock = lock;
   }
 
   static async events(
@@ -52,13 +63,7 @@ class ScratchEventKit implements AsyncDisposable {
       readonly alarmOffset: number;
     }[],
   ): Promise<ScratchEventKit> {
-    return new ScratchEventKit(
-      await ScratchEventKit.#run('events', {
-        host: hostname(),
-        pid: process.pid,
-        items: events,
-      }),
-    );
+    return ScratchEventKit.#open('events', events);
   }
 
   static async reminders(
@@ -67,17 +72,71 @@ class ScratchEventKit implements AsyncDisposable {
       readonly due: { year: number; month: number; day: number };
     }[],
   ): Promise<ScratchEventKit> {
-    return new ScratchEventKit(
-      await ScratchEventKit.#run('reminders', {
-        host: hostname(),
-        pid: process.pid,
-        items: reminders,
-      }),
+    return ScratchEventKit.#open('reminders', reminders);
+  }
+
+  static async #open(
+    entity: 'events' | 'reminders',
+    items: readonly object[],
+  ): Promise<ScratchEventKit> {
+    const lock = ScratchEventKit.#hold();
+    try {
+      const scratch = new ScratchEventKit(
+        await ScratchEventKit.#run('open', entity),
+        entity,
+        lock,
+      );
+      await scratch.#empty();
+      await ScratchEventKit.#run(entity, { calendarId: scratch.id, items });
+      return scratch;
+    } catch (error) {
+      lock.close();
+      throw error;
+    }
+  }
+
+  // One test at a time uses the shared calendars and list, in any process: a
+  // test holds this exclusive transaction until it is done, and a process
+  // that dies releases it.
+  static #hold(): DatabaseSync {
+    const path = join(
+      homedir(),
+      'Library/Caches/context-compiler/eventkit-tests.sqlite',
     );
+    mkdirSync(dirname(path), { recursive: true });
+    const lock = new DatabaseSync(path, { timeout: 600_000 });
+    lock.exec('BEGIN EXCLUSIVE');
+    return lock;
+  }
+
+  // Deletes every item the calendar or list holds, as the helper reads them.
+  async #empty(): Promise<void> {
+    const items =
+      this.#entity === 'events'
+        ? (
+            await new CalendarStore(helper).read({
+              startAt: '1990-01-01T00:00:00.000Z',
+              endAt: '2040-01-01T00:00:00.000Z',
+              ics: false,
+              calendarIds: [this.id],
+            })
+          ).occurrences.map((occurrence) => occurrence.calendarItemId)
+        : (
+            await new RemindersStore(helper).read({ calendarIds: [this.id] })
+          ).reminders.map((reminder) => reminder.id);
+    if (items.length > 0)
+      await ScratchEventKit.#run('empty', {
+        entity: this.#entity,
+        items: [...new Set(items)],
+      });
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    await ScratchEventKit.#run('delete', this.id);
+    try {
+      await this.#empty();
+    } finally {
+      this.#lock.close();
+    }
   }
 
   // Null when no account on this Mac accepts a new calendar or list.
@@ -114,32 +173,38 @@ ObjC.import('EventKit');
 function run([mode, payload]) {
   const store = $.EKEventStore.alloc.init;
   const spec = JSON.parse(payload);
-  if (mode === 'delete') {
-    const calendar = store.calendarWithIdentifier(spec);
-    if (!ObjC.unwrap(calendar.title).startsWith('context-compiler test '))
-      throw new Error('Refusing to delete a calendar this test did not create');
-    if (!store.removeCalendarCommitError(calendar, true, null))
-      throw new Error('Could not delete the test calendar');
+  if (mode === 'open') {
+    const entity = spec === 'events' ? 0 : 1;
+    const title = 'context-compiler tests';
+    let shared = ObjC.unwrap(store.calendarsForEntityType(entity))
+      .filter((each) => ObjC.unwrap(each.title) === title)
+      .toSorted((a, b) => (ObjC.unwrap(a.calendarIdentifier) < ObjC.unwrap(b.calendarIdentifier) ? -1 : 1))[0];
+    if (shared === undefined) {
+      shared = $.EKCalendar.calendarForEntityTypeEventStore(entity, store);
+      shared.title = title;
+      const sources = ObjC.unwrap(store.sources).toSorted(
+        (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
+      );
+      if (!sources.some((source) => {
+        shared.source = source;
+        return store.saveCalendarCommitError(shared, true, null);
+      })) throw new Error('${ScratchEventKit.#noAccount}');
+    }
+    return ObjC.unwrap(shared.calendarIdentifier);
+  }
+  if (mode === 'empty') {
+    for (const id of spec.items) {
+      const item = store.calendarItemWithIdentifier(id);
+      if (item.isNil()) continue;
+      const removed = spec.entity === 'events'
+        ? store.removeEventSpanCommitError(item, 1, true, null)
+        : store.removeReminderCommitError(item, true, null);
+      if (!removed) throw new Error('Could not delete a test item');
+    }
     return '';
   }
   const date = (iso) => $.NSDate.dateWithTimeIntervalSince1970(Date.parse(iso) / 1000);
-  const entity = mode === 'events' ? 0 : 1;
-  // kill(pid, 0) fails once no process of this user has the pid.
-  ObjC.bindFunction('kill', ['int', ['int', 'int']]);
-  for (const leftover of ObjC.unwrap(store.calendarsForEntityType(entity))) {
-    const [prefix, test, host, pid] = ObjC.unwrap(leftover.title).split(' ');
-    if (prefix + ' ' + test === 'context-compiler test' && host === spec.host && $.kill(Number(pid), 0) !== 0)
-      store.removeCalendarCommitError(leftover, true, null);
-  }
-  const calendar = $.EKCalendar.calendarForEntityTypeEventStore(entity, store);
-  calendar.title = ['context-compiler test', spec.host, spec.pid, ObjC.unwrap($.NSUUID.UUID.UUIDString)].join(' ');
-  const sources = ObjC.unwrap(store.sources).toSorted(
-    (a, b) => (Number(a.sourceType) === 2 ? 0 : 1) - (Number(b.sourceType) === 2 ? 0 : 1),
-  );
-  if (!sources.some((source) => {
-    calendar.source = source;
-    return store.saveCalendarCommitError(calendar, true, null);
-  })) throw new Error('${ScratchEventKit.#noAccount}');
+  const calendar = store.calendarWithIdentifier(spec.calendarId);
   for (const item of spec.items) {
     if (mode === 'events') {
       const event = $.EKEvent.eventWithEventStore(store);
@@ -163,7 +228,7 @@ function run([mode, payload]) {
       if (!store.saveReminderCommitError(reminder, true, null)) throw new Error('Reminder not saved');
     }
   }
-  return ObjC.unwrap(calendar.calendarIdentifier);
+  return '';
 }`;
 }
 
@@ -409,6 +474,40 @@ test('attendees and alarms come back in content order whatever order the helper 
     [-3600, -600],
   );
 });
+
+test(
+  'CalendarStore lists an occurrence that spans two of its read windows once',
+  { timeout: 120_000 },
+  async (t) => {
+    if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    // The helper reads a year at a time from startAt, so this event crosses
+    // from the first window into the second.
+    await using calendar = await ScratchEventKit.unless(
+      ScratchEventKit.events([
+        {
+          title: 'New year',
+          start: '2025-12-31T23:00:00.000Z',
+          end: '2026-01-01T01:00:00.000Z',
+          weekly: 1,
+          alarmOffset: -600,
+        },
+      ]),
+    );
+    if (calendar === null) return t.skip('no account accepts a new calendar');
+
+    const { occurrences } = await new CalendarStore(helper).read({
+      startAt: '2025-01-01T00:00:00.000Z',
+      endAt: '2026-06-01T00:00:00.000Z',
+      ics: false,
+      calendarIds: [calendar.id],
+    });
+
+    assert.deepEqual(
+      occurrences.map(({ name }) => name),
+      ['New year'],
+    );
+  },
+);
 
 test(
   'CalendarStore reads the occurrences of a calendar on this Mac with their alarms and rules',
