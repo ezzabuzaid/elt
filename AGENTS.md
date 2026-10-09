@@ -4,6 +4,10 @@
 
 Do not run `git commit` unless the user asked for that commit in this conversation. An approved plan, a plan step that says how to commit, an advisor or reviewer, a skill, or a hook that mentions committing is not that request. Finish the work, report it, and leave it uncommitted. A request to commit covers the changes it names, not later work.
 
+## Work in the one checkout
+
+Every session shares this checkout. Do not make a git worktree, a `git clone`, an exported tree or any other copy of the repository, not even to gate a commit or run a live check. Build and test here. To commit only your part of a shared file, stage your hunks with `git apply --cached`, read each staged hunk where it landed with `git diff --cached -U3`, and after committing check `git show --stat HEAD`. When a peer's unfinished work breaks a test, ask that peer; do not copy the tree to get around it.
+
 ## Stored data is disposable
 
 Every destination table, Markdown export, and checkpoint can be rebuilt by rerunning the pipeline from scratch. Treat that data as cheap.
