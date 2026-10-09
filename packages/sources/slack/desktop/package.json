@@ -1,0 +1,22 @@
+{
+  "name": "@workspace/source-slack-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./slack-desktop-source": {
+      "types": "./dist/slack-desktop-source.d.ts",
+      "default": "./dist/slack-desktop-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/sdk-slack-desktop": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/snappyjs": "0.7.1",
+    "@workspace/elt-sqlite": "0.0.1",
+    "snappyjs": "0.7.0"
+  }
+}

@@ -187,6 +187,12 @@
     },
     {
       "path": "./packages/codecs/leveldb"
+    },
+    {
+      "path": "./packages/sources/slack/desktop"
+    },
+    {
+      "path": "./packages/sdks/slack/desktop"
     }
   ]
 }

@@ -413,6 +413,8 @@ packages/sdks/apple/      SDKs, one per Apple store (sdk-apple-<name>): accounts
                           of another app's SQLite file
 packages/codecs/          One package per format (codec-<format>): plist, protobuf, segb,
                           leveldb, v8-serialization, chromium-indexeddb
+packages/sdks/slack/desktop/    Slack desktop app SDK (sdk-slack-desktop)
+packages/sources/slack/desktop/ Slack desktop app source (source-slack-desktop)
 packages/sources/apple/   One package per Apple source (source-apple-<name>), and the shared
                           source-apple-macos (readers, document parser)
 packages/sources/google/  The Search Console source (source-google-search-console)

@@ -1,0 +1,9 @@
+{
+  "name": "sdk-slack-desktop",
+  "sourceRoot": "packages/sdks/slack/desktop/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {}
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "source-slack-desktop",
+  "sourceRoot": "packages/sources/slack/desktop/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/slack/desktop/dist/*.test.js\""
+    }
+  }
+}
