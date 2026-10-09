@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -335,6 +335,27 @@ test('a plugin server older than the proactive records refuses to write them and
       .all()
       .map(({ email, note }) => ({ email, note })),
     [{ email: 'ann@example.com', note: 'Leads design at Example.' }],
+  );
+});
+
+test('a gate that cannot read the proactive records tells the chat why, rather than reaching it with nothing as when its hooks are not trusted', async () => {
+  await using home = await mkdtempDisposable(join(tmpdir(), 'garden-gate-'));
+  assert.ok(gardenPrompt, 'setup-apple names the Apple gardener prompt');
+  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
+  mkdirSync(appleFolder(home.path), { recursive: true });
+  {
+    // A later plugin version stamps a newer layout on the records.
+    using database = new DatabaseSync(
+      join(appleFolder(home.path), 'proactive.sqlite'),
+    );
+    database.exec('PRAGMA user_version = 999');
+  }
+
+  const output = runGate(home.path, heartbeat(gardenPrompt));
+
+  assert.match(
+    output.hookSpecificOutput.additionalContext,
+    /^The Apple plugin's gate for \$garden-apple, .* failed: A newer Apple plugin wrote these records\./,
   );
 });
 
