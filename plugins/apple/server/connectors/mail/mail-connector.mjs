@@ -29,8 +29,8 @@ import {
 } from "../../chunks/chunk-SDFTRGL6.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-7E5EMV4V.mjs";
-import "../../chunks/chunk-XITEZF4E.mjs";
+} from "../../chunks/chunk-ZVP2EZLL.mjs";
+import "../../chunks/chunk-BXQKRPES.mjs";
 import {
   Catalog,
   Source,
@@ -38,7 +38,7 @@ import {
   diffGroupedSnapshot,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-L4HYJU4U.mjs";
+} from "../../chunks/chunk-G7SZ2AFI.mjs";
 import {
   __callDispose,
   __commonJS,
@@ -28106,6 +28106,11 @@ var AppleMailSource = class extends Source {
     if (reader === void 0)
       throw new TypeError(`Unknown Mail stream ${name}`);
     yield* reader.extract(configuration, state, scan);
+  }
+  // Full Disk Access opens both stores Mail reads: its own and the system's
+  // Accounts store, which holds account settings.
+  failureType(error) {
+    return error instanceof MailUnavailableError || error instanceof AccountsUnavailableError ? "config" : "system";
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };

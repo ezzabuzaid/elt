@@ -16,7 +16,7 @@ description: Tend the Apple plugin's meeting chats and records when the Apple ga
 ## Tend
 
 1. **Meeting chats to archive**: call `set_thread_archived` with each item's `threadId` and `archived` true.
-2. **Import problems to report**: write one short message naming each connector, what failed, and the item's `permissions` guidance.
+2. **Import problems to report**: write one short message naming each connector and what failed, with the item's `permissions` guidance when it has one. An item without `permissions` failed for a reason the user cannot fix by granting access.
 3. **People to write notes about**: for each person, run the Contacts, Mail and Messages queries with their `email`, write the note, and call `apple_person_note` with their `email`, `name` and the note.
 4. End with `<heartbeat><automation_id>…</automation_id><decision>…</decision><message>…</message></heartbeat>`: `NOTIFY` when you reported an import problem, the message naming the connectors; otherwise `DONT_NOTIFY` with a one-line summary.
 5. When the context says the plugin's gate failed, do nothing else and end with the `DONT_NOTIFY` block, its message that failure.

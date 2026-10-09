@@ -556,16 +556,16 @@ var FileContent = class {
 // packages/elt/dist/core/file-transfer.js
 var FileTransfer = class {
   reads;
-  target;
+  location;
   writer;
-  constructor(reads, target, writer) {
+  constructor(reads, location, writer) {
     this.reads = reads;
-    this.target = target;
+    this.location = location;
     this.writer = writer;
   }
   scope(read) {
     return JSON.stringify({
-      target: this.target,
+      location: this.location,
       writer: this.writer,
       field: read.name
     });
@@ -658,7 +658,7 @@ var Copy = class {
   // next run reloads from scratch.
   async clear(source, destination, checkpoints) {
     this.validate(source, destination, checkpoints);
-    const files = new FileTransfer(this.configuration.fileReads, destination.identity(this.to), this.writer(source));
+    const files = new FileTransfer(this.configuration.fileReads, destination.location(this.to), this.writer(source));
     const drop = () => destination.clear(this.configuration, this.to, this.writer(source), (values) => files.reconcile(values));
     if (this.id !== void 0 && checkpoints !== void 0)
       await checkpoints.clear(this.id, drop);
@@ -879,6 +879,12 @@ var Source = class {
   partitions(stream) {
     throw new TypeError(`Source must declare partitions for stream ${stream.name}`);
   }
+  // What kind of failure an error from this source is. Only the source knows
+  // which of its upstream's errors mean the user must act; any other error,
+  // a destination's included, is system.
+  failureType(_error) {
+    return "system";
+  }
   member(stream) {
     if (this.catalog.get(stream.name) !== stream)
       throw new TypeError(`Stream ${stream.name} is not from this source's discovered catalog`);
@@ -1038,13 +1044,23 @@ var Replicated = class {
   copy;
   observe;
   files;
+  #source;
   constructor(copy, source, destination, observe) {
     this.copy = copy;
     this.observe = observe;
-    this.files = new FileTransfer(copy.configuration.fileReads, destination.identity(copy.to), copy.writer(source));
+    this.#source = source;
+    this.files = new FileTransfer(copy.configuration.fileReads, destination.location(copy.to), copy.writer(source));
   }
   get stream() {
     return this.copy.from;
+  }
+  // What did not load, of the kind the source says the error is.
+  recordFailure(partition, error) {
+    this.failures.push({
+      partition,
+      error,
+      failureType: this.#source.failureType(error)
+    });
   }
   outcome() {
     return {
@@ -1084,7 +1100,7 @@ async function replicate(source, destination, checkpoints, copies, observe, sign
       bindings.set(copy.id, {
         copy: {
           source: source.identity,
-          target: destination.identity(copy.to),
+          target: destination.location(copy.to),
           selection: selection(copy.configuration)
         },
         shape: shape(copy.from)
@@ -1179,10 +1195,7 @@ async function transfer(source, destination, run, replications, signal) {
               replication.pending.count = 0;
               replication.pending.deleted = 0;
               replication.failed = true;
-              replication.failures.push({
-                partition: message2.partition,
-                error: message2.error
-              });
+              replication.recordFailure(message2.partition, message2.error);
               await replication.files.reconcile(started(replication).values);
               replication.report();
             } else {
@@ -1298,20 +1311,20 @@ async function commit(replication) {
   replication.report();
 }
 function fail(replication, error) {
-  replication.failures.push({ partition: null, error });
+  replication.recordFailure(null, error);
   replication.broken = true;
   replication.ended = true;
   replication.settle();
 }
 async function breakStage(replication, error) {
-  replication.failures.push({ partition: null, error });
+  replication.recordFailure(null, error);
   replication.broken = true;
   const { stage } = replication;
   replication.stage = void 0;
   try {
     await stage?.[Symbol.asyncDispose]();
   } catch (cause) {
-    replication.failures.push({ partition: null, error: cause });
+    replication.recordFailure(null, cause);
   }
 }
 function validStream(message2) {
@@ -1541,7 +1554,7 @@ var Pipeline = class {
     try {
       outcomes = await replicate(connection.source, connection.destination, connection.checkpoints, steps, record?.progress?.bind(record), signal);
     } catch (error) {
-      await record?.fail(error);
+      await record?.fail(error, connection.source.failureType(error));
       throw error;
     }
     await record?.finish(outcomes);
@@ -1554,7 +1567,7 @@ var Pipeline = class {
       copy,
       coverage: connection.source.coverage(copy.from)
     })));
-    await record.fail(error);
+    await record.fail(error, connection.source.failureType(error));
   }
   // Every declaration is checked before any connection reads, so a wiring
   // mistake stops the whole pipeline; the connection it belongs to records it.
@@ -2011,6 +2024,12 @@ function passStatus(outcomes) {
     return "succeeded";
   return outcomes.some((outcome) => copyStatus(outcome) !== "failed") ? "partial" : "failed";
 }
+function passFailureType(outcomes) {
+  const status = passStatus(outcomes);
+  if (status === "succeeded" || status === "cancelled")
+    return null;
+  return outcomes.some(({ failures }) => failures.some(({ failureType }) => failureType === "config")) ? "config" : "system";
+}
 function passError(outcomes) {
   const incomplete = outcomes.filter(({ failures }) => failures.length > 0);
   if (incomplete.length === 0)
@@ -2026,7 +2045,8 @@ var attempt = {
   started_at: "Database time when the attempt and its declared coverage were recorded, before the pass read anything. Not a source record modification or row load time.",
   completed_at: "Database time when the pass outcomes were recorded. NULL means no completion was recorded; this is not evidence that a process is alive.",
   status: "running: no completion recorded; succeeded: all selected copies completed, including empty or unchanged reads; partial: failures with some successful copies or committed writes/deletes; failed: failures without that progress; cancelled: the run was stopped on request, and error says why; what it committed before stays. No watcher health is implied.",
-  error: "Pipeline error message, or NULL after success or before completion. Per-copy failures and partitions are in extraction_coverage."
+  error: "Pipeline error message, or NULL after success or before completion. Per-copy failures and partitions are in extraction_coverage.",
+  failure_type: "Whose the failure is to fix, as the source classified it: config when at least one failure needs the user to change what they set up or granted, such as macOS access to the app's store; system for every other failure, which the user cannot fix by granting or configuring. NULL after success, before completion, or when cancelled."
 };
 var syncHistoryRelations = {
   sync_attempts: {
@@ -2054,7 +2074,7 @@ var syncHistoryRelations = {
       status: "running: no outcome recorded; succeeded: copy completed with no failures, even with zero changes; partial: failures after committed writes/deletes; failed: failures without committed row changes, or an error without outcomes; cancelled: the run was stopped on request before this copy ended, keeping what it committed. Consult failures for affected partitions.",
       written_count: "Accepted record operations committed by this copy during this pass, including deduplication no-ops. Not changed-row or total-record counts. Zero is valid after success. NULL means no counts were reported.",
       deleted_count: "Accepted deletion operations committed by this copy during this pass, including already-absent keys. Not a count of rows actually removed. NULL means no counts were reported.",
-      failures: "Array of {partition, error} from pass outcomes. A null partition denotes a whole-stream or non-partition-specific failure. Empty array means none recorded; check status before assuming success."
+      failures: "Array of {partition, error, failure_type} from pass outcomes. A null partition denotes a whole-stream or non-partition-specific failure; failure_type is config or system, as in sync_attempts. Empty array means none recorded; check status before assuming success."
     }
   },
   sync_status: {
@@ -2067,6 +2087,7 @@ var syncHistoryRelations = {
       completed_at: attempt.completed_at,
       status: attempt.status,
       error: attempt.error,
+      failure_type: attempt.failure_type,
       last_successful_attempt_id: "Most recently completed all-copies-successful attempt; NULL if none. Its coverage may differ from the latest attempt.",
       last_successful_sync_at: "Completion time of that successful pass, advanced even if no rows changed. NULL if no successful pass was recorded. Never inferred from loaded_at or record modification dates."
     }
@@ -2249,6 +2270,7 @@ export {
   SyncHistory,
   copyStatus,
   passStatus,
+  passFailureType,
   passError,
   syncHistoryRelations,
   LocalFiles

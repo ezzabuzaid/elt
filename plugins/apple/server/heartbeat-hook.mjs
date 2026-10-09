@@ -6,8 +6,8 @@ import {
 } from "./chunks/chunk-MBMOQFVV.mjs";
 import {
   readSQLite
-} from "./chunks/chunk-XITEZF4E.mjs";
-import "./chunks/chunk-L4HYJU4U.mjs";
+} from "./chunks/chunk-BXQKRPES.mjs";
+import "./chunks/chunk-G7SZ2AFI.mjs";
 import {
   __callDispose,
   __using
@@ -34,11 +34,12 @@ var AppleImports = class {
       if (!existsSync(this.#settings)) return [];
       const settings = __using(_stack, readSQLite(this.#settings));
       return settings.prepare(
-        "SELECT connector, database, connection_error, permissions FROM selected_connectors"
+        "SELECT connector, database, connection_error, connection_failure_type, permissions FROM selected_connectors"
       ).all().map((row) => ({
         connector: String(row.connector),
         database: String(row.database),
         connectionError: row.connection_error === null ? null : String(row.connection_error),
+        connectionFailureType: row.connection_failure_type === null ? null : String(row.connection_failure_type),
         permissions: String(row.permissions)
       }));
     } catch (_) {
@@ -59,21 +60,36 @@ var AppleImports = class {
   // failed or loaded only in part.
   problems() {
     return this.#selected().flatMap(
-      ({ connector, database, connectionError, permissions }) => {
-        const problem = connectionError ?? passProblem(database);
-        return problem === null ? [] : [{ connector, problem, permissions }];
+      ({
+        connector,
+        database,
+        connectionError,
+        connectionFailureType,
+        permissions
+      }) => {
+        const failure = connectionError === null ? passFailure(database) : { problem: connectionError, failureType: connectionFailureType };
+        return failure === null ? [] : [
+          {
+            connector,
+            problem: failure.problem,
+            permissions: failure.failureType === "config" ? permissions : null
+          }
+        ];
       }
     );
   }
 };
-function passProblem(database) {
+function passFailure(database) {
   var _stack = [];
   try {
     if (!existsSync(database)) return null;
     const reader = __using(_stack, readSQLite(database));
-    const latest = reader.prepare("SELECT status, error FROM sync_status").get();
+    const latest = reader.prepare("SELECT status, error, failure_type FROM sync_status").get();
     if (latest?.status !== "failed" && latest?.status !== "partial") return null;
-    return `${String(latest.status)}: ${String(latest.error)}`;
+    return {
+      problem: `${String(latest.status)}: ${String(latest.error)}`,
+      failureType: String(latest.failure_type)
+    };
   } catch (_) {
     var _error = _, _hasError = true;
   } finally {

@@ -1,8 +1,9 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
   CalendarStore,
+  CalendarUnavailableError,
   IcsExportUnavailableError
-} from "../../chunks/chunk-TWJG64VL.mjs";
+} from "../../chunks/chunk-3ZK2RNVB.mjs";
 import {
   accounts,
   collections,
@@ -13,8 +14,8 @@ import {
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-7E5EMV4V.mjs";
-import "../../chunks/chunk-XITEZF4E.mjs";
+} from "../../chunks/chunk-ZVP2EZLL.mjs";
+import "../../chunks/chunk-BXQKRPES.mjs";
 import {
   Catalog,
   Source,
@@ -22,7 +23,7 @@ import {
   diffSnapshot,
   isTimestamp,
   validateRecords
-} from "../../chunks/chunk-L4HYJU4U.mjs";
+} from "../../chunks/chunk-G7SZ2AFI.mjs";
 import {
   __callDispose,
   __using
@@ -194,18 +195,8 @@ var CalendarScan = class {
   get calendars() {
     return this.#contents.calendars;
   }
-  // The store lists an occurrence once for each read window it spans; its
-  // first copy is kept.
   get events() {
-    if (this.#events === void 0) {
-      const events = /* @__PURE__ */ new Map();
-      for (const occurrence of this.#contents.occurrences) {
-        const event = identify(occurrence);
-        if (!events.has(event.eventId))
-          events.set(event.eventId, event);
-      }
-      this.#events = [...events.values()];
-    }
+    this.#events ??= this.#contents.occurrences.map(identify);
     return this.#events;
   }
   get rules() {
@@ -239,7 +230,7 @@ function identify(occurrence) {
     occurrenceKey = occurrence.allDay ? occurrence.occurrenceDay ?? null : timestamp(occurrence.occurrenceMs);
   const eventId5 = JSON.stringify([
     occurrence.calendarId,
-    occurrence.calendarItemId,
+    occurrence.seriesItemId ?? occurrence.calendarItemId,
     occurrenceKey
   ]);
   return { eventId: eventId5, recurring, occurrence };
@@ -647,7 +638,7 @@ var properties5 = {
   id: { ...id6, description: "Same value as eventId; the record key." },
   eventId: {
     ...id6,
-    description: "Occurrence identity: JSON [calendarId, calendarItemId, occurrenceKey]. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here."
+    description: "Occurrence identity: JSON [calendarId, series item, occurrenceKey]. The series item is calendarItemId, or for a moved (detached) occurrence, which EventKit gives an item of its own, its series' calendarItemId. occurrenceKey is NULL for a nonrecurring event, occurrenceDate for a recurring all-day event and occurrenceAt for a recurring timed event, so moving an occurrence keeps its identity. An event is recurring when it has recurrence rules or is detached. Related EventKit rows join here."
   },
   calendarId: {
     ...id6,
@@ -655,11 +646,11 @@ var properties5 = {
   },
   calendarItemId: {
     ...id6,
-    description: "EventKit EKCalendarItem.calendarItemIdentifier of the native item; every occurrence of a recurring series shares it. ICS rows relate on (calendarId, calendarItemId). Apple documents that a full sync can replace it."
+    description: "EventKit EKCalendarItem.calendarItemIdentifier of the native item; every occurrence of a recurring series shares it, except a moved (detached) one, which EventKit gives an item of its own. ICS rows relate on (calendarId, calendarItemId). Apple documents that a full sync can replace it."
   },
   externalId: {
     ...nullableText3,
-    description: "EventKit EKCalendarItem.calendarItemExternalIdentifier, the server-provided identifier shared by every occurrence of a series; NULL when EventKit has none. Apple documents duplicates across calendars (imports, shared or delegated calendars), so it is not unique."
+    description: 'EventKit EKCalendarItem.calendarItemExternalIdentifier, the series iCalendar UID shared by every occurrence of a series, without the "/RID=" suffix EventKit adds for a moved occurrence; NULL when EventKit has none. Apple documents duplicates across calendars (imports, shared or delegated calendars), so it is not unique.'
   },
   nativeEventId: {
     ...nullableText3,
@@ -1259,6 +1250,9 @@ var AppleCalendarSource = class extends Source {
     this.endAt = endAt;
     this.scope = scope;
     Object.freeze(this);
+  }
+  failureType(error) {
+    return error instanceof CalendarUnavailableError ? "config" : "system";
   }
   coverage(stream) {
     if (!readerOf(stream).dated)

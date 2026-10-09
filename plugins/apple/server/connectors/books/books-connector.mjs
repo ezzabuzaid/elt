@@ -16,15 +16,15 @@ import {
 } from "../../chunks/chunk-SDFTRGL6.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-7E5EMV4V.mjs";
-import "../../chunks/chunk-XITEZF4E.mjs";
+} from "../../chunks/chunk-ZVP2EZLL.mjs";
+import "../../chunks/chunk-BXQKRPES.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-L4HYJU4U.mjs";
+} from "../../chunks/chunk-G7SZ2AFI.mjs";
 import {
   __callDispose,
   __using
@@ -2377,6 +2377,9 @@ var AppleBooksSource = class extends Source {
   }
   open(streams) {
     return BooksScan.open(this.#books, new Set(streams.map((stream) => readerOf(stream).store)));
+  }
+  failureType(error) {
+    return error instanceof BooksUnavailableError ? "config" : "system";
   }
   coverage(_stream) {
     return localAppleStoreCoverage;

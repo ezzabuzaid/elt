@@ -256,6 +256,8 @@ var RemindersStore = class extends EventKitStore {
 };
 
 export {
+  CalendarUnavailableError,
+  RemindersUnavailableError,
   IcsExportUnavailableError,
   CalendarStore,
   RemindersStore

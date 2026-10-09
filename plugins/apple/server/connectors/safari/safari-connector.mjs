@@ -22,8 +22,8 @@ import {
 } from "../../chunks/chunk-SDFTRGL6.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-7E5EMV4V.mjs";
-import "../../chunks/chunk-XITEZF4E.mjs";
+} from "../../chunks/chunk-ZVP2EZLL.mjs";
+import "../../chunks/chunk-BXQKRPES.mjs";
 import {
   Catalog,
   Source,
@@ -31,7 +31,7 @@ import {
   diffSnapshot,
   expiredAfter,
   validateRecords
-} from "../../chunks/chunk-L4HYJU4U.mjs";
+} from "../../chunks/chunk-G7SZ2AFI.mjs";
 import {
   __callDispose,
   __using
@@ -2946,6 +2946,9 @@ var AppleSafariSource = class extends Source {
   }
   open(streams) {
     return SafariScan.open(this.#safari, new Set(streams.map((stream) => readerOf(stream).store)), this.scope);
+  }
+  failureType(error) {
+    return error instanceof SafariUnavailableError ? "config" : "system";
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };

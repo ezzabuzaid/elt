@@ -32,12 +32,13 @@ import {
   isCalendarDate,
   isTimestamp,
   passError,
+  passFailureType,
   passStatus,
   readerCatalog,
   reloadMode,
   syncHistoryRelations,
   validateRecords
-} from "../chunks/chunk-L4HYJU4U.mjs";
+} from "../chunks/chunk-G7SZ2AFI.mjs";
 import "../chunks/chunk-ZGXE7NZW.mjs";
 export {
   Catalog,
@@ -72,6 +73,7 @@ export {
   isCalendarDate,
   isTimestamp,
   passError,
+  passFailureType,
   passStatus,
   readerCatalog,
   reloadMode,

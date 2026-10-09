@@ -15,11 +15,12 @@ import {
   isCalendarDate,
   isTimestamp,
   passError,
+  passFailureType,
   passStatus,
   readerCatalog,
   reloadMode,
   syncHistoryRelations
-} from "./chunk-L4HYJU4U.mjs";
+} from "./chunk-G7SZ2AFI.mjs";
 import {
   __callDispose,
   __using
@@ -2199,9 +2200,6 @@ var SQLiteDestination = class extends Destination {
     this.path = path === ":memory:" ? path : resolve3(path);
     Object.freeze(this);
   }
-  identity(target) {
-    return JSON.stringify({ type: "sqlite", path: this.path, target });
-  }
   location(target) {
     return `${this.path}#${target.location}`;
   }
@@ -2306,7 +2304,7 @@ var SQLitePasses = class {
         const recorded2 = passState(status2);
         return recorded2 === "running" && !running ? "interrupted" : recorded2;
       };
-      const latest = data.prepare("SELECT status, started_at, completed_at, error, last_successful_sync_at FROM sync_status").get();
+      const latest = data.prepare("SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at FROM sync_status").get();
       return {
         pass: latest === void 0 ? null : recorded(latest, state(latest.status)),
         streams: data.prepare("SELECT stream, status, last_successful_sync_at FROM stream_status ORDER BY stream").all().map((row) => ({
@@ -2330,21 +2328,46 @@ function recorded(row, state) {
   switch (state) {
     case "running":
     case "interrupted":
-      return { ...started, state, completedAt: null, error: null };
+      return {
+        ...started,
+        state,
+        completedAt: null,
+        error: null,
+        failureType: null
+      };
     case "succeeded":
       return {
         ...started,
         state,
         completedAt: String(row.completed_at),
-        error: null
+        error: null,
+        failureType: null
+      };
+    case "cancelled":
+      return {
+        ...started,
+        state,
+        completedAt: String(row.completed_at),
+        error: String(row.error),
+        failureType: null
       };
     default:
       return {
         ...started,
         state,
         completedAt: String(row.completed_at),
-        error: String(row.error)
+        error: String(row.error),
+        failureType: failureType(row.failure_type)
       };
+  }
+}
+function failureType(value) {
+  switch (value) {
+    case "config":
+    case "system":
+      return value;
+    default:
+      throw new TypeError(`Unknown failure type ${String(value)}`);
   }
 }
 function passState(status2) {
@@ -2378,7 +2401,9 @@ var syncHistoryTables = [
     "id" INTEGER PRIMARY KEY,
     "connector" TEXT NOT NULL CHECK (trim("connector") <> ''), "source" TEXT NOT NULL,
     "started_at" TEXT NOT NULL, "completed_at" TEXT, ${status}, "error" TEXT,
-    CHECK (("status" = 'running') = ("completed_at" IS NULL))
+    "failure_type" TEXT CHECK ("failure_type" IN ('config', 'system')),
+    CHECK (("status" = 'running') = ("completed_at" IS NULL)),
+    CHECK (("status" IN ('partial', 'failed')) = ("failure_type" IS NOT NULL))
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS "_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
   `CREATE TABLE IF NOT EXISTS ${coverage} (
@@ -2394,7 +2419,7 @@ var syncHistoryTables = [
   ) STRICT`
 ];
 var queries = {
-  sync_attempts: `SELECT "id" AS "attempt_id", "connector", "source", "started_at", "completed_at", "status", "error" FROM ${attempts}`,
+  sync_attempts: `SELECT "id" AS "attempt_id", "connector", "source", "started_at", "completed_at", "status", "error", "failure_type" FROM ${attempts}`,
   extraction_coverage: `SELECT c."attempt_id", a."connector", a."source", a."started_at", a."completed_at",
       c."stream", c."target_schema", c."target_table",
       EXISTS (SELECT 1 FROM sqlite_schema t WHERE t."type" = 'table' AND lower(t."name") = lower(c."target_table")) AS "target_exists",
@@ -2407,7 +2432,7 @@ var queries = {
       ), "latest" AS (
         SELECT *, row_number() OVER (PARTITION BY "connector" ORDER BY "id" DESC) AS "rank" FROM ${attempts}
       )
-      SELECT a."connector", a."id" AS "latest_attempt_id", a."started_at", a."completed_at", a."status", a."error",
+      SELECT a."connector", a."id" AS "latest_attempt_id", a."started_at", a."completed_at", a."status", a."error", a."failure_type",
         s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
       FROM "latest" a LEFT JOIN "success" s ON s."connector" = a."connector" AND s."rank" = 1
       WHERE a."rank" = 1 ORDER BY a."connector"`,
@@ -2454,9 +2479,15 @@ var SQLiteSyncHistory = class extends SyncHistory {
     });
     return {
       finish: async (outcomes) => this.#finish(path, id, outcomes),
-      fail: async (error) => write(path, (database) => {
-        database.prepare(`UPDATE ${coverage} SET "status" = 'failed', "failures" = ? WHERE "attempt_id" = ?`).run(JSON.stringify([{ partition: null, error: message(error) }]), id);
-        database.prepare(`UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ? WHERE "id" = ?`).run(message(error), id);
+      fail: async (error, failureType2) => write(path, (database) => {
+        database.prepare(`UPDATE ${coverage} SET "status" = 'failed', "failures" = ? WHERE "attempt_id" = ?`).run(JSON.stringify([
+          {
+            partition: null,
+            error: message(error),
+            failure_type: failureType2
+          }
+        ]), id);
+        database.prepare(`UPDATE ${attempts} SET "status" = 'failed', "completed_at" = ${now}, "error" = ?, "failure_type" = ? WHERE "id" = ?`).run(message(error), failureType2, id);
       })
     };
   }
@@ -2479,11 +2510,12 @@ var SQLiteSyncHistory = class extends SyncHistory {
     write(path, (database) => {
       const record = database.prepare(`UPDATE ${coverage} SET "status" = ?, "written_count" = ?, "deleted_count" = ?, "failures" = ? WHERE "attempt_id" = ? AND "stream" = ?`);
       for (const outcome of outcomes)
-        record.run(copyStatus(outcome), outcome.count, outcome.deleted, JSON.stringify(outcome.failures.map(({ partition, error }) => ({
+        record.run(copyStatus(outcome), outcome.count, outcome.deleted, JSON.stringify(outcome.failures.map(({ partition, error, failureType: failureType2 }) => ({
           partition,
-          error: message(error)
+          error: message(error),
+          failure_type: failureType2
         }))), id, outcome.copy.from.name);
-      database.prepare(`UPDATE ${attempts} SET "completed_at" = ${now}, "status" = ?, "error" = ? WHERE "id" = ?`).run(passStatus(outcomes), passError(outcomes), id);
+      database.prepare(`UPDATE ${attempts} SET "completed_at" = ${now}, "status" = ?, "error" = ?, "failure_type" = ? WHERE "id" = ?`).run(passStatus(outcomes), passError(outcomes), passFailureType(outcomes), id);
     });
   }
 };

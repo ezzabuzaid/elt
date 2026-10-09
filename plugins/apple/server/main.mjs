@@ -39,12 +39,12 @@ import {
   AppleConnector,
   NewerLayoutError,
   Settings
-} from "./chunks/chunk-7E5EMV4V.mjs";
+} from "./chunks/chunk-ZVP2EZLL.mjs";
 import {
   SQLitePasses,
   SQLiteSyncHistory
-} from "./chunks/chunk-XITEZF4E.mjs";
-import "./chunks/chunk-L4HYJU4U.mjs";
+} from "./chunks/chunk-BXQKRPES.mjs";
+import "./chunks/chunk-G7SZ2AFI.mjs";
 import {
   __callDispose,
   __commonJS,
@@ -17100,7 +17100,8 @@ var ApplePlugin = class {
               startedAt: failure.failedAt,
               completedAt: failure.failedAt,
               lastSucceededAt: pass?.lastSucceededAt ?? null,
-              error: failure.error
+              error: failure.error,
+              failureType: failure.failureType
             };
             return {
               ...item,
@@ -17179,6 +17180,14 @@ function unchanged(name, stored, requested) {
 
 // apps/apple/plugin/src/chat-status.ts
 import { relative } from "node:path";
+
+// apps/apple/plugin/src/pass-failure.ts
+var passFailure = ({
+  error,
+  failureType
+}, permissions) => failureType === "config" ? `${error} ${permissions}` : error;
+
+// apps/apple/plugin/src/chat-status.ts
 var progress = (sync, guidance) => {
   if (sync === null) return "waiting for its first import";
   const since = sync.lastSucceededAt === null ? "no data yet" : `data as of ${sync.lastSucceededAt}`;
@@ -17192,9 +17201,9 @@ var progress = (sync, guidance) => {
     case "cancelled":
       return `its last pass was stopped and resumes when Codex runs the Apple plugin; ${since}`;
     case "partial":
-      return `partly synced at ${sync.completedAt}: ${sync.error} ${guidance}`;
+      return `partly synced at ${sync.completedAt}: ${passFailure(sync, guidance)}`;
     case "failed":
-      return `last sync failed at ${sync.completedAt}: ${sync.error} ${guidance}; ${since}`;
+      return `last sync failed at ${sync.completedAt}: ${passFailure(sync, guidance)}; ${since}`;
   }
 };
 var readiness = (sync) => {
@@ -17282,7 +17291,8 @@ async function importPending(plugin2) {
           } catch (error) {
             settings.saveConnectionFailure(
               item,
-              error instanceof Error ? error.message : String(error)
+              error instanceof Error ? error.message : String(error),
+              "system"
             );
             return;
           }
@@ -17324,9 +17334,9 @@ function describe2(plugin2, item, now) {
     case "succeeded":
       return `Synced ${ago(sync.completedAt, now)} \xB7 ${plugin2.connectors.find(({ name }) => name === item.connector)?.describe(item.scope) ?? "its saved selection"}.`;
     case "partial":
-      return `Partly synced ${ago(sync.completedAt, now)}: ${sync.error} ${permissions}`;
+      return `Partly synced ${ago(sync.completedAt, now)}: ${passFailure(sync, permissions)}`;
     case "failed":
-      return `Last sync failed: ${sync.error} ${permissions}`;
+      return `Last sync failed: ${passFailure(sync, permissions)}`;
   }
 }
 async function settingsRead(plugin2, now = /* @__PURE__ */ new Date()) {
@@ -17450,6 +17460,7 @@ async function setUpWithForms(plugin2, ask) {
   );
   const unavailable = [];
   for (const connector of chosen) {
+    const loaded = plugin2.connector(connector);
     try {
       if (blocked.includes(connector))
         throw new Error("ChatGPT does not have Full Disk Access.");
@@ -17465,7 +17476,7 @@ async function setUpWithForms(plugin2, ask) {
       unavailable.push({
         connector,
         error: error instanceof Error ? error.message : String(error),
-        permissions: plugin2.connector(connector).guidance()
+        permissions: blocked.includes(connector) || loaded.failureType(error) === "config" ? loaded.guidance() : null
       });
       const kept = previous.get(connector);
       if (kept !== void 0) configuration.push(kept);

@@ -23,15 +23,15 @@ import {
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-7E5EMV4V.mjs";
-import "../../chunks/chunk-XITEZF4E.mjs";
+} from "../../chunks/chunk-ZVP2EZLL.mjs";
+import "../../chunks/chunk-BXQKRPES.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-L4HYJU4U.mjs";
+} from "../../chunks/chunk-G7SZ2AFI.mjs";
 import {
   __callDispose,
   __using
@@ -1056,6 +1056,9 @@ var AppleNotesSource = class extends Source {
   }
   async open() {
     return new NotesScan(this.#store.open(), this.scope);
+  }
+  failureType(error) {
+    return error instanceof NotesUnavailableError ? "config" : "system";
   }
   coverage(_stream) {
     return { ...localAppleStoreCoverage, selection: this.scope };

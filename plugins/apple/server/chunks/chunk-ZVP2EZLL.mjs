@@ -6,7 +6,7 @@ import {
   SQLitePasses,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunk-XITEZF4E.mjs";
+} from "./chunk-BXQKRPES.mjs";
 import {
   Connection,
   Copy,
@@ -15,7 +15,7 @@ import {
   Pipeline,
   PipelineError,
   StreamStatus
-} from "./chunk-L4HYJU4U.mjs";
+} from "./chunk-G7SZ2AFI.mjs";
 import {
   __callDispose,
   __using
@@ -62,7 +62,7 @@ function selectionProblems(selections, facts) {
 // packages/settings/dist/store-layout.js
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-var storeLayout = 4;
+var storeLayout = 7;
 var NewerLayoutError = class extends Error {
   constructor() {
     super("A newer version wrote this store; use that version.");
@@ -95,11 +95,12 @@ var selectedConnectors = {
     include_attachments: "1 when attachment bytes are copied beside the records, 0 for metadata only.",
     database: "Path of the SQLite file the import loads. It may not exist yet while the first import starts.",
     connection_error: "Why the import could not start, such as missing macOS access; NULL when it started. A connector with an error is inaccessible, not empty.",
+    connection_failure_type: "config when the user can fix connection_error by giving access or changing what they set up, and permissions says how; system for any other reason; NULL when the import started.",
     connection_failed_at: "When the import last failed to start, as an ISO 8601 UTC timestamp; NULL when it started.",
     permissions: "What the user can do in macOS to give access to this app."
   },
   query: `SELECT s."connector", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",
-      f."error" AS "connection_error", f."failed_at" AS "connection_failed_at", s."permissions"
+      f."error" AS "connection_error", f."failure_type" AS "connection_failure_type", f."failed_at" AS "connection_failed_at", s."permissions"
     FROM "selections" s LEFT JOIN "connection_failures" f ON f."directory" = s."directory"
     ORDER BY s."position"`
 };
@@ -116,7 +117,7 @@ var Settings = class {
       chmodSync(path, 384);
       if (this.layout() !== storeLayout)
         this.rebuild();
-      this.settings.exec("CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failed_at TEXT NOT NULL);");
+      this.settings.exec(`CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failure_type TEXT NOT NULL CHECK (failure_type IN ('config', 'system')), failed_at TEXT NOT NULL);`);
     } catch (error) {
       this.settings.close();
       throw error;
@@ -236,11 +237,15 @@ var Settings = class {
     return join2(this.directory(selection), "data.sqlite");
   }
   connectionFailure(selection) {
-    const row = this.settings.prepare("SELECT error, failed_at FROM connection_failures WHERE directory=?").get(this.directory(selection));
-    return row === void 0 ? void 0 : { error: String(row.error), failedAt: String(row.failed_at) };
+    const row = this.settings.prepare("SELECT error, failure_type, failed_at FROM connection_failures WHERE directory=?").get(this.directory(selection));
+    return row === void 0 ? void 0 : {
+      error: String(row.error),
+      failedAt: String(row.failed_at),
+      failureType: row.failure_type === "config" ? "config" : "system"
+    };
   }
-  saveConnectionFailure(selection, error) {
-    this.settings.prepare("INSERT INTO connection_failures VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(directory) DO UPDATE SET error=excluded.error, failed_at=excluded.failed_at").run(this.directory(selection), error);
+  saveConnectionFailure(selection, error, failureType) {
+    this.settings.prepare("INSERT INTO connection_failures (directory, error, failure_type, failed_at) VALUES(?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(directory) DO UPDATE SET error=excluded.error, failure_type=excluded.failure_type, failed_at=excluded.failed_at").run(this.directory(selection), error, failureType);
   }
   clearConnectionFailure(selection) {
     this.settings.prepare("DELETE FROM connection_failures WHERE directory=?").run(this.directory(selection));
@@ -300,9 +305,16 @@ var AppleConnector = class {
       this.access(grantee)
     ].join(" ");
   }
-  // What failed, and what macOS access the app needs, for the user to act on.
-  failure(error) {
-    return `${error instanceof Error ? error.message : String(error)} \u2014 ${this.guidance()}`;
+  // Whose an error is to fix, as this connector's source classifies it.
+  failureType(error) {
+    return this.source(this.defaultScope()).failureType(error);
+  }
+  // What failed, and, when it is the user's to fix, what macOS access the app
+  // needs. A failure the history or settings kept passes the type they
+  // stored; null, for a stopped pass, has nothing for the user to fix.
+  failure(error, failureType = this.failureType(error)) {
+    const message = error instanceof Error ? error.message : String(error);
+    return failureType === "config" ? `${message} \u2014 ${this.guidance()}` : message;
   }
   // What a selection of this connector covers, in a person's words.
   describe(scope) {
@@ -315,11 +327,9 @@ var AppleConnector = class {
           `${count} ${count === 1 ? title.replace(/(x)es$|s$/, "$1") : title}`
         ];
       }),
-      ...scope.startAt ? [`from ${scope.startAt.slice(0, 10)}`] : [],
+      ...scope.startAt ? [`from ${localDay(Date.parse(scope.startAt))}`] : [],
       // endAt is exclusive: the last day covered is the one before it.
-      ...scope.endAt ? [
-        `until ${new Date(Date.parse(scope.endAt) - 1).toISOString().slice(0, 10)}`
-      ] : []
+      ...scope.endAt ? [`until ${localDay(Date.parse(scope.endAt) - 1)}`] : []
     ];
     return parts.length === 0 ? "everything" : parts.join(", ");
   }
@@ -383,7 +393,7 @@ var AppleConnector = class {
           try {
             built = await this.connection(settings.directory(selection), selection);
           } catch (error) {
-            settings.saveConnectionFailure(selection, error instanceof Error ? error.message : String(error));
+            settings.saveConnectionFailure(selection, error instanceof Error ? error.message : String(error), this.failureType(error));
             return { status: "unconnected", error };
           }
           settings.clearConnectionFailure(selection);
@@ -442,6 +452,11 @@ var AppleConnector = class {
     return { connection, destination };
   }
 };
+function localDay(epochMilliseconds) {
+  const instant = new Date(epochMilliseconds);
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${instant.getFullYear()}-${pad(instant.getMonth() + 1)}-${pad(instant.getDate())}`;
+}
 
 export {
   NewerLayoutError,

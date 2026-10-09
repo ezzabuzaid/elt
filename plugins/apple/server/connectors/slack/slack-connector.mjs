@@ -9,15 +9,15 @@ import {
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-7E5EMV4V.mjs";
-import "../../chunks/chunk-XITEZF4E.mjs";
+} from "../../chunks/chunk-ZVP2EZLL.mjs";
+import "../../chunks/chunk-BXQKRPES.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-L4HYJU4U.mjs";
+} from "../../chunks/chunk-G7SZ2AFI.mjs";
 import {
   __commonJS,
   __toESM
@@ -3312,6 +3312,9 @@ var SlackDesktopSource = class extends Source {
       this.#store.downloads()
     ]);
     return new SlackDesktopScan(clients, downloads, this.scope);
+  }
+  failureType(error) {
+    return error instanceof SlackDesktopUnavailableError ? "config" : "system";
   }
   coverage(_stream) {
     return {
