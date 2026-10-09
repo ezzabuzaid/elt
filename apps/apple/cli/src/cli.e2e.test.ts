@@ -1213,6 +1213,43 @@ test('status reports a pass a killed sync left running, and each stream in it, a
   );
 });
 
+test('Ctrl-C stops a sync at once while a connector waits on a read, and status shows its pass as interrupted', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+  // A pipe no one writes to: the Photos read waits on it in a thread of
+  // Node's pool, which an exit that waits for that pool never gets past.
+  const pictures = join(mac.path, 'Pictures/photos.json');
+  await rm(pictures);
+  spawnSync('/usr/bin/mkfifo', [pictures]);
+  cli(mac.path, 'setup', '--connector', 'photos');
+  const sync = started(mac.path, 'sync', '--json');
+  try {
+    const deadline = Date.now() + 60_000;
+    while (
+      JSON.parse(cli(mac.path, 'status', '--json').stdout)[0]?.state !==
+      'running'
+    ) {
+      if (Date.now() > deadline)
+        assert.fail('the sync did not start its pass within a minute');
+      await sleep(100);
+    }
+
+    sync.child.kill('SIGINT');
+    const ended = await Promise.race([
+      sync.exited,
+      sleep(10_000).then(() => null),
+    ]);
+
+    assert.notEqual(ended, null, 'the sync still ran 10 s after SIGINT');
+    assert.equal(sync.child.signalCode, 'SIGINT');
+  } finally {
+    sync.child.kill('SIGKILL');
+    await sync.exited;
+  }
+  const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
+  assert.equal(photos.state, 'interrupted');
+});
+
 test('a setup that removes a connector stops the sync importing it, whose import is then gone, while the rest loads', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
