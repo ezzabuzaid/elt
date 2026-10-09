@@ -24,6 +24,7 @@ import { ChannelMembersStream } from './streams/channel-members-stream.ts';
 import { ChannelSectionChannelsStream } from './streams/channel-section-channels-stream.ts';
 import { ChannelSectionsStream } from './streams/channel-sections-stream.ts';
 import { ChannelsStream } from './streams/channels-stream.ts';
+import { DownloadsStream } from './streams/downloads-stream.ts';
 import { FileSharesStream } from './streams/file-shares-stream.ts';
 import { FilesStream } from './streams/files-stream.ts';
 import { ListRecordsStream } from './streams/list-records-stream.ts';
@@ -32,9 +33,11 @@ import { MessageAttachmentsStream } from './streams/message-attachments-stream.t
 import { MessageFilesStream } from './streams/message-files-stream.ts';
 import { MessageReactionsStream } from './streams/message-reactions-stream.ts';
 import { MessagesStream } from './streams/messages-stream.ts';
+import { PinsStream } from './streams/pins-stream.ts';
 import { PreferencesStream } from './streams/preferences-stream.ts';
 import { ThreadRepliesStream } from './streams/thread-replies-stream.ts';
 import { ThreadSubscriptionsStream } from './streams/thread-subscriptions-stream.ts';
+import { UserGroupMembershipsStream } from './streams/user-group-memberships-stream.ts';
 import { WorkspacesStream } from './streams/workspaces-stream.ts';
 
 const readers = {
@@ -49,6 +52,7 @@ const readers = {
   messageAttachments: new MessageAttachmentsStream(),
   messageReactions: new MessageReactionsStream(),
   messageFiles: new MessageFilesStream(),
+  pins: new PinsStream(),
   files: new FilesStream(),
   fileShares: new FileSharesStream(),
   listRecords: new ListRecordsStream(),
@@ -56,6 +60,8 @@ const readers = {
   channelSectionChannels: new ChannelSectionChannelsStream(),
   threadSubscriptions: new ThreadSubscriptionsStream(),
   preferences: new PreferencesStream(),
+  userGroupMemberships: new UserGroupMembershipsStream(),
+  downloads: new DownloadsStream(),
 } satisfies Record<string, SlackDesktopReader>;
 const catalog = new Catalog(
   Object.values(readers).map((reader) => reader.describe()),
@@ -82,6 +88,7 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
   readonly messageAttachments = readers.messageAttachments.describe();
   readonly messageReactions = readers.messageReactions.describe();
   readonly messageFiles = readers.messageFiles.describe();
+  readonly pins = readers.pins.describe();
   readonly files = readers.files.describe();
   readonly fileShares = readers.fileShares.describe();
   readonly listRecords = readers.listRecords.describe();
@@ -89,6 +96,8 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
   readonly channelSectionChannels = readers.channelSectionChannels.describe();
   readonly threadSubscriptions = readers.threadSubscriptions.describe();
   readonly preferences = readers.preferences.describe();
+  readonly userGroupMemberships = readers.userGroupMemberships.describe();
+  readonly downloads = readers.downloads.describe();
 
   readonly directory: string;
   readonly scope: ImportScope;
@@ -104,13 +113,17 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
   }
 
   protected override async open(): Promise<SlackDesktopScan> {
-    return new SlackDesktopScan(await this.#store.clients(), this.scope);
+    const [clients, downloads] = await Promise.allSettled([
+      this.#store.clients(),
+      this.#store.downloads(),
+    ]);
+    return new SlackDesktopScan(clients, downloads, this.scope);
   }
 
   override coverage(_stream: Stream): ExtractionCoverage {
     return {
       description:
-        'What the Slack app keeps on this Mac for each signed-in workspace: its channels, members and apps, and only the messages the app has loaded. A workspace appears once the app has saved it, every few minutes while it is open and when it quits.',
+        'What the Slack app keeps on this Mac for each signed-in workspace: its channels, members and apps, only the messages the app has loaded, and the files it downloaded. A workspace appears once the app has saved it, every few minutes while it is open and when it quits.',
       selection: this.scope,
     };
   }
@@ -150,16 +163,20 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
     if (reader === undefined)
       throw new Error(`Slack has no stream ${stream.name}`);
     const records = reader.read(scan);
-    if (configuration.syncMode === 'full_refresh')
-      yield* records.map((data) => ({ stream: stream.name, data }));
-    else
-      yield* diffSnapshot(
-        stream,
-        records,
-        state,
-        stream.emitsDeletes
-          ? { covers: ({ key }) => reader.covers(scan, key) }
-          : {},
-      );
+    const messages =
+      configuration.syncMode === 'full_refresh'
+        ? records.map((data) => ({ stream: stream.name, data }))
+        : diffSnapshot(
+            stream,
+            records,
+            state,
+            stream.emitsDeletes
+              ? { covers: ({ key }) => reader.covers(scan, key) }
+              : {},
+          );
+    for await (const message of messages)
+      if ('type' in message || configuration.fileReads.length === 0)
+        yield message;
+      else yield { ...message, file: reader.file(message.data) };
   }
 }

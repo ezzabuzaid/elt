@@ -1,4 +1,8 @@
-import type { SlackClient, SlackMessage } from '@workspace/sdk-slack-desktop';
+import type {
+  SlackClient,
+  SlackDownload,
+  SlackMessage,
+} from '@workspace/sdk-slack-desktop';
 import {
   type ImportScope,
   selected,
@@ -9,23 +13,43 @@ import {
 // it compares with them as text.
 const toMilliseconds = (instant: string) => `${instant.slice(0, 23)}Z`;
 
-// One run's read of the Slack app's store: every stream reads the clients the
-// app had saved when the run opened. The import scope keeps the selected
-// workspaces (accounts), the selected channels (collections) and the messages
-// sent within its dates; members, apps and the like belong to a workspace, not
-// a channel, so a channel selection keeps them.
+// One run's read of the Slack app's store: every stream reads what the app had
+// saved when the run opened. The web client's state and the app's own are
+// separate files, so one that cannot be read fails only the streams that read
+// it. The import scope keeps the selected workspaces (accounts), the selected
+// channels (collections) and the messages sent within its dates; members,
+// apps, downloads and the like belong to a workspace, not a channel, so a
+// channel selection keeps them.
 export class SlackDesktopScan implements AsyncDisposable {
-  readonly clients: readonly SlackClient[];
+  readonly #clients: PromiseSettledResult<readonly SlackClient[]>;
+  readonly #downloads: PromiseSettledResult<readonly SlackDownload[]>;
   readonly #scope: ImportScope;
   readonly #kept: ReadonlyMap<string, SlackClient>;
 
-  constructor(clients: readonly SlackClient[], scope: ImportScope) {
+  constructor(
+    clients: PromiseSettledResult<readonly SlackClient[]>,
+    downloads: PromiseSettledResult<readonly SlackDownload[]>,
+    scope: ImportScope,
+  ) {
+    this.#clients = clients;
+    this.#downloads = downloads;
     this.#scope = scope;
     this.#kept = new Map(
-      clients.map((client) => [client.workspace.id, client]),
+      clients.status === 'fulfilled'
+        ? clients.value.map((client) => [client.workspace.id, client])
+        : [],
     );
-    this.clients = clients.filter(({ workspace }) =>
-      selected(scope.accountIds, workspace.id),
+  }
+
+  get clients(): readonly SlackClient[] {
+    return settled(this.#clients).filter(({ workspace }) =>
+      selected(this.#scope.accountIds, workspace.id),
+    );
+  }
+
+  get downloads(): readonly SlackDownload[] {
+    return settled(this.#downloads).filter(({ workspaceId }) =>
+      selected(this.#scope.accountIds, workspaceId),
     );
   }
 
@@ -44,6 +68,14 @@ export class SlackDesktopScan implements AsyncDisposable {
       typeof ts === 'string' &&
       (this.#kept.get(workspaceId)?.holds(channelId, ts) ?? false)
     );
+  }
+
+  // Whether the app loaded this conversation's whole pin list, so a pin it no
+  // longer lists there was removed.
+  holdsPins(workspaceId: unknown, channelId: unknown): boolean {
+    if (typeof workspaceId !== 'string' || typeof channelId !== 'string')
+      return false;
+    return this.#kept.get(workspaceId)?.holdsPins(channelId) ?? false;
   }
 
   channelSelected(channelId: string): boolean {
@@ -67,4 +99,11 @@ export class SlackDesktopScan implements AsyncDisposable {
 
   // Everything was read when the scan opened; nothing stays open.
   async [Symbol.asyncDispose](): Promise<void> {}
+}
+
+// What a file read returned, or its failure, thrown to each stream that reads
+// it.
+function settled<T>(read: PromiseSettledResult<T>): T {
+  if (read.status === 'rejected') throw read.reason;
+  return read.value;
 }

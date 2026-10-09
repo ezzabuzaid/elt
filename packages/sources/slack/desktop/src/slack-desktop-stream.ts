@@ -16,6 +16,7 @@ export const slackFields = {
   nullableText: { type: ['string', 'null'] },
   nullableBoolean: { type: ['boolean', 'null'] },
   nullableInteger: { type: ['integer', 'null'] },
+  nullableNumber: { type: ['number', 'null'] },
   nullableTimestamp: { type: ['string', 'null'], format: 'date-time' },
   textList: { type: 'array', items: { type: 'string' } },
   // Slack's ts, seconds and microseconds, kept as the text Slack writes.
@@ -33,6 +34,7 @@ export type SlackDesktopReader = {
     scan: SlackDesktopScan,
     key: Readonly<Record<string, KeyValue>>,
   ): boolean;
+  file(record: Record<string, unknown>): string | null;
 };
 
 // A Slack stream: its description, and how its records come out of a run's
@@ -78,6 +80,11 @@ export abstract class SlackDesktopStream<P extends Properties, Row> {
     key: Readonly<Record<string, KeyValue>>,
   ): boolean {
     return scan.keeps(key.workspaceId);
+  }
+
+  // The file a record carries, for streams that support file reads.
+  file(_record: SchemaRecord<P>): string | null {
+    return null;
   }
 
   protected abstract rows(scan: SlackDesktopScan): readonly Row[];

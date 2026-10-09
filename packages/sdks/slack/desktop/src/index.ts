@@ -16,12 +16,15 @@ export type {
   SlackListRecord,
   SlackMember,
   SlackMessage,
+  SlackPin,
   SlackPreference,
   SlackReaction,
   SlackThreadSubscription,
+  SlackUserGroupMembership,
   SlackWorkspace,
 } from './slack-client.ts';
 export {
   SlackDesktopStore,
   slackDesktopDirectory,
 } from './slack-desktop-store.ts';
+export type { SlackDownload } from './slack-downloads.ts';

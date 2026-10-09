@@ -60,6 +60,11 @@ const properties = {
     ...nullableText,
     description: 'The first lines of a text file or snippet.',
   },
+  content: {
+    ...nullableText,
+    description:
+      'A snippet’s whole text, which the app keeps with it; NULL for other files.',
+  },
   lines: { ...nullableInteger, description: 'A text file’s line count.' },
   durationMs: {
     ...nullableInteger,
@@ -128,6 +133,7 @@ export class FilesStream extends SlackDesktopStream<typeof properties, Row> {
         urlPrivate: file.urlPrivate,
         permalink: file.permalink,
         preview: file.preview,
+        content: file.content,
         lines: file.lines,
         durationMs: file.durationMs,
         width: file.width,

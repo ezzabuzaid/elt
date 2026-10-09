@@ -1,4 +1,5 @@
 import { readdirSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +15,7 @@ import {
 } from './errors.ts';
 import { readSlackClient } from './slack-client-record.ts';
 import type { SlackClient } from './slack-client.ts';
+import { type SlackDownload, readSlackDownloads } from './slack-downloads.ts';
 
 // Where the Mac App Store build of Slack keeps its data.
 export const slackDesktopDirectory = join(
@@ -27,6 +29,9 @@ const indexedDB = 'IndexedDB/https_app.slack.com_0.indexeddb.leveldb';
 const reduxDatabase = 'reduxPersistence';
 const reduxStore = 'reduxPersistenceStore';
 const clientRecord = /^persist:slack-client-[A-Z0-9]+-[A-Z0-9]+$/;
+// The app's main process keeps its own state, its downloads among it, apart
+// from the web client's, as JSON it rewrites whole.
+const rootState = 'storage/root-state.json';
 // The app rewrites a record every few minutes into a new blob file and
 // deletes the old one; a read that loses that race reads again.
 const attempts = 3;
@@ -58,19 +63,50 @@ export class SlackDesktopStore {
       );
   }
 
-  // A value that changes whenever the app saves its state.
+  // The files the app downloaded, in every workspace: none until it has
+  // saved its own state.
+  async downloads(): Promise<SlackDownload[]> {
+    const text = await this.#rootState();
+    if (text === null) return [];
+    let state: unknown;
+    try {
+      state = JSON.parse(text);
+    } catch (error) {
+      throw new SlackDesktopFormatError(rootState, 'it is not JSON', error);
+    }
+    return readSlackDownloads(state, rootState);
+  }
+
+  // A value that changes whenever the app saves its state, a client's or its
+  // own.
   version(): string {
     const directory = join(this.#directory, indexedDB);
     try {
-      return readdirSync(directory)
-        .sort()
-        .map((name) => {
-          const { size, mtimeMs } = statSync(join(directory, name));
-          return `${name}:${size}:${mtimeMs}`;
+      return [
+        ...readdirSync(directory)
+          .sort()
+          .map((name) => join(directory, name)),
+        join(this.#directory, rootState),
+      ]
+        .map((path) => {
+          const stats = statSync(path, { throwIfNoEntry: false });
+          return `${path}:${stats?.size}:${stats?.mtimeMs}`;
         })
         .join('\n');
     } catch (error) {
       throw new SlackDesktopUnavailableError(this.#directory, error);
+    }
+  }
+
+  async #rootState(): Promise<string | null> {
+    try {
+      return await readFile(join(this.#directory, rootState), 'utf8');
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === 'ENOENT') return null;
+      if (typeof code === 'string' && unreadable.has(code))
+        throw new SlackDesktopUnavailableError(this.#directory, error);
+      throw error;
     }
   }
 

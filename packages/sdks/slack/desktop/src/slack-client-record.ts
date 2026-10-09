@@ -1,5 +1,6 @@
 import { SlackDesktopFormatError } from './errors.ts';
 import { Fields } from './fields.ts';
+import { milliseconds, seconds } from './instants.ts';
 import type {
   SlackApp,
   SlackAttachment,
@@ -14,9 +15,11 @@ import type {
   SlackListRecord,
   SlackMember,
   SlackMessage,
+  SlackPin,
   SlackPreference,
   SlackReaction,
   SlackThreadSubscription,
+  SlackUserGroupMembership,
 } from './slack-client.ts';
 
 // A client's persisted Redux state, as the app saves it under
@@ -42,6 +45,12 @@ export function readSlackClient(state: unknown, record: string): SlackClient {
       .map(([key]) => [key, reactionLists?.list(key).map(reaction) ?? []]),
   );
   const held = history(root, record);
+  const pinLists = root.object('pins');
+  const pinsLoaded = new Set(
+    (pinLists?.values('loadingStateByChannel') ?? [])
+      .filter(([, state]) => state === 'loaded')
+      .map(([channelId]) => channelId),
+  );
   const existing = (fields: Fields) => fields.boolean('isNonExistent') !== true;
   const messagesByChannel = root.object('messages');
   const channelMessages = root.values('messages').flatMap(([channelId]) =>
@@ -104,10 +113,17 @@ export function readSlackClient(state: unknown, record: string): SlackClient {
       .filter(([, fields]) => existing(fields))
       .map(([id, fields]) => file(id, fields)),
     listRecords: listRecords(root, existing, record),
+    pins: pins(root, pinLists),
     channelSections: sections(root),
     threadSubscriptions: root
       .entries('threadSub')
       .map(([key, fields]) => threadSubscription(key, fields, record)),
+    userGroupMemberships: root
+      .entries('userGroupMembership')
+      .map(([userGroupId, fields]): SlackUserGroupMembership => ({
+        userGroupId,
+        isMember: fields.boolean('isMember'),
+      })),
     preferences: preferences(root, workspaceId),
     holds: (channelId, ts) =>
       gone.has(`${channelId} ${ts}`) ||
@@ -115,21 +131,12 @@ export function readSlackClient(state: unknown, record: string): SlackClient {
         ({ start, end }) =>
           compareTs(ts, start) >= 0 && compareTs(ts, end) <= 0,
       ),
+    holdsPins: (channelId) => pinsLoaded.has(channelId),
   };
 }
 
 function fail(record: string, problem: string): never {
   throw new SlackDesktopFormatError(record, problem);
-}
-
-function seconds(value: number | null): string | null {
-  return value === null || value === 0
-    ? null
-    : new Date(value * 1000).toISOString();
-}
-
-function milliseconds(value: number | null): string | null {
-  return value === null || value === 0 ? null : new Date(value).toISOString();
 }
 
 // Slack's ts, seconds and six digits of microseconds, as an instant that
@@ -298,6 +305,7 @@ function message(
 ): SlackMessage {
   const ts = fields.requiredString('ts');
   const edited = fields.object('edited');
+  const saved = fields.object('saved');
   const reactionKey = fields.string('_rxn_key');
   return {
     channelId,
@@ -317,6 +325,9 @@ function message(
     clientMessageId: fields.string('client_msg_id'),
     isLocked: fields.boolean('is_locked'),
     isBeyondPlanLimit: fields.boolean('is_beyond_free_limit'),
+    savedState: saved?.string('state') ?? null,
+    savedTodoState: saved?.string('todo_state') ?? null,
+    isSavedArchived: saved?.boolean('is_archived') ?? null,
     blocksJson: fields.json('blocks'),
     attachments: fields.list('attachments').map(attachment),
     reactions: reactionKey === null ? [] : (reactions.get(reactionKey) ?? []),
@@ -347,6 +358,7 @@ function file(id: string, fields: Fields): SlackFile {
     urlPrivate: fields.string('url_private'),
     permalink: fields.string('permalink'),
     preview: fields.string('preview'),
+    content: fields.string('content'),
     lines: fields.number('lines'),
     durationMs: fields.number('duration_ms'),
     width: fields.number('original_w'),
@@ -401,6 +413,38 @@ function secondsText(value: string | null, record: string): string | null {
   if (value === null) return null;
   if (!/^\d+$/.test(value)) fail(record, `${value} is not a count of seconds`);
   return seconds(Number(value));
+}
+
+// The messages pinned in each conversation. Who pinned one and when come from
+// the conversation's pin list when the client loaded it with the pinned
+// message, else from the pinned message the client holds.
+function pins(root: Fields, pinLists: Fields | null): SlackPin[] {
+  const byChannel = pinLists?.object('pinsByChannel');
+  const channels = root.object('channels');
+  const messages = root.object('messages');
+  return (pinLists?.values('pinsByChannel') ?? []).flatMap(([channelId]) => {
+    const items = channels?.object(channelId)?.list('pinned_items') ?? [];
+    return (byChannel?.list(channelId) ?? []).map((pin) => {
+      const ts = pin.requiredString('ts');
+      const item = items.find(
+        (candidate) => candidate.object('message')?.string('ts') === ts,
+      );
+      const info = messages
+        ?.object(channelId)
+        ?.object(ts)
+        ?.object('pinned_info');
+      return {
+        channelId,
+        ts,
+        type: pin.requiredString('type'),
+        pinnedBy:
+          item?.string('created_by') ?? info?.string('pinned_by') ?? null,
+        pinnedAt: seconds(
+          item?.number('created') ?? info?.number('pinned_ts') ?? null,
+        ),
+      };
+    });
+  });
 }
 
 // The ranges of each channel's history the client holds, as slices whose

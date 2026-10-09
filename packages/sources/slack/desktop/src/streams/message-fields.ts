@@ -74,6 +74,21 @@ export const messageProperties = {
     description:
       'Whether the workspace’s plan hides it, past the free plan’s history limit.',
   },
+  savedState: {
+    ...nullableText,
+    description:
+      'For a message the user saved for later, its state in their Later list, such as in_progress; NULL when not saved.',
+  },
+  savedTodoState: {
+    ...nullableText,
+    description:
+      'For a message saved for later, Slack’s to-do state for it, such as saved.',
+  },
+  isSavedArchived: {
+    ...nullableBoolean,
+    description:
+      'For a message saved for later, whether the user archived it in their Later list.',
+  },
   blocks: {
     ...nullableText,
     description:
@@ -105,6 +120,9 @@ export function messageRecord(
     clientMessageId: message.clientMessageId,
     isLocked: message.isLocked,
     isBeyondPlanLimit: message.isBeyondPlanLimit,
+    savedState: message.savedState,
+    savedTodoState: message.savedTodoState,
+    isSavedArchived: message.isSavedArchived,
     blocks: message.blocksJson,
   };
 }

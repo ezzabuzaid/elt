@@ -151,6 +151,11 @@ export type SlackMessage = {
   readonly isLocked: boolean | null;
   // Hidden by the workspace's plan, past its history limit.
   readonly isBeyondPlanLimit: boolean | null;
+  // Saved for later: its state in the user's Later list, such as in_progress,
+  // its to-do state, such as saved, and whether the user archived it there.
+  readonly savedState: string | null;
+  readonly savedTodoState: string | null;
+  readonly isSavedArchived: boolean | null;
   // As Slack holds them.
   readonly blocksJson: string | null;
   readonly attachments: readonly SlackAttachment[];
@@ -192,6 +197,8 @@ export type SlackFile = {
   readonly permalink: string | null;
   // The first lines of a text file, as Slack previews it.
   readonly preview: string | null;
+  // A snippet's whole text.
+  readonly content: string | null;
   readonly lines: number | null;
   readonly durationMs: number | null;
   readonly width: number | null;
@@ -221,6 +228,16 @@ export type SlackListRecord = {
   readonly fieldsJson: string | null;
 };
 
+// A message pinned in a conversation.
+export type SlackPin = {
+  readonly channelId: string;
+  readonly ts: string;
+  // What is pinned: message.
+  readonly type: string;
+  readonly pinnedBy: string | null;
+  readonly pinnedAt: string | null;
+};
+
 export type SlackChannelSection = {
   readonly id: string;
   readonly type: string;
@@ -236,6 +253,13 @@ export type SlackThreadSubscription = {
   readonly threadTs: string;
   readonly isSubscribed: boolean | null;
   readonly lastReadTs: string | null;
+};
+
+// Whether the signed-in user is in a user group, as the client checked; it
+// keeps neither the group's name nor its members.
+export type SlackUserGroupMembership = {
+  readonly userGroupId: string;
+  readonly isMember: boolean | null;
 };
 
 export type SlackPreference = {
@@ -259,10 +283,15 @@ export type SlackClient = {
   readonly threadReplies: readonly SlackMessage[];
   readonly files: readonly SlackFile[];
   readonly listRecords: readonly SlackListRecord[];
+  readonly pins: readonly SlackPin[];
   readonly channelSections: readonly SlackChannelSection[];
   readonly threadSubscriptions: readonly SlackThreadSubscription[];
+  readonly userGroupMemberships: readonly SlackUserGroupMembership[];
   readonly preferences: readonly SlackPreference[];
   // Whether the client holds a channel's history at this ts: a message there
   // that the client no longer holds was deleted, not dropped from its cache.
   holds(channelId: string, ts: string): boolean;
+  // Whether the client loaded a conversation's whole pin list: a pin it no
+  // longer lists there was removed.
+  holdsPins(channelId: string): boolean;
 };

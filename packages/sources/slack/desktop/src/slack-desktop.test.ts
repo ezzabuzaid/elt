@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   chmod,
   mkdir,
@@ -26,6 +27,7 @@ import {
 } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
+  SQLiteColumns,
   SQLiteDestination,
 } from '@workspace/elt-sqlite';
 import {
@@ -423,7 +425,58 @@ class SlackStore {
       leveldbLog([{ sequence, writes }]),
     );
   }
+
+  // The app's main process recording these downloads by workspace, as it
+  // keeps them in storage/root-state.json beside the rest of its own state.
+  async download(
+    downloads: Readonly<Record<string, readonly DownloadFixture[]>>,
+  ): Promise<void> {
+    await this.rootState(
+      JSON.stringify({
+        appTeams: { lastActiveTeamId: 'T1' },
+        bookmarks: [],
+        diagnostics: { hasRunDiagnostics: false },
+        downloads: Object.fromEntries(
+          Object.entries(downloads).map(([team, list]) => [
+            team,
+            Object.fromEntries(
+              list.map(({ id, path, state = 'completed', progress = 1 }) => [
+                id,
+                {
+                  id,
+                  teamId: team,
+                  url: `https://files.slack.com/files-pri/${team}-${id}/download/report.pdf`,
+                  userId: 'U1',
+                  appVersion: '4.52.171',
+                  downloadState: state,
+                  startTime: 1790000000123,
+                  progress,
+                  downloadPath: path,
+                  ...(state === 'completed' ? { endTime: 1790000004567 } : {}),
+                },
+              ]),
+            ),
+          ]),
+        ),
+        settings: { releaseChannel: 'prod' },
+        teams: {},
+        _persist: { version: 1, rehydrated: true },
+      }),
+    );
+  }
+
+  async rootState(contents: string): Promise<void> {
+    await mkdir(join(this.directory, 'storage'), { recursive: true });
+    await writeFile(join(this.directory, 'storage/root-state.json'), contents);
+  }
 }
+
+type DownloadFixture = {
+  readonly id: string;
+  readonly path: string;
+  readonly state?: 'completed' | 'progressing';
+  readonly progress?: number;
+};
 
 type MessageFixture = {
   readonly ts: string;
@@ -447,6 +500,14 @@ type MessageFixture = {
   };
   // The files it shares, by ID, as the client keeps them.
   readonly files?: readonly string[];
+  // Who pinned it in its channel and when, in seconds, as the message keeps.
+  readonly pinned?: { readonly by: string; readonly at: number };
+  // Saved for later, as the message keeps it.
+  readonly saved?: {
+    readonly state: string;
+    readonly todoState: string;
+    readonly archived: boolean;
+  };
 };
 
 type FileFixture = {
@@ -455,6 +516,8 @@ type FileFixture = {
   readonly mode: 'hosted' | 'snippet' | 'list';
   // Where it was shared: a public channel and the sharing message's ts.
   readonly shared?: readonly (readonly [string, string])[];
+  // A snippet's whole text.
+  readonly content?: string;
 };
 
 type ListFixture = {
@@ -472,6 +535,13 @@ type ChannelFixture = {
   readonly kind?: 'public' | 'private' | 'im' | 'mpim';
   readonly members?: readonly string[];
   readonly topic?: unknown;
+  // The pins the client loaded with the channel's pin list, each with the
+  // pinned message as it was then.
+  readonly pinnedItems?: readonly {
+    readonly ts: string;
+    readonly by: string;
+    readonly at: number;
+  }[];
 };
 
 type MemberFixture = {
@@ -496,6 +566,9 @@ function clientState({
   sections = [],
   files = [],
   lists = [],
+  pins = {},
+  pinsLoading = {},
+  userGroups = {},
 }: {
   team: { readonly id: string; readonly name: string; readonly plan?: string };
   user: string;
@@ -510,6 +583,12 @@ function clientState({
   }[];
   files?: readonly FileFixture[];
   lists?: readonly ListFixture[];
+  // The ts of each pinned message, by channel, and whether the client
+  // loaded each channel's pin list.
+  pins?: Readonly<Record<string, readonly string[]>>;
+  pinsLoading?: Readonly<Record<string, 'loaded' | 'loading'>>;
+  // Whether the signed-in user is in each user group the client checked.
+  userGroups?: Readonly<Record<string, boolean>>;
 }) {
   const reactionKey = (channel: string, ts: string) =>
     `message-${ts}-${channel}`;
@@ -535,7 +614,14 @@ function clientState({
     },
     channels: Object.fromEntries(
       channels.map(
-        ({ id, name, kind = 'public', members: channelMembers, topic }) => [
+        ({
+          id,
+          name,
+          kind = 'public',
+          members: channelMembers,
+          topic,
+          pinnedItems,
+        }) => [
           id,
           {
             id,
@@ -559,6 +645,26 @@ function clientState({
             previous_names: [],
             ...(kind === 'im' ? { user: channelMembers?.[0] } : {}),
             ...(kind === 'mpim' ? { members: channelMembers } : {}),
+            ...(pinnedItems
+              ? {
+                  pinned_items: pinnedItems.map(({ ts, by, at }) => ({
+                    type: 'message',
+                    created: at,
+                    created_by: by,
+                    channel: id,
+                    message: {
+                      user: user,
+                      type: 'message',
+                      ts,
+                      client_msg_id: `client-${ts}`,
+                      text: 'pinned',
+                      team: team.id,
+                      blocks: [],
+                      pinned_to: [id],
+                    },
+                  })),
+                }
+              : {}),
             scroll_top: 120,
             unreads: [],
           },
@@ -625,6 +731,8 @@ function clientState({
               reply,
               gone,
               thread,
+              pinned,
+              saved,
             }) => [
               ts,
               gone
@@ -644,6 +752,24 @@ function clientState({
                     ...(attachments ? { attachments } : {}),
                     ...(fileIds ? { files: fileIds } : {}),
                     ...(reply ? { _hidden_reply: true, thread_ts: reply } : {}),
+                    ...(pinned
+                      ? {
+                          pinned_to: [channel],
+                          pinned_info: {
+                            pinned_by: pinned.by,
+                            pinned_ts: pinned.at,
+                          },
+                        }
+                      : {}),
+                    ...(saved
+                      ? {
+                          saved: {
+                            is_archived: saved.archived,
+                            state: saved.state,
+                            todo_state: saved.todoState,
+                          },
+                        }
+                      : {}),
                     ...(thread
                       ? {
                           thread_ts: ts,
@@ -699,7 +825,7 @@ function clientState({
       ]),
     ),
     files: Object.fromEntries(
-      files.map(({ id, name, mode, shared = [] }) => [
+      files.map(({ id, name, mode, shared = [], content }) => [
         id,
         {
           id,
@@ -720,6 +846,7 @@ function clientState({
           url_private: `https://files.slack.com/files-pri/${team.id}-${id}/${name}`,
           permalink: `https://${team.name.toLowerCase()}.slack.com/files/${user}/${id}/${name}`,
           ...(mode === 'snippet' ? { preview: 'line one', lines: 2 } : {}),
+          ...(content === undefined ? {} : { content }),
           ...(mode === 'list'
             ? {
                 list_metadata: {
@@ -787,6 +914,16 @@ function clientState({
         sections.map(({ id, channels: ids }) => [id, ids]),
       ),
     },
+    pins: {
+      pinsByChannel: Object.fromEntries(
+        Object.entries(pins).map(([channel, list]) => [
+          channel,
+          list.map((ts) => ({ type: 'message', channel, ts })),
+        ]),
+      ),
+      loadingStateByChannel: pinsLoading,
+      popoverScrollTop: { channelId: null, value: null },
+    },
     threadSub: {
       [`C2-1790000000.000200`]: {
         id: 'C2-1790000000.000200',
@@ -794,6 +931,14 @@ function clientState({
         lastRead: '1790000000.000300',
       },
     },
+    // The client keeps no group itself, only its checks of the user's
+    // membership, as Delivery Associates' record held on 2026-10-09.
+    userGroups: {},
+    adminUserGroups: { userGroupsListReducer: { adminUserGroupsList: [] } },
+    hasFetchedInitialAdminUserGroups: false,
+    userGroupMembership: Object.fromEntries(
+      Object.entries(userGroups).map(([id, isMember]) => [id, { isMember }]),
+    ),
     userPrefs: { time24: true, tz: 'Europe/London' },
     teamPrefs: { [team.id]: { display_real_names: false } },
     view: { 'v2::main::home::sidebar': { scroll: 3 } },
@@ -901,6 +1046,7 @@ const unchanged = Object.fromEntries(
     'messageAttachments',
     'messageReactions',
     'messageFiles',
+    'pins',
     'files',
     'fileShares',
     'listRecords',
@@ -908,8 +1054,19 @@ const unchanged = Object.fromEntries(
     'channelSectionChannels',
     'threadSubscriptions',
     'preferences',
+    'userGroupMemberships',
+    'downloads',
   ].map((name) => [name, nothing]),
 );
+
+// A file column's chunk table, by the documented rule: _elt_files_ and the
+// first 40 hex digits of SHA-256 over the JSON of [table, column], both in
+// ASCII lower case.
+const chunkTable = (table: string, column: string) =>
+  `"_elt_files_${createHash('sha256')
+    .update(JSON.stringify([table.toLowerCase(), column.toLowerCase()]))
+    .digest('hex')
+    .slice(0, 40)}"`;
 
 async function scratch() {
   const dir = await mkdtempDisposable(join(tmpdir(), 'slack-desktop-'));
@@ -948,12 +1105,18 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
             ],
             thread: { replies: 2, users: ['U2'], latest: '1790000009.000001' },
             files: ['F1'],
+            saved: {
+              state: 'in_progress',
+              todoState: 'saved',
+              archived: false,
+            },
           },
           {
             ts: '1790000000.000200',
             user: 'U2',
             text: 'hi',
             subtype: 'thread_broadcast',
+            pinned: { by: 'U3', at: 1790000100 },
           },
           {
             ts: '1790000001.000001',
@@ -964,12 +1127,36 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
         ],
       },
       sections: [{ id: 'S1', name: 'Projects', channels: ['C2', 'C1'] }],
+      // C1's pin list, loaded with a message the app holds no more of, and a
+      // pin of a held message; C2's pin of a message the app does not hold,
+      // with no list loaded.
+      channels: [
+        {
+          ...general,
+          pinnedItems: [{ ts: '1789000000.000100', by: 'U2', at: 1789000500 }],
+        },
+        random,
+        { id: 'D1', name: 'U2', kind: 'im', members: ['U2'] },
+        {
+          id: 'G1',
+          name: 'mpdm-ezz--sara--omar-1',
+          kind: 'mpim',
+          members: ['U1', 'U2', 'U3'],
+        },
+      ],
+      pins: {
+        C1: ['1789000000.000100', '1790000000.000200'],
+        C2: ['1790000000.000700'],
+      },
+      pinsLoading: { C1: 'loaded' },
+      userGroups: { S0G1: true, S0G2: false },
       files: [
         {
           id: 'F1',
           name: 'notes.md',
           mode: 'snippet',
           shared: [['C1', '1790000000.000100']],
+          content: 'line one\nline two',
         },
         { id: 'L1', name: 'Launch', mode: 'list' },
       ],
@@ -981,6 +1168,9 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
       ],
     }),
   ]);
+  await store.download({
+    T1: [{ id: 'F1', path: join(dir.path, 'notes.md') }],
+  });
   const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
 
   const results = counts(await run.run());
@@ -997,6 +1187,7 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
     messageAttachments: { count: 1, deleted: 0 },
     messageReactions: { count: 1, deleted: 0 },
     messageFiles: { count: 1, deleted: 0 },
+    pins: { count: 3, deleted: 0 },
     files: { count: 2, deleted: 0 },
     fileShares: { count: 1, deleted: 0 },
     listRecords: { count: 1, deleted: 0 },
@@ -1004,6 +1195,8 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
     channelSectionChannels: { count: 2, deleted: 0 },
     threadSubscriptions: { count: 1, deleted: 0 },
     preferences: { count: 3, deleted: 0 },
+    userGroupMemberships: { count: 2, deleted: 0 },
+    downloads: { count: 1, deleted: 0 },
   });
   assert.deepEqual(
     rows(
@@ -1140,6 +1333,55 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
     ],
   );
   assert.deepEqual(
+    rows(
+      out,
+      'SELECT ts, savedState, savedTodoState, isSavedArchived FROM messages ORDER BY ts',
+    ),
+    [
+      {
+        ts: '1790000000.000100',
+        savedState: 'in_progress',
+        savedTodoState: 'saved',
+        isSavedArchived: 0,
+      },
+      {
+        ts: '1790000000.000200',
+        savedState: null,
+        savedTodoState: null,
+        isSavedArchived: null,
+      },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT channelId, ts, type, pinnedBy, pinnedAt FROM pins ORDER BY channelId, ts',
+    ),
+    [
+      {
+        channelId: 'C1',
+        ts: '1789000000.000100',
+        type: 'message',
+        pinnedBy: 'U2',
+        pinnedAt: '2026-09-10T00:35:00.000Z',
+      },
+      {
+        channelId: 'C1',
+        ts: '1790000000.000200',
+        type: 'message',
+        pinnedBy: 'U3',
+        pinnedAt: '2026-09-21T14:15:00.000Z',
+      },
+      {
+        channelId: 'C2',
+        ts: '1790000000.000700',
+        type: 'message',
+        pinnedBy: null,
+        pinnedAt: null,
+      },
+    ],
+  );
+  assert.deepEqual(
     rows(out, 'SELECT channelId, ts, threadTs, text FROM threadReplies'),
     [
       {
@@ -1184,7 +1426,7 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
   assert.deepEqual(
     rows(
       out,
-      'SELECT id, name, mode, filetype, size, userId, createdAt, preview, lines, urlPrivate, listMetadata FROM files ORDER BY id',
+      'SELECT id, name, mode, filetype, size, userId, createdAt, preview, content, lines, urlPrivate, listMetadata FROM files ORDER BY id',
     ),
     [
       {
@@ -1196,6 +1438,7 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
         userId: 'U1',
         createdAt: '2026-01-09T12:52:22.000Z',
         preview: 'line one',
+        content: 'line one\nline two',
         lines: 2,
         urlPrivate: 'https://files.slack.com/files-pri/T1-F1/notes.md',
         listMetadata: null,
@@ -1209,6 +1452,7 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
         userId: 'U1',
         createdAt: '2026-01-09T12:52:22.000Z',
         preview: null,
+        content: null,
         lines: null,
         urlPrivate: 'https://files.slack.com/files-pri/T1-L1/Launch',
         listMetadata: '{"schema":[{"id":"Col1","name":"Task","type":"text"}]}',
@@ -1294,6 +1538,36 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
       { scope: 'team', name: 'display_real_names', value: 'false' },
       { scope: 'user', name: 'time24', value: 'true' },
       { scope: 'user', name: 'tz', value: '"Europe/London"' },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT workspaceId, userGroupId, isMember FROM userGroupMemberships ORDER BY userGroupId',
+    ),
+    [
+      { workspaceId: 'T1', userGroupId: 'S0G1', isMember: 1 },
+      { workspaceId: 'T1', userGroupId: 'S0G2', isMember: 0 },
+    ],
+  );
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT workspaceId, fileId, url, userId, appVersion, state, progress, startedAt, endedAt, path FROM downloads',
+    ),
+    [
+      {
+        workspaceId: 'T1',
+        fileId: 'F1',
+        url: 'https://files.slack.com/files-pri/T1-F1/download/report.pdf',
+        userId: 'U1',
+        appVersion: '4.52.171',
+        state: 'completed',
+        progress: 1,
+        startedAt: '2026-09-21T14:13:20.123Z',
+        endedAt: '2026-09-21T14:13:24.567Z',
+        path: join(dir.path, 'notes.md'),
+      },
     ],
   );
 });
@@ -1415,6 +1689,108 @@ test('a message deleted inside history the app holds is deleted; one the app dro
   );
 });
 
+test('downloads stay after Slack clears its list, with the file’s bytes while it is where the app saved it', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  const downloaded = join(dir.path, 'Downloads');
+  await mkdir(downloaded);
+  await writeFile(join(downloaded, 'report.pdf'), 'report bytes');
+  await store.save([januaryClient()]);
+  await store.download({
+    T1: [
+      { id: 'F1', path: join(downloaded, 'report.pdf') },
+      // Moved or deleted since the app saved it.
+      { id: 'F2', path: join(downloaded, 'moved.pdf') },
+    ],
+  });
+  const source = new SlackDesktopSource(store.directory);
+  const destination = new SQLiteDestination({ path: out });
+  const run = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(dir.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(
+            source.downloads,
+            destination.table('downloads', (c) => [
+              ...SQLiteColumns.fromSchema(source.downloads.jsonSchema),
+              c.blob('bytes').from(source.downloads.file),
+            ]),
+            {
+              id: 'downloads',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            },
+          ),
+        ],
+      }),
+    ],
+  });
+  await run.run();
+
+  await store.download({});
+  const cleared = counts(await run.run());
+
+  assert.deepEqual(cleared.downloads, nothing);
+  assert.deepEqual(
+    rows(
+      out,
+      `SELECT d.fileId, (SELECT c.bytes FROM ${chunkTable('downloads', 'bytes')} c WHERE c.file = d.bytes) AS bytes FROM downloads d ORDER BY d.fileId`,
+    ),
+    [
+      { fileId: 'F1', bytes: new Uint8Array(Buffer.from('report bytes')) },
+      { fileId: 'F2', bytes: null },
+    ],
+  );
+});
+
+test('a pin removed where the app loaded the conversation’s pins is deleted; pins where it did not, or of a workspace it no longer keeps, stay', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  await store.save([
+    januaryClient({
+      pins: {
+        C1: ['1790000000.000100', '1790000000.000200'],
+        C2: ['1790000000.000700'],
+        D1: ['1790000001.000100'],
+        G1: ['1790000002.000100'],
+      },
+      pinsLoading: { C1: 'loaded', C2: 'loaded', D1: 'loading' },
+    }),
+  ]);
+  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  await run.run();
+
+  // Both of C1's pins removed, leaving its list empty, as the app saved it on
+  // 2026-10-09; D1's list, still loading, and G1's, never loaded, no longer
+  // name theirs.
+  await store.save([
+    januaryClient({
+      pins: { C1: [], C2: ['1790000000.000700'], D1: [] },
+      pinsLoading: { C1: 'loaded', C2: 'loaded', D1: 'loading' },
+    }),
+  ]);
+  const unpinned = counts(await run.run());
+  await store.save([], [januaryClient()]);
+  const signedOut = counts(await run.run());
+
+  assert.deepEqual(unpinned.pins, { count: 0, deleted: 2 });
+  assert.deepEqual(signedOut.pins, nothing);
+  assert.deepEqual(
+    rows(out, 'SELECT channelId, ts FROM pins ORDER BY channelId'),
+    [
+      { channelId: 'C2', ts: '1790000000.000700' },
+      { channelId: 'D1', ts: '1790000001.000100' },
+      { channelId: 'G1', ts: '1790000002.000100' },
+    ],
+  );
+});
+
 test('reactions follow their message: one removed from a held message is deleted, those of a dropped message stay', async () => {
   const { dir, store, out } = await scratch();
   await using _ = dir;
@@ -1487,6 +1863,31 @@ test('reactions follow their message: one removed from a held message is deleted
     count: 0,
     deleted: 1,
   });
+});
+
+test('a user group the app no longer records a check of stays, and a changed membership updates', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  await store.save([
+    januaryClient({ userGroups: { S0G1: true, S0G2: false } }),
+  ]);
+  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  await run.run();
+
+  await store.save([januaryClient({ userGroups: { S0G2: true } })]);
+  const second = counts(await run.run());
+
+  assert.deepEqual(second.userGroupMemberships, { count: 1, deleted: 0 });
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT userGroupId, isMember FROM userGroupMemberships ORDER BY userGroupId',
+    ),
+    [
+      { userGroupId: 'S0G1', isMember: 1 },
+      { userGroupId: 'S0G2', isMember: 1 },
+    ],
+  );
 });
 
 test('an edited message updates its row in place', async () => {
@@ -1744,11 +2145,10 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
   await store.save([januaryClient()]);
   const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
   await run.run();
-  const indexedDB = join(store.directory, 'IndexedDB');
   const { streams } = await new SlackDesktopSource(store.directory).discover();
   // chmod stands in for macOS withholding the app's container from a process
   // without Full Disk Access: both fail the read with EACCES or EPERM.
-  await chmod(indexedDB, 0o000);
+  await chmod(store.directory, 0o000);
 
   try {
     await assert.rejects(run.run(), (error) => {
@@ -1761,14 +2161,14 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
       return true;
     });
   } finally {
-    await chmod(indexedDB, 0o755);
+    await chmod(store.directory, 0o755);
   }
 
   assert.deepEqual(rows(out, 'SELECT count(*) AS n FROM messages'), [{ n: 3 }]);
   assert.deepEqual(counts(await run.run()), unchanged);
 });
 
-test('a store in a format this reader does not know fails every stream by name and keeps what loaded', async () => {
+test('a store in a format this reader does not know fails every stream that reads it by name and keeps what loaded', async () => {
   const { dir, store, out } = await scratch();
   await using _ = dir;
   await store.save([januaryClient()]);
@@ -1779,7 +2179,13 @@ test('a store in a format this reader does not know fails every stream by name a
     await writes();
     await assert.rejects(run.run(), (error) => {
       assert.ok(error instanceof PipelineError);
-      assert.equal(error.errors.length, streams.length);
+      // Downloads come from the app's own state, a file of their own.
+      assert.deepEqual(
+        error.results
+          .filter(({ failures }) => failures.length > 0)
+          .map(({ copy }) => copy.from.name),
+        streams.map(({ name }) => name).filter((name) => name !== 'downloads'),
+      );
       for (const cause of error.errors) {
         assert.ok(cause instanceof SlackDesktopFormatError);
         assert.match(cause.message, problem);
@@ -1866,6 +2272,45 @@ test('a store in a format this reader does not know fails every stream by name a
   assert.deepEqual(rows(out, 'SELECT count(*) AS n FROM channels'), [{ n: 4 }]);
 });
 
+test('a root-state.json in a shape this reader does not know fails downloads by name, and every other stream loads', async () => {
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  await store.save([januaryClient()]);
+  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const damaged = async (writes: () => Promise<void>, problem: RegExp) => {
+    await writes();
+    await assert.rejects(run.run(), (error) => {
+      assert.ok(error instanceof PipelineError);
+      assert.deepEqual(
+        error.results
+          .filter(({ failures }) => failures.length > 0)
+          .map(({ copy }) => copy.from.name),
+        ['downloads'],
+      );
+      for (const cause of error.errors) {
+        assert.ok(cause instanceof SlackDesktopFormatError);
+        assert.match(cause.message, /root-state\.json/);
+        assert.match(cause.message, problem);
+      }
+      return true;
+    });
+  };
+
+  // A file cut off mid-write, and a download whose progress is not a number.
+  await damaged(() => store.rootState('{"downloads":{"T1":'), /not JSON/);
+  await damaged(
+    () =>
+      store.rootState(
+        JSON.stringify({
+          downloads: { T1: { F1: { id: 'F1', progress: 'done' } } },
+        }),
+      ),
+    /state\.downloads\.T1\.F1\.progress is not a number/,
+  );
+
+  assert.deepEqual(rows(out, 'SELECT count(*) AS n FROM messages'), [{ n: 3 }]);
+});
+
 test('a store that fails to read for another reason fails every stream as that error, not as missing access, and keeps what loaded', async () => {
   const { dir, store, out } = await scratch();
   await using _ = dir;
@@ -1917,9 +2362,14 @@ test('an import scope keeps the selected workspaces, channels and dates', async 
         C2: [['1790000000.000200', '1790000000.000200']],
       },
       sections: [{ id: 'S1', name: 'Projects', channels: ['C2', 'C1'] }],
+      pins: { C1: ['1790000000.000100'], C2: ['1790000000.000200'] },
     }),
     other,
   ]);
+  await store.download({
+    T1: [{ id: 'F1', path: join(dir.path, 'one.pdf') }],
+    T2: [{ id: 'F2', path: join(dir.path, 'two.pdf') }],
+  });
   const source = new SlackDesktopSource(store.directory, {
     accountIds: ['T1'],
     collectionIds: ['C1'],
@@ -1943,6 +2393,14 @@ test('an import scope keeps the selected workspaces, channels and dates', async 
     ),
     [{ sectionId: 'S1', channelId: 'C1', position: 1 }],
   );
+  // A pin belongs to its conversation; a download to its workspace, whatever
+  // the conversations or dates selected.
+  assert.deepEqual(rows(out, 'SELECT channelId, ts FROM pins'), [
+    { channelId: 'C1', ts: '1790000000.000100' },
+  ]);
+  assert.deepEqual(rows(out, 'SELECT workspaceId, fileId FROM downloads'), [
+    { workspaceId: 'T1', fileId: 'F1' },
+  ]);
 });
 
 test('a Slack watch wakes every stream once, again when the app saves, and stops when aborted', async () => {
@@ -1976,6 +2434,30 @@ test('a Slack watch wakes every stream once, again when the app saves, and stops
 
   assert.equal(batches.length, 2);
   assert.deepEqual(batches[1]?.messages, { count: 1, deleted: 2 });
+});
+
+test('a Slack watch wakes when the app records a download', async () => {
+  const { dir, store } = await scratch();
+  await using _ = dir;
+  await store.save([januaryClient()]);
+  const run = await pipeline(new SlackDesktopSource(store.directory), dir.path);
+  const controller = new AbortController();
+  const batches: Record<string, { count: number; deleted: number }>[] = [];
+
+  for await (const { outcomes } of run.watch({
+    // A batch that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  })) {
+    batches.push(counts(outcomes));
+    if (batches.length === 1)
+      await store.download({
+        T1: [{ id: 'F1', path: join(dir.path, 'report.pdf') }],
+      });
+    else controller.abort();
+  }
+
+  assert.equal(batches.length, 2);
+  assert.deepEqual(batches[1]?.downloads, { count: 1, deleted: 0 });
 });
 
 test('this Mac’s Slack app loads every workspace it keeps, and a second read with no save writes nothing', async (t) => {
