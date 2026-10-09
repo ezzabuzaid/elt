@@ -665,13 +665,24 @@ test(
       );
 
       // Installing another version deletes this one's folder. The chat still
-      // runs the old server, which now sends the user to a new chat.
+      // runs the old server, which sends the user to a new chat to set up
+      // Apple, and keeps serving the proactive chats' records, which outlive
+      // plugin updates.
       rmSync(join(plugin, '.codex-plugin'), { recursive: true });
-      for (const event of ['UserPromptSubmit', 'UserPromptSubmit'] as const)
-        assert.match(await context(other, event), /open a new chat/);
+      for (const event of ['UserPromptSubmit', 'UserPromptSubmit'] as const) {
+        const updated = await context(other, event);
+        assert.match(updated, /open a new chat/);
+        assert.match(updated, /apple_person_note/);
+      }
       const refused = await call(other, 'apple_settings_read', {});
       assert.equal(refused.isError, true);
       assert.match(JSON.stringify(refused.content), /open a new chat/);
+      const noted = await call(other, 'apple_person_note', {
+        email: 'ann@example.com',
+        name: 'Ann',
+        note: 'Leads design at Example.',
+      });
+      assert.notEqual(noted.isError, true, JSON.stringify(noted.content));
     } finally {
       await client.close();
       await transport.close();

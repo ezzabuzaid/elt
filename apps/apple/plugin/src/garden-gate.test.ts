@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -276,6 +277,11 @@ test('the gardener hands a meeting chat over for archiving once Calendar says it
   const afterDelete = runGate(home.path, heartbeat(meetingPrepPrompt));
 
   assert.deepEqual(section(beforeItEnds, 'Meeting chats to archive'), []);
+  assert.ok(
+    afterItEnds.hookSpecificOutput.additionalContext.includes(
+      `"${join(plugin, 'skills/garden-apple/SKILL.md')}"`,
+    ),
+  );
   assert.deepEqual(section(afterItEnds, 'Meeting chats to archive'), [
     {
       threadId: 'thread-standup',
@@ -285,6 +291,51 @@ test('the gardener hands a meeting chat over for archiving once Calendar says it
   ]);
   assert.equal(later.decision, 'block');
   assert.equal(afterDelete.decision, 'block');
+});
+
+test('a plugin server older than the proactive records refuses to write them and leaves them as they are', async () => {
+  await using home = await mkdtempDisposable(join(tmpdir(), 'garden-gate-'));
+  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
+  const records = join(appleFolder(home.path), 'proactive.sqlite');
+  {
+    await using tools = await pluginTools(home.path);
+    await tools.call('apple_person_note', {
+      email: 'ann@example.com',
+      name: 'Ann',
+      note: 'Leads design at Example.',
+    });
+  }
+  {
+    // A later plugin version stamps a newer layout on the same file.
+    using database = new DatabaseSync(records);
+    database.exec('PRAGMA user_version = 999');
+  }
+
+  const client = new Client({ name: 'garden-gate-test', version: '1' });
+  await client.connect(
+    new StdioClientTransport({
+      command: join(plugin, 'launch_node'),
+      args: ['./server/main.mjs'],
+      cwd: plugin,
+      env: { HOME: home.path, CODEX_MCP_NODE_PATH: runtime, PATH: '' },
+    }),
+  );
+  const refused = await client
+    .callTool({
+      name: 'apple_person_note',
+      arguments: { email: 'bob@example.com', name: 'Bob', note: 'New.' },
+    })
+    .finally(() => client.close());
+
+  assert.equal(refused.isError, true);
+  using database = new DatabaseSync(records, { readOnly: true });
+  assert.deepEqual(
+    database
+      .prepare('SELECT email, note FROM people')
+      .all()
+      .map(({ email, note }) => ({ email, note })),
+    [{ email: 'ann@example.com', note: 'Leads design at Example.' }],
+  );
 });
 
 test('the gardener reports an import problem once, and again when it clears and comes back', async () => {

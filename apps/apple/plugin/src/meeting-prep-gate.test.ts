@@ -285,6 +285,11 @@ test('a Meeting prep heartbeat hands over each meeting due once, with someone in
   const first = runGate(home.path, heartbeat(meetingPrepPrompt));
   const second = runGate(home.path, heartbeat(meetingPrepPrompt));
 
+  // A chat that began before a plugin update keeps the old skill paths, so
+  // the handover names the installed skill.
+  const skill = join(plugin, 'skills/meeting-prep/SKILL.md');
+  assert.ok(existsSync(skill));
+  assert.ok(first.hookSpecificOutput.additionalContext.includes(`"${skill}"`));
   assert.deepEqual(
     section(first, 'New meetings').map(({ name }) => name),
     ['Zoom call', 'Standup'],

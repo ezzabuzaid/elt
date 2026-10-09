@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { z } from 'zod';
 
@@ -19,7 +20,9 @@ const instructions =
   )?.[1];
 if (instructions !== undefined) {
   const now = new Date();
-  for (const gate of [new MeetingPrepGate(), new GardenGate()]) {
+  // This bundle sits in the server folder of the installed plugin.
+  const skills = fileURLToPath(new URL('../skills', import.meta.url));
+  for (const gate of [new MeetingPrepGate(skills), new GardenGate(skills)]) {
     const output = gate.answer(instructions, appleDirectory(), now);
     if (output !== undefined) {
       process.stdout.write(JSON.stringify(output));

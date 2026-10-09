@@ -5,7 +5,9 @@ import { DatabaseSync } from 'node:sqlite';
 // each meeting handed to Meeting prep and the chat that briefs it, the note
 // kept about each person, and the import problems already reported. The
 // heartbeat gates and the plugin's tools share it from separate processes.
-// Stored data is disposable, so a newer layout starts it empty.
+// Stored data is disposable, so an older layout starts it empty. A chat that
+// began before a plugin update keeps the older server, which must not empty
+// a newer layout, so it refuses one.
 const layout = 1;
 
 export type Meeting = {
@@ -32,8 +34,14 @@ export class ProactiveStore implements Disposable {
       timeout: 30_000,
     });
     try {
-      const version = this.#database.prepare('PRAGMA user_version').get();
-      if (Number(version?.user_version) !== layout)
+      const version = Number(
+        this.#database.prepare('PRAGMA user_version').get()?.user_version,
+      );
+      if (version > layout)
+        throw new Error(
+          'A newer Apple plugin wrote these records. Open a new chat to use them.',
+        );
+      if (version < layout)
         this.#database.exec(
           `DROP TABLE IF EXISTS meetings; DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS reports; PRAGMA user_version = ${layout};`,
         );

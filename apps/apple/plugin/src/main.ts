@@ -12,7 +12,6 @@ import { userConnectors } from '@workspace/connector-apple-manifest/user-connect
 
 import {
   ApplePlugin,
-  PluginUpdatedError,
   configurationSchema,
   connectorSchema,
 } from './apple-plugin.ts';
@@ -224,9 +223,16 @@ mcpServer.registerTool(
     _meta: { ui: { visibility: ['app'] } },
   },
   async ({ event }) => {
+    // Meeting prep and the Apple gardener run in long-lived chats that keep
+    // this server after an update, and their records outlive it.
     if (plugin.updated())
       return {
-        content: [{ type: 'text', text: new PluginUpdatedError().message }],
+        content: [
+          {
+            type: 'text',
+            text: 'Apple was updated after this chat started, and this chat runs the old version. To set up Apple or change its connectors, open a new chat. The imports can still be read, and apple_meeting_chat and apple_person_note still work, so a Meeting prep or Apple gardener heartbeat here goes on with the work the Apple plugin hands it.',
+          },
+        ],
       };
     await plugin.refresh();
     const text = await contextFor(event);

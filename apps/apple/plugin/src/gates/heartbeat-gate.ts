@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 // A heartbeat's gate, run by hooks/heartbeat-gate before the heartbeat
 // reaches the model. ChatGPT wakes a chat on a schedule; the gate answers for
 // the heartbeat whose instructions name its skill. With nothing due it blocks
@@ -26,6 +28,13 @@ export type GateOutput =
 export abstract class HeartbeatGate {
   // The skill the heartbeat's instructions name, without the $.
   protected abstract readonly skill: string;
+  // The installed plugin's skills. A chat that began before a plugin update
+  // keeps the old skill paths, so the handover names the installed one.
+  readonly #skills: string;
+
+  constructor(skills: string) {
+    this.#skills = skills;
+  }
 
   // What is due now for this heartbeat, recorded as handed over.
   protected abstract due(directory: string, now: Date): Work;
@@ -42,7 +51,7 @@ export abstract class HeartbeatGate {
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
         additionalContext: [
-          `The Apple plugin hands you this work for $${this.skill}. Each section is one kind of work; act on every item as $${this.skill} describes.`,
+          `The Apple plugin hands you this work for $${this.skill}, whose current instructions are at "${join(this.#skills, this.skill, 'SKILL.md')}". Each section is one kind of work; act on every item as those instructions describe.`,
           ...work.sections.map(
             ({ title, items }) => `${title}:\n${JSON.stringify(items)}`,
           ),
