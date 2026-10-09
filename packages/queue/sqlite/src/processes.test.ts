@@ -50,3 +50,46 @@ test('several processes working one queue file run each job once', async () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('a job whose worker died mid-job runs again once its heartbeat lapses', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'queue-processes-'));
+  const path = join(directory, 'queue.sqlite');
+  const log = join(directory, 'handled.log');
+  // The queue's own clock runs 11 s ahead: past the dead worker's lease.
+  const queue = new SqliteJobQueue({
+    path,
+    pollingIntervalMs: 5,
+    schedule: false,
+    now: () => new Date(Date.now() + 11_000),
+  });
+  let dead: ReturnType<typeof fork> | undefined;
+  try {
+    await queue.start();
+    await queue.createQueue('q', { heartbeatSeconds: 10, retryDelay: 0 });
+    const id = await queue.send('q', {});
+    dead = fork(claimer, [path, log, 'hang'], { stdio: 'ignore' });
+    const claiming = dead;
+    await new Promise<void>((resolve) =>
+      claiming.on('message', (message) => {
+        if (message === 'claimed') resolve();
+      }),
+    );
+    claiming.kill('SIGKILL');
+    const reran = Promise.withResolvers<string>();
+
+    await queue.work('q', {}, async ([job]) => {
+      if (job !== undefined) reran.resolve(job.id);
+    });
+
+    assert.equal(
+      await Promise.race([reran.promise, sleep(10_000).then(() => 'never')]),
+      id,
+    );
+    const [job] = await queue.findJobs('q');
+    assert.equal(job?.retryCount, 1);
+  } finally {
+    dead?.kill();
+    await queue.stop({ close: true });
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

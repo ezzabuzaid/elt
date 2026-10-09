@@ -470,6 +470,75 @@ describe('SqliteJobQueue', () => {
       database.close();
     }
   });
+
+  it('aborts and fails a job that outlives expireInSeconds as timed out', async () => {
+    let clock = new Date('2026-01-01T00:00:00.000Z');
+    const queue = new SqliteJobQueue({
+      idGenerator: createIdGenerator(),
+      pollingIntervalMs: 5,
+      now: () => clock,
+    });
+    await queue.start();
+    try {
+      await queue.createQueue('q', { expireInSeconds: 60, retryLimit: 0 });
+      await queue.send('q', {});
+      const aborted = Promise.withResolvers<void>();
+
+      // A second slot keeps the worker polling while the job runs.
+      await queue.work('q', { localConcurrency: 2 }, async ([job]) => {
+        clock = new Date(clock.getTime() + 61_000);
+        job?.signal.addEventListener('abort', () => aborted.resolve());
+        await aborted.promise;
+      });
+      await aborted.promise;
+
+      const [job] = await queue.findJobs('q');
+      assert.equal(job?.state, 'failed');
+      assert.deepEqual(job?.output, { value: { message: 'job timed out' } });
+    } finally {
+      await queue.stop({ graceful: true, close: true });
+    }
+  });
+
+  it('keeps a running job whose worker refreshes its heartbeat past its first lease', async () => {
+    let clock = new Date('2026-01-01T00:00:00.000Z');
+    const queue = new SqliteJobQueue({
+      idGenerator: createIdGenerator(),
+      pollingIntervalMs: 5,
+      now: () => clock,
+    });
+    await queue.start();
+    try {
+      await queue.createQueue('q', { heartbeatSeconds: 10 });
+      await queue.send('q', {});
+      const done = Promise.withResolvers<void>();
+      const pause = () => new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Twelve seconds pass in two steps, each shorter than the heartbeat,
+      // while a second slot keeps the worker polling.
+      await queue.work(
+        'q',
+        { localConcurrency: 2, heartbeatRefreshSeconds: 0.02 },
+        async () => {
+          clock = new Date(clock.getTime() + 6_000);
+          await pause();
+          clock = new Date(clock.getTime() + 6_000);
+          await pause();
+          done.resolve();
+        },
+      );
+      await done.promise;
+
+      await waitFor(async () =>
+        (await queue.findJobs('q')).every(({ state }) => state !== 'active'),
+      );
+      const [job] = await queue.findJobs('q');
+      assert.equal(job?.state, 'completed');
+      assert.equal(job?.retryCount, 0);
+    } finally {
+      await queue.stop({ graceful: true, close: true });
+    }
+  });
 });
 
 function readSqliteCount(value: unknown): number {

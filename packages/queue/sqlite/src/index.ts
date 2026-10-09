@@ -1007,6 +1007,7 @@ export class SqliteJobQueue
     }
 
     const run = worker.bindJobs(rows);
+    const heartbeats = this.refreshHeartbeats(worker, rows);
     const activeRun = this.handleClaimedJobs(
       worker,
       rows.map((row) => row.id),
@@ -1016,6 +1017,7 @@ export class SqliteJobQueue
         this.emit('error', toWorkerError(error, worker));
       })
       .finally(() => {
+        heartbeats[Symbol.dispose]();
         worker.activeRuns.delete(activeRun);
         this.rescheduleWorker(worker, 0);
       });
@@ -1068,6 +1070,7 @@ export class SqliteJobQueue
     // Chosen and claimed under one write lock, as pg-boss's FOR UPDATE SKIP
     // LOCKED does: another process sharing the file cannot claim the same job.
     return this.transaction(() => {
+      this.failExpiredJobs(name);
       const rows = this.db
         .prepare(
           `SELECT * FROM background_jobs
@@ -1098,6 +1101,69 @@ export class SqliteJobQueue
         return mapJobRow(statement.get(now, now, leaseExpiresOn, name, row.id));
       });
     });
+  }
+
+  // An active job whose time is up fails, so it can run again, as pg-boss's
+  // failJobsByTimeout and failJobsByHeartbeat do: one that outlived its
+  // expireInSeconds timed out, and one whose worker stopped refreshing its
+  // heartbeat, having died mid-job, lapsed.
+  private failExpiredJobs(name: string): void {
+    const now = this.now().getTime();
+    for (const job of this.db
+      .prepare(
+        `SELECT * FROM background_jobs WHERE queue_name = ? AND state = 'active'`,
+      )
+      .all(name)
+      .map(mapJobRow)) {
+      const timedOut =
+        job.started_on !== null &&
+        Date.parse(job.started_on) + job.expire_seconds * 1000 < now;
+      const lapsed =
+        job.lease_expires_on !== null && Date.parse(job.lease_expires_on) < now;
+      if (timedOut || lapsed)
+        this.failOne(
+          name,
+          job.id,
+          JSON.stringify({
+            value: {
+              message: timedOut ? 'job timed out' : 'job heartbeat timeout',
+            },
+          }),
+        );
+    }
+  }
+
+  // Keeps the leases of a run's jobs that have a heartbeat, every
+  // heartbeatRefreshSeconds or half the shortest heartbeat, until the run
+  // ends.
+  private refreshHeartbeats(
+    worker: SqliteWorker,
+    rows: readonly JobRow[],
+  ): Disposable {
+    const beating = rows.filter((row) => row.heartbeat_seconds !== null);
+    if (beating.length === 0) return { [Symbol.dispose]: () => {} };
+    const shortest = Math.min(
+      ...beating.map((row) => row.heartbeat_seconds ?? Infinity),
+    );
+    const statement = this.db.prepare(
+      `UPDATE background_jobs SET heartbeat_on = ?, lease_expires_on = ?
+      WHERE queue_name = ? AND id = ? AND state = 'active'`,
+    );
+    const timer = setInterval(
+      () => {
+        const now = this.now();
+        for (const row of beating)
+          statement.run(
+            asIso(now),
+            asIso(addSeconds(now, row.heartbeat_seconds ?? 0)),
+            worker.name,
+            row.id,
+          );
+      },
+      (worker.options.heartbeatRefreshSeconds ?? shortest / 2) * 1000,
+    );
+    timer.unref();
+    return { [Symbol.dispose]: () => clearInterval(timer) };
   }
 
   private completeJobs(name: string, ids: string[]): void {
