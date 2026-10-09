@@ -3,11 +3,12 @@ import { setInterval } from 'node:timers/promises';
 import type {
   CopyConfiguration,
   ExtractionCoverage,
+  SnapshotDiffOptions,
   SourceMessage,
   SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
-import { Catalog, Source, diffSnapshot } from '@workspace/elt';
+import { Catalog, Source, diffSnapshot, expiredAfter } from '@workspace/elt';
 import {
   Safari,
   type SafariLocation,
@@ -196,7 +197,7 @@ export class AppleSafariSource extends Source<SafariScan> {
     const records = await reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state, reader.horizon(scan))
+        ? diffSnapshot(stream, records, state, coveredBy(reader.horizon(scan)))
         : records.map((data) => ({ stream: stream.name, data }));
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
@@ -204,4 +205,10 @@ export class AppleSafariSource extends Source<SafariScan> {
       else yield { ...message, file: reader.file(message.data, scan) };
     }
   }
+}
+
+// A stream that expires covers what vanished after its horizon; any other
+// stream covers every record.
+function coveredBy(horizon: string | undefined): SnapshotDiffOptions {
+  return horizon === undefined ? {} : { covers: expiredAfter(horizon) };
 }

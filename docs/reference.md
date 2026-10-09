@@ -244,14 +244,33 @@ When the records come from inputs the source can fingerprint without reading the
 
 #### Expiring upstreams
 
-Some upstreams keep records only for a while and then drop them without any deletion, as macOS keeps activity for 28 days and Safari keeps history for its configured age. Without help, a snapshot diff would delete those rows too. A stream that declares `expiresBy`, the name of a non-null millisecond `date-time` property, keeps them: its source passes each diff the horizon the upstream keeps records from, `diffSnapshot(stream, records, state, horizon)` or `diffGroupedSnapshot(stream, groups, state, horizon)`.
+Some upstreams keep records only for a while and then drop them without any deletion, as macOS keeps activity for 28 days and Safari keeps history for its configured age. Without help, a snapshot diff would delete those rows too. A stream that declares `expiresBy`, the name of a non-null millisecond `date-time` property, keeps them: its source tells each diff that the read [covers](#partly-held-upstreams) only what vanished after the horizon the upstream keeps records from, `diffSnapshot(stream, records, state, { covers: expiredAfter(horizon) })`, and the same for `diffGroupedSnapshot`. A diff of such a stream without `covers` fails.
 
-- **Expiry:** each snapshot entry also saves the record's `expiresBy` value (`[fingerprint, expiresBy]`). A key that vanished with a value before the horizon expired: it leaves the snapshot with no `DELETE`, and its row stays loaded. A key that vanished at or after the horizon is deleted as usual, so a deletion the upstream makes within its retention still reaches the destination.
+- **Expiry:** each snapshot entry also saves the record's `expiresBy` value (`[fingerprint, expiresBy]`), which `covers` receives as `{ key, expiresBy }`. A key that vanished with a value before the horizon expired: it leaves the snapshot with no `DELETE`, and its row stays loaded. A key that vanished at or after the horizon is deleted as usual, so a deletion the upstream makes within its retention still reaches the destination.
 - **The horizon:** the source sets it on every read from the upstream's own retention rule, never from the oldest record it finds: a "clear all" leaves no old record, which would turn every deletion into an expiry. Erring toward an earlier horizon misses deletions of the oldest records; erring later deletes rows the upstream merely expired, so sources set it a margin inside the retention.
 - **Returns:** a key that turns up again after it expired, such as an event another device synced late, loads as new.
 - **Bounded state:** expired keys leave the state, so it grows with what the upstream keeps, not with everything ever loaded.
 - **Rows outlive the upstream:** clearing the copy or a full-refresh overwrite loses every expired row for good, because no rerun can read it again. A reset keeps them, and so does a change of the stream's fields ([shape changes](#shape-changes)). Nothing marks a loaded row as expired.
 - **Precedent:** [dlt's `delete-insert`](https://github.com/dlt-hub/dlt/blob/1.30.0/dlt/destinations/sql_jobs.py#L200-L234) and [`scd2` with a `merge_key`](https://github.com/dlt-hub/dlt/blob/1.30.0/dlt/destinations/sql_jobs.py#L969-L990) likewise retire only rows within what a load reloaded; Airbyte deletes only on change-data-capture markers, and its [refreshes guide](https://github.com/airbytehq/airbyte/blob/0eef98ff7f266392e6d1e1077e80d66971f2a378/docs/platform/operator-guides/refreshes.md#L36-L96) names a source that "does not retain all of its records" as the case where truncating loses data. Here the source scopes deletions by time instead, because it knows the upstream's retention.
+
+#### Partly held upstreams
+
+Some upstreams hold only part of their records and say which part, as the Slack app caches the stretches of each conversation it loaded and records their ranges. A message that vanished inside a range the cache still holds was deleted; one outside every range was only dropped from the cache. The source tells the diff which vanished records the read vouches for:
+
+```ts
+protected override async *extract(configuration, state, partition, scan) {
+  // A vanished message is deleted only where the app still holds the history.
+  yield* diffSnapshot(configuration.stream, this.scan(configuration.stream), state, {
+    covers: ({ key }) => scan.holds(key.workspaceId, key.channelId, key.ts),
+  });
+}
+```
+
+- **What `covers` receives:** each key the last committed scan saw and this one did not, as the primary key's fields, with the saved `expiresBy` for an [expiring](#expiring-upstreams) stream. It returns whether that record was deleted.
+- **Uncovered keys:** a key the read does not cover leaves the snapshot with no `DELETE`, and its row stays loaded; a key that turns up again loads as new. Without `covers`, a read covers every key.
+- **Who decides:** only the source knows what its upstream still holds, so the rule is a per-read argument, never a stream declaration: what a cache holds changes with every read.
+- **Rows outlive the upstream**, as for expired rows: clearing the copy or a full-refresh overwrite loses every uncovered row for good.
+- **Precedent:** Airbyte deletes only on change-data-capture markers, and its Slack source never deletes; Fivetran's Slack connector re-reads all history to capture deletes, which a read that covers everything amounts to.
 
 #### Forgetting upstreams
 
@@ -268,7 +287,7 @@ const notifications = new Stream({
 
 - **What changes:** only deletions. New and changed records load as in any snapshot stream, and an unchanged one writes nothing.
 - **Bounded state:** a vanished key leaves the state, so it holds what the upstream keeps now; a key that turns up again loads as new.
-- **No horizon:** such a stream takes no horizon, and `expiresBy` requires `emitsDeletes`: an expiring upstream deletes within its retention, a forgetting one never.
+- **No covers:** such a stream takes no `covers`, and `expiresBy` requires `emitsDeletes`: an expiring upstream deletes within its retention, a partly held one within what it holds, a forgetting one never.
 - **Rows outlive the upstream**, as for expired rows: clearing the copy or a full-refresh overwrite loses them for good, while a reset or a change of the stream's fields keeps them. Nothing marks a loaded row as gone from the upstream.
 - **Airbyte:** destination rows are deleted only "if your source supports emitting deleting records (e.g. an CDC database source)" ([incremental append + deduped](https://docs.airbyte.com/platform/using-airbyte/core-concepts/sync-modes/incremental-append-deduped)); an incremental stream without deletion support keeps every row it loaded. Here that is a declaration on the stream rather than a property of the source.
 

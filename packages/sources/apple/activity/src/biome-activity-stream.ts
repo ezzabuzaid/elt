@@ -7,6 +7,7 @@ import {
   Stream,
   type SyncMode,
   diffGroupedSnapshot,
+  expiredAfter,
   validateRecords,
 } from '@workspace/elt';
 import type { BiomeSegment, BiomeStream } from '@workspace/sdk-apple-biome';
@@ -118,12 +119,9 @@ export abstract class BiomeActivityStream<P extends Properties, E> {
         records: () => this.#read(segment),
       })),
     );
-    yield* diffGroupedSnapshot(
-      configuration.stream,
-      groups,
-      state,
-      retainedSince(scan.startedAt, this.retentionDays),
-    );
+    yield* diffGroupedSnapshot(configuration.stream, groups, state, {
+      covers: expiredAfter(retainedSince(scan.startedAt, this.retentionDays)),
+    });
   }
 
   async *#read(segment: BiomeSegment<E>): AsyncGenerator<SchemaRecord<P>> {

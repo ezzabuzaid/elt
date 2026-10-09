@@ -39,6 +39,7 @@ import {
   TargetOwnedError,
   diffGroupedSnapshot,
   diffSnapshot,
+  expiredAfter,
 } from '@workspace/elt';
 
 import {
@@ -1753,7 +1754,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
           events,
           scan.groups.flatMap(({ rows }) => rows),
           state,
-          scan.horizon,
+          { covers: expiredAfter(scan.horizon) },
         );
       else
         yield* diffGroupedSnapshot(
@@ -1764,7 +1765,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
             records: () => rows,
           })),
           state,
-          scan.horizon,
+          { covers: expiredAfter(scan.horizon) },
         );
     }
   }
@@ -1856,36 +1857,27 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
   ]);
   assert.deepEqual(loaded('events'), ['a', 'c']);
 
-  // A diff of an expiring stream needs a horizon and timestamps to expire by;
-  // any other stream takes no horizon.
+  // A diff of an expiring stream needs to know what its scan covers, and
+  // timestamps to expire by; the horizon it expires after is a timestamp.
   const failing: [() => AsyncIterable<unknown>, RegExp][] = [
     [
       () => diffSnapshot(events, [], null),
-      /expires by seenAt, so its snapshot diff needs a horizon timestamp/,
+      /expires by seenAt, so its snapshot diff needs covers/,
     ],
     [
       () =>
-        diffSnapshot(
-          events,
-          [{ id: 'x', seenAt: 'yesterday' }],
-          null,
-          scan.horizon,
-        ),
+        diffSnapshot(events, [{ id: 'x', seenAt: 'yesterday' }], null, {
+          covers: expiredAfter(scan.horizon),
+        }),
       /must carry seenAt as a timestamp to expire/,
-    ],
-    [
-      () =>
-        diffSnapshot(
-          new Stream({ ...events, expiresBy: undefined }),
-          [],
-          null,
-          scan.horizon,
-        ),
-      /declares no expiresBy, so its snapshot diff takes no horizon/,
     ],
   ];
   for (const [diff, message] of failing)
     await assert.rejects(Array.fromAsync(diff()), message);
+  assert.throws(
+    () => expiredAfter('yesterday'),
+    /Expiry horizon yesterday is not a timestamp/,
+  );
   for (const invalid of [
     { ...declaration, expiresBy: 'id' },
     { ...declaration, expiresBy: 'missing' },
@@ -1905,6 +1897,158 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
       () => new Stream({ name: 'invalid', ...invalid }),
       /expiresBy must name a non-null date-time property of a stream that emits deletions/,
     );
+});
+
+test('a read that covers part of a stream deletes the vanished rows it covers and keeps the rest', async () => {
+  type Row = { channel: string; ts: string };
+  // The ranges of each channel the upstream holds, as a cache holds the part
+  // of a history it loaded: a row it no longer lists inside them was deleted.
+  let scan: { held: Map<string, [string, string]>; rows: Row[] } = {
+    held: new Map(),
+    rows: [],
+  };
+  const covers = ({ key }: { key: Readonly<Record<string, unknown>> }) => {
+    const range = scan.held.get(String(key.channel));
+    return (
+      range !== undefined &&
+      String(key.ts) >= range[0] &&
+      String(key.ts) <= range[1]
+    );
+  };
+  const declaration = {
+    jsonSchema: {
+      type: 'object',
+      properties: { channel: { type: 'string' }, ts: { type: 'string' } },
+    },
+    primaryKey: ['channel', 'ts'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  } as const;
+  const messages = new Stream({ name: 'messages', ...declaration });
+  const grouped = new Stream({ name: 'grouped', ...declaration });
+  class CachedSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'cached-test';
+    protected readonly catalog = new Catalog([messages, grouped]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      if (configuration.stream === messages)
+        yield* diffSnapshot(messages, scan.rows, state, { covers });
+      else
+        yield* diffGroupedSnapshot(
+          grouped,
+          [...new Set(scan.rows.map(({ channel }) => channel))].map(
+            (channel) => ({
+              key: channel,
+              fingerprint: null,
+              records: () => scan.rows.filter((row) => row.channel === channel),
+            }),
+          ),
+          state,
+          { covers },
+        );
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-covers-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new CachedSource(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [messages, grouped].map(
+          (stream) =>
+            new Copy(stream, destination.table(stream.name), {
+              id: stream.name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+        ),
+      }),
+    ],
+  });
+  const loaded = (table: string) => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare(`SELECT channel || ts AS id FROM ${table} ORDER BY id`)
+      .all()
+      .map(({ id }) => id);
+  };
+  const run = async (held: [string, [string, string]][], rows: Row[]) => {
+    scan = { held: new Map(held), rows };
+    return (await pipeline.run()).map(({ count, deleted }) => ({
+      count,
+      deleted,
+    }));
+  };
+  const row = (channel: string, ts: string) => ({ channel, ts });
+
+  assert.deepEqual(
+    await run(
+      [
+        ['A', ['1', '3']],
+        ['B', ['1', '1']],
+      ],
+      [row('A', '1'), row('A', '2'), row('A', '3'), row('B', '1')],
+    ),
+    [
+      { count: 4, deleted: 0 },
+      { count: 4, deleted: 0 },
+    ],
+  );
+
+  // A1 left the held range and B is no longer held, so both stay; A2
+  // vanished inside the range the upstream still holds, so it was deleted.
+  assert.deepEqual(await run([['A', ['2', '3']]], [row('A', '3')]), [
+    { count: 0, deleted: 1 },
+    { count: 0, deleted: 1 },
+  ]);
+  assert.deepEqual(loaded('messages'), ['A1', 'A3', 'B1']);
+  assert.deepEqual(loaded('grouped'), ['A1', 'A3', 'B1']);
+
+  // A stream whose upstream forgets records rather than deleting them takes
+  // no covers: none of its vanished rows is ever deleted.
+  await assert.rejects(
+    Array.fromAsync(
+      diffSnapshot(
+        new Stream({ ...messages, emitsDeletes: undefined }),
+        [],
+        null,
+        { covers },
+      ),
+    ),
+    /emits no deletions, so its snapshot diff takes no covers/,
+  );
+  // An expiring upstream's read covers what vanished at or after its horizon.
+  const covered = expiredAfter('2026-09-08T00:00:00.000Z');
+  assert.equal(
+    covered({ key: {}, expiresBy: '2026-09-08T00:00:00.000Z' }),
+    true,
+  );
+  assert.equal(
+    covered({ key: {}, expiresBy: '2026-09-07T23:59:59.999Z' }),
+    false,
+  );
 });
 
 test('a target has one writer, even when another loads only its own partitions', async () => {
@@ -5204,7 +5348,12 @@ function shapeChanges(
         state: unknown,
       ) {
         received.push(state);
-        yield* diffSnapshot(configuration.stream, rows, state, horizon);
+        yield* diffSnapshot(
+          configuration.stream,
+          rows,
+          state,
+          horizon === undefined ? {} : { covers: expiredAfter(horizon) },
+        );
       }
     }
     return new Pipeline({

@@ -7,6 +7,7 @@ import {
   Stream,
   type SyncMode,
   diffSnapshot,
+  expiredAfter,
   validateRecords,
 } from '@workspace/elt';
 import type {
@@ -91,12 +92,9 @@ export abstract class KnowledgeActivityStream<P extends Properties, E> {
     if (configuration.syncMode === 'full_refresh')
       yield* records.map((data) => ({ stream: this.name, data }));
     else
-      yield* diffSnapshot(
-        configuration.stream,
-        records,
-        state,
-        retainedSince(scan.startedAt, this.retentionDays),
-      );
+      yield* diffSnapshot(configuration.stream, records, state, {
+        covers: expiredAfter(retainedSince(scan.startedAt, this.retentionDays)),
+      });
   }
 
   #read(scan: ActivityScan): SchemaRecord<P>[] {

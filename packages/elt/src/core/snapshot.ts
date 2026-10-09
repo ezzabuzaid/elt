@@ -17,28 +17,53 @@ export type SnapshotState = {
   readonly snapshot: Readonly<Record<string, SavedEntry>>;
 };
 
+// A key the last committed scan saw and this scan did not.
+export type VanishedRecord = {
+  readonly key: Readonly<Record<string, KeyValue>>;
+  // The record's expiresBy timestamp as last seen, when the stream declares it.
+  readonly expiresBy?: string;
+};
+
+export type SnapshotDiffOptions = {
+  // Whether this scan vouches for a vanished record, so that it was deleted:
+  // a record the scan does not cover leaves the snapshot without a DELETE,
+  // and its row stays loaded. Without it, a scan covers every record.
+  readonly covers?: (vanished: VanishedRecord) => boolean;
+};
+
+// What a scan of an upstream that drops records past an age covers: the
+// records whose expiresBy is at or after the horizon it keeps records from.
+// One that vanished earlier expired.
+export function expiredAfter(
+  horizon: string,
+): (vanished: VanishedRecord) => boolean {
+  if (!isTimestamp(horizon))
+    throw new TypeError(`Expiry horizon ${horizon} is not a timestamp`);
+  // Canonical UTC timestamps order as text.
+  return ({ expiresBy }) => expiresBy === undefined || expiresBy >= horizon;
+}
+
 // Incremental reads for a source without a change feed: compare one complete
 // scan with the previous snapshot, emit new or changed records, a DELETE for
 // every key that vanished, then the new snapshot as the only STATE.
 // An empty scan deletes everything, so a failed read must throw, never yield nothing.
-// A stream that declares expiresBy takes the horizon the upstream keeps
-// records from: a key that vanished with an expiresBy before it expired, so it
-// leaves the snapshot without a DELETE and its row stays loaded.
-// A stream that does not declare emitsDeletes has an upstream that forgets
-// records rather than deleting them: every vanished key leaves the snapshot
-// without a DELETE, and its row stays loaded.
+// A scan that holds only part of its upstream, such as a cache, says which
+// vanished records it covers; a stream that declares expiresBy must, through
+// expiredAfter. A stream that does not declare emitsDeletes has an upstream
+// that forgets records rather than deleting them: every vanished key leaves
+// the snapshot without a DELETE, and its row stays loaded.
 export async function* diffSnapshot<Data extends Record<string, unknown>>(
   stream: Stream,
   records: AsyncIterable<Data> | Iterable<Data>,
   state: unknown,
-  horizon?: string,
+  options: SnapshotDiffOptions = {},
 ): AsyncGenerator<
   | { readonly stream: string; readonly data: Data }
   | DeleteMessage
   | StateMessage
 > {
   assertSnapshotStream(stream);
-  const kept = keptRows(stream, horizon);
+  const deleted = deletion(stream, options);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
   const current = new Map<string, SavedEntry>();
@@ -54,12 +79,10 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
       yield { stream: stream.name, data };
   }
   for (const [key, entry] of previous)
-    if (!current.has(key) && !kept(entry))
-      yield {
-        type: 'DELETE',
-        stream: stream.name,
-        key: keyObject(stream, key),
-      };
+    if (!current.has(key)) {
+      const message = deleted(key, entry);
+      if (message !== null) yield message;
+    }
   const snapshot = sortedObject(current);
   yield { type: 'STATE', stream: stream.name, state: { snapshot } };
 }
@@ -87,22 +110,22 @@ export type GroupedSnapshotState = {
 // fingerprint cheaply. A group whose fingerprint matches the last committed
 // scan keeps its records without reading them; every other group is read and
 // diffed record by record. Deletions still come from the complete scan: a key
-// no group produced, carried or read, is deleted, unless it expired before the
-// horizon or the stream emits no deletions, as in diffSnapshot.
+// no group produced, carried or read, is deleted, unless the scan does not
+// cover it or the stream emits no deletions, as in diffSnapshot.
 export async function* diffGroupedSnapshot<
   Data extends Record<string, unknown>,
 >(
   stream: Stream,
   groups: AsyncIterable<SnapshotGroup<Data>> | Iterable<SnapshotGroup<Data>>,
   state: unknown,
-  horizon?: string,
+  options: SnapshotDiffOptions = {},
 ): AsyncGenerator<
   | { readonly stream: string; readonly data: Data }
   | DeleteMessage
   | StateMessage
 > {
   assertSnapshotStream(stream);
-  const kept = keptRows(stream, horizon);
+  const deleted = deletion(stream, options);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what diffGroupedSnapshot wrote; own state is not re-validated
   const saved = state as GroupedSnapshotState | null;
@@ -159,12 +182,10 @@ export async function* diffGroupedSnapshot<
   }
   for (const { snapshot } of previous.values())
     for (const [key, entry] of Object.entries(snapshot))
-      if (!seen.has(key) && !kept(entry))
-        yield {
-          type: 'DELETE',
-          stream: stream.name,
-          key: keyObject(stream, key),
-        };
+      if (!seen.has(key)) {
+        const message = deleted(key, entry);
+        if (message !== null) yield message;
+      }
   yield {
     type: 'STATE',
     stream: stream.name,
@@ -188,28 +209,33 @@ function sortedObject<Value>(
   );
 }
 
-// Whether a vanished key keeps its row: every key of a stream that emits no
-// deletions, whose upstream forgets records rather than deleting them, and,
-// for a stream that declares expiresBy, the keys whose saved expiresBy falls
-// before the horizon the upstream keeps records from.
-function keptRows(
+// The DELETE for a vanished key, or null when its row stays: every key of a
+// stream that emits no deletions, whose upstream forgets records rather than
+// deleting them, and every key the scan does not cover.
+function deletion(
   stream: Stream,
-  horizon: string | undefined,
-): (entry: SavedEntry) => boolean {
-  if (stream.expiresBy === undefined) {
-    if (horizon !== undefined)
+  { covers }: SnapshotDiffOptions,
+): (key: string, entry: SavedEntry) => DeleteMessage | null {
+  if (!stream.emitsDeletes) {
+    if (covers !== undefined)
       throw new TypeError(
-        `Stream ${stream.name} declares no expiresBy, so its snapshot diff takes no horizon`,
+        `Stream ${stream.name} emits no deletions, so its snapshot diff takes no covers`,
       );
-    const forgets = !stream.emitsDeletes;
-    return () => forgets;
+    return () => null;
   }
-  if (!isTimestamp(horizon))
+  if (stream.expiresBy !== undefined && covers === undefined)
     throw new TypeError(
-      `Stream ${stream.name} expires by ${stream.expiresBy}, so its snapshot diff needs a horizon timestamp`,
+      `Stream ${stream.name} expires by ${stream.expiresBy}, so its snapshot diff needs covers, such as expiredAfter(horizon)`,
     );
-  // Canonical UTC timestamps order as text.
-  return (entry) => typeof entry !== 'string' && entry[1] < horizon;
+  return (key, entry) => {
+    const recordKey = keyObject(stream, key);
+    const vanished: VanishedRecord =
+      typeof entry === 'string'
+        ? { key: recordKey }
+        : { key: recordKey, expiresBy: entry[1] };
+    if (covers !== undefined && !covers(vanished)) return null;
+    return { type: 'DELETE', stream: stream.name, key: recordKey };
+  };
 }
 
 function entryOf(
