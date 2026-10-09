@@ -36,6 +36,7 @@ test('every connector folder loads as its connector for the host, and one that c
     'photos',
     'reminders',
     'safari',
+    'slack',
   ]);
   const callHistory = connectors.find(({ name }) => name === 'call-history');
   assert.equal(
@@ -49,6 +50,12 @@ test('every connector folder loads as its connector for the host, and one that c
   assert.equal(
     notificationCenter?.guidance(),
     'Turn on Terminal in System Settings › Privacy & Security › Full Disk Access, then quit and reopen Terminal. macOS does not ask for this access. No app needs to be open: macOS keeps every app’s notifications in one store while Notification Center holds them.',
+  );
+  const slack = connectors.find(({ name }) => name === 'slack');
+  assert.equal(slack?.title, 'Slack');
+  assert.equal(
+    slack?.guidance(),
+    'Turn on Terminal in System Settings › Privacy & Security › Full Disk Access, then quit and reopen Terminal. macOS does not ask for this access. Open Slack in each workspace to import and let it run: it saves what it has loaded every few minutes and when it quits, and only messages it has loaded on this Mac are imported.',
   );
   const photos = connectors.find(({ name }) => name === 'photos');
   assert.equal(

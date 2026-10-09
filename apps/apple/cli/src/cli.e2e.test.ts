@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, renameSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import {
   mkdir,
   mkdtempDisposable,
@@ -14,6 +20,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify, stripVTControlCharacters } from 'node:util';
+import v8 from 'node:v8';
 import { deflateSync, gzipSync } from 'node:zlib';
 
 import { SQLitePasses } from '@workspace/elt-sqlite';
@@ -1904,6 +1911,177 @@ test('notification center syncs from where usernoted keeps it, and --since keeps
       id: '2B000000-0000-4000-8000-000000000002',
       bundleId: 'com.apple.MobileSMS',
       title: 'Lunch?',
+    },
+  ]);
+});
+
+// The Slack app's store as it leaves it: Chromium's IndexedDB for
+// app.slack.com in LevelDB, one log record holding the database's and object
+// store's names and the workspace's client state, which Blink keeps as V8's
+// serialization in its envelope.
+function withSlack(mac: string) {
+  const directory = join(
+    mac,
+    'Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack/IndexedDB/https_app.slack.com_0.indexeddb.leveldb',
+  );
+  mkdirSync(directory, { recursive: true });
+  const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
+    let crc = index;
+    for (let bit = 0; bit < 8; bit++)
+      crc = crc & 1 ? 0x82f63b78 ^ (crc >>> 1) : crc >>> 1;
+    return crc >>> 0;
+  });
+  const maskedCrc = (bytes: Uint8Array) => {
+    let crc = 0xffffffff;
+    for (const byte of bytes)
+      crc = (crcTable[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
+    crc = (crc ^ 0xffffffff) >>> 0;
+    return (((crc >>> 15) | (crc << 17)) + 0xa282ead8) >>> 0;
+  };
+  const varint = (value: number) => {
+    const bytes: number[] = [];
+    let rest = value;
+    while (rest >= 0x80) {
+      bytes.push((rest & 0x7f) | 0x80);
+      rest >>>= 7;
+    }
+    return Buffer.from([...bytes, rest]);
+  };
+  const prefixed = (bytes: Buffer) =>
+    Buffer.concat([varint(bytes.length), bytes]);
+  const utf16be = (text: string) => Buffer.from(text, 'utf16le').swap16();
+  const withLength = (text: string) =>
+    Buffer.concat([varint(text.length), utf16be(text)]);
+  const record = (payload: Buffer) => {
+    const header = Buffer.alloc(7);
+    header.writeUInt32LE(maskedCrc(Buffer.concat([Buffer.of(1), payload])));
+    header.writeUInt16LE(payload.length, 4);
+    header.writeUInt8(1, 6);
+    return Buffer.concat([header, payload]);
+  };
+  const serializer = new v8.Serializer();
+  serializer.writeHeader();
+  serializer.writeValue({
+    selfTeamIds: { teamId: 'T1' },
+    teams: { T1: { id: 'T1', name: 'January', domain: 'january', plan: '' } },
+    channels: {
+      C1: { id: 'C1', name: 'general', is_channel: true, is_member: true },
+    },
+    members: { U1: { id: 'U1', name: 'ezz', real_name: 'Ezz', profile: {} } },
+    messages: {
+      C1: {
+        '1758445200.000100': {
+          type: 'message',
+          ts: '1758445200.000100',
+          user: 'U1',
+          text: 'before',
+        },
+        '1790000000.000100': {
+          type: 'message',
+          ts: '1790000000.000100',
+          user: 'U1',
+          text: 'after',
+        },
+      },
+    },
+    channelHistory: {
+      C1: {
+        slices: [
+          {
+            start: '1758445200.000100',
+            end: '1790000000.000100',
+            timestamps: ['1758445200.000100', '1790000000.000100'],
+          },
+        ],
+      },
+    },
+  });
+  const v8Bytes = serializer.releaseBuffer();
+  // Slack's V8 writes format 16, which differs from Node's 15 only for buffers.
+  v8Bytes[1] = 16;
+  const value = Buffer.concat([
+    varint(1),
+    Buffer.of(0xff, 0x15, 0xfe),
+    Buffer.alloc(12),
+    v8Bytes,
+  ]);
+  const writes = [
+    [
+      Buffer.concat([
+        Buffer.of(0, 0, 0, 0, 201),
+        withLength('https_app.slack.com_0@1'),
+        withLength('reduxPersistence'),
+      ]),
+      Buffer.of(2),
+    ],
+    [
+      Buffer.concat([Buffer.of(0, 2, 0, 0, 50, 1, 0)]),
+      utf16be('reduxPersistenceStore'),
+    ],
+    [
+      Buffer.concat([
+        Buffer.of(0, 2, 1, 1, 1),
+        withLength('persist:slack-client-T1-U1'),
+      ]),
+      value,
+    ],
+  ] as const;
+  const batch = Buffer.alloc(12);
+  batch.writeBigUInt64LE(1n);
+  batch.writeUInt32LE(writes.length, 8);
+  writeFileSync(
+    join(directory, '000003.log'),
+    record(
+      Buffer.concat([
+        batch,
+        ...writes.flatMap(([key, data]) => [
+          Buffer.of(1),
+          prefixed(key),
+          prefixed(data),
+        ]),
+      ]),
+    ),
+  );
+  const edit = Buffer.concat([
+    varint(1),
+    prefixed(Buffer.from('idb_cmp1')),
+    varint(2),
+    varint(0),
+  ]);
+  writeFileSync(join(directory, 'MANIFEST-000001'), record(edit));
+  writeFileSync(join(directory, 'CURRENT'), 'MANIFEST-000001\n');
+}
+
+test('slack syncs from the store the Slack app keeps, and --since keeps the messages sent from that day on', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  withSlack(mac.path);
+
+  const setup = cli(
+    mac.path,
+    'setup',
+    '--connector',
+    'slack',
+    '--since',
+    '2026-01-01',
+  );
+  const synced = cli(mac.path, 'sync');
+  const messages = cli(
+    mac.path,
+    'query',
+    'slack',
+    'SELECT channelId, ts, sentAt, text FROM messages',
+    '--json',
+  );
+
+  assert.equal(setup.status, 0, setup.stderr);
+  assert.equal(synced.status, 0, synced.stdout + synced.stderr);
+  assert.equal(lines(synced.stdout)[0].connector, 'slack');
+  assert.deepEqual(JSON.parse(messages.stdout), [
+    {
+      channelId: 'C1',
+      ts: '1790000000.000100',
+      sentAt: '2026-09-21T14:13:20.000100Z',
+      text: 'after',
     },
   ]);
 });

@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/connector-apple-slack",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/slack-connector.js",
+  "contextCompiler": {
+    "name": "slack",
+    "title": "Slack"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
+    "@workspace/source-slack-desktop": "0.0.1"
+  }
+}

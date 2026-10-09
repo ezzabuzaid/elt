@@ -1806,6 +1806,114 @@ Checked live on 2026-10-07 against macOS 27.0 (26A428), usernoted database versi
 
 A dismissal synced from another device needs the user's other device and was not produced; it is a `DELETE` like the others, with no reason stored, so the import keeps the notification as it keeps every removal. `style`, `orig`, `dest` and the action `st` code stay unnamed: Apple does not document them, usernoted's strings list `none`, `banner` and `alert` for its notification style, but Calendar, whose alert style in `com.apple.ncprefs` is alerts, stored `style` 0 while apps set to banners stored 1, so the codes do not map to the setting. `requests` was empty, also while a Calendar alarm fired.
 
+## Slack
+
+```ts
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-desktop-source';
+
+// ~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack
+const source = new SlackDesktopSource();
+const destination = new SQLiteDestination({ path: './outputs/slack.sqlite' });
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'slack',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/slack-state.sqlite',
+      }),
+      steps: [source.channels, source.members, source.messages].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads what the Slack desktop app (Mac App Store build) keeps on this Mac, from its own store, with the `@workspace/sdk-slack-desktop` SDK: no Slack API, token or network. `npx nx run apple-cli:start -- sync --connector slack` loads every stream into the import's `data.sqlite`, read through its `<snake_stream>` views.
+
+The app is Electron, and its web client saves its Redux state in the IndexedDB of `https://app.slack.com`: one record, `persist:slack-client-<workspace>-<user>`, in the object store `reduxPersistenceStore` of the database `reduxPersistence`, per signed-in workspace. Four packages read it, each owning one layer:
+
+| Package                    | Reads                                                                                                                                                             |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `codec-leveldb`            | LevelDB's files without opening the database: CURRENT and the MANIFEST's version edits name the live tables and logs; the write with the highest sequence wins    |
+| `codec-v8-serialization`   | V8's ValueSerializer, formats 13 to 16, object references and all storable values                                                                                 |
+| `codec-chromium-indexeddb` | Chromium's IndexedDB keys, database and object store names, Blink's value wrapping (a blob file `FF 11 01`, Snappy `FF 11 02`) and its envelope around V8's bytes |
+| `sdk-slack-desktop`        | Where the app keeps its store, which records are clients, what each slice means, its errors and its change signal                                                 |
+
+Slack 4.52.171 runs Electron 44 (Chromium 152, V8 15.2), whose V8 writes format 16; Node 26's `v8.Deserializer` refuses it, and 16 changed only how buffer and view sizes are written. Chromium keeps IndexedDB in LevelDB for apps on disk; a move to SQLite exists behind flags off by default as of Chromium main on 2026-10-08.
+
+### Access
+
+The app's container needs [Full Disk Access](#full-disk-access) (or macOS's consent to read another app's data). Without it, or without the app, reading fails with `SlackDesktopUnavailableError`, which names the grant, and fails every stream. Bytes in no format the reader knows (a V8 format above 16, a log record whose checksum fails, a slice of another shape) fail every stream with `SlackDesktopFormatError`, which names the record and field. Either way nothing is deleted.
+
+### Streams
+
+| Stream                   | One record per                                                              |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `workspaces`             | workspace the app is signed in to and has saved, with the user signed in as |
+| `channels`               | conversation the app knows: public and private channels, DMs, group DMs     |
+| `channelMembers`         | member of a conversation whose members the app keeps (group DMs)            |
+| `members`                | person, bot or app user the app knows in a workspace                        |
+| `bots`                   | bot the app knows, such as an integration's sender                          |
+| `apps`                   | Slack app the client has loaded                                             |
+| `messages`               | channel message the app has held, without thread replies                    |
+| `threadReplies`          | thread reply the app has held, never deleted                                |
+| `messageAttachments`     | link preview, shared message or integration card under a message            |
+| `messageReactions`       | emoji reaction on a message, with who reacted as far as the app knows       |
+| `messageFiles`           | file a held message shares, in its order                                    |
+| `files`                  | file the app has held (upload, snippet, canvas, List), metadata only        |
+| `fileShares`             | conversation and message a file was shared in, held or not                  |
+| `listRecords`            | row of a Slack List the app opened, its cells as JSON                       |
+| `channelSections`        | section of the user's sidebar                                               |
+| `channelSectionChannels` | conversation the user put in a section                                      |
+| `threadSubscriptions`    | thread the app knows whether the user follows                               |
+| `preferences`            | user or workspace preference, its value as JSON                             |
+
+Every key carries `workspaceId`. A message's `ts` is Slack's own ID, seconds and microseconds as Slack writes them; `sentAt` is the same instant as a [`date-time` with `precision` 6](#string-formats). `blocks`, attachment `fields` and preference values stay JSON as Slack holds them. Objects the client marks `isNonExistent` are its note that a message or member is gone, not a record. Left out: the client's UI state (`view`, `modal`, `searchUi` and the like) and `sundryStorage`, which holds only a cache watermark.
+
+### What the app holds, and deletions
+
+The app keeps every conversation, member and app it knows, but only the messages it has loaded: on 2026-10-08 January held 31 messages in 3 of 13 conversations, and Delivery Associates 28 in 1 of 24. Older history reaches the import only if the app loads it while the import runs, and a free workspace hides messages past 90 days (`isBeyondPlanLimit`).
+
+The client records which ranges of each conversation it holds, `channelHistory[channel].slices[{ start, end, timestamps }]`, and the reads [cover](#partly-held-upstreams) exactly those: a message gone from inside a held range, ends included, or marked `isNonExistent`, was deleted and is deleted here; one outside every range was dropped from the cache and stays. Reactions and attachments follow their message. A workspace whose record the store no longer holds, such as one signed out of, keeps all its rows; every other stream deletes what the app stops listing for a workspace it still holds. The client loads a thread's replies when the thread is opened, marks them `_hidden_reply`, and records no range of them, so `threadReplies` is a [forgetting](#forgetting-upstreams) stream: a reply stays after the app drops it, whether it was deleted or only left the cache. Replies' own reactions and attachments are not loaded. The app also caches the files, and the rows of the Lists, it loaded: `files`, `fileShares` and `listRecords` keep what they saw, a deletion showing as `isDeleted`, `isTombstoned` or `isArchived` while the app still holds it; `messageFiles` follows its message. The app keeps no file's bytes: its HTTP cache held no `files.slack.com` response, and `urlPrivate` needs Slack's sign-in, so files load as metadata.
+
+### Import scope
+
+Accounts are workspaces and collections are conversations. A date range selects messages, their attachments and reactions by `sentAt`; members, bots, apps, sections and preferences belong to a workspace, not a conversation, and load whole.
+
+### Watching
+
+The app saves a workspace's whole record into a new blob file every few minutes while it runs and when it quits, and a workspace's record first appears when its client unloads. A watch polls the IndexedDB directory's file sizes and modification times every second through `SlackDesktopStore.version()`; a save wakes every stream, and the snapshot diff writes nothing for those that did not change. The app replaces and deletes the blob it read from; a read that loses that race reads again, up to three times.
+
+### Slack live checks
+
+Checked on 2026-10-08 against Slack 4.52.171 on macOS 27.0:
+
+- The store held one record per workspace: January's (514 KB serialized, 138 slices) and, after Delivery Associates' client unloaded on quit, Delivery Associates' beside it. Each save wrote the record to a new blob number (`…/01/166`, then `16f`, `172`, `178`) of the same size when nothing changed.
+- The whole store decoded in 86 ms. `codec-leveldb` found the same 55 live records as an independent reader, and `codec-v8-serialization` matched Node's own deserializer on every storable tag.
+- A load through `apple-cli`, narrowed to January, wrote 1 workspace, 13 conversations, 9 members, 2 bots, 5 apps, 31 messages, 9 attachments, 8 sections, 2 thread subscriptions and 1,075 preferences; a second load wrote nothing. Two reads with no save in between returned identical records, so no value changes per read.
+- Delivery Associates' record held 22 reactions, 3 edited messages, private channels and group DMs with their members.
+- On 2026-10-09 the app saved a direct message it held no message of as one slice with neither `start` nor `end` (`{ timestamps: [] }`); such a slice holds nothing, so it covers none of the conversation's messages. Before that shape was read, it failed every stream of the import.
+
+The client also records `reachedStart` and `reachedEnd` for each conversation, whether its held history reaches the conversation's first and newest message. The reads do not use them: whether deleting the newest or oldest held message moves a slice's end while `reachedEnd` or `reachedStart` stays true was not observed, so such a message is kept, never deleted on a guess.
+
+Files, Lists and thread replies were checked on 2026-10-09 against the record already on disk for Delivery Associates, reading types and counts only: 13 files (a List, hosted files and snippets) with 2 shares, 10 messages sharing files by ID, 2 List rows whose cells sit under column IDs the List file's `list_metadata.schema` names, and 1 reply in the channel-message shape with `_hidden_reply`.
+
+Not yet verified on real data: pins, saved items, user groups, calendar events and downloads (`storage/root-state.json`), empty in both workspaces on 2026-10-09 and not loaded by the source; the Slack build from slack.com, which keeps its data under `~/Library/Application Support/Slack`; and how the store compacts, since the live database never wrote a table while it was watched (tests cover tables written as LevelDB writes them).
+
 ## Google Search Console
 
 `SearchConsoleSource` reads one property through the `searchconsole:v1` API. `sites`, `sitemaps` and `searchAnalytics` are served under the original `webmasters/v3` path prefix; URL inspection is served from `v1` on the same host.

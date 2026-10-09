@@ -18,6 +18,9 @@
       "path": "../../../sdks/apple/eventkit"
     },
     {
+      "path": "../slack"
+    },
+    {
       "path": "../safari"
     },
     {

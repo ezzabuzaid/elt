@@ -193,6 +193,9 @@
     },
     {
       "path": "./packages/sdks/slack/desktop"
+    },
+    {
+      "path": "./packages/connectors/apple/slack"
     }
   ]
 }

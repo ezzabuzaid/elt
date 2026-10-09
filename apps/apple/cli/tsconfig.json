@@ -11,10 +11,10 @@
       "path": "../../../packages/sources/apple/macos"
     },
     {
-      "path": "../../../packages/sdks/apple/eventkit"
+      "path": "../../../packages/settings"
     },
     {
-      "path": "../../../packages/settings"
+      "path": "../../../packages/sdks/apple/eventkit"
     },
     {
       "path": "../../../packages/google-auth"
@@ -24,6 +24,9 @@
     },
     {
       "path": "../../../packages/elt"
+    },
+    {
+      "path": "../../../packages/connectors/apple/slack"
     },
     {
       "path": "../../../packages/connectors/apple/safari"

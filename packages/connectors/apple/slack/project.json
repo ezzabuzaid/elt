@@ -1,0 +1,8 @@
+{
+  "name": "connector-apple-slack",
+  "sourceRoot": "packages/connectors/apple/slack/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  }
+}

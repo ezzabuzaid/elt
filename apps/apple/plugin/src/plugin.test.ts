@@ -411,6 +411,7 @@ test('the Settings page switches connectors on and off and describes each import
       accounts: false,
       'call-history': false,
       'notification-center': false,
+      slack: false,
     },
   );
   const [kept, mail] = (await plugin.status()).connectors;
