@@ -6,7 +6,7 @@ import {
   isBinaryPlist,
   isDictionary,
   parseBinaryPlist
-} from "../../chunks/chunk-GXPN73JS.mjs";
+} from "../../chunks/chunk-QPPOHR2G.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";

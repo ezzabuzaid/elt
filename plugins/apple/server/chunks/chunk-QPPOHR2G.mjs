@@ -212,7 +212,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 var execute = promisify(execFile);
 async function readPlist(path) {
-  const { stdout } = await execute("/usr/bin/plutil", ["-convert", "binary1", "-o", "-", path], { encoding: "buffer" });
+  const { stdout } = await execute("/usr/bin/plutil", ["-convert", "binary1", "-o", "-", path], { encoding: "buffer", maxBuffer: Infinity });
   return parseBinaryPlist(stdout);
 }
 
