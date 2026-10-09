@@ -118,6 +118,15 @@ export class CopyConfiguration {
       throw new TypeError(
         `Stream ${this.stream.name} defines its own cursor; omit cursorField`,
       );
+    // A cursor field the stream dropped is a breaking change, as Airbyte
+    // treats a removed cursor; the copy must choose another.
+    if (
+      cursorField !== undefined &&
+      !Object.hasOwn(this.stream.jsonSchema.properties ?? {}, cursorField)
+    )
+      throw new TypeError(
+        `Stream ${this.stream.name} does not describe cursor field ${cursorField}`,
+      );
     if (
       syncMode === 'incremental' &&
       !sourceDefinedCursor &&

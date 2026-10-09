@@ -42,7 +42,10 @@ export class SQLiteFileStore {
   // A hash of the table and column, as SQLite compares them: joined as text,
   // table a_b with column c and table a with column b_c would share chunks
   // and prune each other's.
-  static tableName(table: SQLiteTable, column: SQLiteColumn): string {
+  static tableName(
+    table: SQLiteTable,
+    column: Pick<SQLiteColumn, 'name'>,
+  ): string {
     const key = createHash('sha256')
       .update(JSON.stringify([table.location, identifiers.key(column.name)]))
       .digest('hex')

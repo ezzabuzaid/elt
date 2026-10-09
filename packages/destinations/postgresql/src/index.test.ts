@@ -1566,6 +1566,173 @@ test('a stored column that is NOT NULL where the stream allows null is relaxed i
   );
 });
 
+test('an explicit primary key a target gains or drops after a reset is added to or removed from the stored table in place, keeping its rows', async () => {
+  await using database = await scratchDatabase(server);
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, title: { type: 'string' } },
+      required: ['id', 'title'],
+    },
+    supportedSyncModes: ['incremental'],
+    sourceDefinedCursor: true,
+  });
+  const source = new Messages(stream);
+  const destination = new PostgresDestination({
+    url: database.url,
+    schema: 'raw',
+  });
+  const checkpoints = new PostgresCheckpointStore({
+    url: database.url,
+    schema: 'raw',
+  });
+  const run = (keyed: boolean, data: readonly object[]) => {
+    source.messages = rows(stream, data);
+    return new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(
+              stream,
+              destination.table('items', (c) => [
+                keyed ? c.text('id').primaryKey() : c.text('id'),
+                c.text('title'),
+              ]),
+              {
+                id: 'items',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append',
+              },
+            ),
+          ],
+        }),
+      ],
+    }).run();
+  };
+  const key = async () =>
+    (
+      await database.sql`SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = 'raw.items'::regclass AND i.indisprimary`
+    ).map(({ attname }) => attname);
+  const oid = async () =>
+    (await database.sql`SELECT 'raw.items'::regclass::oid AS oid`)[0]?.oid;
+  await run(false, [{ id: 'a', title: 'A' }]);
+  const stored = await oid();
+
+  // A changed column declaration changes the copy, so each change follows a
+  // reset, which keeps the rows.
+  await checkpoints.reset('items');
+  await run(true, [{ id: 'b', title: 'B' }]);
+  const gained = await key();
+  await checkpoints.reset('items');
+  // Only a table without the key takes b twice.
+  await run(false, [{ id: 'b', title: 'B again' }]);
+
+  assert.deepEqual(gained, ['id']);
+  assert.deepEqual(await key(), []);
+  assert.equal(await oid(), stored);
+  assert.deepEqual(
+    (
+      await database.sql`SELECT id, title FROM raw.items ORDER BY id, title`
+    ).map((row) => ({ ...row })),
+    [
+      { id: 'a', title: 'A' },
+      { id: 'b', title: 'B' },
+      { id: 'b', title: 'B again' },
+    ],
+  );
+});
+
+test('a file column the target drops takes its stored chunks with it, whether its table evolves or an overwrite reloads it', async () => {
+  for (const modes of [
+    { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
+    { syncMode: 'full_refresh', destinationSyncMode: 'overwrite' },
+  ] as const) {
+    await using scratch = await mkdtempDisposable(
+      join(tmpdir(), 'elt-files-pg-'),
+    );
+    await using database = await scratchDatabase(server);
+    const file = join(scratch.path, 'a.bin');
+    await writeFile(file, 'aye');
+    const stream = new Stream({
+      name: 'files',
+      jsonSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, version: { type: 'integer' } },
+        required: ['id', 'version'],
+      },
+      supportedSyncModes: ['full_refresh', 'incremental'],
+      primaryKey: ['id'],
+      supportsFileTransfer: true,
+      sourceDefinedCursor: true,
+    });
+    const source = new Messages(stream);
+    const destination = new PostgresDestination({
+      url: database.url,
+      schema: 'raw',
+    });
+    const checkpoints = new PostgresCheckpointStore({
+      url: database.url,
+      schema: 'raw',
+    });
+    const run = (withBytes: boolean) => {
+      // A target that stores no file is sent none.
+      source.messages = [
+        {
+          stream: stream.name,
+          data: { id: 'a', version: 1 },
+          ...(withBytes ? { file } : {}),
+        },
+      ];
+      return new Pipeline({
+        connections: [
+          new Connection({
+            name: 'test',
+            source,
+            destination,
+            checkpoints,
+            steps: [
+              new Copy(
+                stream,
+                destination.table('files', (c) => [
+                  c.text('id'),
+                  c.integer('version'),
+                  ...(withBytes ? [c.blob('bytes').from(stream.file)] : []),
+                ]),
+                { id: 'files', ...modes },
+              ),
+            ],
+          }),
+        ],
+      }).run();
+    };
+    const chunkTables = async () =>
+      (
+        await database.sql`SELECT table_name FROM information_schema.tables WHERE table_schema = 'raw' AND table_name LIKE '\_elt\_files\_%'`
+      ).map(({ table_name }) => table_name);
+    await run(true);
+    const before = await chunkTables();
+    // Dropping a column changes the copy, which an incremental copy's reset
+    // accepts, keeping its rows.
+    await checkpoints.reset('files');
+
+    await run(false);
+
+    assert.equal(before.length, 1, modes.destinationSyncMode);
+    assert.deepEqual(await chunkTables(), [], modes.destinationSyncMode);
+    assert.deepEqual(
+      (await database.sql`SELECT id, version FROM raw.files`).map((row) => ({
+        ...row,
+      })),
+      [{ id: 'a', version: '1' }],
+    );
+  }
+});
+
 test('declarations are checked before any connection', () => {
   const url = 'postgres://u:p@127.0.0.1:1/db';
   assert.throws(

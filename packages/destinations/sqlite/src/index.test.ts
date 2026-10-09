@@ -2716,6 +2716,8 @@ class FileSource extends Source {
   readonly identity = 'file-test';
   readonly staging: string;
   contents: Record<string, { version: number; bytes: Uint8Array }>;
+  // Whether records carry their file, which a target that stores none refuses.
+  withFiles = true;
   readonly snapshot: boolean;
   readonly files: Stream;
   protected readonly catalog: Catalog;
@@ -2760,7 +2762,7 @@ class FileSource extends Source {
         ? diffSnapshot(configuration.stream, scan, state)
         : scan.map((data) => ({ stream: 'files', data }));
     for await (const message of messages) {
-      if ('type' in message) {
+      if ('type' in message || !this.withFiles) {
         yield message;
         continue;
       }
@@ -5805,4 +5807,73 @@ test('a stored table that no longer fits evolves without a reload, keeping every
     files: { a: loaded.files.a },
     orphans: 0,
   });
+});
+
+test('a file column the target drops takes its stored chunks with it, whether its table evolves or an overwrite reloads it', async () => {
+  for (const modes of [
+    { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
+    { syncMode: 'full_refresh', destinationSyncMode: 'overwrite' },
+  ] as const) {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-files-'));
+    const source = new FileSource(scratch.path, {
+      a: { version: 1, bytes: Buffer.from('aye') },
+    });
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'files.sqlite'),
+    });
+    const checkpoints = new SQLiteCheckpointStore({
+      path: join(scratch.path, 'state.sqlite'),
+    });
+    const run = (withBytes: boolean) =>
+      new Pipeline({
+        connections: [
+          new Connection({
+            name: 'test',
+            source,
+            destination,
+            checkpoints,
+            steps: [
+              new Copy(
+                source.files,
+                withBytes
+                  ? fileTable(destination, source)
+                  : destination.table('files', (c) => [
+                      c.text('id'),
+                      c.integer('version'),
+                    ]),
+                { id: 'files', ...modes },
+              ),
+            ],
+          }),
+        ],
+      }).run();
+    const chunkTables = () => {
+      using database = new DatabaseSync(destination.path, { readOnly: true });
+      return database
+        .prepare(
+          `SELECT "name" FROM sqlite_schema WHERE "type" = 'table' AND "name" LIKE '\\_elt\\_files\\_%' ESCAPE '\\'`,
+        )
+        .all()
+        .map(({ name }) => String(name));
+    };
+    await run(true);
+    const before = chunkTables();
+    // Dropping a column changes the copy, which an incremental copy's reset
+    // accepts, keeping its rows; the source stops sending the files.
+    await checkpoints.reset('files');
+    source.withFiles = false;
+
+    await run(false);
+
+    assert.equal(before.length, 1, modes.destinationSyncMode);
+    assert.deepEqual(chunkTables(), [], modes.destinationSyncMode);
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    assert.deepEqual(
+      database
+        .prepare('SELECT id, version FROM files')
+        .all()
+        .map((row) => ({ ...row })),
+      [{ id: 'a', version: 1 }],
+    );
+  }
 });

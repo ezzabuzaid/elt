@@ -387,6 +387,24 @@ export abstract class SQLiteWriter extends Writer {
       : 'stale';
   }
 
+  // Drops the chunks of every stored column that is no longer one of the
+  // target's file columns, before the table is replaced: no row of the table
+  // that takes its place refers to them.
+  #dropRetiredChunks(database: DatabaseSync): void {
+    const files = new Set(
+      this.table.columns
+        .filter(({ storesFile }) => storesFile)
+        .map(({ name }) => identifiers.key(name)),
+    );
+    for (const { name } of database
+      .prepare('SELECT "name" FROM pragma_table_info(?)')
+      .all(this.table.name))
+      if (!files.has(identifiers.key(String(name))))
+        database.exec(
+          `DROP TABLE IF EXISTS ${quote(SQLiteFileStore.tableName(this.table, { name: String(name) }))}`,
+        );
+  }
+
   // Brings a stored table the stream no longer fits to its shape, keeping
   // every row: SQLite cannot change a column's type or constraints in place,
   // so the rows move into a table of the new definition, column by name, a
@@ -419,6 +437,7 @@ export abstract class SQLiteWriter extends Writer {
         { cause },
       );
     }
+    this.#dropRetiredChunks(database);
     database.exec(`DROP TABLE ${this.table.quotedName}`);
     database.exec(`ALTER TABLE ${into} RENAME TO ${this.table.quotedName}`);
     this.initialize(database, false);
@@ -618,6 +637,7 @@ export abstract class SQLiteWriter extends Writer {
             database.exec(
               `DROP VIEW IF EXISTS ${quote(this.table.readerView)}`,
             );
+          this.#dropRetiredChunks(database);
           database.exec(`DROP TABLE IF EXISTS ${this.table.quotedName}`);
           database.exec(
             `ALTER TABLE ${hidden} RENAME TO ${this.table.quotedName}`,

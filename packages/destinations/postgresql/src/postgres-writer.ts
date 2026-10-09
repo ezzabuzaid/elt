@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   type CopyConfiguration,
@@ -338,6 +339,22 @@ export abstract class PostgresWriter extends Writer {
     return `${quote(this.schema)}.${quote(this.#hiddenName)}`;
   }
 
+  // Drops the chunks of every stored column that is no longer one of the
+  // target's file columns, before the table is replaced: no row of the table
+  // that takes its place refers to them.
+  async #dropRetiredChunks(sql: Transaction): Promise<void> {
+    const files = new Set(
+      this.table.columns
+        .filter(({ storesFile }) => storesFile)
+        .map(({ name }) => name),
+    );
+    for (const { name } of await storedColumns(sql, this.qualifiedName))
+      if (!files.has(name))
+        await sql.unsafe(
+          `DROP TABLE IF EXISTS ${PostgresFileStore.qualifiedName(this.schema, this.table, name)}`,
+        );
+  }
+
   // Swaps a completed reload's hidden target in last, so readers of the
   // stored table wait only for the swap, not the reload. A reader that holds
   // it past the timeout fails the copy until the next run. Whatever else
@@ -345,6 +362,7 @@ export abstract class PostgresWriter extends Writer {
   async #swap(sql: Transaction): Promise<void> {
     await sql.unsafe(`SET LOCAL lock_timeout = '${swapTimeout}'`);
     await this.#view?.drop(sql);
+    await this.#dropRetiredChunks(sql);
     await sql.unsafe(`DROP TABLE IF EXISTS ${this.qualifiedName}`);
     await sql.unsafe(
       `ALTER TABLE ${this.#hidden} RENAME TO ${this.table.quotedName}`,
@@ -357,12 +375,24 @@ export abstract class PostgresWriter extends Writer {
   // Brings a stored table the stream no longer fits to its shape in place,
   // keeping every row, as Airbyte's Postgres destination does: a column the
   // stream added is added nullable, one it dropped is dropped, a changed type
-  // is cast, and NOT NULL follows the primary key. A value that will not cast
-  // fails the load, naming the column, and the transaction leaves the table
+  // is cast, and NOT NULL and the primary key follow the target's explicit
+  // key columns. A value that will not cast, or rows that repeat a new key,
+  // fail the load, naming the column, and the transaction leaves the table
   // as it was. Readers wait for the change as they wait for a swap, and
   // whatever else depends on the reader view refuses it.
   async #evolve(sql: Transaction, stage: string): Promise<void> {
     await sql.unsafe(`SET LOCAL lock_timeout = '${swapTimeout}'`);
+    // Postgres keeps the primary key as a constraint apart from NOT NULL, and
+    // refuses to drop NOT NULL from a column it covers.
+    const storedKey = await sql.unsafe<{ conname: string; attname: string }[]>(
+      "SELECT c.conname, a.attname FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey) WHERE c.conrelid = to_regclass($1) AND c.contype = 'p'",
+      [this.qualifiedName],
+    );
+    const key = this.table.columns.filter((column) => column.isPrimaryKey);
+    const rekeyed = !isDeepStrictEqual(
+      storedKey.map(({ attname }) => attname).toSorted(),
+      key.map(({ name }) => name).toSorted(),
+    );
     const stored = new Map(
       (await storedColumns(sql, this.qualifiedName)).map((column) => [
         column.name,
@@ -378,6 +408,12 @@ export abstract class PostgresWriter extends Writer {
     const kept = new Set(['loaded_at']);
     await this.#view?.drop(sql);
     try {
+      await this.#dropRetiredChunks(sql);
+      const [constraint] = storedKey;
+      if (rekeyed && constraint !== undefined)
+        await sql.unsafe(
+          `ALTER TABLE ${this.qualifiedName} DROP CONSTRAINT ${quote(constraint.conname)}`,
+        );
       for (const column of this.table.columns) {
         kept.add(column.name);
         const type = types.get(column.name);
@@ -402,6 +438,10 @@ export abstract class PostgresWriter extends Writer {
           await sql.unsafe(
             `ALTER TABLE ${this.qualifiedName} DROP COLUMN ${quote(name)}`,
           );
+      if (rekeyed && key.length > 0)
+        await sql.unsafe(
+          `ALTER TABLE ${this.qualifiedName} ADD PRIMARY KEY (${key.map(({ quotedName }) => quotedName).join(', ')})`,
+        );
     } catch (cause) {
       throw new TypeError(
         `The rows stored in ${this.qualifiedName} do not fit the new shape of stream ${this.stream.name}: ${cause instanceof Error ? cause.message : String(cause)}. Clear the copy to load it again, or change the stream so they fit.`,

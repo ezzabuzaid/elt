@@ -316,6 +316,27 @@ test('expiry keeps millisecond timestamps, and decimal or base64 fields cannot b
     );
 });
 
+test('an incremental copy refuses a cursor field its stream does not describe, appending or deduplicating', () => {
+  // A stream whose cursor field was dropped upstream since the copy chose it.
+  const stream = new Stream({
+    name: 'items',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    primaryKey: ['id'],
+    supportedSyncModes: ['incremental'],
+  });
+
+  for (const destinationSyncMode of ['append', 'append_dedup'] as const)
+    assert.throws(
+      () =>
+        new CopyConfiguration(stream, {
+          syncMode: 'incremental',
+          destinationSyncMode,
+          cursorField: 'updatedAt',
+        }).validateSelection(),
+      { message: 'Stream items does not describe cursor field updatedAt' },
+    );
+});
+
 type ReadContext = AsyncDisposable & { readonly id: number };
 
 // One scripted extract step: a message to emit or an error to throw. A

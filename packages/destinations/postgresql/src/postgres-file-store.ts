@@ -27,12 +27,31 @@ export class PostgresFileStore {
     this.schema = schema;
     this.table = table;
     this.column = column;
-    const key = createHash('sha256')
-      .update(JSON.stringify([table.name, column.name]))
+    this.qualifiedName = PostgresFileStore.qualifiedName(
+      schema,
+      table,
+      column.name,
+    );
+    this.#staged = quote(
+      `_elt_files_stage_${PostgresFileStore.#key(table, column.name)}`,
+    );
+  }
+
+  // The chunk table of the column named column, which may no longer be one
+  // of the table's file columns.
+  static qualifiedName(
+    schema: string,
+    table: PostgresTable,
+    column: string,
+  ): string {
+    return `${quote(schema)}.${quote(`_elt_files_${PostgresFileStore.#key(table, column)}`)}`;
+  }
+
+  static #key(table: PostgresTable, column: string): string {
+    return createHash('sha256')
+      .update(JSON.stringify([table.name, column]))
       .digest('hex')
       .slice(0, 40);
-    this.qualifiedName = `${quote(schema)}.${quote(`_elt_files_${key}`)}`;
-    this.#staged = quote(`_elt_files_stage_${key}`);
   }
 
   async stage(sql: postgres.Sql): Promise<void> {
