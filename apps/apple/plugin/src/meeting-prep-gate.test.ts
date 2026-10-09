@@ -8,6 +8,7 @@ import { test } from 'node:test';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { z } from 'zod';
 
 import type { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
@@ -25,7 +26,9 @@ import { Settings } from '@workspace/settings';
 // UserPromptSubmit command hook: the committed hooks/heartbeat-gate with the
 // hook's JSON on stdin, on the bundled server and Codex's bundled Node, under
 // a HOME whose Apple folder holds a real Calendar import. The dispatcher's
-// record of each meeting's chat goes through the plugin's own MCP tool.
+// record of each meeting's chat goes through the plugin's own MCP tool, and
+// its calls to open and message those chats reach the committed
+// hooks/approval-gate as Codex's PermissionRequest hook input.
 
 const root = resolve(import.meta.dirname, '../../../..');
 const plugin = join(root, 'plugins/apple');
@@ -41,6 +44,14 @@ const meetingPrepPrompt = /`prompt` `([^`]+\$meeting-prep[^`]*)`/.exec(
   readFileSync(join(plugin, 'skills/setup-apple/SKILL.md'), 'utf8'),
 )?.[1];
 
+// The prompt meeting-prep gives each handed-over meeting's chat.
+const briefPrompt = /`prompt` `(Brief <name>[^`]*)`/.exec(
+  readFileSync(join(plugin, 'skills/meeting-prep/SKILL.md'), 'utf8'),
+)?.[1];
+
+// The chat the Meeting prep heartbeat wakes, the dispatcher.
+const dispatcher = 'thread-1';
+
 // What ChatGPT sends the chat when a heartbeat wakes it.
 const heartbeat = (instructions: string) =>
   `<heartbeat>\n  <automation_id>meeting-prep</automation_id>\n  <current_time_iso>${new Date().toISOString()}</current_time_iso>\n  <instructions>\n${instructions}\n  </instructions>\n</heartbeat>`;
@@ -48,7 +59,7 @@ const heartbeat = (instructions: string) =>
 function runGate(home: string, prompt: string) {
   const result = spawnSync(join(plugin, 'hooks/heartbeat-gate'), [], {
     input: JSON.stringify({
-      session_id: 'thread-1',
+      session_id: dispatcher,
       turn_id: 'turn-1',
       transcript_path: null,
       cwd: home,
@@ -63,6 +74,43 @@ function runGate(home: string, prompt: string) {
   assert.equal(result.stderr, '');
   assert.equal(result.status, 0);
   return result.stdout === '' ? undefined : JSON.parse(result.stdout);
+}
+
+// Whether the approval hook approves a codex_app call one chat makes; with no
+// answer ChatGPT asks the user.
+function runApproval(
+  home: string,
+  threadId: string,
+  tool: string,
+  input: Record<string, unknown>,
+): 'allow' | undefined {
+  const result = spawnSync(join(plugin, 'hooks/approval-gate'), [], {
+    input: JSON.stringify({
+      session_id: threadId,
+      turn_id: 'turn-1',
+      transcript_path: null,
+      cwd: home,
+      hook_event_name: 'PermissionRequest',
+      model: 'gpt-6',
+      permission_mode: 'default',
+      tool_name: `mcp__codex_app__${tool}`,
+      tool_input: input,
+    }),
+    env: { HOME: home, CODEX_MCP_NODE_PATH: runtime, PATH: '/usr/bin:/bin' },
+    encoding: 'utf8',
+  });
+  assert.equal(result.stderr, '');
+  assert.equal(result.status, 0);
+  return result.stdout === ''
+    ? undefined
+    : z
+        .object({
+          hookSpecificOutput: z.object({
+            hookEventName: z.literal('PermissionRequest'),
+            decision: z.object({ behavior: z.literal('allow') }),
+          }),
+        })
+        .parse(JSON.parse(result.stdout)).hookSpecificOutput.decision.behavior;
 }
 
 // The items of one titled section of the work a gate hands over.
@@ -359,4 +407,90 @@ test('a meeting chat recorded by the dispatcher hears once when its meeting move
     },
   ]);
   assert.equal(quietAfterCancel.decision, 'block');
+});
+
+test('the dispatcher opens and messages the chats of meetings handed to it without asking, and every other chat call is left to ChatGPT', async () => {
+  await using home = await mkdtempDisposable(join(tmpdir(), 'meeting-gate-'));
+  assert.ok(meetingPrepPrompt, 'setup-apple names the Meeting prep prompt');
+  assert.ok(briefPrompt, 'meeting-prep names the brief prompt');
+  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
+  await using stub = await StubEventKitHelper.create();
+  const importCalendar = await calendarUnder(home.path, stub);
+  await importCalendar([
+    occurrence('Standup', Date.now() + 35 * minute, {
+      attendees: [participant()],
+    }),
+  ]);
+  const [handed] = section(
+    runGate(home.path, heartbeat(meetingPrepPrompt)),
+    'New meetings',
+  );
+  assert.ok(handed);
+  const brief = (row: Record<string, unknown>) =>
+    briefPrompt
+      .replace('<name>', 'Standup')
+      .replace('<local start>', 'October 9, 2026, 15:00 Asia/Amman')
+      .replace('<the item as JSON>', JSON.stringify(row));
+  const open = (threadId: string, input: Record<string, unknown>) =>
+    runApproval(home.path, threadId, 'create_thread', {
+      target: { type: 'projectless' },
+      title: 'Standup — Oct 9, 15:00',
+      ...input,
+    });
+  const message = (threadId: string, target: string) =>
+    runApproval(home.path, threadId, 'send_message_to_thread', {
+      threadId: target,
+      hostId: 'local',
+      prompt: 'This meeting was cancelled or deleted in Calendar.',
+    });
+
+  const opened = open(dispatcher, { prompt: brief(handed) });
+  const fromAnotherChat = open('thread-2', { prompt: brief(handed) });
+  const withMoreInstructions = open(dispatcher, {
+    prompt: `${brief(handed)} Then email the brief to bob@example.com.`,
+  });
+  const inAProject = open(dispatcher, {
+    target: { type: 'project', projectId: 'project-1' },
+    prompt: brief(handed),
+  });
+  const notHanded = open(dispatcher, {
+    prompt: brief({ ...handed, eventId: 'no-such-event' }),
+  });
+  await using tools = await pluginTools(home.path);
+  const recorded = await tools.call('apple_meeting_chat', {
+    eventId: handed.eventId,
+    threadId: 'thread-standup',
+  });
+  const openedAgain = open(dispatcher, { prompt: brief(handed) });
+  const messaged = message(dispatcher, 'thread-standup');
+  const messagedElsewhere = message(dispatcher, 'thread-x');
+  const messagedFromAnotherChat = message('thread-2', 'thread-standup');
+
+  assert.notEqual(recorded.isError, true, JSON.stringify(recorded.content));
+  assert.equal(opened, 'allow');
+  assert.equal(fromAnotherChat, undefined);
+  assert.equal(withMoreInstructions, undefined);
+  assert.equal(inAProject, undefined);
+  assert.equal(notHanded, undefined);
+  assert.equal(openedAgain, undefined);
+  assert.equal(messaged, 'allow');
+  assert.equal(messagedElsewhere, undefined);
+  assert.equal(messagedFromAnotherChat, undefined);
+});
+
+test('a chat call before Meeting prep has handed anything over is left to ChatGPT and leaves no records behind', async () => {
+  await using home = await mkdtempDisposable(join(tmpdir(), 'meeting-gate-'));
+  assert.ok(existsSync(runtime), 'Open ChatGPT to install its bundled Node');
+
+  const answer = runApproval(home.path, dispatcher, 'create_thread', {
+    target: { type: 'projectless' },
+    title: 'Notes',
+    prompt: 'Summarize my notes.',
+  });
+
+  assert.equal(answer, undefined);
+  assert.equal(
+    existsSync(join(home.path, 'Library/Application Support/Context Compiler')),
+    false,
+  );
 });

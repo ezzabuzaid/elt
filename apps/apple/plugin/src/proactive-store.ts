@@ -2,13 +2,14 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 // What the proactive agent remembers between heartbeats, beside the imports:
-// each meeting handed to Meeting prep and the chat that briefs it, the note
-// kept about each person, and the import problems already reported. The
-// heartbeat gates and the plugin's tools share it from separate processes.
+// each meeting handed to Meeting prep, the dispatcher chat it was handed to
+// and the chat that briefs it, the note kept about each person, and the
+// import problems already reported. The heartbeat gates, the approval hook
+// and the plugin's tools share it from separate processes.
 // Stored data is disposable, so an older layout starts it empty. A chat that
 // began before a plugin update keeps the older server, which must not empty
 // a newer layout, so it refuses one.
-const layout = 1;
+const layout = 2;
 
 export type Meeting = {
   eventId: string;
@@ -18,6 +19,8 @@ export type Meeting = {
 };
 
 export type HandedMeeting = Meeting & {
+  // The dispatcher chat the Meeting prep gate handed it to.
+  dispatcherThreadId: string;
   threadId: string | null;
   cancelled: boolean;
   // Its chat was handed to the gardener for archiving.
@@ -46,7 +49,7 @@ export class ProactiveStore implements Disposable {
           `DROP TABLE IF EXISTS meetings; DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS reports; PRAGMA user_version = ${layout};`,
         );
       this.#database.exec(
-        `CREATE TABLE IF NOT EXISTS meetings (event_id TEXT PRIMARY KEY, name TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT NOT NULL, thread_id TEXT, cancelled INTEGER NOT NULL DEFAULT 0, archive_handed_at TEXT);
+        `CREATE TABLE IF NOT EXISTS meetings (event_id TEXT PRIMARY KEY, name TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT NOT NULL, dispatcher_thread_id TEXT NOT NULL, thread_id TEXT, cancelled INTEGER NOT NULL DEFAULT 0, archive_handed_at TEXT);
          CREATE TABLE IF NOT EXISTS people (email TEXT PRIMARY KEY, name TEXT NOT NULL, note TEXT, noted_at TEXT, requested_at TEXT);
          CREATE TABLE IF NOT EXISTS reports (key TEXT PRIMARY KEY);`,
       );
@@ -63,7 +66,7 @@ export class ProactiveStore implements Disposable {
   #select(where: string, ...values: string[]): HandedMeeting[] {
     return this.#database
       .prepare(
-        `SELECT event_id, name, start_at, end_at, thread_id, cancelled, archive_handed_at FROM meetings ${where}`,
+        `SELECT event_id, name, start_at, end_at, dispatcher_thread_id, thread_id, cancelled, archive_handed_at FROM meetings ${where}`,
       )
       .all(...values)
       .map((row) => ({
@@ -71,18 +74,19 @@ export class ProactiveStore implements Disposable {
         name: String(row.name),
         startAt: String(row.start_at),
         endAt: String(row.end_at),
+        dispatcherThreadId: String(row.dispatcher_thread_id),
         threadId: row.thread_id === null ? null : String(row.thread_id),
         cancelled: row.cancelled === 1,
         archived: row.archive_handed_at !== null,
       }));
   }
 
-  hand(meetings: readonly Meeting[]): void {
+  hand(meetings: readonly Meeting[], dispatcherThreadId: string): void {
     const insert = this.#database.prepare(
-      'INSERT OR IGNORE INTO meetings (event_id, name, start_at, end_at) VALUES (?, ?, ?, ?)',
+      'INSERT OR IGNORE INTO meetings (event_id, name, start_at, end_at, dispatcher_thread_id) VALUES (?, ?, ?, ?, ?)',
     );
     for (const { eventId, name, startAt, endAt } of meetings)
-      insert.run(eventId, name, startAt, endAt);
+      insert.run(eventId, name, startAt, endAt, dispatcherThreadId);
   }
 
   move({ eventId, startAt, endAt }: Meeting): void {

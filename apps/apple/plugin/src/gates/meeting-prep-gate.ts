@@ -13,7 +13,7 @@ const leadMinutes = 40;
 export class MeetingPrepGate extends HeartbeatGate {
   protected readonly skill = 'meeting-prep';
 
-  protected due(directory: string, now: Date): Work {
+  protected due(directory: string, now: Date, threadId: string): Work {
     const database = new AppleImports(directory).database('calendar');
     if (database === null) return { quiet: 'Calendar is not imported.' };
     const calendar = new CalendarImport(database);
@@ -48,7 +48,7 @@ export class MeetingPrepGate extends HeartbeatGate {
         moved.push({ ...meeting, ...occurrence });
     }
 
-    store.hand(fresh);
+    store.hand(fresh, threadId);
     for (const meeting of moved) store.move(meeting);
     for (const { eventId } of cancelled) store.cancel(eventId);
     const sections: Section[] = [];

@@ -37,11 +37,13 @@ export abstract class HeartbeatGate {
     this.#skills = skills;
   }
 
-  // What is due now for this heartbeat, recorded as handed over.
-  protected abstract due(directory: string, now: Date): Work;
+  // What is due now for this heartbeat, recorded as handed over to the chat
+  // it wakes.
+  protected abstract due(directory: string, now: Date, threadId: string): Work;
 
   answer(
     instructions: string,
+    threadId: string,
     directory: string,
     now: Date,
   ): GateOutput | undefined {
@@ -49,7 +51,7 @@ export abstract class HeartbeatGate {
     const skill = `$${this.skill}, whose current instructions are at "${join(this.#skills, this.skill, 'SKILL.md')}"`;
     let work: Work;
     try {
-      work = this.due(directory, now);
+      work = this.due(directory, now, threadId);
     } catch (error) {
       // A gate that exits with an error lets the heartbeat reach the model
       // with nothing in context, as when ChatGPT skips untrusted hooks; the

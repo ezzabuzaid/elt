@@ -1,5 +1,6 @@
 // Bundles the plugin's MCP server into plugins/apple/server: main.mjs, the
-// heartbeat gates' hook heartbeat-hook.mjs, one folder per built-in connector
+// heartbeat gates' hook heartbeat-hook.mjs, the approval hook
+// approval-hook.mjs, one folder per built-in connector
 // (its package.json manifest beside its entry point and its presets), the
 // host modules a user's connector imports, and the chunks they all share, so
 // every connector runs on the same elt and AppleConnector as the server.
@@ -45,6 +46,7 @@ await build({
       in: 'apps/apple/plugin/src/heartbeat-hook.ts',
       out: 'heartbeat-hook',
     },
+    { in: 'apps/apple/plugin/src/approval-hook.ts', out: 'approval-hook' },
     ...builtIns.map(({ in: source, out }) => ({ in: source, out })),
     ...hostModules.map(({ specifier, file }) => ({
       in: fileURLToPath(import.meta.resolve(specifier)),

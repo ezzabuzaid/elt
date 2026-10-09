@@ -11,8 +11,8 @@ import { MeetingPrepGate } from './gates/meeting-prep-gate.ts';
 // only for a heartbeat that names one of the gates' skills. The gate whose
 // skill the heartbeat names decides whether it reaches the model.
 
-const { prompt } = z
-  .object({ prompt: z.string() })
+const { session_id: threadId, prompt } = z
+  .object({ session_id: z.string(), prompt: z.string() })
   .parse(JSON.parse(readFileSync(0, 'utf8')));
 const instructions =
   /^<heartbeat>[\s\S]*?<instructions>([\s\S]*?)<\/instructions>/.exec(
@@ -23,7 +23,7 @@ if (instructions !== undefined) {
   // This bundle sits in the server folder of the installed plugin.
   const skills = fileURLToPath(new URL('../skills', import.meta.url));
   for (const gate of [new MeetingPrepGate(skills), new GardenGate(skills)]) {
-    const output = gate.answer(instructions, appleDirectory(), now);
+    const output = gate.answer(instructions, threadId, appleDirectory(), now);
     if (output !== undefined) {
       process.stdout.write(JSON.stringify(output));
       break;
