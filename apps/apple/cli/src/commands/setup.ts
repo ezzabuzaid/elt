@@ -91,13 +91,13 @@ export class SetupCommand extends Command {
       .addOption(
         new Option(
           '--since <date>',
-          'import records of the --connector before it from this date',
+          "import records of the --connector before it from this day (YYYY-MM-DD, on this Mac's clock)",
         ).argParser(date('since')),
       )
       .addOption(
         new Option(
           '--until <date>',
-          'import records of the --connector before it through this date',
+          "import records of the --connector before it through this day (YYYY-MM-DD, on this Mac's clock)",
         ).argParser(date('until')),
       )
       .option(
@@ -298,25 +298,29 @@ function cancelled(): void {
   process.exitCode = 130;
 }
 
-// The scope bound a typed day names: since starts at that day, and until
-// takes in the whole day, so its exclusive endAt is the next day's start.
-// null when the answer is not a calendar date.
+// The scope bound a typed day names on this Mac's clock: since starts at that
+// day's midnight, and until takes in the whole day, so its exclusive endAt is
+// the next day's midnight. null when the answer is not a calendar date.
 function boundOf(bound: 'startAt' | 'endAt', day: string): string | null {
-  const instant = new Date(`${day}T00:00:00.000Z`);
+  const [year, month, date] = day.split('-').map(Number);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !year || !month || !date) return null;
+  const instant = new Date(year, month - 1, date);
   // Date rolls 2026-02-30 over to March; only a day that reads back as typed
   // is a calendar date.
-  if (
-    Number.isNaN(instant.getTime()) ||
-    instant.toISOString().slice(0, 10) !== day
-  )
-    return null;
-  if (bound === 'endAt') instant.setUTCDate(instant.getUTCDate() + 1);
+  if (localDay(instant) !== day) return null;
+  if (bound === 'endAt') instant.setDate(instant.getDate() + 1);
   return instant.toISOString();
 }
 
 // The day a saved bound shows as, the inverse of boundOf.
 function dayOf(bound: 'startAt' | 'endAt', instant: string): string {
   const day = new Date(instant);
-  if (bound === 'endAt') day.setUTCDate(day.getUTCDate() - 1);
-  return day.toISOString().slice(0, 10);
+  if (bound === 'endAt') day.setDate(day.getDate() - 1);
+  return localDay(day);
+}
+
+// The calendar day an instant falls on, on this Mac's clock.
+function localDay(instant: Date): string {
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${instant.getFullYear()}-${pad(instant.getMonth() + 1)}-${pad(instant.getDate())}`;
 }

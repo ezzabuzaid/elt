@@ -1698,6 +1698,46 @@ test('--until takes in the day it names, and a day that is not on the calendar i
   assert.deepEqual(JSON.parse(notes.stdout), [{ title: 'Groceries' }]);
 });
 
+test('--since and --until name days on the clock of the Mac the CLI runs on, and status shows them as typed', async () => {
+  // Groceries was last edited at 2025-02-03T04:05Z: the evening of 2 February
+  // in Honolulu, ten hours behind UTC.
+  const zone = process.env.TZ;
+  process.env.TZ = 'Pacific/Honolulu';
+  try {
+    const imported = async (...bounds: string[]) => {
+      await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+      await withNotes(mac.path);
+      cli(mac.path, 'setup', '--connector', 'notes', ...bounds);
+      cli(mac.path, 'sync');
+      const [status] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
+      return {
+        selection: status.selection,
+        notes: JSON.parse(
+          cli(
+            mac.path,
+            'query',
+            'notes',
+            "SELECT title FROM notes WHERE title = 'Groceries'",
+            '--json',
+          ).stdout,
+        ),
+      };
+    };
+
+    const until = await imported('--until', '2025-02-02');
+    const since = await imported('--since', '2025-02-03');
+
+    assert.deepEqual(until, {
+      selection: 'until 2025-02-02',
+      notes: [{ title: 'Groceries' }],
+    });
+    assert.deepEqual(since, { selection: 'from 2025-02-03', notes: [] });
+  } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
+  }
+});
+
 test('one SQL statement runs however it is spaced or commented', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);

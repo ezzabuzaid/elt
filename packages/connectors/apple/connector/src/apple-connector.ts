@@ -172,12 +172,10 @@ export abstract class AppleConnector {
           `${count} ${count === 1 ? title.replace(/(x)es$|s$/, '$1') : title}`,
         ];
       }),
-      ...(scope.startAt ? [`from ${scope.startAt.slice(0, 10)}`] : []),
+      ...(scope.startAt ? [`from ${localDay(Date.parse(scope.startAt))}`] : []),
       // endAt is exclusive: the last day covered is the one before it.
       ...(scope.endAt
-        ? [
-            `until ${new Date(Date.parse(scope.endAt) - 1).toISOString().slice(0, 10)}`,
-          ]
+        ? [`until ${localDay(Date.parse(scope.endAt) - 1)}`]
         : []),
     ];
     return parts.length === 0 ? 'everything' : parts.join(', ');
@@ -348,4 +346,12 @@ export abstract class AppleConnector {
     });
     return { connection, destination };
   }
+}
+
+// The calendar day an instant falls on, on the clock of the Mac the host
+// runs on, which is the clock a person picks the days of a selection by.
+function localDay(epochMilliseconds: number): string {
+  const instant = new Date(epochMilliseconds);
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${instant.getFullYear()}-${pad(instant.getMonth() + 1)}-${pad(instant.getDate())}`;
 }
