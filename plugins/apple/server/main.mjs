@@ -34,15 +34,15 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunks/chunk-4DVLIKSL.mjs";
+} from "./chunks/chunk-MBMOQFVV.mjs";
 import {
   AppleConnector,
   NewerLayoutError,
   SQLitePasses,
   SQLiteSyncHistory,
   Settings
-} from "./chunks/chunk-CWZNSNU3.mjs";
-import "./chunks/chunk-AHY2RO53.mjs";
+} from "./chunks/chunk-TI6UOZR6.mjs";
+import "./chunks/chunk-L4HYJU4U.mjs";
 import {
   __callDispose,
   __commonJS,
@@ -17684,7 +17684,12 @@ mcpServer.registerTool(
   async ({ event }) => {
     if (plugin.updated())
       return {
-        content: [{ type: "text", text: new PluginUpdatedError().message }]
+        content: [
+          {
+            type: "text",
+            text: "Apple was updated after this chat started, and this chat runs the old version. To set up Apple or change its connectors, open a new chat. The imports can still be read, and apple_meeting_chat and apple_person_note still work, so a Meeting prep or Apple gardener heartbeat here goes on with the work the Apple plugin hands it."
+          }
+        ]
       };
     await plugin.refresh();
     const text = await contextFor(event);

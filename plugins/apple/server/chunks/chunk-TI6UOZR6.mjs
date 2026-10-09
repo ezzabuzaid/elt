@@ -26,7 +26,7 @@ import {
   readerCatalog,
   reloadMode,
   syncHistoryRelations
-} from "./chunk-AHY2RO53.mjs";
+} from "./chunk-L4HYJU4U.mjs";
 import {
   __callDispose,
   __using
@@ -1793,6 +1793,15 @@ var SQLiteWriter = class extends Writer {
       return "missing";
     return stored === `CREATE TABLE ${this.table.definition(quote3(name))}` ? "fits" : "stale";
   }
+  // Drops the chunks of every stored column that is no longer one of the
+  // target's file columns, before the table is replaced: no row of the table
+  // that takes its place refers to them.
+  #dropRetiredChunks(database) {
+    const files = new Set(this.table.columns.filter(({ storesFile }) => storesFile).map(({ name }) => identifiers.key(name)));
+    for (const { name } of database.prepare('SELECT "name" FROM pragma_table_info(?)').all(this.table.name))
+      if (!files.has(identifiers.key(String(name))))
+        database.exec(`DROP TABLE IF EXISTS ${quote3(SQLiteFileStore.tableName(this.table, { name: String(name) }))}`);
+  }
   // Brings a stored table the stream no longer fits to its shape, keeping
   // every row: SQLite cannot change a column's type or constraints in place,
   // so the rows move into a table of the new definition, column by name, a
@@ -1813,6 +1822,7 @@ var SQLiteWriter = class extends Writer {
     } catch (cause) {
       throw new TypeError(`The rows stored in ${this.table.quotedName} do not fit the new shape of stream ${this.stream.name}: ${cause instanceof Error ? cause.message : String(cause)}. Clear the copy to load it again, or change the stream so they fit.`, { cause });
     }
+    this.#dropRetiredChunks(database);
     database.exec(`DROP TABLE ${this.table.quotedName}`);
     database.exec(`ALTER TABLE ${into} RENAME TO ${this.table.quotedName}`);
     this.initialize(database, false);
@@ -1973,6 +1983,7 @@ var SQLiteWriter = class extends Writer {
         commit(() => {
           if (this.table.readerView !== void 0)
             database.exec(`DROP VIEW IF EXISTS ${quote3(this.table.readerView)}`);
+          this.#dropRetiredChunks(database);
           database.exec(`DROP TABLE IF EXISTS ${this.table.quotedName}`);
           database.exec(`ALTER TABLE ${hidden} RENAME TO ${this.table.quotedName}`);
           this.adopt(database);

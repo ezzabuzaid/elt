@@ -33,6 +33,17 @@
           }
         ]
       }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "mcp__codex_app__create_thread|mcp__codex_app__send_message_to_thread",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/approval-gate\""
+          }
+        ]
+      }
     ]
   }
 }

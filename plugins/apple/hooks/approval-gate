@@ -1,0 +1,8 @@
+#!/bin/sh
+# Codex runs this PermissionRequest hook before ChatGPT asks the user to
+# approve a codex_app call that hooks.json names, so Meeting prep can open and
+# update the chats it was handed without waiting on the user.
+set -eu
+
+plugin=$(cd "$(dirname "$0")/.." && pwd)
+exec "$plugin/launch_node" "$plugin/server/approval-hook.mjs"

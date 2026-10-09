@@ -489,6 +489,8 @@ var CopyConfiguration = class {
     const { sourceDefinedCursor, emitsDeletes } = this.stream;
     if (sourceDefinedCursor && cursorField !== void 0)
       throw new TypeError(`Stream ${this.stream.name} defines its own cursor; omit cursorField`);
+    if (cursorField !== void 0 && !Object.hasOwn(this.stream.jsonSchema.properties ?? {}, cursorField))
+      throw new TypeError(`Stream ${this.stream.name} does not describe cursor field ${cursorField}`);
     if (syncMode === "incremental" && !sourceDefinedCursor && (typeof cursorField !== "string" || !cursorField))
       throw new TypeError("Incremental extraction requires cursorField");
     if (emitsDeletes && syncMode === "incremental" && destinationSyncMode !== "append_dedup")
@@ -1709,9 +1711,14 @@ function assertRecord(record, fields, stream, source) {
 // packages/elt/dist/core/snapshot.js
 import { createHash as createHash2 } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
-async function* diffSnapshot(stream, records, state, horizon) {
+function expiredAfter(horizon) {
+  if (!isTimestamp(horizon))
+    throw new TypeError(`Expiry horizon ${horizon} is not a timestamp`);
+  return ({ expiresBy }) => expiresBy === void 0 || expiresBy >= horizon;
+}
+async function* diffSnapshot(stream, records, state, options = {}) {
   assertSnapshotStream(stream);
-  const kept = keptRows(stream, horizon);
+  const deleted = deletion(stream, options);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
   const current = /* @__PURE__ */ new Map();
@@ -1725,18 +1732,17 @@ async function* diffSnapshot(stream, records, state, horizon) {
       yield { stream: stream.name, data };
   }
   for (const [key, entry] of previous)
-    if (!current.has(key) && !kept(entry))
-      yield {
-        type: "DELETE",
-        stream: stream.name,
-        key: keyObject(stream, key)
-      };
+    if (!current.has(key)) {
+      const message2 = deleted(key, entry);
+      if (message2 !== null)
+        yield message2;
+    }
   const snapshot = sortedObject(current);
   yield { type: "STATE", stream: stream.name, state: { snapshot } };
 }
-async function* diffGroupedSnapshot(stream, groups, state, horizon) {
+async function* diffGroupedSnapshot(stream, groups, state, options = {}) {
   assertSnapshotStream(stream);
-  const kept = keptRows(stream, horizon);
+  const deleted = deletion(stream, options);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const saved = state;
   const previous = new Map(Object.entries(saved?.groups ?? {}));
@@ -1781,12 +1787,11 @@ async function* diffGroupedSnapshot(stream, groups, state, horizon) {
   }
   for (const { snapshot } of previous.values())
     for (const [key, entry] of Object.entries(snapshot))
-      if (!seen.has(key) && !kept(entry))
-        yield {
-          type: "DELETE",
-          stream: stream.name,
-          key: keyObject(stream, key)
-        };
+      if (!seen.has(key)) {
+        const message2 = deleted(key, entry);
+        if (message2 !== null)
+          yield message2;
+      }
   yield {
     type: "STATE",
     stream: stream.name,
@@ -1800,16 +1805,21 @@ function assertSnapshotStream(stream) {
 function sortedObject(entries) {
   return Object.fromEntries([...entries].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
 }
-function keptRows(stream, horizon) {
-  if (stream.expiresBy === void 0) {
-    if (horizon !== void 0)
-      throw new TypeError(`Stream ${stream.name} declares no expiresBy, so its snapshot diff takes no horizon`);
-    const forgets = !stream.emitsDeletes;
-    return () => forgets;
+function deletion(stream, { covers }) {
+  if (!stream.emitsDeletes) {
+    if (covers !== void 0)
+      throw new TypeError(`Stream ${stream.name} emits no deletions, so its snapshot diff takes no covers`);
+    return () => null;
   }
-  if (!isTimestamp(horizon))
-    throw new TypeError(`Stream ${stream.name} expires by ${stream.expiresBy}, so its snapshot diff needs a horizon timestamp`);
-  return (entry) => typeof entry !== "string" && entry[1] < horizon;
+  if (stream.expiresBy !== void 0 && covers === void 0)
+    throw new TypeError(`Stream ${stream.name} expires by ${stream.expiresBy}, so its snapshot diff needs covers, such as expiredAfter(horizon)`);
+  return (key, entry) => {
+    const recordKey = keyObject(stream, key);
+    const vanished = typeof entry === "string" ? { key: recordKey } : { key: recordKey, expiresBy: entry[1] };
+    if (covers !== void 0 && !covers(vanished))
+      return null;
+    return { type: "DELETE", stream: stream.name, key: recordKey };
+  };
 }
 function entryOf(stream, record, fingerprint) {
   if (stream.expiresBy === void 0)
@@ -2231,6 +2241,7 @@ export {
   reloadMode,
   StreamChangeError,
   validateRecords,
+  expiredAfter,
   diffSnapshot,
   diffGroupedSnapshot,
   describeTarget,

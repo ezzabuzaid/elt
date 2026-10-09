@@ -3,7 +3,7 @@ import {
   ProactiveStore,
   appleDirectory,
   external_exports
-} from "./chunks/chunk-4DVLIKSL.mjs";
+} from "./chunks/chunk-MBMOQFVV.mjs";
 import {
   __callDispose,
   __using
@@ -11,6 +11,7 @@ import {
 
 // apps/apple/plugin/src/heartbeat-hook.ts
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 // apps/apple/plugin/src/gates/garden-gate.ts
 import { existsSync as existsSync2 } from "node:fs";
@@ -156,25 +157,40 @@ var CalendarImport = class {
 };
 
 // apps/apple/plugin/src/gates/heartbeat-gate.ts
+import { join as join2 } from "node:path";
 var HeartbeatGate = class {
-  answer(instructions2, directory, now) {
+  // The installed plugin's skills. A chat that began before a plugin update
+  // keeps the old skill paths, so the handover names the installed one.
+  #skills;
+  constructor(skills) {
+    this.#skills = skills;
+  }
+  answer(instructions2, threadId2, directory, now) {
     if (!instructions2.includes(`$${this.skill}`)) return void 0;
-    const work = this.due(directory, now);
+    const skill = `$${this.skill}, whose current instructions are at "${join2(this.#skills, this.skill, "SKILL.md")}"`;
+    let work;
+    try {
+      work = this.due(directory, now, threadId2);
+    } catch (error) {
+      return handover(
+        `The Apple plugin's gate for ${skill} failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
     if ("quiet" in work) return { decision: "block", reason: work.quiet };
-    return {
-      hookSpecificOutput: {
-        hookEventName: "UserPromptSubmit",
-        additionalContext: [
-          `The Apple plugin hands you this work for $${this.skill}. Each section is one kind of work; act on every item as $${this.skill} describes.`,
-          ...work.sections.map(
-            ({ title, items }) => `${title}:
+    return handover(
+      [
+        `The Apple plugin hands you this work for ${skill}. Each section is one kind of work; act on every item as those instructions describe.`,
+        ...work.sections.map(
+          ({ title, items }) => `${title}:
 ${JSON.stringify(items)}`
-          )
-        ].join("\n\n")
-      }
-    };
+        )
+      ].join("\n\n")
+    );
   }
 };
+var handover = (additionalContext) => ({
+  hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext }
+});
 
 // apps/apple/plugin/src/gates/garden-gate.ts
 var minute = 6e4;
@@ -229,8 +245,8 @@ function chatsToArchive(store, calendar, now) {
   );
   return {
     title: "Meeting chats to archive",
-    items: over.map(({ threadId, name, startAt }) => ({
-      threadId,
+    items: over.map(({ threadId: threadId2, name, startAt }) => ({
+      threadId: threadId2,
       name,
       startAt
     }))
@@ -275,7 +291,7 @@ function peopleToNote(store, calendar, now) {
 var leadMinutes = 40;
 var MeetingPrepGate = class extends HeartbeatGate {
   skill = "meeting-prep";
-  due(directory, now) {
+  due(directory, now, threadId2) {
     var _stack = [];
     try {
       const database = new AppleImports(directory).database("calendar");
@@ -285,8 +301,9 @@ var MeetingPrepGate = class extends HeartbeatGate {
       const handed = store.meetings();
       const known = new Set(handed.map(({ eventId }) => eventId));
       const fresh = calendar.due(now, new Date(now.getTime() + leadMinutes * 6e4)).filter(({ eventId }) => !known.has(eventId));
+      const nowIso = now.toISOString();
       const briefed = handed.filter(
-        ({ threadId, cancelled: cancelled2 }) => threadId !== null && !cancelled2
+        ({ threadId: threadId3, cancelled: cancelled2, archived, endAt }) => threadId3 !== null && !cancelled2 && !archived && endAt > nowIso
       );
       const current = new Map(
         calendar.occurrences(briefed.map(({ eventId }) => eventId)).map((occurrence) => [occurrence.eventId, occurrence])
@@ -297,10 +314,10 @@ var MeetingPrepGate = class extends HeartbeatGate {
         const occurrence = current.get(meeting.eventId);
         if (occurrence === void 0 || occurrence.cancelled)
           cancelled.push(meeting);
-        else if (occurrence.startAt !== meeting.startAt && occurrence.startAt >= now.toISOString())
+        else if (occurrence.startAt !== meeting.startAt && occurrence.startAt >= nowIso)
           moved.push({ ...meeting, ...occurrence });
       }
-      store.hand(fresh);
+      store.hand(fresh, threadId2);
       for (const meeting of moved) store.move(meeting);
       for (const { eventId } of cancelled) store.cancel(eventId);
       const sections = [];
@@ -318,8 +335,8 @@ var MeetingPrepGate = class extends HeartbeatGate {
       if (moved.length > 0)
         sections.push({
           title: "Moved meetings",
-          items: moved.map(({ threadId, name, startAt, endAt }) => ({
-            threadId,
+          items: moved.map(({ threadId: threadId3, name, startAt, endAt }) => ({
+            threadId: threadId3,
             name,
             startAt,
             endAt
@@ -328,8 +345,8 @@ var MeetingPrepGate = class extends HeartbeatGate {
       if (cancelled.length > 0)
         sections.push({
           title: "Cancelled meetings",
-          items: cancelled.map(({ threadId, name, startAt }) => ({
-            threadId,
+          items: cancelled.map(({ threadId: threadId3, name, startAt }) => ({
+            threadId: threadId3,
             name,
             startAt
           }))
@@ -344,14 +361,15 @@ var MeetingPrepGate = class extends HeartbeatGate {
 };
 
 // apps/apple/plugin/src/heartbeat-hook.ts
-var { prompt } = external_exports.object({ prompt: external_exports.string() }).parse(JSON.parse(readFileSync(0, "utf8")));
+var { session_id: threadId, prompt } = external_exports.object({ session_id: external_exports.string(), prompt: external_exports.string() }).parse(JSON.parse(readFileSync(0, "utf8")));
 var instructions = /^<heartbeat>[\s\S]*?<instructions>([\s\S]*?)<\/instructions>/.exec(
   prompt
 )?.[1];
 if (instructions !== void 0) {
   const now = /* @__PURE__ */ new Date();
-  for (const gate of [new MeetingPrepGate(), new GardenGate()]) {
-    const output = gate.answer(instructions, appleDirectory(), now);
+  const skills = fileURLToPath(new URL("../skills", import.meta.url));
+  for (const gate of [new MeetingPrepGate(skills), new GardenGate(skills)]) {
+    const output = gate.answer(instructions, threadId, appleDirectory(), now);
     if (output !== void 0) {
       process.stdout.write(JSON.stringify(output));
       break;

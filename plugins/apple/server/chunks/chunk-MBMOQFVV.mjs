@@ -19679,7 +19679,7 @@ var appleDirectory = () => join(homedir(), "Library/Application Support/Context 
 // apps/apple/plugin/src/proactive-store.ts
 import { join as join2 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-var layout = 1;
+var layout = 2;
 var ProactiveStore = class {
   #database;
   constructor(directory) {
@@ -19687,13 +19687,19 @@ var ProactiveStore = class {
       timeout: 3e4
     });
     try {
-      const version2 = this.#database.prepare("PRAGMA user_version").get();
-      if (Number(version2?.user_version) !== layout)
+      const version2 = Number(
+        this.#database.prepare("PRAGMA user_version").get()?.user_version
+      );
+      if (version2 > layout)
+        throw new Error(
+          "A newer Apple plugin wrote these records. Open a new chat to use them."
+        );
+      if (version2 < layout)
         this.#database.exec(
           `DROP TABLE IF EXISTS meetings; DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS reports; PRAGMA user_version = ${layout};`
         );
       this.#database.exec(
-        `CREATE TABLE IF NOT EXISTS meetings (event_id TEXT PRIMARY KEY, name TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT NOT NULL, thread_id TEXT, cancelled INTEGER NOT NULL DEFAULT 0, archive_handed_at TEXT);
+        `CREATE TABLE IF NOT EXISTS meetings (event_id TEXT PRIMARY KEY, name TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT NOT NULL, dispatcher_thread_id TEXT NOT NULL, thread_id TEXT, cancelled INTEGER NOT NULL DEFAULT 0, archive_handed_at TEXT);
          CREATE TABLE IF NOT EXISTS people (email TEXT PRIMARY KEY, name TEXT NOT NULL, note TEXT, noted_at TEXT, requested_at TEXT);
          CREATE TABLE IF NOT EXISTS reports (key TEXT PRIMARY KEY);`
       );
@@ -19707,22 +19713,24 @@ var ProactiveStore = class {
   }
   #select(where, ...values) {
     return this.#database.prepare(
-      `SELECT event_id, name, start_at, end_at, thread_id, cancelled FROM meetings ${where}`
+      `SELECT event_id, name, start_at, end_at, dispatcher_thread_id, thread_id, cancelled, archive_handed_at FROM meetings ${where}`
     ).all(...values).map((row) => ({
       eventId: String(row.event_id),
       name: String(row.name),
       startAt: String(row.start_at),
       endAt: String(row.end_at),
+      dispatcherThreadId: String(row.dispatcher_thread_id),
       threadId: row.thread_id === null ? null : String(row.thread_id),
-      cancelled: row.cancelled === 1
+      cancelled: row.cancelled === 1,
+      archived: row.archive_handed_at !== null
     }));
   }
-  hand(meetings) {
+  hand(meetings, dispatcherThreadId) {
     const insert = this.#database.prepare(
-      "INSERT OR IGNORE INTO meetings (event_id, name, start_at, end_at) VALUES (?, ?, ?, ?)"
+      "INSERT OR IGNORE INTO meetings (event_id, name, start_at, end_at, dispatcher_thread_id) VALUES (?, ?, ?, ?, ?)"
     );
     for (const { eventId, name, startAt, endAt } of meetings)
-      insert.run(eventId, name, startAt, endAt);
+      insert.run(eventId, name, startAt, endAt, dispatcherThreadId);
   }
   move({ eventId, startAt, endAt }) {
     this.#database.prepare(

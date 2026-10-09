@@ -12,15 +12,16 @@ import {
 } from "../../chunks/chunk-SDFTRGL6.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-CWZNSNU3.mjs";
+} from "../../chunks/chunk-TI6UOZR6.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffGroupedSnapshot,
   diffSnapshot,
+  expiredAfter,
   validateRecords
-} from "../../chunks/chunk-AHY2RO53.mjs";
+} from "../../chunks/chunk-L4HYJU4U.mjs";
 import {
   __callDispose,
   __using
@@ -844,7 +845,9 @@ var BiomeActivityStream = class {
       fingerprint: `${parserVersion}:${await segment.fingerprint()}`,
       records: () => this.#read(segment)
     })));
-    yield* diffGroupedSnapshot(configuration.stream, groups, state, retainedSince(scan.startedAt, this.retentionDays));
+    yield* diffGroupedSnapshot(configuration.stream, groups, state, {
+      covers: expiredAfter(retainedSince(scan.startedAt, this.retentionDays))
+    });
   }
   async *#read(segment) {
     const drafts = (await segment.records()).map((record) => this.record(record.event, {
@@ -1223,7 +1226,9 @@ var KnowledgeActivityStream = class {
     if (configuration.syncMode === "full_refresh")
       yield* records.map((data) => ({ stream: this.name, data }));
     else
-      yield* diffSnapshot(configuration.stream, records, state, retainedSince(scan.startedAt, this.retentionDays));
+      yield* diffSnapshot(configuration.stream, records, state, {
+        covers: expiredAfter(retainedSince(scan.startedAt, this.retentionDays))
+      });
   }
   #read(scan) {
     return validateRecords(this, scan.knowledge.events(this.knowledge).map((event) => this.record(event)), "Activity");

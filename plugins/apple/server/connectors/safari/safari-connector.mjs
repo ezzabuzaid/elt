@@ -22,14 +22,15 @@ import {
 } from "../../chunks/chunk-SDFTRGL6.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-CWZNSNU3.mjs";
+} from "../../chunks/chunk-TI6UOZR6.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
+  expiredAfter,
   validateRecords
-} from "../../chunks/chunk-AHY2RO53.mjs";
+} from "../../chunks/chunk-L4HYJU4U.mjs";
 import {
   __callDispose,
   __using
@@ -2989,7 +2990,7 @@ var AppleSafariSource = class extends Source {
     const { stream } = configuration;
     const reader = readerOf(stream);
     const records = await reader.read(scan);
-    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state, reader.horizon(scan)) : records.map((data) => ({ stream: stream.name, data }));
+    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state, coveredBy(reader.horizon(scan))) : records.map((data) => ({ stream: stream.name, data }));
     for await (const message of messages) {
       if ("type" in message || configuration.fileReads.length === 0)
         yield message;
@@ -2998,6 +2999,9 @@ var AppleSafariSource = class extends Source {
     }
   }
 };
+function coveredBy(horizon) {
+  return horizon === void 0 ? {} : { covers: expiredAfter(horizon) };
+}
 
 // packages/connectors/apple/safari/dist/safari-connector.js
 var SafariConnector = class extends AppleConnector {

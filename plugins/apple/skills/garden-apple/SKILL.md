@@ -7,7 +7,7 @@ description: Tend the Apple plugin's meeting chats and records when the Apple ga
 
 ## What you need to know
 
-- The Apple plugin decides what is due. It lets the Apple gardener heartbeat reach this chat only with sections of work in context, each a JSON array, and blocks the heartbeat when nothing is due.
+- The Apple plugin decides what is due. It lets the Apple gardener heartbeat reach this chat only with sections of work in context, each a JSON array, or with why it failed, and blocks the heartbeat when nothing is due.
 - Meeting chats sit in the sidebar section named Apple, beside this chat and the Meeting prep dispatcher. Archiving a chat hides it; it does not delete it.
 - A person note is at most five short lines: who they are (organization and role), how the user knows them, the open threads with them, and when they last talked. `apple_person_note` saves it, and Meeting prep hands it to later briefs in each attendee's row.
 - Read the imports with `$query-apple`'s read command. For a person, run `$meeting-prep`'s step 2 queries by their email: who they are (Contacts), recent mail (Mail) and recent messages (Messages).
@@ -19,7 +19,8 @@ description: Tend the Apple plugin's meeting chats and records when the Apple ga
 2. **Import problems to report**: write one short message naming each connector, what failed, and the item's `permissions` guidance.
 3. **People to write notes about**: for each person, run the Contacts, Mail and Messages queries with their `email`, write the note, and call `apple_person_note` with their `email`, `name` and the note.
 4. End with `<heartbeat><automation_id>…</automation_id><decision>…</decision><message>…</message></heartbeat>`: `NOTIFY` when you reported an import problem, the message naming the connectors; otherwise `DONT_NOTIFY` with a one-line summary.
-5. With no sections in context, the plugin's gate did not run. Do nothing else and end with the `DONT_NOTIFY` block, the message `The Apple gardener gate did not run.`
+5. When the context says the plugin's gate failed, do nothing else and end with the `DONT_NOTIFY` block, its message that failure.
+6. With no sections and no failure in context, ChatGPT skipped the plugin's gate, as it does until the user trusts the plugin's hooks, and every run would reach you with nothing to do. Pause meeting prep as `$setup-apple`'s "Pause and resume meeting prep" describes, then end with the `NOTIFY` block, the message `Meeting prep and the Apple gardener are paused: ChatGPT is not running the Apple plugin's hooks. Choose Trust all where the Apple plugin page says its hooks need review, then ask me to resume.` When the user asks to resume, resume it the same way.
 
 ## Gotchas
 

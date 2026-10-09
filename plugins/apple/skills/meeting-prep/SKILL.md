@@ -94,7 +94,7 @@ description: Prepare the user for a meeting from their Apple Calendar, Mail, Mes
 
 ## When the Meeting prep heartbeat runs this skill
 
-The Apple plugin decides when there is work. It lets the heartbeat reach this chat, the dispatcher, only with sections of work in context, each a JSON array; otherwise it blocks the heartbeat. Each meeting is briefed in a chat of its own. Find the codex_app tools with tool search.
+The Apple plugin decides when there is work. It lets the heartbeat reach this chat, the dispatcher, only with sections of work in context, each a JSON array, or with why it failed; otherwise it blocks the heartbeat. Each meeting is briefed in a chat of its own. Find the codex_app tools with tool search.
 
 - **New meetings**: each item is that meeting's step 1 row; an attendee may carry the `note` the Apple gardener keeps. For each item:
   1. Call `create_thread` with `target` `{"type": "projectless"}`, `title` the meeting's name and local start time, and `prompt` `Brief <name> (<local start>) with $meeting-prep, from its step 2. Its step 1 row: <the item as JSON>`.
@@ -104,7 +104,8 @@ The Apple plugin decides when there is work. It lets the heartbeat reach this ch
 - **Moved meetings**: send each item's `threadId` `The meeting moved: it now runs <local start> to <local end>. Update the brief.` with `send_message_to_thread`.
 - **Cancelled meetings**: send each item's `threadId` `This meeting was cancelled or deleted in Calendar.` with `send_message_to_thread`.
 - End with `<heartbeat><automation_id>…</automation_id><decision>NOTIFY</decision><message>…</message></heartbeat>`, the message naming each meeting, its local start time, and whether its brief is ready or what changed. ChatGPT does not notify the user of a reply in a chat you created or messaged, so this is the user's only notification.
-- With no sections in context, the plugin's gate did not run. Do nothing else and end with the `DONT_NOTIFY` block, the message `The Apple meeting gate did not run.`
+- When the context says the plugin's gate failed, do nothing else and end with the `DONT_NOTIFY` block, its message that failure.
+- With no sections and no failure in context, ChatGPT skipped the plugin's gate, as it does until the user trusts the plugin's hooks, and every run would reach you with nothing to do. Pause meeting prep as `$setup-apple`'s "Pause and resume meeting prep" describes, then end with the `NOTIFY` block, the message `Meeting prep and the Apple gardener are paused: ChatGPT is not running the Apple plugin's hooks. Choose Trust all where the Apple plugin page says its hooks need review, then ask me to resume.` When the user asks to resume, resume it the same way.
 - Never invent another tag.
 
 ## When a chat starts from a handed-over row
@@ -126,4 +127,4 @@ The first message names the meeting and carries its step 1 row. Brief it from st
 - Each brief rests on rows you read and names which connectors had nothing and which are not set up.
 - Times are the user's local time, and only the meetings the user asked about, or the plugin handed over, are briefed.
 - Each handed-over meeting has its own chat in the Apple section, recorded with `apple_meeting_chat`.
-- A heartbeat run ends with exactly one `<heartbeat>` block whose `<decision>` is `NOTIFY`, or `DONT_NOTIFY` only when the gate did not run.
+- A heartbeat run ends with exactly one `<heartbeat>` block whose `<decision>` is `NOTIFY`, or `DONT_NOTIFY` only when the gate failed.
