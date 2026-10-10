@@ -24,8 +24,6 @@ import { promisify, stripVTControlCharacters } from 'node:util';
 import v8 from 'node:v8';
 import { deflateSync, gzipSync } from 'node:zlib';
 
-import { SQLitePasses } from '@workspace/elt-sqlite';
-
 // NoteStore.sqlite's tables as macOS 26.6.2 creates them (schema only, no
 // data), in WAL mode like the real store.
 const noteStoreSchema = `PRAGMA journal_mode = WAL;
@@ -1158,81 +1156,134 @@ test('a connector whose app macOS will not open fails alone, named with the acce
   );
 });
 
-test('a sync skips and reports an import another sync is importing, and nothing it imported is touched', async () => {
-  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
-  await withNotes(mac.path);
-  cli(mac.path, 'setup', '--connector', 'notes');
-  cli(mac.path, 'sync');
-  const [{ database }] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
-
-  // Stands in for another sync, which runs the import's pass.
-  const second = await new SQLitePasses(database).run(async () =>
-    cli(mac.path, 'sync'),
-  );
-
-  assert.ok(second.acquired);
-  assert.equal(second.value.status, 1);
-  assert.deepEqual(lines(second.value.stdout), [
-    { connector: 'notes', status: 'busy' },
-  ]);
-  const notes = cli(
-    mac.path,
-    'query',
-    'notes',
-    'SELECT count(*) AS n FROM notes',
-    '--json',
-  );
-  assert.ok(JSON.parse(notes.stdout)[0].n > 0);
-});
-
-test('status reports a pass a killed sync left running, and each stream in it, as interrupted', async () => {
+test('a second sync of an import another sync is importing says so, waits for that pass and shows it', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withConnectors(mac.path);
-  // A pipe no one writes to: the Photos read waits on it, so the pass is
-  // still running when the sync is killed.
+  // A pipe the test writes once the second sync waits: the Photos read waits
+  // on it, so the first sync's pass still runs when the second starts.
   const pictures = join(mac.path, 'Pictures/photos.json');
   await rm(pictures);
   spawnSync('/usr/bin/mkfifo', [pictures]);
   cli(mac.path, 'setup', '--connector', 'photos');
-  const sync = started(mac.path, 'sync', '--json');
+  const first = started(mac.path, 'sync', '--json');
   try {
-    const deadline = Date.now() + 60_000;
-    for (;;) {
-      const status = cli(mac.path, 'status', '--json');
-      assert.equal(
-        status.status,
-        0,
-        `status failed (${status.signal ?? 'no signal'}): ${status.stderr}`,
-      );
-      if (JSON.parse(status.stdout)[0]?.state === 'running') break;
+    await passRunning(mac.path);
+    const second = terminal(mac.path, 'sync');
+    try {
+      await second.shows('a sync is importing it');
+
+      await writeFile(pictures, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
       const ended = await Promise.race([
-        sync.exited,
-        sleep(100).then(() => null),
+        Promise.all([first.exited, second.exited]),
+        sleep(30_000).then(() => null),
       ]);
-      if (ended !== null)
-        assert.fail(
-          `the sync exited with ${ended.status} before its pass started: ${ended.stderr}`,
-        );
-      if (Date.now() > deadline)
-        assert.fail('the sync did not start its pass within a minute');
+
+      if (ended === null)
+        assert.fail(`a sync never finished:\n${second.screen}`);
+      const [led, waited] = ended;
+      assert.equal(led.status, 0, led.stderr);
+      assert.deepEqual(
+        lines(led.stdout).map(({ connector, status }) => [connector, status]),
+        [['photos', 'succeeded']],
+      );
+      assert.equal(waited, 0, second.screen);
+      assert.match(second.screen, /Photos\s+1 rows · 1 streams/);
+      assert.match(second.screen, /All connectors current\./);
+      const attempts = cli(
+        mac.path,
+        'query',
+        'photos',
+        'SELECT count(*) AS n FROM sync_attempts',
+        '--json',
+      );
+      assert.deepEqual(JSON.parse(attempts.stdout), [{ n: 1 }]);
+    } finally {
+      second.child.kill('SIGKILL');
+      await second.exited;
     }
   } finally {
-    sync.child.kill('SIGKILL');
-    await sync.exited;
+    first.child.kill('SIGKILL');
+    await first.exited;
   }
-
-  const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
-
-  assert.equal(photos.state, 'interrupted');
-  assert.deepEqual(
-    photos.streams.map(
-      ({ stream, state }: { stream: string; state: string }) => [stream, state],
-    ),
-    [['photos', 'interrupted']],
-  );
 });
 
-test('Ctrl-C stops a sync at once while a connector waits on a read, and status shows its pass as interrupted', async () => {
+test('a sync waiting on another sync whose pass is killed says the pass was interrupted and exits 1', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+  // A pipe no one writes to: the first sync's Photos pass runs until killed.
+  const pictures = join(mac.path, 'Pictures/photos.json');
+  await rm(pictures);
+  spawnSync('/usr/bin/mkfifo', [pictures]);
+  cli(mac.path, 'setup', '--connector', 'photos');
+  const first = started(mac.path, 'sync', '--json');
+  try {
+    await passRunning(mac.path);
+    const second = terminal(mac.path, 'sync');
+    try {
+      await second.shows('a sync is importing it');
+
+      first.child.kill('SIGKILL');
+      const waited = await Promise.race([
+        second.exited,
+        sleep(10_000).then(() => 'still waiting'),
+      ]);
+
+      assert.equal(waited, 1, second.screen);
+      assert.match(
+        second.screen,
+        /Photos\s+interrupted · the sync importing it stopped/,
+      );
+      assert.match(second.screen, /Some connectors did not load completely\./);
+    } finally {
+      second.child.kill('SIGKILL');
+      await second.exited;
+    }
+  } finally {
+    first.child.kill('SIGKILL');
+    await first.exited;
+  }
+});
+
+test('a sync of one connector runs while another sync waits on a read of a different one', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withNotes(mac.path);
+  await withConnectors(mac.path);
+  // A pipe no one writes to: the Photos pass runs until killed.
+  const pictures = join(mac.path, 'Pictures/photos.json');
+  await rm(pictures);
+  spawnSync('/usr/bin/mkfifo', [pictures]);
+  cli(mac.path, 'setup', '--connector', 'photos', '--connector', 'notes');
+  const photos = started(mac.path, 'sync', '--json', '--connector', 'photos');
+  try {
+    await passRunning(mac.path);
+    const notes = started(mac.path, 'sync', '--json', '--connector', 'notes');
+    try {
+      const synced = await Promise.race([
+        notes.exited,
+        sleep(30_000).then(() => null),
+      ]);
+
+      if (synced === null)
+        assert.fail('the Notes sync waited on the Photos pass');
+      assert.equal(synced.status, 0, synced.stderr);
+      assert.deepEqual(
+        lines(synced.stdout).map(({ connector, status }) => [
+          connector,
+          status,
+        ]),
+        [['notes', 'succeeded']],
+      );
+    } finally {
+      notes.child.kill('SIGKILL');
+      await notes.exited;
+    }
+  } finally {
+    photos.child.kill('SIGKILL');
+    await photos.exited;
+  }
+});
+
+test('Ctrl-C stops a sync at once while a connector waits on a read', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withConnectors(mac.path);
   // A pipe no one writes to: the Photos read waits on it in a thread of
@@ -1257,11 +1308,9 @@ test('Ctrl-C stops a sync at once while a connector waits on a read, and status 
     sync.child.kill('SIGKILL');
     await sync.exited;
   }
-  const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
-  assert.equal(photos.state, 'interrupted');
 });
 
-test('Ctrl-C typed in a terminal stops a sync at once while a connector waits on a read, and status shows its pass as interrupted', async () => {
+test('Ctrl-C typed in a terminal stops a sync at once while a connector waits on a read', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withConnectors(mac.path);
   // A pipe no one writes to, as above: the Photos read never returns.
@@ -1286,8 +1335,6 @@ test('Ctrl-C typed in a terminal stops a sync at once while a connector waits on
     await sync.exited;
   }
   assert.match(sync.screen, /Sync interrupted/);
-  const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
-  assert.equal(photos.state, 'interrupted');
 });
 
 test('SIGTERM stops a sync in a terminal at once while its spinner shows', async () => {
@@ -1319,11 +1366,9 @@ test('SIGTERM stops a sync in a terminal at once while its spinner shows', async
     await sync.exited;
   }
   assert.match(sync.screen, /Sync interrupted/);
-  const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
-  assert.equal(photos.state, 'interrupted');
 });
 
-test('a setup that removes a connector stops the sync importing it, whose import is then gone, while the rest loads', async () => {
+test('a setup that removes a connector stops the sync importing it, while the rest loads, and the next sync removes its import', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
   await withConnectors(mac.path);
@@ -1363,6 +1408,8 @@ test('a setup that removes a connector stops the sync importing it, whose import
         ['photos', 'removed'],
       ],
     );
+    assert.equal(existsSync(dirname(String(imported))), true);
+    assert.equal(cli(mac.path, 'sync').status, 0);
     assert.equal(existsSync(dirname(String(imported))), false);
   } finally {
     // A sync still waiting on the pipe exits only when killed.

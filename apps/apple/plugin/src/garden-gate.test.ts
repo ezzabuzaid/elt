@@ -182,7 +182,7 @@ async function calendarUnder(home: string, stub: StubEventKitHelper) {
   };
   {
     using settings = new Settings(appleFolder(home));
-    await settings.select([selection], {
+    settings.select([selection], {
       facts: () => connector,
       permissions: () => connector.guidance(),
     });
@@ -371,7 +371,7 @@ test('the gardener reports an import problem once, and again when it clears and 
     includeAttachments: false,
   };
   using settings = new Settings(appleFolder(home.path));
-  await settings.select([selection], {
+  settings.select([selection], {
     facts: () => notes,
     permissions: () => 'Turn on Full Disk Access for ChatGPT.',
   });

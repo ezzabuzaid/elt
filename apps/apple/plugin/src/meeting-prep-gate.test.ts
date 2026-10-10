@@ -244,7 +244,7 @@ async function calendarUnder(home: string, stub: StubEventKitHelper) {
   );
   {
     using settings = new Settings(directory);
-    await settings.select([selection], {
+    settings.select([selection], {
       facts: () => connector,
       permissions: () => connector.guidance(),
     });

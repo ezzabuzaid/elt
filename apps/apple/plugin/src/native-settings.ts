@@ -38,8 +38,6 @@ function describe(
   switch (sync.state) {
     case 'running':
       return `Importing since ${new Date(sync.startedAt).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}.`;
-    case 'interrupted':
-      return 'Paused: resumes the next time Codex runs the Apple plugin.';
     case 'cancelled':
       return 'Stopped: resumes the next time Codex runs the Apple plugin.';
     case 'succeeded':
@@ -51,8 +49,8 @@ function describe(
   }
 }
 
-export async function settingsRead(plugin: ApplePlugin, now = new Date()) {
-  const selected = (await plugin.status()).connectors;
+export function settingsRead(plugin: ApplePlugin, now = new Date()) {
+  const selected = plugin.status().connectors;
   const connected = new Map(selected.map((item) => [item.connector, item]));
   // Every loaded connector, then each selected connector that is not loaded,
   // so it can still be switched off.
@@ -108,7 +106,7 @@ export async function settingsUpdate(
   plugin: ApplePlugin,
   set: Partial<SettingsValues>,
 ) {
-  const current = (await plugin.status()).connectors;
+  const current = plugin.status().connectors;
   const kept = current
     .filter(({ connector }) => set[connector] !== false)
     .map(({ connector, scope, includeAttachments }) => ({
@@ -125,5 +123,5 @@ export async function settingsUpdate(
     )
     .map((connector) => ({ connector, scope: {}, includeAttachments: true }));
   await plugin.configure({ connectors: [...kept, ...added] });
-  return { values: (await settingsRead(plugin)).values };
+  return { values: settingsRead(plugin).values };
 }

@@ -17,7 +17,6 @@ import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
-  SQLitePasses,
   type SQLiteSyncHistory,
   type SQLiteTable,
   installSQLiteCatalog,
@@ -68,9 +67,7 @@ export type ChoiceOptions = Choice & {
 export type ImportOutcome =
   // The pass ran; the import's sync history records how each stream went.
   | { readonly status: 'imported' }
-  // Another process runs a pass of this import now.
-  | { readonly status: 'busy' }
-  // The user removed the connector while its pass ran, and its import is gone.
+  // The user removed the connector while its pass ran; its import is now stale.
   | { readonly status: 'removed' }
   // No connection could be built; the settings keep why, for status.
   | { readonly status: 'unconnected'; readonly error: unknown };
@@ -253,8 +250,8 @@ export abstract class AppleConnector {
     }));
   }
 
-  // One pass of this connector's import, as every host runs it: one pass of an
-  // import at a time, stopped once the user removes the connector, its
+  // One pass of this connector's import, as every host runs it inside the
+  // import's flight: stopped once the user removes the connector, its
   // connection failure kept in the settings and its outcome in the import's
   // sync history.
   async import(
@@ -263,43 +260,31 @@ export abstract class AppleConnector {
     history: SQLiteSyncHistory,
   ): Promise<ImportOutcome> {
     using removal = settings.removal(selection);
+    let built;
     try {
-      const pass = await new SQLitePasses(settings.database(selection)).run(
-        async (): Promise<ImportOutcome> => {
-          let built;
-          try {
-            built = await this.connection(
-              settings.directory(selection),
-              selection,
-            );
-          } catch (error) {
-            settings.saveConnectionFailure(
-              selection,
-              error instanceof Error ? error.message : String(error),
-              this.failureType(error),
-            );
-            return { status: 'unconnected', error };
-          }
-          settings.clearConnectionFailure(selection);
-          const { connection, destination } = built;
-          await history.install([destination]);
-          installSQLiteCatalog(destination);
-          await new Pipeline({ connections: [connection], history })
-            .run({ signal: removal.signal })
-            .catch((error: unknown) => {
-              // The history recorded what each copy did not load.
-              if (!(error instanceof PipelineError)) throw error;
-            });
-          return { status: 'imported' };
-        },
-      );
-      return pass.acquired ? pass.value : { status: 'busy' };
+      built = await this.connection(settings.directory(selection), selection);
     } catch (error) {
-      if (!(error instanceof ConnectorRemovedError)) throw error;
-      // Its pass let go of the import, so the import goes too.
-      await settings.removeStaleImports();
-      return { status: 'removed' };
+      settings.saveConnectionFailure(
+        selection,
+        error instanceof Error ? error.message : String(error),
+        this.failureType(error),
+      );
+      return { status: 'unconnected', error };
     }
+    settings.clearConnectionFailure(selection);
+    const { connection, destination } = built;
+    await history.install([destination]);
+    installSQLiteCatalog(destination);
+    try {
+      await new Pipeline({ connections: [connection], history }).run({
+        signal: removal.signal,
+      });
+    } catch (error) {
+      if (error instanceof ConnectorRemovedError) return { status: 'removed' };
+      // The history recorded what each copy did not load.
+      if (!(error instanceof PipelineError)) throw error;
+    }
+    return { status: 'imported' };
   }
 
   // The connector's streams, loaded incrementally into raw_<stream> tables of

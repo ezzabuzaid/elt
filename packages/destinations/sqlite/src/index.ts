@@ -6,8 +6,8 @@ export { SQLiteDestination } from './sqlite-destination.ts';
 export {
   type PassState,
   type PassStatus,
+  readPassStatus,
   readSQLite,
-  SQLitePasses,
   type StreamPassStatus,
 } from './sqlite-passes.ts';
 export { SQLiteSyncHistory } from './sqlite-sync-history.ts';

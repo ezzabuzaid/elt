@@ -11,8 +11,9 @@ import { json } from './table.ts';
 const count = new Intl.NumberFormat('en');
 
 // Shows a sync as it runs: one spinner naming every stream still reading with
-// what it has read so far and a line per connector as each pass ends or is
-// skipped. Without a terminal, one JSON line per pass or skipped import.
+// what it has read so far, a line per connector whose pass another sync runs,
+// and a line per connector as each pass ends or is skipped. Without a
+// terminal, one JSON line per pass or skipped import.
 export class SyncReport implements SyncObserver {
   readonly interactive: boolean;
   readonly #reading = new Map<string, string>();
@@ -65,16 +66,30 @@ export class SyncReport implements SyncObserver {
     if (this.#reading.size > 0) this.#spin();
   }
 
-  skipped({ name, title }: AppleConnector, why: 'busy' | 'removed'): void {
-    if (why === 'busy') this.#incomplete = true;
+  // The spinner comes back after the line, so a sync that only waits still
+  // shows it runs, and Ctrl-C stops it the same way.
+  joined({ title }: AppleConnector): void {
+    if (!this.interactive) return;
+    this.#spinner?.clear();
+    log.info(`${title.padEnd(10)} a sync is importing it · waiting…`);
+    this.#spin();
+  }
+
+  skipped(
+    { name, title }: AppleConnector,
+    why: 'removed' | 'interrupted',
+  ): void {
+    if (why === 'interrupted') this.#incomplete = true;
     if (!this.interactive) {
       process.stdout.write(`${json({ connector: name, status: why }, 0)}\n`);
       return;
     }
     this.#spinner?.clear();
     this.#spinner = undefined;
-    if (why === 'busy')
-      log.warn(`${title.padEnd(10)} skipped · another sync is importing it`);
+    if (why === 'interrupted')
+      log.warn(
+        `${title.padEnd(10)} interrupted · the sync importing it stopped`,
+      );
     else
       log.info(
         `${title.padEnd(10)} stopped · removed from the selection by another setup`,

@@ -1,8 +1,6 @@
 import { existsSync } from 'node:fs';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 
-import { type Key, Modes, Mutex, SqliteStore } from '@zukhruf/mutex';
-
 import type { FailureType, SyncStatus } from '@workspace/elt';
 
 // How long a reader waits out a pass committing to the file.
@@ -20,9 +18,8 @@ export function readSQLite(path: string): DatabaseSync {
   return new DatabaseSync(path, { readOnly: true, timeout: busyTimeout });
 }
 
-// interrupted: recorded as running while no process runs a pass of the file,
-// as when the process running it was killed.
-export type PassState = SyncStatus | 'running' | 'interrupted';
+// running: begun and not yet ended, or left so by a process that was killed.
+export type PassState = SyncStatus | 'running';
 
 type Started = {
   readonly startedAt: string;
@@ -34,7 +31,7 @@ type Started = {
 // failure is to fix.
 export type PassStatus =
   | (Started & {
-      readonly state: 'running' | 'interrupted';
+      readonly state: 'running';
       readonly completedAt: null;
       readonly error: null;
       readonly failureType: null;
@@ -64,69 +61,40 @@ export type StreamPassStatus = {
   readonly lastSucceededAt: string | null;
 };
 
-// The passes of one SQLite destination file: one runs at a time, and its sync
-// history tells readers how the latest one went.
-export class SQLitePasses {
-  readonly #path: string;
-  readonly #pass: Key<'maybe'>;
-
-  constructor(path: string) {
-    this.#path = path;
-    // A folder of the lock's own, beside the file.
-    this.#pass = new Mutex(new SqliteStore(`${path}.locks`)).key('pass', {
-      mode: Modes.skipIfBusy(),
-    });
-  }
-
-  // Runs work as the file's one pass, or not at all while another holds it.
-  run<T>(work: () => Promise<T>) {
-    return this.#pass.run(work);
-  }
-
-  // Whether a process runs a pass of the file now.
-  running(): Promise<boolean> {
-    return this.#pass.isHeld();
-  }
-
-  // The latest pass and each stream's latest outcome; null and empty until
-  // the file's sync history recorded a pass.
-  async status(): Promise<{
-    readonly pass: PassStatus | null;
-    readonly streams: readonly StreamPassStatus[];
-  }> {
-    if (!existsSync(this.#path)) return { pass: null, streams: [] };
-    const running = await this.running();
-    using data = readSQLite(this.#path);
-    const installed = data
+// The latest pass of a SQLite destination file and each stream's latest
+// outcome, as its sync history records them; null and empty until the history
+// recorded a pass.
+export function readPassStatus(path: string): {
+  readonly pass: PassStatus | null;
+  readonly streams: readonly StreamPassStatus[];
+} {
+  if (!existsSync(path)) return { pass: null, streams: [] };
+  using data = readSQLite(path);
+  const installed = data
+    .prepare(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'",
+    )
+    .get();
+  if (installed === undefined) return { pass: null, streams: [] };
+  const latest = data
+    .prepare(
+      'SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at FROM sync_status',
+    )
+    .get();
+  return {
+    pass:
+      latest === undefined ? null : recorded(latest, passState(latest.status)),
+    streams: data
       .prepare(
-        "SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'",
+        'SELECT stream, status, last_successful_sync_at FROM stream_status ORDER BY stream',
       )
-      .get();
-    if (installed === undefined) return { pass: null, streams: [] };
-    const state = (status: SQLOutputValue | undefined): PassState => {
-      const recorded = passState(status);
-      return recorded === 'running' && !running ? 'interrupted' : recorded;
-    };
-    const latest = data
-      .prepare(
-        'SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at FROM sync_status',
-      )
-      .get();
-    return {
-      pass:
-        latest === undefined ? null : recorded(latest, state(latest.status)),
-      streams: data
-        .prepare(
-          'SELECT stream, status, last_successful_sync_at FROM stream_status ORDER BY stream',
-        )
-        .all()
-        .map((row) => ({
-          stream: String(row.stream),
-          state: state(row.status),
-          lastSucceededAt: text(row.last_successful_sync_at),
-        })),
-    };
-  }
+      .all()
+      .map((row) => ({
+        stream: String(row.stream),
+        state: passState(row.status),
+        lastSucceededAt: text(row.last_successful_sync_at),
+      })),
+  };
 }
 
 // A sync_status row as the pass it records: the history completes every pass
@@ -141,7 +109,6 @@ function recorded(
   };
   switch (state) {
     case 'running':
-    case 'interrupted':
       return {
         ...started,
         state,
@@ -186,9 +153,7 @@ function failureType(value: SQLOutputValue | undefined): FailureType {
   }
 }
 
-function passState(
-  status: SQLOutputValue | undefined,
-): Exclude<PassState, 'interrupted'> {
+function passState(status: SQLOutputValue | undefined): PassState {
   switch (status) {
     case 'running':
     case 'succeeded':

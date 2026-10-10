@@ -26,6 +26,7 @@
     "@workspace/sdk-apple-eventkit": "0.0.1",
     "@workspace/settings": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
+    "@zukhruf/single-flight": "0.3.17",
     "commander": "15.0.0"
   }
 }

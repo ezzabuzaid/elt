@@ -20,8 +20,8 @@ import {
 
 import {
   SQLiteDestination,
-  SQLitePasses,
   SQLiteSyncHistory,
+  readPassStatus,
   readSQLite,
 } from './index.ts';
 
@@ -35,7 +35,7 @@ function shell(database: string, sql: string) {
   return { rows: JSON.parse(stdout || '[]'), stderr };
 }
 
-test('a destination runs one pass at a time; its status names a stopped pass cancelled and a running one no process runs interrupted', async () => {
+test('a pass and each of its streams read running while it runs and cancelled once it is stopped', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-passes-'));
   const reading = Promise.withResolvers<void>();
   // Emits one record, then waits for its run to stop.
@@ -86,34 +86,26 @@ test('a destination runs one pass at a time; its status names a stopped pass can
     destination,
     steps: [new Copy(source.records, destination.table('records'))],
   });
-  const passes = new SQLitePasses(destination.path);
   const controller = new AbortController();
   const reason = new Error('stopped by the test');
 
-  const running = passes.run(() =>
-    new Pipeline({ connections: [connection], history }).run({
-      signal: controller.signal,
-    }),
-  );
+  const running = new Pipeline({ connections: [connection], history }).run({
+    signal: controller.signal,
+  });
   await reading.promise;
-  const during = await passes.status();
-  const second = await passes.run(async () => 'ran');
+  const during = readPassStatus(destination.path);
   controller.abort(reason);
   const stopped = await running.then(
     () => assert.fail('a stopped pass must reject'),
     (error: unknown) => error,
   );
-  const after = await passes.status();
-  // A pass its process left running, as when the process was killed.
-  await history.begin(connection, []);
-  const left = await passes.status();
+  const after = readPassStatus(destination.path);
 
   assert.equal(during.pass?.state, 'running');
   assert.deepEqual(
     during.streams.map(({ stream, state }) => [stream, state]),
     [['records', 'running']],
   );
-  assert.deepEqual(second, { acquired: false });
   assert.equal(stopped, reason);
   assert.equal(after.pass?.state, 'cancelled');
   assert.match(after.pass?.error ?? '', /stopped by the test/);
@@ -121,7 +113,6 @@ test('a destination runs one pass at a time; its status names a stopped pass can
     after.streams.map(({ stream, state }) => [stream, state]),
     [['records', 'cancelled']],
   );
-  assert.equal(left.pass?.state, 'interrupted');
 });
 
 test('a read rolls back the hot journal a pass killed mid-commit left, so the sqlite3 shell can open the file again', async () => {
@@ -220,10 +211,9 @@ test("a pass that did not load says whether its failures are the user's to fix, 
     ],
     history,
   });
-  const passes = new SQLitePasses(destination.path);
   const pass = async () => {
     await pipeline.run().catch(() => {});
-    return (await passes.status()).pass;
+    return readPassStatus(destination.path).pass;
   };
 
   source.failures = {

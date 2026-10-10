@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
@@ -238,6 +238,11 @@ const noteStoreFixture = async (directory: string) => {
 
 const root = resolve(import.meta.dirname, '../../../..');
 
+// Where a server under test finds its HOME: as short as a real /Users/<name>,
+// since the plugin keeps its store under HOME and the socket its servers meet
+// on must fit in 103 bytes, which the macOS temporary folder is too deep for.
+const homes = '/tmp';
+
 // A selected_connectors row with its import's latest pass from sync_status, as
 // the query-apple skill reads them.
 type SelectedConnector = {
@@ -281,7 +286,7 @@ test(
     timeout: 180_000,
   },
   async (t) => {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
     const marketplace = JSON.parse(
       readFileSync(join(root, '.agents/plugins/marketplace.json'), 'utf8'),
     );
@@ -699,9 +704,7 @@ test(
     timeout: 120_000,
   },
   async (t) => {
-    await using scratch = await mkdtempDisposable(
-      join(tmpdir(), 'apple-forms-'),
-    );
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-forms-'));
     // The installed plugin, run as Codex runs it.
     const plugin = join(scratch.path, 'plugin');
     const [entry] = JSON.parse(
@@ -900,7 +903,7 @@ test(
   'a connector the user adds while the server runs imports through it on its own elt and AppleConnector, an edit to it and a preset added to it reach the same chat, and a chat hears of one that does not load',
   { timeout: 120_000 },
   async (t) => {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
     const plugin = join(scratch.path, 'plugin');
     cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
     const runtime =
@@ -1017,7 +1020,7 @@ test(
   'an import a pass loaded only in part imports again when the next chat starts, until every row arrives',
   { timeout: 120_000 },
   async (t) => {
-    await using scratch = await mkdtempDisposable(join(tmpdir(), 'apple-e2e-'));
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
     const plugin = join(scratch.path, 'plugin');
     cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
     const runtime =

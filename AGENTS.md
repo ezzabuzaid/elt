@@ -20,6 +20,8 @@ Every destination table, Markdown export, and checkpoint can be rebuilt by rerun
 
 When asked why a notion exists, name the requirement it serves, not the code that currently needs it. A line such as `DELETE FROM` shows how a writer overreaches today; it does not make the mode, flag, or field that triggers it a necessary concept. Before relocating or keeping a notion, check whether it is an input to a smaller notion that is the real one.
 
+Before defending a package mechanism, list each consumer with its file and line and say whether it decides something or only displays it. Display text in a host does not justify a lock or a liveness check in a package; a consumer that decides does, until a probe shows another owner can decide it. `SQLitePasses` went this way: its pass lock fed three status strings and one folder guard, and only the guard, moved onto the import's flight, was a requirement.
+
 ## Exhaust live verification before calling something unverified
 
 When a live probe finds no instance of a feature, widen it before concluding: scan the full history, not a sample window, and use any earlier evidence that the data exists. Mark behavior unverified only when the environment genuinely cannot produce it, and say what blocked it.

@@ -26,7 +26,7 @@ export class StatusCommand extends Command {
   protected configure(): void {}
 
   protected async run(): Promise<Output> {
-    const statuses = await this.imports.status();
+    const statuses = this.imports.status();
     return {
       data: statuses,
       text: () => {

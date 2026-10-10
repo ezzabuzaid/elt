@@ -27,6 +27,14 @@ export type PassSummary = {
   readonly error: string | null;
 };
 
+// One line a sync shows for an import: how its pass ended; removed, another
+// setup removed its connector while it ran; or interrupted, the sync whose
+// pass this one waited for stopped first.
+export type SyncLine =
+  | PassSummary
+  | { readonly connector: string; readonly status: 'removed' }
+  | { readonly connector: string; readonly status: 'interrupted' };
+
 // Sees each pass of a sync while it runs and once it ends.
 export type PassObserver = {
   progress(
@@ -36,15 +44,15 @@ export type PassObserver = {
   passed(connector: AppleConnector, summary: PassSummary): void;
 };
 
-// Records every pass in each connector's data.sqlite, as any SQLite load
+// Records each pass of one connector in its data.sqlite, as any SQLite load
 // does, and shows the observer each pass while it runs and once it ends.
 export class ObservedHistory extends SQLiteSyncHistory {
-  readonly #connectors: readonly AppleConnector[];
+  readonly #connector: AppleConnector;
   readonly #observer: PassObserver;
 
-  constructor(connectors: readonly AppleConnector[], observer: PassObserver) {
+  constructor(connector: AppleConnector, observer: PassObserver) {
     super();
-    this.#connectors = connectors;
+    this.#connector = connector;
     this.#observer = observer;
   }
 
@@ -52,11 +60,7 @@ export class ObservedHistory extends SQLiteSyncHistory {
     connection: Connection<SQLiteTable>,
     copies: readonly DeclaredCopy<SQLiteTable>[],
   ): Promise<RecordedPass<SQLiteTable>> {
-    const connector = this.#connectors.find(
-      ({ name }) => name === connection.name,
-    );
-    if (connector === undefined)
-      throw new TypeError(`No connector for connection ${connection.name}`);
+    const connector = this.#connector;
     const started = performance.now();
     const seconds = () => Math.round((performance.now() - started) / 1000);
     const pass = await super.begin(connection, copies);

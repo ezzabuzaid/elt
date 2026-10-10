@@ -172,7 +172,7 @@ mcpServer.registerTool(
   },
   async () => {
     await plugin.refresh();
-    return { content: [], structuredContent: await settingsRead(plugin) };
+    return { content: [], structuredContent: settingsRead(plugin) };
   },
 );
 mcpServer.registerTool(
@@ -235,7 +235,7 @@ mcpServer.registerTool(
         ],
       };
     await plugin.refresh();
-    const text = await contextFor(event);
+    const text = contextFor(event);
     return { content: text === null ? [] : [{ type: 'text', text }] };
   },
 );

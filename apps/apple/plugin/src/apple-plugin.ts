@@ -1,6 +1,7 @@
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { SingleFlight } from '@zukhruf/single-flight';
 import { z } from 'zod';
 
 import type {
@@ -12,7 +13,7 @@ import type {
   Connectors,
 } from '@workspace/connector-apple-manifest/connectors';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
-import { type PassStatus, SQLitePasses } from '@workspace/elt-sqlite';
+import { type PassStatus, readPassStatus } from '@workspace/elt-sqlite';
 import {
   type ConnectorFacts,
   NewerLayoutError,
@@ -176,35 +177,67 @@ export class ApplePlugin {
     }
   }
 
-  async status() {
+  status() {
     using settings = this.#open();
     return {
-      connectors: await Promise.all(
-        settings.selections().map(async (item) => {
-          const database = settings.database(item);
-          const { pass } = await new SQLitePasses(database).status();
-          const failure = settings.connectionFailure(item);
-          const sync: PassStatus | null =
-            failure === undefined
-              ? pass
-              : {
-                  state: 'failed',
-                  startedAt: failure.failedAt,
-                  completedAt: failure.failedAt,
-                  lastSucceededAt: pass?.lastSucceededAt ?? null,
-                  error: failure.error,
-                  failureType: failure.failureType,
-                };
-          return {
-            ...item,
-            title: this.#loaded(item.connector)?.title ?? item.connector,
-            database: existsSync(database) ? database : null,
-            sync,
-            permissions: this.#permissions(item.connector),
-          };
-        }),
-      ),
+      connectors: settings.selections().map((item) => {
+        const database = settings.database(item);
+        const { pass } = readPassStatus(database);
+        const failure = settings.connectionFailure(item);
+        const sync: PassStatus | null =
+          failure === undefined
+            ? pass
+            : {
+                state: 'failed',
+                startedAt: failure.failedAt,
+                completedAt: failure.failedAt,
+                lastSucceededAt: pass?.lastSucceededAt ?? null,
+                error: failure.error,
+                failureType: failure.failureType,
+              };
+        return {
+          ...item,
+          title: this.#loaded(item.connector)?.title ?? item.connector,
+          database: existsSync(database) ? database : null,
+          sync,
+          permissions: this.#permissions(item.connector),
+        };
+      }),
     };
+  }
+
+  // Where every server of these imports meets the others: a pass of an
+  // import runs in one of them at a time, and the rest wait for it.
+  flights(): SingleFlight<void> {
+    return new SingleFlight({
+      directory: this.directory,
+      codec: { encode: () => '', decode: () => undefined },
+    });
+  }
+
+  // Removes each import the selection no longer names, unless a server runs
+  // its pass now: joining that pass's flight gives up the wait at once, and
+  // the next selection change or server start removes it. While a removal
+  // runs, a pass of the import waits. The CLI's Imports removes stale imports
+  // the same way.
+  async removeStale(
+    settings: Settings,
+    flights: SingleFlight<void>,
+  ): Promise<void> {
+    for (const directory of settings.staleImports()) {
+      const joined = new AbortController();
+      await flights
+        .run(
+          directory,
+          async () => {
+            rmSync(directory, { recursive: true, force: true });
+          },
+          { onJoin: () => joined.abort(), signal: joined.signal },
+        )
+        .catch((error: unknown) => {
+          if (!joined.signal.aborted) throw error;
+        });
+    }
   }
 
   // A changed scope is a new import: importPending loads it, and the
@@ -215,7 +248,7 @@ export class ApplePlugin {
     {
       using settings = this.#open();
       const stored = settings.selections();
-      await settings.select(
+      settings.select(
         requested.connectors.map((item) => {
           const connector = this.#loaded(item.connector);
           return connector === undefined
@@ -231,6 +264,8 @@ export class ApplePlugin {
           permissions: ({ connector }) => this.#permissions(connector),
         },
       );
+      await using flights = this.flights();
+      await this.removeStale(settings, flights);
     }
     return this.status();
   }

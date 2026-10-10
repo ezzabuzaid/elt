@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { mkdtempDisposable } from 'node:fs/promises';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -15,7 +16,7 @@ import {
 
 import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
 import { Connectors } from '@workspace/connector-apple-manifest/connectors';
-import { SQLitePasses, SQLiteSyncHistory } from '@workspace/elt-sqlite';
+import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { type Selection, importDirectory } from '@workspace/settings';
 
 import { ApplePlugin } from './apple-plugin.ts';
@@ -75,7 +76,7 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = await applePlugin(install, scratch.path);
-  assert.deepEqual((await plugin.status()).connectors, []);
+  assert.deepEqual(plugin.status().connectors, []);
   for (const [selection, message] of [
     [
       [
@@ -119,7 +120,7 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
       () => plugin.configure({ connectors: selection }),
       message,
     );
-  assert.deepEqual((await plugin.status()).connectors, []);
+  assert.deepEqual(plugin.status().connectors, []);
   const [calendar] = (
     await plugin.configure({
       connectors: [
@@ -186,7 +187,7 @@ test('agents read the selected connectors, where each import lives and what macO
   ]);
 });
 
-test('Apple setup keeps an unchanged import, removes a changed or disconnected one, and reports a pass no server finishes as interrupted', async () => {
+test('Apple setup keeps an unchanged import and removes a changed or disconnected one', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
@@ -202,29 +203,16 @@ test('Apple setup keeps an unchanged import, removes a changed or disconnected o
   );
   const database = imported(scratch.path, notes);
   assert.equal(
-    (await (await applePlugin(install, scratch.path)).status()).connectors[0]
-      ?.database,
+    (await applePlugin(install, scratch.path)).status().connectors[0]?.database,
     database,
   );
   await plugin.configure({ connectors: [notes] });
   assert.equal(existsSync(database), true);
 
-  // A pass left running by a server that exited is reported as interrupted.
-  const begin = await passes(plugin, notes);
-  await begin();
-  assert.equal(
-    (await plugin.status()).connectors[0]?.sync?.state,
-    'interrupted',
-  );
-  // A server importing it runs the import's pass.
-  await new SQLitePasses(database).run(async () =>
-    assert.equal((await plugin.status()).connectors[0]?.sync?.state, 'running'),
-  );
-
   const changed = { ...notes, scope: { collectionIds: ['folder-2'] } };
   await plugin.configure({ connectors: [changed] });
   assert.equal(existsSync(database), false);
-  const [current] = (await plugin.status()).connectors;
+  const [current] = plugin.status().connectors;
   assert.equal(current?.database, null);
   assert.equal(current?.sync, null);
   imported(scratch.path, changed);
@@ -243,6 +231,61 @@ test('importing settles when the settings cannot be read, so the server keeps se
   await assert.doesNotReject(importPending(plugin));
 });
 
+test('two servers importing one selection at once load it in one pass, the second waiting for the first', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  // A pipe the test writes once the pass runs: the Photos read waits on it,
+  // so the second import asks while the first one's pass still runs.
+  const home = join(scratch.path, 'home');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  spawnSync('/usr/bin/mkfifo', [join(home, 'Pictures/photos.json')]);
+  const plugin = new ApplePlugin(
+    new Connectors([
+      builtInConnectors,
+      resolve('packages/connectors/apple/manifest/dist/fixtures'),
+    ]),
+    host,
+    install,
+    join(scratch.path, 'store'),
+  );
+  await plugin.refresh();
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  await plugin.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const both = Promise.all([importPending(plugin), importPending(plugin)]);
+    const deadline = Date.now() + 30_000;
+    while (plugin.status().connectors[0]?.sync?.state !== 'running') {
+      if (Date.now() > deadline) assert.fail('no import started its pass');
+      await sleep(50);
+    }
+
+    await writeFile(
+      join(home, 'Pictures/photos.json'),
+      JSON.stringify([{ id: 'p1', title: 'Beach' }]),
+    );
+    const settled = await Promise.race([both, sleep(30_000).then(() => null)]);
+
+    if (settled === null) assert.fail('an import never settled');
+    using data = new DatabaseSync(
+      join(importDirectory(plugin.directory, photos), 'data.sqlite'),
+      { readOnly: true },
+    );
+    assert.deepEqual(
+      data
+        .prepare('SELECT status FROM sync_attempts')
+        .all()
+        .map((row) => ({ ...row })),
+      [{ status: 'succeeded' }],
+    );
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
 test('a chat hears of a pass only when it changes what a reader can do with the connector', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
@@ -254,52 +297,45 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
     includeAttachments: true,
   };
   await plugin.configure({ connectors: [notes] });
-  // The importing server runs the import's pass while it records passes.
-  await new SQLitePasses(
-    join(importDirectory(scratch.path, notes), 'data.sqlite'),
-  ).run(async () => {
-    const waiting = await chatStatus(plugin);
-    assert.match(
-      waiting.text,
-      /^- Notes: waiting for its first import\. No database yet\.$/m,
-    );
-    const begin = await passes(plugin, notes);
-    await begin();
-    const importing = await chatStatus(plugin);
-    assert.match(
-      importing.text,
-      /^- Notes: importing since .*; no data yet\. Database: notes\//m,
-    );
-    assert.notEqual(importing.state, waiting.state);
-    await (await begin()).finish([]);
-    const synced = await chatStatus(plugin);
-    assert.match(synced.text, /^- Notes: synced at /m);
-    assert.notEqual(synced.state, importing.state);
+  const waiting = chatStatus(plugin);
+  assert.match(
+    waiting.text,
+    /^- Notes: waiting for its first import\. No database yet\.$/m,
+  );
+  const begin = await passes(plugin, notes);
+  await begin();
+  const importing = chatStatus(plugin);
+  assert.match(
+    importing.text,
+    /^- Notes: importing since .*; no data yet\. Database: notes\//m,
+  );
+  assert.notEqual(importing.state, waiting.state);
+  await (await begin()).finish([]);
+  const synced = chatStatus(plugin);
+  assert.match(synced.text, /^- Notes: synced at /m);
+  assert.notEqual(synced.state, importing.state);
 
-    // Passes over data already imported change its times, not the state.
-    const again = await begin();
-    assert.equal((await chatStatus(plugin)).state, synced.state);
-    await again.finish([]);
-    assert.equal((await chatStatus(plugin)).state, synced.state);
+  // Passes over data already imported change its times, not the state.
+  const again = await begin();
+  assert.equal(chatStatus(plugin).state, synced.state);
+  await again.finish([]);
+  assert.equal(chatStatus(plugin).state, synced.state);
 
-    await (
-      await begin()
-    ).fail(new Error('Notes could not be opened.'), 'config');
-    const failed = await chatStatus(plugin);
-    await (await begin()).fail(new Error('Notes crashed.'), 'system');
-    const crashed = await chatStatus(plugin);
-    assert.ok(
-      failed.text.includes(
-        `: Notes could not be opened. ${plugin.connector('notes').guidance()}; data as of `,
-      ),
-      failed.text,
-    );
-    assert.notEqual(failed.state, synced.state);
-    assert.match(
-      crashed.text,
-      /^- Notes: last sync failed at .*: Notes crashed\.; data as of /m,
-    );
-  });
+  await (await begin()).fail(new Error('Notes could not be opened.'), 'config');
+  const failed = chatStatus(plugin);
+  await (await begin()).fail(new Error('Notes crashed.'), 'system');
+  const crashed = chatStatus(plugin);
+  assert.ok(
+    failed.text.includes(
+      `: Notes could not be opened. ${plugin.connector('notes').guidance()}; data as of `,
+    ),
+    failed.text,
+  );
+  assert.notEqual(failed.state, synced.state);
+  assert.match(
+    crashed.text,
+    /^- Notes: last sync failed at .*: Notes crashed\.; data as of /m,
+  );
 });
 
 test('a selected connector that is no longer loaded is reported, keeps its import through other changes, and can be disconnected', async () => {
@@ -320,8 +356,8 @@ test('a selected connector that is no longer loaded is reported, keeps its impor
   await withPhotos.configure({ connectors: [photos] });
   const plugin = await applePlugin(install, scratch.path);
 
-  const [reported] = (await plugin.status()).connectors;
-  const context = (await chatStatus(plugin)).text;
+  const [reported] = plugin.status().connectors;
+  const context = chatStatus(plugin).text;
   const kept = await plugin.configure({
     connectors: [
       photos,
@@ -332,7 +368,7 @@ test('a selected connector that is no longer loaded is reported, keeps its impor
     plugin.configure({
       connectors: [{ ...photos, includeAttachments: false }],
     });
-  const switches = (await settingsRead(plugin)).values;
+  const switches = settingsRead(plugin).values;
   const { values } = await settingsUpdate(plugin, { photos: false });
 
   assert.equal(reported?.title, 'photos');
@@ -352,7 +388,7 @@ test('a selected connector that is no longer loaded is reported, keeps its impor
   assert.equal(switches.photos, true);
   assert.equal(values.photos, undefined);
   assert.deepEqual(
-    (await plugin.status()).connectors.map(({ connector }) => connector),
+    plugin.status().connectors.map(({ connector }) => connector),
     ['notes'],
   );
 });
@@ -362,8 +398,8 @@ test('the Settings page switches connectors on and off and describes each import
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = await applePlugin(install, scratch.path);
-  const described = async () => {
-    const result = await settingsRead(plugin);
+  const described = () => {
+    const result = settingsRead(plugin);
     OpenAISettingsReadResultSchema.parse(result);
     return Object.fromEntries(
       Object.entries(result.schema.properties).map(([name, field]) => [
@@ -372,7 +408,7 @@ test('the Settings page switches connectors on and off and describes each import
       ]),
     );
   };
-  assert.equal((await described()).notes, 'Not connected.');
+  assert.equal(described().notes, 'Not connected.');
 
   const notes = {
     connector: 'notes' as const,
@@ -380,29 +416,21 @@ test('the Settings page switches connectors on and off and describes each import
     includeAttachments: true,
   };
   await plugin.configure({ connectors: [notes] });
-  assert.equal((await described()).notes, 'Waiting to import.');
+  assert.equal(described().notes, 'Waiting to import.');
   const begin = await passes(plugin, notes);
   await (await begin()).finish([]);
-  assert.equal((await described()).notes, 'Synced just now · 1 folder.');
+  assert.equal(described().notes, 'Synced just now · 1 folder.');
   // The page adds the connector's permissions guidance to the error once.
   await (await begin()).fail(new Error('Notes could not be opened.'), 'config');
   assert.equal(
-    (await described()).notes,
+    described().notes,
     `Last sync failed: Notes could not be opened. ${plugin.connector('notes').guidance()}`,
   );
   // A failure granting access cannot fix shows only what went wrong.
   await (await begin()).fail(new Error('Notes crashed.'), 'system');
-  assert.equal((await described()).notes, 'Last sync failed: Notes crashed.');
+  assert.equal(described().notes, 'Last sync failed: Notes crashed.');
   await begin();
-  assert.equal(
-    (await described()).notes,
-    'Paused: resumes the next time Codex runs the Apple plugin.',
-  );
-  await new SQLitePasses(
-    join(importDirectory(scratch.path, notes), 'data.sqlite'),
-  ).run(async () =>
-    assert.match((await described()).notes ?? '', /^Importing since /),
-  );
+  assert.match(String(described().notes), /^Importing since /);
 
   // Switching Mail on keeps Notes as it was chosen; switching Notes off
   // disconnects it and removes its import.
@@ -428,14 +456,14 @@ test('the Settings page switches connectors on and off and describes each import
       wallet: false,
     },
   );
-  const [kept, mail] = (await plugin.status()).connectors;
+  const [kept, mail] = plugin.status().connectors;
   assert.deepEqual(kept?.scope, notes.scope);
   assert.deepEqual(mail?.scope, {});
   assert.equal(mail?.includeAttachments, true);
-  assert.equal((await described()).mail, 'Waiting to import.');
+  assert.equal(described().mail, 'Waiting to import.');
   await settingsUpdate(plugin, { notes: false });
   assert.deepEqual(
-    (await plugin.status()).connectors.map(({ connector }) => connector),
+    plugin.status().connectors.map(({ connector }) => connector),
     ['mail'],
   );
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
@@ -527,7 +555,7 @@ test('settings an older layout wrote are discarded, so the user sets up again', 
     );
   }
   const plugin = await applePlugin(install, scratch.path);
-  assert.deepEqual((await plugin.status()).connectors, []);
+  assert.deepEqual(plugin.status().connectors, []);
   using database = new DatabaseSync(join(scratch.path, 'settings.sqlite'), {
     readOnly: true,
   });

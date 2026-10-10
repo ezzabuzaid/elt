@@ -21,8 +21,6 @@ const progress = (sync: PassStatus | null, guidance: string): string => {
       return `synced at ${sync.completedAt}`;
     case 'running':
       return `importing since ${sync.startedAt}; ${since}`;
-    case 'interrupted':
-      return `its last pass stopped unfinished and resumes when Codex runs the Apple plugin; ${since}`;
     case 'cancelled':
       return `its last pass was stopped and resumes when Codex runs the Apple plugin; ${since}`;
     case 'partial':
@@ -45,11 +43,11 @@ const readiness = (sync: PassStatus | null) => {
 
 // state changes only when the selection, an import's file, what a reader
 // can do with it, its presets, or the connectors that could not load change.
-export async function chatStatus(plugin: ApplePlugin): Promise<{
+export function chatStatus(plugin: ApplePlugin): {
   state: string;
   text: string;
-}> {
-  const selected = (await plugin.status()).connectors;
+} {
+  const selected = plugin.status().connectors;
   const broken = plugin.broken.map(
     ({ title, error }) => `- ${title} could not be loaded: ${error}`,
   );
@@ -103,10 +101,8 @@ export async function chatStatus(plugin: ApplePlugin): Promise<{
 // last sent.
 export function chatContext(plugin: ApplePlugin) {
   let sent: string | undefined;
-  return async (
-    event: 'SessionStart' | 'UserPromptSubmit',
-  ): Promise<string | null> => {
-    const status = await chatStatus(plugin);
+  return (event: 'SessionStart' | 'UserPromptSubmit'): string | null => {
+    const status = chatStatus(plugin);
     if (event === 'UserPromptSubmit' && status.state === sent) return null;
     sent = status.state;
     return status.text;

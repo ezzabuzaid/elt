@@ -24,12 +24,12 @@ export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 // saved; the server then imports them in the background.
 export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   const previous = new Map(
-    (await plugin.status()).connectors.map(
-      ({ connector, scope, includeAttachments }) => [
+    plugin
+      .status()
+      .connectors.map(({ connector, scope, includeAttachments }) => [
         connector,
         { connector, scope, includeAttachments },
-      ],
-    ),
+      ]),
   );
   const picked = await ask({
     mode: 'form',
@@ -55,8 +55,7 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       required: ['connectors'],
     },
   });
-  if (picked.action !== 'accept')
-    return { changed: false, ...(await plugin.status()) };
+  if (picked.action !== 'accept') return { changed: false, ...plugin.status() };
   const chosen = z.array(connectorSchema).parse(picked.content?.connectors);
   const behindFullDiskAccess = chosen.filter(
     (name) => plugin.connector(name).fullDiskAccess,

@@ -1,10 +1,9 @@
-import { chmodSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import type { FailureType } from '@workspace/elt';
 import {
-  SQLitePasses,
   installSQLiteCatalog,
   publishSQLiteViews,
 } from '@workspace/elt-sqlite';
@@ -147,9 +146,9 @@ export class Settings implements Disposable {
   }
 
   // Saves a selection that has no problems, with what macOS needs granted for
-  // each connector, forgets the failures of every other import, removes those
-  // imports and publishes what readers see.
-  async select<Selected extends Selection>(
+  // each connector, forgets the failures of every other import and publishes
+  // what readers see. The imports it no longer names are left stale.
+  select<Selected extends Selection>(
     selections: readonly Selected[],
     {
       facts,
@@ -158,7 +157,7 @@ export class Settings implements Disposable {
       facts: (connector: string) => ConnectorFacts;
       permissions: (selection: Selected) => string;
     },
-  ): Promise<void> {
+  ): void {
     const problems = selectionProblems(selections, facts);
     if (problems.length > 0) throw new Error(problems.join('\n'));
     this.settings.exec('BEGIN IMMEDIATE');
@@ -184,27 +183,24 @@ export class Settings implements Disposable {
       this.settings.exec('ROLLBACK');
       throw error;
     }
-    await this.removeStaleImports();
     this.publish();
   }
 
-  // Removes every import directory but the selected one of each connector,
-  // including those of connectors no longer selected. One a pass still runs
-  // is left to that pass, which removes it once its removal stops it.
-  async removeStaleImports(): Promise<void> {
+  // Every import directory but the selected one of each connector, including
+  // those of connectors no longer selected. A host removes each once no pass
+  // runs it, since a pass keeps its locks inside.
+  staleImports(): string[] {
     const kept = new Set(
       this.selections().map((selection) => this.directory(selection)),
     );
-    for (const connector of readdirSync(this.root, { withFileTypes: true }))
-      if (connector.isDirectory())
-        for (const entry of readdirSync(join(this.root, connector.name))) {
-          const directory = join(this.root, connector.name, entry);
-          if (
-            !kept.has(directory) &&
-            !(await new SQLitePasses(join(directory, 'data.sqlite')).running())
-          )
-            rmSync(directory, { recursive: true, force: true });
-        }
+    return readdirSync(this.root, { withFileTypes: true })
+      .filter((connector) => connector.isDirectory())
+      .flatMap((connector) =>
+        readdirSync(join(this.root, connector.name)).map((entry) =>
+          join(this.root, connector.name, entry),
+        ),
+      )
+      .filter((directory) => !kept.has(directory));
   }
 
   // Aborts with ConnectorRemovedError once the selection no longer names this

@@ -1,6 +1,12 @@
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+
+import {
+  FlightFailedError,
+  FlightInterruptedError,
+  SingleFlight,
+} from '@zukhruf/single-flight';
 
 import type {
   AppleConnector,
@@ -9,7 +15,7 @@ import type {
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
 import {
   type PassState,
-  SQLitePasses,
+  readPassStatus,
   readSQLite,
 } from '@workspace/elt-sqlite';
 import { type Selection, Settings } from '@workspace/settings';
@@ -18,15 +24,18 @@ import {
   ObservedHistory,
   type PassObserver,
   type PassSummary,
+  type SyncLine,
   failed,
 } from './sync.ts';
 
 // Shows a sync from its start to its finish or interruption, each pass in
-// between, and each import it did not run: busy, another sync imports it;
-// removed, another setup removed its connector while it ran.
+// between, each import whose pass another sync runs, which this one waits for,
+// and each import it did not finish: removed, another setup removed its
+// connector while it ran; interrupted, the sync it waited for stopped first.
 export type SyncObserver = PassObserver & {
   start(): void;
-  skipped(connector: AppleConnector, why: 'busy' | 'removed'): void;
+  joined(connector: AppleConnector): void;
+  skipped(connector: AppleConnector, why: 'removed' | 'interrupted'): void;
   finish(): void;
   interrupted(): void;
 };
@@ -93,12 +102,23 @@ export class Imports {
 
   // Replaces the selection. A connector that left it, or whose scope changed,
   // loses its import, so the next sync reads it again from the start; a sync
-  // importing it now stops.
+  // importing it now stops, and the next setup or sync removes that import.
   async select(selections: readonly Selection[]): Promise<void> {
     using settings = new Settings(this.root);
-    await settings.select(selections, {
+    settings.select(selections, {
       facts: (name) => this.connector(name),
       permissions: ({ connector }) => this.connector(connector).guidance(),
+    });
+    await using flights = this.#flights();
+    await removeStale(settings, flights);
+  }
+
+  // Where every setup and sync of these imports meets the others: a pass of
+  // an import runs in one of them at a time, and the rest wait for its lines.
+  #flights(): SingleFlight<readonly SyncLine[]> {
+    return new SingleFlight({
+      directory: this.root,
+      codec: { encode: JSON.stringify, decode: JSON.parse },
     });
   }
 
@@ -118,11 +138,12 @@ export class Imports {
   }
 
   // One pass of each selected connector, or only of those named, shown through
-  // the observer. Ctrl-C or SIGTERM stops a sync at once: what it committed
-  // stays, its checkpoints resume it, and status shows the pass as
-  // interrupted. A pass that did not load completely, or an import another
-  // sync was running, leaves exit status 1; a connector another setup removed
-  // meanwhile does not.
+  // the observer, once the imports no longer selected are removed. A sync that
+  // finds another sync running an import's pass waits for that pass and shows
+  // it instead of running its own. Ctrl-C or SIGTERM stops a sync at once:
+  // what it committed stays and its checkpoints resume it. A pass that did not
+  // load completely, or one it waited for whose sync stopped first, leaves
+  // exit status 1; a connector another setup removed meanwhile does not.
   async sync(
     only: readonly string[] | undefined,
     observer: SyncObserver,
@@ -131,6 +152,8 @@ export class Imports {
     const selections = settings.selections();
     if (selections.length === 0)
       throw new Error('No connectors are set up; run: setup');
+    await using flights = this.#flights();
+    await removeStale(settings, flights);
     const imports = [];
     // A selected connector that is not loaded cannot sync; status says so,
     // and the others still sync.
@@ -163,24 +186,55 @@ export class Imports {
     };
     process.on('exit', cancelled);
     const passes: PassSummary[] = [];
-    const passed = (connector: AppleConnector, summary: PassSummary) => {
-      passes.push(summary);
-      observer.passed(connector, summary);
+    const show = (connector: AppleConnector, line: SyncLine) => {
+      if (line.status === 'removed' || line.status === 'interrupted') {
+        if (line.status === 'interrupted') unsynced = true;
+        observer.skipped(connector, line.status);
+      } else {
+        passes.push(line);
+        observer.passed(connector, line);
+      }
     };
-    const history = new ObservedHistory(
-      imports.map(({ connector }) => connector),
-      { progress: (...args) => observer.progress(...args), passed },
-    );
     observer.start();
     try {
       await Promise.all(
         imports.map(async ({ connector, selection }) => {
-          const outcome = await connector.import(settings, selection, history);
-          if (outcome.status === 'unconnected')
-            passed(connector, failed(connector, outcome.error, 0));
-          else if (outcome.status !== 'imported') {
-            if (outcome.status === 'busy') unsynced = true;
-            observer.skipped(connector, outcome.status);
+          // What this sync shows of its own pass, for the syncs that wait on it.
+          const lines: SyncLine[] = [];
+          const own = (line: SyncLine) => {
+            lines.push(line);
+            show(connector, line);
+          };
+          try {
+            const { value, joined } = await flights.run(
+              settings.directory(selection),
+              async () => {
+                const outcome = await connector.import(
+                  settings,
+                  selection,
+                  new ObservedHistory(connector, {
+                    progress: (...args) => observer.progress(...args),
+                    passed: (_, summary) => own(summary),
+                  }),
+                );
+                if (outcome.status === 'unconnected')
+                  own(failed(connector, outcome.error, 0));
+                else if (outcome.status === 'removed')
+                  own({ connector: connector.name, status: 'removed' });
+                return lines;
+              },
+              { onJoin: () => observer.joined(connector) },
+            );
+            if (joined) for (const line of value) show(connector, line);
+          } catch (error) {
+            if (error instanceof FlightInterruptedError)
+              show(connector, {
+                connector: connector.name,
+                status: 'interrupted',
+              });
+            else if (error instanceof FlightFailedError)
+              show(connector, failed(connector, error.failure.message, 0));
+            else throw error;
           }
         }),
       );
@@ -198,68 +252,91 @@ export class Imports {
   // Each selected connector as its own data.sqlite records it: the latest
   // pass, the last successful one, and every stream's own latest outcome; or
   // why its connection could not be built, which no pass recorded.
-  async status(): Promise<ConnectorStatus[]> {
+  status(): ConnectorStatus[] {
     using settings = new Settings(this.root);
-    return Promise.all(
-      settings.selections().map(async (selection) => {
-        const connector = this.#loaded(selection.connector);
-        const path = settings.database(selection);
-        const base = {
-          connector: selection.connector,
-          title: connector?.title ?? selection.connector,
-          selection:
-            connector?.describe(selection.scope) ?? 'its saved selection',
-          database: existsSync(path) ? path : null,
-        };
-        const never = {
-          ...base,
-          state: 'never' as const,
-          completedAt: null,
-          lastSuccessAt: null,
-          error: null,
-          streams: [],
-        };
-        if (connector === undefined)
-          return {
-            ...never,
-            state: 'failed' as const,
-            error: unloaded(selection.connector),
-          };
-        const failure = settings.connectionFailure(selection);
-        if (failure !== undefined)
-          return {
-            ...never,
-            state: 'failed' as const,
-            completedAt: failure.failedAt,
-            error: connector.failure(
-              new Error(failure.error),
-              failure.failureType,
-            ),
-          };
-        const { pass, streams } = await new SQLitePasses(path).status();
-        // Not synced yet, or no pass began.
-        if (pass === null) return never;
+    return settings.selections().map((selection) => {
+      const connector = this.#loaded(selection.connector);
+      const path = settings.database(selection);
+      const base = {
+        connector: selection.connector,
+        title: connector?.title ?? selection.connector,
+        selection:
+          connector?.describe(selection.scope) ?? 'its saved selection',
+        database: existsSync(path) ? path : null,
+      };
+      const never = {
+        ...base,
+        state: 'never' as const,
+        completedAt: null,
+        lastSuccessAt: null,
+        error: null,
+        streams: [],
+      };
+      if (connector === undefined)
         return {
-          ...base,
-          state: pass.state,
-          completedAt: pass.completedAt,
-          lastSuccessAt: pass.lastSucceededAt,
-          error:
-            pass.error === null
-              ? null
-              : connector.failure(new Error(pass.error), pass.failureType),
-          streams: streams.map(({ stream, state, lastSucceededAt }) => ({
-            stream,
-            state,
-            lastSuccessAt: lastSucceededAt,
-          })),
+          ...never,
+          state: 'failed' as const,
+          error: unloaded(selection.connector),
         };
-      }),
-    );
+      const failure = settings.connectionFailure(selection);
+      if (failure !== undefined)
+        return {
+          ...never,
+          state: 'failed' as const,
+          completedAt: failure.failedAt,
+          error: connector.failure(
+            new Error(failure.error),
+            failure.failureType,
+          ),
+        };
+      const { pass, streams } = readPassStatus(path);
+      // Not synced yet, or no pass began.
+      if (pass === null) return never;
+      return {
+        ...base,
+        state: pass.state,
+        completedAt: pass.completedAt,
+        lastSuccessAt: pass.lastSucceededAt,
+        error:
+          pass.error === null
+            ? null
+            : connector.failure(new Error(pass.error), pass.failureType),
+        streams: streams.map(({ stream, state, lastSucceededAt }) => ({
+          stream,
+          state,
+          lastSuccessAt: lastSucceededAt,
+        })),
+      };
+    });
   }
 }
 
 // Why a selected connector cannot be used, and what to do about it.
 function unloaded(name: string): string {
   return `No connector named ${name} is loaded: fix or restore its folder in ${userConnectors}, or set up without it.`;
+}
+
+// Removes each import the selection no longer names, unless a sync runs its
+// pass now: joining that pass's flight gives up the wait at once, and the next
+// setup or sync removes it. While a removal runs, a sync of the import waits.
+// The plugin's importPending removes stale imports the same way.
+async function removeStale(
+  settings: Settings,
+  flights: SingleFlight<readonly SyncLine[]>,
+): Promise<void> {
+  for (const directory of settings.staleImports()) {
+    const joined = new AbortController();
+    await flights
+      .run(
+        directory,
+        async () => {
+          rmSync(directory, { recursive: true, force: true });
+          return [];
+        },
+        { onJoin: () => joined.abort(), signal: joined.signal },
+      )
+      .catch((error: unknown) => {
+        if (!joined.signal.aborted) throw error;
+      });
+  }
 }
