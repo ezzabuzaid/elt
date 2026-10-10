@@ -8,6 +8,7 @@ import {
 import {
   AppDatabase,
   type AppDatabaseColumns,
+  referenceDateInstant,
 } from '@workspace/sdk-apple-app-database';
 
 import {
@@ -57,7 +58,7 @@ export class NotificationCenterSnapshot implements Disposable {
         return {
           id: uuid(row.uuid),
           bundleId: required(payload.app, 'A notification names no app'),
-          deliveredAt: instant(Number(row.deliveredAt)),
+          deliveredAt: referenceDateInstant(Number(row.deliveredAt)),
           requestId: text(request.iden),
           threadId: text(request.thre),
           category: text(request.cate),
@@ -67,7 +68,9 @@ export class NotificationCenterSnapshot implements Disposable {
           defaultActionUrl: text(request.durl),
           soundName: isDictionary(request.soun) ? text(request.soun.nam) : null,
           expiresAt:
-            typeof request.edat === 'number' ? instant(request.edat) : null,
+            typeof request.edat === 'number'
+              ? referenceDateInstant(request.edat)
+              : null,
           interruptionLevel:
             typeof level === 'number'
               ? (interruptionLevels[level] ?? null)
@@ -197,13 +200,4 @@ function text(value: PlistValue | undefined): string | null {
 
 function integer(value: PlistValue | undefined): number | null {
   return typeof value === 'number' ? value : null;
-}
-
-// usernoted's dates are seconds since 2001-01-01 in a double, which resolves
-// about a tenth of a microsecond today, so they are written to the microsecond.
-function instant(value: number): string {
-  const micros = Math.round(value * 1e6);
-  const seconds = Math.floor(micros / 1e6);
-  const whole = new Date((seconds + 978307200) * 1000).toISOString();
-  return `${whole.slice(0, 19)}.${String(micros - seconds * 1e6).padStart(6, '0')}Z`;
 }

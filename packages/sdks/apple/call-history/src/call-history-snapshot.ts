@@ -1,6 +1,7 @@
 import {
   AppDatabase,
   type AppDatabaseColumns,
+  referenceDateInstant,
 } from '@workspace/sdk-apple-app-database';
 
 import { type Call, type Handle, callCategory, callKind } from './call.ts';
@@ -176,7 +177,10 @@ export class CallHistorySnapshot implements Disposable {
         const categoryCode = number(row.categoryCode);
         return {
           id: required(row.id, 'A call has no unique ID'),
-          startedAt: instant(row.startedAt),
+          startedAt:
+            row.startedAt === null
+              ? null
+              : referenceDateInstant(Number(row.startedAt)),
           duration: number(row.duration),
           serviceProvider: string(row.serviceProvider),
           kind: callKind(kindCode),
@@ -368,14 +372,4 @@ function number(value: unknown): number | null {
 
 function flag(value: unknown): boolean | null {
   return value === null ? null : Number(value) === 1;
-}
-
-// Core Data dates are seconds since 2001-01-01 in a double, which resolves
-// about a tenth of a microsecond today, so they are written to the microsecond.
-function instant(value: unknown): string | null {
-  if (value === null) return null;
-  const micros = Math.round(Number(value) * 1e6);
-  const seconds = Math.floor(micros / 1e6);
-  const whole = new Date((seconds + 978307200) * 1000).toISOString();
-  return `${whole.slice(0, 19)}.${String(micros - seconds * 1e6).padStart(6, '0')}Z`;
 }
