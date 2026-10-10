@@ -20,7 +20,7 @@ import {
   readerCatalog,
   reloadMode,
   syncHistoryRelations
-} from "./chunk-G7SZ2AFI.mjs";
+} from "./chunk-2UKXR4JG.mjs";
 import {
   __callDispose,
   __using
@@ -2271,55 +2271,30 @@ function readSQLite(path) {
   }
   return new DatabaseSync9(path, { readOnly: true, timeout: busyTimeout });
 }
-var SQLitePasses = class {
-  #path;
-  #pass;
-  constructor(path) {
-    this.#path = path;
-    this.#pass = new Mutex(new SqliteStore(`${path}.locks`)).key("pass", {
-      mode: Modes.skipIfBusy()
-    });
+function readPassStatus(path) {
+  var _stack = [];
+  try {
+    if (!existsSync2(path))
+      return { pass: null, streams: [] };
+    const data = __using(_stack, readSQLite(path));
+    const installed = data.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'").get();
+    if (installed === void 0)
+      return { pass: null, streams: [] };
+    const latest = data.prepare("SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at FROM sync_status").get();
+    return {
+      pass: latest === void 0 ? null : recorded(latest, passState(latest.status)),
+      streams: data.prepare("SELECT stream, status, last_successful_sync_at FROM stream_status ORDER BY stream").all().map((row) => ({
+        stream: String(row.stream),
+        state: passState(row.status),
+        lastSucceededAt: text2(row.last_successful_sync_at)
+      }))
+    };
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
   }
-  // Runs work as the file's one pass, or not at all while another holds it.
-  run(work) {
-    return this.#pass.run(work);
-  }
-  // Whether a process runs a pass of the file now.
-  running() {
-    return this.#pass.isHeld();
-  }
-  // The latest pass and each stream's latest outcome; null and empty until
-  // the file's sync history recorded a pass.
-  async status() {
-    var _stack = [];
-    try {
-      if (!existsSync2(this.#path))
-        return { pass: null, streams: [] };
-      const running = await this.running();
-      const data = __using(_stack, readSQLite(this.#path));
-      const installed = data.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'").get();
-      if (installed === void 0)
-        return { pass: null, streams: [] };
-      const state = (status2) => {
-        const recorded2 = passState(status2);
-        return recorded2 === "running" && !running ? "interrupted" : recorded2;
-      };
-      const latest = data.prepare("SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at FROM sync_status").get();
-      return {
-        pass: latest === void 0 ? null : recorded(latest, state(latest.status)),
-        streams: data.prepare("SELECT stream, status, last_successful_sync_at FROM stream_status ORDER BY stream").all().map((row) => ({
-          stream: String(row.stream),
-          state: state(row.status),
-          lastSucceededAt: text2(row.last_successful_sync_at)
-        }))
-      };
-    } catch (_) {
-      var _error = _, _hasError = true;
-    } finally {
-      __callDispose(_stack, _error, _hasError);
-    }
-  }
-};
+}
 function recorded(row, state) {
   const started = {
     startedAt: String(row.started_at),
@@ -2327,7 +2302,6 @@ function recorded(row, state) {
   };
   switch (state) {
     case "running":
-    case "interrupted":
       return {
         ...started,
         state,
@@ -2555,6 +2529,6 @@ export {
   SQLiteColumns,
   SQLiteDestination,
   readSQLite,
-  SQLitePasses,
+  readPassStatus,
   SQLiteSyncHistory
 };

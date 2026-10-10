@@ -32,7 +32,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
 
 ## Set up in chat
 
-1. Take the current selection from the Apple status in context, or read it as `$query-apple` describes, then ask which connectors the user wants to set up. Present Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, Call History, Notification Center, Activity and Slack in plain language. Reconfiguration starts from the current selection. Do not call `apple_options` for connectors they have not selected.
+1. Take the current selection from the Apple status in context, or read it as `$query-apple` describes, then ask which connectors the user wants to set up. Present Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, Call History, Notification Center, Wallet, Activity and Slack in plain language. Reconfiguration starts from the current selection. Do not call `apple_options` for connectors they have not selected.
 2. For each chosen connector, call `apple_options` with its `connector` to discover real account and collection IDs. It reads metadata and may trigger a macOS prompt. Explain the returned permission guidance when access fails, then retry after the user changes access.
 3. Offer all content or a narrower selection where available:
    - Mail: accounts, mailboxes, received date (sent date if absent).
@@ -45,6 +45,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
    - Books: everything; it has no accounts, collections or dates to choose. Books kept only in iCloud are listed without their files until the user opens them in Books.
    - Call History: call dates only; it has no accounts or collections. Phone calls arrive from the user's iPhone through iCloud. A call removed from Recents, or dropped by macOS, leaves the import too.
    - Notification Center: delivery dates only; it has no accounts or collections. Notification Center keeps a notification only until its app withdraws it or the user clears it, often minutes; the import keeps every notification it saw after that, and sees the ones Notification Center holds when it imports.
+   - Wallet: everything; it has no accounts, collections or dates to choose. Passes from the user's iPhone arrive through iCloud. A pass removed in Wallet leaves the import too.
    - Accounts: everything; it is one small store with nothing to choose.
    - Slack: workspaces, conversations and message dates. It reads what the Slack desktop app keeps on this Mac, which is only the messages Slack has loaded, so tell the user that message history builds up from the first import and that older history arrives only once Slack loads it. A workspace appears once Slack has saved it, every few minutes while it is open and when it quits.
    - Activity: everything; it has no accounts, collections or dates to choose. macOS keeps most activity for 28 days; the import keeps what it loaded after macOS drops it, so tell the user that history builds up from the first import, and that removing Activity or rebuilding its import loses whatever macOS has dropped since.

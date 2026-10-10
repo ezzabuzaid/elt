@@ -754,6 +754,9 @@ var Identifiers = class {
   }
 };
 
+// packages/elt/dist/core/pipeline.js
+import { setTimeout as sleep } from "node:timers/promises";
+
 // packages/elt/dist/core/interleave.js
 async function* interleave(generators, concurrency) {
   const waiting = [...generators];
@@ -1402,6 +1405,7 @@ var Writer = class {
 };
 
 // packages/elt/dist/core/pipeline.js
+var stopGraceMs = 1e3;
 var PipelineError = class extends AggregateError {
   name = "PipelineError";
   results;
@@ -1485,6 +1489,7 @@ var Pipeline = class {
     const streams = new Map(connection.steps.map((copy) => [copy.from.name, copy.from]));
     const pending = /* @__PURE__ */ new Set();
     let wake = Promise.withResolvers();
+    watching.addEventListener("abort", () => wake.resolve(), { once: true });
     let finished = false;
     let failed = false;
     let failure;
@@ -1540,7 +1545,15 @@ var Pipeline = class {
       await this.#recordFailure(connection, error).catch((cause) => stopped.push(connectionError(connection, cause)));
     } finally {
       controller.abort();
-      await receive;
+      const graced = new AbortController();
+      await Promise.race([
+        receive,
+        sleep(stopGraceMs, void 0, {
+          ref: false,
+          signal: graced.signal
+        }).catch(() => void 0)
+      ]);
+      graced.abort();
     }
   }
   // One read per pass, never held between watch passes: a long read can
@@ -1734,18 +1747,21 @@ async function* diffSnapshot(stream, records, state, options = {}) {
   const deleted = deletion(stream, options);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
+  const seen = /* @__PURE__ */ new Set();
   const current = /* @__PURE__ */ new Map();
   for await (const data of records) {
     const key = deduplication.key(data);
-    if (current.has(key))
+    if (seen.has(key))
       throw new TypeError(`Stream ${stream.name} returned key ${key} twice in one scan`);
+    seen.add(key);
     const fingerprint = fingerprintOf(stream, data);
-    current.set(key, entryOf(stream, data, fingerprint));
+    if (options.keeps?.(data) ?? true)
+      current.set(key, entryOf(stream, data, fingerprint));
     if (fingerprintIn(previous.get(key)) !== fingerprint)
       yield { stream: stream.name, data };
   }
   for (const [key, entry] of previous)
-    if (!current.has(key)) {
+    if (!seen.has(key)) {
       const message2 = deleted(key, entry);
       if (message2 !== null)
         yield message2;

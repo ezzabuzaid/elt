@@ -7,22 +7,23 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppDatabase,
-  AppDatabaseVersion
-} from "../../chunks/chunk-SDFTRGL6.mjs";
+  AppDatabaseVersion,
+  referenceDateInstant
+} from "../../chunks/chunk-DV4S52G7.mjs";
 import {
   eventKitFields
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-ZVP2EZLL.mjs";
-import "../../chunks/chunk-BXQKRPES.mjs";
+} from "../../chunks/chunk-QNQLFEII.mjs";
+import "../../chunks/chunk-YZBCNEVG.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-G7SZ2AFI.mjs";
+} from "../../chunks/chunk-2UKXR4JG.mjs";
 import {
   __callDispose,
   __using
@@ -185,7 +186,7 @@ var CallHistorySnapshot = class {
       const categoryCode = number(row.categoryCode);
       return {
         id: required(row.id, "A call has no unique ID"),
-        startedAt: instant(row.startedAt),
+        startedAt: row.startedAt === null ? null : referenceDateInstant(Number(row.startedAt)),
         duration: number(row.duration),
         serviceProvider: string(row.serviceProvider),
         kind: callKind(kindCode),
@@ -334,14 +335,6 @@ function number(value) {
 function flag(value) {
   return value === null ? null : Number(value) === 1;
 }
-function instant(value) {
-  if (value === null)
-    return null;
-  const micros = Math.round(Number(value) * 1e6);
-  const seconds = Math.floor(micros / 1e6);
-  const whole = new Date((seconds + 978307200) * 1e3).toISOString();
-  return `${whole.slice(0, 19)}.${String(micros - seconds * 1e6).padStart(6, "0")}Z`;
-}
 
 // packages/sdks/apple/call-history/dist/call-history-store.js
 import { homedir } from "node:os";
@@ -364,7 +357,7 @@ var CallHistoryStore = class {
 };
 
 // packages/sources/apple/call-history/dist/call-history-scan.js
-var toMilliseconds = (instant2) => `${instant2.slice(0, 23)}Z`;
+var toMilliseconds = (instant) => `${instant.slice(0, 23)}Z`;
 var CallHistoryScan = class {
   #snapshot;
   #scope;

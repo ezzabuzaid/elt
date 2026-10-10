@@ -3,10 +3,9 @@ import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
-  SQLitePasses,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunk-BXQKRPES.mjs";
+} from "./chunk-YZBCNEVG.mjs";
 import {
   Connection,
   Copy,
@@ -15,7 +14,7 @@ import {
   Pipeline,
   PipelineError,
   StreamStatus
-} from "./chunk-G7SZ2AFI.mjs";
+} from "./chunk-2UKXR4JG.mjs";
 import {
   __callDispose,
   __using
@@ -26,7 +25,7 @@ import { existsSync, mkdirSync as mkdirSync2, readdirSync as readdirSync2 } from
 import { join as join3 } from "node:path";
 
 // packages/settings/dist/settings.js
-import { chmodSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync } from "node:fs";
 import { join as join2 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -156,9 +155,9 @@ var Settings = class {
     }));
   }
   // Saves a selection that has no problems, with what macOS needs granted for
-  // each connector, forgets the failures of every other import, removes those
-  // imports and publishes what readers see.
-  async select(selections, { facts, permissions }) {
+  // each connector, forgets the failures of every other import and publishes
+  // what readers see. The imports it no longer names are left stale.
+  select(selections, { facts, permissions }) {
     const problems = selectionProblems(selections, facts);
     if (problems.length > 0)
       throw new Error(problems.join("\n"));
@@ -174,21 +173,14 @@ var Settings = class {
       this.settings.exec("ROLLBACK");
       throw error;
     }
-    await this.removeStaleImports();
     this.publish();
   }
-  // Removes every import directory but the selected one of each connector,
-  // including those of connectors no longer selected. One a pass still runs
-  // is left to that pass, which removes it once its removal stops it.
-  async removeStaleImports() {
+  // Every import directory but the selected one of each connector, including
+  // those of connectors no longer selected. A host removes each once no pass
+  // runs it, since a pass keeps its locks inside.
+  staleImports() {
     const kept = new Set(this.selections().map((selection) => this.directory(selection)));
-    for (const connector of readdirSync(this.root, { withFileTypes: true }))
-      if (connector.isDirectory())
-        for (const entry of readdirSync(join2(this.root, connector.name))) {
-          const directory = join2(this.root, connector.name, entry);
-          if (!kept.has(directory) && !await new SQLitePasses(join2(directory, "data.sqlite")).running())
-            rmSync(directory, { recursive: true, force: true });
-        }
+    return readdirSync(this.root, { withFileTypes: true }).filter((connector) => connector.isDirectory()).flatMap((connector) => readdirSync(join2(this.root, connector.name)).map((entry) => join2(this.root, connector.name, entry))).filter((directory) => !kept.has(directory));
   }
   // Aborts with ConnectorRemovedError once the selection no longer names this
   // import. It reads the settings again only when PRAGMA data_version says
@@ -379,40 +371,36 @@ var AppleConnector = class {
       }))
     }));
   }
-  // One pass of this connector's import, as every host runs it: one pass of an
-  // import at a time, stopped once the user removes the connector, its
+  // One pass of this connector's import, as every host runs it inside the
+  // import's flight: stopped once the user removes the connector, its
   // connection failure kept in the settings and its outcome in the import's
   // sync history.
   async import(settings, selection, history) {
     var _stack = [];
     try {
       const removal = __using(_stack, settings.removal(selection));
+      let built;
       try {
-        const pass = await new SQLitePasses(settings.database(selection)).run(async () => {
-          let built;
-          try {
-            built = await this.connection(settings.directory(selection), selection);
-          } catch (error) {
-            settings.saveConnectionFailure(selection, error instanceof Error ? error.message : String(error), this.failureType(error));
-            return { status: "unconnected", error };
-          }
-          settings.clearConnectionFailure(selection);
-          const { connection, destination } = built;
-          await history.install([destination]);
-          installSQLiteCatalog(destination);
-          await new Pipeline({ connections: [connection], history }).run({ signal: removal.signal }).catch((error) => {
-            if (!(error instanceof PipelineError))
-              throw error;
-          });
-          return { status: "imported" };
-        });
-        return pass.acquired ? pass.value : { status: "busy" };
+        built = await this.connection(settings.directory(selection), selection);
       } catch (error) {
-        if (!(error instanceof ConnectorRemovedError))
-          throw error;
-        await settings.removeStaleImports();
-        return { status: "removed" };
+        settings.saveConnectionFailure(selection, error instanceof Error ? error.message : String(error), this.failureType(error));
+        return { status: "unconnected", error };
       }
+      settings.clearConnectionFailure(selection);
+      const { connection, destination } = built;
+      await history.install([destination]);
+      installSQLiteCatalog(destination);
+      try {
+        await new Pipeline({ connections: [connection], history }).run({
+          signal: removal.signal
+        });
+      } catch (error) {
+        if (error instanceof ConnectorRemovedError)
+          return { status: "removed" };
+        if (!(error instanceof PipelineError))
+          throw error;
+      }
+      return { status: "imported" };
     } catch (_) {
       var _error = _, _hasError = true;
     } finally {

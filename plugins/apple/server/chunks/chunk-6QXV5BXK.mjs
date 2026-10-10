@@ -194,9 +194,9 @@ function inContentOrder(document) {
       attendee.participantType
     ]),
     alarms: sorted(document.alarms, (alarm) => [
-      alarm.alarmType,
-      alarm.relativeOffset,
       alarm.absoluteMs ?? null,
+      alarm.relativeOffset,
+      alarm.alarmType,
       alarm.emailAddress ?? null,
       alarm.soundName ?? null,
       alarm.proximity,
@@ -208,11 +208,22 @@ function inContentOrder(document) {
   };
 }
 function sorted(values, key) {
-  return values.map((value) => [JSON.stringify(key(value)), value]).sort(([a], [b]) => {
-    if (a < b)
+  return values.toSorted((a, b) => compareKeys(key(a), key(b)));
+}
+function compareKeys(a, b) {
+  for (const [index, left] of a.entries()) {
+    const right = b[index];
+    if (left === right)
+      continue;
+    if (left === null)
       return -1;
-    return a > b ? 1 : 0;
-  }).map(([, value]) => value);
+    if (right === null)
+      return 1;
+    if (typeof left === "number" && typeof right === "number")
+      return left - right;
+    return String(left) < String(right) ? -1 : 1;
+  }
+  return 0;
 }
 
 // packages/sdks/apple/eventkit/dist/calendar-store.js

@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 import {
   RemindersStore,
   RemindersUnavailableError
-} from "../../chunks/chunk-3ZK2RNVB.mjs";
+} from "../../chunks/chunk-6QXV5BXK.mjs";
 import {
   accounts,
   collections,
@@ -16,15 +16,15 @@ import {
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-ZVP2EZLL.mjs";
-import "../../chunks/chunk-BXQKRPES.mjs";
+} from "../../chunks/chunk-QNQLFEII.mjs";
+import "../../chunks/chunk-YZBCNEVG.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-G7SZ2AFI.mjs";
+} from "../../chunks/chunk-2UKXR4JG.mjs";
 import "../../chunks/chunk-ZGXE7NZW.mjs";
 
 // packages/sources/apple/reminders/dist/reminders-scan.js
@@ -158,7 +158,7 @@ var properties2 = {
   reminderId,
   position: {
     ...ordinal2,
-    description: "Order among the owner's alarms, numbered in content order, not EventKit's order, which changes between reads."
+    description: "Order among the owner's alarms in firing order: relative alarms by offset, then absolute alarms by date. EventKit's own order changes between reads, so it is not used."
   },
   type: {
     ...ordinal2,

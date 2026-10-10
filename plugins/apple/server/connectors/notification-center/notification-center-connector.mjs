@@ -14,22 +14,23 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppDatabase,
-  AppDatabaseVersion
-} from "../../chunks/chunk-SDFTRGL6.mjs";
+  AppDatabaseVersion,
+  referenceDateInstant
+} from "../../chunks/chunk-DV4S52G7.mjs";
 import {
   eventKitFields
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-ZVP2EZLL.mjs";
-import "../../chunks/chunk-BXQKRPES.mjs";
+} from "../../chunks/chunk-QNQLFEII.mjs";
+import "../../chunks/chunk-YZBCNEVG.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-G7SZ2AFI.mjs";
+} from "../../chunks/chunk-2UKXR4JG.mjs";
 import {
   __callDispose,
   __using
@@ -82,7 +83,7 @@ var NotificationCenterSnapshot = class {
       return {
         id: uuid(row.uuid),
         bundleId: required(payload.app, "A notification names no app"),
-        deliveredAt: instant(Number(row.deliveredAt)),
+        deliveredAt: referenceDateInstant(Number(row.deliveredAt)),
         requestId: text(request.iden),
         threadId: text(request.thre),
         category: text(request.cate),
@@ -91,7 +92,7 @@ var NotificationCenterSnapshot = class {
         body: text(request.body),
         defaultActionUrl: text(request.durl),
         soundName: isDictionary(request.soun) ? text(request.soun.nam) : null,
-        expiresAt: typeof request.edat === "number" ? instant(request.edat) : null,
+        expiresAt: typeof request.edat === "number" ? referenceDateInstant(request.edat) : null,
         interruptionLevel: typeof level === "number" ? interruptionLevels[level] ?? null : null,
         contentType: text(request.unct),
         style: row.style === null ? null : Number(row.style),
@@ -183,12 +184,6 @@ function text(value) {
 function integer(value) {
   return typeof value === "number" ? value : null;
 }
-function instant(value) {
-  const micros = Math.round(value * 1e6);
-  const seconds = Math.floor(micros / 1e6);
-  const whole = new Date((seconds + 978307200) * 1e3).toISOString();
-  return `${whole.slice(0, 19)}.${String(micros - seconds * 1e6).padStart(6, "0")}Z`;
-}
 
 // packages/sdks/apple/notification-center/dist/notification-center-store.js
 import { homedir } from "node:os";
@@ -211,7 +206,7 @@ var NotificationCenterStore = class {
 };
 
 // packages/sources/apple/notification-center/dist/notification-center-scan.js
-var toMilliseconds = (instant3) => `${instant3.slice(0, 23)}Z`;
+var toMilliseconds = (instant2) => `${instant2.slice(0, 23)}Z`;
 var NotificationCenterScan = class {
   #snapshot;
   #scope;
@@ -435,7 +430,7 @@ var CategoryActionsStream = class extends AppleNotificationCenterStream {
 };
 
 // packages/sources/apple/notification-center/dist/streams/notifications-stream.js
-var { id: id4, text: text2, nullableInteger: nullableInteger4, nullableText: nullableText3, instant: instant2, nullableInstant } = notificationCenterFields;
+var { id: id4, text: text2, nullableInteger: nullableInteger4, nullableText: nullableText3, instant, nullableInstant } = notificationCenterFields;
 var properties4 = {
   id: {
     ...id4,
@@ -446,7 +441,7 @@ var properties4 = {
     description: "Bundle identifier of the app that posted it, in the app\u2019s own case; apps.bundleId is the same identifier lowercased."
   },
   deliveredAt: {
-    ...instant2,
+    ...instant,
     description: "When Notification Center delivered it, to the microsecond."
   },
   requestId: {

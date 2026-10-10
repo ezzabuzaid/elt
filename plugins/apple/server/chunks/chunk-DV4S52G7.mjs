@@ -74,7 +74,16 @@ var AppDatabaseVersion = class {
   }
 };
 
+// packages/sdks/apple/app-database/dist/reference-date.js
+function referenceDateInstant(seconds) {
+  const micros = Math.round(seconds * 1e6);
+  const whole = Math.floor(micros / 1e6);
+  const iso = new Date((whole + 978307200) * 1e3).toISOString();
+  return `${iso.slice(0, 19)}.${String(micros - whole * 1e6).padStart(6, "0")}Z`;
+}
+
 export {
   AppDatabase,
-  AppDatabaseVersion
+  AppDatabaseVersion,
+  referenceDateInstant
 };
