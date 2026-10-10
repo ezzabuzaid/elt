@@ -1,4 +1,4 @@
-import { type FieldSchema, Stream, type SyncMode } from '@workspace/elt';
+import { type FieldSchema, Stream } from '@workspace/elt';
 
 const text = { type: 'string' } as const;
 const id = { ...text, minLength: 1 };
@@ -184,23 +184,20 @@ export const urlInspectionReferrersFields = {
   referringUrl: text,
 } satisfies Record<string, FieldSchema>;
 
+// Deletions come from the source: incremental copies diff each read with the
+// last (diffSnapshot), unless the stream is rolling.
 export function searchConsoleStream({
   name,
   fields,
   primaryKey,
-  supportedSyncModes = ['full_refresh'],
-  snapshot = false,
   rolling = false,
   partitionKey,
 }: {
   name: string;
   fields: Record<string, FieldSchema>;
   primaryKey: readonly string[];
-  supportedSyncModes?: readonly SyncMode[];
-  // A complete list on every read: incremental copies diff it (diffSnapshot).
-  snapshot?: boolean;
   // Each run refreshes only the items that fell due, keeping per-item state:
-  // incremental only, and deletions come from the source.
+  // incremental only.
   rolling?: boolean;
   partitionKey?: readonly string[];
 }): Stream {
@@ -214,13 +211,9 @@ export function searchConsoleStream({
     primaryKey,
     supportedSyncModes: rolling
       ? ['incremental']
-      : snapshot
-        ? ['full_refresh', 'incremental']
-        : supportedSyncModes,
-    ...((snapshot || rolling) && {
-      sourceDefinedCursor: true,
-      emitsDeletes: true,
-    }),
+      : ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
     ...(partitionKey && { partitionKey }),
   });
 }

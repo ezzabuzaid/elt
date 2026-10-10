@@ -64,7 +64,12 @@ async function warehouse(siteUrls: string[], google: Google) {
   const requester = {
     async request(options: {
       url: string;
-      data?: { dimensions?: string[]; type?: string };
+      data?: {
+        dimensions?: string[];
+        type?: string;
+        startDate?: string;
+        endDate?: string;
+      };
     }) {
       const path = new URL(options.url).pathname;
       if (path.endsWith('/webmasters/v3/sites'))
@@ -80,15 +85,23 @@ async function warehouse(siteUrls: string[], google: Google) {
       const site = decodeURIComponent(
         path.split('/sites/')[1]?.split('/')[0] ?? '',
       );
+      const dimensions = options.data?.dimensions ?? [];
+      const day = dimensions.indexOf('date');
+      // Like Google, it answers only the days the request asks for.
+      const asked = ({ keys }: Row) => {
+        const date = day === -1 ? undefined : keys[day];
+        return (
+          date === undefined ||
+          (date >= String(options.data?.startDate) &&
+            date <= String(options.data?.endDate))
+        );
+      };
       return {
         data: {
           // Google always reports ctr, so the fake derives it as Google does.
           rows: google
-            .analytics({
-              site,
-              dimensions: options.data?.dimensions ?? [],
-              type: String(options.data?.type),
-            })
+            .analytics({ site, dimensions, type: String(options.data?.type) })
+            .filter(asked)
             .map((row) => ({
               ctr: row.impressions > 0 ? row.clicks / row.impressions : 0,
               ...row,
@@ -319,6 +332,131 @@ test('a re-read day settles, and query rows Google stopped reporting drop out of
   assert.deepEqual(await freshness(), [
     { latest_date: '2026-09-21', latest_settled_date: '2026-09-21' },
   ]);
+});
+
+test('days before the re-read window stay loaded when a later read starts after them', async () => {
+  const queries = [
+    row(['2026-09-18', 'older'], 3, 30),
+    row(['2026-09-19', 'older'], 2, 20),
+    row(['2026-09-20', 'settled'], 1, 10),
+    row(['2026-09-21', 'provisional'], 1, 5),
+  ];
+  const google: Google = {
+    firstIncompleteDate: '2026-09-21',
+    analytics: ({ dimensions, type }) =>
+      type === 'WEB' && dimensions.join() === 'date,query' ? queries : [],
+  };
+  await using store = await warehouse([SITE], google);
+  await store.load();
+
+  // The next read starts at the last settled day, so it asks for neither of
+  // the two older days.
+  google.firstIncompleteDate = '2026-09-22';
+  await store.run();
+
+  assert.deepEqual(
+    (
+      await store.agent`
+        SELECT date::text, query FROM search_console_queries_daily
+        ORDER BY date`
+    ).map((found) => ({ ...found })),
+    [
+      { date: '2026-09-18', query: 'older' },
+      { date: '2026-09-19', query: 'older' },
+      { date: '2026-09-20', query: 'settled' },
+      { date: '2026-09-21', query: 'provisional' },
+    ],
+  );
+});
+
+test('a re-read day that comes back with no query rows loses the rows it showed', async () => {
+  let queries = [
+    row(['2026-09-20', 'settled'], 1, 10),
+    row(['2026-09-21', 'provisional'], 1, 5),
+  ];
+  const google: Google = {
+    firstIncompleteDate: '2026-09-21',
+    analytics: ({ dimensions, type }) =>
+      type === 'WEB' && dimensions.join() === 'date,query' ? queries : [],
+  };
+  await using store = await warehouse([SITE], google);
+  await store.load();
+
+  // Google withholds every query of a day whose few searches were all rare.
+  queries = [row(['2026-09-20', 'settled'], 1, 10)];
+  await store.run();
+
+  assert.deepEqual(
+    (
+      await store.agent`
+        SELECT date::text, query FROM search_console_queries_daily`
+    ).map((found) => ({ ...found })),
+    [{ date: '2026-09-20', query: 'settled' }],
+  );
+});
+
+test('a re-read day shows its unchanged query and page rows beside the ones that changed', async () => {
+  let restated = 1;
+  const google: Google = {
+    firstIncompleteDate: '2026-09-21',
+    analytics: ({ dimensions, type }) =>
+      type === 'WEB' && dimensions.length === 2
+        ? [
+            row(['2026-09-20', 'same'], 1, 10),
+            row(['2026-09-20', 'restated'], restated, 40),
+          ]
+        : [],
+  };
+  await using store = await warehouse([SITE], google);
+  await store.load();
+
+  restated = 4;
+  await store.run();
+
+  for (const [view, column] of [
+    ['search_console_queries_daily', 'query'],
+    ['search_console_pages_daily', 'page'],
+  ] as const)
+    assert.deepEqual(
+      (
+        await store.agent`
+          SELECT ${store.agent(column)} AS key, clicks::int
+          FROM ${store.agent(view)} ORDER BY key`
+      ).map((found) => ({ ...found })),
+      [
+        { key: 'restated', clicks: 4 },
+        { key: 'same', clicks: 1 },
+      ],
+      view,
+    );
+});
+
+test('a search type whose re-read day reports nothing loses that day’s totals', async () => {
+  let discover = [row(['2026-09-20'], 2, 20), row(['2026-09-21'], 1, 10)];
+  const google: Google = {
+    firstIncompleteDate: '2026-09-21',
+    analytics: ({ dimensions, type }) => {
+      if (dimensions.join() !== 'date') return [];
+      return type === 'DISCOVER' ? discover : [row(['2026-09-21'], 5, 50)];
+    },
+  };
+  await using store = await warehouse([SITE], google);
+  await store.load();
+
+  discover = [row(['2026-09-20'], 2, 20)];
+  await store.run();
+
+  assert.deepEqual(
+    (
+      await store.agent`
+        SELECT date::text, search_type FROM search_console_totals_daily
+        ORDER BY date, search_type`
+    ).map((found) => ({ ...found })),
+    [
+      { date: '2026-09-20', search_type: 'DISCOVER' },
+      { date: '2026-09-21', search_type: 'WEB' },
+    ],
+  );
 });
 
 test('everything the agent can see explains itself', async () => {

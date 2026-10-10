@@ -230,7 +230,6 @@ export class SearchConsoleSource extends Source {
       name: 'sites',
       fields: sitesFields,
       primaryKey: ['siteUrl'],
-      snapshot: true,
     });
     // Every stream but sites is read once per property, the partition every
     // row carries; sites is the grant's own list, the same for all of them.
@@ -239,27 +238,22 @@ export class SearchConsoleSource extends Source {
       partitionKey: ['siteUrl'],
       fields: sitemapsFields,
       primaryKey: ['siteUrl', 'path'],
-      snapshot: true,
     });
     this.sitemapContents = searchConsoleStream({
       name: 'sitemapContents',
       partitionKey: ['siteUrl'],
       fields: sitemapContentsFields,
       primaryKey: ['siteUrl', 'sitemapPath', 'type'],
-      snapshot: true,
     });
     // Every row carries its property, so several properties share one table.
+    // A grain carrying the date dimension resumes on it and diffs the days it
+    // reads again; one without is a complete trailing view on every read.
     const grain = (name: SearchAnalyticsGrain): Stream =>
       searchConsoleStream({
         name,
         partitionKey: ['siteUrl'],
         fields: searchAnalyticsFields(name),
         primaryKey: ['siteUrl', ...searchAnalyticsGrains[name].key],
-        // A grain carrying the date dimension resumes on it; one without is a
-        // complete trailing view on every read, so incremental copies diff it.
-        ...(searchAnalyticsGrains[name].dimensions.includes('date')
-          ? { supportedSyncModes: ['full_refresh', 'incremental'] as const }
-          : { snapshot: true }),
       });
     this.searchAnalyticsDaily = grain('searchAnalyticsDaily');
     this.searchAnalyticsQueries = grain('searchAnalyticsQueries');
@@ -303,19 +297,6 @@ export class SearchConsoleSource extends Source {
 
   protected override partitions(): readonly Partition[] {
     return this.siteUrls.map((siteUrl) => ({ siteUrl }));
-  }
-
-  protected override validateExtraction(
-    configuration: CopyConfiguration,
-  ): void {
-    if (
-      configuration.syncMode === 'incremental' &&
-      !configuration.stream.sourceDefinedCursor &&
-      configuration.cursorField !== 'date'
-    )
-      throw new TypeError(
-        'Search Console incremental extraction requires the date cursor',
-      );
   }
 
   /**
@@ -524,11 +505,12 @@ export class SearchConsoleSource extends Source {
     const saved = readCheckpoint(state);
     const startDate =
       configuration.syncMode === 'incremental'
-        ? earlier(saved ?? opening, endDate)
+        ? earlier(saved?.date ?? opening, endDate)
         : opening;
     const types =
       name === 'searchAnalyticsDaily' ? this.searchTypes : (['WEB'] as const);
 
+    const rows: Record<string, unknown>[] = [];
     let settled: string | undefined;
     for (const type of types) {
       const page = await readSearchAnalytics(this.#api, siteUrl, {
@@ -539,27 +521,37 @@ export class SearchConsoleSource extends Source {
         type,
       });
       const { firstIncompleteDate } = page;
-      yield* this.#records(
-        stream,
-        this.#rows(name, page.rows, siteUrl, (row) => ({
+      rows.push(
+        ...this.#rows(name, page.rows, siteUrl, (row) => ({
           ...(name === 'searchAnalyticsDaily' ? { searchType: type } : {}),
           settled:
             firstIncompleteDate === undefined ||
             String(row.date) < firstIncompleteDate,
         })),
       );
-      if (page.firstIncompleteDate === undefined) continue;
+      if (firstIncompleteDate === undefined) continue;
       // Report types settle independently, so the checkpoint keeps the
       // earliest boundary and re-reads the rest next run.
-      const boundary = addDays(page.firstIncompleteDate, -1);
+      const boundary = addDays(firstIncompleteDate, -1);
       settled = settled === undefined ? boundary : earlier(settled, boundary);
     }
-    if (configuration.syncMode !== 'incremental') return;
-    yield {
-      type: 'STATE',
-      stream: stream.name,
-      state: { date: earlier(settled ?? endDate, endDate) },
-    };
+    if (configuration.syncMode !== 'incremental') {
+      yield* this.#records(stream, rows);
+      return;
+    }
+    // Google may still restate every day from the next read's first, so the
+    // snapshot keeps those days: a row a re-read no longer returns is deleted,
+    // and the days before stay as loaded.
+    const date = earlier(settled ?? endDate, endDate);
+    for await (const message of diffSnapshot(
+      stream,
+      validateRecords(stream, rows, 'Search Console'),
+      saved?.diff ?? null,
+      { keeps: (record) => String(record.date) >= date },
+    ))
+      yield 'type' in message && message.type === 'STATE'
+        ? { ...message, state: { date, diff: message.state } }
+        : message;
   }
 
   #rows(
@@ -896,10 +888,13 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-// The analytics checkpoint is this source's own STATE: the last settled date.
-function readCheckpoint(state: unknown): string | null {
+// The analytics checkpoint holds the day the next read starts from, the last
+// settled one, and the diff's state for the days from it.
+function readCheckpoint(
+  state: unknown,
+): { readonly date: string; readonly diff: unknown } | null {
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what this source wrote; own state is not re-validated
-  return (state as { date: string } | null)?.date ?? null;
+  return state as { date: string; diff: unknown } | null;
 }
 
 // Google reports some instants to the second (2026-09-14T19:44:28Z); they

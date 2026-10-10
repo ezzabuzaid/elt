@@ -77,18 +77,14 @@ A deduplicating copy that leaves `dedupPolicy` unset uses `cursor_newer`, or `re
 Selecting `cursor_newer` with a cursor that is a member of the primary key is rejected. A conflict on that key implies an equal cursor, so the guard could never fire and a restated record would load as a no-op that reports a count without changing the row. The rejection names the field and points at `replace`.
 
 ```ts
-// searchAnalyticsQueries declares the key [siteUrl, date, query].
-new Copy(
-  source.searchAnalyticsQueries,
-  destination.table('raw_searchAnalyticsQueries'),
-  {
-    id: 'search-analytics-queries',
-    syncMode: 'incremental',
-    destinationSyncMode: 'append_dedup',
-    dedupPolicy: 'replace',
-    cursorField: 'date',
-  },
-);
+// A daily report keyed [account, date] whose upstream restates recent days.
+new Copy(source.dailyTotals, destination.table('daily_totals'), {
+  id: 'daily-totals',
+  syncMode: 'incremental',
+  destinationSyncMode: 'append_dedup',
+  dedupPolicy: 'replace',
+  cursorField: 'date',
+});
 ```
 
 Capabilities are immutable metadata:
@@ -271,6 +267,23 @@ protected override async *extract(configuration, state, partition, scan) {
 - **Who decides:** only the source knows what its upstream still holds, so the rule is a per-read argument, never a stream declaration: what a cache holds changes with every read.
 - **Rows outlive the upstream**, as for expired rows: clearing the copy or a full-refresh overwrite loses every uncovered row for good.
 - **Precedent:** Airbyte deletes only on change-data-capture markers, and its Slack source never deletes; Fivetran's Slack connector re-reads all history to capture deletes, which a read that covers everything amounts to.
+
+#### Re-read windows
+
+Some reads ask for a window, and the next read asks for part of it again, as Search Console reads every day from the last settled one, because Google may still restate those days. Without help, the snapshot would hold every record the first read loaded, sixteen months of them, and a later read that starts after a day would take its rows as vanished. The source tells the diff which records the next read reads again:
+
+```ts
+// The next read starts at the last settled day.
+yield *
+  diffSnapshot(stream, rows, state, {
+    keeps: (record) => String(record.date) >= nextStart,
+  });
+```
+
+- **What stays:** only the records `keeps` accepts stay in the saved snapshot, so the state holds no more than the next read compares. A record left out cannot vanish from that read, so its row stays loaded and is never deleted.
+- **What is deleted:** a kept record the next read no longer returns, such as a query Google stopped reporting for a re-read day, or every row of a day that comes back empty.
+- **Who decides:** the source sets where its next read starts, from its own checkpoint, so `keeps` and that start come from the same value. Keeping fewer records than the next read covers leaves rows it stopped returning; keeping more deletes rows it never asked for.
+- **Precedent:** Airbyte's Search Console source reads only final data and states that its ["syncs do not delete rows"](https://github.com/airbytehq/airbyte/blob/4bc984c55bafae1fdf1f09d9dcc62fbea0a98241/docs/integrations/sources/google-search-console.md#L246-L247); Fivetran re-syncs a seven-day rollback window without capturing deletes. [dlt's `delete-insert`](https://github.com/dlt-hub/dlt/blob/5084786a456038fab4b4e05f50492a718430d0a6/docs/website/docs/general-usage/merge-loading.md#L22-L29) with a merge key replaces each day a load brings at the destination, but a day that comes back empty brings no merge key and keeps its rows.
 
 #### Forgetting upstreams
 
@@ -2102,12 +2115,13 @@ The report types change which rows exist, so they are part of the source identit
 
 Google revises recent metrics for roughly two to three days. The response metadata reports `firstIncompleteDate`, the first day still being collected, so the connector does not guess a lookback:
 
-- State is `{ date: '<last settled day>' }`.
+- State is `{ date: '<last settled day>', diff }`, where `diff` is the [snapshot](#re-read-windows) of the days from that date.
 - A run resumes **at** the saved date rather than after it, so the last settled day is re-read. That re-read is the lookback.
 - Requests use `dataState: 'ALL'`, and the checkpoint advances to `firstIncompleteDate` minus one day, or to the end date when the API reports none.
 - Rows are paginated by `startRow` at 25000 per page until a short page.
+- Each read is diffed with the last, keeping only the days from the next start. A restated row loads again, an unchanged one is not rewritten, and a row Google no longer returns for a re-read day is deleted, including every row of a day that comes back empty. Days before the window stay as loaded.
 
-Because `date` is both the cursor and part of the key, each resumable grain requires `dedupPolicy: 'replace'`. With the default guard the restated day would be discarded. `searchAnalyticsDaily` requests one window per report type and keeps the earliest settled boundary across them, because report types settle independently.
+`searchAnalyticsDaily` requests one window per report type and keeps the earliest settled boundary across them, because report types settle independently.
 
 ### Warehouse marts
 
@@ -2144,7 +2158,7 @@ Three clocks have different meanings: source record modification fields describe
 | `extraction_coverage`                                                                                          | Per attempt and stream: configured selection, scope explanation, target, copy outcome, committed counts and failed partitions.                                                                                                         |
 | `search_console_freshness`                                                                                     | Observed latest day, settled day and maximum row `loaded_at` per Search Console view, computed when read. Not sync status.                                                                                                             |
 | `search_console_totals_daily`                                                                                  | Authoritative totals per property, day and report type.                                                                                                                                                                                |
-| `search_console_queries_daily`, `search_console_pages_daily`                                                   | Web breakdowns. Pages add `page_path`. Rows a re-read no longer returns are hidden (only the latest load of each property and day shows).                                                                                              |
+| `search_console_queries_daily`, `search_console_pages_daily`                                                   | Web breakdowns. Pages add `page_path`. Rows a re-read no longer returns are deleted when it loads.                                                                                                                                     |
 | `search_console_withheld_daily`                                                                                | Web totals, the sum of query rows, and the difference Google withheld.                                                                                                                                                                 |
 | `search_console_countries`                                                                                     | The trailing country × device window with its `start_date` and `end_date`.                                                                                                                                                             |
 | `search_console_properties`, `_sitemaps`, `_sitemap_contents`, `_url_inspection` (+ `_sitemaps`, `_referrers`) | The listings, in snake_case. Inspection adds `page_path`.                                                                                                                                                                              |

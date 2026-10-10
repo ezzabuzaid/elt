@@ -27,15 +27,19 @@ export function searchConsoleCopies<T extends Target>(
 ): Copy<T>[] {
   const tables = searchConsoleTables;
   return [
-    // Listings are complete on every read: a copy writes changes and
-    // deletes only the keys the previous snapshot held. The country and
-    // device split carries no date, so it is a trailing view diffed as a
-    // whole rather than resumed.
+    // Each read is diffed with the last: a copy writes changes and deletes
+    // only the keys the previous snapshot held. The dated analytics resume
+    // from the last settled day, and each grain is its own copy: Google
+    // anonymizes rare rows, so the daily totals stay authoritative while the
+    // breakdowns are only comparable within themselves.
     ...(
       [
         [source.sites, tables.sites],
         [source.sitemaps, tables.sitemaps],
         [source.sitemapContents, tables.sitemapContents],
+        [source.searchAnalyticsDaily, tables.searchAnalyticsDaily],
+        [source.searchAnalyticsQueries, tables.searchAnalyticsQueries],
+        [source.searchAnalyticsPages, tables.searchAnalyticsPages],
         [source.searchAnalyticsCountries, tables.searchAnalyticsCountries],
         [source.urlInspection, tables.urlInspection],
         [source.urlInspectionSitemaps, tables.urlInspectionSitemaps],
@@ -47,26 +51,6 @@ export function searchConsoleCopies<T extends Target>(
           id: stream.name,
           syncMode: 'incremental',
           destinationSyncMode: 'append_dedup',
-        }),
-    ),
-    // Each grain is its own copy: Google anonymizes rare rows, so the daily
-    // totals stay authoritative while the breakdowns are only comparable
-    // within themselves. The cursor is part of every key, so a restated day
-    // has to replace the loaded rows rather than lose to an equal cursor.
-    ...(
-      [
-        [source.searchAnalyticsDaily, tables.searchAnalyticsDaily],
-        [source.searchAnalyticsQueries, tables.searchAnalyticsQueries],
-        [source.searchAnalyticsPages, tables.searchAnalyticsPages],
-      ] as const
-    ).map(
-      ([stream, name]) =>
-        new Copy(stream, table(name), {
-          id: stream.name,
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          dedupPolicy: 'replace',
-          cursorField: 'date',
         }),
     ),
   ];

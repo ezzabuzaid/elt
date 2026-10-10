@@ -154,8 +154,6 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
     source.searchAnalyticsQueries,
     destination.table('search_analytics'),
     {
-      cursorField: 'date',
-      dedupPolicy: 'replace',
       destinationSyncMode: 'append_dedup',
       id: 'search-analytics',
       syncMode: 'incremental',
@@ -178,10 +176,13 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
     (
       await sql`SELECT date::text, clicks::int, settled FROM search_analytics ORDER BY date`
     ).map((row) => ({ ...row }));
+  // Where the property's own partition state says the next read starts.
   const saved = async () => {
-    const [row] =
-      await sql`SELECT state FROM _elt_checkpoints WHERE id = ${'search-analytics'}`;
-    return row?.state.state;
+    const [row] = await sql`
+      SELECT state #> '{state,partitions,0,partition}' AS partition,
+        state #>> '{state,partitions,0,state,date}' AS date
+      FROM _elt_checkpoints WHERE id = ${'search-analytics'}`;
+    return { ...row };
   };
   // The 21st is still being collected, and its row says so.
   assert.deepEqual(await loaded(), [
@@ -190,9 +191,7 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
   ]);
   // firstIncompleteDate is 2026-09-21, so the last settled day is the 20th,
   // kept as the property's own partition state.
-  const checkpoint = (date: string) => ({
-    partitions: [{ partition: { siteUrl: SITE }, state: { date } }],
-  });
+  const checkpoint = (date: string) => ({ partition: { siteUrl: SITE }, date });
   assert.deepEqual(await saved(), checkpoint('2026-09-20'));
 
   clicks = 19;
@@ -775,8 +774,6 @@ test('two properties share tables through one source without deleting each other
               id: `${name}:searchAnalyticsDaily`,
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
-              dedupPolicy: 'replace',
-              cursorField: 'date',
             }),
             listing(source.searchAnalyticsCountries, 'countries'),
           ],
@@ -1228,8 +1225,6 @@ test('one source loads every property; a newly listed one backfills while the ot
               id: 'daily',
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
-              dedupPolicy: 'replace',
-              cursorField: 'date',
             }),
             new Copy(source.urlInspection, destination.table('inspection'), {
               id: 'inspection',
@@ -1319,8 +1314,6 @@ test('a property without permission is reported by name while the others load an
             id: 'daily',
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
-            dedupPolicy: 'replace',
-            cursorField: 'date',
           }),
         ],
       }),
@@ -1470,8 +1463,6 @@ test('a property without permission is reported in each batch while watching goe
       id: 'rows',
       syncMode: 'incremental',
       destinationSyncMode: 'append_dedup',
-      dedupPolicy: 'replace',
-      cursorField: 'date',
     },
   );
   const controller = new AbortController();
@@ -1509,7 +1500,8 @@ test('a property without permission is reported in each batch while watching goe
     assert.deepEqual(await batch(), { count: 1, failed: [[B, true]] });
     assert.deepEqual(await loaded(), [[A, 5]]);
     denied = false;
-    assert.deepEqual(await batch(), { count: 2, failed: [] });
+    // A's row has not changed since, so only B's is written.
+    assert.deepEqual(await batch(), { count: 1, failed: [] });
     assert.deepEqual(await loaded(), [
       [A, 5],
       [B, 7],
@@ -2091,10 +2083,7 @@ test('watching wakes inspection streams when URLs fall due, not when traffic cha
         checkpoints,
         steps: [
           copy(source.urlInspection, 'inspection'),
-          copy(source.searchAnalyticsDaily, 'daily', {
-            dedupPolicy: 'replace',
-            cursorField: 'date',
-          }),
+          copy(source.searchAnalyticsDaily, 'daily'),
         ],
       }),
     ],

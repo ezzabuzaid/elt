@@ -52,11 +52,16 @@ export function expiredAfter(
 // expiredAfter. A stream that does not declare emitsDeletes has an upstream
 // that forgets records rather than deleting them: every vanished key leaves
 // the snapshot without a DELETE, and its row stays loaded.
+// A scan the next one repeats only in part, such as a window of days an
+// upstream may still restate, says which records the next scan reads again:
+// only those stay in the snapshot, and one left out is never deleted.
 export async function* diffSnapshot<Data extends Record<string, unknown>>(
   stream: Stream,
   records: AsyncIterable<Data> | Iterable<Data>,
   state: unknown,
-  options: SnapshotDiffOptions = {},
+  options: SnapshotDiffOptions & {
+    readonly keeps?: (record: Data) => boolean;
+  } = {},
 ): AsyncGenerator<
   | { readonly stream: string; readonly data: Data }
   | DeleteMessage
@@ -66,20 +71,23 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
   const deleted = deletion(stream, options);
   const deduplication = new Deduplication(stream, stream.primaryKey);
   const previous = readSnapshot(state);
+  const seen = new Set<string>();
   const current = new Map<string, SavedEntry>();
   for await (const data of records) {
     const key = deduplication.key(data);
-    if (current.has(key))
+    if (seen.has(key))
       throw new TypeError(
         `Stream ${stream.name} returned key ${key} twice in one scan`,
       );
+    seen.add(key);
     const fingerprint = fingerprintOf(stream, data);
-    current.set(key, entryOf(stream, data, fingerprint));
+    if (options.keeps?.(data) ?? true)
+      current.set(key, entryOf(stream, data, fingerprint));
     if (fingerprintIn(previous.get(key)) !== fingerprint)
       yield { stream: stream.name, data };
   }
   for (const [key, entry] of previous)
-    if (!current.has(key)) {
+    if (!seen.has(key)) {
       const message = deleted(key, entry);
       if (message !== null) yield message;
     }

@@ -34,11 +34,6 @@ const pagePath =
 const urlPath = (url: string) =>
   `CASE WHEN ${url} ~* '^[a-z][a-z0-9+.-]*://' THEN coalesce(nullif(substring(${url} FROM '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*([^?#]*)'), ''), '/') END`;
 
-// Each breakdown row a re-read no longer returns keeps its older load time;
-// only the latest load of a day is what Google reports now.
-const latestLoad = (table: string) =>
-  `(SELECT *, max(loaded_at) OVER (PARTITION BY "siteUrl", "date") AS latest_load FROM ${table}) AS loaded WHERE loaded_at = latest_load`;
-
 const views: readonly View[] = [
   {
     name: 'search_console_properties',
@@ -77,7 +72,7 @@ const views: readonly View[] = [
     description:
       'Web clicks and impressions per search query and day. Google withholds rare queries, so these rows never add up to search_console_totals_daily; see search_console_withheld_daily for how much is missing.',
     select: (raw) =>
-      `SELECT "siteUrl" AS site_url, "date", query, ${measures}, settled, loaded_at FROM ${latestLoad(`${raw}.${quote(tables.searchAnalyticsQueries)}`)}`,
+      `SELECT "siteUrl" AS site_url, "date", query, ${measures}, settled, loaded_at FROM ${raw}.${quote(tables.searchAnalyticsQueries)}`,
     columns: {
       site_url: site,
       date,
@@ -95,7 +90,7 @@ const views: readonly View[] = [
     description:
       'Web clicks and impressions per landing page and day. Counted per page, so they do not add up to search_console_totals_daily either.',
     select: (raw) =>
-      `SELECT "siteUrl" AS site_url, "date", page, ${urlPath('page')} AS page_path, ${measures}, settled, loaded_at FROM ${latestLoad(`${raw}.${quote(tables.searchAnalyticsPages)}`)}`,
+      `SELECT "siteUrl" AS site_url, "date", page, ${urlPath('page')} AS page_path, ${measures}, settled, loaded_at FROM ${raw}.${quote(tables.searchAnalyticsPages)}`,
     columns: {
       site_url: site,
       date,

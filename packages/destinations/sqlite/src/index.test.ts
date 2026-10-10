@@ -2051,6 +2051,96 @@ test('a read that covers part of a stream deletes the vanished rows it covers an
   );
 });
 
+test('a diff that keeps only what the next read covers deletes none of the rows it did not keep', async () => {
+  type Row = { day: string; item: string };
+  // Each read asks for the days from its start; the next starts at next.
+  let read: { rows: Row[]; next: string } = { rows: [], next: '' };
+  const days = new Stream({
+    name: 'days',
+    jsonSchema: {
+      type: 'object',
+      properties: { day: { type: 'string' }, item: { type: 'string' } },
+    },
+    primaryKey: ['day', 'item'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  class WindowSource extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'window-test';
+    protected readonly catalog = new Catalog([days]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract(
+      _configuration: CopyConfiguration,
+      state: unknown,
+    ) {
+      const { next } = read;
+      yield* diffSnapshot(days, read.rows, state, {
+        keeps: ({ day }) => day >= next,
+      });
+    }
+  }
+
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-keeps-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new WindowSource(),
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(days, destination.table('days'), {
+            id: 'days',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+  const loaded = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT day || item AS id FROM days ORDER BY id')
+      .all()
+      .map(({ id }) => id);
+  };
+  const run = async (rows: Row[], next: string) => {
+    read = { rows, next };
+    return (await pipeline.run()).map(({ count, deleted }) => ({
+      count,
+      deleted,
+    }));
+  };
+  const row = (day: string, item: string) => ({ day, item });
+
+  assert.deepEqual(
+    await run([row('1', 'a'), row('2', 'a'), row('3', 'a')], '2'),
+    [{ count: 3, deleted: 0 }],
+  );
+
+  // The read from day 2 no longer returns 3a, which it was kept for, and
+  // reads day 1 no more; 2a is read again but kept no longer.
+  assert.deepEqual(await run([row('2', 'a')], '3'), [{ count: 0, deleted: 1 }]);
+  assert.deepEqual(loaded(), ['1a', '2a']);
+});
+
 test('a target has one writer, even when another loads only its own partitions', async () => {
   class Records extends Source {
     override coverage() {
