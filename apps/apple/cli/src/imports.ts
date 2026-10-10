@@ -21,13 +21,14 @@ import {
   failed,
 } from './sync.ts';
 
-// Shows a sync from its start to its finish, each pass in between, and each
-// import it did not run: busy, another sync imports it; removed, another setup
-// removed its connector while it ran.
+// Shows a sync from its start to its finish or interruption, each pass in
+// between, and each import it did not run: busy, another sync imports it;
+// removed, another setup removed its connector while it ran.
 export type SyncObserver = PassObserver & {
   start(): void;
   skipped(connector: AppleConnector, why: 'busy' | 'removed'): void;
   finish(): void;
+  interrupted(): void;
 };
 
 export type { Selection };
@@ -117,12 +118,11 @@ export class Imports {
   }
 
   // One pass of each selected connector, or only of those named, shown through
-  // the observer. Ctrl-C stops a sync at once: what it committed stays, its
-  // checkpoints resume it, and status shows the pass as interrupted. In a
-  // terminal clack's spinner takes Ctrl-C itself and exits with 0, so the exit
-  // status is set as the process exits. A pass that did not load completely,
-  // or an import another sync was running, leaves exit status 1; a connector
-  // another setup removed meanwhile does not.
+  // the observer. Ctrl-C or SIGTERM stops a sync at once: what it committed
+  // stays, its checkpoints resume it, and status shows the pass as
+  // interrupted. A pass that did not load completely, or an import another
+  // sync was running, leaves exit status 1; a connector another setup removed
+  // meanwhile does not.
   async sync(
     only: readonly string[] | undefined,
     observer: SyncObserver,
@@ -145,16 +145,23 @@ export class Imports {
         unsynced = true;
       } else imports.push({ connector, selection });
     }
-    const interrupted = () => {
-      process.exitCode = 130;
-    };
-    process.on('exit', interrupted);
     // The signal ends the process the default way: process.exit would first
     // wait for a source stuck in a filesystem call, such as a pipe no one
-    // writes, and never return.
-    const stop = (signal: NodeJS.Signals) => process.kill(process.pid, signal);
-    process.once('SIGINT', stop);
-    process.once('SIGTERM', stop);
+    // writes, and never return. A listener left for the signal, such as this
+    // sync's own when clack exits, would take it instead, and it would be lost.
+    const interrupt = (signal: NodeJS.Signals) => {
+      observer.interrupted();
+      process.removeAllListeners(signal);
+      process.kill(process.pid, signal);
+    };
+    process.once('SIGINT', interrupt);
+    process.once('SIGTERM', interrupt);
+    // In a terminal clack's spinner reads Ctrl-C itself and exits with 0,
+    // which no finished sync does.
+    const cancelled = (code: number) => {
+      if (code === 0) interrupt('SIGINT');
+    };
+    process.on('exit', cancelled);
     const passes: PassSummary[] = [];
     const passed = (connector: AppleConnector, summary: PassSummary) => {
       passes.push(summary);
@@ -178,7 +185,7 @@ export class Imports {
         }),
       );
     } finally {
-      process.off('exit', interrupted);
+      process.off('exit', cancelled);
     }
     observer.finish();
     process.exitCode =

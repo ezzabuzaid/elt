@@ -92,6 +92,12 @@ export class SyncReport implements SyncObserver {
     );
   }
 
+  // Cancelling the spinner hands the terminal back: the cursor shows again and
+  // keys echo.
+  interrupted(): void {
+    this.#spinner?.cancel('Sync interrupted');
+  }
+
   // Without its guide, a spinner leaves no bar behind when cleared, so each
   // pass's line follows the last.
   #spin(): SpinnerResult {

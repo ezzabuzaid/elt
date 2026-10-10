@@ -1061,13 +1061,14 @@ const withNotes = (mac: string) =>
 
 // The CLI in a terminal of its own, typed into as a person would: expect,
 // which macOS ships, gives it a 120×40 pseudo-terminal, relays keys and exits
-// with the CLI's status.
+// with the CLI's status. A CLI a signal ended has no status, so expect names
+// the signal instead, and exited resolves to it.
 function terminal(mac: string, ...args: string[]) {
   const child = spawn(
     '/usr/bin/expect',
     [
       '-c',
-      `set stty_init {columns 120 rows 40}; spawn -noecho {${process.execPath}} {${entry}} ${args.join(' ')}; interact; lassign [wait] pid spawned failed status; exit $status`,
+      `set stty_init {columns 120 rows 40}; spawn -noecho {${process.execPath}} {${entry}} ${args.join(' ')}; interact; lassign [wait] pid spawned failed status killed signal; if {$killed eq {CHILDKILLED}} {puts stderr $signal}; exit $status`,
     ],
     { cwd: mac, env: { ...process.env, HOME: mac } },
   );
@@ -1075,8 +1076,12 @@ function terminal(mac: string, ...args: string[]) {
   child.stdout.on('data', (data) => {
     screen += stripVTControlCharacters(String(data));
   });
-  const exited = new Promise<number | null>((resolve) =>
-    child.once('close', resolve),
+  let signal = '';
+  child.stderr.on('data', (data) => {
+    signal += String(data);
+  });
+  const exited = new Promise<number | string | null>((resolve) =>
+    child.once('close', (status) => resolve(signal.trim() || status)),
   );
   return {
     child,
@@ -1099,6 +1104,19 @@ function terminal(mac: string, ...args: string[]) {
   };
 }
 
+// Polls status until the only selected connector's pass runs.
+async function passRunning(mac: string) {
+  const deadline = Date.now() + 60_000;
+  while (
+    JSON.parse(cli(mac, 'status', '--json').stdout)[0]?.state !== 'running'
+  ) {
+    if (Date.now() > deadline)
+      assert.fail('the sync did not start its pass within a minute');
+    await sleep(100);
+  }
+}
+
+const ctrlC = '\x03';
 const down = '\x1b[B';
 const space = ' ';
 const enter = '\r';
@@ -1225,15 +1243,7 @@ test('Ctrl-C stops a sync at once while a connector waits on a read, and status 
   cli(mac.path, 'setup', '--connector', 'photos');
   const sync = started(mac.path, 'sync', '--json');
   try {
-    const deadline = Date.now() + 60_000;
-    while (
-      JSON.parse(cli(mac.path, 'status', '--json').stdout)[0]?.state !==
-      'running'
-    ) {
-      if (Date.now() > deadline)
-        assert.fail('the sync did not start its pass within a minute');
-      await sleep(100);
-    }
+    await passRunning(mac.path);
 
     sync.child.kill('SIGINT');
     const ended = await Promise.race([
@@ -1247,6 +1257,68 @@ test('Ctrl-C stops a sync at once while a connector waits on a read, and status 
     sync.child.kill('SIGKILL');
     await sync.exited;
   }
+  const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
+  assert.equal(photos.state, 'interrupted');
+});
+
+test('Ctrl-C typed in a terminal stops a sync at once while a connector waits on a read, and status shows its pass as interrupted', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+  // A pipe no one writes to, as above: the Photos read never returns.
+  const pictures = join(mac.path, 'Pictures/photos.json');
+  await rm(pictures);
+  spawnSync('/usr/bin/mkfifo', [pictures]);
+  cli(mac.path, 'setup', '--connector', 'photos');
+  const sync = terminal(mac.path, 'sync');
+  try {
+    await passRunning(mac.path);
+    await sync.shows('Photos photos');
+
+    await sync.type(ctrlC);
+    const ended = await Promise.race([
+      sync.exited,
+      sleep(10_000).then(() => 'still running'),
+    ]);
+
+    assert.equal(ended, 'SIGINT', sync.screen);
+  } finally {
+    sync.child.kill('SIGKILL');
+    await sync.exited;
+  }
+  assert.match(sync.screen, /Sync interrupted/);
+  const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
+  assert.equal(photos.state, 'interrupted');
+});
+
+test('SIGTERM stops a sync in a terminal at once while its spinner shows', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+  const pictures = join(mac.path, 'Pictures/photos.json');
+  await rm(pictures);
+  spawnSync('/usr/bin/mkfifo', [pictures]);
+  cli(mac.path, 'setup', '--connector', 'photos');
+  const sync = terminal(mac.path, 'sync');
+  try {
+    await passRunning(mac.path);
+    await sync.shows('Photos photos');
+    // expect runs the CLI as its only child.
+    const pid = spawnSync('/usr/bin/pgrep', ['-P', String(sync.child.pid)], {
+      encoding: 'utf8',
+    }).stdout.trim();
+    assert.match(pid, /^\d+$/, 'expect runs no CLI');
+
+    process.kill(Number(pid), 'SIGTERM');
+    const ended = await Promise.race([
+      sync.exited,
+      sleep(10_000).then(() => 'still running'),
+    ]);
+
+    assert.equal(ended, 'SIGTERM', sync.screen);
+  } finally {
+    sync.child.kill('SIGKILL');
+    await sync.exited;
+  }
+  assert.match(sync.screen, /Sync interrupted/);
   const [photos] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
   assert.equal(photos.state, 'interrupted');
 });
