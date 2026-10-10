@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import { MemoryStore, Mutex } from '@zukhruf/mutex';
 
 import {
@@ -375,8 +377,7 @@ export class SearchConsoleSource extends Source {
         due === wokeFor ? Number.POSITIVE_INFINITY : due,
         Date.now() + this.pollIntervalMs,
       );
-      await sleep(Math.max(0, wake - Date.now()), signal);
-      if (signal.aborted) return;
+      await sleep(Math.max(0, wake - Date.now()), undefined, { signal });
       const changed: Stream[] = [];
       if (others.length > 0 && Date.now() >= probeAt) {
         probeAt = Date.now() + this.pollIntervalMs;
@@ -874,18 +875,6 @@ export class SearchConsoleSource extends Source {
     }
     return JSON.stringify(probes);
   }
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(finish, ms);
-    signal.addEventListener('abort', finish, { once: true });
-    function finish(): void {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', finish);
-      resolve();
-    }
-  });
 }
 
 // The analytics checkpoint holds the day the next read starts from, the last

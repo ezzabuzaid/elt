@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { gzipSync } from 'node:zlib';
 
 import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
@@ -111,10 +112,11 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
   assert.deepEqual(request?.data, {
     dataState: 'ALL',
     dimensions: ['date', 'query'],
-    endDate: '2026-09-22',
+    // NOW, 2026-09-22T00:00Z, is still the 21st in Pacific Time.
+    endDate: '2026-09-21',
     rowLimit: 25_000,
-    // Sixteen calendar months before 2026-09-22, not 480 days.
-    startDate: '2025-05-22',
+    // Sixteen calendar months before 2026-09-21, not 480 days.
+    startDate: '2025-05-21',
     startRow: 0,
     type: 'WEB',
   });
@@ -686,7 +688,7 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
   assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 1 }]);
 
   // The window trails the clock; no date checkpoint narrows it.
-  assert.deepEqual(windows, ['2026-06-22', '2026-06-22']);
+  assert.deepEqual(windows, ['2026-06-21', '2026-06-21']);
   assert.deepEqual(
     (
       await sql`SELECT "siteUrl", country, device, clicks::int, "startDate"::text, "endDate"::text FROM countries`
@@ -696,9 +698,9 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
         clicks: 4,
         country: 'usa',
         device: 'DESKTOP',
-        endDate: '2026-09-22',
+        endDate: '2026-09-21',
         siteUrl: SITE,
-        startDate: '2026-06-22',
+        startDate: '2026-06-21',
       },
     ],
   );
@@ -1099,6 +1101,34 @@ test(
   },
 );
 
+test('aborting a watch while it waits for its next poll ends it at once', async () => {
+  const { requester } = recorder(() => ({ rows: [] }));
+  const source = new SearchConsoleSource({
+    now: NOW,
+    requester,
+    searchTypes: ['WEB'],
+    siteUrls: [SITE],
+  });
+  const controller = new AbortController();
+  const watching = source.watch({
+    signal: controller.signal,
+    streams: [source.searchAnalyticsDaily],
+  });
+  await watching.next();
+
+  // The next poll is six hours away.
+  const waiting = watching.next();
+  controller.abort();
+
+  await assert.rejects(
+    Promise.race([
+      waiting,
+      sleep(1_000).then(() => assert.fail('still waiting a second later')),
+    ]),
+    { name: 'AbortError' },
+  );
+});
+
 test('an incremental sites copy deletes a property that is no longer listed', async () => {
   let siteEntry = [
     { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:a.example' },
@@ -1247,7 +1277,7 @@ test('one source loads every property; a newly listed one backfills while the ot
   // A resumes at its settled day; B has no state yet, so it backfills.
   assert.deepEqual(windows, [
     [A, '2026-09-20'],
-    [B, '2025-05-22'],
+    [B, '2025-05-21'],
   ]);
   assert.deepEqual(
     (

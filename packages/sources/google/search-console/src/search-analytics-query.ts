@@ -25,16 +25,18 @@ export type SearchAnalyticsPage = {
   readonly firstIncompleteDate?: string;
 };
 
-export function today(now: Date = new Date()): string {
-  const iso = now.toISOString();
-  return iso.slice(0, iso.indexOf('T'));
+export const PACIFIC = 'America/Los_Angeles';
+
+// The calendar day Search Console reports at now: Pacific Time, not UTC.
+export function today(now: Date): string {
+  return Temporal.Instant.fromEpochMilliseconds(now.getTime())
+    .toZonedDateTimeISO(PACIFIC)
+    .toPlainDate()
+    .toString();
 }
 
 export function addDays(date: string, days: number): string {
-  if (!isCalendarDate(date)) throw new TypeError(`Invalid date: ${date}`);
-  const shifted = new Date(`${date}T00:00:00.000Z`);
-  shifted.setUTCDate(shifted.getUTCDate() + days);
-  return today(shifted);
+  return calendarDate(date).add({ days }).toString();
 }
 
 /**
@@ -44,16 +46,13 @@ export function addDays(date: string, days: number): string {
  * drifts for the same reason.
  */
 export function subMonths(date: string, months: number): string {
+  return calendarDate(date).subtract({ months }).toString();
+}
+
+// Temporal also reads a date with a time; Google's dates carry none.
+function calendarDate(date: string): Temporal.PlainDate {
   if (!isCalendarDate(date)) throw new TypeError(`Invalid date: ${date}`);
-  const shifted = new Date(`${date}T00:00:00.000Z`);
-  const day = shifted.getUTCDate();
-  shifted.setUTCDate(1);
-  shifted.setUTCMonth(shifted.getUTCMonth() - months);
-  const lastDay = new Date(
-    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, 0),
-  ).getUTCDate();
-  shifted.setUTCDate(Math.min(day, lastDay));
-  return today(shifted);
+  return Temporal.PlainDate.from(date);
 }
 
 export function earlier(left: string, right: string): string {

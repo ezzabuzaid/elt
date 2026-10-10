@@ -11,6 +11,9 @@
     "down-sqlserver": {
       "command": "docker compose -f infra/docker-compose.yml --profile sqlserver stop sqlserver"
     },
+    "down-warehouse": {
+      "command": "docker compose -f infra/docker-compose.yml stop warehouse warehouse-mcp"
+    },
     "down": {
       "command": "docker compose -f infra/docker-compose.yml --profile sqlserver down"
     },

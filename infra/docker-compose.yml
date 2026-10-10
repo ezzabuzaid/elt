@@ -1,5 +1,6 @@
 # Local Postgres warehouse; consumers may connect directly as agent_reader.
 # Start: npx nx run infra:up (reset the volume: npx nx run infra:reset)
+# Stop it and leave SQL Server running: npx nx run infra:down-warehouse
 # SQL Server, for the SQL Server source: npx nx run infra:up-sqlserver
 name: context-compiler
 
