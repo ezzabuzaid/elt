@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   Catalog,
@@ -1609,6 +1610,63 @@ test('a connection whose watcher fails stops alone and is recorded; the others k
     history.log.filter((entry) => entry === 'finish steady succeeded').length,
     2,
   );
+});
+
+// The test's own timeout fails a watch that outlives its abort.
+test(
+  'a watch ends when its signal aborts, also while a source’s watcher ignores the signal',
+  { timeout: 5_000 },
+  async () => {
+    // A watcher that never looks at its signal: after the initial invalidation
+    // it waits on a read that never settles, as a source can on a stuck store.
+    class Deaf extends ContextSource {
+      protected override async *observe({ streams }: SourceWatchOptions) {
+        yield streams;
+        await new Promise<never>(() => {});
+      }
+    }
+    const pipeline = new Pipeline({
+      connections: [leftOnly('deaf', new Deaf())],
+    });
+    const controller = new AbortController();
+    const passes: string[] = [];
+
+    for await (const { connection } of pipeline.watch({
+      signal: controller.signal,
+    })) {
+      passes.push(connection.name);
+      controller.abort();
+    }
+
+    assert.deepEqual(passes, ['deaf']);
+  },
+);
+
+test('a stopping watch waits for a source that heeds the abort to finish stopping', async () => {
+  let stopped = false;
+  class Slow extends ContextSource {
+    protected override async *observe({ streams, signal }: SourceWatchOptions) {
+      try {
+        yield streams;
+        await new Promise((resolve) =>
+          signal.addEventListener('abort', resolve, { once: true }),
+        );
+      } finally {
+        // Stopping takes a moment, as ending a helper process does.
+        await sleep(50);
+        stopped = true;
+      }
+    }
+  }
+  const pipeline = new Pipeline({
+    connections: [leftOnly('slow', new Slow())],
+  });
+  const controller = new AbortController();
+
+  for await (const _ of pipeline.watch({ signal: controller.signal }))
+    controller.abort();
+
+  assert.equal(stopped, true);
 });
 
 test('an invalid connection stops the whole pipeline before any read, and is recorded against that connection', async () => {

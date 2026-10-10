@@ -1391,75 +1391,69 @@ test('each image loads with its file, and an image the issuer replaces loads aga
   );
 });
 
-// The test's own timeout fails a watch that outlives its abort: the
-// pipeline waits on the source's observe, so a signal the source ignores ends
-// nothing.
-test(
-  'a Wallet watch loads each commit while passd keeps its store open, and stops when aborted',
-  { timeout: 15_000 },
-  async () => {
-    await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+test('a Wallet watch loads each commit while passd keeps its store open, and stops when aborted', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-wallet-'));
+  {
+    using wallet = new ScratchWallet(dir.path);
+    wallet.add(storeCard);
+  }
+  const run = await pipeline(
+    new AppleWalletSource({ directory: dir.path }),
+    dir.path,
+  );
+  // passd holds its connection open the whole time.
+  using passd = new ScratchWallet(dir.path, { existing: true });
+  passd.exec('CREATE TABLE cloud_store_zone (pid INTEGER, zone_name TEXT)');
+  const controller = new AbortController();
+  const batches: Record<string, { count: number; deleted: number }>[] = [];
+  let abortedAt = Number.NaN;
+
+  for await (const { outcomes } of run.watch({
+    // A batch that never comes ends the watch, so the assertion fails.
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+  })) {
+    batches.push(counts(outcomes));
+    if (batches.length === 1) passd.add(eventTicket);
+    // CloudKit bookkeeping commits without changing a pass.
+    else if (batches.length === 2)
+      passd.exec("INSERT INTO cloud_store_zone VALUES (1, 'passes')");
+    // Past the next one-second poll, so a spurious batch would show.
+    else
+      setTimeout(() => {
+        abortedAt = performance.now();
+        controller.abort();
+      }, 1500);
+  }
+
+  // The source stopped on the abort: the pipeline leaves a source that
+  // ignores it behind only after a second.
+  assert.ok(performance.now() - abortedAt < 500);
+
+  const none = { count: 0, deleted: 0 };
+  assert.deepEqual(batches, [
     {
-      using wallet = new ScratchWallet(dir.path);
-      wallet.add(storeCard);
-    }
-    const run = await pipeline(
-      new AppleWalletSource({ directory: dir.path }),
-      dir.path,
-    );
-    // passd holds its connection open the whole time.
-    using passd = new ScratchWallet(dir.path, { existing: true });
-    passd.exec('CREATE TABLE cloud_store_zone (pid INTEGER, zone_name TEXT)');
-    const controller = new AbortController();
-    const batches: Record<string, { count: number; deleted: number }>[] = [];
-    let abortedAt = Number.NaN;
-
-    for await (const { outcomes } of run.watch({
-      // A batch that never comes ends the watch, so the assertion fails.
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-    })) {
-      batches.push(counts(outcomes));
-      if (batches.length === 1) passd.add(eventTicket);
-      // CloudKit bookkeeping commits without changing a pass.
-      else if (batches.length === 2)
-        passd.exec("INSERT INTO cloud_store_zone VALUES (1, 'passes')");
-      // Past the next one-second poll, so a spurious batch would show.
-      else
-        setTimeout(() => {
-          abortedAt = performance.now();
-          controller.abort();
-        }, 1500);
-    }
-
-    // The abort ended the watch, not the timeout that guards a hang.
-    assert.ok(performance.now() - abortedAt < 1000);
-
-    const none = { count: 0, deleted: 0 };
-    assert.deepEqual(batches, [
-      {
-        passes: { count: 1, deleted: 0 },
-        passFields: { count: 1, deleted: 0 },
-        passBarcodes: none,
-        passLocations: none,
-        passBeacons: none,
-        passRelevantDates: none,
-        passLocalizations: none,
-        passImages: { count: 1, deleted: 0 },
-      },
-      {
-        passes: { count: 1, deleted: 0 },
-        passFields: { count: 2, deleted: 0 },
-        passBarcodes: { count: 1, deleted: 0 },
-        passLocations: { count: 1, deleted: 0 },
-        passBeacons: { count: 1, deleted: 0 },
-        passRelevantDates: { count: 2, deleted: 0 },
-        passLocalizations: none,
-        passImages: { count: 1, deleted: 0 },
-      },
-      Object.fromEntries(streamNames.map((name) => [name, none])),
-    ]);
-  },
-);
+      passes: { count: 1, deleted: 0 },
+      passFields: { count: 1, deleted: 0 },
+      passBarcodes: none,
+      passLocations: none,
+      passBeacons: none,
+      passRelevantDates: none,
+      passLocalizations: none,
+      passImages: { count: 1, deleted: 0 },
+    },
+    {
+      passes: { count: 1, deleted: 0 },
+      passFields: { count: 2, deleted: 0 },
+      passBarcodes: { count: 1, deleted: 0 },
+      passLocations: { count: 1, deleted: 0 },
+      passBeacons: { count: 1, deleted: 0 },
+      passRelevantDates: { count: 2, deleted: 0 },
+      passLocalizations: none,
+      passImages: { count: 1, deleted: 0 },
+    },
+    Object.fromEntries(streamNames.map((name) => [name, none])),
+  ]);
+});
 
 test('this Mac’s Wallet loads every pass passd lists, as passd records it, and a second run writes nothing', async (t) => {
   if (process.platform !== 'darwin') return t.skip('Wallet requires macOS');

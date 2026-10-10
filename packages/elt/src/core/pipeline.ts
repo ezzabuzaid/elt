@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import type { SyncHistory } from '../state/sync-history.ts';
 import { Connection } from './connection.ts';
 import {
@@ -10,6 +12,12 @@ import { interleave } from './interleave.ts';
 import { replicate } from './replication.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import { TargetOwnedError } from './writer.ts';
+
+// How long a stopping watch waits for a source to finish stopping, such as
+// ending a helper process, before it leaves the source behind: a source that
+// ignores its signal must not hang its host's shutdown, as a grace period
+// bounds a process's SIGTERM before SIGKILL.
+const stopGraceMs = 1000;
 
 // One connection's read over the copies it selected, and what each loaded.
 export type Pass<Target extends DestinationTarget> = {
@@ -172,6 +180,8 @@ export class Pipeline<Target extends DestinationTarget> {
     );
     const pending = new Set<string>();
     let wake = Promise.withResolvers<void>();
+    // An abort wakes the loop below, whether or not the source heeds it.
+    watching.addEventListener('abort', () => wake.resolve(), { once: true });
     let finished = false;
     let failed = false;
     let failure: unknown;
@@ -237,7 +247,15 @@ export class Pipeline<Target extends DestinationTarget> {
       );
     } finally {
       controller.abort();
-      await receive;
+      const graced = new AbortController();
+      await Promise.race([
+        receive,
+        sleep(stopGraceMs, undefined, {
+          ref: false,
+          signal: graced.signal,
+        }).catch(() => undefined),
+      ]);
+      graced.abort();
     }
   }
 
