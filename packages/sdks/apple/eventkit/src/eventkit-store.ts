@@ -176,7 +176,9 @@ function withoutSelection({
 
 // EventKit returns an item's attendees and alarms in a different order in
 // each process (verified live), so they are sorted by their content. A reply
-// changes an attendee's status, so status does not order attendees.
+// changes an attendee's status, so status does not order attendees. Alarms
+// sort in firing order: relative alarms by offset, then absolute alarms by
+// date.
 function inContentOrder(document: EventKitDocument): EventKitDocument {
   if (!('attendees' in document)) return document;
   return {
@@ -188,9 +190,9 @@ function inContentOrder(document: EventKitDocument): EventKitDocument {
       attendee.participantType,
     ]),
     alarms: sorted(document.alarms, (alarm) => [
-      alarm.alarmType,
-      alarm.relativeOffset,
       alarm.absoluteMs ?? null,
+      alarm.relativeOffset,
+      alarm.alarmType,
       alarm.emailAddress ?? null,
       alarm.soundName ?? null,
       alarm.proximity,
@@ -202,12 +204,22 @@ function inContentOrder(document: EventKitDocument): EventKitDocument {
   };
 }
 
-function sorted<T>(values: readonly T[], key: (value: T) => unknown): T[] {
-  return values
-    .map((value) => [JSON.stringify(key(value)), value] as const)
-    .sort(([a], [b]) => {
-      if (a < b) return -1;
-      return a > b ? 1 : 0;
-    })
-    .map(([, value]) => value);
+type SortKey = readonly (string | number | null)[];
+
+function sorted<T>(values: readonly T[], key: (value: T) => SortKey): T[] {
+  return values.toSorted((a, b) => compareKeys(key(a), key(b)));
+}
+
+// Compares part by part: null first, numbers by value, strings by code point.
+function compareKeys(a: SortKey, b: SortKey): number {
+  for (const [index, left] of a.entries()) {
+    const right = b[index];
+    if (left === right) continue;
+    if (left === null) return -1;
+    if (right === null) return 1;
+    if (typeof left === 'number' && typeof right === 'number')
+      return left - right;
+    return String(left) < String(right) ? -1 : 1;
+  }
+  return 0;
 }

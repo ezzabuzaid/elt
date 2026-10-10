@@ -420,7 +420,7 @@ test('a scoped read keeps the calendars the helper selected and the accounts the
   assert.ok(calendars.every((calendar) => !('selected' in calendar)));
 });
 
-test('attendees and alarms come back in content order whatever order the helper writes them in', async () => {
+test('attendees come back in content order and alarms in firing order, whatever order the helper writes them in', async () => {
   await using stub = await StubEventKitHelper.create();
   const attendees = [
     {
@@ -442,7 +442,22 @@ test('attendees and alarms come back in content order whatever order the helper 
   ];
   const alarms = [
     { alarmType: 0, relativeOffset: -600, proximity: 0 },
+    {
+      alarmType: 0,
+      relativeOffset: 0,
+      absoluteMs: Date.parse('2025-01-02T09:00:00Z'),
+      proximity: 0,
+    },
     { alarmType: 0, relativeOffset: -3600, proximity: 0 },
+    { alarmType: 0, relativeOffset: 600, proximity: 0 },
+    { alarmType: 0, relativeOffset: -1800, proximity: 0 },
+    { alarmType: 0, relativeOffset: 0, proximity: 0 },
+    {
+      alarmType: 0,
+      relativeOffset: 0,
+      absoluteMs: Date.parse('2025-01-01T09:00:00Z'),
+      proximity: 0,
+    },
   ];
   const reminder = (order: 'written' | 'reversed') => ({
     type: 'reminder' as const,
@@ -470,8 +485,18 @@ test('attendees and alarms come back in content order whatever order the helper 
     ['Ann', 'Bo'],
   );
   assert.deepEqual(
-    first?.alarms.map(({ relativeOffset }) => relativeOffset),
-    [-3600, -600],
+    first?.alarms.map(({ relativeOffset, absoluteMs }) =>
+      absoluteMs === undefined ? relativeOffset : new Date(absoluteMs),
+    ),
+    [
+      -3600,
+      -1800,
+      -600,
+      0,
+      600,
+      new Date('2025-01-01T09:00:00Z'),
+      new Date('2025-01-02T09:00:00Z'),
+    ],
   );
 });
 

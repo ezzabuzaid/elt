@@ -742,10 +742,10 @@ test(
       'modifiedAt',
     ])
       assert.equal(typeof Reflect.get(event, field), 'string', field);
-    // Alarms are numbered in the content order of their values.
+    // Alarms are numbered in firing order.
     assert.deepEqual(
       table(source.alarms),
-      [-1800, -3600, -600].map((relativeOffset, position) => ({
+      [-3600, -1800, -600].map((relativeOffset, position) => ({
         id: JSON.stringify([id, position]),
         eventId: id,
         position,
@@ -1402,7 +1402,7 @@ test(
 );
 
 test(
-  'Calendar numbers alarms the same in every helper process, whatever order EventKit returns them in',
+  'Calendar numbers alarms in firing order in every helper process, whatever order EventKit returns them in',
   { timeout: 120_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
@@ -1426,7 +1426,7 @@ test(
     assert.deepEqual(reads[2], reads[0]);
     assert.deepEqual(
       reads[0]?.map(([, offset]) => offset),
-      [-1800, -3600, -600, -7200],
+      [-7200, -3600, -1800, -600],
     );
   },
 );

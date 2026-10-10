@@ -21,7 +21,7 @@ const properties = {
   position: {
     ...ordinal,
     description:
-      "Order among the owner's alarms, numbered in content order, not EventKit's order, which changes between reads.",
+      "Order among the owner's alarms in firing order: relative alarms by offset, then absolute alarms by date. EventKit's own order changes between reads, so it is not used.",
   },
   type: {
     ...ordinal,
