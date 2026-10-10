@@ -1808,6 +1808,93 @@ Checked live on 2026-10-07 against macOS 27.0 (26A428), usernoted database versi
 
 A dismissal synced from another device needs the user's other device and was not produced; it is a `DELETE` like the others, with no reason stored, so the import keeps the notification as it keeps every removal. `style`, `orig`, `dest` and the action `st` code stay unnamed: Apple does not document them, usernoted's strings list `none`, `banner` and `alert` for its notification style, but Calendar, whose alert style in `com.apple.ncprefs` is alerts, stored `style` 0 while apps set to banners stored 1, so the codes do not map to the setting. `requests` was empty, also while a Calendar alarm fired.
 
+## Apple Wallet
+
+```ts
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+import { AppleWalletSource } from '@workspace/source-apple-wallet/apple-wallet-source';
+
+// ~/Library/Passes
+const source = new AppleWalletSource();
+const destination = new SQLiteDestination({ path: './outputs/wallet.sqlite' });
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'apple-wallet',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/wallet-state.sqlite',
+      }),
+      steps: [source.passes, source.passFields, source.passBarcodes].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads `~/Library/Passes`, where passd keeps this Mac's Wallet passes, with the `@workspace/sdk-apple-wallet` SDK: `passes23.sqlite` records each pass, and `Cards/<id>.pkpass/` holds the bundle its issuer signed. No app needs to be open, and neither Wallet nor PassKit is used: PassKit shows an app only the passes of the types its entitlement names. `npx nx run apple-cli:start -- sync --connector wallet` loads every stream incrementally into the import's `data.sqlite`, read through its `<snake_stream>` views (`passes`, `pass_fields`, `pass_barcodes`, …). Passes come from Pass Viewer, which adds a `.pkpass` file to Wallet on this Mac, and from the user's iPhone through iCloud.
+
+### Access
+
+No grant is needed. On 2026-10-10 a launchd job without Full Disk Access read `passes23.sqlite` and a `pass.json`, while the same job got `authorization denied` from the Notification Center store. A store that cannot be opened, such as on a Mac where Wallet was never used, becomes `WalletUnavailableError`, a `config` failure, and fails every stream.
+
+### Streams
+
+| Stream              | Upstream                                                   | One record per                                                                               |
+| ------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `passes`            | `pass`, `pass_annotations`, the bundle's `pass.json`       | pass: issuer, kind, dates, colors, semantic tags, when Wallet added, updated and archived it |
+| `passFields`        | `pass.json`'s `<area>Fields` arrays                        | field the pass shows, on its front or behind it: a gate, a seat, a balance                   |
+| `passBarcodes`      | `pass.json`'s `barcodes`, or `barcode` when it has no list | barcode: format, the message a scanner reads, its encoding and alt text                      |
+| `passLocations`     | `pass.json`'s `locations`                                  | place where Wallet offers the pass on the Lock Screen                                        |
+| `passBeacons`       | `pass.json`'s `beacons`                                    | Bluetooth beacon near which Wallet offers the pass                                           |
+| `passRelevantDates` | `pass.json`'s `relevantDates` (iOS 18 and later)           | moment or interval the pass is relevant                                                      |
+| `passLocalizations` | each `<language>.lproj/pass.strings`                       | text a pass translates, by language and localization key                                     |
+| `passImages`        | the images `manifest.json` lists                           | image in the bundle, with the image as its file                                              |
+
+A pass's `id` is passd's `unique_id`, which also names its bundle; `passTypeIdentifier` and `serialNumber` are the issuer's identity for it. Every other stream's `passId` refers to `id`.
+
+`pass.json`'s content is read from the bundle, not from passd's copies (`relevant_pass_dates`, `location`), because the bundle keeps what the copies lose: a date's offset. PassKit's dates are W3C dates with a time zone, such as a departure at `2025-09-15T09:30+08:00`; each loads as a UTC [`date-time`](#string-formats) to the millisecond (`relevantAt`) and the offset it was written with, in minutes (`relevantAtOffset`), the convention the SQL Server source uses. A date without a time zone fails the read. A field's `value` loads as `pass.json` writes it: text or a localization key, a W3C date that `dateStyle` formats, or a number's own digits, read through `JSON.parse`'s source text so a value no double holds keeps every digit; `semantics`, `userInfo`, `personalization` and `passJson` keep numbers the same way. `passJson` is the whole `pass.json` except `authenticationToken`, the credential the issuer's web service takes, which loads nowhere. Barcode messages load: they are what the pass shows for scanning.
+
+Text a pass localizes is its key in `pass.json`, and `passLocalizations` holds each language's text from `pass.strings`, in UTF-8 or UTF-16 (`plutil` reads both). The source does not pick a language: a reader joins on `passId` and `key`. Fields are keyed by their area and position, since an issuer may repeat a key.
+
+passd's own dates (`addedAt` from `ingested_date`, `updatedAt` from `modified_date`, `archivedAt` from `pass_annotations.archived_timestamp`) are seconds since 2001-01-01 in a double, written to the microsecond; `signedAt` is the signature's time, to the second. `sortingState` is `pass_annotations.sorting_state`, which passd's predicates use to split Wallet's stack of current passes from its expired section; Apple does not document the codes. On this Mac it was 0 on the passes without `archivedAt` and 1 on a boarding pass added a day after its flight, archived as it was added. An expired or voided pass stays in Wallet and loads with `expiresAt` and `voided`.
+
+Left out: `pass_group`, whose `group_order` is Wallet's display order and shifts for every pass when one is added (seen live), so loading it would rewrite every pass on each add; `pass_type` and `web_service`, which repeat `pass.json`'s identifiers and URL beside the push token; payment cards' columns and `payment_transaction`, empty on this Mac (no card); the bundles' `signature` and the rendered faces in `Cards/<id>.cache/`. FinanceKit's `~/Library/Finance` stores, which hold Wallet orders and Apple Card and Cash, had never stored a row here and are not read (#2537).
+
+### Changes and deletions
+
+Every stream is a [snapshot stream](#snapshot-streams) with deletions: a run reads every pass, an unchanged record writes nothing, and a pass the user removes, here or on a device that syncs Wallet through iCloud, is deleted with its fields, barcodes and images; passd keeps no record of the removal. An issuer's update replaces the bundle and `modified_date`, and its changed records load in place. A pass whose bundle is missing or whose `pass.json` the reader cannot decode fails the read as `PassBundleError`, naming the pass, rather than leaving the pass out, so the import keeps its rows. The SDK checks every column it reads when it opens the database: a passd layout without one fails every stream with `WalletSchemaError`.
+
+A change made on another device reaches this Mac only when passd fetches Wallet's iCloud zone, which its scheduled activities (`PDPassSyncActivityIdentifier`, `PDCloudSyncCoordinator…` in `ScheduledActivities.archive`) repeat every 86,400 s; its `cloud_store_zone.fetch_timestamp` read 2026-10-10 00:14 UTC. A pass removed on the iPhone at about 08:55 UTC that day had not reached this Mac's store 45 minutes later, while a pass added on this Mac reached iCloud within 16 s. So an import can hold a pass the iPhone removed for up to a day.
+
+passd commits through a rollback journal, not a write-ahead log, so a reader holding the database blocks its commits: the SDK reads its rows in one read transaction and closes the database before it reads the bundles.
+
+### Watching
+
+A watch polls `passes23.sqlite`'s `data_version` every second through `WalletStore.version()` and wakes every selected stream on a commit. On 2026-10-10 a read-only connection saw passd commit twice when a pass was added (once at the add, once 16 s later) and not at all over the rest of 30 idle minutes. FSEvents on `Cards/` would miss archiving, which changes only the database, and PassKit's `com.apple.passkit.sharedcachechanged` notification fired twice in that half hour without a change to any pass.
+
+### Wallet export probe
+
+Checked live on 2026-10-10 against macOS 27.0 (26A428):
+
+- The store held 4 passes, two Qatar Airways boarding passes and two Genius Bar reservations, from 2025-08-19 on; their `pass.json` dates kept offsets of +02:00, +08:00 and +04:00, and the database's instants matched them.
+- A pass made with WalletWallet (a third-party signer, dummy data: a generic pass with one location, both `barcode` and `barcodes`, and a millisecond UTC expiry) was added through Pass Viewer's Add to Wallet: passd stored it with `modified_source` 4, where the synced passes had 5, gave it `group_order` 0 and moved every other pass's order by one.
+- A load through `apple-cli`, run from a scratch folder so the user's selection stayed as it was, took 0.78 s and wrote the 5 passes, 46 fields, 5 barcodes, 3 locations and 34 images; a second load wrote nothing. `/usr/bin/sqlite3` read every view, every exported image was on disk, and none of the 4 passes' `authenticationToken` appeared in any of the import's 38 files. Every pass's serial number, expiry and number of places matched passd's own record of it.
+
+Unverified: localizations, beacons, `relevantDates`, `personalization.json`, and a new version of a pass replacing the old one. No pass on this Mac carries the first four, WalletWallet's form writes none of them, and its generator gives every pass a new random serial number, so it cannot issue a second version of one; they are tested only against PassKit's documented format. Producing them live needs a signer that controls the whole `pass.json` and its serial number: a Pass Type ID certificate in the developer account, or WalletWallet's API with a key. Payment cards were not read: no card is on this Mac, and adding one needs a real card.
+
 ## Slack
 
 ```ts

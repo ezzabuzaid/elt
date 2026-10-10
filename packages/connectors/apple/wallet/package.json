@@ -1,0 +1,15 @@
+{
+  "name": "@workspace/connector-apple-wallet",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/wallet-connector.js",
+  "contextCompiler": {
+    "name": "wallet",
+    "title": "Wallet"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/source-apple-wallet": "0.0.1"
+  }
+}

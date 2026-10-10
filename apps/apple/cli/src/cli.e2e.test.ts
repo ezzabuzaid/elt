@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -1990,6 +1991,78 @@ test('notification center syncs from where usernoted keeps it, and --since keeps
       title: 'Lunch?',
     },
   ]);
+});
+
+// The user's Wallet, where passd keeps it under HOME: the columns the reader
+// reads, typed as macOS 27's passd declares them, and one boarding pass's
+// bundle.
+function withWallet(mac: string) {
+  const directory = join(mac, 'Library/Passes');
+  const bundle = join(directory, 'Cards/Rj5JgNLqUsLcgX514jcGtHwF+aI=.pkpass');
+  mkdirSync(bundle, { recursive: true });
+  const pass = JSON.stringify({
+    formatVersion: 1,
+    passTypeIdentifier: 'pass.com.example.airline',
+    serialNumber: 'BP-845',
+    teamIdentifier: 'TEAM123456',
+    organizationName: 'Example Air',
+    description: 'Boarding pass',
+    barcodes: [
+      {
+        format: 'PKBarcodeFormatQR',
+        message: 'M1RIVERA/SAM E9U5XWF KULDOHEA 0845',
+        messageEncoding: 'iso-8859-1',
+      },
+    ],
+    boardingPass: {
+      transitType: 'PKTransitTypeAir',
+      headerFields: [{ key: 'boarding-gate', label: 'GATE', value: 'C1' }],
+    },
+  });
+  writeFileSync(join(bundle, 'pass.json'), pass);
+  writeFileSync(
+    join(bundle, 'manifest.json'),
+    JSON.stringify({
+      'pass.json': createHash('sha1').update(pass).digest('hex'),
+    }),
+  );
+  using store = new DatabaseSync(join(directory, 'passes23.sqlite'));
+  store.exec(`
+    CREATE TABLE "pass" ("pid" INTEGER, "unique_id" TEXT NOT NULL, "pass_type_pid" INTEGER NOT NULL, "serial_number" TEXT NOT NULL, "signing_date" INTEGER, "ingested_date" INTEGER, "modified_date" INTEGER, PRIMARY KEY (pid));
+    CREATE TABLE pass_annotations (pass_pid INTEGER, sorting_state INTEGER, archived_timestamp INTEGER, PRIMARY KEY (pass_pid));
+    INSERT INTO pass VALUES (1, 'Rj5JgNLqUsLcgX514jcGtHwF+aI=', 1, 'BP-845', 779580466, 779621300.66, 779621300.97);
+    INSERT INTO pass_annotations VALUES (1, 0, NULL);
+  `);
+}
+
+test('wallet syncs the passes where passd keeps them, with their fields', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  withWallet(mac.path);
+
+  const setup = cli(mac.path, 'setup', '--connector', 'wallet');
+  const synced = cli(mac.path, 'sync');
+  const passes = cli(
+    mac.path,
+    'query',
+    'wallet',
+    'SELECT organizationName, style FROM passes',
+    '--json',
+  );
+  const fields = cli(
+    mac.path,
+    'query',
+    'wallet',
+    'SELECT label, value FROM pass_fields',
+    '--json',
+  );
+
+  assert.equal(setup.status, 0, setup.stderr);
+  assert.equal(synced.status, 0, synced.stdout + synced.stderr);
+  assert.equal(lines(synced.stdout)[0].connector, 'wallet');
+  assert.deepEqual(JSON.parse(passes.stdout), [
+    { organizationName: 'Example Air', style: 'boardingPass' },
+  ]);
+  assert.deepEqual(JSON.parse(fields.stdout), [{ label: 'GATE', value: 'C1' }]);
 });
 
 // The Slack app's store as it leaves it: Chromium's IndexedDB for

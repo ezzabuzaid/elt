@@ -28,6 +28,7 @@
     "@workspace/connector-apple-reminders": "0.0.1",
     "@workspace/connector-apple-safari": "0.0.1",
     "@workspace/connector-apple-slack": "0.0.1",
+    "@workspace/connector-apple-wallet": "0.0.1",
     "@workspace/sdk-apple-eventkit": "0.0.1"
   }
 }

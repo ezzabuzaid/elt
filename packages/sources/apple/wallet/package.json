@@ -1,0 +1,20 @@
+{
+  "name": "@workspace/source-apple-wallet",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-wallet-source": {
+      "types": "./dist/apple-wallet-source.d.ts",
+      "default": "./dist/apple-wallet-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/sdk-apple-wallet": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

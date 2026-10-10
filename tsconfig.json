@@ -187,6 +187,15 @@
     },
     {
       "path": "./packages/connectors/apple/slack"
+    },
+    {
+      "path": "./packages/sdks/apple/wallet"
+    },
+    {
+      "path": "./packages/sources/apple/wallet"
+    },
+    {
+      "path": "./packages/connectors/apple/wallet"
     }
   ]
 }

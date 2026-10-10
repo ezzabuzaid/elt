@@ -37,6 +37,7 @@ test('every connector folder loads as its connector for the host, and one that c
     'reminders',
     'safari',
     'slack',
+    'wallet',
   ]);
   const callHistory = connectors.find(({ name }) => name === 'call-history');
   assert.equal(
@@ -56,6 +57,12 @@ test('every connector folder loads as its connector for the host, and one that c
   assert.equal(
     slack?.guidance(),
     'Turn on Terminal in System Settings › Privacy & Security › Full Disk Access, then quit and reopen Terminal. macOS does not ask for this access. Open Slack in each workspace to import and let it run: it saves what it has loaded every few minutes and when it quits, and only messages it has loaded on this Mac are imported.',
+  );
+  const wallet = connectors.find(({ name }) => name === 'wallet');
+  assert.equal(wallet?.title, 'Wallet');
+  assert.equal(
+    wallet?.guidance(),
+    'No app needs to be open: macOS keeps the passes in Wallet on this Mac, with those iCloud brings from your iPhone.',
   );
   const photos = connectors.find(({ name }) => name === 'photos');
   assert.equal(

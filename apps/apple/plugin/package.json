@@ -19,6 +19,7 @@
     "@workspace/connector-apple-reminders": "0.0.1",
     "@workspace/connector-apple-safari": "0.0.1",
     "@workspace/connector-apple-slack": "0.0.1",
+    "@workspace/connector-apple-wallet": "0.0.1",
     "@workspace/elt": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1",
     "@workspace/settings": "0.0.1",

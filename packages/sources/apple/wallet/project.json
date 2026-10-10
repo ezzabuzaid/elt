@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-wallet",
+  "sourceRoot": "packages/sources/apple/wallet/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/wallet/dist/*.test.js\""
+    }
+  }
+}
