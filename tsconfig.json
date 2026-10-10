@@ -24,6 +24,9 @@
       "path": "./packages/elt"
     },
     {
+      "path": "./packages/eca"
+    },
+    {
       "path": "./apps/google"
     },
     {

@@ -1,0 +1,13 @@
+{
+  "name": "eca",
+  "sourceRoot": "packages/eca/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test packages/eca/dist/*.test.js"
+    }
+  }
+}
