@@ -22,6 +22,8 @@ When asked why a notion exists, name the requirement it serves, not the code tha
 
 Before defending a package mechanism, list each consumer with its file and line and say whether it decides something or only displays it. Display text in a host does not justify a lock or a liveness check in a package; a consumer that decides does, until a probe shows another owner can decide it. `SQLitePasses` went this way: its pass lock fed three status strings and one folder guard, and only the guard, moved onto the import's flight, was a requirement.
 
+Before you move, extract or wrap a guard such as a lock, name the failure it prevents as a concrete case with the hosts' real configuration, and say who else prevents it. If no host can cause the case, delete the guard; do not find it a new home. The SQLite writer lock and the Markdown target lock went this way: the checkpoint store already kept two runs of one copy apart, and the only case left, two copies configured to write one table, is a misconfiguration that no host makes.
+
 ## Exhaust live verification before calling something unverified
 
 When a live probe finds no instance of a feature, widen it before concluding: scan the full history, not a sample window, and use any earlier evidence that the data exists. Mark behavior unverified only when the environment genuinely cannot produce it, and say what blocked it.
