@@ -1,0 +1,13 @@
+{
+  "name": "@workspace/proactive",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/connector-apple-manifest": "0.0.1",
+    "@workspace/eca": "0.0.1",
+    "@workspace/elt-sqlite": "0.0.1",
+    "@workspace/sdk-apple-eventkit": "0.0.1",
+    "@workspace/settings": "0.0.1"
+  }
+}

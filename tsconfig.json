@@ -199,6 +199,9 @@
     },
     {
       "path": "./packages/connectors/apple/wallet"
+    },
+    {
+      "path": "./apps/proactive"
     }
   ]
 }

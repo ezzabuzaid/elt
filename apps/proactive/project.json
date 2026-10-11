@@ -1,0 +1,12 @@
+{
+  "name": "proactive",
+  "sourceRoot": "apps/proactive/src",
+  "projectType": "application",
+  "targets": {
+    "format": {},
+    "start": {
+      "dependsOn": ["build"],
+      "command": "node apps/proactive/dist/main.js"
+    }
+  }
+}
