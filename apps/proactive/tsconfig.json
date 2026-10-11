@@ -7,17 +7,25 @@
   },
   "include": ["src/**/*.ts"],
   "references": [
+    { "path": "../../packages/sdks/apple/accounts" },
+    { "path": "../../packages/sdks/apple/eventkit" },
+    { "path": "../../packages/sdks/apple/mail" },
+    { "path": "../../packages/sources/apple/calendar" },
+    { "path": "../../packages/sources/apple/mail" },
     {
-      "path": "../../packages/eca"
+      "path": "../../packages/sources/slack/desktop"
     },
     {
-      "path": "../../packages/elt"
+      "path": "../../packages/sources/apple/messages"
     },
     {
       "path": "../../packages/destinations/postgresql"
     },
     {
-      "path": "../../packages/sources/apple/messages"
+      "path": "../../packages/elt"
+    },
+    {
+      "path": "../../packages/eca"
     }
   ]
 }

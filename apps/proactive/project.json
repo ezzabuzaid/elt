@@ -4,6 +4,10 @@
   "projectType": "application",
   "targets": {
     "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test apps/proactive/dist/*.test.js"
+    },
     "start": {
       "dependsOn": ["build"],
       "command": "node apps/proactive/dist/main.js"

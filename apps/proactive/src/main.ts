@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import postgres from 'postgres';
@@ -7,7 +8,9 @@ import { Eca, type Warehouse } from '@workspace/eca';
 
 import { EarlyMonthSpend } from './early-month-spend.ts';
 import { KeywordText } from './keyword-text.ts';
+import { MeetingBriefWriter } from './meeting-brief-writer.ts';
 import pipeline from './pipeline.ts';
+import { type MeetingBrief, PlanningMeetings } from './planning-meetings.ts';
 
 // Conditions read the marts as agent_reader, which can read nothing else.
 const readerUrl = 'postgres://agent_reader:agent@127.0.0.1:55432/warehouse';
@@ -21,9 +24,9 @@ const sql = stack.adopt(
 
 // A rule starts from what the marts held before this run's pass, so the first
 // run, with nothing loaded yet, loads first and tells nothing.
-const [loaded] =
-  await sql`SELECT 1 FROM marts.sync_status WHERE connector = 'apple-messages' AND last_successful_sync_at IS NOT NULL`;
-if (loaded === undefined) {
+const loaded =
+  await sql`SELECT connector FROM marts.sync_status WHERE connector IN ('apple-messages', 'slack', 'apple-calendar', 'apple-mail') AND last_successful_sync_at IS NOT NULL`;
+if (loaded.length !== 4) {
   await pipeline.run();
 }
 
@@ -37,11 +40,21 @@ const warehouse: Warehouse<postgres.Sql> = {
     }
   },
 };
-const eca = new Eca<postgres.Sql, { spent: number } | { text: string }>({
+const eca = new Eca<
+  postgres.Sql,
+  { spent: number } | { text: string } | MeetingBrief
+>({
   warehouse,
 });
+
 await eca.add({ condition: new EarlyMonthSpend() });
 await eca.add({ condition: new KeywordText() });
+await eca.add({ condition: new PlanningMeetings() });
+const briefs = new MeetingBriefWriter(
+  fileURLToPath(
+    new URL('../../../outputs/proactive/meeting-briefs/', import.meta.url),
+  ),
+);
 
 const stop = new AbortController();
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -55,6 +68,17 @@ for await (const match of eca.watch({ signal: stop.signal })) {
     process.stderr.write(`A rule failed: ${String(match.error)}\n`);
     continue;
   }
+  const brief =
+    'meeting' in match.data
+      ? await briefs.write(match.data, stop.signal)
+      : null;
+  if (brief !== null) process.stdout.write(`Meeting brief: ${brief}\n`);
+  const message =
+    'meeting' in match.data
+      ? `Planning brief ready: ${match.data.meeting.name}\n${brief}`
+      : 'spent' in match.data
+        ? `You spent ${match.data.spent} JOD in the first 10 days of ${match.key}.`
+        : match.data.text;
   await run('/usr/bin/osascript', [
     '-e',
     'on run argv',
@@ -62,8 +86,6 @@ for await (const match of eca.watch({ signal: stop.signal })) {
     'display notification (item 1 of argv) with title "Proactive"',
     '-e',
     'end run',
-    'spent' in match.data
-      ? `You spent ${match.data.spent} JOD in the first 10 days of ${match.key}.`
-      : match.data.text,
+    message,
   ]);
 }
