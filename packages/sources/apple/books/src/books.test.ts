@@ -1369,6 +1369,44 @@ test('a Books watch wakes only the streams of the store that changed, while Book
   ]);
 });
 
+test('Books imports library assets with oversized integers in unused columns and internal relationship keys', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
+  const location = await booksFixture(scratch.path);
+  const source = new AppleBooksSource(location);
+  const fields = Object.keys(source.libraryAssets.jsonSchema.properties ?? {})
+    .map((name) => `"${name}"`)
+    .join(', ');
+  const query = `SELECT ${fields} FROM library_assets ORDER BY "assetId"`;
+  const before = await appleImport(source, join(scratch.path, 'before'));
+  await before.load();
+  const expected = before.read(query);
+  assert.equal(expected.length, 4);
+
+  {
+    using library = new DatabaseSync(location.files.library);
+    // None of these internal columns is an exported asset field. A new
+    // Books column must not silently become another input to the reader.
+    library.exec(`
+      ALTER TABLE ZBKLIBRARYASSET ADD COLUMN ZUNMAPPEDCOUNTER INTEGER;
+      UPDATE ZBKLIBRARYASSET SET
+        ZSORTKEY = 9223372036854775807,
+        ZSERIESSORTKEY = -9223372036854775808,
+        ZGENERATION = 9007199254740993,
+        ZUNMAPPEDCOUNTER = 9223372036854775807;
+      UPDATE ZBKLIBRARYASSET SET Z_PK = 9223372036854775807 WHERE ZASSETID = 'A1';
+      UPDATE ZBKLIBRARYASSET SET ZSERIESCONTAINER = 9223372036854775807 WHERE ZASSETID = 'G3';
+    `);
+  }
+  const after = await appleImport(
+    new AppleBooksSource(location),
+    join(scratch.path, 'after'),
+  );
+
+  await after.load();
+
+  assert.deepEqual(after.read(query), expected);
+});
+
 test('a malformed or missing Books store, column or value fails only the streams that read it', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'books-'));
   // The failures one load has after running sql on one store of a fresh
@@ -1438,12 +1476,6 @@ test('a malformed or missing Books store, column or value fails only the streams
     ),
     themes: await withoutKey('themes', 'themes', 'ZBOOKTHEME'),
   };
-  // A column no stream maps, holding an integer JavaScript cannot represent.
-  const generation = await afterSql(
-    'generation',
-    'library',
-    "UPDATE ZBKLIBRARYASSET SET ZGENERATION = 9007199254740993 WHERE ZASSETID = 'A1'",
-  );
   const blobId = await afterSql(
     'blob-id',
     'assetData',
@@ -1509,8 +1541,6 @@ test('a malformed or missing Books store, column or value fails only the streams
     assert.deepEqual(Object.keys(failed), [stream]);
     assert.match(failed[stream] ?? '', /no such column: (member\.)?Z_PK/);
   }
-  assert.deepEqual(Object.keys(generation), ['libraryAssets']);
-  assert.match(generation.libraryAssets ?? '', /9007199254740993/);
   assert.deepEqual(Object.keys(blobId), ['assetDetails']);
   assert.match(blobId.assetDetails ?? '', /invalid assetDetails\.assetId/);
   // Without the group container, everything bookdatastored keeps fails, and

@@ -120,8 +120,17 @@ const libraryColumns = {
   ZBKCOLLECTIONMEMBER: ['ZCOLLECTION', 'ZASSETID', 'ZSORTKEY', 'ZLOCALMODDATE'],
 } as const;
 
+// Internal counters can exceed JavaScript's safe integer range. Read only
+// mapped fields; SQLite keeps the keys used for ordering and joins as int64.
 const assetsQuery = `
-      SELECT asset.*,
+      SELECT ${libraryColumns.ZBKLIBRARYASSET.filter(
+        (column) =>
+          column !== 'Z_PK' &&
+          column !== 'ZSERIESCONTAINER' &&
+          column !== 'ZSUPPLEMENTALCONTENTPARENT',
+      )
+        .map((column) => `asset.${column}`)
+        .join(', ')},
         container.ZASSETID AS seriesContainerAssetId,
         parent.ZASSETID AS supplementalContentParentAssetId
       FROM ZBKLIBRARYASSET asset
