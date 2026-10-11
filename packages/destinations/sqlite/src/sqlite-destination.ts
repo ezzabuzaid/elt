@@ -10,7 +10,7 @@ import { SQLiteColumns } from './sqlite-columns.ts';
 import { SQLiteDeduplicatingWriter } from './sqlite-deduplicating-writer.ts';
 import { SQLiteOverwriteWriter } from './sqlite-overwrite-writer.ts';
 import { SQLiteTable } from './sqlite-table.ts';
-import { type SQLiteWriter, lockWriter } from './sqlite-writer.ts';
+import type { SQLiteWriter } from './sqlite-writer.ts';
 
 export class SQLiteDestination extends Destination<SQLiteTable> {
   readonly supportedDestinationSyncModes = Object.freeze([
@@ -32,23 +32,12 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
     return `${this.path}#${target.location}`;
   }
 
-  // The writer lock spans all commits and keeps a competing load out; each
-  // stream's commit is its own short transaction, so no transaction stays
-  // open while the sources read.
+  // Each stream's commit is its own short transaction, so no transaction
+  // stays open while the sources read.
   override async load(): Promise<Load<SQLiteTable>> {
-    const resources = new DisposableStack();
-    let database: DatabaseSync;
-    try {
-      resources.use(lockWriter(this.path));
-      // A commit waits for readers, such as an agent's sqlite3 -readonly
-      // query, to finish.
-      database = resources.use(
-        new DatabaseSync(this.path, { timeout: 30_000 }),
-      );
-    } catch (error) {
-      resources.dispose();
-      throw error;
-    }
+    // A commit waits for readers, such as an agent's sqlite3 -readonly
+    // query, to finish.
+    const database = new DatabaseSync(this.path, { timeout: 30_000 });
     const loadedAt = new Date().toISOString();
     return {
       prepare: async (configuration, target, binding) =>
@@ -61,7 +50,7 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
         try {
           if (database.isTransaction) database.exec('ROLLBACK');
         } finally {
-          resources.dispose();
+          database.close();
         }
       },
     };

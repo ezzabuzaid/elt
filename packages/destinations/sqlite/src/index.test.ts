@@ -3414,42 +3414,39 @@ const removal = (stream: string, id: string) => ({
   key: { id },
 });
 
-test('the SQLite writer lock spans commits, permits readers and releases after disposal', async () => {
+test('two loads into one SQLite file commit side by side across their commits, and readers keep reading', async () => {
   await using scratch = await mkdtempDisposable(
-    join(tmpdir(), 'elt-writer-lock-'),
+    join(tmpdir(), 'elt-side-by-side-'),
   );
-  const stream = scripted('docs');
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
-  const copy = new Copy(stream, destination.table('docs'));
-  const load = await destination.load();
-  try {
-    const stage = await load.prepare(copy.configuration, copy.to, {
-      writer: 'writer',
-      reloading: false,
-    });
-    try {
-      await stage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
-      await stage.commit();
-      using reader = new DatabaseSync(destination.path, { readOnly: true });
-      assert.equal(
-        reader.prepare('SELECT count(*) AS n FROM docs').get()?.n,
-        1,
-      );
-      await assert.rejects(destination.load(), /locked/);
-      await assert.rejects(
-        destination.clear(copy.configuration, copy.to, 'writer'),
-        /locked/,
-      );
-    } finally {
-      await stage[Symbol.asyncDispose]();
-    }
-  } finally {
-    await load[Symbol.asyncDispose]();
-  }
-  await destination.clear(copy.configuration, copy.to, 'writer');
-  await using next = await destination.load();
+  const docs = new Copy(scripted('docs'), destination.table('docs'));
+  const notes = new Copy(scripted('notes'), destination.table('notes'));
+  // A second load on the same file stands in for another replication's run.
+  await using first = await destination.load();
+  await using second = await destination.load();
+  await using docsStage = await first.prepare(docs.configuration, docs.to, {
+    writer: 'docs',
+    reloading: false,
+  });
+  await using notesStage = await second.prepare(notes.configuration, notes.to, {
+    writer: 'notes',
+    reloading: false,
+  });
+  using reader = new DatabaseSync(destination.path, { readOnly: true });
+  const count = (table: string) =>
+    reader.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n;
+
+  await docsStage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
+  await docsStage.commit();
+  await notesStage.apply({ type: 'RECORD', data: { id: 'a', version: 1 } });
+  const whileStaged = count('docs');
+  await notesStage.commit();
+  await docsStage.apply({ type: 'RECORD', data: { id: 'b', version: 1 } });
+  await docsStage.commit();
+
+  assert.deepEqual([whileStaged, count('docs'), count('notes')], [1, 2, 1]);
 });
 
 // A reader such as an agent's sqlite3 -readonly query, holding the file

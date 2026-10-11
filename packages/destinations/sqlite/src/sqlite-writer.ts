@@ -25,22 +25,6 @@ import { SQLiteFileStore } from './sqlite-file-store.ts';
 import { identifiers } from './sqlite-identifiers.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
-// Keep competing loads out across commits, including while other streams have
-// pending files. A separate native lock leaves the destination readable and
-// releases automatically on process exit; the sidecar stores no records.
-export function lockWriter(path: string): Disposable {
-  const lock = new DatabaseSync(
-    path === ':memory:' ? path : `${path}.writer-lock`,
-  );
-  try {
-    lock.exec('BEGIN EXCLUSIVE');
-    return { [Symbol.dispose]: () => lock.close() };
-  } catch (error) {
-    lock.close();
-    throw error;
-  }
-}
-
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 export const seq = '"_elt_seq"';
 export const op = '"_elt_op"';
@@ -175,7 +159,7 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   // Records the owner with the target's first commit; prepare refused any
-  // other, and the writer lock keeps one in until the load ends.
+  // other.
   private own(database: DatabaseSync, writer: string): void {
     this.writers(database);
     database.exec(
@@ -231,7 +215,6 @@ export abstract class SQLiteWriter extends Writer {
     writer: string,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
-    using _lock = lockWriter(this.path);
     // Waits for readers to finish, as a load's commit does.
     using database = new DatabaseSync(this.path, { timeout: 30_000 });
     database.exec('BEGIN IMMEDIATE');

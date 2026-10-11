@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, rm, rmdir } from 'node:fs/promises';
+import { lstat, open, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type {
@@ -34,7 +34,6 @@ export abstract class MarkdownWriter extends Writer {
         : undefined;
   }
 
-  // The target's name, which also names its lock.
   protected abstract readonly name: string;
 
   // The owner and records the target named name holds now; none when it does
@@ -82,7 +81,6 @@ export abstract class MarkdownWriter extends Writer {
     writer: string,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
-    await using _ = await this.lock();
     const { owner } = await this.read(this.name);
     if (owner !== undefined && owner !== writer)
       throw new TargetOwnedError(this.name, owner, writer);
@@ -90,14 +88,6 @@ export abstract class MarkdownWriter extends Writer {
     // Clearing a copy also abandons the reload it left open.
     await this.removeHidden();
     await committed?.(this.values(() => [this.name]));
-  }
-
-  // An exclusive directory prevents two cooperating writers from publishing the same target.
-  private async lock(): Promise<AsyncDisposable> {
-    await mkdir(this.path, { recursive: true });
-    const lock = join(this.path, `.markdown-${this.name}.lock`);
-    await mkdir(lock);
-    return { [Symbol.asyncDispose]: () => rmdir(lock) };
   }
 
   // Each target is its own file or folder, so its in-memory rows are already
@@ -110,97 +100,91 @@ export abstract class MarkdownWriter extends Writer {
     writer: string;
     reloading: boolean;
   }): Promise<Stage> {
-    const lock = await this.lock();
-    try {
-      const target = await this.read(this.name);
-      if (target.owner !== undefined && target.owner !== writer)
-        throw new TargetOwnedError(this.name, target.owner, writer);
-      const hidden = await this.read(this.hiddenName);
-      // Markdown stores no shape, so a stored target always fits the stream.
-      const fit = ({ owner }: { readonly owner?: string }): StoredFit =>
-        owner === undefined ? 'missing' : 'fits';
-      const sync = this.configuration.destinationSyncMode;
-      let mode: ReloadMode = reloadMode({
-        reloading,
-        destinationSyncMode: sync,
-        target: fit(target),
-        hidden: fit(hidden),
-      });
-      // A hidden target no reload continues is a leftover readers never saw.
-      if (mode !== 'continue') await this.removeHidden();
-      const open = () => mode === 'reload' || mode === 'continue';
-      // ponytail: Markdown reconciliation holds the target in memory; use an on-disk index if exports outgrow memory.
-      let published = new Map<string, unknown>();
-      // A reload keeps none of the target's rows; one it continues keeps the
-      // hidden target's.
-      let kept: readonly unknown[] = [];
-      if (mode === 'continue') kept = hidden.rows;
-      else if (mode === 'load') kept = target.rows;
-      if (sync === 'append' || sync === 'append_dedup')
-        for (const row of kept) this.add(published, row);
-      let working = new Map(published);
-      return {
-        fresh: mode === 'create' || mode === 'reload',
-        get reloading() {
-          return open();
-        },
-        values: this.values(() =>
-          open() ? [this.name, this.hiddenName] : [this.name],
-        ),
-        apply: async (operation) => {
-          if (operation.type === 'RECORD') {
-            // Validate every observation, including deduplication losers.
-            this.document.render(operation.data, 1);
-            this.add(working, operation.data);
+    const target = await this.read(this.name);
+    if (target.owner !== undefined && target.owner !== writer)
+      throw new TargetOwnedError(this.name, target.owner, writer);
+    const hidden = await this.read(this.hiddenName);
+    // Markdown stores no shape, so a stored target always fits the stream.
+    const fit = ({ owner }: { readonly owner?: string }): StoredFit =>
+      owner === undefined ? 'missing' : 'fits';
+    const sync = this.configuration.destinationSyncMode;
+    let mode: ReloadMode = reloadMode({
+      reloading,
+      destinationSyncMode: sync,
+      target: fit(target),
+      hidden: fit(hidden),
+    });
+    // A hidden target no reload continues is a leftover readers never saw.
+    if (mode !== 'continue') await this.removeHidden();
+    const open = () => mode === 'reload' || mode === 'continue';
+    // ponytail: Markdown reconciliation holds the target in memory; use an on-disk index if exports outgrow memory.
+    let published = new Map<string, unknown>();
+    // A reload keeps none of the target's rows; one it continues keeps the
+    // hidden target's.
+    let kept: readonly unknown[] = [];
+    if (mode === 'continue') kept = hidden.rows;
+    else if (mode === 'load') kept = target.rows;
+    if (sync === 'append' || sync === 'append_dedup')
+      for (const row of kept) this.add(published, row);
+    let working = new Map(published);
+    return {
+      fresh: mode === 'create' || mode === 'reload',
+      get reloading() {
+        return open();
+      },
+      values: this.values(() =>
+        open() ? [this.name, this.hiddenName] : [this.name],
+      ),
+      apply: async (operation) => {
+        if (operation.type === 'RECORD') {
+          // Validate every observation, including deduplication losers.
+          this.document.render(operation.data, 1);
+          this.add(working, operation.data);
+          return;
+        }
+        if (operation.type === 'RESET') {
+          const { partition } = operation;
+          if (partition === null) {
+            // The whole stream starts over in a new hidden target.
+            mode = 'reload';
+            published = new Map();
+            working = new Map();
             return;
           }
-          if (operation.type === 'RESET') {
-            const { partition } = operation;
-            if (partition === null) {
-              // The whole stream starts over in a new hidden target.
-              mode = 'reload';
-              published = new Map();
-              working = new Map();
-              return;
-            }
-            for (const [key, row] of working)
-              if (
-                Object.entries(partition).every(
-                  ([field, value]) => Reflect.get(Object(row), field) === value,
-                )
+          for (const [key, row] of working)
+            if (
+              Object.entries(partition).every(
+                ([field, value]) => Reflect.get(Object(row), field) === value,
               )
-                working.delete(key);
-            return;
-          }
-          if (this.deduplication === undefined)
-            throw new TypeError('Only deduplicating loads can apply deletions');
-          working.delete(this.deduplication.key(operation.key));
-        },
-        commit: async () => {
-          await this.publish(
-            open() ? this.hiddenName : this.name,
-            [...working.values()],
-            writer,
-          );
-          published = new Map(working);
-        },
-        complete: async () => {
-          if (!open()) return;
-          await this.replace(
-            join(this.path, this.hiddenName),
-            join(this.path, this.name),
-          );
-          mode = 'load';
-        },
-        discard: async () => {
-          working = new Map(published);
-        },
-        [Symbol.asyncDispose]: () => lock[Symbol.asyncDispose](),
-      };
-    } catch (error) {
-      await lock[Symbol.asyncDispose]();
-      throw error;
-    }
+            )
+              working.delete(key);
+          return;
+        }
+        if (this.deduplication === undefined)
+          throw new TypeError('Only deduplicating loads can apply deletions');
+        working.delete(this.deduplication.key(operation.key));
+      },
+      commit: async () => {
+        await this.publish(
+          open() ? this.hiddenName : this.name,
+          [...working.values()],
+          writer,
+        );
+        published = new Map(working);
+      },
+      complete: async () => {
+        if (!open()) return;
+        await this.replace(
+          join(this.path, this.hiddenName),
+          join(this.path, this.name),
+        );
+        mode = 'load';
+      },
+      discard: async () => {
+        working = new Map(published);
+      },
+      [Symbol.asyncDispose]: async () => {},
+    };
   }
 
   private add(rows: Map<string, unknown>, record: unknown): void {

@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import type { CopyConfiguration, Load } from '@workspace/elt';
@@ -33,6 +34,8 @@ export class MarkdownDestination extends Destination<
   }
 
   override async load(): Promise<Load<MarkdownFile | MarkdownFolder>> {
+    // Each publish stages its target in this folder.
+    await mkdir(this.path, { recursive: true });
     return {
       prepare: (configuration, target, binding) =>
         this.createWriter(configuration, target).prepare(binding),
