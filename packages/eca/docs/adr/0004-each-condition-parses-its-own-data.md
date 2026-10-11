@@ -14,4 +14,4 @@ A view such as `bank_transactions` could parse the SMS one time for all the cond
 
 - A condition is code with SQL in it. It reads the rows with SQL and parses them in TypeScript.
 - Two conditions about money each contain the parse of the SMS.
-- eca stores no views. It keeps only the matches and the reads of each rule.
+- eca keeps no views. It keeps only the matches of each rule, in memory.

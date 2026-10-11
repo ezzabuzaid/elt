@@ -1,61 +1,57 @@
-import { Imports } from './imports.ts';
-import type { Match, Rule } from './rule.ts';
-import { Store } from './store.ts';
+import { isDeepStrictEqual } from 'node:util';
 
-export class Eca implements Disposable {
-  readonly #imports: Imports;
-  readonly #store: Store;
-  // Each added rule, run again by the commits its condition read.
-  readonly #rules = new Map<string, () => Promise<void>>();
+import type { Change, Rule } from './rule.ts';
+import type { Warehouse } from './warehouse.ts';
 
-  constructor(options: {
-    readonly store: string;
-    readonly imports: Readonly<Record<string, string>>;
-  }) {
-    this.#imports = new Imports(options.imports);
-    this.#store = new Store(options.store);
+type Watched<Sql, Data> = {
+  readonly rule: Rule<Sql, Data>;
+  // What the condition matched when the host last moved past its changes.
+  matches: ReadonlyMap<string, Data>;
+};
+
+export class Eca<Sql, Data> {
+  readonly #warehouse: Warehouse<Sql>;
+  readonly #rules: Watched<Sql, Data>[] = [];
+
+  constructor(options: { readonly warehouse: Warehouse<Sql> }) {
+    this.#warehouse = options.warehouse;
   }
 
-  // A rule the store has not seen starts from what its condition matches now,
-  // so its action hears only of commits made after the rule was added.
-  add<Data>(rule: Rule<Data>): void {
-    if (!this.#store.has(rule.id)) {
-      const { matches, reads } = this.#imports.evaluate(rule.condition);
-      this.#store.save(rule.id, fingerprints(matches), reads);
-    }
-    this.#rules.set(rule.id, async () => {
-      const previous = this.#store.matches(rule.id);
-      const { matches, reads } = this.#imports.evaluate(rule.condition);
-      const current = fingerprints(matches);
-      for (const { key, data } of matches) {
-        const before = previous.get(key);
-        if (before === undefined)
-          await rule.action.run({ type: 'started', rule: rule.id, key, data });
-        else if (before !== current.get(key))
-          await rule.action.run({ type: 'changed', rule: rule.id, key, data });
+  // A rule starts from what its condition matches now, so it reports only what
+  // changes after it was added.
+  add(rule: Rule<Sql, Data>): void {
+    this.#rules.push({ rule, matches: this.#evaluate(rule) });
+  }
+
+  // Each commit to the warehouse evaluates every rule. A rule moves on to its
+  // new matches only when the host pulls past its last change, so a change the
+  // host stopped at comes again to its next watch.
+  async *watch({
+    signal,
+  }: {
+    readonly signal: AbortSignal;
+  }): AsyncGenerator<Change<Data>> {
+    for await (const _ of this.#warehouse.commits(signal))
+      for (const watched of this.#rules) {
+        const { id } = watched.rule;
+        const matches = this.#evaluate(watched.rule);
+        for (const [key, data] of matches) {
+          if (!watched.matches.has(key))
+            yield { type: 'started', rule: id, key, data };
+          else if (!isDeepStrictEqual(watched.matches.get(key), data))
+            yield { type: 'changed', rule: id, key, data };
+        }
+        for (const key of watched.matches.keys())
+          if (!matches.has(key)) yield { type: 'ended', rule: id, key };
+        watched.matches = matches;
       }
-      for (const key of previous.keys())
-        if (!current.has(key))
-          await rule.action.run({ type: 'ended', rule: rule.id, key });
-      this.#store.save(rule.id, current, reads);
-    });
   }
 
-  // The host reports which tables of an import a commit wrote; every rule
-  // whose condition read one of them runs again.
-  async committed(name: string, tables: readonly string[]): Promise<void> {
-    for (const [id, run] of this.#rules) {
-      const read = this.#store.reads(id).get(name);
-      if (tables.some((table) => read?.has(table))) await run();
-    }
-  }
-
-  [Symbol.dispose](): void {
-    this.#imports[Symbol.dispose]();
-    this.#store[Symbol.dispose]();
+  #evaluate(rule: Rule<Sql, Data>): ReadonlyMap<string, Data> {
+    return new Map(
+      rule.condition
+        .evaluate(this.#warehouse.sql)
+        .map(({ key, data }) => [key, data]),
+    );
   }
 }
-
-// Each key a condition matched, with its data as JSON to tell a change.
-const fingerprints = (matches: readonly Match<unknown>[]) =>
-  new Map(matches.map(({ key, data }) => [key, JSON.stringify(data)]));
