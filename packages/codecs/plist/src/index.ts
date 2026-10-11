@@ -1,4 +1,5 @@
 export {
+  PlistDate,
   type PlistValue,
   decodeArchive,
   isBinaryPlist,

@@ -24,6 +24,17 @@ export class PlistUid {
 
 const appleEpoch = Date.UTC(2001, 0, 1);
 
+// Preserve the format's original double alongside Date's millisecond view.
+// Consumers that export finer timestamps need the seconds before Date rounds.
+export class PlistDate extends Date {
+  readonly referenceSeconds: number;
+
+  constructor(referenceSeconds: number) {
+    super(appleEpoch + referenceSeconds * 1000);
+    this.referenceSeconds = referenceSeconds;
+  }
+}
+
 export function isBinaryPlist(bytes: Uint8Array): boolean {
   return (
     bytes.length >= 40 &&
@@ -91,7 +102,7 @@ export function parseBinaryPlist(bytes: Uint8Array): PlistValue {
       case 0x2:
         return nibble === 2 ? view.getFloat32(at + 1) : view.getFloat64(at + 1);
       case 0x3:
-        return new Date(appleEpoch + view.getFloat64(at + 1) * 1000);
+        return new PlistDate(view.getFloat64(at + 1));
       case 0x4: {
         const [length, start] = lengthAt(at);
         // A plain copy: a Buffer would serialize through Buffer#toJSON.
@@ -212,7 +223,7 @@ function decodeClass(
     case 'NSMutableData':
       return resolve(value['NS.data'] ?? null);
     case 'NSDate':
-      return new Date(appleEpoch + Number(value['NS.time']) * 1000);
+      return new PlistDate(Number(value['NS.time']));
     case 'NSURL': {
       const relative = String(resolve(value['NS.relative'] ?? null));
       const base = resolve(value['NS.base'] ?? null);

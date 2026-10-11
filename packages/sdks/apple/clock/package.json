@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/sdk-apple-clock",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./clock-store": {
+      "types": "./dist/clock-store.d.ts",
+      "default": "./dist/clock-store.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/codec-plist": "0.0.1",
+    "@workspace/sdk-apple-app-database": "0.0.1"
+  }
+}

@@ -201,6 +201,9 @@
       "path": "./packages/connectors/apple/wallet"
     },
     {
+      "path": "./packages/sdks/apple/clock"
+    },
+    {
       "path": "./apps/proactive"
     }
   ]

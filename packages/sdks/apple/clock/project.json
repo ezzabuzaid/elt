@@ -1,0 +1,9 @@
+{
+  "name": "sdk-apple-clock",
+  "sourceRoot": "packages/sdks/apple/clock/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  },
+  "tags": ["layer:island", "layer:sdk"]
+}
