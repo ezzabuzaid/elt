@@ -16,6 +16,11 @@ const count = new Intl.NumberFormat('en');
 // terminal, one JSON line per pass or skipped import.
 export class SyncReport implements SyncObserver {
   readonly interactive: boolean;
+  // What the spinner says while no stream reads.
+  protected readonly idle: string = 'Reading';
+  // Whether the spinner comes back between passes, while no stream reads.
+  protected readonly spinsWhenIdle: boolean = false;
+  protected readonly interruption: string = 'Sync interrupted';
   readonly #reading = new Map<string, string>();
   #spinner: SpinnerResult | undefined;
   #shownAt = 0;
@@ -50,20 +55,15 @@ export class SyncReport implements SyncObserver {
     // A cancelled pass is a removed connector; skipped reports it.
     if (summary.status === 'cancelled') return;
     if (summary.status !== 'succeeded') this.#incomplete = true;
-    if (!this.interactive) {
-      process.stdout.write(`${json(summary, 0)}\n`);
-      return;
-    }
-    this.#spinner?.clear();
-    this.#spinner = undefined;
-    const written = summary.streams.reduce(
-      (total, { written, deleted }) => total + written + deleted,
-      0,
-    );
-    const line = `${title.padEnd(10)} ${written === 0 ? 'no changes' : `${count.format(written)} rows`} · ${summary.streams.length} streams · ${summary.seconds}s`;
-    if (summary.status === 'succeeded') log.success(line);
-    else log.warn(`${title.padEnd(10)} ${summary.status} · ${summary.error}`);
-    if (this.#reading.size > 0) this.#spin();
+    this.line(summary, () => {
+      const written = summary.streams.reduce(
+        (total, { written, deleted }) => total + written + deleted,
+        0,
+      );
+      const line = `${title.padEnd(10)} ${written === 0 ? 'no changes' : `${count.format(written)} rows`} · ${summary.streams.length} streams · ${summary.seconds}s`;
+      if (summary.status === 'succeeded') log.success(line);
+      else log.warn(`${title.padEnd(10)} ${summary.status} · ${summary.error}`);
+    });
   }
 
   // The spinner comes back after the line, so a sync that only waits still
@@ -77,40 +77,52 @@ export class SyncReport implements SyncObserver {
 
   skipped(
     { name, title }: AppleConnector,
-    why: 'removed' | 'interrupted',
+    why: 'removed' | 'interrupted' | 'watched',
   ): void {
     if (why === 'interrupted') this.#incomplete = true;
-    if (!this.interactive) {
-      process.stdout.write(`${json({ connector: name, status: why }, 0)}\n`);
-      return;
-    }
-    this.#spinner?.clear();
-    this.#spinner = undefined;
-    if (why === 'interrupted')
-      log.warn(
-        `${title.padEnd(10)} interrupted · the sync importing it stopped`,
-      );
-    else
-      log.info(
-        `${title.padEnd(10)} stopped · removed from the selection by another setup`,
-      );
-    if (this.#reading.size > 0) this.#spin();
+    this.line({ connector: name, status: why }, () => {
+      if (why === 'interrupted')
+        log.warn(
+          `${title.padEnd(10)} interrupted · the sync importing it stopped`,
+        );
+      else if (why === 'watched')
+        log.info(`${title.padEnd(10)} kept current by apple-cli sync watch`);
+      else
+        log.info(
+          `${title.padEnd(10)} stopped · removed from the selection by another setup`,
+        );
+    });
   }
 
   finish(): void {
     if (!this.interactive) return;
     this.#spinner?.clear();
-    outro(
-      this.#incomplete
-        ? 'Some connectors did not load completely.'
-        : 'All connectors current.',
-    );
+    outro(this.closing());
+  }
+
+  protected closing(): string {
+    return this.#incomplete
+      ? 'Some connectors did not load completely.'
+      : 'All connectors current.';
   }
 
   // Cancelling the spinner hands the terminal back: the cursor shows again and
   // keys echo.
   interrupted(): void {
-    this.#spinner?.cancel('Sync interrupted');
+    this.#spinner?.cancel(this.interruption);
+  }
+
+  // One line about an import: its JSON without a terminal; otherwise shown in
+  // place of the spinner, which comes back while a stream still reads.
+  protected line(data: object, show: () => void): void {
+    if (!this.interactive) {
+      process.stdout.write(`${json(data, 0)}\n`);
+      return;
+    }
+    this.#spinner?.clear();
+    this.#spinner = undefined;
+    show();
+    if (this.#reading.size > 0 || this.spinsWhenIdle) this.#spin();
   }
 
   // Without its guide, a spinner leaves no bar behind when cleared, so each
@@ -127,6 +139,6 @@ export class SyncReport implements SyncObserver {
   }
 
   #status(): string {
-    return [...this.#reading.values()].join(' · ') || 'Reading';
+    return [...this.#reading.values()].join(' · ') || this.idle;
   }
 }

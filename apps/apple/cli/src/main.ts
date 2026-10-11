@@ -30,8 +30,13 @@ for (const { title, error } of broken)
 const imports = new Imports(connectors);
 
 const program = new Program('apple-cli')
-  .description('Import Apple apps on this Mac into outputs/cli and query them.')
-  .showHelpAfterError();
+  .description(
+    'Import Apple apps on this Mac into outputs/cli, keep them current, and query them.',
+  )
+  .showHelpAfterError()
+  // Each command reads its own options, so sync watch --connector reaches
+  // watch rather than sync.
+  .enablePositionalOptions();
 
 for (const command of [
   new SetupCommand(imports),

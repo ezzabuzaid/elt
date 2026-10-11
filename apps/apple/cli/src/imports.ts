@@ -1,7 +1,8 @@
 import { existsSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve, sep } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 
+import { SqliteElection } from '@zukhruf/election';
 import {
   FlightFailedError,
   FlightInterruptedError,
@@ -31,13 +32,34 @@ import {
 // Shows a sync from its start to its finish or interruption, each pass in
 // between, each import whose pass another sync runs, which this one waits for,
 // and each import it did not finish: removed, another setup removed its
-// connector while it ran; interrupted, the sync it waited for stopped first.
+// connector while it ran; interrupted, the sync it waited for stopped first;
+// watched, a sync watch keeps it current.
 export type SyncObserver = PassObserver & {
   start(): void;
   joined(connector: AppleConnector): void;
-  skipped(connector: AppleConnector, why: 'removed' | 'interrupted'): void;
+  skipped(
+    connector: AppleConnector,
+    why: 'removed' | 'interrupted' | 'watched',
+  ): void;
   finish(): void;
   interrupted(): void;
+};
+
+// Shows a watch as a sync, and also each import it waits to own while another
+// process does, and each import whose watch stopped on its own.
+export type WatchObserver = SyncObserver & {
+  waiting(connector: AppleConnector): void;
+  stopped(connector: AppleConnector): void;
+};
+
+// One selected connector's import, as a sync or a watch runs it, and where it
+// shows each line.
+type ImportRun = {
+  readonly settings: Settings;
+  readonly flights: SingleFlight<readonly SyncLine[]>;
+  readonly connector: AppleConnector;
+  readonly selection: Selection;
+  show(line: SyncLine): void;
 };
 
 export type { Selection };
@@ -140,13 +162,106 @@ export class Imports {
   // One pass of each selected connector, or only of those named, shown through
   // the observer, once the imports no longer selected are removed. A sync that
   // finds another sync running an import's pass waits for that pass and shows
-  // it instead of running its own. Ctrl-C or SIGTERM stops a sync at once:
-  // what it committed stays and its checkpoints resume it. A pass that did not
-  // load completely, or one it waited for whose sync stopped first, leaves
-  // exit status 1; a connector another setup removed meanwhile does not.
+  // it instead of running its own; one that finds a sync watch keeping an
+  // import current leaves it to the watch. Ctrl-C or SIGTERM stops a sync at
+  // once: what it committed stays and its checkpoints resume it. A pass that
+  // did not load completely, or one it waited for whose sync stopped first,
+  // leaves exit status 1; a connector another setup removed meanwhile does
+  // not.
   async sync(
     only: readonly string[] | undefined,
     observer: SyncObserver,
+  ): Promise<void> {
+    await this.#each(only, observer, async (run) => {
+      const { settings, flights, connector, selection, show } = run;
+      const directory = settings.directory(selection);
+      // What this sync shows of its own pass, for the syncs that wait on it.
+      const lines: SyncLine[] = [];
+      const own = (line: SyncLine) => {
+        lines.push(line);
+        show(line);
+      };
+      try {
+        const { value, joined } = await flights.run(
+          directory,
+          async () => {
+            await using owner = await owners(settings, directory).campaign();
+            if (owner === undefined) {
+              own({ connector: connector.name, status: 'watched' });
+              return lines;
+            }
+            const outcome = await connector.import(
+              settings,
+              selection,
+              new ObservedHistory(connector, {
+                progress: (...args) => observer.progress(...args),
+                passed: (_, summary) => own(summary),
+              }),
+            );
+            if (outcome.status === 'unconnected')
+              own(failed(connector, outcome.error, 0));
+            else if (outcome.status === 'removed')
+              own({ connector: connector.name, status: 'removed' });
+            return lines;
+          },
+          { onJoin: () => observer.joined(connector) },
+        );
+        if (joined) for (const line of value) show(line);
+      } catch (error) {
+        if (error instanceof FlightInterruptedError)
+          show({ connector: connector.name, status: 'interrupted' });
+        else if (error instanceof FlightFailedError)
+          show(failed(connector, error.failure.message, 0));
+        else throw error;
+      }
+    });
+  }
+
+  // Keeps each selected connector's import current, or only those named: a
+  // pass at once, then one for each change its source reports, until Ctrl-C
+  // or SIGTERM stops it. One process owns an import at a time: a watch that
+  // finds another owner, a sync running a pass or another watch, waits and
+  // owns the import once that one ends or dies. An import's watch ends on its
+  // own once another setup removes its connector or its source stops
+  // reporting changes.
+  async watch(
+    only: readonly string[] | undefined,
+    observer: WatchObserver,
+  ): Promise<void> {
+    await this.#each(only, observer, async (run) => {
+      const { settings, connector, selection, show } = run;
+      const election = owners(settings, settings.directory(selection));
+      // Every owner stops once its connector is removed, so a watch that
+      // waits always gets the import, and then hears of the removal itself.
+      let owner = await election.campaign();
+      if (owner === undefined) observer.waiting(connector);
+      while (owner === undefined)
+        owner = await election.campaign({ timeout: Number.POSITIVE_INFINITY });
+      // Held until the process ends; the kernel frees it if the process dies.
+      await using _ = owner;
+      const outcome = await connector.watch(
+        settings,
+        selection,
+        new ObservedHistory(connector, {
+          progress: (...args) => observer.progress(...args),
+          passed: (_, summary) => show(summary),
+        }),
+      );
+      if (outcome.status === 'unconnected')
+        show(failed(connector, outcome.error, 0));
+      else if (outcome.status === 'removed')
+        show({ connector: connector.name, status: 'removed' });
+      else observer.stopped(connector);
+    });
+  }
+
+  // What sync and watch share: the selection, less the imports it no longer
+  // names; each selected connector, or each one named, run side by side and
+  // shown through the observer; Ctrl-C and SIGTERM; and the exit status.
+  async #each(
+    only: readonly string[] | undefined,
+    observer: SyncObserver,
+    each: (run: ImportRun) => Promise<void>,
   ): Promise<void> {
     using settings = new Settings(this.root);
     const selections = settings.selections();
@@ -186,8 +301,12 @@ export class Imports {
     };
     process.on('exit', cancelled);
     const passes: PassSummary[] = [];
-    const show = (connector: AppleConnector, line: SyncLine) => {
-      if (line.status === 'removed' || line.status === 'interrupted') {
+    const show = (connector: AppleConnector) => (line: SyncLine) => {
+      if (
+        line.status === 'removed' ||
+        line.status === 'interrupted' ||
+        line.status === 'watched'
+      ) {
         if (line.status === 'interrupted') unsynced = true;
         observer.skipped(connector, line.status);
       } else {
@@ -198,45 +317,15 @@ export class Imports {
     observer.start();
     try {
       await Promise.all(
-        imports.map(async ({ connector, selection }) => {
-          // What this sync shows of its own pass, for the syncs that wait on it.
-          const lines: SyncLine[] = [];
-          const own = (line: SyncLine) => {
-            lines.push(line);
-            show(connector, line);
-          };
-          try {
-            const { value, joined } = await flights.run(
-              settings.directory(selection),
-              async () => {
-                const outcome = await connector.import(
-                  settings,
-                  selection,
-                  new ObservedHistory(connector, {
-                    progress: (...args) => observer.progress(...args),
-                    passed: (_, summary) => own(summary),
-                  }),
-                );
-                if (outcome.status === 'unconnected')
-                  own(failed(connector, outcome.error, 0));
-                else if (outcome.status === 'removed')
-                  own({ connector: connector.name, status: 'removed' });
-                return lines;
-              },
-              { onJoin: () => observer.joined(connector) },
-            );
-            if (joined) for (const line of value) show(connector, line);
-          } catch (error) {
-            if (error instanceof FlightInterruptedError)
-              show(connector, {
-                connector: connector.name,
-                status: 'interrupted',
-              });
-            else if (error instanceof FlightFailedError)
-              show(connector, failed(connector, error.failure.message, 0));
-            else throw error;
-          }
-        }),
+        imports.map(({ connector, selection }) =>
+          each({
+            settings,
+            flights,
+            connector,
+            selection,
+            show: show(connector),
+          }),
+        ),
       );
     } finally {
       process.off('exit', cancelled);
@@ -316,8 +405,22 @@ function unloaded(name: string): string {
   return `No connector named ${name} is loaded: fix or restore its folder in ${userConnectors}, or set up without it.`;
 }
 
+// Who owns an import: the process holding its claim, a sync for one pass or a
+// sync watch until it stops. The claim sits at the store's root, beside the
+// settings, so the removal of an import's folder never deletes a claim a
+// waiting watch holds open.
+function owners(settings: Settings, directory: string): SqliteElection {
+  const name = relative(settings.root, directory).replaceAll(sep, '.');
+  return new SqliteElection({
+    directory: settings.root,
+    claimFile: `${name}.owner.lock`,
+    epochFile: `${name}.owner.epoch`,
+  });
+}
+
 // Removes each import the selection no longer names, unless a sync runs its
-// pass now: joining that pass's flight gives up the wait at once, and the next
+// pass now or a sync watch still owns it: joining that pass's flight gives up
+// the wait at once, a watch hears of the removal within a second, and the next
 // setup or sync removes it. While a removal runs, a sync of the import waits.
 // The plugin's importPending removes stale imports the same way.
 async function removeStale(
@@ -330,7 +433,9 @@ async function removeStale(
       .run(
         directory,
         async () => {
-          rmSync(directory, { recursive: true, force: true });
+          await using owner = await owners(settings, directory).campaign();
+          if (owner !== undefined)
+            rmSync(directory, { recursive: true, force: true });
           return [];
         },
         { onJoin: () => joined.abort(), signal: joined.signal },

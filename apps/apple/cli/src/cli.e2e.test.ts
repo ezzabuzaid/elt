@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  constants,
   existsSync,
   mkdirSync,
   realpathSync,
@@ -11,6 +12,7 @@ import {
 import {
   mkdir,
   mkdtempDisposable,
+  open,
   readFile,
   rm,
   writeFile,
@@ -1028,7 +1030,8 @@ function cli(mac: string, ...args: string[]) {
 }
 
 // The CLI started alongside the test, as a second process a person or script
-// runs while another works; exited settles with how it ended.
+// runs while another works; exited settles with how it ended. printed holds
+// the JSON lines it printed so far, and prints waits for one that matches.
 function started(mac: string, ...args: string[]) {
   const child = spawn(process.execPath, [entry, ...args], {
     cwd: mac,
@@ -1049,7 +1052,23 @@ function started(mac: string, ...args: string[]) {
   }>((resolve) =>
     child.once('close', (status) => resolve({ status, stdout, stderr })),
   );
-  return { child, exited };
+  // Only whole lines: the one being written has no newline yet.
+  const printed = (): Record<string, unknown>[] =>
+    stdout
+      .split('\n')
+      .slice(0, -1)
+      .map((line) => JSON.parse(line));
+  return {
+    child,
+    exited,
+    printed,
+    async prints(matches: (line: Record<string, unknown>) => boolean) {
+      for (let tries = 0; !printed().some(matches); tries++) {
+        if (tries > 300) assert.fail(`never printed it:\n${stdout}${stderr}`);
+        await sleep(100);
+      }
+    },
+  };
 }
 
 // The user's Notes, where Notes keeps them under HOME. Only Notes has a store
@@ -1111,6 +1130,34 @@ async function passRunning(mac: string) {
     if (Date.now() > deadline)
       assert.fail('the sync did not start its pass within a minute');
     await sleep(100);
+  }
+}
+
+// Writes a pipe once a process opens it to read. A plain write waits for a
+// reader in a thread of Node's pool, which no test can stop: a reader that
+// never came would hang the whole run instead of failing this test.
+async function feed(pipe: string, content: string): Promise<void> {
+  for (let tries = 0; ; tries++) {
+    let handle;
+    try {
+      handle = await open(pipe, constants.O_WRONLY | constants.O_NONBLOCK);
+    } catch (error) {
+      if (!(
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENXIO'
+      ))
+        throw error;
+      if (tries > 300) assert.fail(`nothing read ${pipe} within 30 s`);
+      await sleep(100);
+      continue;
+    }
+    try {
+      await handle.writeFile(content);
+    } finally {
+      await handle.close();
+    }
+    return;
   }
 }
 
@@ -1914,12 +1961,11 @@ test('one SQL statement runs however it is spaced or commented', async () => {
   assert.equal(JSON.parse(commented.stdout)[0].n, 3);
 });
 
-test('sync loads Safari history from its library and tabs from where Safari keeps its sandbox container', async () => {
-  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
-  // Safari keeps history under ~/Library/Safari and its tabs in its sandbox
-  // container; the fixture writes both, and the container moves where Safari
-  // keeps it.
-  const library = join(mac.path, 'Library');
+// The user's Safari: history under ~/Library/Safari and tabs where Safari
+// keeps its sandbox container. Returns History.db, which Safari commits each
+// visit to.
+async function withSafari(mac: string): Promise<string> {
+  const library = join(mac, 'Library');
   const { directory, container } = await safariFixture(library);
   const sandboxed = join(
     library,
@@ -1927,14 +1973,24 @@ test('sync loads Safari history from its library and tabs from where Safari keep
   );
   mkdirSync(dirname(sandboxed), { recursive: true });
   renameSync(container, sandboxed);
-  {
-    using history = new DatabaseSync(join(directory, 'History.db'));
-    history
-      .prepare(
-        'INSERT INTO history_visits (history_item, visit_time) VALUES (1, ?)',
-      )
-      .run(appleSeconds('2026-04-01T00:00:00Z'));
-  }
+  return join(directory, 'History.db');
+}
+
+// Visits to the fixture's first page, at each time given, committed together
+// as Safari commits what it has.
+function visit(history: string, ...at: string[]): void {
+  using database = new DatabaseSync(history);
+  const insert = database.prepare(
+    'INSERT INTO history_visits (history_item, visit_time) VALUES (1, ?)',
+  );
+  database.exec('BEGIN');
+  for (const time of at) insert.run(appleSeconds(time));
+  database.exec('COMMIT');
+}
+
+test('sync loads Safari history from its library and tabs from where Safari keeps its sandbox container', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  visit(await withSafari(mac.path), '2026-04-01T00:00:00Z');
   cli(mac.path, 'setup', '--connector', 'safari');
 
   const synced = cli(mac.path, 'sync');
@@ -1956,6 +2012,406 @@ test('sync loads Safari history from its library and tabs from where Safari keep
     '--json',
   );
   assert.ok(JSON.parse(tabs.stdout)[0].n > 0, tabs.stderr);
+});
+
+// How many passes an import's sync history holds.
+const attempts = (mac: string, connector: string): number =>
+  JSON.parse(
+    cli(
+      mac,
+      'query',
+      connector,
+      'SELECT count(*) AS n FROM sync_attempts',
+      '--json',
+    ).stdout,
+  )[0].n;
+
+test('a sync of a connector a sync watch keeps current says so and exits 0, running no pass of its own', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withSafari(mac.path);
+  cli(mac.path, 'setup', '--connector', 'safari');
+  const watch = started(mac.path, 'sync', 'watch', '--json');
+  try {
+    await watch.prints(({ connector }) => connector === 'safari');
+    const before = attempts(mac.path, 'safari');
+
+    const sync = started(mac.path, 'sync', '--json');
+    try {
+      const synced = await Promise.race([
+        sync.exited,
+        sleep(30_000).then(() => null),
+      ]);
+      const shown = terminal(mac.path, 'sync');
+      try {
+        const exited = await Promise.race([
+          shown.exited,
+          sleep(30_000).then(() => 'still waiting'),
+        ]);
+
+        if (synced === null) assert.fail('the sync waited on the watch');
+        assert.equal(synced.status, 0, synced.stderr);
+        assert.deepEqual(lines(synced.stdout), [
+          { connector: 'safari', status: 'watched' },
+        ]);
+        assert.equal(exited, 0, shown.screen);
+        assert.match(
+          shown.screen,
+          /Safari\s+kept current by apple-cli sync watch/,
+        );
+        assert.equal(attempts(mac.path, 'safari'), before);
+      } finally {
+        shown.child.kill('SIGKILL');
+        await shown.exited;
+      }
+    } finally {
+      sync.child.kill('SIGKILL');
+      await sync.exited;
+    }
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
+
+test('a setup that removes a watched connector stops its watch within seconds, keeps its import while the watch owns it, and the next sync removes it', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withSafari(mac.path);
+  await withConnectors(mac.path);
+  cli(mac.path, 'setup', '--connector', 'safari');
+  const watch = started(mac.path, 'sync', 'watch', '--json');
+  try {
+    await watch.prints(({ connector }) => connector === 'safari');
+    const imported = dirname(
+      JSON.parse(cli(mac.path, 'status', '--json').stdout)[0].database,
+    );
+
+    const removed = cli(mac.path, 'setup', '--connector', 'photos');
+    const kept = existsSync(imported);
+    const stopped = await Promise.race([
+      watch.exited,
+      sleep(5_000).then(() => null),
+    ]);
+
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.equal(kept, true, 'the setup removed an import a watch owned');
+    if (stopped === null)
+      assert.fail('the watch still ran 5 s after the removal');
+    assert.equal(stopped.status, 0, stopped.stderr);
+    assert.deepEqual(lines(stopped.stdout).at(-1), {
+      connector: 'safari',
+      status: 'removed',
+    });
+    assert.equal(existsSync(imported), true);
+    assert.equal(cli(mac.path, 'sync').status, 0);
+    assert.equal(existsSync(imported), false);
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
+
+test('a second sync watch of a connector another one keeps current waits without a pass, and takes over once that one is stopped', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withSafari(mac.path);
+  cli(mac.path, 'setup', '--connector', 'safari');
+  const first = started(mac.path, 'sync', 'watch', '--json');
+  try {
+    await first.prints(({ connector }) => connector === 'safari');
+    const second = started(mac.path, 'sync', 'watch', '--json');
+    try {
+      await second.prints(({ status }) => status === 'waiting');
+      const waited = attempts(mac.path, 'safari');
+
+      first.child.kill('SIGINT');
+      await first.exited;
+      await second.prints(({ status }) => status === 'succeeded');
+
+      assert.equal(waited, 1);
+      assert.equal(first.child.signalCode, 'SIGINT');
+      assert.deepEqual(
+        second.printed().map(({ connector, status }) => [connector, status]),
+        [
+          ['safari', 'waiting'],
+          ['safari', 'succeeded'],
+        ],
+      );
+      assert.equal(attempts(mac.path, 'safari'), 2);
+    } finally {
+      second.child.kill('SIGKILL');
+      await second.exited;
+    }
+  } finally {
+    first.child.kill('SIGKILL');
+    await first.exited;
+  }
+});
+
+test('a connector whose watch ends stops alone and says so, while the others keep loading what changes', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  const history = await withSafari(mac.path);
+  // Photos reports a change once, for its first pass, and never again.
+  await withConnectors(mac.path);
+  cli(mac.path, 'setup', '--connector', 'safari', '--connector', 'photos');
+  const watch = started(mac.path, 'sync', 'watch', '--json');
+  try {
+    await watch.prints(
+      ({ connector, status }) => connector === 'photos' && status === 'stopped',
+    );
+    await watch.prints(({ connector }) => connector === 'safari');
+
+    visit(history, '2026-04-02T00:00:00Z');
+    await watch.prints(
+      ({ connector, streams }) =>
+        connector === 'safari' &&
+        Array.isArray(streams) &&
+        streams.some(
+          ({ stream, written }) => stream === 'historyVisits' && written === 1,
+        ),
+    );
+
+    assert.deepEqual(
+      watch
+        .printed()
+        .filter(({ connector }) => connector === 'photos')
+        .map(({ status }) => status),
+      ['succeeded', 'stopped'],
+    );
+    assert.equal(watch.child.exitCode, null, 'the watch stopped altogether');
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
+
+test('a connector whose watcher fails is reported failed with its error and stops alone, while the others keep loading what changes', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  const history = await withSafari(mac.path);
+  await withConnectors(mac.path);
+  // Photos as a connector whose watcher fails once its library is gone.
+  const photos = join(
+    mac.path,
+    'Library/Application Support/Context Compiler/Connectors/photos/photos-connector.ts',
+  );
+  const watcher =
+    '  protected async *observe({ streams }: SourceWatchOptions) {\n    yield streams;\n  }';
+  const source = await readFile(photos, 'utf8');
+  assert.ok(source.includes(watcher), 'the Photos fixture watches another way');
+  await writeFile(
+    photos,
+    source.replace(
+      watcher,
+      `  protected async *observe({ streams }: SourceWatchOptions) {
+    yield streams;
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await readFile(join(homedir(), 'Pictures/photos.json')).catch(() => {
+        throw new Error('The photo library went away');
+      });
+    }
+  }`,
+    ),
+  );
+  cli(mac.path, 'setup', '--connector', 'safari', '--connector', 'photos');
+  const watch = started(mac.path, 'sync', 'watch', '--json');
+  try {
+    await watch.prints(
+      ({ connector, status }) =>
+        connector === 'photos' && status === 'succeeded',
+    );
+    await watch.prints(({ connector }) => connector === 'safari');
+
+    await rm(join(mac.path, 'Pictures/photos.json'));
+    await watch.prints(
+      ({ connector, status }) => connector === 'photos' && status === 'stopped',
+    );
+    visit(history, '2026-04-03T00:00:00Z');
+    await watch.prints(
+      ({ connector, streams }) =>
+        connector === 'safari' &&
+        Array.isArray(streams) &&
+        streams.some(
+          ({ stream, written }) => stream === 'historyVisits' && written === 1,
+        ),
+    );
+
+    const photosLines = watch
+      .printed()
+      .filter(({ connector }) => connector === 'photos');
+    assert.deepEqual(
+      photosLines.map(({ status }) => status),
+      ['succeeded', 'failed', 'stopped'],
+    );
+    assert.match(String(photosLines[1]?.error), /The photo library went away/);
+    assert.equal(watch.child.exitCode, null, 'the watch stopped altogether');
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
+
+test('sync watch --connector watches only the connectors it names', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withSafari(mac.path);
+  await withConnectors(mac.path);
+  cli(mac.path, 'setup', '--connector', 'safari', '--connector', 'photos');
+
+  // Photos reports a change once, so a watch of Photos alone ends after it.
+  const watch = started(
+    mac.path,
+    'sync',
+    'watch',
+    '--json',
+    '--connector',
+    'photos',
+  );
+  try {
+    const ended = await Promise.race([
+      watch.exited,
+      sleep(30_000).then(() => null),
+    ]);
+
+    if (ended === null)
+      assert.fail('the watch kept watching another connector');
+    assert.equal(ended.status, 0, ended.stderr);
+    assert.deepEqual(
+      lines(ended.stdout).map(({ connector, status }) => [connector, status]),
+      [
+        ['photos', 'succeeded'],
+        ['photos', 'stopped'],
+      ],
+    );
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
+
+test('sync watch loads each change Safari commits until SIGTERM stops it, keeping every pass it finished', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  const history = await withSafari(mac.path);
+  cli(mac.path, 'setup', '--connector', 'safari');
+  const watch = started(mac.path, 'sync', 'watch', '--json');
+  try {
+    await watch.prints(({ connector }) => connector === 'safari');
+    const visited = (count: number) =>
+      watch.prints(
+        ({ streams }) =>
+          Array.isArray(streams) &&
+          streams.some(
+            ({ stream, written }) =>
+              stream === 'historyVisits' && written === count,
+          ),
+      );
+
+    visit(history, '2026-04-01T00:00:00Z');
+    await visited(1);
+    visit(history, '2026-04-02T00:00:00Z', '2026-04-02T01:00:00Z');
+    await visited(2);
+    watch.child.kill('SIGTERM');
+    const ended = await Promise.race([
+      watch.exited,
+      sleep(10_000).then(() => null),
+    ]);
+
+    assert.notEqual(ended, null, 'the watch still ran 10 s after SIGTERM');
+    assert.equal(watch.child.signalCode, 'SIGTERM');
+    assert.ok(
+      watch.printed().every(({ status }) => status === 'succeeded'),
+      JSON.stringify(watch.printed()),
+    );
+    const visits = cli(
+      mac.path,
+      'query',
+      'safari',
+      "SELECT count(*) AS n FROM history_visits WHERE visitedAt >= '2026-04-01'",
+      '--json',
+    );
+    assert.equal(JSON.parse(visits.stdout)[0].n, 3, visits.stderr);
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
+
+test('sync watch in a terminal says it watches between passes, and Ctrl-C stops it', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withSafari(mac.path);
+  cli(mac.path, 'setup', '--connector', 'safari');
+  const watch = terminal(mac.path, 'sync', 'watch');
+  try {
+    await watch.shows(' streams · ');
+    // The spinner comes back after the pass's line, not only before it.
+    const sincePass = () =>
+      watch.screen.slice(watch.screen.lastIndexOf(' streams · '));
+    for (
+      let tries = 0;
+      !sincePass().includes('Watching for changes');
+      tries++
+    ) {
+      if (tries > 100)
+        assert.fail(`no spinner after the pass:\n${watch.screen}`);
+      await sleep(100);
+    }
+
+    await watch.type(ctrlC);
+    const ended = await Promise.race([
+      watch.exited,
+      sleep(10_000).then(() => 'still running'),
+    ]);
+
+    assert.equal(ended, 'SIGINT', watch.screen);
+    assert.match(watch.screen, /Safari\s+[\d,]+ rows · \d+ streams/);
+    assert.match(watch.screen, /Stopped watching/);
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
+
+test('a sync watch started while a sync runs a pass of the connector waits for that pass, then watches', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+  // A pipe the test writes once the watch waits: the sync's Photos read waits
+  // on it, so its pass still runs when the watch starts.
+  const pictures = join(mac.path, 'Pictures/photos.json');
+  await rm(pictures);
+  spawnSync('/usr/bin/mkfifo', [pictures]);
+  cli(mac.path, 'setup', '--connector', 'photos');
+  const sync = started(mac.path, 'sync', '--json');
+  try {
+    await passRunning(mac.path);
+    const watch = started(mac.path, 'sync', 'watch', '--json');
+    try {
+      await watch.prints(({ status }) => status === 'waiting');
+
+      await feed(pictures, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+      const synced = await Promise.race([
+        sync.exited,
+        sleep(30_000).then(() => null),
+      ]);
+      // The pipe is read again by the watch's own pass.
+      await feed(pictures, JSON.stringify([{ id: 'p2', title: 'Snow' }]));
+      await watch.prints(({ status }) => status === 'stopped');
+
+      if (synced === null) assert.fail('the sync never ended its pass');
+      assert.equal(synced.status, 0, synced.stderr);
+      assert.deepEqual(
+        watch.printed().map(({ connector, status }) => [connector, status]),
+        [
+          ['photos', 'waiting'],
+          ['photos', 'succeeded'],
+          ['photos', 'stopped'],
+        ],
+      );
+      assert.equal(attempts(mac.path, 'photos'), 2);
+    } finally {
+      watch.child.kill('SIGKILL');
+      await watch.exited;
+    }
+  } finally {
+    sync.child.kill('SIGKILL');
+    await sync.exited;
+  }
 });
 
 // The user's call history, where callhistoryd keeps it under HOME: every table

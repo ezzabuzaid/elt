@@ -28,12 +28,14 @@ export type PassSummary = {
 };
 
 // One line a sync shows for an import: how its pass ended; removed, another
-// setup removed its connector while it ran; or interrupted, the sync whose
-// pass this one waited for stopped first.
+// setup removed its connector while it ran; interrupted, the sync whose pass
+// this one waited for stopped first; or watched, a sync watch keeps it
+// current, so this sync runs no pass of it.
 export type SyncLine =
   | PassSummary
   | { readonly connector: string; readonly status: 'removed' }
-  | { readonly connector: string; readonly status: 'interrupted' };
+  | { readonly connector: string; readonly status: 'interrupted' }
+  | { readonly connector: string; readonly status: 'watched' };
 
 // Sees each pass of a sync while it runs and once it ends.
 export type PassObserver = {

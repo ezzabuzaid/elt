@@ -8,7 +8,6 @@ import {
   type FailureType,
   LocalFiles,
   Pipeline,
-  PipelineError,
   type Source,
   type Stream,
   StreamStatus,
@@ -63,9 +62,9 @@ export type ChoiceOptions = Choice & {
   readonly options: readonly { readonly id: string; readonly label: string }[];
 };
 
-// How one pass of an import ended, for its host to show.
+// How one pass or watch of an import ended, for its host to show.
 export type ImportOutcome =
-  // The pass ran; the import's sync history records how each stream went.
+  // The passes ran; the import's sync history records how each stream went.
   | { readonly status: 'imported' }
   // The user removed the connector while its pass ran; its import is now stale.
   | { readonly status: 'removed' }
@@ -259,6 +258,41 @@ export abstract class AppleConnector {
     selection: Selection,
     history: SQLiteSyncHistory,
   ): Promise<ImportOutcome> {
+    return this.#load(settings, selection, history, (pipeline, removal) =>
+      pipeline.run({ signal: removal }),
+    );
+  }
+
+  // Keeps this connector's import current: a pass at once, then one for each
+  // change its source reports, each recorded in the import's sync history.
+  // Ends once the user removes the connector, or once the source stops
+  // reporting changes; otherwise it lasts as long as the process.
+  async watch(
+    settings: Settings,
+    selection: Selection,
+    history: SQLiteSyncHistory,
+  ): Promise<ImportOutcome> {
+    return this.#load(
+      settings,
+      selection,
+      history,
+      async (pipeline, removal) => {
+        for await (const _pass of pipeline.watch({ signal: removal }));
+        // A watch ends quietly on abort, where a run throws its reason.
+        removal.throwIfAborted();
+      },
+    );
+  }
+
+  async #load(
+    settings: Settings,
+    selection: Selection,
+    history: SQLiteSyncHistory,
+    load: (
+      pipeline: Pipeline<SQLiteTable>,
+      removal: AbortSignal,
+    ) => Promise<unknown>,
+  ): Promise<ImportOutcome> {
     using removal = settings.removal(selection);
     let built;
     try {
@@ -276,13 +310,15 @@ export abstract class AppleConnector {
     await history.install([destination]);
     installSQLiteCatalog(destination);
     try {
-      await new Pipeline({ connections: [connection], history }).run({
-        signal: removal.signal,
-      });
+      await load(
+        new Pipeline({ connections: [connection], history }),
+        removal.signal,
+      );
     } catch (error) {
       if (error instanceof ConnectorRemovedError) return { status: 'removed' };
-      // The history recorded what each copy did not load.
-      if (!(error instanceof PipelineError)) throw error;
+      // The history recorded what each copy did not load, as a PipelineError
+      // says, or why a watch stopped.
+      if (!(error instanceof AggregateError)) throw error;
     }
     return { status: 'imported' };
   }
