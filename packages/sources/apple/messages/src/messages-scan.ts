@@ -13,6 +13,7 @@ export class MessageSelection {
   readonly #attachments: ReadonlySet<string>;
   readonly #handles: ReadonlySet<string>;
 
+  // Reads each table once, row by row, keeping only the keys it selects.
   constructor(database: ChatDatabase, scope: ImportScope) {
     this.#chats = new Set(
       database
@@ -24,31 +25,36 @@ export class MessageSelection {
         )
         .map(({ guid }) => guid),
     );
-    const linked = new Set(
-      [...database.chatMessages(), ...database.recoverableMessages()]
-        .filter(({ chatGuid }) => this.#chats.has(chatGuid))
-        .map(({ messageGuid }) => messageGuid),
-    );
-    const messages = database.messages().filter((message) => {
+    const linked = new Set<string>();
+    for (const links of [
+      database.chatMessages(),
+      database.recoverableMessages(),
+    ])
+      for (const { chatGuid, messageGuid } of links)
+        if (this.#chats.has(chatGuid)) linked.add(messageGuid);
+    const messages = new Set<string>();
+    const handles = new Set<string>();
+    for (const message of database.messages()) {
       const { date } = message.values;
-      return (
-        ((scope.collectionIds === undefined &&
-          scope.accountIds === undefined) ||
-          linked.has(message.guid)) &&
-        withinDates(scope, date instanceof Date ? date.toISOString() : null)
+      const inChats =
+        (scope.collectionIds === undefined && scope.accountIds === undefined) ||
+        linked.has(message.guid);
+      const inDates = withinDates(
+        scope,
+        date instanceof Date ? date.toISOString() : null,
       );
-    });
-    this.#messages = new Set(messages.map(({ guid }) => guid));
+      if (!inChats || !inDates) continue;
+      messages.add(message.guid);
+      for (const handle of [message.handle, message.otherHandle])
+        if (handle !== null) handles.add(handleKey(handle.id, handle.service));
+    }
+    this.#messages = messages;
     this.#attachments = new Set(
       database
         .messageAttachments()
         .filter(({ messageGuid }) => this.#messages.has(messageGuid))
         .map(({ attachmentGuid }) => attachmentGuid),
     );
-    const handles = new Set<string>();
-    for (const message of messages)
-      for (const handle of [message.handle, message.otherHandle])
-        if (handle !== null) handles.add(handleKey(handle.id, handle.service));
     for (const { chatGuid, handle } of database.chatHandles())
       if (this.#chats.has(chatGuid) && handle !== null)
         handles.add(handleKey(handle.id, handle.service));

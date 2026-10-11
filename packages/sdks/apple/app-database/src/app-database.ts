@@ -96,7 +96,7 @@ export class AppDatabase implements Disposable {
   iterate(
     sql: string,
     ...parameters: SQLInputValue[]
-  ): IterableIterator<Record<string, SQLOutputValue>> {
+  ): IteratorObject<Record<string, SQLOutputValue>, undefined> {
     return this.#database.prepare(sql).iterate(...parameters);
   }
 

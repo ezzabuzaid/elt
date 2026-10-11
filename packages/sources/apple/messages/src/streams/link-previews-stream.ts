@@ -62,7 +62,7 @@ export class LinkPreviewsStream extends AppleMessagesStream<MessagePayload> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(database: ChatDatabase): readonly MessagePayload[] {
+  protected rows(database: ChatDatabase): Iterable<MessagePayload> {
     return database.payloads();
   }
 

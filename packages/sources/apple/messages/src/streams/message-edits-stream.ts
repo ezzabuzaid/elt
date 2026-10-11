@@ -51,7 +51,7 @@ export class MessageEditsStream extends AppleMessagesStream<MessageSummary> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(database: ChatDatabase): readonly MessageSummary[] {
+  protected rows(database: ChatDatabase): Iterable<MessageSummary> {
     return database.summaries();
   }
 

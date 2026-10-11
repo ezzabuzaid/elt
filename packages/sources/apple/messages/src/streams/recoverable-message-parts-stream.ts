@@ -38,7 +38,7 @@ export class RecoverableMessagePartsStream extends AppleMessagesStream<Recoverab
     required: Object.keys(properties),
   } as const;
 
-  protected rows(database: ChatDatabase): readonly RecoverablePartRow[] {
+  protected rows(database: ChatDatabase): Iterable<RecoverablePartRow> {
     return database.recoverableMessageParts();
   }
 

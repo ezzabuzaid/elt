@@ -162,8 +162,9 @@ const required = Object.fromEntries(
 // A read-only view of Messages' chat.db pinned to one moment: chat.db runs in
 // WAL mode, so a read transaction sees one snapshot however Messages writes.
 // Relationships resolve local ROWIDs to GUIDs, which survive Messages in
-// iCloud rebuilding chat.db. Hold it only while reading: an open read stops
-// Messages checkpointing its WAL.
+// iCloud rebuilding chat.db. Each read yields its rows one at a time, so a
+// reader holds no table whole however long the history. Hold it only while
+// reading: an open read stops Messages checkpointing its WAL.
 export class ChatDatabase implements Disposable {
   readonly #database: AppDatabase;
 
@@ -172,24 +173,26 @@ export class ChatDatabase implements Disposable {
     this.#database.requireColumns(required, MessagesSchemaError);
   }
 
-  chats(): ChatRow[] {
+  chats(): IteratorObject<ChatRow, undefined> {
     return this.#database
-      .all(`SELECT c.guid AS "@guid", ${select(chatTable, 'c')} FROM chat c`)
+      .iterate(
+        `SELECT c.guid AS "@guid", ${select(chatTable, 'c')} FROM chat c`,
+      )
       .map((row) => ({
         guid: guid(row['@guid'], 'A chat'),
         values: values(chatTable, row),
       }));
   }
 
-  handles(): ChatValues[] {
+  handles(): IteratorObject<ChatValues, undefined> {
     return this.#database
-      .all(`SELECT ${select(handleTable, 'h')} FROM handle h`)
+      .iterate(`SELECT ${select(handleTable, 'h')} FROM handle h`)
       .map((row) => values(handleTable, row));
   }
 
-  chatLookups(): ChatPartRow[] {
+  chatLookups(): IteratorObject<ChatPartRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT c.guid AS "@chatGuid", ${select(chatLookupTable, 'l')} FROM chat_lookup l JOIN chat c ON c.ROWID = l.chat`,
       )
       .map((row) => ({
@@ -198,9 +201,9 @@ export class ChatDatabase implements Disposable {
       }));
   }
 
-  chatServices(): ChatPartRow[] {
+  chatServices(): IteratorObject<ChatPartRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT c.guid AS "@chatGuid", ${select(chatServiceTable, 's')} FROM chat_service s JOIN chat c ON c.ROWID = s.chat`,
       )
       .map((row) => ({
@@ -209,9 +212,9 @@ export class ChatDatabase implements Disposable {
       }));
   }
 
-  chatHandles(): ChatHandleRow[] {
+  chatHandles(): IteratorObject<ChatHandleRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT c.guid AS "@chatGuid", h.id AS "@handleId", h.service AS "@handleService" FROM chat_handle_join j JOIN chat c ON c.ROWID = j.chat_id JOIN handle h ON h.ROWID = j.handle_id',
       )
       .map((row) => ({
@@ -220,9 +223,9 @@ export class ChatDatabase implements Disposable {
       }));
   }
 
-  messages(): Message[] {
+  messages(): IteratorObject<Message, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT m.guid AS "@guid", h.id AS "@handleId", h.service AS "@handleService", o.id AS "@otherHandleId", o.service AS "@otherHandleService", ${select(messageTable, 'm')} FROM message m LEFT JOIN handle h ON h.ROWID = m.handle_id LEFT JOIN handle o ON o.ROWID = m.other_handle`,
       )
       .map(
@@ -236,23 +239,23 @@ export class ChatDatabase implements Disposable {
       );
   }
 
-  chatMessages(): ChatMessageRow[] {
+  chatMessages(): IteratorObject<ChatMessageRow, undefined> {
     return this.#links(
       chatMessageTable,
       'chat_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id',
     );
   }
 
-  recoverableMessages(): ChatMessageRow[] {
+  recoverableMessages(): IteratorObject<ChatMessageRow, undefined> {
     return this.#links(
       recoverableMessageTable,
       'chat_recoverable_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id',
     );
   }
 
-  recoverableMessageParts(): RecoverablePartRow[] {
+  recoverableMessageParts(): IteratorObject<RecoverablePartRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT c.guid AS "@chatGuid", m.guid AS "@messageGuid", p.part_index AS "@partIndex", ${select(recoverablePartTable, 'p')} FROM recoverable_message_part p JOIN chat c ON c.ROWID = p.chat_id JOIN message m ON m.ROWID = p.message_id`,
       )
       .map((row) => {
@@ -268,9 +271,9 @@ export class ChatDatabase implements Disposable {
       });
   }
 
-  attachments(): Attachment[] {
+  attachments(): IteratorObject<Attachment, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT a.guid AS "@guid", ${select(attachmentTable, 'a')} FROM attachment a`,
       )
       .map(
@@ -282,9 +285,9 @@ export class ChatDatabase implements Disposable {
       );
   }
 
-  messageAttachments(): MessageAttachmentRow[] {
+  messageAttachments(): IteratorObject<MessageAttachmentRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT m.guid AS "@messageGuid", a.guid AS "@attachmentGuid" FROM message_attachment_join j JOIN message m ON m.ROWID = j.message_id JOIN attachment a ON a.ROWID = j.attachment_id',
       )
       .map((row) => ({
@@ -295,9 +298,9 @@ export class ChatDatabase implements Disposable {
 
   // Messages whose payload_data is stored, the rich links among them decoded
   // only when asked.
-  payloads(): MessagePayload[] {
+  payloads(): IteratorObject<MessagePayload, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT m.guid AS "@guid", m.payload_data AS payload FROM message m WHERE m.payload_data IS NOT NULL',
       )
       .map(
@@ -308,9 +311,9 @@ export class ChatDatabase implements Disposable {
 
   // Messages whose message_summary_info is stored, their edit history decoded
   // only when asked.
-  summaries(): MessageSummary[] {
+  summaries(): IteratorObject<MessageSummary, undefined> {
     return this.#database
-      .all(
+      .iterate(
         'SELECT m.guid AS "@guid", m.message_summary_info AS summary FROM message m WHERE m.message_summary_info IS NOT NULL',
       )
       .map(
@@ -323,9 +326,12 @@ export class ChatDatabase implements Disposable {
     this.#database[Symbol.dispose]();
   }
 
-  #links(table: ChatTable, from: string): ChatMessageRow[] {
+  #links(
+    table: ChatTable,
+    from: string,
+  ): IteratorObject<ChatMessageRow, undefined> {
     return this.#database
-      .all(
+      .iterate(
         `SELECT c.guid AS "@chatGuid", m.guid AS "@messageGuid", ${select(table, 'j')} FROM ${from}`,
       )
       .map((row) => ({

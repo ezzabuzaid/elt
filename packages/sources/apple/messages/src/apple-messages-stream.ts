@@ -12,14 +12,16 @@ import type { MessageSelection, MessagesScan } from './messages-scan.ts';
 export type MessagesReader = {
   readonly name: string;
   describe(): Stream;
-  read(scan: MessagesScan): Promise<Record<string, unknown>[]>;
+  read(scan: MessagesScan): AsyncIterable<Record<string, unknown>>;
   file(record: Record<string, unknown>): string | null;
 };
 
 // A Messages stream: its description, and how its records come out of a
-// run's chat.db snapshot. Reading is the same for every stream: take the rows
-// the import scope keeps, project each into records, validate them against
-// the schema, so streams supply only those first two steps.
+// run's chat.db snapshot. Reading is the same for every stream: read one row,
+// keep it only if the import scope does, project it into records and validate
+// each against the schema, then read the next, so a pass holds one row however
+// long the history. Streams supply the rows, what the scope keeps and the
+// projection.
 export abstract class AppleMessagesStream<Row> {
   abstract readonly name: string;
   abstract readonly jsonSchema: {
@@ -43,13 +45,13 @@ export abstract class AppleMessagesStream<Row> {
     return this.#stream;
   }
 
-  async read(scan: MessagesScan): Promise<Record<string, unknown>[]> {
+  async *read(scan: MessagesScan): AsyncGenerator<Record<string, unknown>> {
     const { selection } = scan;
-    const rows = this.rows(scan.database).filter(
-      (row) => selection === null || this.accepts(row, selection),
-    );
-    const records = await Promise.all(rows.map((row) => this.records(row)));
-    return validateRecords(this, records.flat(), 'Messages');
+    for (const row of this.rows(scan.database)) {
+      if (selection !== null && !this.accepts(row, selection)) continue;
+      for (const record of await this.records(row))
+        yield* validateRecords(this, [record], 'Messages');
+    }
   }
 
   // The file a record carries, for streams that support file reads.
@@ -57,7 +59,7 @@ export abstract class AppleMessagesStream<Row> {
     return null;
   }
 
-  protected abstract rows(database: ChatDatabase): readonly Row[];
+  protected abstract rows(database: ChatDatabase): Iterable<Row>;
 
   // Whether an import scope keeps the row.
   protected abstract accepts(row: Row, selection: MessageSelection): boolean;

@@ -131,11 +131,14 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     const reader = readersByName.get(stream.name);
     if (reader === undefined)
       throw new TypeError(`Messages has no stream ${stream.name}`);
-    const records = await reader.read(scan);
+    const records = reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
         ? diffSnapshot(stream, records, state)
-        : records.map((data) => ({ stream: stream.name, data }));
+        : (async function* () {
+            for await (const data of records)
+              yield { stream: stream.name, data };
+          })();
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
         yield message;

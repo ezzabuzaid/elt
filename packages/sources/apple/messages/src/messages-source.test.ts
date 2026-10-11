@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import {
   Connection,
@@ -1134,4 +1135,107 @@ test('Messages reads as documented views joined on both handle keys and counted 
   );
   assert.equal(await readFile(files['att-local'], 'utf8'), 'attached words');
   assert.equal(files['att-offloaded'], null);
+});
+
+// One chat holding count messages, each with a body of about a kilobyte
+// archived as Messages archives one, a minute apart from 2025-01-01.
+const largeChatFixture = (directory: string, count: number) => {
+  const path = join(directory, 'chat.db');
+  using database = new DatabaseSync(path);
+  database.exec(chatSchema);
+  database.exec(`
+    INSERT INTO chat (ROWID, guid, chat_identifier, service_name) VALUES (1, 'iMessage;-;+15550100', '+15550100', 'iMessage');
+    INSERT INTO handle VALUES (1, '+15550100', 'US', 'iMessage', '5550100', 'person-1');
+    INSERT INTO chat_handle_join VALUES (1, 1);
+  `);
+  const message = database.prepare(
+    "INSERT INTO message (ROWID, guid, attributedBody, handle_id, date, service) VALUES (?, ?, ?, 1, ?, 'iMessage')",
+  );
+  const link = database.prepare(
+    'INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, ?)',
+  );
+  const start = Date.parse('2025-01-01T00:00:00.000Z');
+  database.exec('BEGIN');
+  for (let row = 1; row <= count; row++) {
+    message.run(
+      row,
+      `m-${row}`,
+      archivedText(`message ${row} `.padEnd(1000, '.')),
+      appleNanoseconds(new Date(start + row * 60_000).toISOString()),
+    );
+    link.run(row);
+  }
+  database.exec('COMMIT');
+  return path;
+};
+
+test('a Messages pass over a large chat.db holds one message at a time, so it loads in a small heap', async () => {
+  await using directory = await mkdtempDisposable(join(tmpdir(), 'messages-'));
+  const chat = largeChatFixture(directory.path, 60_000);
+  // The import as a host runs it, in a process whose heap is far smaller
+  // than the store: a pass that holds every message, every row it reads or
+  // every record it keeps at once runs out of it. The process loads the
+  // built source from this package's folder, where its dependencies resolve.
+  // Bodies live outside the JavaScript heap, so the cap measures the rows
+  // themselves; the pass itself needs about 20 MB.
+  const pass = `
+    const { Connection, Copy, Pipeline } = await import('@workspace/elt');
+    const { SQLiteCheckpointStore, SQLiteDestination } = await import('@workspace/elt-sqlite');
+    const { AppleMessagesSource } = await import(process.env.SOURCE);
+    const source = new AppleMessagesSource(process.env.CHAT, { startAt: process.env.SINCE });
+    const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
+    const { streams } = await source.discover();
+    await new Pipeline({
+      connections: [
+        new Connection({
+          name: 'messages',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({ path: process.env.OUT + '/checkpoints.sqlite' }),
+          steps: streams.map((stream) => new Copy(stream, destination.table('raw_' + stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          })),
+        }),
+      ],
+    }).run();
+  `;
+
+  const run = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=64', '--input-type=module', '-e', pass],
+    {
+      // The package's own folder, where its dependencies resolve.
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        ...process.env,
+        SOURCE: pathToFileURL(
+          join(import.meta.dirname, 'apple-messages-source.js'),
+        ).href,
+        CHAT: chat,
+        OUT: directory.path,
+        // The last 20,000 messages: the scope reads every message to choose.
+        SINCE: new Date(
+          Date.parse('2025-01-01T00:00:00.000Z') + 40_001 * 60_000,
+        ).toISOString(),
+      },
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+
+  // V8 names a heap limit it reached in the first lines it writes.
+  assert.equal(
+    run.status,
+    0,
+    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
+  );
+  using imported = new DatabaseSync(join(directory.path, 'data.sqlite'), {
+    readOnly: true,
+  });
+  assert.deepEqual(
+    { ...imported.prepare('SELECT count(*) AS n FROM raw_messages').get() },
+    { n: 20_000 },
+  );
 });

@@ -36,7 +36,7 @@ export class ChatsStream extends AppleMessagesStream<ChatRow> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(database: ChatDatabase): readonly ChatRow[] {
+  protected rows(database: ChatDatabase): Iterable<ChatRow> {
     return database.chats();
   }
 

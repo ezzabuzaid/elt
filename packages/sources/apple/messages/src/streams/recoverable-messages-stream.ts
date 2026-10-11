@@ -33,7 +33,7 @@ export class RecoverableMessagesStream extends AppleMessagesStream<ChatMessageRo
     required: Object.keys(properties),
   } as const;
 
-  protected rows(database: ChatDatabase): readonly ChatMessageRow[] {
+  protected rows(database: ChatDatabase): Iterable<ChatMessageRow> {
     return database.recoverableMessages();
   }
 

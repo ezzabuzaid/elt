@@ -44,7 +44,7 @@ export class AttachmentsStream extends AppleMessagesStream<Attachment> {
     required: Object.keys(properties),
   } as const;
 
-  protected rows(database: ChatDatabase): readonly Attachment[] {
+  protected rows(database: ChatDatabase): Iterable<Attachment> {
     return database.attachments();
   }
 
