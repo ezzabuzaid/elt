@@ -1734,6 +1734,71 @@ Checked live on 2026-10-06 against macOS 27.0 (26A428):
 
 Unverified: values of `emergencyMediaItems` and `saintDavidsCounts`. Both tables are empty here and are tested only against their declared shapes: emergency media exists only after media is shared during an emergency call, and Apple names neither the Saint Davids feature nor its type codes (`ZSAINT_DAVIDS_1` is 0 and `ZSAINT_DAVIDS_2` empty on every call here).
 
+## Apple Clock
+
+```sh
+npx nx run apple-cli:start -- setup --connector clock --sync
+npx nx run apple-cli:start -- sync --connector clock
+```
+
+Both Apple hosts discover `connector-apple-clock`, whose `ClockConnector` uses `AppleClockSource` from `@workspace/source-apple-clock/apple-clock-source`. Clock has no account, collection, date-range or attachment selection. The CLI imports all ten streams into its Clock `data.sqlite`; the plugin exposes the same connector in setup and native settings and follows its existing once-per-selection import policy. `Pipeline.watch()` is available to library callers; connecting Clock in the plugin does not start that watch.
+
+### Stores and access
+
+`@workspace/sdk-apple-clock/clock-store` reads three local stores without writing, launching Clock, or contacting a server:
+
+| Store                    | Location relative to the user's home                                                      | Streams                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| MobileTimer Core Data    | `Library/Group Containers/group.com.apple.mobiletimerd/local.sqlite`                      | alarms, timers, timer durations, sounds, calendar releases, makeup days, reports |
+| Clock city preferences   | `Library/Containers/com.apple.clock/Data/Library/Preferences/com.apple.mobiletimer.plist` | world clocks                                                                     |
+| mobiletimerd preferences | `Library/Preferences/com.apple.mobiletimerd.plist`                                        | stopwatches and laps                                                             |
+
+The SDK owns locations, read-only transactions, property-list/archive decoding, access and schema errors, and version probes. The source owns stream schemas, snapshot comparison, and which streams to refresh. One run reads only the selected stores. All database streams share one SQLite transaction, including WAL commits; the two preference files are separate snapshots. A failed store throws for its streams while the others continue. A missing database or unreadable file raises `ClockUnavailableError` and becomes a configuration failure. Missing required database columns raise `ClockSchemaError`; malformed plist values remain errors, never empty snapshots. A preferences domain with no saved cities or no stopwatch collection means no saved objects, but a missing file does not.
+
+Open Clock once to create its stores. macOS protects the database and city preferences; the host advertises Full Disk Access guidance if access fails. On macOS 27, a user-approved launchd probe outside the granted host received SQLite `authorization denied` for the database and a permission error for city preferences. The stopwatch preferences were readable in that same job. All three reads succeeded from the granted host. This verifies the access boundary on this Mac, without claiming Full Disk Access is the only grant macOS can use to authorize another app's data.
+
+### Streams and identities
+
+| Stream             | Stored facts and key                                                                                                                                                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `alarms`           | Native UUID; title, enabled, local hour/minute/date components, repeat bitmask, snooze settings, sleep flags, coordination/silent-mode/dismissal codes, fire/dismiss/snooze/modified dates, sound relationship, Siri context |
+| `timers`           | Native UUID; title, state code, duration in seconds, sound, URL, fire/dismiss/modified dates, saved fire-time anchor or remaining seconds, full keyed fire-time archive as JSON, Siri and timer contexts                     |
+| `timerDurations`   | Core Data row ID; recent/saved timer title and duration, favorite/latest/valid-recent flags, modification date and sound                                                                                                     |
+| `sounds`           | Core Data row ID; sound type, volume, tone and vibration identifiers, exact signed 64-bit media-library identifier                                                                                                           |
+| `calendarReleases` | Core Data row ID; regional calendar release region, year, release and check dates                                                                                                                                            |
+| `makeupDays`       | Core Data row ID; stored date, type code, calendar-release relationship                                                                                                                                                      |
+| `reports`          | Core Data row ID; stored date and Apple's concerns code, whose meaning is not assumed                                                                                                                                        |
+| `worldClocks`      | Saved list position; city identifier, names and country overrides, coordinates, time zone, country/language codes, presentation flags and stored type                                                                        |
+| `stopwatches`      | Native identifier; title, state code, saved current interval, offset, completed-lap total and start-date anchor                                                                                                              |
+| `stopwatchLaps`    | Stopwatch identifier plus zero-based position; each completed lap's stored duration in seconds                                                                                                                               |
+
+Alarms and timers use uppercase native UUIDs, decoded from their 16-byte fields. Related rows use exact text IDs; `soundId` and `calendarReleaseId` join their parent tables. World clocks use position because Clock permits repeated cities and ordering is part of the saved list. Lap positions belong to the current stopwatch; resetting it removes its laps.
+
+Dates are canonical UTC strings to six fractional digits. Both Core Data and native/archived plist dates retain their original seconds since 2001 before formatting; JavaScript's millisecond `Date` does not round away the fraction. `codec-plist` exposes `PlistDate.referenceSeconds` for consumers that need that precision while retaining normal `Date` behavior. Large media IDs are strings with `format: int64`. Optional values remain null; opaque Siri/timer context bytes are base64. `fireTime` preserves the original keyed archive as JSON, including its references and numeric `NS.time`.
+
+Raw codes are retained. The live alarm used Monday bit 0 and nine snooze minutes. Timer states observed were 1 stopped, 2 paused and 3 running; stopwatch states observed were 0 reset and 1 stopped. There is no invented countdown or elapsed-time value that changes merely because a reader runs again: running timers export their saved deadline, paused timers their saved remaining seconds, and stopwatches their stored anchors and intervals. World clocks export the saved city configuration, not the current displayed wall-clock time or sunrise/sunset calculations.
+
+### Changes, deletions and history
+
+Each stream supports full refresh and snapshot incremental. An incremental copy uses `append_dedup`, a checkpoint store, and the stream's own key, with no cursor field. It scans every selected stream's complete local contents, emits only changed/new rows, deletes vanished keys, and saves the new snapshot. Scan and checkpoint costs grow with stored rows; there is no sample, date window, cap or pagination assumption. A full refresh replaces its output with the current complete scan. Failures preserve the previous successful rows and checkpoint.
+
+Clock is primarily current state. Timer durations retain some history: deleting the probe from Recents set `validRecent` false while preserving its duration row with `latest` true. That row remains exported. Alarm/timer fire and dismiss dates describe the stored object, not a complete event log. Stopwatch preferences contain the current stopwatch and completed laps only; reset removed the lap, and no retained session history was found in a full inspection of the local stores. The colocated `analytics.sqlite` had the same model but every entity empty, with every `Z_PRIMARYKEY.Z_MAX` zero. It is not treated as an alternative history source. `ZAKCD*` entities belong to third-party AlarmKit alarms rather than Clock's own objects and are not included.
+
+A watch establishes version probes before its initial scan. Every second the database probe checks `PRAGMA data_version`, while preference probes compare inode, size and nanosecond modification time to catch atomic replacements. It emits only selected streams belonging to changed stores, then the pipeline rereads those streams. Aborting closes the interval and SQLite connection. No private daemon subscription is required.
+
+### Clock export probe
+
+Checked on 2026-10-11 with macOS 27.0 (26A428), Clock 1.1 (62):
+
+- Inspected Clock's scripting support, app intents, URL behavior, MobileTimer runtime declarations and `MobileTimer.mom`, both complete SQLite stores, and Clock/mobiletimerd preferences. Clock has no scripting dictionary (`sdef` error -192). The `MTAlarmManager`, `MTTimerManager` and `MTStopwatchManager` reads returned `NSCocoaErrorDomain` 4097 for their mobiletimerd services from an ordinary process; Clock carries a private mobiletimerd entitlement. App intents operate on objects but did not supply a complete history/read surface. Direct store reads were the working complete snapshot path.
+- Created an alarm, timer, city and stopwatch lap through Clock, preserving existing user objects. The real CLI imported 1 alarm, 2 timers (including its existing default timer), 1 timer-duration row, 4 sounds, 6 world clocks, 1 stopwatch and 1 lap, plus the three empty auxiliary streams. A second unchanged sync wrote/deleted zero rows. Editing the alarm title wrote exactly one alarm.
+- Removed the probe alarm, timer, city and lap through Clock and reset the originally empty stopwatch. The next CLI sync deleted the alarm, timer, city, lap and an unreferenced sound, and updated the reset stopwatch and invalidated duration. The following sync again wrote/deleted zero rows across all ten streams. Reader views and all ten saved checkpoints were inspected. The original five cities and stopped default timer remained. Clock retains the invalid recent duration internally after its visible removal.
+- Closed Clock and imported through the plugin's actual host classes, discovered connector and `importPending`, with temporary settings/output and native upstream paths. All ten streams succeeded; a second startup left the successful pass unchanged. The installed plugin's settings were not changed. The host's bundle/setup integration and native-settings suites also passed.
+- After explicit user approval, ran the three read-only store checks in a temporary launchd job outside the granted host. Database and city reads were denied; stopwatch preferences passed validation. The same checks succeeded from the granted host. The probe processes exited and the launchd job was removed; no privacy settings or native records were changed.
+- Tests use native-shaped synthetic stores through the public source and real Pipeline/SQLite destination for malformed/unavailable-store isolation, exact values, unchanged/update/delete behavior, repeated full refresh, and selective watch/cancellation. A separate read-only live test matches database and preference counts against this Mac and skips only where access is unavailable. See [the verification ledger](apple-clock-verification.md).
+
+Unverified populated data: `calendarReleases`, `makeupDays` and `reports` were empty across the complete stores, with no supported Clock operation in this environment to create those regional/diagnostic records. Their shapes and relationships come from Apple's shipped model and are tested with synthetic records. Historical stopwatch sessions and any private-API-only history remain unproven: neither a retained session store nor an accessible manager history API was found.
+
 ## Apple Notification Center
 
 ```ts
