@@ -6,6 +6,7 @@ import postgres from 'postgres';
 import { Eca, type Warehouse } from '@workspace/eca';
 
 import { EarlyMonthSpend } from './early-month-spend.ts';
+import { KeywordText } from './keyword-text.ts';
 import pipeline from './pipeline.ts';
 
 // Conditions read the marts as agent_reader, which can read nothing else.
@@ -36,9 +37,11 @@ const warehouse: Warehouse<postgres.Sql> = {
     }
   },
 };
-const eca = new Eca<postgres.Sql, { spent: number }>({ warehouse });
-const spend = { condition: new EarlyMonthSpend() };
-await eca.add(spend);
+const eca = new Eca<postgres.Sql, { spent: number } | { text: string }>({
+  warehouse,
+});
+await eca.add({ condition: new EarlyMonthSpend() });
+await eca.add({ condition: new KeywordText() });
 
 const stop = new AbortController();
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -47,15 +50,15 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 
 const run = promisify(execFile);
 for await (const match of eca.watch({ signal: stop.signal })) {
-  if (match.rule === spend) {
-    await run('/usr/bin/osascript', [
-      '-e',
-      'on run argv',
-      '-e',
-      'display notification (item 1 of argv) with title "Proactive"',
-      '-e',
-      'end run',
-      `You spent ${match.data.spent} JOD in the first 10 days of ${match.key}.`,
-    ]);
-  }
+  await run('/usr/bin/osascript', [
+    '-e',
+    'on run argv',
+    '-e',
+    'display notification (item 1 of argv) with title "Proactive"',
+    '-e',
+    'end run',
+    'spent' in match.data
+      ? `You spent ${match.data.spent} JOD in the first 10 days of ${match.key}.`
+      : match.data.text,
+  ]);
 }
