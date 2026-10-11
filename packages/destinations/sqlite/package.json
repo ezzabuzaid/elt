@@ -11,6 +11,6 @@
   },
   "dependencies": {
     "@workspace/elt": "0.0.1",
-    "@zukhruf/mutex": "^0.3.11"
+    "@zukhruf/mutex": "^0.3.19"
   }
 }
