@@ -4,7 +4,7 @@ import {
   isBinaryPlist,
   isDictionary,
   plistJSON
-} from "../../chunks/chunk-QPPOHR2G.mjs";
+} from "../../chunks/chunk-CWCLYXDX.mjs";
 import {
   selected,
   withinDates
@@ -21,8 +21,8 @@ import {
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-QNQLFEII.mjs";
-import "../../chunks/chunk-YZBCNEVG.mjs";
+} from "../../chunks/chunk-G5BWDLSD.mjs";
+import "../../chunks/chunk-ORGWIAHM.mjs";
 import {
   Catalog,
   Source,
@@ -328,34 +328,34 @@ var ChatDatabase = class {
     this.#database.requireColumns(required, MessagesSchemaError);
   }
   chats() {
-    return this.#database.all(`SELECT c.guid AS "@guid", ${select(chatTable, "c")} FROM chat c`).map((row) => ({
+    return this.#database.iterate(`SELECT c.guid AS "@guid", ${select(chatTable, "c")} FROM chat c`).map((row) => ({
       guid: guid(row["@guid"], "A chat"),
       values: values(chatTable, row)
     }));
   }
   handles() {
-    return this.#database.all(`SELECT ${select(handleTable, "h")} FROM handle h`).map((row) => values(handleTable, row));
+    return this.#database.iterate(`SELECT ${select(handleTable, "h")} FROM handle h`).map((row) => values(handleTable, row));
   }
   chatLookups() {
-    return this.#database.all(`SELECT c.guid AS "@chatGuid", ${select(chatLookupTable, "l")} FROM chat_lookup l JOIN chat c ON c.ROWID = l.chat`).map((row) => ({
+    return this.#database.iterate(`SELECT c.guid AS "@chatGuid", ${select(chatLookupTable, "l")} FROM chat_lookup l JOIN chat c ON c.ROWID = l.chat`).map((row) => ({
       chatGuid: guid(row["@chatGuid"], "A chat lookup"),
       values: values(chatLookupTable, row)
     }));
   }
   chatServices() {
-    return this.#database.all(`SELECT c.guid AS "@chatGuid", ${select(chatServiceTable, "s")} FROM chat_service s JOIN chat c ON c.ROWID = s.chat`).map((row) => ({
+    return this.#database.iterate(`SELECT c.guid AS "@chatGuid", ${select(chatServiceTable, "s")} FROM chat_service s JOIN chat c ON c.ROWID = s.chat`).map((row) => ({
       chatGuid: guid(row["@chatGuid"], "A chat service"),
       values: values(chatServiceTable, row)
     }));
   }
   chatHandles() {
-    return this.#database.all('SELECT c.guid AS "@chatGuid", h.id AS "@handleId", h.service AS "@handleService" FROM chat_handle_join j JOIN chat c ON c.ROWID = j.chat_id JOIN handle h ON h.ROWID = j.handle_id').map((row) => ({
+    return this.#database.iterate('SELECT c.guid AS "@chatGuid", h.id AS "@handleId", h.service AS "@handleService" FROM chat_handle_join j JOIN chat c ON c.ROWID = j.chat_id JOIN handle h ON h.ROWID = j.handle_id').map((row) => ({
       chatGuid: guid(row["@chatGuid"], "A chat handle"),
       handle: linkedHandle(row["@handleId"], row["@handleService"])
     }));
   }
   messages() {
-    return this.#database.all(`SELECT m.guid AS "@guid", h.id AS "@handleId", h.service AS "@handleService", o.id AS "@otherHandleId", o.service AS "@otherHandleService", ${select(messageTable, "m")} FROM message m LEFT JOIN handle h ON h.ROWID = m.handle_id LEFT JOIN handle o ON o.ROWID = m.other_handle`).map((row) => new Message(guid(row["@guid"], "A message"), handleKey(row["@handleId"], row["@handleService"]), handleKey(row["@otherHandleId"], row["@otherHandleService"]), values(messageTable, row)));
+    return this.#database.iterate(`SELECT m.guid AS "@guid", h.id AS "@handleId", h.service AS "@handleService", o.id AS "@otherHandleId", o.service AS "@otherHandleService", ${select(messageTable, "m")} FROM message m LEFT JOIN handle h ON h.ROWID = m.handle_id LEFT JOIN handle o ON o.ROWID = m.other_handle`).map((row) => new Message(guid(row["@guid"], "A message"), handleKey(row["@handleId"], row["@handleService"]), handleKey(row["@otherHandleId"], row["@otherHandleService"]), values(messageTable, row)));
   }
   chatMessages() {
     return this.#links(chatMessageTable, "chat_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id");
@@ -364,7 +364,7 @@ var ChatDatabase = class {
     return this.#links(recoverableMessageTable, "chat_recoverable_message_join j JOIN chat c ON c.ROWID = j.chat_id JOIN message m ON m.ROWID = j.message_id");
   }
   recoverableMessageParts() {
-    return this.#database.all(`SELECT c.guid AS "@chatGuid", m.guid AS "@messageGuid", p.part_index AS "@partIndex", ${select(recoverablePartTable, "p")} FROM recoverable_message_part p JOIN chat c ON c.ROWID = p.chat_id JOIN message m ON m.ROWID = p.message_id`).map((row) => {
+    return this.#database.iterate(`SELECT c.guid AS "@chatGuid", m.guid AS "@messageGuid", p.part_index AS "@partIndex", ${select(recoverablePartTable, "p")} FROM recoverable_message_part p JOIN chat c ON c.ROWID = p.chat_id JOIN message m ON m.ROWID = p.message_id`).map((row) => {
       const partIndex = row["@partIndex"];
       if (typeof partIndex !== "number")
         throw new TypeError("A recoverable message part has no part_index");
@@ -377,10 +377,10 @@ var ChatDatabase = class {
     });
   }
   attachments() {
-    return this.#database.all(`SELECT a.guid AS "@guid", ${select(attachmentTable, "a")} FROM attachment a`).map((row) => new Attachment(guid(row["@guid"], "An attachment"), values(attachmentTable, row)));
+    return this.#database.iterate(`SELECT a.guid AS "@guid", ${select(attachmentTable, "a")} FROM attachment a`).map((row) => new Attachment(guid(row["@guid"], "An attachment"), values(attachmentTable, row)));
   }
   messageAttachments() {
-    return this.#database.all('SELECT m.guid AS "@messageGuid", a.guid AS "@attachmentGuid" FROM message_attachment_join j JOIN message m ON m.ROWID = j.message_id JOIN attachment a ON a.ROWID = j.attachment_id').map((row) => ({
+    return this.#database.iterate('SELECT m.guid AS "@messageGuid", a.guid AS "@attachmentGuid" FROM message_attachment_join j JOIN message m ON m.ROWID = j.message_id JOIN attachment a ON a.ROWID = j.attachment_id').map((row) => ({
       messageGuid: guid(row["@messageGuid"], "A message attachment"),
       attachmentGuid: guid(row["@attachmentGuid"], "A message attachment")
     }));
@@ -388,18 +388,18 @@ var ChatDatabase = class {
   // Messages whose payload_data is stored, the rich links among them decoded
   // only when asked.
   payloads() {
-    return this.#database.all('SELECT m.guid AS "@guid", m.payload_data AS payload FROM message m WHERE m.payload_data IS NOT NULL').map((row) => new MessagePayload(guid(row["@guid"], "A message"), row.payload));
+    return this.#database.iterate('SELECT m.guid AS "@guid", m.payload_data AS payload FROM message m WHERE m.payload_data IS NOT NULL').map((row) => new MessagePayload(guid(row["@guid"], "A message"), row.payload));
   }
   // Messages whose message_summary_info is stored, their edit history decoded
   // only when asked.
   summaries() {
-    return this.#database.all('SELECT m.guid AS "@guid", m.message_summary_info AS summary FROM message m WHERE m.message_summary_info IS NOT NULL').map((row) => new MessageSummary(guid(row["@guid"], "A message"), row.summary));
+    return this.#database.iterate('SELECT m.guid AS "@guid", m.message_summary_info AS summary FROM message m WHERE m.message_summary_info IS NOT NULL').map((row) => new MessageSummary(guid(row["@guid"], "A message"), row.summary));
   }
   [Symbol.dispose]() {
     this.#database[Symbol.dispose]();
   }
   #links(table2, from) {
-    return this.#database.all(`SELECT c.guid AS "@chatGuid", m.guid AS "@messageGuid", ${select(table2, "j")} FROM ${from}`).map((row) => ({
+    return this.#database.iterate(`SELECT c.guid AS "@chatGuid", m.guid AS "@messageGuid", ${select(table2, "j")} FROM ${from}`).map((row) => ({
       chatGuid: guid(row["@chatGuid"], `A ${table2.name} row`),
       messageGuid: guid(row["@messageGuid"], `A ${table2.name} row`),
       values: values(table2, row)
@@ -425,20 +425,32 @@ var MessageSelection = class {
   #messages;
   #attachments;
   #handles;
+  // Reads each table once, row by row, keeping only the keys it selects.
   constructor(database, scope) {
     this.#chats = new Set(database.chats().filter(({ guid: guid2, values: values2 }) => selected(scope.collectionIds, guid2) && selected(scope.accountIds, values2.account_id)).map(({ guid: guid2 }) => guid2));
-    const linked = new Set([...database.chatMessages(), ...database.recoverableMessages()].filter(({ chatGuid: chatGuid2 }) => this.#chats.has(chatGuid2)).map(({ messageGuid: messageGuid2 }) => messageGuid2));
-    const messages = database.messages().filter((message) => {
-      const { date } = message.values;
-      return (scope.collectionIds === void 0 && scope.accountIds === void 0 || linked.has(message.guid)) && withinDates(scope, date instanceof Date ? date.toISOString() : null);
-    });
-    this.#messages = new Set(messages.map(({ guid: guid2 }) => guid2));
-    this.#attachments = new Set(database.messageAttachments().filter(({ messageGuid: messageGuid2 }) => this.#messages.has(messageGuid2)).map(({ attachmentGuid }) => attachmentGuid));
+    const linked = /* @__PURE__ */ new Set();
+    for (const links of [
+      database.chatMessages(),
+      database.recoverableMessages()
+    ])
+      for (const { chatGuid: chatGuid2, messageGuid: messageGuid2 } of links)
+        if (this.#chats.has(chatGuid2))
+          linked.add(messageGuid2);
+    const messages = /* @__PURE__ */ new Set();
     const handles = /* @__PURE__ */ new Set();
-    for (const message of messages)
+    for (const message of database.messages()) {
+      const { date } = message.values;
+      const inChats = scope.collectionIds === void 0 && scope.accountIds === void 0 || linked.has(message.guid);
+      const inDates = withinDates(scope, date instanceof Date ? date.toISOString() : null);
+      if (!inChats || !inDates)
+        continue;
+      messages.add(message.guid);
       for (const handle of [message.handle, message.otherHandle])
         if (handle !== null)
           handles.add(handleKey2(handle.id, handle.service));
+    }
+    this.#messages = messages;
+    this.#attachments = new Set(database.messageAttachments().filter(({ messageGuid: messageGuid2 }) => this.#messages.has(messageGuid2)).map(({ attachmentGuid }) => attachmentGuid));
     for (const { chatGuid: chatGuid2, handle } of database.chatHandles())
       if (this.#chats.has(chatGuid2) && handle !== null)
         handles.add(handleKey2(handle.id, handle.service));
@@ -492,11 +504,14 @@ var AppleMessagesStream = class {
     this.#stream ??= new Stream(this);
     return this.#stream;
   }
-  async read(scan) {
+  async *read(scan) {
     const { selection } = scan;
-    const rows = this.rows(scan.database).filter((row) => selection === null || this.accepts(row, selection));
-    const records = await Promise.all(rows.map((row) => this.records(row)));
-    return validateRecords(this, records.flat(), "Messages");
+    for (const row of this.rows(scan.database)) {
+      if (selection !== null && !this.accepts(row, selection))
+        continue;
+      for (const record of await this.records(row))
+        yield* validateRecords(this, [record], "Messages");
+    }
   }
   // The file a record carries, for streams that support file reads.
   file(_record) {
@@ -1200,8 +1215,11 @@ var AppleMessagesSource = class extends Source {
     const reader = readersByName.get(stream.name);
     if (reader === void 0)
       throw new TypeError(`Messages has no stream ${stream.name}`);
-    const records = await reader.read(scan);
-    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state) : records.map((data) => ({ stream: stream.name, data }));
+    const records = reader.read(scan);
+    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state) : (async function* () {
+      for await (const data of records)
+        yield { stream: stream.name, data };
+    })();
     for await (const message of messages) {
       if ("type" in message || configuration.fileReads.length === 0)
         yield message;

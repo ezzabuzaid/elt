@@ -149,26 +149,81 @@ function installSQLiteCatalog({ path }) {
 // packages/destinations/sqlite/dist/sqlite-checkpoint-store.js
 import { chmodSync } from "node:fs";
 import { resolve as resolve2 } from "node:path";
-import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 
-// node_modules/@zukhruf/mutex/dist/shared/until-aborted.js
+// node_modules/@zukhruf/async/dist/latch.js
+var Latch = class {
+  /** Holds the value in a box, so it never adopts a promise and never rejects, whatever `T` is. */
+  // eslint-disable-next-line zukhruf/no-promise-field -- A latch never rejects and is never replaced, so no hazard of the rule applies; it is the primitive the rule recommends.
+  #opened = Promise.withResolvers();
+  /**
+   * A later open changes nothing. A type that names a promise is refused: a
+   * wait would adopt the promise, and could then reject.
+   */
+  open(value) {
+    this.#opened.resolve({ value });
+  }
+  wait() {
+    return this.#opened.promise.then(({ value }) => value);
+  }
+};
+
+// node_modules/@zukhruf/async/dist/until-aborted.js
+import { addAbortListener } from "node:events";
 function untilAborted(promise, signal) {
   if (!signal)
     return promise;
   return new Promise((resolve4, reject) => {
-    const abort = () => reject(signal.reason);
-    if (signal.aborted)
-      return abort();
-    signal.addEventListener("abort", abort, { once: true });
+    const listening = addAbortListener(signal, () => reject(signal.reason));
     promise.then((value) => {
-      signal.removeEventListener("abort", abort);
+      listening[Symbol.dispose]();
       resolve4(value);
     }, (error) => {
-      signal.removeEventListener("abort", abort);
+      listening[Symbol.dispose]();
       reject(error);
     });
   });
 }
+
+// node_modules/@zukhruf/lease/dist/lease-lost-error.js
+var LeaseLostError = class extends Error {
+  subject;
+  constructor(subject, options) {
+    super(`Lost the lease on ${JSON.stringify(subject)}: another holder may have it now.`, options);
+    this.name = "LeaseLostError";
+    this.subject = subject;
+  }
+};
+
+// node_modules/@zukhruf/lease/dist/lease-controller.js
+var LeaseController = class {
+  #subject;
+  #lost = new AbortController();
+  /** Aborts once the lease ends, by a loss or by `end()`. */
+  #ended = new AbortController();
+  constructor(subject) {
+    this.#subject = subject;
+  }
+  get signal() {
+    return this.#lost.signal;
+  }
+  /**
+   * Another holder may have the right now. Aborts `signal` with a
+   * `LeaseLostError` that carries `cause`, when one is given. A lease is lost
+   * at most once, and never after it ended: a released right is not this
+   * holder's to lose.
+   */
+  lose(cause) {
+    if (this.#ended.signal.aborted)
+      return;
+    this.#ended.abort();
+    this.#lost.abort(new LeaseLostError(this.#subject, cause === void 0 ? void 0 : { cause }));
+  }
+  /** The holder released the lease. `signal` keeps its state, and a later `lose` does nothing. */
+  end() {
+    this.#ended.abort();
+  }
+};
 
 // node_modules/@zukhruf/mutex/dist/mutex/acquire-modes/wait-mode.js
 var WaitMode = class {
@@ -194,16 +249,6 @@ var Key = class {
   }
   run(task, { mode, signal } = {}) {
     return mode === void 0 ? this.#mutex.acquire(this.name, task, { mode: this.#mode, signal }) : this.#mutex.acquire(this.name, task, { mode, signal });
-  }
-};
-
-// node_modules/@zukhruf/mutex/dist/mutex/lock-lost-error.js
-var LockLostError = class extends Error {
-  key;
-  constructor(key, options) {
-    super(`Lost the lock on ${JSON.stringify(key)}: another holder may have been granted it.`, options);
-    this.name = "LockLostError";
-    this.key = key;
   }
 };
 
@@ -242,15 +287,15 @@ var Mutex = class {
       const handle = await this.#acquire(key, mode, signal);
       if (!handle)
         return gaveUp(key)[mode.outcome];
-      const held = __using(_stack, handle, true);
-      const { token, signal: lost } = held;
+      const held2 = __using(_stack, handle, true);
+      const { token, signal: lost } = held2;
       let value;
       try {
         value = await task({ token, signal: lost });
       } catch (error) {
         if (!lost.aborted || error === lost.reason)
           throw error;
-        throw new LockLostError(key, { cause: error });
+        throw new LeaseLostError(key, { cause: error });
       }
       if (lost.aborted)
         throw lost.reason;
@@ -284,17 +329,30 @@ async function giveBack(acquiring) {
 }
 
 // node_modules/@zukhruf/mutex/dist/mutex/lease.js
-async function leaseFor(key, held, tokens) {
+async function leaseFor(key, held2, tokens) {
+  var _stack = [];
   try {
+    const minting = __using(_stack, new AsyncDisposableStack(), true);
+    minting.use(held2);
     const token = await tokens.next(key);
+    minting.move();
+    const lease = new LeaseController(key);
     return {
       token,
-      signal: new AbortController().signal,
-      [Symbol.asyncDispose]: () => held[Symbol.asyncDispose]()
+      signal: lease.signal,
+      // Not a disposable stack: it would release the lock a turn later, and a
+      // coordinator that reads a release and then a look in one turn would
+      // answer that look from the lock it still holds.
+      [Symbol.asyncDispose]: () => {
+        lease.end();
+        return held2[Symbol.asyncDispose]();
+      }
     };
-  } catch (error) {
-    await held[Symbol.asyncDispose]();
-    throw error;
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    var _promise = __callDispose(_stack, _error, _hasError);
+    _promise && await _promise;
   }
 }
 
@@ -333,11 +391,19 @@ var Modes = {
   skipIfBusy: (options) => new SkipIfBusyMode(options)
 };
 
-// node_modules/@zukhruf/mutex/dist/fencing/fencing-token.js
-var FencingToken = class {
+// node_modules/@zukhruf/fencing/dist/fencing-token.js
+var FencingToken = class _FencingToken {
   value;
   constructor(value) {
     this.value = value;
+  }
+  /**
+   * Reads decimal digits, the text that `toString` writes, or returns null for
+   * any other text. `BigInt` alone would also accept `''`, `' 1'` and `'0x10'`,
+   * and a token is never negative.
+   */
+  static parse(text3) {
+    return /^\d+$/.test(text3) ? new _FencingToken(BigInt(text3)) : null;
   }
   isNewerThan(other) {
     return this.value > other.value;
@@ -347,7 +413,7 @@ var FencingToken = class {
   }
 };
 
-// node_modules/@zukhruf/mutex/dist/fencing/counter-token-source.js
+// node_modules/@zukhruf/fencing/dist/counter-token-source.js
 var CounterTokenSource = class {
   #last = 0n;
   async next(_key) {
@@ -356,25 +422,52 @@ var CounterTokenSource = class {
   }
 };
 
-// node_modules/@zukhruf/mutex/dist/fencing/file-token-source.js
+// node_modules/@zukhruf/fencing/dist/epoch-token-source.js
+var SEQUENCE_BITS = 32n;
+var EPOCH_LIMIT = 1n << 31n;
+var SEQUENCE_LIMIT = 1n << SEQUENCE_BITS;
+var EpochTokenSource = class {
+  #epoch;
+  #sequence = 0n;
+  constructor(epoch) {
+    if (epoch < 0n || epoch >= EPOCH_LIMIT) {
+      throw new RangeError(`Epoch ${epoch} is outside [0, ${EPOCH_LIMIT}).`);
+    }
+    this.#epoch = epoch;
+  }
+  async next(_key) {
+    this.#sequence++;
+    if (this.#sequence >= SEQUENCE_LIMIT) {
+      throw new RangeError(`Epoch ${this.#epoch} has no tokens left.`);
+    }
+    return new FencingToken(this.#epoch << SEQUENCE_BITS | this.#sequence);
+  }
+};
+
+// node_modules/@zukhruf/fencing/dist/file-token-source.js
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-// node_modules/@zukhruf/mutex/dist/shared/fs/durable-write.js
-import { randomUUID } from "node:crypto";
-import { open, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+// node_modules/@zukhruf/fs/dist/atomic-write.js
+import { rm, writeFile } from "node:fs/promises";
 
-// node_modules/@zukhruf/mutex/dist/shared/fs/errno.js
+// node_modules/@zukhruf/fs/dist/draft.js
+import { randomUUID } from "node:crypto";
+var draftOf = (path) => `${path}.${randomUUID()}.tmp`;
+var draftSuffixLength = draftOf("").length;
+
+// node_modules/@zukhruf/fs/dist/replace-file.js
+import { rename } from "node:fs/promises";
+
+// node_modules/@zukhruf/fs/dist/patiently.js
+import { setTimeout as delay } from "node:timers/promises";
+
+// node_modules/@zukhruf/fs/dist/errno.js
 function isErrno(error, code) {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-// node_modules/@zukhruf/mutex/dist/shared/fs/replace-file.js
-import { rename } from "node:fs/promises";
-
-// node_modules/@zukhruf/mutex/dist/shared/fs/patiently.js
-import { setTimeout as delay } from "node:timers/promises";
+// node_modules/@zukhruf/fs/dist/patiently.js
 var WINDOWS_PATIENCE = 1e3;
 function isRefusedForNow(error) {
   return process.platform === "win32" && ["EPERM", "EACCES", "EBUSY"].some((code) => isErrno(error, code));
@@ -392,21 +485,33 @@ async function patiently(operation) {
   }
 }
 
-// node_modules/@zukhruf/mutex/dist/shared/fs/replace-file.js
+// node_modules/@zukhruf/fs/dist/replace-file.js
 function replaceFile(draft, path) {
   return patiently(() => rename(draft, path));
 }
 
-// node_modules/@zukhruf/mutex/dist/shared/fs/durable-write.js
-var draftOf = (path) => `${path}.${randomUUID()}.tmp`;
-var draftSuffixLength = draftOf("").length;
+// node_modules/@zukhruf/fs/dist/atomic-write.js
+async function atomicWrite(path, content) {
+  const draft = draftOf(path);
+  try {
+    await writeFile(draft, content);
+    await replaceFile(draft, path);
+  } catch (error) {
+    await rm(draft, { force: true });
+    throw error;
+  }
+}
+
+// node_modules/@zukhruf/fs/dist/durable-write.js
+import { open, rm as rm2 } from "node:fs/promises";
+import { dirname } from "node:path";
 async function durableWrite(path, content) {
   const draft = draftOf(path);
   try {
     await writeSynced(draft, content);
     await replaceFile(draft, path);
   } catch (error) {
-    await rm(draft, { force: true });
+    await rm2(draft, { force: true });
     throw error;
   }
   await syncDirectory(dirname(path));
@@ -444,128 +549,102 @@ async function syncDirectory(directory) {
   }
 }
 
-// node_modules/@zukhruf/mutex/dist/shared/fs/safe-file-name.js
-import { createHash } from "node:crypto";
-var longestFileName = 255;
-var visibleStart = 32;
-function safeFileName(key, longestSuffix) {
-  if (key.isWellFormed()) {
-    const encoded = encode(key);
-    if (encoded.length + longestSuffix <= longestFileName)
-      return encoded;
+// node_modules/@zukhruf/fs/dist/file-lock.js
+import { existsSync } from "node:fs";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+var SQLITE_BUSY = 5;
+var SQLITE_CANTOPEN = 14;
+var held = /* @__PURE__ */ new Set();
+var FileLock = class _FileLock {
+  #path;
+  #database;
+  constructor(path, database) {
+    this.#path = path;
+    this.#database = database;
   }
-  const start = encode(key.toWellFormed()).slice(0, visibleStart).replace(/%[0-9A-F]?$/, "");
-  const digest = createHash("sha256").update(Buffer.from(key, "utf16le")).digest("hex");
-  return `${start}%%${digest}`;
-}
-function encode(key) {
-  return encodeURIComponent(key).replaceAll(".", "%2E");
-}
-
-// node_modules/@zukhruf/mutex/dist/fencing/file-token-source.js
-var FileTokenSource = class {
-  #directory;
-  constructor(directory) {
-    this.#directory = directory;
+  /** Opens the file, and creates it empty when it is absent. Takes no lock. */
+  static open(path) {
+    return new _FileLock(path, new DatabaseSync2(path));
   }
-  async next(key) {
-    await mkdir(this.#directory, { recursive: true });
-    const name = safeFileName(key, ".fence".length + draftSuffixLength);
-    const path = join(this.#directory, `${name}.fence`);
-    const token = await readCounter(path) + 1n;
-    await durableWrite(path, token.toString());
-    return new FencingToken(token);
-  }
-};
-async function readCounter(path) {
-  try {
-    return BigInt(await readFile(path, "utf8"));
-  } catch (error) {
-    if (isErrno(error, "ENOENT"))
-      return 0n;
-    throw error;
-  }
-}
-
-// node_modules/@zukhruf/mutex/dist/fencing/epoch-token-source.js
-var SEQUENCE_BITS = 32n;
-var EPOCH_LIMIT = 1n << 31n;
-var SEQUENCE_LIMIT = 1n << SEQUENCE_BITS;
-
-// node_modules/@zukhruf/mutex/dist/shared/latch.js
-var Latch = class {
-  #opened = Promise.withResolvers();
-  open() {
-    this.#opened.resolve();
-  }
-  wait() {
-    return this.#opened.promise;
-  }
-};
-
-// node_modules/@zukhruf/mutex/dist/lock-stores/memory/memory-store.js
-var MemoryStore = class {
-  /** For each key, the latch that the last caller in line opens when it releases. */
-  #lines = /* @__PURE__ */ new Map();
-  #tokens;
-  constructor({ tokens = new CounterTokenSource() } = {}) {
-    this.#tokens = tokens;
-  }
-  async acquire(key, { signal } = {}) {
-    signal?.throwIfAborted();
-    const previous = this.#lines.get(key);
-    const released = new Latch();
-    this.#lines.set(key, released);
-    const release = async () => {
-      released.open();
-      if (this.#lines.get(key) === released)
-        this.#lines.delete(key);
-    };
-    const turn = previous?.wait() ?? Promise.resolve();
+  /**
+   * Whether a handle holds the lock on the file at `path` now. It reads
+   * the file once, read-only, and never creates it. For that read it takes a
+   * shared lock, so a `tryLock` at that moment can return `false`. The answer
+   * can be stale as soon as it returns.
+   */
+  static check(path) {
+    let database;
     try {
-      await untilAborted(turn, signal);
+      database = new DatabaseSync2(path, { readOnly: true });
     } catch (error) {
-      void turn.then(release);
+      if (hasResultCode(error, SQLITE_CANTOPEN) && !existsSync(path)) {
+        return "missing";
+      }
       throw error;
     }
-    return leaseFor(key, { [Symbol.asyncDispose]: release }, this.#tokens);
+    try {
+      database.prepare("SELECT count(*) FROM sqlite_schema").get();
+      return "unlocked";
+    } catch (error) {
+      if (hasResultCode(error, SQLITE_BUSY))
+        return "locked";
+      throw error;
+    } finally {
+      database.close();
+    }
   }
-  async tryAcquire(key) {
-    if (this.#lines.has(key))
-      return void 0;
-    return this.acquire(key);
+  /** Takes the lock without waiting. Returns `false` when another handle holds it. */
+  tryLock() {
+    if (this.#database.isTransaction) {
+      throw new Error(`This handle holds the file lock ${JSON.stringify(this.#path)} already.`);
+    }
+    try {
+      this.#database.exec("PRAGMA journal_mode = MEMORY");
+      this.#database.exec("BEGIN EXCLUSIVE");
+    } catch (error) {
+      if (hasResultCode(error, SQLITE_BUSY))
+        return false;
+      throw error;
+    }
+    held.add(this.#database);
+    return true;
   }
-  /** The first caller in a key's line holds it, so a key with a line is held. */
-  async isHeld(key) {
-    return this.#lines.has(key);
+  /** Lets the lock go. The handle stays open for the next `tryLock`. */
+  unlock() {
+    if (!this.#database.isTransaction) {
+      throw new Error(`This handle does not hold the file lock ${JSON.stringify(this.#path)}.`);
+    }
+    this.#database.exec("ROLLBACK");
+    held.delete(this.#database);
+  }
+  /** Closes the handle. A lock that it holds goes with it. */
+  [Symbol.dispose]() {
+    held.delete(this.#database);
+    this.#database[Symbol.dispose]();
   }
 };
+function hasResultCode(error, code) {
+  return error instanceof Error && "errcode" in error && typeof error.errcode === "number" && (error.errcode & 255) === code;
+}
 
-// node_modules/@zukhruf/mutex/dist/shared/is-record.js
-var isRecord = (value) => typeof value === "object" && value !== null;
+// node_modules/@zukhruf/fs/dist/local-directory.js
+import { statfs } from "node:fs/promises";
+import { dirname as dirname2, resolve } from "node:path";
 
-// node_modules/@zukhruf/mutex/dist/local-directory/network-directory-error.js
+// node_modules/@zukhruf/fs/dist/network-directory-error.js
 var NetworkDirectoryError = class extends Error {
   directory;
   /** The network file system the directory is on, for example `NFS`. */
   fileSystem;
   constructor(directory, fileSystem) {
-    super(`The lock directory ${JSON.stringify(directory)} is on a network file system (${fileSystem}), where its locks are not shared reliably between machines. Use a local directory.`);
+    super(`The directory ${JSON.stringify(directory)} is on a network file system (${fileSystem}), where file locks are not shared reliably between machines. Use a local directory.`);
     this.name = "NetworkDirectoryError";
     this.directory = directory;
     this.fileSystem = fileSystem;
   }
 };
 
-// node_modules/@zukhruf/mutex/dist/lock-stores/file-system/file-lock-store.js
-import { mkdir as mkdir2 } from "node:fs/promises";
-import { join as join2 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
-import { setTimeout as delay2 } from "node:timers/promises";
-
-// node_modules/@zukhruf/mutex/dist/local-directory/local-directory.js
-import { statfs } from "node:fs/promises";
-import { dirname as dirname2, resolve } from "node:path";
+// node_modules/@zukhruf/fs/dist/local-directory.js
 var linuxNetworkFileSystems = /* @__PURE__ */ new Map([
   [0x6969n, "NFS"],
   [0x517bn, "SMB"],
@@ -618,20 +697,94 @@ function isUncPath(path) {
   return path.startsWith("\\\\");
 }
 
-// node_modules/@zukhruf/mutex/dist/shared/sqlite/is-busy.js
-var SQLITE_BUSY = 5;
-function isBusy(error) {
-  return error instanceof Error && "errcode" in error && typeof error.errcode === "number" && // The low byte is the primary result code, covering SQLITE_BUSY_* variants.
-  (error.errcode & 255) === SQLITE_BUSY;
+// node_modules/@zukhruf/fs/dist/safe-file-name.js
+import { createHash } from "node:crypto";
+var longestFileName = 255;
+var visibleStart = 32;
+function safeFileName(key, longestSuffix) {
+  if (key.isWellFormed()) {
+    const encoded = encode(key);
+    if (encoded.length + longestSuffix <= longestFileName)
+      return encoded;
+  }
+  const start = encode(key.toWellFormed()).slice(0, visibleStart).replace(/%[0-9A-F]?$/, "");
+  const digest = createHash("sha256").update(Buffer.from(key, "utf16le")).digest("hex");
+  return `${start}%%${digest}`;
+}
+function encode(key) {
+  return encodeURIComponent(key).replaceAll(".", "%2E");
 }
 
-// node_modules/@zukhruf/mutex/dist/shared/sqlite/is-not-a-database.js
-var SQLITE_NOTADB = 26;
-function isNotADatabase(error) {
-  return error instanceof Error && "errcode" in error && typeof error.errcode === "number" && (error.errcode & 255) === SQLITE_NOTADB;
+// node_modules/@zukhruf/fencing/dist/file-token-source.js
+var FileTokenSource = class {
+  #directory;
+  constructor(directory) {
+    this.#directory = directory;
+  }
+  async next(key) {
+    await mkdir(this.#directory, { recursive: true });
+    const name = safeFileName(key, ".fence".length + draftSuffixLength);
+    const path = join(this.#directory, `${name}.fence`);
+    const token = await readCounter(path) + 1n;
+    await durableWrite(path, token.toString());
+    return new FencingToken(token);
+  }
+};
+async function readCounter(path) {
+  try {
+    return BigInt(await readFile(path, "utf8"));
+  } catch (error) {
+    if (isErrno(error, "ENOENT"))
+      return 0n;
+    throw error;
+  }
 }
+
+// node_modules/@zukhruf/mutex/dist/lock-stores/memory/memory-store.js
+var MemoryStore = class {
+  /** For each key, the latch that the last caller in line opens when it releases. */
+  #lines = /* @__PURE__ */ new Map();
+  #tokens;
+  constructor({ tokens = new CounterTokenSource() } = {}) {
+    this.#tokens = tokens;
+  }
+  async acquire(key, { signal } = {}) {
+    signal?.throwIfAborted();
+    const previous = this.#lines.get(key);
+    const released = new Latch();
+    this.#lines.set(key, released);
+    const release = async () => {
+      released.open();
+      if (this.#lines.get(key) === released)
+        this.#lines.delete(key);
+    };
+    const turn = previous?.wait() ?? Promise.resolve();
+    try {
+      await untilAborted(turn, signal);
+    } catch (error) {
+      void turn.then(release);
+      throw error;
+    }
+    return leaseFor(key, { [Symbol.asyncDispose]: release }, this.#tokens);
+  }
+  async tryAcquire(key) {
+    if (this.#lines.has(key))
+      return void 0;
+    return this.acquire(key);
+  }
+  /** The first caller in a key's line holds it, so a key with a line is held. */
+  async isHeld(key) {
+    return this.#lines.has(key);
+  }
+};
+
+// node_modules/@zukhruf/mutex/dist/shared/is-record.js
+var isRecord = (value) => typeof value === "object" && value !== null;
 
 // node_modules/@zukhruf/mutex/dist/lock-stores/file-system/file-lock-store.js
+import { mkdir as mkdir2 } from "node:fs/promises";
+import { join as join2 } from "node:path";
+import { setTimeout as delay2 } from "node:timers/promises";
 var FileLockStore = class {
   #directory;
   #pollInterval;
@@ -643,29 +796,25 @@ var FileLockStore = class {
   }
   async acquire(key, { signal } = {}) {
     signal?.throwIfAborted();
-    const held = await this.lock(await this.#prepare(key), signal);
-    return leaseFor(key, held, this.#tokens);
+    const held2 = await this.lock(await this.#prepare(key), signal);
+    return leaseFor(key, held2, this.#tokens);
   }
   async tryAcquire(key) {
-    const held = await this.tryLock(await this.#prepare(key));
-    return held && leaseFor(key, held, this.#tokens);
+    const held2 = await this.tryLock(await this.#prepare(key));
+    return held2 && leaseFor(key, held2, this.#tokens);
   }
   /** Makes no directory: a key in a directory that does not exist has no holder. */
   async isHeld(key) {
     await assertLocalDirectory(this.#directory);
     return this.isHeldAt(this.#pathFor(key));
   }
-  async poll(attempt, { signal } = {}) {
+  /** Stops between attempts once `signal` aborts, and then rejects with `signal.reason`. */
+  async poll(attempt, signal) {
     for (; ; ) {
       const result = await attempt();
       if (result !== void 0)
         return result;
-      try {
-        await delay2(this.#pollInterval, void 0, { signal });
-      } catch (error) {
-        signal?.throwIfAborted();
-        throw error;
-      }
+      await untilAborted(delay2(this.#pollInterval, void 0, { signal }), signal);
     }
   }
   /**
@@ -673,23 +822,20 @@ var FileLockStore = class {
    * same dead holder could each remove a lock the other had just taken. The
    * kernel holds this lock, so a waiter that dies while it evicts frees it at
    * once. Its file stays for the next eviction: deleting it while waiters use
-   * it would let two of them lock two different files. Nothing may open that
-   * file except through SQLite: closing any other handle to it drops this
-   * process's lock without a word.
+   * it would let two of them lock two different files.
    */
   async withReclaimLock(path, task) {
-    const reclaimPath = `${path}.reclaim`;
-    const reclaim = new DatabaseSync2(reclaimPath, { timeout: 0 });
+    var _stack = [];
     try {
+      const reclaimPath = `${path}.reclaim`;
+      const reclaim = __using(_stack, FileLock.open(reclaimPath));
       if (!claim(reclaim, reclaimPath))
         return;
-      try {
-        await task();
-      } finally {
-        reclaim.exec("ROLLBACK");
-      }
+      await task();
+    } catch (_) {
+      var _error = _, _hasError = true;
     } finally {
-      reclaim.close();
+      __callDispose(_stack, _error, _hasError);
     }
   }
   async #prepare(key) {
@@ -704,30 +850,21 @@ var FileLockStore = class {
 };
 function claim(reclaim, path) {
   try {
-    reclaim.exec("PRAGMA journal_mode = MEMORY");
-    reclaim.exec("BEGIN EXCLUSIVE");
-    return true;
+    return reclaim.tryLock();
   } catch (error) {
-    if (isBusy(error))
-      return false;
     if (isNotADatabase(error)) {
       throw new Error(`The reclaim file ${JSON.stringify(path)} was left by an older version of @zukhruf/mutex. Stop the processes that run that version, then delete the file.`, { cause: error });
     }
     throw error;
   }
 }
-
-// node_modules/@zukhruf/mutex/dist/shared/fs/atomic-write.js
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { writeFile } from "node:fs/promises";
-async function atomicWrite(path, content) {
-  const draft = `${path}.${randomUUID2()}.tmp`;
-  await writeFile(draft, content);
-  await replaceFile(draft, path);
+var SQLITE_NOTADB = 26;
+function isNotADatabase(error) {
+  return error instanceof Error && "errcode" in error && typeof error.errcode === "number" && (error.errcode & 255) === SQLITE_NOTADB;
 }
 
 // node_modules/@zukhruf/mutex/dist/lock-stores/file-system/caller.js
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { hostname } from "node:os";
 var Caller = class _Caller {
   pid;
@@ -739,7 +876,7 @@ var Caller = class _Caller {
     this.id = id;
   }
   static current() {
-    return new _Caller(process.pid, hostname(), randomUUID3());
+    return new _Caller(process.pid, hostname(), randomUUID2());
   }
   static parse(serialized) {
     const parsed = JSON.parse(serialized);
@@ -754,24 +891,13 @@ var Caller = class _Caller {
 };
 
 // node_modules/@zukhruf/mutex/dist/lock-stores/file-system/presence.js
-import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
-import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
-
-// node_modules/@zukhruf/mutex/dist/shared/sqlite/is-cant-open.js
-var SQLITE_CANTOPEN = 14;
-function isCantOpen(error) {
-  return error instanceof Error && "errcode" in error && typeof error.errcode === "number" && (error.errcode & 255) === SQLITE_CANTOPEN;
-}
-
-// node_modules/@zukhruf/mutex/dist/lock-stores/file-system/presence.js
-var open2 = /* @__PURE__ */ new Set();
 var Presence = class _Presence {
   #path;
-  #database;
-  constructor(path, database) {
+  #lock;
+  constructor(path, lock) {
     this.#path = path;
-    this.#database = database;
+    this.#lock = lock;
   }
   /** The length of what `pathOf` adds to a record's path. */
   static suffixLength = _Presence.pathOf("", Caller.current()).length;
@@ -779,56 +905,40 @@ var Presence = class _Presence {
   static pathOf(record, caller) {
     return `${record}.${caller.id}.presence`;
   }
-  static claim(path) {
-    const database = new DatabaseSync3(path, { timeout: 0 });
+  /** Claims the presence of `caller`, whose record is at `record`. */
+  static claim(record, caller) {
+    var _stack = [];
     try {
-      database.exec("PRAGMA journal_mode = MEMORY");
-      database.exec("BEGIN EXCLUSIVE");
-    } catch (error) {
-      database.close();
-      throw error;
-    }
-    open2.add(database);
-    return new _Presence(path, database);
-  }
-  /**
-   * Whether the caller behind `path` still runs. Reading needs a lock that the
-   * caller's exclusive transaction refuses, and opening read-only never creates
-   * the file.
-   */
-  static check(path) {
-    let database;
-    try {
-      database = new DatabaseSync3(path, { readOnly: true, timeout: 0 });
-    } catch (error) {
-      if (isCantOpen(error) && !existsSync(path))
-        return "missing";
-      throw error;
-    }
-    try {
-      database.prepare("SELECT count(*) FROM sqlite_schema").get();
-      return "gone";
-    } catch (error) {
-      if (isBusy(error))
-        return "present";
-      throw error;
+      const path = _Presence.pathOf(record, caller);
+      const opened = __using(_stack, new DisposableStack());
+      const lock = opened.use(FileLock.open(path));
+      if (!lock.tryLock()) {
+        throw new Error(`The presence file ${JSON.stringify(path)} is locked already, but it belongs to one caller only. Another program opened it.`);
+      }
+      opened.move();
+      return new _Presence(path, lock);
+    } catch (_) {
+      var _error = _, _hasError = true;
     } finally {
-      database.close();
+      __callDispose(_stack, _error, _hasError);
     }
   }
   /**
    * Whether `caller`, whom the record at `record` named, still runs. A caller's
    * record goes before its presence file, so a missing presence file is a
-   * fault while `stillNamed` says the record names the caller, and means the
-   * caller `moved` on when it does not.
+   * fault while `readNamed` still reads the caller from the record, and means
+   * the caller `moved` on when it does not.
    */
-  static async judge(record, caller, stillNamed) {
+  static async judge(record, caller, readNamed) {
     const path = _Presence.pathOf(record, caller);
-    const state = _Presence.check(path);
-    if (state !== "missing")
-      return state;
-    if (await stillNamed())
+    const state = FileLock.check(path);
+    if (state === "locked")
+      return "present";
+    if (state === "unlocked")
+      return "gone";
+    if ((await readNamed())?.id === caller.id) {
       throw _Presence.missing(record, path);
+    }
     return "moved";
   }
   /** Whether the caller that `readNamed` reads from the record at `record` still runs. Writes nothing. */
@@ -837,7 +947,7 @@ var Presence = class _Presence {
       const caller = await readNamed();
       if (!caller)
         return false;
-      const state = await _Presence.judge(record, caller, async () => (await readNamed())?.id === caller.id);
+      const state = await _Presence.judge(record, caller, readNamed);
       if (state !== "moved")
         return state === "present";
     }
@@ -856,9 +966,7 @@ var Presence = class _Presence {
   }
   /** Lets the kernel lock go. The file stays for whoever removes the caller's record. */
   end() {
-    open2.delete(this.#database);
-    this.#database.exec("ROLLBACK");
-    this.#database.close();
+    this.#lock[Symbol.dispose]();
   }
   /**
    * Removes the caller's record, then ends this presence and deletes its file.
@@ -882,11 +990,19 @@ var Presence = class _Presence {
   }
 };
 
-// node_modules/@zukhruf/mutex/dist/lock-stores/sqlite/sqlite-store.js
-import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+// node_modules/@zukhruf/mutex/dist/lock-stores/file-system/record-file.js
+import { readFileSync } from "node:fs";
+async function readRecord(path) {
+  try {
+    return await patiently(async () => readFileSync(path, "utf8"));
+  } catch (error) {
+    if (isErrno(error, "ENOENT"))
+      return void 0;
+    throw error;
+  }
+}
 
 // node_modules/@zukhruf/mutex/dist/lock-stores/sqlite/holder-record.js
-import { readFileSync } from "node:fs";
 import { mkdir as mkdir3, readdir, unlink as unlink2 } from "node:fs/promises";
 import { basename, join as join3 } from "node:path";
 var HolderRecord = class {
@@ -901,19 +1017,24 @@ var HolderRecord = class {
    * names it, so a look never finds a record whose presence is still to come.
    */
   async announce() {
-    const me = Caller.current();
-    await mkdir3(this.#folder, { recursive: true });
-    const presence = Presence.claim(Presence.pathOf(this.#path, me));
+    var _stack = [];
     try {
+      const me = Caller.current();
+      await mkdir3(this.#folder, { recursive: true });
+      const announcing = __using(_stack, new AsyncDisposableStack(), true);
+      const presence = announcing.adopt(Presence.claim(this.#path, me), (claimed) => claimed.withdraw());
       await atomicWrite(this.#path, me.serialize());
-    } catch (error) {
-      await presence.withdraw();
-      throw error;
+      announcing.move();
+      await this.#clearEarlierHolders(me);
+      return {
+        [Symbol.asyncDispose]: () => presence.releaseAfter(() => patiently(() => unlink2(this.#path)))
+      };
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise = __callDispose(_stack, _error, _hasError);
+      _promise && await _promise;
     }
-    await this.#clearEarlierHolders(me);
-    return {
-      [Symbol.asyncDispose]: () => presence.releaseAfter(() => patiently(() => unlink2(this.#path)))
-    };
   }
   /** Whether the holder that the record names still runs. Writes nothing. */
   isPresent() {
@@ -934,14 +1055,9 @@ var HolderRecord = class {
     })));
   }
   async #read() {
-    let content;
-    try {
-      content = await patiently(async () => readFileSync(this.#path, "utf8"));
-    } catch (error) {
-      if (isErrno(error, "ENOENT"))
-        return void 0;
-      throw error;
-    }
+    const content = await readRecord(this.#path);
+    if (content === void 0)
+      return void 0;
     try {
       return Caller.parse(content);
     } catch (error) {
@@ -955,114 +1071,306 @@ var HolderRecord = class {
 // node_modules/@zukhruf/mutex/dist/lock-stores/sqlite/sqlite-store.js
 var SqliteStore = class extends FileLockStore {
   /**
-   * SQLite keeps the rollback journal of a key's database at `<path>-journal`.
-   * The holder folder `<path>.holder` is shorter, so a key keeps the file name
-   * that versions without the folder gave it.
+   * Published versions keep the rollback journal of a key's database at
+   * `<path>-journal`. New versions keep it in memory, but a key keeps the file
+   * name that those versions gave it, so both versions share its lock. The
+   * holder folder `<path>.holder` is shorter.
    */
   longestSuffix = "-journal".length;
   #inProcess = new MemoryStore();
   async acquire(key, options = {}) {
-    const turn = await this.#inProcess.acquire(key, options);
+    var _stack = [];
     try {
+      const turn = __using(_stack, new AsyncDisposableStack(), true);
+      turn.use(await this.#inProcess.acquire(key, options));
       return withTurn(await super.acquire(key, options), turn);
-    } catch (error) {
-      await turn[Symbol.asyncDispose]();
-      throw error;
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise = __callDispose(_stack, _error, _hasError);
+      _promise && await _promise;
     }
   }
   async tryAcquire(key) {
-    const turn = await this.#inProcess.tryAcquire(key);
-    if (!turn)
-      return void 0;
+    var _stack = [];
     try {
+      const turn = __using(_stack, new AsyncDisposableStack(), true);
+      const inProcess = await this.#inProcess.tryAcquire(key);
+      if (!inProcess)
+        return void 0;
+      turn.use(inProcess);
       const lease = await super.tryAcquire(key);
-      if (lease)
-        return withTurn(lease, turn);
-    } catch (error) {
-      await turn[Symbol.asyncDispose]();
-      throw error;
+      return lease && withTurn(lease, turn);
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise = __callDispose(_stack, _error, _hasError);
+      _promise && await _promise;
     }
-    await turn[Symbol.asyncDispose]();
-    return void 0;
   }
   async lock(path, signal) {
-    const database = new DatabaseSync4(path, { timeout: 0 });
+    var _stack = [];
     try {
-      await this.poll(async () => begin(database) ? true : void 0, {
-        signal
-      });
-    } catch (error) {
-      database.close();
-      throw error;
+      const held2 = __using(_stack, new AsyncDisposableStack(), true);
+      const lock = held2.use(FileLock.open(path));
+      await this.poll(async () => lock.tryLock() ? true : void 0, signal);
+      held2.use(await new HolderRecord(path).announce());
+      return held2.move();
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise = __callDispose(_stack, _error, _hasError);
+      _promise && await _promise;
     }
-    return holding(path, database);
   }
   async tryLock(path) {
-    const database = new DatabaseSync4(path, { timeout: 0 });
-    let begun;
+    var _stack = [];
     try {
-      begun = begin(database);
-    } catch (error) {
-      database.close();
-      throw error;
+      const held2 = __using(_stack, new AsyncDisposableStack(), true);
+      const lock = held2.use(FileLock.open(path));
+      if (!lock.tryLock())
+        return void 0;
+      held2.use(await new HolderRecord(path).announce());
+      return held2.move();
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise = __callDispose(_stack, _error, _hasError);
+      _promise && await _promise;
     }
-    if (begun)
-      return holding(path, database);
-    database.close();
-    return void 0;
   }
   isHeldAt(path) {
     return new HolderRecord(path).isPresent();
   }
 };
-function begin(database) {
-  try {
-    database.exec("BEGIN EXCLUSIVE");
-    return true;
-  } catch (error) {
-    if (isBusy(error))
-      return false;
-    throw error;
-  }
-}
-async function holding(path, database) {
-  const record = await new HolderRecord(path).announce().catch((error) => {
-    unlock(database);
-    throw error;
-  });
-  return {
-    [Symbol.asyncDispose]: async () => {
-      try {
-        await record[Symbol.asyncDispose]();
-      } finally {
-        unlock(database);
-      }
-    }
-  };
-}
-function unlock(database) {
-  try {
-    database.exec("ROLLBACK");
-  } finally {
-    database.close();
-  }
-}
 function withTurn(handle, turn) {
+  turn.use(handle);
+  const release = turn.move();
   return {
     token: handle.token,
     signal: handle.signal,
-    [Symbol.asyncDispose]: async () => {
-      try {
-        await handle[Symbol.asyncDispose]();
-      } finally {
-        await turn[Symbol.asyncDispose]();
-      }
-    }
+    [Symbol.asyncDispose]: () => release.disposeAsync()
   };
 }
 
-// node_modules/@zukhruf/mutex/dist/leader-election/leader-election.js
-import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
+// node_modules/@zukhruf/election/dist/leader-election.js
+import { setTimeout as delay3 } from "node:timers/promises";
+
+// node_modules/@zukhruf/election/dist/term.js
+var Term = class {
+  /** Higher than the epoch of each earlier term, so a newer leader can always outrank an older one. */
+  epoch;
+  /**
+   * True only when the term just before this one resigned clean: its leader
+   * left nothing to recover. False after a crash, a lost term, a resign that
+   * did not say it was clean, and for the first term.
+   */
+  afterCleanShutdown;
+  #steps;
+  #lease = new LeaseController("leadership");
+  /** Aborts once the term starts to end, by resign or by loss. */
+  #ending = new AbortController();
+  #ended = new Latch();
+  #watching = new DisposableStack();
+  constructor({ epoch, afterCleanShutdown }, steps) {
+    this.epoch = epoch;
+    this.afterCleanShutdown = afterCleanShutdown;
+    this.#steps = steps;
+    this.#watching.use(steps.watch((reason) => this.#lose(reason)));
+  }
+  /** Aborts with `LeaseLostError` when the term ends while its leader still runs. */
+  get signal() {
+    return this.#lease.signal;
+  }
+  /**
+   * Ends the term and gives the claim up. With `clean`, it first records a
+   * clean shutdown for the next term. A second call waits for the first, and
+   * its options do nothing. After a loss, it only waits until the claim's
+   * resources are free, records nothing, and never rejects.
+   */
+  async resign(options) {
+    if (!this.#ending.signal.aborted) {
+      this.#ending.abort();
+      this.#lease.end();
+      this.#ended.open(await this.#giveUp(options?.clean === true));
+    }
+    const ending = await this.#ended.wait();
+    if (ending.failed)
+      throw ending.error;
+  }
+  [Symbol.asyncDispose]() {
+    return this.resign();
+  }
+  #lose(reason) {
+    this.#lease.lose(reason);
+    if (this.#ending.signal.aborted)
+      return;
+    this.#ending.abort();
+    void Promise.resolve().then(() => this.#freeLost()).then((ending) => this.#ended.open(ending));
+  }
+  async #giveUp(clean) {
+    try {
+      this.#watching.dispose();
+      if (clean)
+        await this.#steps.recordCleanShutdown();
+      await this.#steps.release();
+    } catch (error) {
+      await this.#steps.close().catch(() => {
+      });
+      return { failed: true, error };
+    }
+    try {
+      await this.#steps.close();
+      return { failed: false };
+    } catch (error) {
+      return { failed: true, error };
+    }
+  }
+  /**
+   * A lost claim is no longer this term's to give up: a release could undo
+   * the next leader's claim. Only its resources are freed, and a loss has no
+   * caller to report a failure to.
+   */
+  async #freeLost() {
+    try {
+      this.#watching.dispose();
+    } finally {
+      await this.#steps.close().catch(() => {
+      });
+    }
+    return { failed: false };
+  }
+};
+
+// node_modules/@zukhruf/election/dist/leader-election.js
+var LeaderElection = class {
+  #pollInterval;
+  constructor(pollInterval) {
+    this.#pollInterval = pollInterval;
+  }
+  /** Resolves with the new term, or `undefined` when another candidate still leads after `timeout`. */
+  async campaign({ timeout = 0, signal } = {}) {
+    signal?.throwIfAborted();
+    const deadline = performance.now() + timeout;
+    for (; ; ) {
+      const outcome = await this.#attempt(deadline, signal);
+      if (outcome !== "lost")
+        return outcome;
+    }
+  }
+  async #attempt(deadline, signal) {
+    const claim2 = await this.open(signal);
+    let won;
+    try {
+      for (; ; ) {
+        won = await this.tryClaim(claim2, signal);
+        if (won !== void 0)
+          break;
+        if (performance.now() >= deadline)
+          break;
+        await untilAborted(delay3(this.#pollInterval, void 0, { signal }), signal);
+      }
+    } catch (error) {
+      await this.close(claim2).catch(() => {
+      });
+      throw error;
+    }
+    if (won === void 0) {
+      await this.close(claim2);
+      return void 0;
+    }
+    return this.#begin(claim2, won, signal);
+  }
+  /** Hands a won claim to its term, or gives it up when the caller left meanwhile. */
+  async #begin(claim2, won, signal) {
+    let term;
+    try {
+      signal?.throwIfAborted();
+      term = new Term(won, {
+        watch: (lose) => this.watch(claim2, lose),
+        recordCleanShutdown: () => this.recordCleanShutdown(claim2, won.epoch),
+        release: () => this.release(claim2),
+        close: () => this.close(claim2)
+      });
+    } catch (error) {
+      await this.release(claim2).catch(() => {
+      });
+      await this.close(claim2).catch(() => {
+      });
+      throw error;
+    }
+    return term.signal.aborted ? "lost" : term;
+  }
+};
+
+// node_modules/@zukhruf/election/dist/sqlite/sqlite-election.js
+import { mkdir as mkdir4, readFile as readFile2, rm as rm3 } from "node:fs/promises";
+import { join as join4 } from "node:path";
+var SqliteElection = class extends LeaderElection {
+  #directory;
+  #claimPath;
+  #epochPath;
+  #cleanShutdownPath;
+  constructor({ directory, claimFile, epochFile, pollInterval = 10 }) {
+    super(pollInterval);
+    this.#directory = directory;
+    this.#claimPath = join4(directory, claimFile);
+    this.#epochPath = join4(directory, epochFile);
+    this.#cleanShutdownPath = `${this.#claimPath}.clean`;
+  }
+  async open() {
+    await assertLocalDirectory(this.#directory);
+    await mkdir4(this.#directory, { recursive: true });
+    return FileLock.open(this.#claimPath);
+  }
+  async tryClaim(claim2) {
+    if (!claim2.tryLock())
+      return void 0;
+    const previous = await readEpoch(this.#epochPath);
+    const afterCleanShutdown = await readCleanShutdown(this.#cleanShutdownPath) === previous.toString();
+    const epoch = previous + 1n;
+    await durableWrite(this.#epochPath, epoch.toString());
+    await rm3(this.#cleanShutdownPath, { force: true });
+    return { epoch, afterCleanShutdown };
+  }
+  /** The kernel holds the claim for as long as the process lives, so there is nothing to watch. */
+  watch() {
+    return { [Symbol.dispose]() {
+    } };
+  }
+  /**
+   * A lost note costs the next term only its recovery, so the note needs no
+   * sync to the disk: an atomic replace is enough, and a reader never sees a
+   * part of it.
+   */
+  async recordCleanShutdown(_claim, epoch) {
+    await atomicWrite(this.#cleanShutdownPath, epoch.toString());
+  }
+  async release(claim2) {
+    claim2.unlock();
+  }
+  async close(claim2) {
+    claim2[Symbol.dispose]();
+  }
+};
+async function readCleanShutdown(path) {
+  try {
+    return await readFile2(path, "utf8");
+  } catch (error) {
+    if (isErrno(error, "ENOENT"))
+      return void 0;
+    throw error;
+  }
+}
+async function readEpoch(path) {
+  try {
+    return BigInt(await readFile2(path, "utf8"));
+  } catch (error) {
+    if (isErrno(error, "ENOENT"))
+      return 0n;
+    throw error;
+  }
+}
 
 // packages/destinations/sqlite/dist/sqlite-checkpoint-store.js
 var SQLiteCheckpointStore = class extends CheckpointStore {
@@ -1084,18 +1392,18 @@ var SQLiteCheckpointStore = class extends CheckpointStore {
     const [id, ...rest] = ids;
     if (id === void 0)
       return this.#withFile(work);
-    const held = await this.#locks.acquire(id, () => this.session(rest, work), {
+    const held2 = await this.#locks.acquire(id, () => this.session(rest, work), {
       mode: Modes.skipIfBusy()
     });
-    if (!held.acquired)
+    if (!held2.acquired)
       throw new TypeError(`Checkpoint ${id} is in use by another run`);
-    return held.value;
+    return held2.value;
   }
   // Each save commits on its own, so it is durable when it resolves.
   async #withFile(work) {
     var _stack = [];
     try {
-      const database = __using(_stack, new DatabaseSync6(this.path, { timeout: 3e4 }));
+      const database = __using(_stack, new DatabaseSync3(this.path, { timeout: 3e4 }));
       chmodSync(this.path, 384);
       database.exec("CREATE TABLE IF NOT EXISTS checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL) STRICT");
       return await work({
@@ -1484,11 +1792,11 @@ var SQLiteColumns = class {
 
 // packages/destinations/sqlite/dist/sqlite-destination.js
 import { resolve as resolve3 } from "node:path";
-import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-writer.js
 import { createHash as createHash3 } from "node:crypto";
-import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-file-store.js
 import { createHash as createHash2 } from "node:crypto";
@@ -1562,16 +1870,6 @@ var SQLiteFileStore = class _SQLiteFileStore {
 };
 
 // packages/destinations/sqlite/dist/sqlite-writer.js
-function lockWriter(path) {
-  const lock = new DatabaseSync7(path === ":memory:" ? path : `${path}.writer-lock`);
-  try {
-    lock.exec("BEGIN EXCLUSIVE");
-    return { [Symbol.dispose]: () => lock.close() };
-  } catch (error) {
-    lock.close();
-    throw error;
-  }
-}
 var quote3 = (name) => `"${name.replaceAll('"', '""')}"`;
 var seq = '"_elt_seq"';
 var op = '"_elt_op"';
@@ -1646,7 +1944,7 @@ var SQLiteWriter = class extends Writer {
       throw new TargetOwnedError(this.table.name, String(owner), writer);
   }
   // Records the owner with the target's first commit; prepare refused any
-  // other, and the writer lock keeps one in until the load ends.
+  // other.
   own(database, writer) {
     this.writers(database);
     database.exec(`DELETE FROM "_elt_writers" WHERE "target" NOT IN (SELECT lower("name") FROM sqlite_schema WHERE "type" = 'table')`);
@@ -1674,8 +1972,7 @@ var SQLiteWriter = class extends Writer {
   async clear(writer, committed) {
     var _stack = [];
     try {
-      const _lock = __using(_stack, lockWriter(this.path));
-      const database = __using(_stack, new DatabaseSync7(this.path, { timeout: 3e4 }));
+      const database = __using(_stack, new DatabaseSync4(this.path, { timeout: 3e4 }));
       database.exec("BEGIN IMMEDIATE");
       try {
         this.writers(database);
@@ -1836,9 +2133,9 @@ var SQLiteWriter = class extends Writer {
       store: new SQLiteFileStore(database, this.table, column)
     }));
     let mode;
-    const open3 = () => mode === "reload" || mode === "continue";
-    const into = () => open3() ? hidden : this.table.quotedName;
-    const tables = () => [this.table.name, ...open3() ? [this.#hiddenName] : []].filter((table) => this.exists(database, identifiers.key(table)));
+    const open2 = () => mode === "reload" || mode === "continue";
+    const into = () => open2() ? hidden : this.table.quotedName;
+    const tables = () => [this.table.name, ...open2() ? [this.#hiddenName] : []].filter((table) => this.exists(database, identifiers.key(table)));
     const referenced = (column) => tables().map((table) => `SELECT ${column.quotedName} FROM ${quote3(table)} WHERE ${column.quotedName} IS NOT NULL`).join(" UNION ") || "SELECT NULL WHERE 0";
     const prune = () => {
       for (const { column, store } of stores)
@@ -1857,7 +2154,7 @@ var SQLiteWriter = class extends Writer {
       });
       if (mode !== "continue")
         database.exec(`DROP TABLE IF EXISTS ${hidden}`);
-      if (!open3() && this.table.readerView !== void 0)
+      if (!open2() && this.table.readerView !== void 0)
         this.#refuseReaderView(database, this.table.readerView, target === "stale");
       if (mode === "evolve") {
         this.#evolve(database, hidden);
@@ -1905,7 +2202,7 @@ var SQLiteWriter = class extends Writer {
     return {
       fresh,
       get reloading() {
-        return open3();
+        return open2();
       },
       values: this.values(database, tables),
       apply: async (operation) => {
@@ -1940,7 +2237,7 @@ var SQLiteWriter = class extends Writer {
       },
       commit: async () => {
         commit(() => {
-          if (open3()) {
+          if (open2()) {
             if (!opened) {
               database.exec(`DROP TABLE IF EXISTS ${hidden}`);
               database.exec(`CREATE TABLE ${this.table.definition(hidden)}`);
@@ -1964,11 +2261,11 @@ var SQLiteWriter = class extends Writer {
             prune();
           drop();
         });
-        opened = open3();
+        opened = open2();
         committed = true;
       },
       complete: async () => {
-        if (!open3())
+        if (!open2())
           return;
         commit(() => {
           if (this.table.readerView !== void 0)
@@ -2203,19 +2500,10 @@ var SQLiteDestination = class extends Destination {
   location(target) {
     return `${this.path}#${target.location}`;
   }
-  // The writer lock spans all commits and keeps a competing load out; each
-  // stream's commit is its own short transaction, so no transaction stays
-  // open while the sources read.
+  // Each stream's commit is its own short transaction, so no transaction
+  // stays open while the sources read.
   async load() {
-    const resources = new DisposableStack();
-    let database;
-    try {
-      resources.use(lockWriter(this.path));
-      database = resources.use(new DatabaseSync8(this.path, { timeout: 3e4 }));
-    } catch (error) {
-      resources.dispose();
-      throw error;
-    }
+    const database = new DatabaseSync5(this.path, { timeout: 3e4 });
     const loadedAt = (/* @__PURE__ */ new Date()).toISOString();
     return {
       prepare: async (configuration, target, binding) => this.createWriter(configuration, target).prepare(database, binding, loadedAt),
@@ -2224,7 +2512,7 @@ var SQLiteDestination = class extends Destination {
           if (database.isTransaction)
             database.exec("ROLLBACK");
         } finally {
-          resources.dispose();
+          database.close();
         }
       }
     };
@@ -2255,13 +2543,13 @@ var SQLiteDestination = class extends Destination {
 
 // packages/destinations/sqlite/dist/sqlite-passes.js
 import { existsSync as existsSync2 } from "node:fs";
-import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 var busyTimeout = 3e4;
 function readSQLite(path) {
   if (existsSync2(path)) {
     var _stack = [];
     try {
-      const recovery = __using(_stack, new DatabaseSync9(path, { timeout: busyTimeout }));
+      const recovery = __using(_stack, new DatabaseSync6(path, { timeout: busyTimeout }));
       recovery.prepare("SELECT count(*) FROM sqlite_schema").get();
     } catch (_) {
       var _error = _, _hasError = true;
@@ -2269,7 +2557,7 @@ function readSQLite(path) {
       __callDispose(_stack, _error, _hasError);
     }
   }
-  return new DatabaseSync9(path, { readOnly: true, timeout: busyTimeout });
+  return new DatabaseSync6(path, { readOnly: true, timeout: busyTimeout });
 }
 function readPassStatus(path) {
   var _stack = [];
@@ -2363,7 +2651,7 @@ function text2(value) {
 }
 
 // packages/destinations/sqlite/dist/sqlite-sync-history.js
-import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 
 // packages/destinations/sqlite/dist/sqlite-sync-history-schema.js
 var attempts = '"_elt_sync_attempts"';
@@ -2501,7 +2789,7 @@ function persistent({ path }) {
 function write(path, work) {
   var _stack = [];
   try {
-    const database = __using(_stack, new DatabaseSync10(path, { timeout: busyTimeout2 }));
+    const database = __using(_stack, new DatabaseSync7(path, { timeout: busyTimeout2 }));
     database.exec("BEGIN IMMEDIATE");
     try {
       const result = work(database);
@@ -2525,6 +2813,14 @@ function message(error) {
 export {
   publishSQLiteViews,
   installSQLiteCatalog,
+  Latch,
+  untilAborted,
+  LeaseLostError,
+  LeaseController,
+  FencingToken,
+  EpochTokenSource,
+  assertLocalDirectory,
+  SqliteElection,
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,

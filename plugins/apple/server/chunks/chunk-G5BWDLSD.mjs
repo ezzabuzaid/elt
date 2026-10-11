@@ -5,14 +5,13 @@ import {
   SQLiteDestination,
   installSQLiteCatalog,
   publishSQLiteViews
-} from "./chunk-YZBCNEVG.mjs";
+} from "./chunk-ORGWIAHM.mjs";
 import {
   Connection,
   Copy,
   CopyConfiguration,
   LocalFiles,
   Pipeline,
-  PipelineError,
   StreamStatus
 } from "./chunk-2UKXR4JG.mjs";
 import {
@@ -376,6 +375,20 @@ var AppleConnector = class {
   // connection failure kept in the settings and its outcome in the import's
   // sync history.
   async import(settings, selection, history) {
+    return this.#load(settings, selection, history, (pipeline, removal) => pipeline.run({ signal: removal }));
+  }
+  // Keeps this connector's import current: a pass at once, then one for each
+  // change its source reports, each recorded in the import's sync history.
+  // Ends once the user removes the connector, or once the source stops
+  // reporting changes; otherwise it lasts as long as the process.
+  async watch(settings, selection, history) {
+    return this.#load(settings, selection, history, async (pipeline, removal) => {
+      for await (const _pass of pipeline.watch({ signal: removal }))
+        ;
+      removal.throwIfAborted();
+    });
+  }
+  async #load(settings, selection, history, load) {
     var _stack = [];
     try {
       const removal = __using(_stack, settings.removal(selection));
@@ -391,13 +404,11 @@ var AppleConnector = class {
       await history.install([destination]);
       installSQLiteCatalog(destination);
       try {
-        await new Pipeline({ connections: [connection], history }).run({
-          signal: removal.signal
-        });
+        await load(new Pipeline({ connections: [connection], history }), removal.signal);
       } catch (error) {
         if (error instanceof ConnectorRemovedError)
           return { status: "removed" };
-        if (!(error instanceof PipelineError))
+        if (!(error instanceof AggregateError))
           throw error;
       }
       return { status: "imported" };

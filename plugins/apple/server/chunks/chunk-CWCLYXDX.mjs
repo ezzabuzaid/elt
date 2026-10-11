@@ -8,6 +8,13 @@ var PlistUid = class {
   }
 };
 var appleEpoch = Date.UTC(2001, 0, 1);
+var PlistDate = class extends Date {
+  referenceSeconds;
+  constructor(referenceSeconds) {
+    super(appleEpoch + referenceSeconds * 1e3);
+    this.referenceSeconds = referenceSeconds;
+  }
+};
 function isBinaryPlist(bytes) {
   return bytes.length >= 40 && new TextDecoder("latin1").decode(bytes.subarray(0, 8)) === "bplist00";
 }
@@ -76,7 +83,7 @@ function parseBinaryPlist(bytes) {
       case 2:
         return nibble === 2 ? view.getFloat32(at + 1) : view.getFloat64(at + 1);
       case 3:
-        return new Date(appleEpoch + view.getFloat64(at + 1) * 1e3);
+        return new PlistDate(view.getFloat64(at + 1));
       case 4: {
         const [length, start] = lengthAt(at);
         return new Uint8Array(bytes.subarray(start, start + length));
@@ -167,7 +174,7 @@ function decodeClass(className, value, resolve) {
     case "NSMutableData":
       return resolve(value["NS.data"] ?? null);
     case "NSDate":
-      return new Date(appleEpoch + Number(value["NS.time"]) * 1e3);
+      return new PlistDate(Number(value["NS.time"]));
     case "NSURL": {
       const relative = String(resolve(value["NS.relative"] ?? null));
       const base = resolve(value["NS.base"] ?? null);
@@ -217,6 +224,7 @@ async function readPlist(path) {
 }
 
 export {
+  PlistDate,
   isBinaryPlist,
   parseBinaryPlist,
   plistJSON,

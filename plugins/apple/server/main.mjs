@@ -39,11 +39,19 @@ import {
   AppleConnector,
   NewerLayoutError,
   Settings
-} from "./chunks/chunk-QNQLFEII.mjs";
+} from "./chunks/chunk-G5BWDLSD.mjs";
 import {
+  EpochTokenSource,
+  FencingToken,
+  Latch,
+  LeaseController,
+  LeaseLostError,
   SQLiteSyncHistory,
-  readPassStatus
-} from "./chunks/chunk-YZBCNEVG.mjs";
+  SqliteElection,
+  assertLocalDirectory,
+  readPassStatus,
+  untilAborted
+} from "./chunks/chunk-ORGWIAHM.mjs";
 import "./chunks/chunk-2UKXR4JG.mjs";
 import {
   __callDispose,
@@ -3003,7 +3011,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3030,7 +3038,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3860,7 +3868,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve3(baseURI, relativeURI, options) {
+    function resolve2(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4229,7 +4237,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve3,
+      resolve: resolve2,
       resolveComponent,
       equal,
       serialize,
@@ -7220,7 +7228,7 @@ var require_dist = __commonJS({
 
 // apps/apple/plugin/src/main.ts
 import { readFileSync as readFileSync2 } from "node:fs";
-import { join as join7 } from "node:path";
+import { join as join6 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -14706,7 +14714,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error) {
@@ -14723,7 +14731,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve2, reject) => {
       const earlyReject = (error) => {
         reject(error);
       };
@@ -14801,7 +14809,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve3(parseResult.data);
+            resolve2(parseResult.data);
           }
         } catch (error) {
           reject(error);
@@ -15062,12 +15070,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve2, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve3, interval);
+      const timeoutId = setTimeout(resolve2, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -16158,7 +16166,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -16822,12 +16830,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve3) => {
+    return new Promise((resolve2) => {
       const json = serializeMessage(message);
       if (this._stdout.write(json)) {
-        resolve3();
+        resolve2();
       } else {
-        this._stdout.once("drain", resolve3);
+        this._stdout.once("drain", resolve2);
       }
     });
   }
@@ -16975,286 +16983,61 @@ var userConnectors = join3(homedir(), "Library/Application Support/Context Compi
 
 // apps/apple/plugin/src/apple-plugin.ts
 import { existsSync as existsSync3, rmSync } from "node:fs";
-import { join as join6 } from "node:path";
-
-// node_modules/@zukhruf/async/dist/latch.js
-var Latch = class {
-  /** Holds the value in a box, so it never adopts a promise and never rejects, whatever `T` is. */
-  // eslint-disable-next-line zukhruf/no-promise-field -- A latch never rejects and is never replaced, so no hazard of the rule applies; it is the primitive the rule recommends.
-  #opened = Promise.withResolvers();
-  /**
-   * A later open changes nothing. A type that names a promise is refused: a
-   * wait would adopt the promise, and could then reject.
-   */
-  open(value) {
-    this.#opened.resolve({ value });
-  }
-  wait() {
-    return this.#opened.promise.then(({ value }) => value);
-  }
-};
-
-// node_modules/@zukhruf/async/dist/until-aborted.js
-import { addAbortListener } from "node:events";
-function untilAborted(promise, signal) {
-  if (!signal)
-    return promise;
-  return new Promise((resolve3, reject) => {
-    const listening = addAbortListener(signal, () => reject(signal.reason));
-    promise.then((value) => {
-      listening[Symbol.dispose]();
-      resolve3(value);
-    }, (error) => {
-      listening[Symbol.dispose]();
-      reject(error);
-    });
-  });
-}
-
-// node_modules/@zukhruf/lease/dist/lease-lost-error.js
-var LeaseLostError = class extends Error {
-  subject;
-  constructor(subject, options) {
-    super(`Lost the lease on ${JSON.stringify(subject)}: another holder may have it now.`, options);
-    this.name = "LeaseLostError";
-    this.subject = subject;
-  }
-};
-
-// node_modules/@zukhruf/lease/dist/lease-controller.js
-var LeaseController = class {
-  #subject;
-  #lost = new AbortController();
-  /** Aborts once the lease ends, by a loss or by `end()`. */
-  #ended = new AbortController();
-  constructor(subject) {
-    this.#subject = subject;
-  }
-  get signal() {
-    return this.#lost.signal;
-  }
-  /**
-   * Another holder may have the right now. Aborts `signal` with a
-   * `LeaseLostError` that carries `cause`, when one is given. A lease is lost
-   * at most once, and never after it ended: a released right is not this
-   * holder's to lose.
-   */
-  lose(cause) {
-    if (this.#ended.signal.aborted)
-      return;
-    this.#ended.abort();
-    this.#lost.abort(new LeaseLostError(this.#subject, cause === void 0 ? void 0 : { cause }));
-  }
-  /** The holder released the lease. `signal` keeps its state, and a later `lose` does nothing. */
-  end() {
-    this.#ended.abort();
-  }
-};
+import { join as join5 } from "node:path";
 
 // node_modules/@zukhruf/single-flight/dist/client/flight-client.js
-import { randomUUID as randomUUID2 } from "node:crypto";
-
-// node_modules/@zukhruf/fencing/dist/fencing-token.js
-var FencingToken = class _FencingToken {
-  value;
-  constructor(value) {
-    this.value = value;
-  }
-  /**
-   * Reads decimal digits, the text that `toString` writes, or returns null for
-   * any other text. `BigInt` alone would also accept `''`, `' 1'` and `'0x10'`,
-   * and a token is never negative.
-   */
-  static parse(text) {
-    return /^\d+$/.test(text) ? new _FencingToken(BigInt(text)) : null;
-  }
-  isNewerThan(other) {
-    return this.value > other.value;
-  }
-  toString() {
-    return this.value.toString();
-  }
-};
-
-// node_modules/@zukhruf/fencing/dist/epoch-token-source.js
-var SEQUENCE_BITS = 32n;
-var EPOCH_LIMIT = 1n << 31n;
-var SEQUENCE_LIMIT = 1n << SEQUENCE_BITS;
-var EpochTokenSource = class {
-  #epoch;
-  #sequence = 0n;
-  constructor(epoch) {
-    if (epoch < 0n || epoch >= EPOCH_LIMIT) {
-      throw new RangeError(`Epoch ${epoch} is outside [0, ${EPOCH_LIMIT}).`);
-    }
-    this.#epoch = epoch;
-  }
-  async next(_key) {
-    this.#sequence++;
-    if (this.#sequence >= SEQUENCE_LIMIT) {
-      throw new RangeError(`Epoch ${this.#epoch} has no tokens left.`);
-    }
-    return new FencingToken(this.#epoch << SEQUENCE_BITS | this.#sequence);
-  }
-};
-
-// node_modules/@zukhruf/fs/dist/draft.js
 import { randomUUID } from "node:crypto";
-var draftOf = (path) => `${path}.${randomUUID()}.tmp`;
-var draftSuffixLength = draftOf("").length;
 
-// node_modules/@zukhruf/fs/dist/replace-file.js
-import { rename } from "node:fs/promises";
+// node_modules/@zukhruf/single-flight/dist/shared/is-record.js
+var isRecord = (value) => typeof value === "object" && value !== null;
 
-// node_modules/@zukhruf/fs/dist/patiently.js
-import { setTimeout as delay } from "node:timers/promises";
-
-// node_modules/@zukhruf/fs/dist/errno.js
-function isErrno(error, code) {
-  return error instanceof Error && "code" in error && error.code === code;
+// node_modules/@zukhruf/single-flight/dist/protocol/flight-protocol.js
+var isToken = (value) => typeof value === "string" && FencingToken.parse(value) !== null;
+function isRequestEnvelope(message) {
+  return isRecord(message) && typeof message.op === "string" && typeof message.id === "string";
 }
-
-// node_modules/@zukhruf/fs/dist/patiently.js
-var WINDOWS_PATIENCE = 1e3;
-function isRefusedForNow(error) {
-  return process.platform === "win32" && ["EPERM", "EACCES", "EBUSY"].some((code) => isErrno(error, code));
-}
-async function patiently(operation) {
-  const started = performance.now();
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await operation();
-    } catch (error) {
-      if (!isRefusedForNow(error) || performance.now() - started > WINDOWS_PATIENCE)
-        throw error;
-      await delay(Math.min(5 * 2 ** attempt, 100));
-    }
+function isFlightRequest(request) {
+  switch (request.op) {
+    case "run":
+      return "key" in request && typeof request.key === "string" && (!("flight" in request) || isToken(request.flight));
+    case "land":
+      return "outcome" in request && isOutcome(request.outcome);
+    case "cancel":
+      return true;
+    case "reassert":
+      return "key" in request && typeof request.key === "string" && "token" in request && isToken(request.token);
+    default:
+      return false;
   }
 }
-
-// node_modules/@zukhruf/fs/dist/replace-file.js
-function replaceFile(draft, path) {
-  return patiently(() => rename(draft, path));
-}
-
-// node_modules/@zukhruf/fs/dist/durable-write.js
-import { open, rm } from "node:fs/promises";
-import { dirname } from "node:path";
-async function durableWrite(path, content) {
-  const draft = draftOf(path);
-  try {
-    await writeSynced(draft, content);
-    await replaceFile(draft, path);
-  } catch (error) {
-    await rm(draft, { force: true });
-    throw error;
-  }
-  await syncDirectory(dirname(path));
-}
-async function writeSynced(path, content) {
-  var _stack = [];
-  try {
-    const handle = __using(_stack, await open(path, "wx"), true);
-    await handle.writeFile(content);
-    await handle.sync();
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    var _promise = __callDispose(_stack, _error, _hasError);
-    _promise && await _promise;
+function isFlightResponse(message) {
+  if (!isRecord(message) || typeof message.id !== "string")
+    return false;
+  switch (message.op) {
+    case "lead":
+      return isToken(message.token);
+    case "joined":
+      return isToken(message.flight);
+    case "landed":
+      return isOutcome(message.outcome);
+    case "interrupted":
+    case "ack":
+    case "rejected":
+    case "unsupported":
+      return true;
+    default:
+      return false;
   }
 }
-async function syncDirectory(directory) {
-  var _stack = [];
-  try {
-    if (process.platform === "win32")
-      return;
-    const handle = __using(_stack, await open(directory, "r"), true);
-    try {
-      await handle.sync();
-    } catch (error) {
-      if (!isErrno(error, "EINVAL") && !isErrno(error, "ENOTSUP"))
-        throw error;
-    }
-  } catch (_) {
-    var _error = _, _hasError = true;
-  } finally {
-    var _promise = __callDispose(_stack, _error, _hasError);
-    _promise && await _promise;
-  }
+function isOutcome(value) {
+  if (!isRecord(value))
+    return false;
+  if ("value" in value)
+    return typeof value.value === "string";
+  return isFailure(value.failure);
 }
-
-// node_modules/@zukhruf/fs/dist/file-lock.js
-import { DatabaseSync } from "node:sqlite";
-
-// node_modules/@zukhruf/fs/dist/local-directory.js
-import { statfs } from "node:fs/promises";
-import { dirname as dirname2, resolve } from "node:path";
-
-// node_modules/@zukhruf/fs/dist/network-directory-error.js
-var NetworkDirectoryError = class extends Error {
-  directory;
-  /** The network file system the directory is on, for example `NFS`. */
-  fileSystem;
-  constructor(directory, fileSystem) {
-    super(`The directory ${JSON.stringify(directory)} is on a network file system (${fileSystem}), where file locks are not shared reliably between machines. Use a local directory.`);
-    this.name = "NetworkDirectoryError";
-    this.directory = directory;
-    this.fileSystem = fileSystem;
-  }
-};
-
-// node_modules/@zukhruf/fs/dist/local-directory.js
-var linuxNetworkFileSystems = /* @__PURE__ */ new Map([
-  [0x6969n, "NFS"],
-  [0x517bn, "SMB"],
-  [0xff534d42n, "CIFS"],
-  [0xfe534d42n, "SMB2"],
-  [0x00c36400n, "Ceph"],
-  [0x5346414fn, "AFS"],
-  [0x6b414653n, "kAFS"],
-  [0x73757245n, "Coda"],
-  [0x564cn, "NCP"],
-  [0x7461636fn, "OCFS2"],
-  [0x01161970n, "GFS2"],
-  [0x0bd00bd0n, "Lustre"],
-  [0x01021997n, "9p"]
-]);
-var local = { kind: "local" };
-var unknown2 = { kind: "unknown" };
-var judges = {
-  linux: (path) => statfsOfNearest(path).then(({ type }) => {
-    const fileSystem = linuxNetworkFileSystems.get(BigInt.asUintN(32, type));
-    return fileSystem ? { kind: "network", fileSystem } : local;
-  }, () => unknown2),
-  win32: async (path) => isUncPath(path) ? { kind: "network", fileSystem: "UNC share" } : local
-};
-var localDirectories = /* @__PURE__ */ new Set();
-async function assertLocalDirectory(directory) {
-  const path = resolve(directory);
-  if (localDirectories.has(path))
-    return;
-  const judgement = await judges[process.platform]?.(path) ?? local;
-  if (judgement.kind === "network") {
-    throw new NetworkDirectoryError(directory, judgement.fileSystem);
-  }
-  if (judgement.kind === "local")
-    localDirectories.add(path);
-}
-async function statfsOfNearest(path) {
-  try {
-    return await statfs(path, { bigint: true });
-  } catch (error) {
-    const parent = dirname2(path);
-    if (!isErrno(error, "ENOENT") || parent === path)
-      throw error;
-    return statfsOfNearest(parent);
-  }
-}
-function isUncPath(path) {
-  if (/^\\\\[?.]\\/.test(path))
-    return /^\\\\[?.]\\UNC\\/i.test(path);
-  return path.startsWith("\\\\");
+function isFailure(value) {
+  return isRecord(value) && typeof value.name === "string" && typeof value.message === "string" && (value.code === void 0 || typeof value.code === "string" || typeof value.code === "number");
 }
 
 // node_modules/@zukhruf/single-flight/dist/client/flight-client.js
@@ -17267,7 +17050,10 @@ var FlightClient = class {
   constructor(link) {
     this.#link = link;
     link.on("connected", () => this.#resume());
-    link.on("message", (response) => this.#receive(response));
+    link.on("message", (message) => {
+      if (isFlightResponse(message))
+        this.#receive(message);
+    });
     link.on("disconnected", () => this.#interrupt());
     link.on("failed", (error) => this.#fail(error));
   }
@@ -17276,14 +17062,14 @@ var FlightClient = class {
     if (this.#link.status === "closed") {
       throw new Error("This single flight is closed.");
     }
-    const id = randomUUID2();
-    const { promise, resolve: resolve3, reject } = Promise.withResolvers();
+    const id = randomUUID();
+    const { promise, resolve: resolve2, reject } = Promise.withResolvers();
     const pending = {
       key,
       onJoin,
       delivery: "queued",
       flight: void 0,
-      resolve: resolve3,
+      resolve: resolve2,
       reject
     };
     this.#pending.set(id, pending);
@@ -17305,7 +17091,7 @@ var FlightClient = class {
    */
   async close() {
     while ([...this.#held.values()].some(({ landing }) => landing)) {
-      await new Promise((resolve3) => this.#released.add(resolve3));
+      await new Promise((resolve2) => this.#released.add(resolve2));
     }
     const closing = this.#link.close();
     for (const id of [...this.#pending.keys()]) {
@@ -17662,69 +17448,27 @@ var Closed = class {
 };
 
 // node_modules/@zukhruf/single-flight/dist/connection/electing-connector.js
+import { once } from "node:events";
 import { connect } from "node:net";
-import { setTimeout as delay2 } from "node:timers/promises";
+import { setTimeout as delay } from "node:timers/promises";
 
-// node_modules/@zukhruf/single-flight/dist/shared/is-record.js
-var isRecord = (value) => typeof value === "object" && value !== null;
+// node_modules/@zukhruf/single-flight/dist/connection/json-line.js
+function jsonLine(message) {
+  return `${JSON.stringify(message)}
+`;
+}
 
-// node_modules/@zukhruf/single-flight/dist/protocol/flight-protocol.js
-var isToken = (value) => typeof value === "string" && FencingToken.parse(value) !== null;
-function isRequestEnvelope(message) {
-  return isRecord(message) && typeof message.op === "string" && typeof message.id === "string";
-}
-function isFlightRequest(message) {
-  if (!isRecord(message) || typeof message.id !== "string")
-    return false;
-  switch (message.op) {
-    case "run":
-      return typeof message.key === "string" && (message.flight === void 0 || isToken(message.flight));
-    case "land":
-      return isOutcome(message.outcome);
-    case "cancel":
-      return true;
-    case "reassert":
-      return typeof message.key === "string" && isToken(message.token);
-    default:
-      return false;
-  }
-}
-function isFlightResponse(message) {
-  if (!isRecord(message) || typeof message.id !== "string")
-    return false;
-  switch (message.op) {
-    case "lead":
-      return isToken(message.token);
-    case "joined":
-      return isToken(message.flight);
-    case "landed":
-      return isOutcome(message.outcome);
-    case "interrupted":
-    case "ack":
-    case "rejected":
-    case "unsupported":
-      return true;
-    default:
-      return false;
-  }
-}
-function isOutcome(value) {
-  if (!isRecord(value))
-    return false;
-  if ("value" in value)
-    return typeof value.value === "string";
-  return isFailure(value.failure);
-}
-function isFailure(value) {
-  return isRecord(value) && typeof value.name === "string" && typeof value.message === "string" && (value.code === void 0 || typeof value.code === "string" || typeof value.code === "number");
+// node_modules/@zukhruf/single-flight/dist/connection/leave-errors-to-close.js
+function leaveErrorsToClose(emitter) {
+  emitter.on("error", () => {
+  });
 }
 
 // node_modules/@zukhruf/single-flight/dist/connection/handshake.js
 var PROTOCOL = "single-flight";
 var PROTOCOL_VERSION = 1;
 async function greet(socket) {
-  socket.write(`${JSON.stringify({ op: "hello", protocol: PROTOCOL, version: PROTOCOL_VERSION })}
-`);
+  socket.write(jsonLine({ op: "hello", protocol: PROTOCOL, version: PROTOCOL_VERSION }));
   const answer = parse2(await readLine(socket));
   if (isRecord(answer) && answer.op === "welcome")
     return { kind: "welcome" };
@@ -17740,12 +17484,10 @@ async function welcome(socket) {
     return false;
   }
   if (hello.protocol === PROTOCOL && hello.version === PROTOCOL_VERSION) {
-    socket.write(`${JSON.stringify({ op: "welcome" })}
-`);
+    socket.write(jsonLine({ op: "welcome" }));
     return true;
   }
-  socket.end(`${JSON.stringify({ op: "refused", protocol: PROTOCOL, version: PROTOCOL_VERSION })}
-`, () => socket.destroy());
+  socket.end(jsonLine({ op: "refused", protocol: PROTOCOL, version: PROTOCOL_VERSION }), () => socket.destroy());
   return false;
 }
 function parse2(line) {
@@ -17759,7 +17501,7 @@ function parse2(line) {
 }
 var FIRST_LINE_LIMIT = 1024;
 function readLine(socket) {
-  const { promise, resolve: resolve3 } = Promise.withResolvers();
+  const { promise, resolve: resolve2 } = Promise.withResolvers();
   const chunks = [];
   let lineBytes = 0;
   const stop = () => {
@@ -17772,7 +17514,7 @@ function readLine(socket) {
     lineBytes += end === -1 ? chunk.length : end;
     if (lineBytes > FIRST_LINE_LIMIT) {
       stop();
-      resolve3(void 0);
+      resolve2(void 0);
       return;
     }
     if (end === -1) {
@@ -17783,14 +17525,13 @@ function readLine(socket) {
     const rest = chunk.subarray(end + 1);
     if (rest.length > 0)
       socket.unshift(rest);
-    resolve3(Buffer.concat([...chunks, chunk.subarray(0, end)]).toString("utf8"));
+    resolve2(Buffer.concat([...chunks, chunk.subarray(0, end)]).toString("utf8"));
   };
   const onClose = () => {
     socket.off("data", onData);
-    resolve3(void 0);
+    resolve2(void 0);
   };
-  socket.on("error", () => {
-  });
+  leaveErrorsToClose(socket);
   socket.on("data", onData);
   socket.once("close", onClose);
   return promise;
@@ -17813,36 +17554,29 @@ var ProtocolVersionError = class extends Error {
 // node_modules/@zukhruf/single-flight/dist/connection/socket-connection.js
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { createInterface } from "node:readline";
+import { promisify } from "node:util";
 var SocketConnection = class extends EventEmitter2 {
   #socket;
-  constructor(socket, isIncoming) {
+  /** A write after the socket closed reports the error through its callback. */
+  #write;
+  constructor(socket) {
     super();
     this.#socket = socket;
-    socket.on("error", () => {
-    });
-    createInterface({ input: socket, crlfDelay: Infinity }).on("line", (line) => {
+    this.#write = promisify(socket.write).bind(socket);
+    leaveErrorsToClose(socket);
+    const lines = createInterface({ input: socket, crlfDelay: Infinity });
+    lines.on("line", (line) => {
       try {
-        const parsed = JSON.parse(line);
-        if (isIncoming(parsed))
-          this.emit("message", parsed);
-        else
-          this.close();
+        this.emit("message", JSON.parse(line));
       } catch {
         this.close();
       }
-    }).on("error", () => {
     });
+    leaveErrorsToClose(lines);
     socket.once("close", () => this.emit("close"));
   }
   send(message) {
-    return new Promise((resolve3, reject) => {
-      if (!this.#socket.writable) {
-        reject(new Error("The socket is closed."));
-        return;
-      }
-      this.#socket.write(`${JSON.stringify(message)}
-`, (error) => error ? reject(error) : resolve3());
-    });
+    return this.#write(jsonLine(message));
   }
   ref() {
     this.#socket.ref();
@@ -17871,13 +17605,13 @@ var ElectingConnector = class {
         if (connection)
           return connection;
       }
-      const leadership = await this.#campaign(pollInterval, signal);
-      if (leadership) {
-        const own2 = await this.#coordinate(leadership, signal);
+      const term = await this.#campaign(pollInterval, signal);
+      if (term) {
+        const own2 = await this.#coordinate(term, signal);
         if (own2)
           return own2;
       } else {
-        await delay2(pollInterval, void 0, { signal });
+        await untilAborted(delay(pollInterval, void 0, { signal }), signal);
       }
     }
   }
@@ -17893,9 +17627,9 @@ var ElectingConnector = class {
     const { socketPath, pollInterval } = this.#options;
     const deadline = performance.now() + HANDSHAKE_PATIENCE;
     for (; ; ) {
-      const leadership = await this.#campaign(0, signal);
-      if (leadership)
-        return this.#coordinate(leadership, signal);
+      const term = await this.#campaign(0, signal);
+      if (term)
+        return this.#coordinate(term, signal);
       const again = await reachUnlessAborted(socketPath, signal);
       if (!again)
         return void 0;
@@ -17905,33 +17639,43 @@ var ElectingConnector = class {
       if (performance.now() >= deadline) {
         throw new ProtocolVersionError(PROTOCOL_VERSION, void 0);
       }
-      await delay2(pollInterval, void 0, { signal });
+      await untilAborted(delay(pollInterval, void 0, { signal }), signal);
     }
   }
-  /** Campaigns until `timeout`; a term won after `signal` aborted is resigned. */
+  /**
+   * Campaigns until `timeout`; a term won after `signal` aborted is resigned.
+   * The election gives up a term that it wins after the abort, but the abort
+   * can also land after the campaign resolved, before this step continues.
+   */
   async #campaign(timeout, signal) {
-    const leadership = await this.#options.election.campaign({ timeout });
+    const term = await this.#options.election.campaign({ timeout, signal });
     if (signal.aborted)
-      await leadership?.resign();
+      await term?.resign();
     signal.throwIfAborted();
-    return leadership;
+    return term;
   }
   /** Serves the term this process just won, and reaches its own server like any other process. */
-  async #coordinate(leadership, signal) {
+  async #coordinate(term, signal) {
+    var _stack = [];
     try {
-      await this.#options.serve(leadership);
-    } catch (error) {
-      await leadership.resign();
-      throw error;
-    }
-    const own2 = await reachUnlessAborted(this.#options.socketPath, signal);
-    if (!own2)
+      const serving = __using(_stack, new AsyncDisposableStack(), true);
+      serving.defer(() => term.resign());
+      await this.#options.serve(term);
+      serving.move();
+      const own2 = await reachUnlessAborted(this.#options.socketPath, signal);
+      if (!own2)
+        return void 0;
+      const greeting = await greetUnlessAborted(own2, signal);
+      if (greeting.kind === "welcome")
+        return flightConnection(own2);
+      own2.destroy();
       return void 0;
-    const greeting = await greetUnlessAborted(own2, signal);
-    if (greeting.kind === "welcome")
-      return flightConnection(own2);
-    own2.destroy();
-    return void 0;
+    } catch (_) {
+      var _error = _, _hasError = true;
+    } finally {
+      var _promise = __callDispose(_stack, _error, _hasError);
+      _promise && await _promise;
+    }
   }
   /** Uses the coordinator on `socket` if it speaks this protocol; `undefined` when it hung up on the hello. */
   async #follow(socket, signal) {
@@ -17946,7 +17690,7 @@ var ElectingConnector = class {
   }
 };
 function flightConnection(socket) {
-  return new SocketConnection(socket, isFlightResponse);
+  return new SocketConnection(socket);
 }
 async function reachUnlessAborted(socketPath, signal) {
   signal.throwIfAborted();
@@ -17956,27 +17700,39 @@ async function reachUnlessAborted(socketPath, signal) {
   signal.throwIfAborted();
   return socket;
 }
-function reach(socketPath) {
-  return new Promise((resolve3) => {
-    const socket = connect(socketPath);
-    const fail = () => {
-      socket.destroy();
-      resolve3(void 0);
-    };
-    socket.once("error", fail);
-    socket.once("connect", () => {
-      socket.off("error", fail);
-      resolve3(socket);
-    });
-  });
+async function reach(socketPath) {
+  const socket = connect(socketPath);
+  try {
+    await once(socket, "connect");
+    return socket;
+  } catch {
+    socket.destroy();
+    return void 0;
+  }
 }
 async function greetUnlessAborted(socket, signal) {
+  var _stack = [];
   try {
-    return await untilAborted(greet(socket), signal);
-  } catch (error) {
-    socket.destroy();
-    throw error;
+    const greeting = __using(_stack, new DisposableStack());
+    greeting.defer(() => socket.destroy());
+    const greeted = await untilAborted(greet(socket), signal);
+    greeting.move();
+    return greeted;
+  } catch (_) {
+    var _error = _, _hasError = true;
+  } finally {
+    __callDispose(_stack, _error, _hasError);
   }
+}
+
+// node_modules/@zukhruf/single-flight/dist/connection/flight-election.js
+function flightElection(directory, pollInterval) {
+  return new SqliteElection({
+    directory,
+    claimFile: "flight.lock",
+    epochFile: "flight.epoch",
+    pollInterval
+  });
 }
 
 // node_modules/@zukhruf/single-flight/dist/connection/local-directory-connector.js
@@ -17997,11 +17753,11 @@ var LocalDirectoryConnector = class {
 
 // node_modules/@zukhruf/single-flight/dist/connection/socket-path.js
 import { createHash } from "node:crypto";
-import { join as join4, resolve as resolve2 } from "node:path";
+import { join as join4, resolve } from "node:path";
 var SOCKET_PATH_LIMIT = 103;
 function socketPathFor(directory) {
   if (process.platform === "win32") {
-    const id = createHash("sha256").update(resolve2(directory).toLowerCase()).digest("hex").slice(0, 32);
+    const id = createHash("sha256").update(resolve(directory).toLowerCase()).digest("hex").slice(0, 32);
     return `\\\\.\\pipe\\single-flight-${id}`;
   }
   const socketPath = join4(directory, "flight.sock");
@@ -18012,7 +17768,8 @@ function socketPathFor(directory) {
 }
 
 // node_modules/@zukhruf/single-flight/dist/coordinator/flight-server.js
-import { unlink } from "node:fs/promises";
+import { addAbortListener, once as once2 } from "node:events";
+import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
 
 // node_modules/@zukhruf/single-flight/dist/coordinator/flight.js
@@ -18026,9 +17783,13 @@ var Flight = class {
     this.token = token;
     this.leader = leader;
   }
-  /** Whether this is the flight with the token `flight`, which a rejoin names. */
+  /** The flight's name on the wire: its token as decimal text, which a joined answer and a rejoin carry. */
+  get id() {
+    return this.token.toString();
+  }
+  /** Whether this is the flight with the id `flight`, which a rejoin names. */
   is(flight) {
-    return flight === this.token.toString();
+    return flight === this.id;
   }
   add(joiner) {
     this.#joiners.add(joiner);
@@ -18040,15 +17801,15 @@ var Flight = class {
   /** Pushes the outcome to every joiner, then tells the leader that it was handed over. */
   land(outcome) {
     for (const joiner of this.#joiners) {
-      joiner.end({ op: "landed", id: joiner.id, outcome });
+      joiner.end({ op: "landed", outcome });
     }
     this.#joiners.clear();
-    this.leader.end({ op: "ack", id: this.leader.id });
+    this.leader.end({ op: "ack" });
   }
   /** Ends without an outcome: every joiner learns that its flight is lost, and none runs the work again. */
   interrupt() {
     for (const joiner of this.#joiners) {
-      joiner.end({ op: "interrupted", id: joiner.id });
+      joiner.end({ op: "interrupted" });
     }
     this.#joiners.clear();
   }
@@ -18066,13 +17827,13 @@ var Party = class {
   get role() {
     return this.#role;
   }
+  /** Whether the party still waits: it has no answer yet, it was not withdrawn, and its connection is not gone. */
+  get waiting() {
+    return this.#role.kind === "waiting";
+  }
   lead(flight) {
     this.#role = { kind: "leading", flight };
-    this.#inbox.reply({
-      op: "lead",
-      id: this.id,
-      token: flight.token.toString()
-    });
+    this.#reply({ op: "lead", token: flight.token.toString() });
   }
   /** A leader from before a failover claimed its flight again; it already knows that it leads. */
   resume(flight) {
@@ -18080,20 +17841,19 @@ var Party = class {
   }
   join(flight) {
     this.#role = { kind: "joining", flight };
-    this.#inbox.reply({
-      op: "joined",
-      id: this.id,
-      flight: flight.token.toString()
-    });
+    this.#reply({ op: "joined", flight: flight.id });
   }
-  /** Answers for good with `response`, or ends without an answer when it was withdrawn or its connection is gone. */
-  end(response) {
+  /** Answers for good with `answer`, or ends without an answer when it was withdrawn or its connection is gone. */
+  end(answer) {
     if (this.#role.kind === "gone")
       return;
     this.#role = { kind: "gone" };
     this.#inbox.forget(this.id);
-    if (response)
-      this.#inbox.reply(response);
+    if (answer)
+      this.#reply(answer);
+  }
+  #reply(answer) {
+    this.#inbox.reply(Object.assign({ op: answer.op, id: this.id }, answer));
   }
 };
 
@@ -18105,7 +17865,11 @@ var Session = class {
   constructor(coordinator, connection) {
     this.#coordinator = coordinator;
     this.#phase = new Serving(connection);
-    connection.on("message", (request) => this.#handle(request));
+    connection.on("message", (message) => {
+      if (!isRequestEnvelope(message))
+        return;
+      this.#handle(message);
+    });
     connection.once("close", () => this.#end());
   }
   reply(response) {
@@ -18206,6 +17970,13 @@ var FlightCoordinator = class {
       this.#phase = coordinating;
     }
   }
+  /**
+   * Whether the next coordinator would find nothing to recover: no flight is
+   * in progress, and the grace window is over or there was none.
+   */
+  get leavesNothingToRecover() {
+    return this.#phase.leavesNothingToRecover;
+  }
   serve(connection) {
     new Session(this, connection);
   }
@@ -18234,9 +18005,12 @@ var Coordinating = class {
     this.#flights = flights;
     this.#tokens = tokens;
   }
+  get leavesNothingToRecover() {
+    return this.#flights.size === 0;
+  }
   async run(party, key) {
     const token = await this.#tokens.next(key);
-    if (party.role.kind !== "waiting")
+    if (!party.waiting)
       return;
     const inProgress = this.#flights.get(key);
     if (inProgress)
@@ -18247,15 +18021,15 @@ var Coordinating = class {
   }
   /** A rejoin joins only its own flight; any other answer could be a second run of the work. */
   async rejoin(party, key, flight) {
-    if (party.role.kind !== "waiting")
+    if (!party.waiting)
       return;
     const inProgress = this.#flights.get(key);
     if (inProgress?.is(flight))
       return inProgress.add(party);
-    party.end({ op: "interrupted", id: party.id });
+    party.end({ op: "interrupted" });
   }
   reassert(party) {
-    party.end({ op: "rejected", id: party.id });
+    party.end({ op: "rejected" });
   }
   land(flight, outcome) {
     this.#forget(flight);
@@ -18283,6 +18057,10 @@ var GraceWindow = class {
     this.#over = over;
     this.#next = next;
   }
+  /** A leader of the previous term may not have reasserted its flight yet, so this coordinator cannot know. */
+  get leavesNothingToRecover() {
+    return false;
+  }
   /** A fresh run leads or joins only once every leader had its chance to reassert. */
   async run(party, key) {
     await this.#over.wait();
@@ -18296,14 +18074,14 @@ var GraceWindow = class {
   async rejoin(party, key, flight) {
     const over = this.#over.wait().then(() => "over");
     for (; ; ) {
-      if (party.role.kind !== "waiting")
+      if (!party.waiting)
         return;
       const inProgress = this.#flights.get(key);
       if (inProgress?.is(flight))
         return inProgress.add(party);
       const ending = this.#endings.get(key);
-      if (ending?.token === flight) {
-        return party.end("landed" in ending ? { op: "landed", id: party.id, outcome: ending.landed } : { op: "interrupted", id: party.id });
+      if (ending?.flight.is(flight)) {
+        return party.end("landed" in ending ? { op: "landed", outcome: ending.landed } : { op: "interrupted" });
       }
       const woken = await Promise.race([over, this.#reassertionOf(key)]);
       if (woken === "over")
@@ -18314,10 +18092,10 @@ var GraceWindow = class {
   reassert(party, key, token) {
     const claimed = this.#flights.get(key);
     if (claimed && !token.isNewerThan(claimed.token)) {
-      return party.end({ op: "rejected", id: party.id });
+      return party.end({ op: "rejected" });
     }
     if (claimed) {
-      claimed.leader.end({ op: "rejected", id: claimed.leader.id });
+      claimed.leader.end({ op: "rejected" });
       this.interrupt(claimed);
     }
     const flight = new Flight(key, token, party);
@@ -18329,25 +18107,19 @@ var GraceWindow = class {
       wake();
   }
   land(flight, outcome) {
-    this.#endings.set(flight.key, {
-      token: flight.token.toString(),
-      landed: outcome
-    });
+    this.#endings.set(flight.key, { flight, landed: outcome });
     this.#next.land(flight, outcome);
   }
   interrupt(flight) {
-    this.#endings.set(flight.key, {
-      token: flight.token.toString(),
-      interrupted: true
-    });
+    this.#endings.set(flight.key, { flight, interrupted: true });
     this.#next.interrupt(flight);
   }
   #reassertionOf(key) {
-    const { promise, resolve: resolve3 } = Promise.withResolvers();
+    const { promise, resolve: resolve2 } = Promise.withResolvers();
     let wakers = this.#wakers.get(key);
     if (!wakers)
       this.#wakers.set(key, wakers = /* @__PURE__ */ new Set());
-    wakers.add(() => resolve3("reasserted"));
+    wakers.add(() => resolve2("reasserted"));
     return promise;
   }
 };
@@ -18356,21 +18128,22 @@ var GraceWindow = class {
 var FlightServer = class _FlightServer {
   #server;
   #connections;
-  #leadership;
-  constructor(server, connections, leadership) {
+  #coordinator;
+  #term;
+  #closeOnLoss;
+  constructor(server, connections, coordinator, term) {
     this.#server = server;
     this.#connections = connections;
-    this.#leadership = leadership;
+    this.#coordinator = coordinator;
+    this.#term = term;
+    this.#closeOnLoss = addAbortListener(term.signal, () => void this.close());
   }
-  static async start(socketPath, leadership, { graceWindow }) {
+  static async start(socketPath, term, { graceWindow }) {
     if (process.platform !== "win32") {
-      await unlink(socketPath).catch((error) => {
-        if (!isErrno(error, "ENOENT"))
-          throw error;
-      });
+      await rm(socketPath, { force: true });
     }
     const coordinator = new FlightCoordinator({
-      tokens: new EpochTokenSource(leadership.epoch),
+      tokens: new EpochTokenSource(term.epoch),
       graceWindow
     });
     const connections = /* @__PURE__ */ new Set();
@@ -18381,18 +18154,18 @@ var FlightServer = class _FlightServer {
       void welcome(socket).then((speaksOurs) => {
         if (!speaksOurs)
           return;
-        coordinator.serve(new SocketConnection(socket, isRequestEnvelope));
+        coordinator.serve(new SocketConnection(socket));
       });
     });
-    await new Promise((resolve3, reject) => {
-      server.once("error", reject);
-      server.listen(socketPath, () => {
-        server.off("error", reject);
-        resolve3();
-      });
-    });
+    server.listen(socketPath);
+    await once2(server, "listening");
     server.unref();
-    return new _FlightServer(server, connections, leadership);
+    const started = new _FlightServer(server, connections, coordinator, term);
+    if (term.signal.aborted) {
+      await started.close();
+      term.signal.throwIfAborted();
+    }
+    return started;
   }
   /**
    * Hands the term over. Ending every connection tells the other processes to
@@ -18401,107 +18174,21 @@ var FlightServer = class _FlightServer {
    * Each connection ends only after what was written to it, such as an
    * outcome for a joiner, is sent. The term ends only after the socket is
    * gone: in the other order, this close could remove a successor's socket file.
+   * The term resigns clean when the coordinator leaves nothing to recover, so
+   * the successor skips its grace window; a lost term records nothing.
+   * The first call removes the file at once, so a second caller finds it gone,
+   * and it too resolves only once the term ended as the first call ended it.
    */
   async close() {
-    const closed = new Promise((resolve3) => this.#server.close(() => resolve3()));
+    this.#closeOnLoss[Symbol.dispose]();
+    const closed = this.#server[Symbol.asyncDispose]();
+    const clean = this.#coordinator.leavesNothingToRecover;
     for (const socket of this.#connections)
       socket.destroySoon();
     await closed;
-    await this.#leadership.resign();
+    await this.#term.resign({ clean });
   }
 };
-
-// node_modules/@zukhruf/single-flight/dist/election/leader-election.js
-import { mkdir, readFile } from "node:fs/promises";
-import { join as join5 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
-import { setTimeout as delay3 } from "node:timers/promises";
-
-// node_modules/@zukhruf/single-flight/dist/shared/sqlite/is-busy.js
-var SQLITE_BUSY = 5;
-function isBusy(error) {
-  return error instanceof Error && "errcode" in error && typeof error.errcode === "number" && // The low byte is the primary result code, covering SQLITE_BUSY_* variants.
-  (error.errcode & 255) === SQLITE_BUSY;
-}
-
-// node_modules/@zukhruf/single-flight/dist/election/leadership.js
-var Leadership = class {
-  /** Grows with every term, so a newer coordinator's tokens always outrank an older one's. */
-  epoch;
-  #claim;
-  constructor(epoch, claim) {
-    this.epoch = epoch;
-    this.#claim = claim;
-  }
-  async resign() {
-    if (!this.#claim.isOpen)
-      return;
-    this.#claim.exec("ROLLBACK");
-    this.#claim.close();
-  }
-  [Symbol.asyncDispose]() {
-    return this.resign();
-  }
-};
-
-// node_modules/@zukhruf/single-flight/dist/election/leader-election.js
-var LeaderElection = class {
-  #directory;
-  #pollInterval;
-  constructor(directory, { pollInterval = 10 } = {}) {
-    this.#directory = directory;
-    this.#pollInterval = pollInterval;
-  }
-  /** Resolves with the new term, or `undefined` if another process still coordinates after `timeout`. */
-  async campaign({ timeout = 0 } = {}) {
-    await assertLocalDirectory(this.#directory);
-    await mkdir(this.#directory, { recursive: true });
-    const claim = new DatabaseSync2(join5(this.#directory, "flight.lock"), {
-      timeout: 0
-    });
-    const deadline = performance.now() + timeout;
-    try {
-      for (; ; ) {
-        if (this.#tryClaim(claim))
-          return new Leadership(await this.#nextEpoch(), claim);
-        if (performance.now() >= deadline)
-          break;
-        await delay3(this.#pollInterval);
-      }
-    } catch (error) {
-      claim.close();
-      throw error;
-    }
-    claim.close();
-    return void 0;
-  }
-  #tryClaim(claim) {
-    try {
-      claim.exec("BEGIN EXCLUSIVE");
-      return true;
-    } catch (error) {
-      if (isBusy(error))
-        return false;
-      throw error;
-    }
-  }
-  /** Safe without further locking: only the claim holder gets here. */
-  async #nextEpoch() {
-    const path = join5(this.#directory, "flight.epoch");
-    const epoch = await readEpoch(path) + 1n;
-    await durableWrite(path, epoch.toString());
-    return epoch;
-  }
-};
-async function readEpoch(path) {
-  try {
-    return BigInt(await readFile(path, "utf8"));
-  } catch (error) {
-    if (isErrno(error, "ENOENT"))
-      return 0n;
-    throw error;
-  }
-}
 
 // node_modules/@zukhruf/single-flight/dist/errors.js
 var FlightFailedError = class extends Error {
@@ -18543,17 +18230,17 @@ var SingleFlight = class {
     const socketPath = socketPathFor(directory);
     this.#client = new FlightClient(new ConnectionSupervisor(new LocalDirectoryConnector(directory, new ElectingConnector({
       socketPath,
-      election: new LeaderElection(directory, {
-        pollInterval: POLL_INTERVAL
-      }),
+      election: flightElection(directory, POLL_INTERVAL),
       pollInterval: POLL_INTERVAL,
-      serve: async (leadership) => {
+      serve: async (term) => {
         var _stack = [];
         try {
           const starting = __using(_stack, new AsyncDisposableStack(), true);
-          starting.adopt(await FlightServer.start(socketPath, leadership, {
-            // The first term of a directory has no flights to wait for.
-            graceWindow: leadership.epoch > 1n ? graceWindow : 0
+          starting.adopt(await FlightServer.start(socketPath, term, {
+            // The first term of a directory has no flights to wait for,
+            // and neither has a term after a clean shutdown: the
+            // coordinator before it left no flight in progress.
+            graceWindow: term.epoch > 1n && !term.afterCleanShutdown ? graceWindow : 0
           }), (started) => started.close());
           this.#servers.use(starting.move());
         } catch (_) {
@@ -18707,7 +18394,7 @@ var ApplePlugin = class {
   // deleted this version's folder, or that version rewrote the settings in a
   // layout this code predates.
   #open() {
-    if (!existsSync3(join6(this.install, ".codex-plugin/plugin.json")))
+    if (!existsSync3(join5(this.install, ".codex-plugin/plugin.json")))
       throw new PluginUpdatedError();
     try {
       return new Settings(this.directory);
@@ -19071,8 +18758,8 @@ async function settingsUpdate(plugin2, set) {
 // apps/apple/plugin/src/full-disk-access.ts
 import { execFile as execFileCallback } from "node:child_process";
 import { readdir } from "node:fs/promises";
-import { promisify } from "node:util";
-var execFile = promisify(execFileCallback);
+import { promisify as promisify2 } from "node:util";
+var execFile = promisify2(execFileCallback);
 var protectedDirectory = "/Library/Application Support/com.apple.TCC";
 async function hasFullDiskAccess() {
   try {
@@ -19209,7 +18896,7 @@ var plugin = new ApplePlugin(
 await plugin.refresh();
 var { version } = external_exports.object({ version: external_exports.string() }).parse(
   JSON.parse(
-    readFileSync2(join7(install, ".codex-plugin/plugin.json"), "utf8")
+    readFileSync2(join6(install, ".codex-plugin/plugin.json"), "utf8")
   )
 );
 var mcpServer = new McpServer(

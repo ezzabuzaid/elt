@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 import {
   isDictionary,
   readPlist
-} from "../../chunks/chunk-QPPOHR2G.mjs";
+} from "../../chunks/chunk-CWCLYXDX.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
@@ -16,8 +16,8 @@ import {
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-QNQLFEII.mjs";
-import "../../chunks/chunk-YZBCNEVG.mjs";
+} from "../../chunks/chunk-G5BWDLSD.mjs";
+import "../../chunks/chunk-ORGWIAHM.mjs";
 import {
   Catalog,
   Source,

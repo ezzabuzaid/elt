@@ -9,8 +9,8 @@ import {
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-QNQLFEII.mjs";
-import "../../chunks/chunk-YZBCNEVG.mjs";
+} from "../../chunks/chunk-G5BWDLSD.mjs";
+import "../../chunks/chunk-ORGWIAHM.mjs";
 import {
   Catalog,
   Source,
@@ -431,7 +431,7 @@ import { setInterval } from "node:timers/promises";
 var SlackDesktopUnavailableError = class extends Error {
   name = "SlackDesktopUnavailableError";
   constructor(path, cause) {
-    super(`The Slack app's store at ${path} cannot be read. Install Slack from the Mac App Store and sign in, and allow the process that runs the export Full Disk Access in System Settings > Privacy & Security.`, { cause });
+    super(`The Slack app's store at ${path} cannot be read. Open Slack, sign in and let it save its workspaces. If macOS denies access, allow the process that runs the export Full Disk Access in System Settings > Privacy & Security.`, { cause });
   }
 };
 var SlackDesktopFormatError = class extends Error {
@@ -1842,7 +1842,6 @@ function readSlackDownloads(state, record) {
 }
 
 // packages/sdks/slack/desktop/dist/slack-desktop-store.js
-var slackDesktopDirectory = join3(homedir(), "Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack");
 var indexedDB = "IndexedDB/https_app.slack.com_0.indexeddb.leveldb";
 var reduxDatabase = "reduxPersistence";
 var reduxStore = "reduxPersistenceStore";
@@ -1850,9 +1849,35 @@ var clientRecord = /^persist:slack-client-[A-Z0-9]+-[A-Z0-9]+$/;
 var rootState = "storage/root-state.json";
 var attempts = 3;
 var unreadable = /* @__PURE__ */ new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM"]);
+function slackDesktopDirectory() {
+  const direct = join3(homedir(), "Library/Application Support/Slack");
+  const appStore = join3(homedir(), "Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack");
+  let selected2;
+  let unavailable;
+  let newest = -Infinity;
+  for (const directory of [direct, appStore]) {
+    try {
+      const path = join3(directory, indexedDB);
+      const files = readdirSync(path);
+      if (!files.includes("CURRENT"))
+        continue;
+      const modified = Math.max(...files.map((name2) => statSync(join3(path, name2), { throwIfNoEntry: false })?.mtimeMs ?? 0));
+      if (modified > newest) {
+        selected2 = directory;
+        newest = modified;
+      }
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === "ENOENT" || code === "ENOTDIR")
+        continue;
+      unavailable ??= directory;
+    }
+  }
+  return selected2 ?? unavailable ?? direct;
+}
 var SlackDesktopStore = class {
   #directory;
-  constructor(directory = slackDesktopDirectory) {
+  constructor(directory = slackDesktopDirectory()) {
     this.#directory = directory;
   }
   // Every signed-in workspace's client as the app last saved it. A workspace
@@ -2363,7 +2388,7 @@ var properties7 = {
   endedAt: { ...nullableTimestamp3, description: "When it finished." },
   path: {
     ...nullableText5,
-    description: "Where the app saved the file: its Downloads folder, ~/Library/Containers/com.tinyspeck.slackmacgap/Data/Downloads, unless the user chose another place."
+    description: "Where the app saved the file, as recorded by Slack: its Downloads folder unless the user chose another place."
   }
 };
 var DownloadsStream = class extends SlackDesktopStream {
@@ -3298,7 +3323,7 @@ var SlackDesktopSource = class extends Source {
   directory;
   scope;
   #store;
-  constructor(directory = slackDesktopDirectory, scope = {}) {
+  constructor(directory = slackDesktopDirectory(), scope = {}) {
     super();
     this.directory = directory;
     this.scope = scope;
