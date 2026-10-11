@@ -3,7 +3,7 @@ export class SlackDesktopUnavailableError extends Error {
 
   constructor(path: string, cause: unknown) {
     super(
-      `The Slack app's store at ${path} cannot be read. Install Slack from the Mac App Store and sign in, and allow the process that runs the export Full Disk Access in System Settings > Privacy & Security.`,
+      `The Slack app's store at ${path} cannot be read. Open Slack, sign in and let it save its workspaces. If macOS denies access, allow the process that runs the export Full Disk Access in System Settings > Privacy & Security.`,
       { cause },
     );
   }

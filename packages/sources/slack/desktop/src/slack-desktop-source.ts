@@ -105,7 +105,7 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
   readonly scope: ImportScope;
   readonly #store: SlackDesktopStore;
 
-  constructor(directory = slackDesktopDirectory, scope: ImportScope = {}) {
+  constructor(directory = slackDesktopDirectory(), scope: ImportScope = {}) {
     super();
     this.directory = directory;
     this.scope = scope;

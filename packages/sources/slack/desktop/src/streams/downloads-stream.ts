@@ -40,7 +40,7 @@ const properties = {
   path: {
     ...nullableText,
     description:
-      'Where the app saved the file: its Downloads folder, ~/Library/Containers/com.tinyspeck.slackmacgap/Data/Downloads, unless the user chose another place.',
+      'Where the app saved the file, as recorded by Slack: its Downloads folder unless the user chose another place.',
   },
 } as const;
 

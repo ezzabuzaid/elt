@@ -17,12 +17,6 @@ import { readSlackClient } from './slack-client-record.ts';
 import type { SlackClient } from './slack-client.ts';
 import { type SlackDownload, readSlackDownloads } from './slack-downloads.ts';
 
-// Where the Mac App Store build of Slack keeps its data.
-export const slackDesktopDirectory = join(
-  homedir(),
-  'Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack',
-);
-
 // The app's web client keeps its state in the IndexedDB of app.slack.com:
 // one record per signed-in workspace and user in reduxPersistenceStore.
 const indexedDB = 'IndexedDB/https_app.slack.com_0.indexeddb.leveldb';
@@ -39,10 +33,48 @@ const attempts = 3;
 // keeps from a process without Full Disk Access.
 const unreadable = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
 
+// Both Slack builds use the same store format under Electron's userData.
+// An old installation can leave its folder behind: use the database whose
+// files were modified most recently, and hold that choice for this store.
+export function slackDesktopDirectory(): string {
+  const direct = join(homedir(), 'Library/Application Support/Slack');
+  const appStore = join(
+    homedir(),
+    'Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack',
+  );
+  let selected: string | undefined;
+  let unavailable: string | undefined;
+  let newest = -Infinity;
+  for (const directory of [direct, appStore]) {
+    try {
+      const path = join(directory, indexedDB);
+      const files = readdirSync(path);
+      if (!files.includes('CURRENT')) continue;
+      const modified = Math.max(
+        ...files.map(
+          (name) =>
+            statSync(join(path, name), { throwIfNoEntry: false })?.mtimeMs ?? 0,
+        ),
+      );
+      if (modified > newest) {
+        selected = directory;
+        newest = modified;
+      }
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      // If neither store is readable, keep the failing path so its read
+      // reports the actual access error instead of a missing default folder.
+      unavailable ??= directory;
+    }
+  }
+  return selected ?? unavailable ?? direct;
+}
+
 export class SlackDesktopStore {
   readonly #directory: string;
 
-  constructor(directory = slackDesktopDirectory) {
+  constructor(directory = slackDesktopDirectory()) {
     this.#directory = directory;
   }
 
