@@ -9,6 +9,9 @@ export class PostgresSession implements AsyncDisposable {
   constructor(url: string, applicationName: string) {
     this.sql = postgres(url, {
       max: 1,
+      // postgres.js replaces a connection after 30 to 60 minutes by default,
+      // which silently drops a session's TEMP stages and session locks.
+      max_lifetime: null,
       onnotice: () => {},
       connection: { application_name: applicationName },
     });
@@ -45,7 +48,8 @@ export function schemaName(schema: string): string {
   return schema;
 }
 
-// Serializes everything elt writes into one schema: loads, owners, DDL.
+// Serializes the DDL that creates one schema and its views, which Postgres
+// refuses to run in two sessions at once.
 export function schemaLock(schema: string): string {
   return `elt:${schema}`;
 }
