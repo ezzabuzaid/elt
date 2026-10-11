@@ -107,47 +107,43 @@ const november = [
   purchase('d', '2026-11-05T09:00:00.000Z', '85.000'),
 ];
 
-test('a commit that changes nothing yields nothing, and a new purchase in a month that started yields changed', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-change-'));
+// eca evaluates synchronously, so every commit raised so far is evaluated once
+// pending callbacks have run.
+const evaluated = () => setImmediate();
+
+test('a crossing yields its month once: a commit that changes nothing, or more spend in that month, yields nothing more', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-once-'));
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  eca.add({ id: 'early-month-spend', condition: new EarlyMonthSpend() });
-  await using changes = eca.watch({ signal: AbortSignal.timeout(10_000) });
+  const spend = { condition: new EarlyMonthSpend() };
+  eca.add(spend);
+  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
 
-  const first = changes.next();
+  const first = matches.next();
   load(path, october);
   warehouse.commit();
-  const started = await first;
-  const second = changes.next();
+  const crossed = await first;
+  const second = matches.next();
   warehouse.commit();
-  // eca evaluates synchronously, so this commit is evaluated once pending
-  // callbacks have run, before the next purchase lands.
-  await setImmediate();
+  await evaluated();
   load(path, [purchase('e', '2026-10-03T08:00:00.000Z', '10.000')]);
+  warehouse.commit();
+  await evaluated();
+  load(path, november);
   warehouse.commit();
 
   assert.deepEqual(
-    [started.value, (await second).value],
+    [crossed.value, (await second).value],
     [
-      {
-        type: 'started',
-        rule: 'early-month-spend',
-        key: '2026-10',
-        data: { spent: 220.807 },
-      },
-      {
-        type: 'changed',
-        rule: 'early-month-spend',
-        key: '2026-10',
-        data: { spent: 230.807 },
-      },
+      { rule: spend, key: '2026-10', data: { spent: 220.807 } },
+      { rule: spend, key: '2026-11', data: { spent: 205 } },
     ],
   );
 });
 
-test('a rule added when October already passed 200 stays quiet about October, and a later November crossing still starts', async () => {
+test('a rule added when October already passed 200 stays quiet about October, and a later November crossing still yields', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'eca-baseline-'),
   );
@@ -155,160 +151,97 @@ test('a rule added when October already passed 200 stays quiet about October, an
   writeImport(path, october);
   using warehouse = new ImportWarehouse(path);
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  const spend = { condition: new EarlyMonthSpend() };
 
-  eca.add({ id: 'early-month-spend', condition: new EarlyMonthSpend() });
-  await using changes = eca.watch({ signal: AbortSignal.timeout(10_000) });
-  const first = changes.next();
+  eca.add(spend);
+  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+  const first = matches.next();
   load(path, november);
   warehouse.commit();
 
   assert.deepEqual((await first).value, {
-    type: 'started',
-    rule: 'early-month-spend',
+    rule: spend,
     key: '2026-11',
     data: { spent: 205 },
   });
 });
 
-test('a deleted purchase that takes the total under 200 yields the month ended', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-end-'));
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  eca.add({ id: 'early-month-spend', condition: new EarlyMonthSpend() });
-  await using changes = eca.watch({ signal: AbortSignal.timeout(10_000) });
-
-  const first = changes.next();
-  load(path, october);
-  warehouse.commit();
-  const started = await first;
-  const second = changes.next();
-  remove(path, 'b');
-  warehouse.commit();
-
-  assert.deepEqual(
-    [started.value, (await second).value],
-    [
-      {
-        type: 'started',
-        rule: 'early-month-spend',
-        key: '2026-10',
-        data: { spent: 220.807 },
-      },
-      { type: 'ended', rule: 'early-month-spend', key: '2026-10' },
-    ],
-  );
-});
-
-test('a November crossing starts its own month and leaves October alone', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-months-'));
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  eca.add({ id: 'early-month-spend', condition: new EarlyMonthSpend() });
-  await using changes = eca.watch({ signal: AbortSignal.timeout(10_000) });
-
-  const first = changes.next();
-  load(path, october);
-  warehouse.commit();
-  const started = await first;
-  const second = changes.next();
-  load(path, november);
-  warehouse.commit();
-
-  assert.deepEqual(
-    [started.value, (await second).value],
-    [
-      {
-        type: 'started',
-        rule: 'early-month-spend',
-        key: '2026-10',
-        data: { spent: 220.807 },
-      },
-      {
-        type: 'started',
-        rule: 'early-month-spend',
-        key: '2026-11',
-        data: { spent: 205 },
-      },
-    ],
-  );
-});
-
-test('two rules over the same purchases each yield their own started', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-rules-'));
-  const path = join(scratch.path, 'messages.sqlite');
-  writeImport(path, []);
-  using warehouse = new ImportWarehouse(path);
-  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  eca.add({ id: 'spend-alert', condition: new EarlyMonthSpend() });
-  eca.add({ id: 'spend-log', condition: new EarlyMonthSpend() });
-  await using changes = eca.watch({ signal: AbortSignal.timeout(10_000) });
-
-  const first = changes.next();
-  load(path, october);
-  warehouse.commit();
-  const alert = await first;
-  const log = await changes.next();
-
-  assert.deepEqual(
-    [alert.value, log.value],
-    [
-      {
-        type: 'started',
-        rule: 'spend-alert',
-        key: '2026-10',
-        data: { spent: 220.807 },
-      },
-      {
-        type: 'started',
-        rule: 'spend-log',
-        key: '2026-10',
-        data: { spent: 220.807 },
-      },
-    ],
-  );
-});
-
-test('changes the host stopped before pulling past come again to its next watch, for every rule that had not moved on', async () => {
+test('a month that drops under 200 and crosses again yields again', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-again-'));
   const path = join(scratch.path, 'messages.sqlite');
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  eca.add({ id: 'spend-alert', condition: new EarlyMonthSpend() });
-  eca.add({ id: 'spend-log', condition: new EarlyMonthSpend() });
+  const spend = { condition: new EarlyMonthSpend() };
+  eca.add(spend);
+  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+
+  const first = matches.next();
+  load(path, october);
+  warehouse.commit();
+  const crossed = await first;
+  const second = matches.next();
+  remove(path, 'b');
+  warehouse.commit();
+  await evaluated();
+  load(path, [purchase('f', '2026-10-04T08:00:00.000Z', '30.000')]);
+  warehouse.commit();
+
+  assert.deepEqual(
+    [crossed.value, (await second).value],
+    [
+      { rule: spend, key: '2026-10', data: { spent: 220.807 } },
+      { rule: spend, key: '2026-10', data: { spent: 204.495 } },
+    ],
+  );
+});
+
+test('two rules over the same purchases each yield their own match', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-rules-'));
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, []);
+  using warehouse = new ImportWarehouse(path);
+  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  const alert = { condition: new EarlyMonthSpend() };
+  const log = { condition: new EarlyMonthSpend() };
+  eca.add(alert);
+  eca.add(log);
+  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+
+  const first = matches.next();
+  load(path, october);
+  warehouse.commit();
+  const fromAlert = await first;
+  const fromLog = await matches.next();
+
+  assert.equal(fromAlert.value?.rule, alert);
+  assert.equal(fromLog.value?.rule, log);
+});
+
+test('matches the host stopped before pulling past come again to its next watch, for every rule that had not moved on', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-stop-'));
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, []);
+  using warehouse = new ImportWarehouse(path);
+  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  const alert = { condition: new EarlyMonthSpend() };
+  const log = { condition: new EarlyMonthSpend() };
+  eca.add(alert);
+  eca.add(log);
   {
-    await using changes = eca.watch({ signal: AbortSignal.timeout(10_000) });
-    const first = changes.next();
+    await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+    const first = matches.next();
     load(path, october);
     warehouse.commit();
     await first;
   }
 
-  await using changes = eca.watch({ signal: AbortSignal.timeout(10_000) });
-  const alert = changes.next();
+  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+  const again = matches.next();
   warehouse.commit();
 
-  assert.deepEqual(
-    [(await alert).value, (await changes.next()).value],
-    [
-      {
-        type: 'started',
-        rule: 'spend-alert',
-        key: '2026-10',
-        data: { spent: 220.807 },
-      },
-      {
-        type: 'started',
-        rule: 'spend-log',
-        key: '2026-10',
-        data: { spent: 220.807 },
-      },
-    ],
-  );
+  assert.equal((await again).value?.rule, alert);
+  assert.equal((await matches.next()).value?.rule, log);
 });
 
 test('a rule the host moved past keeps its new matches when the host stops inside the next rule', async () => {
@@ -317,27 +250,24 @@ test('a rule the host moved past keeps its new matches when the host stops insid
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  eca.add({ id: 'spend-alert', condition: new EarlyMonthSpend() });
-  eca.add({ id: 'spend-log', condition: new EarlyMonthSpend() });
+  const alert = { condition: new EarlyMonthSpend() };
+  const log = { condition: new EarlyMonthSpend() };
+  eca.add(alert);
+  eca.add(log);
   {
-    await using changes = eca.watch({ signal: AbortSignal.timeout(10_000) });
-    const first = changes.next();
+    await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+    const first = matches.next();
     load(path, october);
     warehouse.commit();
     await first;
-    await changes.next();
+    await matches.next();
   }
 
-  await using changes = eca.watch({ signal: AbortSignal.timeout(10_000) });
-  const again = changes.next();
+  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+  const again = matches.next();
   warehouse.commit();
 
-  assert.deepEqual((await again).value, {
-    type: 'started',
-    rule: 'spend-log',
-    key: '2026-10',
-    data: { spent: 220.807 },
-  });
+  assert.equal((await again).value?.rule, log);
 });
 
 // A watch that never ends would hang the run, so this test has its own deadline.
@@ -347,11 +277,11 @@ test('aborting the signal ends the watch', { timeout: 5_000 }, async () => {
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  eca.add({ id: 'early-month-spend', condition: new EarlyMonthSpend() });
+  eca.add({ condition: new EarlyMonthSpend() });
   const controller = new AbortController();
-  await using changes = eca.watch({ signal: controller.signal });
+  await using matches = eca.watch({ signal: controller.signal });
 
-  const next = changes.next();
+  const next = matches.next();
   controller.abort();
 
   await assert.rejects(next, { name: 'AbortError' });

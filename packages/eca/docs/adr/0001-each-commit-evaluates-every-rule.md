@@ -2,7 +2,7 @@
 
 eca follows the Event–Condition–Action model of active databases (HiPAC, 1988). An event tells eca when to evaluate a condition. In eca, the event is a commit to the warehouse, and each commit evaluates every rule.
 
-The first design made the event narrower. It recorded which tables each condition read, through the authorizer callback of SQLite, and a commit evaluated only the rules that read a table that the commit wrote. That routing is an optimization only. When eca evaluates every rule, the outcomes are the same, because eca compares the matches by key and reports only what changed. The routing also tied eca to SQLite, and it needed the host to report the table names that each commit wrote.
+The first design made the event narrower. It recorded which tables each condition read, through the authorizer callback of SQLite, and a commit evaluated only the rules that read a table that the commit wrote. That routing is an optimization only. When eca evaluates every rule, the outcomes are the same, because eca compares the keys and yields only new matches. The routing also tied eca to SQLite, and it needed the host to report the table names that each commit wrote.
 
 ## Considered Options
 

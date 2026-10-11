@@ -4,7 +4,7 @@ A user adds the rule "when my card purchases in days 1 to 10 of a month pass 200
 
 An import can be late. A host that did not run for some days imports the SMS of 2 October on 12 October. The user still wants to hear of October then. Thus the condition must judge the window by the time of the purchase (event time), not by the time of the evaluation (processing time). But a condition that uses event time finds October true on 15 October, and reports it.
 
-eca solves both cases with a baseline. `add` evaluates the condition one time, keeps its matches, and reports no change. A rule then reports only what changes after it was added. A SQL trigger does the same: it does not fire for rows that were there before the trigger. A new Kafka consumer group with `auto.offset.reset=latest` also starts at the end and skips the older messages.
+eca solves both cases with a baseline. `add` evaluates the condition one time, keeps its keys, and yields no new match. A rule then yields only keys that start to match after it was added. A SQL trigger does the same: it does not fire for rows that were there before the trigger. A new Kafka consumer group with `auto.offset.reset=latest` also starts at the end and skips the older messages.
 
 ## Considered Options
 

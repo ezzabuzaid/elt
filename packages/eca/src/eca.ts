@@ -1,12 +1,10 @@
-import { isDeepStrictEqual } from 'node:util';
-
-import type { Change, Rule } from './rule.ts';
+import type { NewMatch, Rule } from './rule.ts';
 import type { Warehouse } from './warehouse.ts';
 
 type Watched<Sql, Data> = {
   readonly rule: Rule<Sql, Data>;
-  // What the condition matched when the host last moved past its changes.
-  matches: ReadonlyMap<string, Data>;
+  // The keys the condition matched when the host last moved past its matches.
+  keys: ReadonlySet<string>;
 };
 
 export class Eca<Sql, Data> {
@@ -17,33 +15,26 @@ export class Eca<Sql, Data> {
     this.#warehouse = options.warehouse;
   }
 
-  // A rule starts from what its condition matches now, so it reports only what
-  // changes after it was added.
+  // A rule starts from what its condition matches now, so it yields only keys
+  // that start to match after it was added.
   add(rule: Rule<Sql, Data>): void {
-    this.#rules.push({ rule, matches: this.#evaluate(rule) });
+    this.#rules.push({ rule, keys: new Set(this.#evaluate(rule).keys()) });
   }
 
   // Each commit to the warehouse evaluates every rule. A rule moves on to its
-  // new matches only when the host pulls past its last change, so a change the
+  // new keys only when the host pulls past its last new match, so a match the
   // host stopped at comes again to its next watch.
   async *watch({
     signal,
   }: {
     readonly signal: AbortSignal;
-  }): AsyncGenerator<Change<Data>> {
+  }): AsyncGenerator<NewMatch<Sql, Data>> {
     for await (const _ of this.#warehouse.commits(signal))
       for (const watched of this.#rules) {
-        const { id } = watched.rule;
         const matches = this.#evaluate(watched.rule);
-        for (const [key, data] of matches) {
-          if (!watched.matches.has(key))
-            yield { type: 'started', rule: id, key, data };
-          else if (!isDeepStrictEqual(watched.matches.get(key), data))
-            yield { type: 'changed', rule: id, key, data };
-        }
-        for (const key of watched.matches.keys())
-          if (!matches.has(key)) yield { type: 'ended', rule: id, key };
-        watched.matches = matches;
+        for (const [key, data] of matches)
+          if (!watched.keys.has(key)) yield { rule: watched.rule, key, data };
+        watched.keys = new Set(matches.keys());
       }
   }
 

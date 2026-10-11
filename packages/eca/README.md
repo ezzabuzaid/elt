@@ -1,28 +1,30 @@
 # @workspace/eca
 
-A user wants to know when the data in a warehouse starts to match a condition. For example: "when my card purchases in the first 10 days of a month pass 200 JOD, tell me". An agent writes the condition as code with SQL in it. The host gives eca the warehouse, and it acts on what eca reports. eca evaluates every condition at each commit to the warehouse, and it reports each change of their matches. The model is Event–Condition–Action (ECA), from active databases: a commit is the event, and the host does the action.
+A user wants to know when the data in a warehouse starts to match a condition. For example: "when my card purchases in the first 10 days of a month pass 200 JOD, tell me". An agent writes the condition as code with SQL in it. The host gives eca the warehouse, and it acts on what eca yields. eca evaluates every condition at each commit to the warehouse, and it yields each new match: a key that starts to match. The model is Event–Condition–Action (ECA), from active databases: a commit is the event, and the host does the action.
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
 ## Use it
 
-The host makes one `Eca` with its warehouse, adds the rules, and watches the changes:
+The host makes one `Eca` with its warehouse, adds the rules, and watches the new matches:
 
 ```ts
 import { Eca } from '@workspace/eca';
 
 const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-eca.add({ id: 'early-month-spend', condition: new EarlyMonthSpend() });
+const spend = { condition: new EarlyMonthSpend() };
+eca.add(spend);
 
-for await (const change of eca.watch({ signal }))
-  if (change.type === 'started' && change.rule === 'early-month-spend')
+for await (const match of eca.watch({ signal }))
+  if (match.rule === spend)
     await notify(
-      `You spent ${change.data.spent} JOD in the first 10 days of ${change.key}.`,
+      `You spent ${match.data.spent} JOD in the first 10 days of ${match.key}.`,
     );
 ```
 
-- `add` evaluates the condition one time, for its baseline. It reports no change.
-- `watch` evaluates every rule at each commit to the warehouse, and it yields each change.
+- A rule is the host's own object with a `condition`. Each new match carries it back as `match.rule`, so the host knows which rule matched.
+- `add` evaluates the condition one time, for its baseline. It yields nothing.
+- `watch` evaluates every rule at each commit to the warehouse, and it yields each new match.
 - The two type parameters are the handle of the warehouse and the data of the matches. Give a union when the rules have different data.
 
 ## Give eca the warehouse
@@ -95,53 +97,47 @@ class EarlyMonthSpend implements Condition<SQLTagStore, { spent: number }> {
 - The condition parses its own data. SQL reads the rows, and the code reads the text. See [ADR 0004](./docs/adr/0004-each-condition-parses-its-own-data.md).
 - Judge a window by the time in the data, not by the time of the evaluation. A commit can be late.
 
-## The key
+## New matches
 
-The condition chooses the key, and the key sets how often the host hears of a match. With the month as the key, the host hears one time for each month:
+A new match is `{ rule, key, data }`: a key that the condition matches now and did not match in the previous evaluation. The condition chooses the key, and the key sets how often the host hears of a match:
 
-| Key       | The host hears               |
-| --------- | ---------------------------- |
-| the month | one time for each month      |
-| the day   | one time for each day        |
-| one text  | one time, until the key ends |
-| an id     | one time for each id         |
+| Key       | The host hears                                  |
+| --------- | ----------------------------------------------- |
+| the month | one time for each month                         |
+| the day   | one time for each day                           |
+| one text  | one time, until the condition stops matching it |
+| an id     | one time for each id                            |
 
-## Changes
+- A key that keeps matching gives nothing, also when its data changes. More spend in October after the crossing gives nothing.
+- A key that stops matching gives nothing. When it matches again later, it is a new match again: October dropped under 200 and passed it again.
 
-eca compares each evaluation with the previous one, key by key. It yields one change for each difference:
+See [ADR 0007](./docs/adr/0007-eca-yields-only-new-matches.md).
 
-| Change                                 | When                                          |
-| -------------------------------------- | --------------------------------------------- |
-| `{ type: 'started', rule, key, data }` | The key is new.                               |
-| `{ type: 'changed', rule, key, data }` | The key was there, and its data is different. |
-| `{ type: 'ended', rule, key }`         | The key is not there now.                     |
+## Watch the new matches
 
-A key with equal data gives no change. eca compares the data with `isDeepStrictEqual` of `node:util`. An ended change has no data.
+The host pulls each new match. eca evaluates the next commit only when the host asks for the next new match, so a slow host never gets a pile of evaluations. See [ADR 0003](./docs/adr/0003-the-host-acts-on-each-new-match.md).
 
-## Watch the changes
-
-The host pulls each change. eca evaluates the next commit only when the host asks for the next change, so a slow host never gets a pile of evaluations. See [ADR 0003](./docs/adr/0003-the-host-acts-on-each-change.md).
-
-- **Move past a change.** A rule takes its new matches only when the host moved past its last change: it asked for the next change. A change that the host stopped at comes again to its next watch, with the later changes of that rule from that commit.
-- **Stop the watch.** Abort the signal. eca gives the signal to `commits`, and `watch` ends the way `commits` ends. With `events.on`, it rejects with an `AbortError`. A `break` out of the loop also stops it, and the change of that turn was not moved past.
+- **Move past a new match.** A rule takes its new keys only when the host moved past its last new match: it asked for the next one. A new match that the host stopped at comes again to its next watch, with the later new matches of that rule from that commit.
+- **Stop the watch.** Abort the signal. eca gives the signal to `commits`, and `watch` ends the way `commits` ends. With `events.on`, it rejects with an `AbortError`. A `break` out of the loop also stops it, and the new match of that turn was not moved past.
 
 ## A new rule starts from a baseline
 
-A rule reports only what changes after it was added. `add` keeps the matches of its first evaluation and reports no change. A rule added on 15 October, after October passed 200 JOD, never reports October. See [ADR 0002](./docs/adr/0002-a-new-rule-starts-from-a-baseline.md).
+A rule yields only keys that start to match after it was added. `add` keeps the keys of its first evaluation and yields nothing. A rule added on 15 October, after October passed 200 JOD, never yields October. See [ADR 0002](./docs/adr/0002-a-new-rule-starts-from-a-baseline.md).
 
-The matches are in memory. When the host starts again and adds its rules again, each rule takes a new baseline, and a change that came while the host was down is not reported. Restarts are the concern of the host. See [ADR 0006](./docs/adr/0006-eca-keeps-no-state-across-restarts.md).
+The keys are in memory. When the host starts again and adds its rules again, each rule takes a new baseline, and a key that started to match while the host was down is not yielded. Restarts are the concern of the host. See [ADR 0006](./docs/adr/0006-eca-keeps-no-state-across-restarts.md).
 
 ## When something fails
 
 - **A condition throws in `add`.** `add` throws, and the rule is not added.
-- **A condition throws in `watch`.** `watch` rejects with that error. The rules after it are not evaluated for that commit, and the rule keeps its old matches.
+- **A condition throws in `watch`.** `watch` rejects with that error. The rules after it are not evaluated for that commit, and the rule keeps its old keys.
 - **`commits` rejects.** `watch` rejects with the same error.
-- **The host fails to act on a change.** Stop the watch before you ask for the next change. The change comes again at the next commit of a new watch. eca retries nothing.
+- **The host fails to act on a new match.** Stop the watch before you ask for the next one. The new match comes again at the next commit of a new watch. eca retries nothing.
 
 ## What eca does not do
 
 - No time events. A window that closes with no new data ends at the next commit. A rule about data that did not come ("I did not spend 200 JOD by day 10") cannot be written.
-- A rule whose window is fixed in time and already over is added, and it never reports.
+- A rule whose window is fixed in time and already over is added, and it never yields.
+- No news of a match whose data changed, or of a match that stopped. See [ADR 0007](./docs/adr/0007-eca-yields-only-new-matches.md).
 - No state across restarts.
 - No routing. Each commit evaluates every rule. See [ADR 0001](./docs/adr/0001-each-commit-evaluates-every-rule.md).
 
@@ -152,9 +148,9 @@ The matches are in memory. When the host starts again and adds its rules again, 
 | Rule: event, condition, action        | ECA rules of active databases (HiPAC, 1988); Home Assistant automations: trigger, condition, action |
 | Event: a commit                       | SQL `CREATE TRIGGER … AFTER INSERT`                                                                 |
 | Key                                   | PagerDuty Events API `dedup_key`; the labels of a Prometheus alert instance                         |
-| Started and ended                     | A Prometheus alert goes from inactive to firing; Alertmanager sends resolved                        |
+| New match                             | A Prometheus alert goes from inactive to firing                                                     |
 | Baseline                              | A SQL trigger does not fire for older rows; a Kafka consumer group with `auto.offset.reset=latest`  |
-| Move past a change                    | A Kafka consumer commits its offset after it processed a message                                    |
+| Move past a new match                 | A Kafka consumer commits its offset after it processed a message                                    |
 | `watch`, pulled with `for await`      | `Pipeline.watch` of elt; `events.on` of Node                                                        |
 | Warehouse port and the host's adapter | Ports and adapters; the `Dialect` of Kysely                                                         |
 | A threshold over a period             | AWS Budgets: one alert for each threshold in each budget period                                     |
@@ -163,10 +159,11 @@ The matches are in memory. When the host starts again and adds its rules again, 
 
 - [ADR 0001: Each commit evaluates every rule](./docs/adr/0001-each-commit-evaluates-every-rule.md)
 - [ADR 0002: A new rule starts from a baseline](./docs/adr/0002-a-new-rule-starts-from-a-baseline.md)
-- [ADR 0003: The host acts on each change](./docs/adr/0003-the-host-acts-on-each-change.md)
+- [ADR 0003: The host acts on each new match](./docs/adr/0003-the-host-acts-on-each-new-match.md)
 - [ADR 0004: Each condition parses its own data](./docs/adr/0004-each-condition-parses-its-own-data.md)
 - [ADR 0005: eca reads the warehouse through a port](./docs/adr/0005-eca-reads-the-warehouse-through-a-port.md)
 - [ADR 0006: eca keeps no state across restarts](./docs/adr/0006-eca-keeps-no-state-across-restarts.md)
+- [ADR 0007: eca yields only new matches](./docs/adr/0007-eca-yields-only-new-matches.md)
 
 ## Development
 
@@ -182,8 +179,8 @@ The tests have their own warehouse over a SQLite import that they write as elt w
 
 ```
 src/
-  eca.ts         Eca: add, watch, and the comparison of evaluations
-  rule.ts        Rule, Condition, Match, Change
+  eca.ts         Eca: add, watch, and the comparison of keys
+  rule.ts        Rule, Condition, Match, NewMatch
   warehouse.ts   the Warehouse port
   index.ts       the public exports
   eca.test.ts    the tests
