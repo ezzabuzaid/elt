@@ -39,7 +39,7 @@ export class PostgresCheckpointStore extends CheckpointStore {
     await using connection = new PostgresSession(this.#url, 'elt-checkpoints');
     const { sql } = connection;
     await this.#create(sql);
-    // Two-key locks never collide with the writers' one-key schema lock. A
+    // Two-key locks never collide with the one-key schema lock of DDL. A
     // replication already running fails the run fast; others run in parallel.
     // Taken in sorted order, so two runs never wait on each other.
     const namespace = `elt-checkpoints:${this.schema}`;
@@ -83,9 +83,9 @@ export class PostgresCheckpointStore extends CheckpointStore {
     }
   }
 
-  // Committed before any run holds its lock: a writer creating the same
-  // schema would otherwise wait on this transaction while it waits on the
-  // writer, a hang Postgres cannot see.
+  // Two runs of one connection create the schema at once, and Postgres
+  // refuses the second CREATE SCHEMA with a duplicate key; the schema's lock
+  // makes them take turns.
   async #create(sql: postgres.Sql): Promise<void> {
     const [found] = await sql.unsafe(
       'SELECT to_regclass($1) IS NOT NULL AS "exists"',

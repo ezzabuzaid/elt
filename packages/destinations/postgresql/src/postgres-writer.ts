@@ -22,7 +22,7 @@ import { PostgresFileStore } from './postgres-file-store.ts';
 import { storedColumns, storedFit } from './postgres-fit.ts';
 import type { PostgresLoad, Transaction } from './postgres-load.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
-import { PostgresSession, schemaLock } from './postgres-session.ts';
+import { PostgresSession } from './postgres-session.ts';
 import type { PostgresTable } from './postgres-table.ts';
 
 const batchSize = 1000;
@@ -245,12 +245,6 @@ export abstract class PostgresWriter extends Writer {
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
     await using connection = new PostgresSession(this.url, 'elt');
-    // Hold this schema across the database commit and its acknowledgement.
-    // The session closes on every exit, releasing its advisory lock.
-    await connection.sql.unsafe(
-      'SELECT pg_advisory_lock(hashtextextended($1, 0))',
-      [schemaLock(this.schema)],
-    );
     await connection.sql.begin(async (transaction) => {
       const [schema] = await transaction.unsafe(
         'SELECT to_regnamespace($1) IS NOT NULL AS "exists"',

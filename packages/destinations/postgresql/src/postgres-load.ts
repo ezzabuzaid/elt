@@ -1,14 +1,13 @@
 import type postgres from 'postgres';
 
-import { PostgresSession, schemaLock } from './postgres-session.ts';
+import { PostgresSession } from './postgres-session.ts';
 
 // The load's one connection, inside one commit's transaction or on its own.
 export type Transaction = postgres.Sql;
 
-// A run's one connection to a schema. The schema lock keeps every other load
-// out until it closes, as SQLite's BEGIN IMMEDIATE does per file; readers
-// never wait on it. No transaction stays open between commits, so reading the
-// source holds no locks on the targets and keeps nothing from vacuum.
+// A run's one connection to a schema. No transaction stays open between
+// commits, so reading the source holds no locks on the targets and keeps
+// nothing from vacuum.
 export class PostgresLoad implements AsyncDisposable {
   readonly #connection: PostgresSession;
   readonly schema: string;
@@ -33,11 +32,6 @@ export class PostgresLoad implements AsyncDisposable {
     try {
       const [clock] = await connection.sql.unsafe(
         'SELECT clock_timestamp()::text AS "loadedAt"',
-      );
-      // Closing this connection releases the session lock, including on errors.
-      await connection.sql.unsafe(
-        'SELECT pg_advisory_lock(hashtextextended($1, 0))',
-        [schemaLock(schema)],
       );
       return new PostgresLoad(connection, schema, String(clock?.loadedAt));
     } catch (error) {

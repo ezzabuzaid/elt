@@ -9,7 +9,6 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import postgres from 'postgres';
 
@@ -248,56 +247,48 @@ test('documented views expose live data and replace atomically without dropping 
   assert.deepEqual([...(await metadata())], revisedMetadata);
 });
 
-test("a competing load cannot reconcile pending files between another load's commits", async () => {
+test('two loads into one schema commit side by side across their commits, and readers keep reading', async () => {
   await using database = await scratchDatabase(server);
-  const stream = new Stream({
-    name: 'docs',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
-    supportedSyncModes: ['full_refresh'],
-  });
+  const stream = (name: string) =>
+    new Stream({
+      name,
+      jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+      supportedSyncModes: ['full_refresh'],
+    });
   const destination = new PostgresDestination({
     url: database.url,
     schema: 'raw',
   });
-  const copy = new Copy(stream, destination.table('docs'));
-  const load = await destination.load();
-  let acquired = false;
-  let contender: Promise<void> | undefined;
-  try {
-    const stage = await load.prepare(copy.configuration, copy.to, {
-      writer: 'writer',
-      reloading: false,
-    });
-    try {
-      await stage.apply({ type: 'RECORD', data: { id: 'a' } });
-      contender = destination.load().then(async (other) => {
-        acquired = true;
-        await other[Symbol.asyncDispose]();
-      });
-      // Wait until the real server has queued the contender, without racing
-      // connection startup against this load's commit.
-      let queued = false;
-      for (let attempt = 0; attempt < 200; attempt++) {
-        const [row] = await database.sql`SELECT count(*)::int AS n FROM pg_locks
-          WHERE locktype = 'advisory' AND NOT granted
-          AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`;
-        if (row?.n > 0) {
-          queued = true;
-          break;
-        }
-        await delay(10);
-      }
-      assert.equal(queued, true);
-      await stage.commit();
-      assert.equal(acquired, false);
-    } finally {
-      await stage[Symbol.asyncDispose]();
-    }
-  } finally {
-    await load[Symbol.asyncDispose]();
-    await contender;
-  }
-  assert.equal(acquired, true);
+  const docs = new Copy(stream('docs'), destination.table('docs'));
+  const notes = new Copy(stream('notes'), destination.table('notes'));
+  // A second load on the same schema stands in for another replication's run.
+  await using first = await destination.load();
+  await using second = await destination.load();
+  await using docsStage = await first.prepare(docs.configuration, docs.to, {
+    writer: 'docs',
+    reloading: false,
+  });
+  await using notesStage = await second.prepare(notes.configuration, notes.to, {
+    writer: 'notes',
+    reloading: false,
+  });
+  const count = async (table: string) =>
+    (
+      await database.sql.unsafe(`SELECT count(*)::int AS n FROM raw.${table}`)
+    )[0]?.n;
+
+  await docsStage.apply({ type: 'RECORD', data: { id: 'a' } });
+  await docsStage.commit();
+  await notesStage.apply({ type: 'RECORD', data: { id: 'a' } });
+  const whileStaged = await count('docs');
+  await notesStage.commit();
+  await docsStage.apply({ type: 'RECORD', data: { id: 'b' } });
+  await docsStage.commit();
+
+  assert.deepEqual(
+    [whileStaged, await count('docs'), await count('notes')],
+    [1, 2, 1],
+  );
 });
 
 test('Postgres stores per-field attachment references and reconciles only the files its committed rows retain', async () => {
