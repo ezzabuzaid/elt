@@ -129,7 +129,7 @@ The keys are in memory. When the host starts again and adds its rules again, eac
 ## When something fails
 
 - **A condition throws in `add`.** `add` throws, and the rule is not added.
-- **A condition throws in `watch`.** `watch` rejects with that error. The rules after it are not evaluated for that commit, and the rule keeps its old keys.
+- **A condition throws in `watch`.** `watch` yields a failure, `{ rule, error }`, beside the new matches, and the other rules of that commit still run. The failing rule keeps its keys, so the next commit evaluates it again and none of its matches is lost. Tell a failure from a new match with `'error' in item`. See [ADR 0008](./docs/adr/0008-a-failing-condition-is-yielded-beside-the-new-matches.md).
 - **`commits` rejects.** `watch` rejects with the same error.
 - **The host fails to act on a new match.** Stop the watch before you ask for the next one. The new match comes again at the next commit of a new watch. eca retries nothing.
 
@@ -164,6 +164,7 @@ The keys are in memory. When the host starts again and adds its rules again, eac
 - [ADR 0005: eca reads the warehouse through a port](./docs/adr/0005-eca-reads-the-warehouse-through-a-port.md)
 - [ADR 0006: eca keeps no state across restarts](./docs/adr/0006-eca-keeps-no-state-across-restarts.md)
 - [ADR 0007: eca yields only new matches](./docs/adr/0007-eca-yields-only-new-matches.md)
+- [ADR 0008: A failing condition is yielded beside the new matches](./docs/adr/0008-a-failing-condition-is-yielded-beside-the-new-matches.md)
 
 ## Development
 

@@ -1,4 +1,4 @@
-import type { NewMatch, Rule } from './rule.ts';
+import type { Failure, NewMatch, Rule } from './rule.ts';
 import type { Warehouse } from './warehouse.ts';
 
 type Watched<Sql, Data> = {
@@ -26,15 +26,22 @@ export class Eca<Sql, Data> {
 
   // Each commit to the warehouse evaluates every rule. A rule moves on to its
   // new keys only when the host pulls past its last new match, so a match the
-  // host stopped at comes again to its next watch.
+  // host stopped at comes again to its next watch. A rule whose condition
+  // throws is yielded as a failure, and the other rules still run.
   async *watch({
     signal,
   }: {
     readonly signal: AbortSignal;
-  }): AsyncGenerator<NewMatch<Sql, Data>> {
+  }): AsyncGenerator<NewMatch<Sql, Data> | Failure<Sql, Data>> {
     for await (const _ of this.#warehouse.commits(signal))
       for (const watched of this.#rules) {
-        const matches = await this.#evaluate(watched.rule);
+        let matches: ReadonlyMap<string, Data>;
+        try {
+          matches = await this.#evaluate(watched.rule);
+        } catch (error) {
+          yield { rule: watched.rule, error };
+          continue;
+        }
         for (const [key, data] of matches)
           if (!watched.keys.has(key)) yield { rule: watched.rule, key, data };
         watched.keys = new Set(matches.keys());

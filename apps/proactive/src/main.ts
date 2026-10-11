@@ -50,6 +50,11 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 
 const run = promisify(execFile);
 for await (const match of eca.watch({ signal: stop.signal })) {
+  // A rule whose condition threw is evaluated again at the next commit.
+  if ('error' in match) {
+    process.stderr.write(`A rule failed: ${String(match.error)}\n`);
+    continue;
+  }
   await run('/usr/bin/osascript', [
     '-e',
     'on run argv',

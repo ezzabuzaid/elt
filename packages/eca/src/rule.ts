@@ -18,3 +18,10 @@ export type Rule<Sql, Data> = { readonly condition: Condition<Sql, Data> };
 export type NewMatch<Sql, Data> = Match<Data> & {
   readonly rule: Rule<Sql, Data>;
 };
+
+// A rule whose condition threw in an evaluation, and what it threw. The rule
+// keeps the keys it had, so the next commit evaluates it again.
+export type Failure<Sql, Data> = {
+  readonly rule: Rule<Sql, Data>;
+  readonly error: unknown;
+};

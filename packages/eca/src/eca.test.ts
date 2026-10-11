@@ -305,6 +305,104 @@ test('a rule added while a watch runs stays quiet about what matched before it w
   });
 });
 
+test('a condition that throws yields its failure, the other rules still yield, and the failing rule tries again at the next commit', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-fail-'));
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, []);
+  using warehouse = new ImportWarehouse(path);
+  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  // Fails only on its second evaluation, the first commit after its baseline.
+  let evaluations = 0;
+  const flaky = {
+    condition: {
+      evaluate: (sql: SQLTagStore) =>
+        ++evaluations === 2
+          ? Promise.reject(new Error('no such table: messages.mesages'))
+          : new EarlyMonthSpend().evaluate(sql),
+    },
+  };
+  const spend = { condition: new EarlyMonthSpend() };
+  await eca.add(flaky);
+  await eca.add(spend);
+  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+
+  const first = matches.next();
+  load(path, october);
+  warehouse.commit();
+  const failed = await first;
+  const crossed = await matches.next();
+  const third = matches.next();
+  warehouse.commit();
+  const retried = await third;
+
+  assert.ok(failed.value !== undefined && 'error' in failed.value);
+  assert.equal(failed.value.rule, flaky);
+  assert.ok(failed.value.error instanceof Error);
+  assert.equal(failed.value.error.message, 'no such table: messages.mesages');
+  assert.deepEqual(
+    [crossed.value, retried.value],
+    [
+      { rule: spend, key: '2026-10', data: { spent: 220.807 } },
+      { rule: flaky, key: '2026-10', data: { spent: 220.807 } },
+    ],
+  );
+});
+
+test('a failing rule keeps the matches it already reported, so after the failure only what is new yields', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-kept-'));
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, []);
+  using warehouse = new ImportWarehouse(path);
+  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  // Fails only on its third evaluation, after it reported October.
+  let evaluations = 0;
+  const flaky = {
+    condition: {
+      evaluate: (sql: SQLTagStore) =>
+        ++evaluations === 3
+          ? Promise.reject(new Error('connection reset'))
+          : new EarlyMonthSpend().evaluate(sql),
+    },
+  };
+  await eca.add(flaky);
+  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+
+  const first = matches.next();
+  load(path, october);
+  warehouse.commit();
+  const reported = await first;
+  const second = matches.next();
+  warehouse.commit();
+  const failed = await second;
+  const third = matches.next();
+  load(path, november);
+  warehouse.commit();
+  const after = await third;
+  // Whatever yields next must be December's crossing, so October was not
+  // queued again behind November.
+  const fourth = matches.next();
+  load(path, [
+    purchase('g', '2026-12-02T09:00:00.000Z', '150.000'),
+    purchase('h', '2026-12-03T09:00:00.000Z', '60.000'),
+  ]);
+  warehouse.commit();
+  const next = await fourth;
+
+  assert.deepEqual(reported.value, {
+    rule: flaky,
+    key: '2026-10',
+    data: { spent: 220.807 },
+  });
+  assert.ok(failed.value !== undefined && 'error' in failed.value);
+  assert.deepEqual(
+    [after.value, next.value],
+    [
+      { rule: flaky, key: '2026-11', data: { spent: 205 } },
+      { rule: flaky, key: '2026-12', data: { spent: 210 } },
+    ],
+  );
+});
+
 // A watch that never ends would hang the run, so this test has its own deadline.
 test('aborting the signal ends the watch', { timeout: 5_000 }, async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-abort-'));

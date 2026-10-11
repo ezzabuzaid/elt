@@ -40,6 +40,10 @@ _Avoid_: Id, dedup key, fingerprint
 A key that a rule's condition matches in this evaluation and did not match in the previous one. eca yields it with its rule and its data. It is the moment the host acts.
 _Avoid_: Change, started, alert, firing, event (an event makes eca evaluate)
 
+**Failure**:
+A rule whose condition threw in an evaluation, with what it threw. eca yields it beside the new matches. The rule keeps its keys, so the next commit evaluates it again.
+_Avoid_: Error event, crash, alert
+
 **Baseline**:
 The first evaluation of a rule, when the host adds it. eca keeps its keys and yields no new match. Thus a rule yields only keys that start to match after it was added. The baseline is in memory, so a rule that the host adds again starts from a new baseline.
 _Avoid_: Seed, snapshot (elt uses snapshot for a full read), initial run
