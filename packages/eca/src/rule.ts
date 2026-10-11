@@ -3,9 +3,10 @@
 export type Match<Data> = { readonly key: string; readonly data: Data };
 
 // What is true now, read from the warehouse through sql. The agent writes it
-// as code, with SQL in it.
+// as code, with SQL in it. It is async, because a warehouse such as Postgres
+// answers a query asynchronously.
 export interface Condition<Sql, Data> {
-  evaluate(sql: Sql): readonly Match<Data>[];
+  evaluate(sql: Sql): Promise<readonly Match<Data>[]>;
 }
 
 // The host's own object: a new match carries it back, so the host knows which

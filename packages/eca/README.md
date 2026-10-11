@@ -13,7 +13,7 @@ import { Eca } from '@workspace/eca';
 
 const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
 const spend = { condition: new EarlyMonthSpend() };
-eca.add(spend);
+await eca.add(spend);
 
 for await (const match of eca.watch({ signal }))
   if (match.rule === spend)
@@ -23,7 +23,7 @@ for await (const match of eca.watch({ signal }))
 ```
 
 - A rule is the host's own object with a `condition`. Each new match carries it back as `match.rule`, so the host knows which rule matched.
-- `add` evaluates the condition one time, for its baseline. It yields nothing.
+- `add` evaluates the condition one time, for its baseline, and resolves when the baseline is kept. It yields nothing.
 - `watch` evaluates every rule at each commit to the warehouse, and it yields each new match.
 - The two type parameters are the handle of the warehouse and the data of the matches. Give a union when the rules have different data.
 
@@ -59,7 +59,7 @@ The adapter decides what read-only means and how it learns of a commit. A SQLite
 
 ## Write a condition
 
-A condition has one method: `evaluate(sql)`. It gets the handle of the warehouse, and it returns the matches that are true now. Each match has a key and data:
+A condition has one method: `evaluate(sql)`. It gets the handle of the warehouse, and it resolves to the matches that are true now. It is async, because a warehouse such as Postgres answers a query asynchronously; a condition over a synchronous handle, such as `node:sqlite`, is `async` too. Each match has a key and data:
 
 ```ts
 import type { SQLTagStore } from 'node:sqlite';
@@ -69,7 +69,7 @@ import type { Condition } from '@workspace/eca';
 // Card purchases of Arab Bank in days 1 to 10 of each month, on the clock of
 // the user, by the time of the SMS.
 class EarlyMonthSpend implements Condition<SQLTagStore, { spent: number }> {
-  evaluate(sql: SQLTagStore) {
+  async evaluate(sql: SQLTagStore) {
     const fils = new Map<string, number>();
     for (const {
       text,

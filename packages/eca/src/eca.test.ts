@@ -7,7 +7,7 @@ import { DatabaseSync, type SQLTagStore } from 'node:sqlite';
 import { test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 
-import { type Condition, Eca, type Warehouse } from './index.ts';
+import { type Condition, Eca, type Match, type Warehouse } from './index.ts';
 
 type Sms = { guid: string; handle: string; text: string; date: string };
 
@@ -73,7 +73,7 @@ const purchase = (guid: string, date: string, amount: string): Sms => ({
 // What an agent would write for "when I spend over 200 in the first 10 days
 // of a month": card purchases by the SMS's own date, on the user's clock.
 class EarlyMonthSpend implements Condition<SQLTagStore, { spent: number }> {
-  evaluate(sql: SQLTagStore) {
+  async evaluate(sql: SQLTagStore) {
     const fils = new Map<string, number>();
     for (const {
       text,
@@ -107,8 +107,8 @@ const november = [
   purchase('d', '2026-11-05T09:00:00.000Z', '85.000'),
 ];
 
-// eca evaluates synchronously, so every commit raised so far is evaluated once
-// pending callbacks have run.
+// The test condition reads SQLite synchronously, so eca's evaluation of every
+// commit raised so far settles once pending callbacks have run.
 const evaluated = () => setImmediate();
 
 test('a crossing yields its month once: a commit that changes nothing, or more spend in that month, yields nothing more', async () => {
@@ -118,7 +118,7 @@ test('a crossing yields its month once: a commit that changes nothing, or more s
   using warehouse = new ImportWarehouse(path);
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
   const spend = { condition: new EarlyMonthSpend() };
-  eca.add(spend);
+  await eca.add(spend);
   await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
 
   const first = matches.next();
@@ -153,7 +153,7 @@ test('a rule added when October already passed 200 stays quiet about October, an
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
   const spend = { condition: new EarlyMonthSpend() };
 
-  eca.add(spend);
+  await eca.add(spend);
   await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
   const first = matches.next();
   load(path, november);
@@ -173,7 +173,7 @@ test('a month that drops under 200 and crosses again yields again', async () => 
   using warehouse = new ImportWarehouse(path);
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
   const spend = { condition: new EarlyMonthSpend() };
-  eca.add(spend);
+  await eca.add(spend);
   await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
 
   const first = matches.next();
@@ -204,8 +204,8 @@ test('two rules over the same purchases each yield their own match', async () =>
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
   const alert = { condition: new EarlyMonthSpend() };
   const log = { condition: new EarlyMonthSpend() };
-  eca.add(alert);
-  eca.add(log);
+  await eca.add(alert);
+  await eca.add(log);
   await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
 
   const first = matches.next();
@@ -226,8 +226,8 @@ test('matches the host stopped before pulling past come again to its next watch,
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
   const alert = { condition: new EarlyMonthSpend() };
   const log = { condition: new EarlyMonthSpend() };
-  eca.add(alert);
-  eca.add(log);
+  await eca.add(alert);
+  await eca.add(log);
   {
     await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
     const first = matches.next();
@@ -252,8 +252,8 @@ test('a rule the host moved past keeps its new matches when the host stops insid
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
   const alert = { condition: new EarlyMonthSpend() };
   const log = { condition: new EarlyMonthSpend() };
-  eca.add(alert);
-  eca.add(log);
+  await eca.add(alert);
+  await eca.add(log);
   {
     await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
     const first = matches.next();
@@ -270,6 +270,41 @@ test('a rule the host moved past keeps its new matches when the host stops insid
   assert.equal((await again).value?.rule, log);
 });
 
+test('a rule added while a watch runs stays quiet about what matched before it was added, even when its baseline answers last', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-late-'));
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, october);
+  using warehouse = new ImportWarehouse(path);
+  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  await using matches = eca.watch({ signal: AbortSignal.timeout(10_000) });
+  const first = matches.next();
+  // The baseline answers only when the test says so, as a slow warehouse might.
+  const baseline = Promise.withResolvers<readonly Match<{ spent: number }>[]>();
+  let evaluations = 0;
+  const spend = {
+    condition: {
+      evaluate: (sql: SQLTagStore) =>
+        evaluations++ === 0
+          ? baseline.promise
+          : new EarlyMonthSpend().evaluate(sql),
+    },
+  };
+
+  const adding = eca.add(spend);
+  warehouse.commit();
+  await evaluated();
+  baseline.resolve(await new EarlyMonthSpend().evaluate(warehouse.sql));
+  await adding;
+  load(path, november);
+  warehouse.commit();
+
+  assert.deepEqual((await first).value, {
+    rule: spend,
+    key: '2026-11',
+    data: { spent: 205 },
+  });
+});
+
 // A watch that never ends would hang the run, so this test has its own deadline.
 test('aborting the signal ends the watch', { timeout: 5_000 }, async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-abort-'));
@@ -277,7 +312,7 @@ test('aborting the signal ends the watch', { timeout: 5_000 }, async () => {
   writeImport(path, []);
   using warehouse = new ImportWarehouse(path);
   const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
-  eca.add({ condition: new EarlyMonthSpend() });
+  await eca.add({ condition: new EarlyMonthSpend() });
   const controller = new AbortController();
   await using matches = eca.watch({ signal: controller.signal });
 

@@ -11,19 +11,13 @@
       "path": "../../packages/eca"
     },
     {
-      "path": "../../packages/settings"
+      "path": "../../packages/elt"
     },
     {
-      "path": "../../packages/destinations/sqlite"
+      "path": "../../packages/destinations/postgresql"
     },
     {
-      "path": "../../packages/connectors/apple/connector"
-    },
-    {
-      "path": "../../packages/connectors/apple/manifest"
-    },
-    {
-      "path": "../../packages/sdks/apple/eventkit"
+      "path": "../../packages/sources/apple/messages"
     }
   ]
 }

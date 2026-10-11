@@ -17,8 +17,11 @@ export class Eca<Sql, Data> {
 
   // A rule starts from what its condition matches now, so it yields only keys
   // that start to match after it was added.
-  add(rule: Rule<Sql, Data>): void {
-    this.#rules.push({ rule, keys: new Set(this.#evaluate(rule).keys()) });
+  async add(rule: Rule<Sql, Data>): Promise<void> {
+    this.#rules.push({
+      rule,
+      keys: new Set((await this.#evaluate(rule)).keys()),
+    });
   }
 
   // Each commit to the warehouse evaluates every rule. A rule moves on to its
@@ -31,18 +34,18 @@ export class Eca<Sql, Data> {
   }): AsyncGenerator<NewMatch<Sql, Data>> {
     for await (const _ of this.#warehouse.commits(signal))
       for (const watched of this.#rules) {
-        const matches = this.#evaluate(watched.rule);
+        const matches = await this.#evaluate(watched.rule);
         for (const [key, data] of matches)
           if (!watched.keys.has(key)) yield { rule: watched.rule, key, data };
         watched.keys = new Set(matches.keys());
       }
   }
 
-  #evaluate(rule: Rule<Sql, Data>): ReadonlyMap<string, Data> {
+  async #evaluate(rule: Rule<Sql, Data>): Promise<ReadonlyMap<string, Data>> {
     return new Map(
-      rule.condition
-        .evaluate(this.#warehouse.sql)
-        .map(({ key, data }) => [key, data]),
+      (await rule.condition.evaluate(this.#warehouse.sql)).map(
+        ({ key, data }) => [key, data],
+      ),
     );
   }
 }
