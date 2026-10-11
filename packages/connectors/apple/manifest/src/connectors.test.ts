@@ -28,6 +28,7 @@ test('every connector folder loads as its connector for the host, and one that c
     'books',
     'calendar',
     'call-history',
+    'clock',
     'contacts',
     'mail',
     'messages',

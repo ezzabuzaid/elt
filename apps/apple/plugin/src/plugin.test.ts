@@ -451,6 +451,7 @@ test('the Settings page switches connectors on and off and describes each import
       activity: false,
       accounts: false,
       'call-history': false,
+      clock: false,
       'notification-center': false,
       slack: false,
       wallet: false,

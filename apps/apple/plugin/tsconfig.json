@@ -50,6 +50,9 @@
       "path": "../../../packages/connectors/apple/connector"
     },
     {
+      "path": "../../../packages/connectors/apple/clock"
+    },
+    {
       "path": "../../../packages/connectors/apple/call-history"
     },
     {

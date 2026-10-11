@@ -1,0 +1,13 @@
+{
+  "name": "source-apple-clock",
+  "sourceRoot": "packages/sources/apple/clock/src",
+  "projectType": "library",
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/apple/clock/dist/*.test.js\""
+    }
+  },
+  "tags": ["layer:island"]
+}

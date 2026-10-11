@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/source-apple-clock",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./apple-clock-source": {
+      "types": "./dist/apple-clock-source.d.ts",
+      "default": "./dist/apple-clock-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/sdk-apple-clock": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1",
+    "@workspace/codec-plist": "0.0.1"
+  }
+}

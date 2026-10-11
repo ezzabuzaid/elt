@@ -201,6 +201,12 @@
       "path": "./packages/connectors/apple/wallet"
     },
     {
+      "path": "./packages/connectors/apple/clock"
+    },
+    {
+      "path": "./packages/sources/apple/clock"
+    },
+    {
       "path": "./packages/sdks/apple/clock"
     },
     {
