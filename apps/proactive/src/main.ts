@@ -9,8 +9,10 @@ import { Eca, type Warehouse } from '@workspace/eca';
 import { EarlyMonthSpend } from './early-month-spend.ts';
 import { KeywordText } from './keyword-text.ts';
 import { MeetingBriefWriter } from './meeting-brief-writer.ts';
+import { MissingMidMonthCredit } from './missing-mid-month-credit.ts';
 import pipeline from './pipeline.ts';
 import { type MeetingBrief, PlanningMeetings } from './planning-meetings.ts';
+import { SpendSpike } from './spend-spike.ts';
 
 // Conditions read the marts as agent_reader, which can read nothing else.
 const readerUrl = 'postgres://agent_reader:agent@127.0.0.1:55432/warehouse';
@@ -42,12 +44,18 @@ const warehouse: Warehouse<postgres.Sql> = {
 };
 const eca = new Eca<
   postgres.Sql,
-  { spent: number } | { text: string } | MeetingBrief
+  | { spent: number }
+  | { spent: number; usual: number }
+  | { due: string }
+  | { text: string }
+  | MeetingBrief
 >({
   warehouse,
 });
 
 await eca.add({ condition: new EarlyMonthSpend() });
+await eca.add({ condition: new SpendSpike() });
+await eca.add({ condition: new MissingMidMonthCredit() });
 await eca.add({ condition: new KeywordText() });
 await eca.add({ condition: new PlanningMeetings() });
 const briefs = new MeetingBriefWriter(
@@ -76,9 +84,13 @@ for await (const match of eca.watch({ signal: stop.signal })) {
   const message =
     'meeting' in match.data
       ? `Planning brief ready: ${match.data.meeting.name}\n${brief}`
-      : 'spent' in match.data
-        ? `You spent ${match.data.spent} JOD in the first 10 days of ${match.key}.`
-        : match.data.text;
+      : 'usual' in match.data
+        ? `You spent ${match.data.spent} JOD in ${match.key}, over twice your usual ${match.data.usual} JOD a week.`
+        : 'spent' in match.data
+          ? `You spent ${match.data.spent} JOD in the first 10 days of ${match.key}.`
+          : 'due' in match.data
+            ? `The mid-month credit of ${match.key} has not arrived. It was due by ${match.data.due}.`
+            : match.data.text;
   await run('/usr/bin/osascript', [
     '-e',
     'on run argv',

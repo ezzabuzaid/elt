@@ -31,6 +31,19 @@ first import form the baseline, so this does not backfill every future meeting.
 Calendar access and Full Disk Access for Mail and Messages must already be
 granted to the host running the app.
 
+Two rules read the Arab Bank SMS in Messages, by the time of each SMS in
+Amman:
+
+- **SpendSpike:** the card purchases of an ISO week pass twice the median of
+  the 8 weeks before it. A week without purchases counts as 0 JOD. One-time
+  codes, credits and transfers are not purchases. Each week notifies once.
+- **MissingMidMonthCredit:** a credit of 1000 JOD or more is due on days 13
+  to 17 of each month. When day 18 starts and no such credit came on day 13
+  or later, the month notifies once. Day 18 starts when the import holds a
+  message from day 18, so an import that is behind does not notify. A credit
+  on days 7 to 12 does not count, because a different credit of the same
+  size arrives then; thus a mid-month credit that comes early notifies too.
+
 Rules keep their keys only during one run. A restart takes a new baseline from
 the warehouse before refreshing, as the other proactive rules do. No schedule
 or persistent background process is installed.
