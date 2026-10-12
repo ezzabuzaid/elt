@@ -1,12 +1,11 @@
 import { useApp, useHostStyles } from '@modelcontextprotocol/ext-apps/react';
 
 import { ConnectorDetail } from './connector-detail.tsx';
-import { ConnectorList } from './connector-list.tsx';
 import { PageProvider, usePage } from './page-context.tsx';
 import { Sidebar } from './sidebar.tsx';
 
-// The Apple page ChatGPT lists in its sidebar: its own sidebar beside the
-// connector list, or beside one connector's page.
+// The Apple page ChatGPT lists in its sidebar: its own sidebar, beside the
+// page of the connector it opened.
 export function Page() {
   const { app, error } = useApp({
     appInfo: { name: 'apple-page', version: '1.0.0' },
@@ -34,5 +33,5 @@ export function Page() {
 function OpenedConnector() {
   const { rows, opened } = usePage();
   const row = rows?.find(({ name }) => name === opened);
-  return row === undefined ? <ConnectorList /> : <ConnectorDetail row={row} />;
+  return row === undefined ? null : <ConnectorDetail row={row} />;
 }

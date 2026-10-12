@@ -1,16 +1,15 @@
-import { type ReactNode, useState } from 'react';
+import type { ReactNode } from 'react';
 
-import { messageOf } from './call-tool.ts';
+import { ConnectorSwitch } from './connector-switch.tsx';
 import type { ConnectorRow } from './contract.ts';
 import { usePage } from './page-context.tsx';
 
 // The Apple page's sidebar, drawn like the sidebar of ChatGPT's Space: its
 // title with Sync, which imports every connected connector again and turns
-// until the last pass ends, then its monitors and its connectors, each a
-// section that folds away.
+// until the last pass ends, the page's failure to read or sync, then its
+// monitors and its connectors, each a section that folds away.
 export function Sidebar() {
-  const { rows, sync, syncing } = usePage();
-  const [failure, setFailure] = useState<string | null>(null);
+  const { rows, failure, sync, syncing } = usePage();
   const label = syncing ? 'Syncing connectors' : 'Sync connectors';
   return (
     <nav className="sidebar" aria-label="Apple">
@@ -23,12 +22,7 @@ export function Sidebar() {
           aria-busy={syncing}
           title={label}
           disabled={syncing}
-          onClick={() => {
-            sync().then(
-              () => setFailure(null),
-              (error: unknown) => setFailure(messageOf(error)),
-            );
-          }}
+          onClick={() => void sync()}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
@@ -67,7 +61,8 @@ function Section({ title, children }: { title: string; children?: ReactNode }) {
   );
 }
 
-// A connector that is not loaded has no page of its own to open.
+// A connector with its status on hover and its switch at the end. One that
+// is not loaded has no page of its own to open, only its switch to turn off.
 function ConnectorLink({ row }: { row: ConnectorRow }) {
   const { opened, open } = usePage();
   const label = (
@@ -82,14 +77,18 @@ function ConnectorLink({ row }: { row: ConnectorRow }) {
         <button
           type="button"
           className="item"
+          title={row.status.text}
           aria-current={opened === row.name ? 'page' : undefined}
           onClick={() => open(row.name)}
         >
           {label}
         </button>
       ) : (
-        <span className="item">{label}</span>
+        <span className="item" title={row.status.text}>
+          {label}
+        </span>
       )}
+      <ConnectorSwitch row={row} />
     </li>
   );
 }

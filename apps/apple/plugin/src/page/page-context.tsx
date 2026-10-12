@@ -29,7 +29,8 @@ type Page = {
     connector: string,
     selection: Partial<ConnectorSelection> | null,
   ) => Promise<void>;
-  // Imports every connected connector again, and settles once all have ended.
+  // Imports every connected connector again, and settles once all have
+  // ended; a failure becomes the page's failure.
   readonly sync: () => Promise<void>;
   readonly syncing: boolean;
   readonly opened: string | null;
@@ -146,6 +147,8 @@ export function PageProvider({
       );
       setRows(connectors);
       setFailure(null);
+    } catch (error) {
+      setFailure(messageOf(error));
     } finally {
       setSyncing(false);
     }

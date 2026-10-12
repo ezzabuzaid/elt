@@ -3,7 +3,6 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { callTool, messageOf } from './call-tool.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ConnectorStatus } from './connector-status.tsx';
-import { ConnectorSwitch } from './connector-switch.tsx';
 import {
   type ConnectorChoices,
   type ConnectorRow,
@@ -12,11 +11,11 @@ import {
 } from './contract.ts';
 import { usePage } from './page-context.tsx';
 
-// One connector: its switch, its status and what it imports. Its choices are
-// read from its Apple app only when this page opens, since reading them may
-// make macOS ask for access.
+// One connector: its status and what it imports; its switch is on its
+// sidebar row. Its choices are read from its Apple app only when this page
+// opens, since reading them may make macOS ask for access.
 export function ConnectorDetail({ row }: { row: ConnectorRow }) {
-  const { app, open } = usePage();
+  const { app } = usePage();
   const [choices, setChoices] = useState<ConnectorChoices | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -65,17 +64,7 @@ export function ConnectorDetail({ row }: { row: ConnectorRow }) {
 
   return (
     <main className="page">
-      <button
-        type="button"
-        className="btn btn-ghost"
-        onClick={() => open(null)}
-      >
-        ‹ Connectors
-      </button>
-      <header className="header detail">
-        <h2>{row.title}</h2>
-        <ConnectorSwitch row={row} />
-      </header>
+      <h2>{row.title}</h2>
       <ConnectorStatus row={row} />
       <section className="card">
         <h3>What to import</h3>

@@ -166,11 +166,43 @@
   list-style: none;
 }
 
+.section li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding-inline-end: 8px;
+}
+
+/* A sidebar row's switch is the small one, as a row is only 30px tall. */
+.section .switch {
+  width: 26px;
+  height: 15px;
+  border-radius: 7.5px;
+}
+
+.section .switch::after {
+  width: 11px;
+  height: 11px;
+}
+
+.section .switch:checked::after {
+  transform: translateX(11px);
+}
+
+/* A switch's failure takes its own line under the row. */
+.section li > p {
+  flex-basis: 100%;
+  margin: 0;
+  padding-inline: 8px;
+}
+
 .item {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   gap: 8px;
-  width: 100%;
   height: 30px;
   padding: 5px 8px;
   border: 0;
@@ -265,57 +297,6 @@ button.item:hover,
   max-width: 720px;
   margin: 0 auto;
   padding: 16px;
-}
-
-.header {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.header.detail {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.rows {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.row-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.row-title {
-  padding: 0;
-  border: 0;
-  color: var(--foreground);
-  background: none;
-  font: inherit;
-  font-weight: var(--font-weight-medium, 500);
-  text-align: left;
-  cursor: var(--cursor-interaction, pointer);
-}
-
-span.row-title {
-  cursor: default;
 }
 
 .status {
