@@ -8,9 +8,11 @@ import {
   type FailureType,
   LocalFiles,
   Pipeline,
+  PipelineError,
   type Source,
   type Stream,
   StreamStatus,
+  WatchError,
 } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
@@ -316,9 +318,10 @@ export abstract class AppleConnector {
       );
     } catch (error) {
       if (error instanceof ConnectorRemovedError) return { status: 'removed' };
-      // The history recorded what each copy did not load, as a PipelineError
-      // says, or why a watch stopped.
-      if (!(error instanceof AggregateError)) throw error;
+      // The history recorded each failure these hold: what each copy did not
+      // load, or why the watch stopped. It recorded no other error.
+      if (!(error instanceof PipelineError || error instanceof WatchError))
+        throw error;
     }
     return { status: 'imported' };
   }

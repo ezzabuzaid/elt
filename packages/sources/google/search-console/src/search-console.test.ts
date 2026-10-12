@@ -1386,6 +1386,176 @@ test('a property without permission is reported by name while the others load an
   assert.deepEqual(await saved(), [A, B]);
 });
 
+test('a property Google refuses to the user is a config failure, and a quota refusal or a server error is a system failure', async () => {
+  const refusals: Record<string, Error> = {
+    'sc-domain:forbidden.example': googleError(403, {
+      error: {
+        message:
+          "User does not have sufficient permission for site 'sc-domain:forbidden.example'.",
+        errors: [{ reason: 'forbidden' }],
+      },
+    }),
+    'sc-domain:unauthenticated.example': googleError(401, {
+      error: {
+        message: 'Request had invalid authentication credentials.',
+        errors: [{ reason: 'authError' }],
+        status: 'UNAUTHENTICATED',
+      },
+    }),
+    'sc-domain:limited.example': httpError(403, {
+      reason: 'rateLimitExceeded',
+    }),
+    'sc-domain:broken.example': httpError(500),
+  };
+  const { requester } = recorder((call) => {
+    throw refusals[siteOf(call)];
+  });
+  await using warehouse = await searchConsoleDatabase(testServer);
+  const { destination, checkpoints } = warehouse;
+  const source = new SearchConsoleSource({
+    now: NOW,
+    requester,
+    retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    searchTypes: ['WEB'],
+    siteUrls: Object.keys(refusals),
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+            id: 'daily',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('every property was refused'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof PipelineError, String(error));
+  assert.deepEqual(
+    error.results[0]?.failures.map(({ partition, failureType }) => [
+      partition?.siteUrl,
+      failureType,
+    ]),
+    [
+      ['sc-domain:forbidden.example', 'config'],
+      ['sc-domain:unauthenticated.example', 'config'],
+      ['sc-domain:limited.example', 'system'],
+      ['sc-domain:broken.example', 'system'],
+    ],
+  );
+});
+
+test(
+  'under a watch, a copy that failed on a denied property and on a server error loads again about ten seconds later with no change in traffic',
+  { timeout: 30_000 },
+  async () => {
+    const A = 'sc-domain:a.example';
+    const B = 'sc-domain:b.example';
+    let refusing = true;
+    const { requester } = recorder((call) => {
+      if (refusing && siteOf(call) === A)
+        throw googleError(403, {
+          error: {
+            message: `User does not have sufficient permission for site '${A}'.`,
+            errors: [{ reason: 'forbidden' }],
+          },
+        });
+      if (refusing) throw httpError(500);
+      return {
+        metadata: { firstIncompleteDate: '2026-09-21' },
+        rows: [
+          {
+            clicks: 1,
+            ctr: 0.1,
+            impressions: 10,
+            keys: ['2026-09-20'],
+            position: 2,
+          },
+        ],
+      };
+    });
+    await using warehouse = await searchConsoleDatabase(testServer);
+    const { destination, checkpoints } = warehouse;
+    const source = new SearchConsoleSource({
+      now: NOW,
+      // No poll within the test: nothing but a retry loads the copy again.
+      pollIntervalMs: 60_000,
+      requester,
+      retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+      searchTypes: ['WEB'],
+      siteUrls: [A, B],
+    });
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+              id: 'daily',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
+        }),
+      ],
+    }).watch({ signal: controller.signal });
+    // Ends a watch that never loads the copy again, so the test fails, not hangs.
+    const deadline = setTimeout(() => controller.abort(), 20_000);
+
+    try {
+      const failed = await watching.next();
+      const failedAt = Date.now();
+      refusing = false;
+      const retried = await watching.next();
+      const waited = Date.now() - failedAt;
+
+      if (failed.done || retried.done)
+        assert.fail('the copy was not loaded again');
+      assert.deepEqual(
+        failed.value.outcomes[0]?.failures.map(({ partition, failureType }) => [
+          partition?.siteUrl,
+          failureType,
+        ]),
+        [
+          [A, 'config'],
+          [B, 'system'],
+        ],
+      );
+      assert.deepEqual(
+        retried.value.outcomes.map(({ count, failures }) => [
+          count,
+          failures.length,
+        ]),
+        [[2, 0]],
+      );
+      assert.ok(
+        waited >= 9_000 && waited < 20_000,
+        `loaded again after ${waited} ms`,
+      );
+    } finally {
+      clearTimeout(deadline);
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
+
 test('watching invalidates when only one of several properties changed', async () => {
   const A = 'sc-domain:a.example';
   const B = 'sc-domain:b.example';
@@ -2157,3 +2327,138 @@ test('watching wakes inspection streams when URLs fall due, not when traffic cha
     controller.abort();
   }
 });
+
+test(
+  'under a watch, an inspection stream whose pass failed, the first one or one when its URL fell due, is inspected again at the next poll though no due time moved',
+  { timeout: 15_000 },
+  async () => {
+    let denied = true;
+    const property = inspectionProperty({ pages: ['https://example.com/a'] });
+    const requester = {
+      async request(options: { url: string; data?: Record<string, unknown> }) {
+        if (denied)
+          throw googleError(403, {
+            error: {
+              message: `User does not have sufficient permission for site '${SITE}'.`,
+              errors: [{ reason: 'forbidden' }],
+            },
+          });
+        return property.requester.request(options);
+      },
+    };
+    const source = new SearchConsoleSource({
+      fetch: property.fetch,
+      // 360 ms: the URL falls due again soon after it is inspected.
+      inspectionRefreshHours: 0.0001,
+      pollIntervalMs: 500,
+      requester,
+      retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    await using warehouse = await searchConsoleDatabase(testServer);
+    const { destination, checkpoints } = warehouse;
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(source.urlInspection, destination.table('inspection'), {
+              id: 'inspection',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
+        }),
+      ],
+    }).watch({ signal: controller.signal });
+    // Waits for the next pass that loads, or fails to load, the inspections.
+    const until = async (loads: boolean) => {
+      for (;;) {
+        const next = await watching.next();
+        if (next.done) assert.fail('the inspections were not read again');
+        if ((next.value.outcomes[0]?.failures.length === 0) === loads) return;
+      }
+    };
+    // Ends a watch that never reads them again, so the test fails, not hangs.
+    const deadline = setTimeout(() => controller.abort(), 10_000);
+
+    try {
+      await until(false);
+      denied = false;
+      await until(true);
+      const first = property.inspected.length;
+      denied = true;
+      await until(false);
+      denied = false;
+      await until(true);
+
+      assert.equal(first, 1);
+      assert.ok(property.inspected.length >= 2, String(property.inspected));
+    } finally {
+      clearTimeout(deadline);
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
+
+test(
+  'under a watch, an inspection that falls due sooner than the next poll is made when it falls due',
+  { timeout: 15_000 },
+  async () => {
+    const property = inspectionProperty({ pages: ['https://example.com/a'] });
+    const source = new SearchConsoleSource({
+      ...property,
+      // 360 ms: the URL falls due again soon after it is inspected.
+      inspectionRefreshHours: 0.0001,
+      pollIntervalMs: 60_000,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    await using warehouse = await searchConsoleDatabase(testServer);
+    const { destination, checkpoints } = warehouse;
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            new Copy(source.urlInspection, destination.table('inspection'), {
+              id: 'inspection',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+          ],
+        }),
+      ],
+    }).watch({ signal: controller.signal });
+    // Ends a watch that waits for its next poll, so the test fails, not hangs.
+    const deadline = setTimeout(() => controller.abort(), 10_000);
+
+    try {
+      await watching.next();
+      const inspectedAt = Date.now();
+      const due = await watching.next();
+      const waited = Date.now() - inspectedAt;
+
+      assert.equal(due.done, false, 'the due inspection waited for the poll');
+      assert.deepEqual(property.inspected, [
+        'https://example.com/a',
+        'https://example.com/a',
+      ]);
+      assert.ok(waited < 5_000, `inspected again after ${waited} ms`);
+    } finally {
+      clearTimeout(deadline);
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);

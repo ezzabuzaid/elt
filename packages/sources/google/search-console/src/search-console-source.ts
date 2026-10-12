@@ -6,6 +6,7 @@ import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
+  type FailureType,
   type Partition,
   type RecordMessage,
   Source,
@@ -16,7 +17,7 @@ import {
   isCalendarDate,
   validateRecords,
 } from '@workspace/elt';
-import { messageOf } from '@workspace/google-auth';
+import { messageOf, statusOf } from '@workspace/google-auth';
 
 import {
   nextPacificMidnight,
@@ -153,6 +154,9 @@ export class SearchConsoleSource extends Source {
   // When each inspection stream next has a URL due, per property, learned
   // from the checkpoints its extractions received; observe() sleeps on it.
   readonly #dueAt = new Map<string, number>();
+  // Wakes a sleeping observe() whenever an extraction learns a due time, which
+  // can be sooner than the one it went to sleep on.
+  readonly #dueLearned = new EventTarget();
   // Inspection streams read at once take turns per property to plan and
   // inspect, so each sees what the one before it inspected and no URL is
   // inspected twice; different properties never wait on each other.
@@ -355,6 +359,14 @@ export class SearchConsoleSource extends Source {
     };
   }
 
+  // Google refused the grant, or the grant cannot read the property, so only
+  // the user can fix it. A rate limit Google sends as a 403 never gets here:
+  // the API turns it into a SearchConsoleQuotaError once retries run out.
+  override failureType(error: unknown): FailureType {
+    const status = statusOf(error);
+    return status === 401 || status === 403 ? 'config' : 'system';
+  }
+
   protected override async *observe({
     streams,
     signal,
@@ -367,17 +379,21 @@ export class SearchConsoleSource extends Source {
     );
     let fingerprint =
       others.length > 0 ? await this.#fingerprint(signal) : undefined;
+    // The first check wakes every stream, the inspection streams included.
+    let woke = this.#now().getTime();
     yield streams;
     let probeAt = Date.now() + this.pollIntervalMs;
-    let wokeFor: number | undefined;
     while (!signal.aborted) {
+      // A due time that no extraction moved past the last wake, because that
+      // extraction failed or has not run, is checked again at the next poll.
       const due = this.#nextDue(inspections);
+      const inspectAt = due > woke ? due : woke + this.pollIntervalMs;
       const wake = Math.min(
         others.length > 0 ? probeAt : Number.POSITIVE_INFINITY,
-        due === wokeFor ? Number.POSITIVE_INFINITY : due,
+        inspections.length > 0 ? inspectAt : Number.POSITIVE_INFINITY,
         Date.now() + this.pollIntervalMs,
       );
-      await sleep(Math.max(0, wake - Date.now()), undefined, { signal });
+      await this.#sleep(wake, signal);
       const changed: Stream[] = [];
       if (others.length > 0 && Date.now() >= probeAt) {
         probeAt = Date.now() + this.pollIntervalMs;
@@ -387,19 +403,32 @@ export class SearchConsoleSource extends Source {
           changed.push(...others);
         }
       }
-      // Wake once per due time; the extraction it triggers moves the time on.
-      if (
-        inspections.length > 0 &&
-        due !== wokeFor &&
-        this.#now().getTime() >= due
-      ) {
-        wokeFor = due;
+      if (inspections.length > 0 && this.#now().getTime() >= inspectAt) {
+        woke = this.#now().getTime();
         changed.push(...inspections);
       }
       if (changed.length > 0) yield changed;
     }
   }
 
+  // Sleeps until wake, or until an extraction learns a due time.
+  async #sleep(wake: number, signal: AbortSignal): Promise<void> {
+    const learned = new AbortController();
+    this.#dueLearned.addEventListener('learned', () => learned.abort(), {
+      signal: learned.signal,
+    });
+    try {
+      await sleep(Math.max(0, wake - Date.now()), undefined, {
+        signal: AbortSignal.any([signal, learned.signal]),
+      });
+    } catch (error) {
+      if (signal.aborted || !learned.signal.aborted) throw error;
+    } finally {
+      learned.abort();
+    }
+  }
+
+  // A due time no extraction has learned yet counts as due.
   #nextDue(streams: readonly Stream[]): number {
     let due = Number.POSITIVE_INFINITY;
     for (const stream of streams)
@@ -407,7 +436,7 @@ export class SearchConsoleSource extends Source {
         due = Math.min(
           due,
           this.#dueAt.get(`${stream.name}\0${siteUrl}`) ??
-            Number.POSITIVE_INFINITY,
+            Number.NEGATIVE_INFINITY,
         );
     return due;
   }
@@ -683,6 +712,7 @@ export class SearchConsoleSource extends Source {
           }
         } else if (plan.due.length > 0) nextDue = Math.min(nextDue, resetAt);
         this.#dueAt.set(`${stream.name}\0${siteUrl}`, nextDue);
+        this.#dueLearned.dispatchEvent(new Event('learned'));
         return { plan, inspections };
       },
     );

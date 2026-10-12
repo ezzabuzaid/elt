@@ -24,45 +24,55 @@ const stopGraceMs = 1000;
 // about a minute, and every record is a write.
 const checkRecordMs = 60_000;
 
+// When a watch loads a stream again, with no change, after its copy failed
+// for a system reason, as Airbyte's platform retries a failed sync attempt:
+// 10 s after the first failure and three times longer after each further one
+// in a row, at most 30 minutes, until 5 in a row failed; the source's next
+// change then starts over. Airbyte also stops at 10 failures in all, which
+// binds only once attempts that made progress break up a run of failures; a
+// watch does not count progress. As in Airbyte, a config failure is never
+// retried: only the user can fix it, and the source's next change loads it.
+// https://github.com/airbytehq/airbyte-platform/blob/f69abdf9567f1d496fdb7b69e2265e0104c5f2d3/airbyte-workers/src/main/kotlin/io/airbyte/workers/runtime/AirbyteWorkerRetryConfig.kt#L9-L13
+// https://github.com/airbytehq/airbyte-platform/blob/f69abdf9567f1d496fdb7b69e2265e0104c5f2d3/airbyte-commons-temporal/src/main/kotlin/io/airbyte/commons/temporal/scheduling/retries/BackoffPolicy.kt#L32-L42
+// https://github.com/airbytehq/airbyte-platform/blob/f69abdf9567f1d496fdb7b69e2265e0104c5f2d3/airbyte-commons-temporal/src/main/kotlin/io/airbyte/commons/temporal/scheduling/retries/RetryManager.kt#L94-L98
+// https://github.com/airbytehq/airbyte-platform/blob/f69abdf9567f1d496fdb7b69e2265e0104c5f2d3/airbyte-workers/src/main/kotlin/io/airbyte/workers/temporal/scheduling/ConnectionManagerWorkflowImpl.kt#L534
+const retryLimit = 5;
+const retryDelayMs = (failures: number) =>
+  Math.min(10_000 * 3 ** (failures - 1), 30 * 60_000);
+
 // One connection's read over the copies it selected, and what each loaded.
 export type Pass<Target extends DestinationTarget> = {
   readonly connection: Connection<Target>;
   readonly outcomes: readonly CopyOutcome<Target>[];
 };
 
-// A run that did not load completely. Like Airbyte, every copy still ran;
-// results holds each one's committed counts and failures, errors also the
-// passes that could not run, and cause is the first failure.
+// A run that did not load completely, as its sync history recorded. Like
+// Airbyte, every copy still ran; results holds each one's committed counts and
+// failures, and cause is the first failure.
 export class PipelineError<
   Target extends DestinationTarget,
 > extends AggregateError {
   override name = 'PipelineError';
   readonly results: readonly CopyOutcome<Target>[];
-  constructor(
-    results: readonly CopyOutcome<Target>[],
-    unrun: readonly unknown[],
-  ) {
+  constructor(results: readonly CopyOutcome<Target>[]) {
     const incomplete = results.filter(({ failures }) => failures.length > 0);
-    const errors = [
-      ...incomplete.flatMap(({ failures }) =>
-        failures.map(({ error }) => error),
-      ),
-      ...unrun,
-    ];
+    const errors = incomplete.flatMap(({ failures }) =>
+      failures.map(({ error }) => error),
+    );
     super(
       errors,
-      [
-        ...(incomplete.length > 0
-          ? [
-              `The following copies did not load completely: ${incomplete.map(describeFailures).join('; ')}`,
-            ]
-          : []),
-        ...unrun.map(message),
-      ].join('; '),
+      `The following copies did not load completely: ${incomplete.map(describeFailures).join('; ')}`,
       { cause: errors[0] },
     );
     this.results = Object.freeze([...results]);
   }
+}
+
+// A watch that ended, once every connection stopped or its signal aborted,
+// with failed watchers: each error names a connection whose watcher failed,
+// and the sync history recorded why.
+export class WatchError extends AggregateError {
+  override name = 'WatchError';
 }
 
 // The orchestrator. Connections are independent: each pass reads one
@@ -118,28 +128,32 @@ export class Pipeline<Target extends DestinationTarget> {
   }): Promise<CopyResult<Target>[]> {
     const signal = options?.signal;
     await this.#declare();
-    const passes = await Promise.all(
+    const passes = await Promise.allSettled(
       this.connections.map((connection) =>
-        this.#pass(connection, connection.steps, signal).then(
-          ({ outcomes }) => outcomes,
-          (error: unknown) => connectionError(connection, error),
-        ),
+        this.#pass(connection, connection.steps, signal),
       ),
     );
-    const unrun = passes.filter((pass): pass is Error => pass instanceof Error);
-    const results = passes
-      .filter((pass): pass is CopyOutcome<Target>[] => !(pass instanceof Error))
-      .flat();
+    // A pass rejects only with an error no history recorded, such as the
+    // history's own; the run rejects with it once every other pass ended.
+    const unrecorded = passes.find(
+      (pass): pass is PromiseRejectedResult => pass.status === 'rejected',
+    );
+    if (unrecorded !== undefined) throw unrecorded.reason;
+    const results = passes.flatMap((pass) =>
+      pass.status === 'fulfilled' ? pass.value.outcomes : [],
+    );
     if (results.some(({ cancelled }) => cancelled)) throw signal?.reason;
-    if (unrun.length > 0 || results.some(({ failures }) => failures.length > 0))
-      throw new PipelineError(results, unrun);
+    if (results.some(({ failures }) => failures.length > 0))
+      throw new PipelineError(results);
     return results.map(({ failures: _, cancelled: __, ...result }) => result);
   }
 
   // Each connection watches its own source and runs a pass for what changed.
   // A connection whose watcher fails stops alone, and its failure is recorded;
   // the rest keep watching. Once every connection stopped, or signal aborts,
-  // the failures are thrown together.
+  // the recorded failures are thrown together as a WatchError. An error the
+  // sync history could not record stops every connection and rejects as
+  // itself.
   async *watch({
     signal,
   }: {
@@ -153,7 +167,9 @@ export class Pipeline<Target extends DestinationTarget> {
     const passes = interleave(
       this.connections
         .filter(({ steps }) => steps.length > 0)
-        .map((connection) => this.#watch(connection, watching, stopped)),
+        .map((connection) =>
+          this.#watch(connection, watching, controller, stopped),
+        ),
       Number.POSITIVE_INFINITY,
     );
     // Advanced by hand: yield* would forward a consumer's early return to the
@@ -170,12 +186,14 @@ export class Pipeline<Target extends DestinationTarget> {
       await passes.return(undefined);
     }
     if (stopped.length > 0)
-      throw new AggregateError(stopped, stopped.map(message).join('; '));
+      throw new WatchError(stopped, stopped.map(message).join('; '));
   }
 
   async *#watch(
     connection: Connection<Target>,
     signal: AbortSignal,
+    // Stops every connection's watch.
+    everyone: AbortController,
     stopped: unknown[],
   ): AsyncGenerator<Pass<Target>> {
     const controller = new AbortController();
@@ -189,13 +207,21 @@ export class Pipeline<Target extends DestinationTarget> {
     // failed to load stays current only as of before that change.
     const loading = new Set<string>();
     const loaded = new Set<string>();
+    // Each stream whose copy last failed for a system reason: how many times
+    // in a row, and when the watch loads it again.
+    const retries = new Map<
+      string,
+      { readonly failures: number; readonly at: number }
+    >();
     let recordedAt = Number.NEGATIVE_INFINITY;
     let wake = Promise.withResolvers<void>();
     // An abort wakes the loop below, whether or not the source heeds it.
     watching.addEventListener('abort', () => wake.resolve(), { once: true });
     let finished = false;
-    let failed = false;
-    let failure: unknown;
+    // The watcher's own failure, which the history records once it stopped,
+    // and a check the history could not record, which stops the whole watch.
+    let failure: { readonly error: unknown } | undefined;
+    let unrecorded: { readonly error: unknown } | undefined;
     const receive = (async () => {
       let initial = true;
       try {
@@ -222,7 +248,12 @@ export class Pipeline<Target extends DestinationTarget> {
           );
           if (current.length > 0 && now - recordedAt >= checkRecordMs) {
             recordedAt = now;
-            await this.history?.checked(connection, current, new Date(now));
+            try {
+              await this.history?.checked(connection, current, new Date(now));
+            } catch (error) {
+              unrecorded = { error };
+              return;
+            }
           }
         }
         if (initial && !watching.aborted)
@@ -232,21 +263,32 @@ export class Pipeline<Target extends DestinationTarget> {
           watching.aborted &&
           error instanceof Error &&
           error.name === 'AbortError'
-        )) {
-          failed = true;
-          failure = error;
-        }
+        ))
+          failure = { error };
       } finally {
         finished = true;
         wake.resolve();
       }
     })();
     try {
-      while (!watching.aborted) {
-        if (failed) throw failure;
+      while (
+        !watching.aborted &&
+        failure === undefined &&
+        unrecorded === undefined
+      ) {
+        // Retries end with the watcher, as its changes do.
+        if (!finished)
+          for (const [name, { at }] of retries)
+            if (at <= Date.now()) pending.add(name);
         if (pending.size === 0) {
-          if (finished) return;
-          await wake.promise;
+          if (finished) break;
+          const woken = wake;
+          const due = Math.min(...[...retries.values()].map(({ at }) => at));
+          const retrying = Number.isFinite(due)
+            ? setTimeout(() => woken.resolve(), due - Date.now())
+            : undefined;
+          await woken.promise;
+          clearTimeout(retrying);
           continue;
         }
         const steps = connection.steps.filter((copy) =>
@@ -256,21 +298,39 @@ export class Pipeline<Target extends DestinationTarget> {
         for (const copy of steps) loading.add(copy.from.name);
         wake = Promise.withResolvers<void>();
         // Like a schedule after a failed sync, watching goes on: each pass
-        // reports what did not load, and a later invalidation retries it.
+        // reports what did not load, and a retry or the source's next change
+        // loads it again.
         const pass = await this.#pass(connection, steps, undefined);
         for (const { copy, failures } of pass.outcomes) {
-          loading.delete(copy.from.name);
-          if (failures.length === 0) loaded.add(copy.from.name);
-          else loaded.delete(copy.from.name);
+          const { name } = copy.from;
+          loading.delete(name);
+          if (failures.length === 0) loaded.add(name);
+          else loaded.delete(name);
+          // A success, a failure only the user can fix, or the last failure
+          // the limit allows ends the run of retries.
+          const inARow = (retries.get(name)?.failures ?? 0) + 1;
+          if (
+            failures.some(({ failureType }) => failureType === 'system') &&
+            inARow < retryLimit
+          )
+            retries.set(name, {
+              failures: inARow,
+              at: Date.now() + retryDelayMs(inARow),
+            });
+          else retries.delete(name);
         }
         yield pass;
       }
-      if (failed) throw failure;
+      if (unrecorded !== undefined) throw unrecorded.error;
+      if (failure !== undefined) {
+        await this.#recordFailure(connection, failure.error);
+        stopped.push(connectionError(connection, failure.error));
+      }
     } catch (error) {
-      stopped.push(connectionError(connection, error));
-      await this.#recordFailure(connection, error).catch((cause: unknown) =>
-        stopped.push(connectionError(connection, cause)),
-      );
+      // No history recorded this error, so no reader would see it: every
+      // connection stops at once, rather than once each next changes.
+      everyone.abort();
+      throw error;
     } finally {
       controller.abort();
       const graced = new AbortController();
@@ -299,37 +359,41 @@ export class Pipeline<Target extends DestinationTarget> {
         coverage: connection.source.coverage(copy.from),
       })),
     );
-    let outcomes: CopyOutcome<Target>[];
-    try {
-      outcomes = await replicate(
-        connection.source,
-        connection.destination,
-        connection.checkpoints,
-        steps,
-        record?.progress?.bind(record),
-        signal,
-      );
-    } catch (error) {
-      await record?.fail(error, connection.source.failureType(error));
-      throw error;
-    }
+    const outcomes = await replicate(
+      connection.source,
+      connection.destination,
+      connection.checkpoints,
+      steps,
+      record?.progress?.bind(record),
+      signal,
+    );
     await record?.finish(outcomes);
     return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
   }
 
+  // Records why a connection stopped. When the history cannot, the
+  // SuppressedError holds both errors, as a failed dispose does.
   async #recordFailure(
     connection: Connection<Target>,
-    error: unknown,
+    failure: unknown,
   ): Promise<void> {
     if (this.history === undefined) return;
-    const record = await this.history.begin(
-      connection,
-      connection.steps.map((copy) => ({
-        copy,
-        coverage: connection.source.coverage(copy.from),
-      })),
-    );
-    await record.fail(error, connection.source.failureType(error));
+    try {
+      const record = await this.history.begin(
+        connection,
+        connection.steps.map((copy) => ({
+          copy,
+          coverage: connection.source.coverage(copy.from),
+        })),
+      );
+      await record.fail(failure, connection.source.failureType(failure));
+    } catch (error) {
+      throw new SuppressedError(
+        error,
+        failure,
+        `Connection ${connection.name} stopped (${message(failure)}), and its sync history could not record why: ${message(error)}`,
+      );
+    }
   }
 
   // Every declaration is checked before any connection reads, so a wiring

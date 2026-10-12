@@ -2367,6 +2367,112 @@ test('sync watch loads each change Safari commits until SIGTERM stops it, keepin
   }
 });
 
+test('a copy that fails is shown as the pass its sync history recorded, not as an error of the sync', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+  await writeFile(
+    join(mac.path, 'Pictures/photos.json'),
+    JSON.stringify([{ id: 'p1', title: 'Beach' }, 'not a photo']),
+  );
+  cli(mac.path, 'setup', '--connector', 'photos');
+
+  const synced = cli(mac.path, 'sync');
+
+  assert.equal(synced.status, 1);
+  const [pass] = lines(synced.stdout);
+  assert.equal(pass.connector, 'photos');
+  // The photo before the entry that is not one loaded.
+  assert.equal(pass.status, 'partial');
+  assert.match(pass.error, /Each entry in photos\.json is a photo/);
+  assert.doesNotMatch(synced.stderr, /^error:/m);
+});
+
+test('a pass that fails with an error its sync history never recorded makes sync exit 1 naming it, though the error aggregates others', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+  // Photos as a connector whose source cannot say what a pass reads.
+  const photos = join(
+    mac.path,
+    'Library/Application Support/Context Compiler/Connectors/photos/photos-connector.ts',
+  );
+  const coverage =
+    "    return { description: 'every photo in photos.json', selection: {} };";
+  const source = await readFile(photos, 'utf8');
+  assert.ok(
+    source.includes(coverage),
+    'the Photos fixture declares its coverage another way',
+  );
+  await writeFile(
+    photos,
+    source.replace(
+      coverage,
+      "    throw new AggregateError([new Error('no album')], 'Photos cannot say what it reads');",
+    ),
+  );
+  cli(mac.path, 'setup', '--connector', 'photos');
+
+  const synced = cli(mac.path, 'sync');
+
+  assert.equal(synced.status, 1, synced.stdout);
+  assert.match(synced.stderr, /Photos cannot say what it reads/);
+});
+
+test('sync watch exits 1 and names the error when an import’s sync history cannot record a pass, though another connector keeps watching', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  const history = await withSafari(mac.path);
+  await withConnectors(mac.path);
+  // Photos as a connector that watches until the watch stops.
+  const photos = join(
+    mac.path,
+    'Library/Application Support/Context Compiler/Connectors/photos/photos-connector.ts',
+  );
+  const watcher =
+    '  protected async *observe({ streams }: SourceWatchOptions) {\n    yield streams;\n  }';
+  const source = await readFile(photos, 'utf8');
+  assert.ok(source.includes(watcher), 'the Photos fixture watches another way');
+  await writeFile(
+    photos,
+    source.replace(
+      watcher,
+      `  protected async *observe({ streams, signal }: SourceWatchOptions) {
+    yield streams;
+    await new Promise((resolve) =>
+      signal.addEventListener('abort', resolve, { once: true }),
+    );
+  }`,
+    ),
+  );
+  cli(mac.path, 'setup', '--connector', 'safari', '--connector', 'photos');
+  const watch = started(mac.path, 'sync', 'watch', '--json');
+  try {
+    await watch.prints(({ connector }) => connector === 'safari');
+    await watch.prints(({ connector }) => connector === 'photos');
+    // No operation makes the history fail; a table dropped under it does.
+    {
+      using imported = new DatabaseSync(
+        JSON.parse(cli(mac.path, 'status', '--json').stdout).find(
+          ({ connector }: { connector: string }) => connector === 'safari',
+        ).database,
+        { timeout: 5_000 },
+      );
+      imported.exec('DROP TABLE "_elt_extraction_coverage"');
+    }
+
+    visit(history, '2026-04-04T00:00:00Z');
+    const ended = await Promise.race([
+      watch.exited,
+      sleep(20_000).then(() => null),
+    ]);
+
+    if (ended === null) assert.fail('the watch went on without the history');
+    assert.equal(ended.status, 1, ended.stdout);
+    assert.match(ended.stderr, /no such table: _elt_extraction_coverage/);
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
+
 test('sync watch in a terminal says it watches between passes, and Ctrl-C stops it', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withSafari(mac.path);

@@ -23,9 +23,11 @@ import {
   Copy,
   type CopyConfiguration,
   type Destination,
+  type FailureType,
   type FileContent,
   LocalFiles,
   type Partition,
+  type Pass,
   Pipeline,
   PipelineError,
   type Properties,
@@ -37,6 +39,7 @@ import {
   StreamStatus,
   type Target,
   TargetOwnedError,
+  WatchError,
   diffGroupedSnapshot,
   diffSnapshot,
   expiredAfter,
@@ -47,6 +50,7 @@ import {
   SQLiteColumns,
   SQLiteDestination,
   SQLiteSyncHistory,
+  type SQLiteTable,
   installSQLiteCatalog,
 } from './index.ts';
 
@@ -6264,13 +6268,17 @@ test('a copy that declares its columns from the stream and stores its files keep
     );
 });
 
-// Two streams of one record each, a read the test can make fail, and a
-// watcher the test drives: each check event is one check of the upstream,
+// A refusal only the user can fix, such as an access they have not given.
+class DeniedError extends Error {}
+
+// Two streams of one record each, a read the test can make fail or deny, and
+// a watcher the test drives: each check event is one check of the upstream,
 // naming the streams that changed since the previous check, possibly none.
 class CheckedSource extends Source {
   readonly identity = 'checked';
   readonly checks = new EventEmitter();
   readonly failing = new Set<string>();
+  readonly denied = new Set<string>();
   readonly a = new Stream({
     name: 'a',
     jsonSchema: {
@@ -6287,6 +6295,10 @@ class CheckedSource extends Source {
     return { description: 'test', selection: {} };
   }
 
+  override failureType(error: unknown): FailureType {
+    return error instanceof DeniedError ? 'config' : 'system';
+  }
+
   protected override async open() {
     return new AsyncDisposableStack();
   }
@@ -6300,6 +6312,7 @@ class CheckedSource extends Source {
   protected override async *extract(configuration: CopyConfiguration) {
     const { name } = configuration.stream;
     if (this.failing.has(name)) throw new Error(`${name} cannot be read`);
+    if (this.denied.has(name)) throw new DeniedError(`${name} is denied`);
     yield { stream: name, data: { id: 'one' } };
   }
 }
@@ -6356,7 +6369,7 @@ async function checkedPipeline(directory: string) {
       await sleep(50);
     }
   };
-  return { source, pipeline, streams, connector, startedAt, until };
+  return { source, pipeline, path, read, streams, connector, startedAt, until };
 }
 
 test('under a watch, a stream whose change fails to load stays current only as of before that change, and so does its connector, while the others move on with the next check', async () => {
@@ -6442,3 +6455,275 @@ test('a run makes each stream it loaded current as of when its pass began, and t
   assert.equal(streams().b?.current_as_of, startedAt());
   assert.equal(connector(), startedAt());
 });
+
+test('a watcher failure the sync history recorded ends the watch with a WatchError naming the connection', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  const { source, pipeline, read } = await checkedPipeline(scratch.path);
+  const watching = pipeline.watch({ signal: new AbortController().signal });
+  const lost = new Error('Native watcher failed');
+  try {
+    await watching.next();
+
+    source.checks.emit('error', lost);
+
+    await assert.rejects(watching.next(), (error: unknown) => {
+      assert.ok(error instanceof WatchError, String(error));
+      assert.equal(error.errors.length, 1);
+      assert.equal(error.errors[0].cause, lost);
+      assert.equal(error.message, 'Connection checked: Native watcher failed');
+      return true;
+    });
+    assert.deepEqual(
+      read(
+        'SELECT status, error, failure_type FROM sync_attempts ORDER BY attempt_id DESC LIMIT 1',
+      ),
+      [
+        {
+          status: 'failed',
+          error: 'Native watcher failed',
+          failure_type: 'system',
+        },
+      ],
+    );
+    assert.equal(source.checks.listenerCount('check'), 0);
+  } finally {
+    await watching.return(undefined);
+  }
+});
+
+test('a watcher failure the sync history cannot record rejects with a SuppressedError holding the history’s error and the watcher’s', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  const { source, pipeline, path } = await checkedPipeline(scratch.path);
+  const watching = pipeline.watch({ signal: new AbortController().signal });
+  const lost = new Error('Native watcher failed');
+  try {
+    await watching.next();
+    // No operation makes the history fail; a table dropped under it does.
+    {
+      using database = new DatabaseSync(path);
+      database.exec('DROP TABLE "_elt_extraction_coverage"');
+    }
+
+    source.checks.emit('error', lost);
+
+    await assert.rejects(watching.next(), (error: unknown) => {
+      assert.ok(error instanceof SuppressedError, String(error));
+      assert.equal(error.suppressed, lost);
+      assert.match(
+        String(error.error),
+        /no such table: _elt_extraction_coverage/,
+      );
+      assert.match(
+        error.message,
+        /^Connection checked stopped \(Native watcher failed\)/,
+      );
+      return true;
+    });
+    assert.equal(source.checks.listenerCount('check'), 0);
+  } finally {
+    await watching.return(undefined);
+  }
+});
+
+test('a watch whose sync history cannot record a pass rejects with the history’s own error at once, though another connection waits for its next change', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  const path = join(scratch.path, 'data.sqlite');
+  const destination = new SQLiteDestination({ path });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const busy = new CheckedSource();
+  const idle = new CheckedSource();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'busy',
+        source: busy,
+        destination,
+        steps: [new Copy(busy.a, destination.table('busy_a'))],
+      }),
+      new Connection({
+        name: 'idle',
+        source: idle,
+        destination,
+        steps: [new Copy(idle.a, destination.table('idle_a'))],
+      }),
+    ],
+  });
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    await watching.next();
+    // No operation makes the history fail; a table dropped under it does.
+    {
+      using database = new DatabaseSync(path);
+      database.exec('DROP TABLE "_elt_extraction_coverage"');
+    }
+
+    busy.checks.emit('check', [busy.a]);
+    const started = Date.now();
+    // Stops a watch that would wait for the idle connection's next change.
+    const waiting = setTimeout(() => controller.abort(), 3000);
+    const error = await watching.next().then(
+      () => assert.fail('the watch went on'),
+      (error: unknown) => error,
+    );
+    clearTimeout(waiting);
+
+    assert.ok(error instanceof Error);
+    assert.equal(error.message, 'no such table: _elt_extraction_coverage');
+    assert.ok(Date.now() - started < 3000, 'it waited for the idle connection');
+    assert.equal(busy.checks.listenerCount('check'), 0);
+    assert.equal(idle.checks.listenerCount('check'), 0);
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('a watch whose sync history cannot record a check rejects with the history’s own error, not as a failed watcher', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  const { source, pipeline, path, read } = await checkedPipeline(scratch.path);
+  const watching = pipeline.watch({ signal: new AbortController().signal });
+  try {
+    await watching.next();
+    // No operation makes the history fail; a table dropped under it does.
+    {
+      using database = new DatabaseSync(path);
+      database.exec('DROP TABLE "_elt_stream_checks"');
+    }
+
+    source.checks.emit('check', []);
+
+    await assert.rejects(watching.next(), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, 'no such table: _elt_stream_checks');
+      return true;
+    });
+    assert.deepEqual(read('SELECT status FROM sync_attempts'), [
+      { status: 'succeeded' },
+    ]);
+    assert.equal(source.checks.listenerCount('check'), 0);
+  } finally {
+    await watching.return(undefined);
+  }
+});
+
+test('a run whose sync history cannot record a pass rejects with the history’s own error, not a PipelineError', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-stops-'));
+  const { pipeline, path } = await checkedPipeline(scratch.path);
+  // No operation makes the history fail; a table dropped under it does.
+  {
+    using database = new DatabaseSync(path);
+    database.exec('DROP TABLE "_elt_extraction_coverage"');
+  }
+
+  const error = await pipeline.run().then(
+    () => assert.fail('the run reported nothing'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(!(error instanceof PipelineError), String(error));
+  assert.ok(error instanceof Error);
+  assert.equal(error.message, 'no such table: _elt_extraction_coverage');
+});
+
+// Each copy of a watched pass: its stream, and whose its failure is to fix,
+// or null when it loaded completely.
+const outcomes = (pass: IteratorResult<Pass<SQLiteTable>, undefined>) =>
+  pass.value?.outcomes.map(({ copy, failures }) => [
+    copy.from.name,
+    failures[0]?.failureType ?? null,
+  ]);
+
+test(
+  'under a watch, a stream whose load failed for a system reason loads again about ten seconds later with no change, and a sibling’s change does not pull it in sooner',
+  { timeout: 30_000 },
+  async () => {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-retry-'));
+    const { source, pipeline, streams, startedAt } = await checkedPipeline(
+      scratch.path,
+    );
+    const controller = new AbortController();
+    const watching = pipeline.watch({ signal: controller.signal });
+    // Ends a watch that never loads a again, so the test fails, not hangs.
+    const deadline = setTimeout(() => controller.abort(), 20_000);
+    try {
+      await watching.next();
+
+      source.failing.add('a');
+      source.checks.emit('check', [source.a]);
+      const failed = await watching.next();
+      const failedAt = Date.now();
+      source.failing.clear();
+      source.checks.emit('check', [source.b]);
+      const sibling = await watching.next();
+      const retried = await watching.next();
+      const waited = Date.now() - failedAt;
+
+      assert.deepEqual(outcomes(failed), [['a', 'system']]);
+      assert.deepEqual(outcomes(sibling), [['b', null]]);
+      assert.deepEqual(outcomes(retried), [['a', null]]);
+      assert.ok(
+        waited >= 9_000 && waited < 20_000,
+        `retried after ${waited} ms`,
+      );
+      assert.equal(streams().a?.current_as_of, startedAt());
+    } finally {
+      clearTimeout(deadline);
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
+
+test(
+  'under a watch, a stream whose load failed loads at once when its own source reports a change, and one whose load failed for a config reason waits for that change',
+  { timeout: 30_000 },
+  async () => {
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-retry-'));
+    const { source, pipeline } = await checkedPipeline(scratch.path);
+    const controller = new AbortController();
+    const watching = pipeline.watch({ signal: controller.signal });
+    // Ends a watch whose next pass never comes, so the test fails, not hangs.
+    const deadline = setTimeout(() => controller.abort(), 25_000);
+    try {
+      await watching.next();
+
+      source.failing.add('a');
+      source.denied.add('b');
+      source.checks.emit('check', [source.a, source.b]);
+      const failed = await watching.next();
+      const failedAt = Date.now();
+      source.failing.clear();
+      source.denied.clear();
+      source.checks.emit('check', [source.a]);
+      const changed = await watching.next();
+      const changedAfter = Date.now() - failedAt;
+      // Past when a retry of either would have come.
+      const next = watching.next();
+      const quiet = await Promise.race([
+        next,
+        sleep(Math.max(0, 11_000 - (Date.now() - failedAt))).then(
+          () => 'quiet',
+        ),
+      ]);
+      source.checks.emit('check', [source.b]);
+      const granted = await next;
+
+      assert.deepEqual(outcomes(failed), [
+        ['a', 'system'],
+        ['b', 'config'],
+      ]);
+      assert.deepEqual(outcomes(changed), [['a', null]]);
+      assert.ok(changedAfter < 5_000, `loaded after ${changedAfter} ms`);
+      assert.equal(quiet, 'quiet', JSON.stringify(outcomes(granted)));
+      assert.deepEqual(outcomes(granted), [['b', null]]);
+    } finally {
+      clearTimeout(deadline);
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
