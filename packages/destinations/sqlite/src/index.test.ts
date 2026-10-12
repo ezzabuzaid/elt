@@ -1338,7 +1338,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     (message) => message instanceof StreamStatus && message.status === 'FAILED',
   );
   assert.ok(failure instanceof StreamStatus);
-  assert.match(String(failure.error), /returned key \["a"\] twice in one scan/);
+  assert.match(String(failure.error), /returned id a twice in one scan/);
   const plain = new Stream({
     ...items,
     sourceDefinedCursor: undefined,
@@ -1696,7 +1696,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
         { key: 'four', fingerprint: 'v1', rows: [] },
         { key: 'five', fingerprint: 'v1', rows: [{ id: 'c', name: 'C' }] },
       ],
-      /returned key \["c"\] twice in one scan/,
+      /returned id c twice in one scan/,
     ],
     [
       [

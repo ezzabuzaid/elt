@@ -77,7 +77,7 @@ export async function* diffSnapshot<Data extends Record<string, unknown>>(
     const key = deduplication.key(data);
     if (seen.has(key))
       throw new TypeError(
-        `Stream ${stream.name} returned key ${key} twice in one scan`,
+        `Stream ${stream.name} returned ${keyText(stream, key)} twice in one scan`,
       );
     seen.add(key);
     const fingerprint = fingerprintOf(stream, data);
@@ -155,7 +155,7 @@ export async function* diffGroupedSnapshot<
   const claim = (key: string) => {
     if (seen.has(key))
       throw new TypeError(
-        `Stream ${stream.name} returned key ${key} twice in one scan`,
+        `Stream ${stream.name} returned ${keyText(stream, key)} twice in one scan`,
       );
     seen.add(key);
   };
@@ -269,6 +269,17 @@ function readSnapshot(state: unknown): Map<string, SavedEntry> {
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what diffSnapshot wrote; own state is not re-validated
   const saved = state as SnapshotState | null;
   return new Map(Object.entries(saved?.snapshot ?? {}));
+}
+
+// A snapshot key as people read it: each primary key field with its value,
+// a string as it is rather than quoted and escaped once more.
+function keyText(stream: Stream, key: string): string {
+  return Object.entries(keyObject(stream, key))
+    .map(
+      ([field, value]) =>
+        `${field} ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+    )
+    .join(', ');
 }
 
 // A snapshot key is the JSON of the primary key's values, in field order.
