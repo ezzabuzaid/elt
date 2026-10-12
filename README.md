@@ -440,7 +440,6 @@ packages/connectors/apple/ One package per Apple connector (connector-apple-<nam
 apps/apple/plugin/     Codex plugin server, bundled into plugins/apple/server (apple-plugin)
 apps/apple/cli/        Terminal CLI over the Apple connectors: setup, sync, status, query (apple-cli)
 apps/google/           Google example app over the Search Console source
-apps/sql-server/       SQL Server host: loads each configured database into the warehouse
 docs/                  Detailed behavior and native API research
 infra/                 Local Postgres warehouse, optional MCP server and SQL Server
 ```
@@ -456,7 +455,7 @@ npx nx run-many -t test
 
 Put `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in the workspace `.env` (gitignored), then run the Search Console example with `npx nx run google:start`. It loads `sc-domain:ezz.sh` into the warehouse (`npx nx run infra:up`), checkpoints included, writes no local files, and installs the [agent-facing marts](docs/reference.md#warehouse-marts); an explicitly invoked consumer reads them directly through PostgreSQL as `agent_reader` (MCP is optional). Sync status and declared coverage are discoverable through `marts.catalog`; reading never starts a refresh. The first run opens a browser for Google consent; see [Search Console authorization](docs/reference.md#authorization) for the one-time OAuth client setup.
 
-Each SQL Server database the [SQL Server host](apps/sql-server/src/connectors.ts) lists loads with `npx nx run sql-server:start`, through the connection string in `SQLSERVER_<NAME>_CONNECTION_STRING` in the workspace `.env` (`Server=host,port;Database=name;User Id=...;Password=...`, the form SQL Server's own tools print). A read-only login is enough: `db_datareader`, plus `VIEW CHANGE TRACKING` on the tables whose changes it should read. Each database lands in its own raw schema, `sql_server_<name>`, and each table is readable as `marts.<name>_<schema>_<table>`; see [SQL Server](docs/reference.md#sql-server).
+SQL Server is available as an SDK and source package for library use; see [SQL Server](docs/reference.md#sql-server). A read-only login needs `db_datareader`, plus `VIEW CHANGE TRACKING` on tables whose changes it should read.
 
 Run apps only through their Nx targets: `start` builds the app and its packages first and loads `.env`. Node's default TypeScript stripping does not support the parameter properties used here, so the targets run the built JavaScript.
 

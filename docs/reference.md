@@ -2386,9 +2386,9 @@ Pages compare the whole primary key as a tuple, each part cast to its column's d
 
 `observe()` polls every 30 seconds: a moved Change Tracking version (`CHANGE_TRACKING_CURRENT_VERSION()`) wakes the Change Tracking streams, a moved last rowversion (`@@DBTS`) the rowversion streams. Full-refresh streams have no change signal a read-only login can see, and refresh once an hour.
 
-### SQL Server host
+### SQL Server library use
 
-`apps/sql-server` lists the databases to load in `connectors.ts`; each reads `SQLSERVER_<NAME>_CONNECTION_STRING` from the workspace `.env`. A database loads into its own raw schema, `sql_server_<name>`, with its checkpoints, and each table gets its name from the [naming rule](#names) (`dbo.Order Items` becomes `dbo_Order_Items_<hash>`). Readers see each table as `marts.<name>_<schema>_<table>` in snake case; a name the snake case changes keeps a hash of the original (`local_sales_order_items_80f28272`). Two tables that still land on one view name, such as `dbo_order.items` and `dbo.order_items`, do not merge: the second's load refuses the view the first made. Column names follow the same rule. They keep their case, so a mixed-case column is quoted (`"orderId"`), and the description of a renamed column names the SQL Server column. A table dropped upstream leaves its raw table and view as they were.
+Create a `SqlServerDatabase` from the connection string, call `SqlServerSource.discover(database, { schemas })`, and use `sqlServerCopies` to create a copy for every discovered table with the sync strategy that discovery selected. Connect those copies to a destination and checkpoint store through `Connection` and `Pipeline`. The SDK and source packages hold no environment-variable or standalone-app configuration.
 
 ### SQL Server limitations
 
@@ -2408,4 +2408,4 @@ Run on 2026-10-06 against SQL Server 2022 CU27 (16.0.4295.3) Developer, in the c
 - `varbinary` keys ignore trailing zero bytes (`0x00`, `0x0000` and `0x` are one key).
 - tedious 20.0.0 refused to connect to an IP address over TLS; 20.3.3 connects.
 - `sql_variant` text under style 126 keeps times exact; floating point needs style 3 for 17 digits.
-- An end-to-end run of `nx run sql-server:start` loaded a seeded database read by a `db_datareader` login, wrote nothing to its Change Tracking and rowversion tables on a second run, and applied an update, a deletion, a truncate and an added column on a third.
+- An end-to-end source/pipeline check loaded a seeded database read by a `db_datareader` login, wrote nothing to its Change Tracking and rowversion tables on a second run, and applied an update, a deletion, a truncate and an added column on a third.

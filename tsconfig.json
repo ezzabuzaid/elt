@@ -150,9 +150,6 @@
       "path": "./packages/sources/microsoft/sql-server"
     },
     {
-      "path": "./apps/sql-server"
-    },
-    {
       "path": "./packages/sdks/apple/knowledge"
     },
     {
