@@ -1,0 +1,20 @@
+{
+  "name": "@workspace/source-whatsapp-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./whatsapp-desktop-source": {
+      "types": "./dist/whatsapp-desktop-source.d.ts",
+      "default": "./dist/whatsapp-desktop-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/sdk-whatsapp-desktop": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "source-whatsapp-desktop",
+  "sourceRoot": "packages/sources/whatsapp/desktop/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/whatsapp/desktop/dist/*.test.js\""
+    }
+  }
+}

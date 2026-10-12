@@ -210,6 +210,12 @@
       "path": "./apps/proactive"
     },
     {
+      "path": "./packages/sdks/whatsapp/desktop"
+    },
+    {
+      "path": "./packages/sources/whatsapp/desktop"
+    },
+    {
       "path": "./packages/sdks/google/search-console"
     },
     {

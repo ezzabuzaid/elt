@@ -2092,6 +2092,156 @@ Files, Lists and thread replies were checked on 2026-10-09 against the record al
 
 Not yet verified on real data: calendar events, since no calendar is connected to Slack in either workspace and connecting one is the account owner's consent; the Slack build from slack.com, which keeps its data under `~/Library/Application Support/Slack`; and how the store compacts, since the live database never wrote a table while it was watched (tests cover tables written as LevelDB writes them).
 
+## WhatsApp
+
+```ts
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+import { WhatsAppDesktopSource } from '@workspace/source-whatsapp-desktop/whatsapp-desktop-source';
+
+// ~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared
+const source = new WhatsAppDesktopSource();
+const destination = new SQLiteDestination({
+  path: './outputs/whatsapp.sqlite',
+});
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'whatsapp',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/whatsapp-state.sqlite',
+      }),
+      steps: [source.chats, source.messages, source.users].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads what WhatsApp for Mac keeps on this Mac, from its own stores, with the `@workspace/sdk-whatsapp-desktop` SDK: no WhatsApp server, session or network. `npx nx run apple-cli:start -- sync --connector whatsapp` loads every stream into the import's `data.sqlite`, read through its `<snake_stream>` views, and `apps/proactive` loads chats, messages, reactions, users, contacts and push names into the warehouse as `marts.whatsapp_<stream>`.
+
+WhatsApp for Mac is WhatsApp's iOS app built for the Mac. It keeps its data in the group container it shares with its extensions, in SQLite stores that WhatsApp keeps open with a WAL, read as of one moment each through `AppDatabase`:
+
+| Store                              | Holds                                                                                  | Streams                                                                                                                                                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ChatStorage.sqlite`               | Core Data model `WhatsAppChat`: chats, messages with their media item and receipt info | `chats`, `messages`, `messageReceipts`, `messageReactions`, `messageReactionCounts`, `messageDataItems`, `groupMembers`, `groupMembersChanges`, `chatPushConfigs`, `pushNames`, `profilePictures`, `blockedContacts` |
+| `ContactsV2.sqlite`                | The address book's people WhatsApp found on WhatsApp                                   | `contacts`                                                                                                                                                                                                           |
+| `LID.sqlite`                       | WhatsApp users by LID, with the phone number they share                                | `users`                                                                                                                                                                                                              |
+| `CallHistory.sqlite`               | Calls and the call-log entries that hold them                                          | `calls`, `callParticipants`                                                                                                                                                                                          |
+| `ExtChatDB/ExtChatDatabase.sqlite` | Which message belongs to which, such as a photo to its album                           | `messageAssociations`                                                                                                                                                                                                |
+| `Biz/Biz.sqlite`                   | Profiles of businesses the account chats with                                          | `businessProfiles`, `businessVerifiedNames`, `businessCategories`, `businessHours`, `businessServiceAreas`, `businessBotPrompts`                                                                                     |
+| `statusDB/Status.sqlite`           | Contacts' statuses                                                                     | `statuses`                                                                                                                                                                                                           |
+| `Sticker.sqlite`                   | Sticker packs and stickers                                                             | `stickerPacks`, `stickers`                                                                                                                                                                                           |
+| `LocalKeyValue.sqlite`             | Settings and what WhatsApp learned of people on this Mac, among caches                 | `privacySettings`, `disappearingModes`, `linkedProfiles`, `changedNumbers`                                                                                                                                           |
+| `BackedUpKeyValue.sqlite`          | What WhatsApp backs up with the account, among tokens                                  | `favoriteStickers`, `recentStickers`                                                                                                                                                                                 |
+
+Media, profile picture thumbnails and stickers are files in the container: a message's or status's file under `Message/` at its `mediaLocalPath` or `filePath`, a profile picture at `<path>.thumb`, a sticker under `stickers/`.
+
+### Access
+
+The group container needs [Full Disk Access](#full-disk-access) (or macOS's consent to read another app's data). Each store opens on its own. A store that is missing or that macOS denies fails with `WhatsAppUnavailableError`, which names the store and the grant, and fails only the streams that read it; a store that is no SQLite database fails them as a system failure. Every column a store's reader reads is checked when its snapshot opens: a layout without one fails that store's streams with `WhatsAppSchemaError`, naming each missing column, and the other stores load. A value the reader cannot decode, such as a receipt naming a recipient of a kind it does not know, fails the streams decoded from it. Either way nothing is deleted.
+
+### Streams
+
+| Stream                  | One record per                                                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `chats`                 | chat: a person, a group, a community's group, a channel, a broadcast list, a contact's statuses, with a group's details |
+| `messages`              | message, with its media item: file, link preview, contact card or place                                                 |
+| `messageReceipts`       | recipient a message's receipts name, with when it was delivered, read and played                                        |
+| `messageReactions`      | reaction to a message, a withdrawn one with no emoji                                                                    |
+| `messageReactionCounts` | emoji people reacted with to a channel post, with how many                                                              |
+| `messageDataItems`      | link WhatsApp found in a message, with the page's title and description                                                 |
+| `messageAssociations`   | message shown as part of another, such as an album's photo                                                              |
+| `groupMembers`          | person WhatsApp lists for a group, including those who left                                                             |
+| `groupMembersChanges`   | change to a group's members WhatsApp keeps                                                                              |
+| `chatPushConfigs`       | chat with its own notification settings, such as a mute                                                                 |
+| `pushNames`             | person whose own WhatsApp name the account has seen                                                                     |
+| `profilePictures`       | person or group whose picture WhatsApp looked up, with the thumbnail it keeps                                           |
+| `blockedContacts`       | person the account blocked                                                                                              |
+| `contacts`              | address book phone number WhatsApp found on WhatsApp                                                                    |
+| `users`                 | WhatsApp user by LID, with the phone number when they share it                                                          |
+| `calls`                 | call, with the direction, missed state and video of the call-log entry holding it                                       |
+| `callParticipants`      | other party on a call                                                                                                   |
+| `businessProfiles`      | business profile, with its websites, Facebook page and Instagram account                                                |
+| `businessVerifiedNames` | business with a verified name, by LID, with its business-platform role                                                  |
+| `businessCategories`    | category a business profile lists, in order                                                                             |
+| `businessHours`         | opening a business lists for a day of the week                                                                          |
+| `businessServiceAreas`  | area a business says it serves                                                                                          |
+| `businessBotPrompts`    | question a business's automated agent offers to start a chat with                                                       |
+| `statuses`              | status a contact or the account posted, with its text styling or link preview and its photo or video                    |
+| `stickerPacks`          | sticker pack in the picker's tray, and pack in the copy WhatsApp keeps of its store                                     |
+| `stickers`              | sticker WhatsApp keeps: a tray pack's, or one the account favorited or sent                                             |
+| `favoriteStickers`      | sticker the account favorited, with when                                                                                |
+| `recentStickers`        | sticker in the picker's recent list, in its order                                                                       |
+| `privacySettings`       | privacy setting of the account, such as who sees its last seen                                                          |
+| `disappearingModes`     | account's default timer for messages in new chats, the account's own among them                                         |
+| `linkedProfiles`        | account on another service a person links to their profile                                                              |
+| `changedNumbers`        | person WhatsApp saw move to a new phone number                                                                          |
+
+### Identities and values
+
+WhatsApp names a person by a JID: `<number>@s.whatsapp.net` by phone number, or `<LID>@lid`, a number WhatsApp gives in place of the phone number. It is moving chats from the first to the second, so one person can appear under both; `users` maps each LID to the phone number when the person shares it, and `contacts` gives both for the address book's people. Groups are `…@g.us`, channels `…@newsletter`.
+
+A message is keyed as WhatsApp keys it: its chat's JID, whether this account sent it, and the stanza ID its sender gave it. WhatsApp keeps a second copy of a few messages (1 pair of 54,627 messages) and a second, empty session for a few chats (1 of 909); the first copy stands for both. A message whose chat WhatsApp removed (1, a type 28 notice) belongs to no conversation it shows and has no key, so it is not read. `senderJid` is the group member who sent a group message, the person for a message from one, and NULL for the account's own messages and for notices and channel posts, which name no person.
+
+Each record keeps WhatsApp's codes (chat and message kinds, statuses, flags) as numbers, as WhatsApp documents none of them; the stream descriptions name the values seen. Core Data stores a date as seconds since 2001-01-01 in a double, loaded as a [`date-time` with `precision` 6](#string-formats); Foundation's distant past, which WhatsApp writes where it has no date, loads as `0000-12-30T00:00:00.000000Z`, and a mute without end as `4001-01-01`. Receipt times are whole seconds, reaction times milliseconds, and status times whole seconds held to the millisecond.
+
+A message's media item holds different things for different kinds of message, under the names WhatsApp's model gives them: for a photo or video `vCardName` is the file's SHA-256 in base64, `vCardString` its MIME type, `latitude` and `longitude` its height and width in pixels, and `title` its caption; for a contact card they hold the card's name and vCard; for a place, its coordinates; for a document, `authorName` is the file name.
+
+Two blobs WhatsApp writes as protobufs with no published schema are decoded by the field numbers the store bears out, and kept whole as base64 beside the decoded fields:
+
+- `metadata` (`ZWAMEDIAITEM.ZMETADATA`): field 5 is a reply's quoted stanza ID, which named a message of the same chat for 9,948 of 10,018 replies, and field 6 the quoted message's sender. It also holds link previews, list menus and a 32-byte per-message secret, which stay undecoded.
+- `receiptInfo` (`ZWAMESSAGEINFO.ZRECEIPTINFO`): field 3 is the message's time in Unix seconds; each field 2 is a recipient, its JID packed in up to nine bytes (`0x81` then the number in binary-coded decimal for `@s.whatsapp.net`, `0x8c` for `@lid`, `0x83` for `@bot`), and fields 4, 5 and 6 are seconds after field 3 until delivery, reading and playing: a message with status 8 has field 5 and a played voice note (status 5) field 6. Field 7 holds reactions: a stanza ID (1), sender (2, absent exactly when field 6 marks the account's own), emoji (3, absent once withdrawn) and time in milliseconds (4); a channel post's counts per emoji sit in field 7.3. Recipients include the account's own other devices.
+
+Business profiles archive their websites, hours and linked accounts with NSKeyedArchiver; hours are `WABizHoursConfig` objects whose `day` runs from 1, Sunday, and whose `mode` is 0 open all day, 1 set hours or 2 by appointment, as the app's own code maps them. Its verified name certificate's serial passes 2^53 and loads as an [`int64`](#string-formats).
+
+Left out: the keys WhatsApp encrypts or downloads by (media keys, stickers' and statuses' keys and encrypted hashes, a status's secret, contacts' device lists, the Signal store `Axolotl.sqlite`, `enc-key.dat`), its own bookkeeping (Spotlight and search-index states, encryption retries, participant hashes, sync tags, Core Data row references), and the key-value stores' caches, tokens, queues and telemetry.
+
+### What WhatsApp holds, and deletions
+
+WhatsApp writes its chats and messages only while the app runs (its notification extension decrypts pushes without writing `ChatStorage.sqlite`): a message reaches the import once WhatsApp has run since it arrived. It holds the history it synced from the phone when it was linked (here back to 2020-07) and what it received since, but downloads little media: 78 of 52,195 media items had their file on this Mac, so most messages load as metadata.
+
+Every stream diffs a whole read of its store against the previous one: an unchanged record is not written, a changed one is, and one WhatsApp no longer holds is deleted, with the receipts and reactions that hung off a deleted message. Statuses [expire](#expiring-upstreams) by `timestamp`: WhatsApp keeps a contact's status for a day after it is posted, then its sweep (`SELECT … FROM status WHERE timestamp <= ? AND is_archived = 0`, then `DELETE … WHERE row_id = ?`) removes it without a deletion, so a status that vanished more than 23 hours after it was posted stays, and one that vanished sooner was withdrawn and is deleted. The account's own statuses, whose sender is `status_me`, are archived (`is_archived` 1) rather than removed.
+
+### Import scope
+
+Collections are chats, by JID. Chats select their messages, group members and member changes, and notification settings; a date range selects messages by `messageDate`. Receipts, reactions, reaction counts, data items and associations follow the messages kept. The other streams belong to no chat and load whole.
+
+### Watching
+
+A watch polls each store's `data_version` every second, which changes with every commit WhatsApp makes, and wakes only the streams of the store that changed. A store WhatsApp creates while the watch runs reads as missing until it appears, and its appearance wakes its streams.
+
+### WhatsApp live checks
+
+Checked on 2026-10-12 against WhatsApp for Mac 26.38.74 (model `WhatsAppChat_2.18.10`) on macOS 27.0, read-only:
+
+- The container held 54,627 messages in 909 chats (772 with one person, 113 groups, 14 of session type 4, 5 status, 4 channels, 1 broadcast list), 8,424 group members, 4,792 LID users, 325 contacts, 190 calls, 171 business profiles, 15 statuses and 246 stickers. Every stream loaded in 1.6 s, and each store's main stream counted what the store holds (the per-store live test).
+- Message kinds were read from the media items they carry: kind 1 `image/jpeg`, 2 `video/mp4`, 3 `audio/ogg; codecs=opus`, 4 a vCard, 5 coordinates within 25–32° N, 7 a URL found in the text, 8 a file name with its extension (201 of 202), 15 `image/webp`. For 5 photos on disk, `vCardName` equalled the file's SHA-256 and `latitude` × `longitude` its height × width. A photo's caption is its `title`: photos never carry `ZTEXT`, and all 128 links WhatsApp found in photo messages (`ZWAMESSAGEDATAITEM`) sit in the photo's title.
+- A live `apple-cli sync watch` woke only the streams of the store WhatsApp committed to (12, 16 or 17 of 32) and wrote only what changed. A message sent to the account's own chat reached `ChatStorage.sqlite` at once; deleted in WhatsApp, its row vanished, and the next pass deleted it and its receipt from the import.
+- Edits and deletions, read from replies' copies of what they quote: 59 replies quote a text that differs from their target's current text (not a trimmed prefix), so an edit rewrites `ZTEXT` in place under the same key and the import writes the message again. A message deleted for everyone stays as a type 14 row: all 350 have their content removed, and in 36 group messages `ZTEXT` names the admin who deleted it. No reply quotes a type 14 row.
+- Receipts: of 13,638 messages the account sent to one person, every one with status 8 had a read time and every voice note with status 5 a played time; 186,320 recipient JIDs unpacked, all with a known first byte, and 180,810 named a JID the store holds elsewhere.
+- Reactions: in all 14,575, the sender was absent exactly when field 6 was 1, and never the account's own JID or LID. Each sender held at most one reaction per message, and none of the 91 with no emoji sat beside an emoji from the same sender: WhatsApp keeps each person's latest reaction, empty once withdrawn.
+- Calls: `ZWACDCALLEVENTPARTICIPANT.Z1PARTICIPANTS` names the call-log entry (`WAAggregateCallEvent`, entity 1), not the call: a group call's entry held its 3 and 4 participants, where joining on the call's row number gave 1.
+- Business hours' modes and days were mapped from WhatsApp's own code (`-[WABizHoursConfig modeServerStringValue]`, `dayServerStringValue`); verified names keep 4 businesses with no profile.
+- Statuses: 15 from 6 contacts, all within their day; type 3 a text post with styling, 4 a photo (`image/jpeg`), 5 a video (`video/mp4`), 10 a link post whose text is its URL. A status's media item is its only one, its file under `Message/` (5 of 11 downloaded, each matching its SHA-256).
+- Statuses expired live: at 11:51 UTC WhatsApp deleted the four statuses posted 24 hours before (15 rows to 11), with their media, thumbnails and files, and none was archived. A sync right after deleted nothing and kept all 14 it had loaded. A status not loaded within its day is lost with its file, so a watch must run within that day.
+- `apple-cli` (`setup --connector whatsapp --sync`, from a scratch working directory) loaded all 32 streams in 12 s with 82 message files, 256 profile thumbnails, 173 stickers and 5 status photos; the next two syncs wrote and deleted nothing. `apps/proactive`'s WhatsApp connection loaded `marts.whatsapp_messages` (54,674 rows) and wrote nothing on its second pass.
+- `disappearing-mode` holds each account's default timer, not a chat's: 3,832 LIDs against 908 chats, durations 0, 86,400, 604,800 and 7,776,000 only.
+
+Not read, with what they held here: `Labels.sqlite` (business labels and lists, empty), `Location.sqlite` (live location, empty), `ZWAZ1PAYMENTTRANSACTION` (payments, which WhatsApp offers in few countries, empty), `ZWACHATPROPERTIES` and `ZWAVCARDMENTION` (empty), joinable and upcoming calls (empty), the app-state sync log (`AppState`), the message queues (`MessagingInfraDB_v2`), the search indexes (`fts`, `channels-fts`), per-sender status counts (`status_info`), and the preferences in `Library/Preferences/group.net.whatsapp.WhatsApp.shared.plist`, such as whether read receipts are off. Per-chat disappearing timers were not found in any store.
+
 ## Google Search Console
 
 `SearchConsoleSource` reads one property through the `searchconsole:v1` API. `sites`, `sitemaps` and `searchAnalytics` are served under the original `webmasters/v3` path prefix; URL inspection is served from `v1` on the same host.
