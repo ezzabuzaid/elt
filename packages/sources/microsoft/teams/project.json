@@ -1,0 +1,13 @@
+{
+  "name": "source-microsoft-teams",
+  "sourceRoot": "packages/sources/microsoft/teams/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/microsoft/teams/dist/*.test.js\""
+    }
+  }
+}

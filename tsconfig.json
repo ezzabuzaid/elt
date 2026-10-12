@@ -210,6 +210,15 @@
       "path": "./apps/proactive"
     },
     {
+      "path": "./packages/sdks/microsoft/teams"
+    },
+    {
+      "path": "./packages/sources/microsoft/teams"
+    },
+    {
+      "path": "./packages/connectors/apple/teams"
+    },
+    {
       "path": "./packages/sdks/whatsapp/desktop"
     },
     {

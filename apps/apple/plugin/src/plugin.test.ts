@@ -573,6 +573,7 @@ test('the sidebar page describes each connector’s import and switches one conn
       clock: false,
       'notification-center': false,
       slack: false,
+      teams: false,
       wallet: false,
       whatsapp: false,
     },

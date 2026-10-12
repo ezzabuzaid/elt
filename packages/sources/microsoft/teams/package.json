@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/source-microsoft-teams",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./teams-source": {
+      "types": "./dist/teams-source.d.ts",
+      "default": "./dist/teams-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/sdk-microsoft-teams": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/codec-chromium-indexeddb": "0.0.1",
+    "@workspace/elt-sqlite": "0.0.1"
+  }
+}

@@ -2092,6 +2092,131 @@ Files, Lists and thread replies were checked on 2026-10-09 against the record al
 
 Not yet verified on real data: calendar events, since no calendar is connected to Slack in either workspace and connecting one is the account owner's consent; the Slack build from slack.com, which keeps its data under `~/Library/Application Support/Slack`; and how the store compacts, since the live database never wrote a table while it was watched (tests cover tables written as LevelDB writes them).
 
+## Microsoft Teams
+
+```ts
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+import { TeamsSource } from '@workspace/source-microsoft-teams/teams-source';
+
+// ~/Library/Containers/com.microsoft.teams2/…/EBWebView/WV2Profile_tfw
+const source = new TeamsSource();
+const destination = new SQLiteDestination({ path: './outputs/teams.sqlite' });
+
+await new Pipeline({
+  connections: [
+    new Connection({
+      name: 'teams',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/teams-state.sqlite',
+      }),
+      steps: [source.conversations, source.people, source.messages].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+The source reads what the new Microsoft Teams app (`com.microsoft.teams2`) keeps on this Mac, from its own store, with the `@workspace/sdk-microsoft-teams` SDK: no Microsoft Graph, token or network. `npx nx run apple-cli:start -- sync --connector teams` loads every stream into the import's `data.sqlite`, read through its `<snake_stream>` views.
+
+The app runs its web client in Edge WebView2. Work and school accounts share the WebView profile `WV2Profile_tfw` in the app's container, and the client keeps its caches in the IndexedDB of `https://teams.microsoft.com`: one database per manager of the client and per signed-in account, `Teams:<manager>:react-web-client:<tenant>:<user>:<locale>`. Most names put the tenant first; the folder manager writes the user as `8:orgid:<user>` and the search history writes the user first, so the SDK finds an account by its conversation manager's database and gives it every database that names the same two IDs. The same codecs as [Slack's](#slack) read the bytes; `sdk-microsoft-teams` knows where the store is, which managers and object stores hold what, and what their records mean.
+
+| Manager and object store                             | Streams                                                                                                                                                                                 |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `conversation-manager/conversations`                 | `conversations`, `conversationMembers`, `pins`, and each conversation's newest messages                                                                                                 |
+| `replychain-manager/replychains`                     | `messages` and their parts; the client's own feeds `48:calllogs`, `48:notifications`, `48:annotations`, `48:starred` give `callLogs`, `callParticipants`, `activities`, `savedMessages` |
+| `streams-replychain-manager/saved`                   | `savedMessages` from `48:saved`                                                                                                                                                         |
+| `syncstate-manager/syncstates`                       | which part of each conversation, channel thread and feed the client holds                                                                                                               |
+| `activity-manager/feed-items`                        | whether the user has read an activity                                                                                                                                                   |
+| `profiles/profiles`                                  | `people`                                                                                                                                                                                |
+| `calendar/calendar`                                  | `meetings`, `meetingAttendees`                                                                                                                                                          |
+| `conversation-folder-manager/folders`                | `folders`, `folderConversations`                                                                                                                                                        |
+| `*-installed-apps-manager` entitlements, definitions | `installedApps`                                                                                                                                                                         |
+| `search-history-manager/searchhistory`               | `searches`                                                                                                                                                                              |
+| `tenant-manager/tenant`                              | the account's verified domains                                                                                                                                                          |
+
+The client's other managers hold Microsoft's own data or its bookkeeping: the app store's catalog of about 3,800 apps, the emoji catalog, policies, feature settings, telemetry and suggestions. The source reads none of them. The `MSTeams/lds` SQLite file beside the WebView profile is a stale store of an older client, and the Outlook storage buckets the profile holds keep only sync logs.
+
+### Access
+
+The app's container needs [Full Disk Access](#full-disk-access). Without it, or without the app, reading fails with `TeamsUnavailableError`, which names the grant, and fails every stream. A record in a shape the reader has not verified fails with `TeamsFormatError`, which names the database, object store, key and field, and fails every stream: one read builds every stream.
+
+### Streams
+
+| Stream                | One record per                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------------------------- |
+| `accounts`            | work or school account signed in to the app, with its organization and verified domains           |
+| `conversations`       | chat, meeting chat, team (its `Space`, the General channel) and channel, all of them              |
+| `conversationMembers` | member of a chat, meeting chat or team whose member list the app keeps                            |
+| `messages`            | chat and channel message the app has held, and the newest of every conversation                   |
+| `messageReactions`    | person's reaction to a message, with when                                                         |
+| `messageMentions`     | mention in a message: a person, everyone, a channel, team or tag                                  |
+| `messageFiles`        | file attached to a message, metadata and its OneDrive or SharePoint addresses                     |
+| `messageLinks`        | link in a message, with the preview Teams shows                                                   |
+| `messageQuotes`       | earlier message a message replies to by quoting it                                                |
+| `pins`                | message pinned to a conversation, in its order                                                    |
+| `callLogs`            | call in the call history the app holds, its times to the ten-millionth of a second                |
+| `callParticipants`    | participant of a group call                                                                       |
+| `activities`          | entry of the activity feed, and of the reactions to the user's messages, with whether it was read |
+| `savedMessages`       | message the user saved, or starred before Teams called it saving                                  |
+| `people`              | person or bot the app has looked up in the directory                                              |
+| `meetings`            | meeting on the calendar the app holds                                                             |
+| `meetingAttendees`    | attendee of a meeting, with their answer                                                          |
+| `folders`             | folder of the chat list                                                                           |
+| `folderConversations` | conversation in a folder                                                                          |
+| `installedApps`       | app installed for the user, or in a chat or team whose apps the app has loaded                    |
+| `searches`            | search the user ran that the app kept                                                             |
+
+Every key carries `accountId`, the user's Entra object ID. Teams names a message by the time the service received it, in milliseconds, so a message's key is its conversation, its thread (the message itself, except for a reply in a channel) and that ID; `sentAt` is the same instant. A message keeps its content as Teams holds it: HTML for rich text, XML for calls and recordings. Adaptive cards stay JSON in `cardsJson`. A deleted message keeps its place with `content` null and `deletedAt`, as Teams keeps it. Instants Teams writes as text keep their digits: a call's times to 7 fraction digits, a meeting's change time moved from its offset to UTC. `lastReadAt` is when the user last read a conversation.
+
+### What the app holds, and deletions
+
+The app keeps every conversation (the chat list is synced from the start of time), but only the messages it has loaded: on 2026-10-12 one account's cache held 5,960 messages in 54 of 487 conversations, from 2021 to that day, and the newest message of 433 conversations. Older history reaches the import only if the app loads it while the import runs.
+
+The client records, in `syncstates`, the span of each conversation it holds (`chatServiceStartOfSyncWindow` to `chatServiceEndOfSyncWindow`, or from the start of time), and when it prunes its cache it moves the span's start. A channel loads only a thread's latest replies with its posts, and the client records a span of its own for each channel thread it opens, keyed `<channel>;messageid=<thread>`. The reads [cover](#partly-held-upstreams) exactly those spans: a chat message, or a channel post, gone from inside its conversation's span, ends included, was deleted and is deleted here; a channel reply is covered only by its thread's span; a message outside every span was dropped from the cache and stays. A span with a gap in it covers nothing. Reactions, mentions, files, links and quotes follow their message. Call logs, activities and saved messages are messages of the client's own feeds and follow those feeds' spans the same way.
+
+A conversation the app stops listing is deleted, with its pins; a folder too, and a conversation taken out of a folder. Members are deleted only from a conversation whose member list the app still keeps, and apps only from a user, chat or team whose apps it still lists. An account whose databases are gone, such as one signed out of, keeps all its rows. The app keeps only the people it has looked up lately, the meetings of a span around today it does not record, and its latest searches, so `people`, `meetings` and `searches` are [forgetting](#forgetting-upstreams) streams; a cancelled meeting says so in `isCancelled`.
+
+A record that leaves the snapshot uncovered is not deleted later when a read covers its place again (backlog #2600): a reply deleted while the app did not hold its thread stays after the app loads the thread again. Slack's cache has the same gap.
+
+### Import scope
+
+Accounts are accounts and collections are conversations. A date range selects messages and their parts by `sentAt`. Pins, members and folder entries belong to their conversation, whatever the dates; people, meetings, call logs, activities, saved messages, apps and searches belong to an account, not a conversation, and load whole.
+
+### Watching
+
+The web client writes its caches as it works. A watch polls the sizes and modification times of the IndexedDB directory's files every second through `TeamsStore.version()`; a write wakes every selected stream, and the snapshot diff writes nothing for those that did not change. One read of the store took about one second for 39 MB on 2026-10-12. LevelDB compacts its files while the app runs, so a read that loses a file to a compaction reads again, up to three times.
+
+### Limits
+
+- Personal Microsoft accounts keep their client in another WebView profile, for `teams.live.com`, which the source does not read.
+- When Teams' app language changes, its web client starts a new set of databases for each account (`…:en-gb` beside `…:en-us`) and leaves the old set on disk, holding what it had cached. The source reads only the set the client synced last, by the newest `lastSyncTime` among its sync states, so after a change it follows the new cache; rows already imported stay, but a first import after a change does not read history only the old set holds.
+- Files stay in OneDrive or SharePoint; the app keeps no copy, so `messageFiles` holds their metadata and addresses.
+- A Viva Engage community keeps, as its newest message, a placeholder with no type, sender or content for a post that Engage holds; it is not a message.
+
+### Teams live checks
+
+Checked on 2026-10-12 against Microsoft Teams 26163.407 (Edge WebView2 149) on macOS 27.0, one work account:
+
+- The codecs decoded the whole `teams.microsoft.com` IndexedDB, about 100 object stores, unchanged. The store held 487 conversations, 5,285 reply chains with 5,960 messages, 803 sync states, 129 profiles, 24 meetings from a week back to ten weeks ahead, 226 activity feed items and 1,062 installed apps across the user, chats and teams.
+- With channel threads' own spans, 8 of the 5,960 cached messages fell outside every span. A conversation with no cached message keeps an empty span (start after end).
+- A load through `apple-cli` (`setup --connector teams`, then `sync`) wrote all 21 streams, 19,823 rows in 3 seconds: 1 account, 487 conversations, 5,314 members, 5,713 messages, 3,611 reactions, 1,609 mentions, 82 files, 737 links, 225 quotes, 14 pins, 196 call logs, 167 call participants, 387 activities, 6 saved messages, 129 people, 24 meetings, 34 attendees, 7 folders, 17 folder entries, 1,062 apps and 1 search. A second load wrote and deleted nothing, so no value changes per read. Of the messages, 5,354 have a sender `people` holds.
+- On 2026-10-12 switching the app language from English (United States) to English (United Kingdom) and restarting left 99 `en-us` databases (13,812 records) beside 99 new `en-gb` ones (5,890 records, growing); the `en-gb` set synced at 13:40 UTC and the `en-us` set last at 12:37 UTC, and the read took the `en-gb` set. Switching back to following macOS made the `en-us` set the one synced last (14:14 UTC) and the read took it again. Teams' own `app_settings.json` then said `en-jo`, macOS's English (Jordan), while the client still wrote the `en-us` databases, so the setting does not name the set; the sync times do.
+- One message's link preview held raw line breaks inside its JSON text, which Teams writes without other whitespace; the reader escapes them and reads it. Four call logs were recording or transcript notices with no call log; they load as messages.
+- In the user's own notes chat (`48:notes`), each change reached the next load: a posted message as a new message from the user; a like as a `messageReactions` row (`yes-tone2`, with its time); taking the like back as its deletion; an edit as the message re-written with `editedAt`; a pin as a `pins` row and an unpin as its deletion; and deleting the message as the same row with `deletedAt` and no content.
+- The pin reached `threadProperties.pinnedItems` at once, while the conversation's own `pinnedItems` copy stayed empty; in every other conversation the two lists matched. `pins` reads the thread's list.
+
 ## WhatsApp
 
 ```ts

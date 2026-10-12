@@ -24,6 +24,9 @@
       "path": "../wallet"
     },
     {
+      "path": "../teams"
+    },
+    {
       "path": "../slack"
     },
     {

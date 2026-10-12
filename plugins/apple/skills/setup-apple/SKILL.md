@@ -1,6 +1,6 @@
 ---
 name: setup-apple
-description: Connect or reconfigure Apple Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, call history, notifications, Mac accounts, Mac activity, Slack and WhatsApp for the Apple plugin on a Mac.
+description: Connect or reconfigure Apple Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, call history, notifications, Mac accounts, Mac activity, Slack, Microsoft Teams and WhatsApp for the Apple plugin on a Mac.
 ---
 
 # Set up Apple
@@ -32,7 +32,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
 
 ## Set up in chat
 
-1. Take the current selection from the Apple status in context, or read it as `$query-apple` describes, then ask which connectors the user wants to set up. Present Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, Call History, Notification Center, Wallet, Activity, Slack and WhatsApp in plain language. Reconfiguration starts from the current selection. Do not call `apple_options` for connectors they have not selected.
+1. Take the current selection from the Apple status in context, or read it as `$query-apple` describes, then ask which connectors the user wants to set up. Present Mail, Notes, Messages, Contacts, Calendar, Reminders, Safari, Books, Call History, Notification Center, Wallet, Activity, Slack, Microsoft Teams and WhatsApp in plain language. Reconfiguration starts from the current selection. Do not call `apple_options` for connectors they have not selected.
 2. For each chosen connector, call `apple_options` with its `connector` to discover real account and collection IDs. It reads metadata and may trigger a macOS prompt. Explain the returned permission guidance when access fails, then retry after the user changes access.
 3. Offer all content or a narrower selection where available:
    - Mail: accounts, mailboxes, received date (sent date if absent).
@@ -48,6 +48,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
    - Wallet: everything; it has no accounts, collections or dates to choose. Passes from the user's iPhone arrive through iCloud. A pass removed in Wallet leaves the import too.
    - Accounts: everything; it is one small store with nothing to choose.
    - Slack: workspaces, conversations and message dates. It reads what the Slack desktop app keeps on this Mac, which is only the messages Slack has loaded, so tell the user that message history builds up from the first import and that older history arrives only once Slack loads it. A workspace appears once Slack has saved it, every few minutes while it is open and when it quits.
+   - Microsoft Teams: accounts, conversations and message dates. It reads what the Teams app keeps on this Mac, which is only the messages Teams has loaded, so tell the user that message history builds up from the first import and that older history arrives only once Teams loads it. It reads work and school accounts; a personal Microsoft account is not read.
    - WhatsApp: chats and message dates. It reads what WhatsApp for Mac keeps: the history it synced from the phone and what arrived while it ran. WhatsApp saves new messages only while it runs, so tell the user to keep it open, and that most photos and videos load without their file because WhatsApp downloads few. A narrowed WhatsApp import leaves out people, calls, statuses, businesses, stickers and settings, which belong to no chat.
    - Activity: everything; it has no accounts, collections or dates to choose. macOS keeps most activity for 28 days; the import keeps what it loaded after macOS drops it, so tell the user that history builds up from the first import, and that removing Activity or rebuilding its import loses whatever macOS has dropped since.
 4. Translate plain dates using the user's timezone into canonical UTC timestamps with milliseconds. `startAt` is inclusive and `endAt` exclusive; use the following midnight to include an end date. Do not invent account or collection IDs. Unspecified ID lists mean all; leave a connector out of `apple_configure`'s `connectors` to disconnect it. Attachments are copied by default; offer metadata only if the user prefers.

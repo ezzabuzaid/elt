@@ -2871,3 +2871,171 @@ test('slack syncs from the store the Slack app keeps, and --since keeps the mess
     },
   ]);
 });
+
+// The Teams app's store as its web client leaves it: Chromium's IndexedDB for
+// teams.microsoft.com, one database per manager of one signed-in account,
+// holding its organization's domains, a chat with two of its messages and the
+// span of the chat it loaded, and a team with no name and one channel.
+async function withTeams(mac: string) {
+  const tenant = '7c1b6a4e-0d2f-4a8e-9b3c-5e6f7a8b9c0d';
+  const user = '3f2e1d0c-4b5a-4968-8776-a5b4c3d2e1f0';
+  const chat = '19:ada-chat@thread.v2';
+  const database = (manager: string) =>
+    `Teams:${manager}:react-web-client:${tenant}:${user}:en-us`;
+  const message = (sent: string, content: string) => {
+    const id = String(Date.parse(sent));
+    return {
+      conversationId: chat,
+      replyChainId: id,
+      messageMap: {
+        [`8:orgid:${user}_${id}`]: {
+          id,
+          conversationId: chat,
+          parentMessageId: id,
+          messageType: 'RichText/Html',
+          contentType: 'Text',
+          originalArrivalTime: Date.parse(sent),
+          creator: `8:orgid:${user}`,
+          imDisplayName: 'Ezz',
+          content,
+          properties: {},
+          isSentByCurrentUser: true,
+        },
+      },
+    };
+  };
+  await new IndexedDBWriter(
+    join(
+      mac,
+      'Library/Containers/com.microsoft.teams2/Data/Library/Application Support/Microsoft/MSTeams/EBWebView/WV2Profile_tfw/IndexedDB/https_teams.microsoft.com_0.indexeddb.leveldb',
+    ),
+  ).save([
+    {
+      database: database('tenant-manager'),
+      objectStore: 'tenant',
+      key: 'domains',
+      value: { category: 'domains', value: ['contoso.com'] },
+    },
+    ...[
+      {
+        id: '19:design-general@thread.tacv2',
+        type: 'Space',
+        teamId: '19:design-general@thread.tacv2',
+        threadProperties: { tenantid: tenant },
+      },
+      {
+        id: '19:design-reviews@thread.tacv2',
+        type: 'Topic',
+        teamId: '19:design-general@thread.tacv2',
+        threadProperties: { topic: 'reviews', tenantid: tenant },
+      },
+    ].map((value) => ({
+      database: database('conversation-manager'),
+      objectStore: 'conversations',
+      key: value.id,
+      value: { ...value, properties: {} },
+    })),
+    {
+      database: database('conversation-manager'),
+      objectStore: 'conversations',
+      key: chat,
+      value: {
+        id: chat,
+        type: 'Chat',
+        lastMessageTimeUtc: Date.parse('2026-09-21T10:00:00.000Z'),
+        threadProperties: { topic: 'Release', tenantid: tenant },
+        properties: {},
+      },
+    },
+    ...[
+      message('2026-08-30T10:00:00.000Z', '<p>before</p>'),
+      message('2026-09-21T10:00:00.000Z', '<p>after</p>'),
+    ].map((value) => ({
+      database: database('replychain-manager'),
+      objectStore: 'replychains',
+      key: value.replyChainId,
+      value,
+    })),
+    {
+      database: database('syncstate-manager'),
+      objectStore: 'syncstates',
+      key: chat,
+      value: {
+        id: chat,
+        chatServiceStartOfSyncWindow: Date.parse('2026-08-01T00:00:00.000Z'),
+        chatServiceEndOfSyncWindow: Date.parse('2026-09-30T00:00:00.000Z'),
+      },
+    },
+  ]);
+}
+
+test('teams syncs from the store the Teams app keeps, and --since keeps the messages sent from that day on', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withTeams(mac.path);
+
+  const setup = cli(
+    mac.path,
+    'setup',
+    '--connector',
+    'teams',
+    '--since',
+    '2026-09-01',
+  );
+  const synced = cli(mac.path, 'sync');
+  const messages = cli(
+    mac.path,
+    'query',
+    'teams',
+    'SELECT conversationId, sentAt, content FROM messages',
+    '--json',
+  );
+
+  assert.equal(setup.status, 0, setup.stderr);
+  assert.equal(synced.status, 0, synced.stdout + synced.stderr);
+  assert.equal(lines(synced.stdout)[0].connector, 'teams');
+  assert.deepEqual(JSON.parse(messages.stdout), [
+    {
+      conversationId: '19:ada-chat@thread.v2',
+      sentAt: '2026-09-21T10:00:00.000Z',
+      content: '<p>after</p>',
+    },
+  ]);
+});
+
+test('teams without access to the Teams app’s store fails its sync naming Full Disk Access', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  // No store under HOME, as when macOS withholds the app's container.
+  assert.equal(cli(mac.path, 'setup', '--connector', 'teams').status, 0);
+
+  const synced = cli(mac.path, 'sync');
+
+  assert.equal(synced.status, 1);
+  const [pass] = lines(synced.stdout);
+  assert.equal(pass.connector, 'teams');
+  assert.equal(pass.status, 'failed');
+  assert.match(pass.error, /Full Disk Access/);
+});
+
+test('teams options name the account by its organization’s domain, a team without a name by its ID and its channels after it', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withTeams(mac.path);
+
+  const listed = cli(mac.path, 'options', 'teams', '--json');
+
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.deepEqual(
+    JSON.parse(listed.stdout).map(
+      ({ title, options }: { title: string; options: { label: string }[] }) => [
+        title,
+        options.map(({ label }) => label).sort(),
+      ],
+    ),
+    [
+      ['accounts', ['contoso.com']],
+      [
+        'conversations',
+        ['Release', 'team / reviews', 'team 19:design-general@thread.tacv2'],
+      ],
+    ],
+  );
+});

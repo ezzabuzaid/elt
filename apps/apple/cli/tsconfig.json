@@ -32,6 +32,9 @@
       "path": "../../../packages/connectors/apple/wallet"
     },
     {
+      "path": "../../../packages/connectors/apple/teams"
+    },
+    {
       "path": "../../../packages/connectors/apple/slack"
     },
     {

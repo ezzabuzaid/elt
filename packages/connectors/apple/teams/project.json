@@ -1,0 +1,8 @@
+{
+  "name": "connector-apple-teams",
+  "sourceRoot": "packages/connectors/apple/teams/src",
+  "projectType": "library",
+  "targets": {
+    "format": {}
+  }
+}
