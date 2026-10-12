@@ -9,8 +9,7 @@ export function ConnectorList() {
   return (
     <main className="page">
       <header className="header">
-        <h2>Apple</h2>
-        <p className="text-muted">Connectors</p>
+        <h2>Connectors</h2>
       </header>
       {failure !== null && (
         <p role="alert" className="text-small text-destructive">

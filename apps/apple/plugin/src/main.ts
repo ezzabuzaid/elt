@@ -80,7 +80,7 @@ const mcpServer = new McpServer(
     ],
   },
   {
-    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.connectors.map(({ title }) => title))} content the user chose into private SQLite files on this Mac, once per connector while Codex is open; an imported connector is not refreshed. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
+    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.connectors.map(({ title }) => title))} content the user chose into private SQLite files on this Mac when the user connects a connector or changes what it imports, and again when the user presses Sync on the Apple page; nothing refreshes an import on its own. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
   },
 );
 // McpServer turns a thrown error into an isError result the model can act on.
@@ -185,7 +185,10 @@ mcpServer.registerTool(
       // openai/settings section, so Apple has none.
       'openai/ui': {
         entrypoints: [
-          { type: 'global' },
+          // The page draws its own title row with Sync, as ChatGPT's Space
+          // does, so ChatGPT leaves out its own (ChatGPT 26.1007 reads
+          // header.enabled; @openai/mcp-extensions 0.1.0's schema predates it).
+          { type: 'global', header: { enabled: false } },
           {
             type: 'settings',
             searchTerms: [
@@ -259,6 +262,28 @@ mcpServer.registerTool(
     );
     void plugin.import(newImports);
     return structured({ connectors });
+  },
+);
+mcpServer.registerTool(
+  'apple_sync',
+  {
+    title: 'Sync Apple connectors',
+    description:
+      'Import every connected connector again from the Apple page, so each brings in what changed since its last sync, and return once every pass has ended. A connector another chat is importing finishes that pass instead.',
+    inputSchema: {},
+    outputSchema: connectorsResult,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    _meta: appOnly,
+  },
+  async () => {
+    await plugin.refresh();
+    await plugin.import(plugin.status().connectors);
+    return structured({ connectors: connectorRows(plugin) });
   },
 );
 mcpServer.registerTool(

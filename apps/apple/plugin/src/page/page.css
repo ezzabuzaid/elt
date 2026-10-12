@@ -1,5 +1,263 @@
 /* The Apple page's layout over OpenAI's MCP App styles. */
 
+/* The sidebar follows ChatGPT's Space sidebar (ChatGPT 26.1007): 275px wide,
+   30px rows, 14px text, a 14px chevron that shows on hover or while folded.
+   The page gets no hover colour from ChatGPT, so it mixes Space's own. */
+
+.shell {
+  --row-hover: light-dark(
+    color-mix(
+      in srgb,
+      var(--color-text-primary, var(--foreground)) 5.3%,
+      transparent
+    ),
+    color-mix(
+      in srgb,
+      var(--color-text-primary, var(--foreground)) 7.8%,
+      transparent
+    )
+  );
+  --text-tertiary: var(--color-text-tertiary, var(--muted-foreground));
+
+  display: grid;
+  grid-template-columns: 275px minmax(0, 1fr);
+  align-items: start;
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  position: sticky;
+  top: 0;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100vh;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+  font-size: var(--font-text-md-size, 14px);
+  line-height: var(--font-text-md-line-height, 21px);
+}
+
+.sidebar-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  height: 32px;
+  margin-inline-start: 8px;
+  padding-inline-end: 4px;
+}
+
+.sidebar-title h2 {
+  overflow: hidden;
+  margin: 0;
+  font-size: var(--font-heading-xs-size, 18px);
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-failure {
+  margin: 0;
+  padding-inline: 8px;
+}
+
+.icon-button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--border-radius-md, 8px);
+  color: var(--text-tertiary);
+  background: none;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.icon-button:hover:not(:disabled) {
+  color: var(--color-text-primary, var(--foreground));
+  background: var(--row-hover);
+}
+
+.icon-button:disabled {
+  cursor: default;
+}
+
+.icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.icon-button[aria-busy='true'] svg {
+  animation: turn 1s linear infinite;
+}
+
+.section {
+  interpolate-size: allow-keywords;
+}
+
+.section summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding-inline: 8px 6px;
+  color: var(--text-tertiary);
+  font-weight: var(--font-weight-medium, 500);
+  list-style: none;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.section summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+  opacity: 0;
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.section:hover .disclosure,
+.section summary:focus-visible .disclosure,
+.section:not([open]) .disclosure {
+  opacity: 1;
+}
+
+.section:not([open]) .disclosure {
+  transform: rotate(-90deg);
+}
+
+.section::details-content {
+  overflow: clip;
+  block-size: 0;
+  opacity: 0;
+  transition:
+    block-size 300ms cubic-bezier(0.19, 1, 0.22, 1),
+    opacity 300ms cubic-bezier(0.19, 1, 0.22, 1),
+    content-visibility 300ms allow-discrete;
+}
+
+.section[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+
+.section ul {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--color-text-primary, var(--foreground));
+  background: none;
+  font: inherit;
+  text-align: left;
+}
+
+@supports (corner-shape: superellipse(1.5)) {
+  .item {
+    border-radius: var(--border-radius-lg, 12.5px);
+    corner-shape: superellipse(1.5);
+  }
+}
+
+button.item {
+  cursor: var(--cursor-interaction, pointer);
+}
+
+button.item:hover,
+.item[aria-current='page'] {
+  background: var(--row-hover);
+}
+
+.item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glyph {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-tertiary);
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.5;
+}
+
+.glyph.synced {
+  fill: currentColor;
+  stroke: none;
+}
+
+.glyph.troubled {
+  color: var(--destructive);
+}
+
+.glyph.busy {
+  animation: turn 800ms linear infinite;
+}
+
+@keyframes turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glyph.busy,
+  .icon-button[aria-busy='true'] svg {
+    animation: none;
+  }
+
+  .disclosure,
+  .section::details-content {
+    transition: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: static;
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
 .page {
   display: flex;
   flex-direction: column;

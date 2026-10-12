@@ -3,9 +3,10 @@ import { useApp, useHostStyles } from '@modelcontextprotocol/ext-apps/react';
 import { ConnectorDetail } from './connector-detail.tsx';
 import { ConnectorList } from './connector-list.tsx';
 import { PageProvider, usePage } from './page-context.tsx';
+import { Sidebar } from './sidebar.tsx';
 
-// The Apple page ChatGPT lists in its sidebar: the connector list, or one
-// connector's page.
+// The Apple page ChatGPT lists in its sidebar: its own sidebar beside the
+// connector list, or beside one connector's page.
 export function Page() {
   const { app, error } = useApp({
     appInfo: { name: 'apple-page', version: '1.0.0' },
@@ -22,7 +23,10 @@ export function Page() {
     );
   return (
     <PageProvider app={app}>
-      <OpenedConnector />
+      <div className="shell">
+        <Sidebar />
+        <OpenedConnector />
+      </div>
     </PageProvider>
   );
 }

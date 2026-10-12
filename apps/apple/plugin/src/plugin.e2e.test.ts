@@ -27,7 +27,7 @@ import {
   ElicitRequestSchema,
   type ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import { OpenAIUiToolMetadataSchema } from '@openai/mcp-extensions/server';
+import { z } from 'zod';
 
 // NoteStore.sqlite's tables as macOS 26.6.2 creates them (schema only, no
 // data), in WAL mode like the real store.
@@ -457,6 +457,7 @@ test(
         'apple_options',
         'apple_page',
         'apple_setup',
+        'apple_sync',
       ]);
       const metaOf = (name: string) =>
         tools.find((tool) => tool.name === name)?._meta;
@@ -467,6 +468,7 @@ test(
         'apple_connectors',
         'apple_connector_choices',
         'apple_connector_update',
+        'apple_sync',
         'apple_open_full_disk_access',
       ])
         assert.deepEqual(metaOf(name), { ui: { visibility: ['app'] } }, name);
@@ -478,18 +480,28 @@ test(
         resourceUri: 'ui://apple/page.html',
         visibility: ['app'],
       });
-      const { entrypoints } = OpenAIUiToolMetadataSchema.parse(
-        pageMeta?.['openai/ui'],
-      );
-      assert.deepEqual(
-        entrypoints?.map(({ type }) => type),
-        ['global', 'settings'],
-      );
-      const searchTerms = entrypoints?.flatMap((entrypoint) =>
-        entrypoint.type === 'settings' ? (entrypoint.searchTerms ?? []) : [],
-      );
+      // ChatGPT leaves out its own title row above the page, which draws its
+      // own. @openai/mcp-extensions 0.1.0's schema predates header, so the
+      // test reads the entrypoints with its own.
+      const {
+        entrypoints: [global, settings],
+      } = z
+        .strictObject({
+          entrypoints: z.tuple([
+            z.strictObject({
+              type: z.literal('global'),
+              header: z.strictObject({ enabled: z.boolean() }),
+            }),
+            z.strictObject({
+              type: z.literal('settings'),
+              searchTerms: z.array(z.string()),
+            }),
+          ]),
+        })
+        .parse(pageMeta?.['openai/ui']);
+      assert.equal(global.header.enabled, false);
       for (const term of ['connectors', 'Notes', 'Mail', 'Calendar'])
-        assert.ok(searchTerms?.includes(term), term);
+        assert.ok(settings.searchTerms.includes(term), term);
       const { contents: pages } = await client.readResource({
         uri: 'ui://apple/page.html',
       });
@@ -504,6 +516,7 @@ test(
         'apple_connectors',
         'apple_connector_choices',
         'apple_connector_update',
+        'apple_sync',
         'apple_open_full_disk_access',
       ])
         assert.ok(
@@ -665,6 +678,19 @@ test(
       assert.equal(
         readFileSync(String(attachment.attachmentRef), 'utf8'),
         'attached words',
+      );
+      // An imported connector stays as it is until the user syncs it: Sync on
+      // the Apple page imports it again into the same copy, edit included,
+      // and returns once the pass has ended.
+      retitle('Groceries (synced)');
+      await invoke(client, 'apple_sync', {});
+      assert.deepEqual(
+        read(
+          synced.database,
+          'SELECT id FROM notes WHERE title = @title',
+          `.parameter set @title "'Groceries (synced)'"`,
+        ).rows,
+        [{ id: 'NOTE-RICH' }],
       );
 
       // A connector macOS does not allow fails alone, and Notes keeps its import.

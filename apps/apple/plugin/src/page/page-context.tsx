@@ -18,7 +18,7 @@ import {
 } from './contract.ts';
 
 // What every part of the Apple page shares: its connection to ChatGPT, the
-// connector rows it keeps current, the one change it makes, and which
+// connector rows it keeps current, the changes it makes, and which
 // connector's page is open.
 type Page = {
   readonly app: App | null;
@@ -29,6 +29,9 @@ type Page = {
     connector: string,
     selection: Partial<ConnectorSelection> | null,
   ) => Promise<void>;
+  // Imports every connected connector again, and settles once all have ended.
+  readonly sync: () => Promise<void>;
+  readonly syncing: boolean;
   readonly opened: string | null;
   readonly open: (connector: string | null) => void;
 };
@@ -42,10 +45,13 @@ export function usePage(): Page {
 }
 
 // The server cannot tell the page that an import moved on, so the page asks
-// again: soon while an import waits or runs, rarely once all are settled, and
-// not at all while ChatGPT hides the page.
+// again: soon while a sync or an import runs, rarely once all are settled,
+// and not at all while ChatGPT hides the page.
 const busyDelay = 2_000;
 const settledDelay = 15_000;
+// A sync lasts as long as its slowest import; the server allows a tool call
+// as long (tool_timeout_sec in plugins/apple/.mcp.json).
+const syncTimeout = 1_800_000;
 
 export function PageProvider({
   app,
@@ -58,6 +64,7 @@ export function PageProvider({
   const [failure, setFailure] = useState<string | null>(null);
   const [reads, setReads] = useState(0);
   const [opened, setOpened] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const read = useCallback(async () => {
     if (app === null) return;
@@ -79,9 +86,12 @@ export function PageProvider({
 
   useEffect(() => {
     if (app === null) return;
-    const busy = rows?.some(
-      ({ status }) => status.state === 'waiting' || status.state === 'running',
-    );
+    const busy =
+      syncing ||
+      rows?.some(
+        ({ status }) =>
+          status.state === 'waiting' || status.state === 'running',
+      );
     let delay = settledDelay;
     if (reads === 0) delay = 0;
     else if (busy === true) delay = busyDelay;
@@ -89,7 +99,7 @@ export function PageProvider({
       if (!document.hidden) void read();
     }, delay);
     return () => clearTimeout(timer);
-  }, [app, reads, rows, read]);
+  }, [app, reads, rows, read, syncing]);
 
   useEffect(() => {
     const shown = () => {
@@ -123,9 +133,36 @@ export function PageProvider({
     [app],
   );
 
+  const sync = useCallback(async () => {
+    if (app === null) return;
+    setSyncing(true);
+    try {
+      const { connectors } = await callTool(
+        app,
+        'apple_sync',
+        {},
+        connectorsResult,
+        { timeout: syncTimeout },
+      );
+      setRows(connectors);
+      setFailure(null);
+    } finally {
+      setSyncing(false);
+    }
+  }, [app]);
+
   return (
     <PageContext
-      value={{ app, rows, failure, update, opened, open: setOpened }}
+      value={{
+        app,
+        rows,
+        failure,
+        update,
+        sync,
+        syncing,
+        opened,
+        open: setOpened,
+      }}
     >
       {children}
     </PageContext>
