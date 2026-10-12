@@ -1,4 +1,5 @@
 import type { PassStatus } from '@workspace/elt-sqlite';
+import type { Selection } from '@workspace/settings';
 
 import { type ApplePlugin, configurationSchema } from './apple-plugin.ts';
 import type {
@@ -40,7 +41,7 @@ function describe(
     case 'running':
       return `Importing since ${new Date(sync.startedAt).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}.`;
     case 'cancelled':
-      return 'Stopped: resumes the next time Codex runs the Apple plugin.';
+      return 'Stopped before it finished.';
     case 'succeeded':
       return `Synced ${ago(sync.completedAt, now)} · ${covers}.`;
     case 'partial':
@@ -134,14 +135,15 @@ export function connectorRows(plugin: ApplePlugin): ConnectorRow[] {
   ];
 }
 
-// Connects, narrows or disconnects one connector. Every other connector keeps
-// its stored selection, so a page that read the selection before another chat
-// changed it does not undo that change.
+// Connects, narrows or disconnects one connector, and returns the rows with
+// the imports the change creates. Every other connector keeps its stored
+// selection, so a page that read the selection before another chat changed it
+// does not undo that change.
 export async function updateConnector(
   plugin: ApplePlugin,
   connector: string,
   selection: ConnectorSelection | null,
-): Promise<ConnectorRow[]> {
+): Promise<{ connectors: ConnectorRow[]; newImports: Selection[] }> {
   const current = plugin
     .status()
     .connectors.map(({ connector, scope, includeAttachments }) => ({
@@ -158,8 +160,10 @@ export async function updateConnector(
     selection !== null && !current.some((item) => item.connector === connector)
       ? [{ connector, ...selection }]
       : [];
-  await plugin.configure({ connectors: [...replaced, ...added] });
-  return connectorRows(plugin);
+  const newImports = await plugin.configure({
+    connectors: [...replaced, ...added],
+  });
+  return { connectors: connectorRows(plugin), newImports };
 }
 
 // What a connector can be narrowed to, read from its app, which may make

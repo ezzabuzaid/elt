@@ -430,7 +430,7 @@ function owners(settings: Settings, directory: string): SqliteElection {
 // pass now or a sync watch still owns it: joining that pass's flight gives up
 // the wait at once, a watch hears of the removal within a second, and the next
 // setup or sync removes it. While a removal runs, a sync of the import waits.
-// The plugin's importPending removes stale imports the same way.
+// The Apple plugin removes stale imports the same way.
 async function removeStale(
   settings: Settings,
   flights: SingleFlight<readonly SyncLine[]>,

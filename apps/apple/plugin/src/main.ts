@@ -25,7 +25,6 @@ import {
   updateConnector,
 } from './connector-page.ts';
 import { openFullDiskAccessSettings } from './full-disk-access.ts';
-import { importPending } from './importing.ts';
 import { choicesResult, connectorsResult } from './page/contract.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
@@ -112,10 +111,10 @@ mcpServer.registerTool(
       );
     // A person answers each form: wait for them, not the SDK's 60 seconds.
     // Codex pauses the tool call's timeout while a form is open.
-    const saved = await setUpWithForms(plugin, (form) =>
+    const { newImports, ...saved } = await setUpWithForms(plugin, (form) =>
       mcpServer.server.elicitInput(form, { timeout: 1_800_000 }),
     );
-    void importPending(plugin);
+    void plugin.import(newImports);
     return structured(saved);
   },
 );
@@ -149,9 +148,8 @@ mcpServer.registerTool(
   },
   async (input) => {
     await plugin.refresh();
-    const saved = await plugin.configure(input);
-    void importPending(plugin);
-    return structured(saved);
+    void plugin.import(await plugin.configure(input));
+    return structured(plugin.status());
   },
 );
 // Tools only the hooks and the Apple page call; Codex keeps them from the
@@ -254,8 +252,12 @@ mcpServer.registerTool(
   },
   async ({ connector, selection }) => {
     await plugin.refresh();
-    const connectors = await updateConnector(plugin, connector, selection);
-    void importPending(plugin);
+    const { connectors, newImports } = await updateConnector(
+      plugin,
+      connector,
+      selection,
+    );
+    void plugin.import(newImports);
     return structured({ connectors });
   },
 );
@@ -298,6 +300,3 @@ mcpServer.registerTool(
 );
 
 await mcpServer.connect(new StdioServerTransport());
-// Finishes what an earlier server left unimported; each selection change
-// above imports what it added.
-await importPending(plugin);

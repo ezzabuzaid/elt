@@ -13,7 +13,11 @@ import type {
   Connectors,
 } from '@workspace/connector-apple-manifest/connectors';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
-import { type PassStatus, readPassStatus } from '@workspace/elt-sqlite';
+import {
+  type PassStatus,
+  SQLiteSyncHistory,
+  readPassStatus,
+} from '@workspace/elt-sqlite';
 import {
   type ConnectorFacts,
   NewerLayoutError,
@@ -88,7 +92,7 @@ export class PluginUpdatedError extends Error {
   }
 }
 
-// Setup and status for the Codex plugin. importPending writes each
+// Setup, imports and status for the Codex plugin. Each import writes its
 // connector's data.sqlite; agents read those files directly.
 export class ApplePlugin {
   // The installed plugin's folder. Installing another version deletes it.
@@ -216,10 +220,9 @@ export class ApplePlugin {
 
   // Removes each import the selection no longer names, unless a server runs
   // its pass now: joining that pass's flight gives up the wait at once, and
-  // the next selection change or server start removes it. While a removal
-  // runs, a pass of the import waits. The CLI's Imports removes stale imports
-  // the same way.
-  async removeStale(
+  // that pass removes its import when it ends. While a removal runs, a pass
+  // of the import waits. The CLI's Imports removes stale imports the same way.
+  async #removeStale(
     settings: Settings,
     flights: SingleFlight<void>,
   ): Promise<void> {
@@ -239,34 +242,67 @@ export class ApplePlugin {
     }
   }
 
-  // A changed scope is a new import: importPending loads it, and the
-  // previous one is removed, so nothing reads an import that is not selected.
-  // A selected connector that is not loaded keeps only the selection it has,
-  // so a connector broken while it is edited loses nothing.
-  async configure(requested: { readonly connectors: readonly Selection[] }) {
-    {
-      using settings = this.#open();
-      const stored = settings.selections();
-      settings.select(
-        requested.connectors.map((item) => {
-          const connector = this.#loaded(item.connector);
-          return connector === undefined
-            ? item
-            : {
-                ...item,
-                scope: { ...connector.defaultScope(), ...item.scope },
-              };
-        }),
-        {
-          facts: (name) =>
-            this.#loaded(name) ?? unchanged(name, stored, requested.connectors),
-          permissions: ({ connector }) => this.#permissions(connector),
-        },
-      );
-      await using flights = this.flights();
-      await this.removeStale(settings, flights);
-    }
-    return this.status();
+  // Saves the requested selection and returns the imports it creates: one for
+  // each connector added and for each whose scope changed, since a changed
+  // scope is a new import. The previous import is removed, so nothing reads
+  // an import that is not selected. A selected connector that is not loaded
+  // keeps only the selection it has, so a connector broken while it is edited
+  // loses nothing.
+  async configure(requested: {
+    readonly connectors: readonly Selection[];
+  }): Promise<Selection[]> {
+    using settings = this.#open();
+    const stored = settings.selections();
+    const imported = new Set(stored.map((item) => settings.directory(item)));
+    settings.select(
+      requested.connectors.map((item) => {
+        const connector = this.#loaded(item.connector);
+        return connector === undefined
+          ? item
+          : {
+              ...item,
+              scope: { ...connector.defaultScope(), ...item.scope },
+            };
+      }),
+      {
+        facts: (name) =>
+          this.#loaded(name) ?? unchanged(name, stored, requested.connectors),
+        permissions: ({ connector }) => this.#permissions(connector),
+      },
+    );
+    await using flights = this.flights();
+    await this.#removeStale(settings, flights);
+    return settings
+      .selections()
+      .filter((item) => !imported.has(settings.directory(item)));
+  }
+
+  // Runs one pass of each selection's import at once, each in the import's
+  // flight, so a server that finds another loading an import waits for that
+  // pass instead of loading it again. A pass whose selection the user removed
+  // meanwhile removes its import when it ends, since the removal could not
+  // while the pass ran. Settles whatever the passes do: each pass records how
+  // it ended in its import's sync history.
+  async import(selections: readonly Selection[]): Promise<void> {
+    await Promise.allSettled(
+      selections.map(async (selection) => {
+        using settings = this.#open();
+        await using flights = this.flights();
+        const directory = settings.directory(selection);
+        await flights.run(directory, async () => {
+          try {
+            await this.connector(selection.connector).import(
+              settings,
+              selection,
+              new SQLiteSyncHistory(),
+            );
+          } finally {
+            if (settings.staleImports().includes(directory))
+              rmSync(directory, { recursive: true, force: true });
+          }
+        });
+      }),
+    );
   }
 
   async options(name: string) {

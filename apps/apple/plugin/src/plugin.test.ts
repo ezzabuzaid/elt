@@ -17,7 +17,6 @@ import { type Selection, importDirectory } from '@workspace/settings';
 import { ApplePlugin } from './apple-plugin.ts';
 import { chatStatus } from './chat-status.ts';
 import { connectorRows, updateConnector } from './connector-page.ts';
-import { importPending } from './importing.ts';
 
 // The committed plugin, as Codex installs it.
 const install = resolve('plugins/apple');
@@ -136,13 +135,11 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
       message,
     );
   assert.deepEqual(plugin.status().connectors, []);
-  const [calendar] = (
-    await plugin.configure({
-      connectors: [
-        { connector: 'calendar', scope: {}, includeAttachments: true },
-      ],
-    })
-  ).connectors;
+  const [calendar] = await plugin.configure({
+    connectors: [
+      { connector: 'calendar', scope: {}, includeAttachments: true },
+    ],
+  });
   assert.ok(calendar?.scope.startAt);
   assert.ok(calendar.scope.endAt);
   assert.ok(calendar.scope.startAt < calendar.scope.endAt);
@@ -202,7 +199,7 @@ test('agents read the selected connectors, where each import lives and what macO
   ]);
 });
 
-test('Apple setup keeps an unchanged import and removes a changed or disconnected one', async () => {
+test('Apple setup imports only what a change adds or changes, keeps an unchanged import and removes a changed or disconnected one', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
@@ -212,26 +209,29 @@ test('Apple setup keeps an unchanged import and removes a changed or disconnecte
     scope: { collectionIds: ['folder-1'] },
     includeAttachments: true,
   };
-  assert.equal(
-    (await plugin.configure({ connectors: [notes] })).connectors[0]?.database,
-    null,
-  );
+  assert.deepEqual(await plugin.configure({ connectors: [notes] }), [notes]);
+  assert.equal(plugin.status().connectors[0]?.database, null);
   const database = imported(scratch.path, notes);
   assert.equal(
     (await applePlugin(install, scratch.path)).status().connectors[0]?.database,
     database,
   );
-  await plugin.configure({ connectors: [notes] });
+  const books = { connector: 'books', scope: {}, includeAttachments: true };
+  assert.deepEqual(await plugin.configure({ connectors: [notes, books] }), [
+    books,
+  ]);
   assert.equal(existsSync(database), true);
 
   const changed = { ...notes, scope: { collectionIds: ['folder-2'] } };
-  await plugin.configure({ connectors: [changed] });
+  assert.deepEqual(await plugin.configure({ connectors: [changed] }), [
+    changed,
+  ]);
   assert.equal(existsSync(database), false);
   const [current] = plugin.status().connectors;
   assert.equal(current?.database, null);
   assert.equal(current?.sync, null);
   imported(scratch.path, changed);
-  await plugin.configure({ connectors: [] });
+  assert.deepEqual(await plugin.configure({ connectors: [] }), []);
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
 });
 
@@ -243,7 +243,11 @@ test('importing settles when the settings cannot be read, so the server keeps se
   mkdirSync(join(scratch.path, 'settings.sqlite'));
   const plugin = await applePlugin(install, scratch.path);
 
-  await assert.doesNotReject(importPending(plugin));
+  await assert.doesNotReject(
+    plugin.import([
+      { connector: 'notes', scope: {}, includeAttachments: true },
+    ]),
+  );
 });
 
 test('two servers importing one selection at once load it in one pass, the second waiting for the first', async () => {
@@ -266,11 +270,11 @@ test('two servers importing one selection at once load it in one pass, the secon
   );
   await plugin.refresh();
   const photos = { connector: 'photos', scope: {}, includeAttachments: true };
-  await plugin.configure({ connectors: [photos] });
+  const imports = await plugin.configure({ connectors: [photos] });
   const previous = process.env.HOME;
   process.env.HOME = home;
   try {
-    const both = Promise.all([importPending(plugin), importPending(plugin)]);
+    const both = Promise.all([plugin.import(imports), plugin.import(imports)]);
     const deadline = Date.now() + 30_000;
     while (plugin.status().connectors[0]?.sync?.state !== 'running') {
       if (Date.now() > deadline) assert.fail('no import started its pass');
@@ -295,6 +299,58 @@ test('two servers importing one selection at once load it in one pass, the secon
         .map((row) => ({ ...row })),
       [{ status: 'succeeded' }],
     );
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a connector switched off while its pass runs loses its import once the pass ends', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  // A pipe the test writes once the connector is switched off: the Photos
+  // read waits on it, so the pass is still running when the switch happens.
+  const home = join(scratch.path, 'home');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  spawnSync('/usr/bin/mkfifo', [join(home, 'Pictures/photos.json')]);
+  const plugin = new ApplePlugin(
+    new Connectors([
+      builtInConnectors,
+      resolve('packages/connectors/apple/manifest/dist/fixtures'),
+    ]),
+    host,
+    install,
+    join(scratch.path, 'store'),
+  );
+  await plugin.refresh();
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const directory = importDirectory(plugin.directory, photos);
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const importing = plugin.import(imports);
+    const deadline = Date.now() + 30_000;
+    while (plugin.status().connectors[0]?.sync?.state !== 'running') {
+      if (Date.now() > deadline) assert.fail('no import started its pass');
+      await sleep(50);
+    }
+
+    await plugin.configure({ connectors: [] });
+    const keptWhileRunning = existsSync(directory);
+    await writeFile(
+      join(home, 'Pictures/photos.json'),
+      JSON.stringify([{ id: 'p1', title: 'Beach' }]),
+    );
+    const settled = await Promise.race([
+      importing.then(() => true),
+      sleep(30_000).then(() => false),
+    ]);
+
+    assert.equal(settled, true, 'the pass never ended');
+    assert.equal(keptWhileRunning, true);
+    assert.equal(existsSync(directory), false);
   } finally {
     if (previous === undefined) delete process.env.HOME;
     else process.env.HOME = previous;
@@ -373,18 +429,19 @@ test('a selected connector that is no longer loaded is reported, keeps its impor
 
   const [reported] = plugin.status().connectors;
   const context = chatStatus(plugin).text;
-  const kept = await plugin.configure({
+  const imports = await plugin.configure({
     connectors: [
       photos,
       { connector: 'notes', scope: {}, includeAttachments: true },
     ],
   });
+  const kept = plugin.status().connectors;
   const changed = () =>
     plugin.configure({
       connectors: [{ ...photos, includeAttachments: false }],
     });
   const listed = connectorRows(plugin).find(({ name }) => name === 'photos');
-  const rows = await updateConnector(plugin, 'photos', null);
+  const { connectors: rows } = await updateConnector(plugin, 'photos', null);
 
   assert.equal(reported?.title, 'photos');
   assert.match(
@@ -393,8 +450,12 @@ test('a selected connector that is no longer loaded is reported, keeps its impor
   );
   assert.match(context, /^- photos: No connector named photos is loaded/m);
   assert.deepEqual(
-    kept.connectors.map(({ connector }) => connector),
+    kept.map(({ connector }) => connector),
     ['photos', 'notes'],
+  );
+  assert.deepEqual(
+    imports.map(({ connector }) => connector),
+    ['notes'],
   );
   await assert.rejects(
     changed,
@@ -489,7 +550,7 @@ test('the sidebar page describes each connector’s import and switches one conn
   // Switching Mail on keeps Notes as it was chosen; switching Notes off
   // disconnects it and removes its import. No row moves.
   imported(scratch.path, notes);
-  const rows = await updateConnector(plugin, 'mail', {
+  const { connectors: rows } = await updateConnector(plugin, 'mail', {
     scope: {},
     includeAttachments: true,
   });
@@ -550,7 +611,7 @@ test('the sidebar page narrows a connector by date, says which connectors it can
     scope: { collectionIds: ['FOLDER-NOTES'] },
     includeAttachments: false,
   });
-  const rows = await updateConnector(plugin, 'notes', {
+  const { connectors: rows } = await updateConnector(plugin, 'notes', {
     scope: {},
     includeAttachments: true,
   });
@@ -611,7 +672,7 @@ test('once another plugin version replaces this one, its server refuses to chang
     /open a new chat/,
   );
 
-  await importPending(plugin);
+  await plugin.import([notes]);
 
   // Old code neither removes imports nor starts one.
   assert.equal(existsSync(unselected), true);
@@ -647,7 +708,7 @@ test('a server whose code predates the settings file refuses to change connector
     /open a new chat/,
   );
 
-  await importPending(plugin);
+  await plugin.import([notes]);
 
   assert.equal(existsSync(unselected), true);
   assert.equal(existsSync(importDirectory(scratch.path, notes)), false);
@@ -682,7 +743,7 @@ test('settings an older layout wrote are discarded, so the user sets up again', 
           { connector: 'notes', scope: {}, includeAttachments: true },
         ],
       })
-    ).connectors.length,
+    ).length,
     1,
   );
 });

@@ -152,6 +152,32 @@ test('readers find each selected import, where it lives and what access it needs
   );
 });
 
+test('readers find selected_connectors empty in a new store and in one an older layout wrote, before anything is selected', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
+  const settings = join(scratch.path, 'settings.sqlite');
+  const selected = () =>
+    shell(settings, 'SELECT connector FROM selected_connectors');
+
+  new Settings(scratch.path)[Symbol.dispose]();
+  const fresh = selected();
+  {
+    using store = new Settings(scratch.path);
+    store.select(
+      [{ connector: 'notes', scope: {}, includeAttachments: true }],
+      options,
+    );
+  }
+  {
+    using database = new DatabaseSync(settings);
+    database.exec('PRAGMA user_version = 1');
+  }
+  new Settings(scratch.path)[Symbol.dispose]();
+  const rebuilt = selected();
+
+  assert.deepEqual(fresh, { rows: [], stderr: '' });
+  assert.deepEqual(rebuilt, { rows: [], stderr: '' });
+});
+
 test('a changed selection leaves its previous import stale, and a selection with problems changes nothing', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
   using store = new Settings(scratch.path);

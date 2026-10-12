@@ -399,8 +399,7 @@ test(
           'SELECT latest_attempt_id, status, error, last_successful_sync_at FROM sync_status',
         ).rows[0],
       }));
-    // Waits for the leading server until the selected connectors reach the
-    // state done looks for.
+    // Waits until the selected connectors reach the state done looks for.
     const settled = async (
       what: string,
       done: (connectors: SelectedConnector[]) => boolean,
@@ -515,7 +514,7 @@ test(
         );
       // Codex shows these instructions with the tools.
       assert.match(String(client.getInstructions()), /\$query-apple/);
-      // The server names the installed version, which decides who leads.
+      // The server names the installed version.
       assert.equal(client.getServerVersion()?.version, manifest.version);
       // ChatGPT drops a page's Settings search terms while the server also
       // has a native Settings section, so Apple has none.
@@ -722,7 +721,7 @@ test(
         /No connector named invalid is loaded/,
       );
 
-      // When the leading chat closes, another chat's server leads.
+      // The first chat closes; the other chat changes the selection from here.
       await client.close();
       await transport.close();
       retitle('Groceries (edited)');
@@ -745,22 +744,13 @@ test(
         selected().map(({ connector }) => connector),
         ['messages'],
       );
-      // The selection change imports again what no pass loaded: Messages
-      // fails once more.
-      await settled(
-        'retried Messages',
-        ([retried]) =>
-          retried?.sync?.latest_attempt_id !==
-            messages.sync?.latest_attempt_id &&
-          retried?.sync?.status === 'failed',
-      );
       // A chat that never got the start-of-chat status gets it on its next prompt.
       assert.match(
         await context(other, 'UserPromptSubmit'),
         /^- Messages: last sync failed/m,
       );
       // An imported connector is not refreshed; switched on again, Notes
-      // imports afresh, with the change made since, through the new leader.
+      // imports afresh, with the change made since.
       await invoke(other, 'apple_connector_update', {
         connector: 'notes',
         selection: { scope: {}, includeAttachments: true },
@@ -1140,103 +1130,5 @@ test(
       await client.close();
       await transport.close();
     }
-  },
-);
-
-test(
-  'an import a pass loaded only in part imports again when the next chat starts, until every row arrives',
-  { timeout: 120_000 },
-  async (t) => {
-    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
-    const plugin = join(scratch.path, 'plugin');
-    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
-    const runtime =
-      process.env.CODEX_MCP_NODE_PATH ??
-      join(
-        homedir(),
-        '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
-      );
-    const {
-      mcpServers: { apple },
-    } = JSON.parse(readFileSync(join(plugin, '.mcp.json'), 'utf8'));
-    // Codex starts a server for each chat.
-    const chat = async () => {
-      const transport = new StdioClientTransport({
-        command: join(plugin, apple.command),
-        args: apple.args,
-        cwd: join(plugin, apple.cwd),
-        env: { HOME: scratch.path, CODEX_MCP_NODE_PATH: runtime, PATH: '' },
-        stderr: 'pipe',
-      });
-      const client = new Client({ name: 'apple-e2e', version: '1.0.0' });
-      await client.connect(transport, { signal: t.signal, timeout: 10_000 });
-      return { client, transport };
-    };
-    const settings = join(
-      scratch.path,
-      'Library/Application Support/Context Compiler/Apple/settings.sqlite',
-    );
-    // The photos a reader sees once the import's latest pass ends as status.
-    const photosOnceEnded = async (status: string) => {
-      for (let attempt = 0; attempt < 60; attempt++) {
-        const [selected] = read(
-          settings,
-          "SELECT database FROM selected_connectors WHERE connector = 'photos'",
-        ).rows;
-        if (
-          selected !== undefined &&
-          existsSync(selected.database) &&
-          read(selected.database, 'SELECT status FROM sync_status').rows[0]
-            ?.status === status
-        )
-          return read(
-            selected.database,
-            'SELECT id, title FROM photos ORDER BY id',
-          ).rows;
-        await sleep(500);
-      }
-      assert.fail(`The Photos import never ended ${status}`);
-    };
-    await withConnectors(scratch.path);
-    const pictures = join(scratch.path, 'Pictures/photos.json');
-    await writeFile(
-      pictures,
-      JSON.stringify([{ id: 'p1', title: 'Beach' }, 'not a photo']),
-    );
-
-    const first = await chat();
-    let partly: unknown[];
-    try {
-      const configured = await first.client.callTool({
-        name: 'apple_configure',
-        arguments: { connectors: [{ connector: 'photos' }] },
-      });
-      assert.notEqual(configured.isError, true);
-      partly = await photosOnceEnded('partial');
-    } finally {
-      await first.client.close();
-      await first.transport.close();
-    }
-    await writeFile(
-      pictures,
-      JSON.stringify([
-        { id: 'p1', title: 'Beach' },
-        { id: 'p2', title: 'Snow' },
-      ]),
-    );
-    const next = await chat();
-    let complete: unknown[];
-    try {
-      complete = await photosOnceEnded('succeeded');
-    } finally {
-      await next.client.close();
-      await next.transport.close();
-    }
-
-    assert.deepEqual(partly, [{ id: 'p1', title: 'Beach' }]);
-    assert.deepEqual(complete, [
-      { id: 'p1', title: 'Beach' },
-      { id: 'p2', title: 'Snow' },
-    ]);
   },
 );

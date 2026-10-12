@@ -21,7 +21,7 @@ export type Ask = (form: ElicitRequestFormParams) => Promise<ElicitResult>;
 // reported. Full Disk Access has no macOS prompt, so connectors behind it are
 // reported without opening them and a second form offers to open its Settings
 // list. Cancelling leaves setup unchanged. It returns once the answers are
-// saved; the server then imports them in the background.
+// saved, with the imports they create for the server to run.
 export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
   const previous = new Map(
     plugin
@@ -55,7 +55,8 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       required: ['connectors'],
     },
   });
-  if (picked.action !== 'accept') return { changed: false, ...plugin.status() };
+  if (picked.action !== 'accept')
+    return { changed: false, ...plugin.status(), newImports: [] };
   const chosen = z.array(connectorSchema).parse(picked.content?.connectors);
   const behindFullDiskAccess = chosen.filter(
     (name) => plugin.connector(name).fullDiskAccess,
@@ -103,16 +104,15 @@ export async function setUpWithForms(plugin: ApplePlugin, ask: Ask) {
       if (kept !== undefined) configuration.push(kept);
     }
   }
-  const saved = await plugin.configure({ connectors: configuration });
-  if (blocked.length === 0) return { changed: true, unavailable, ...saved };
+  const newImports = await plugin.configure({ connectors: configuration });
+  const saved = { changed: true, unavailable, ...plugin.status(), newImports };
+  if (blocked.length === 0) return saved;
   return {
-    changed: true,
-    unavailable,
+    ...saved,
     openedFullDiskAccess: await offerFullDiskAccess(
       ask,
       blocked.map((name) => plugin.connector(name).title),
     ),
-    ...saved,
   };
 }
 

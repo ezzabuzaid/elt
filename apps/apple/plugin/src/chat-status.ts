@@ -23,7 +23,7 @@ const progress = (sync: PassStatus | null, guidance: string): string => {
     case 'running':
       return `importing since ${sync.startedAt}; ${since}`;
     case 'cancelled':
-      return `its last pass was stopped and resumes when Codex runs the Apple plugin; ${since}`;
+      return `its last pass was stopped before it finished; ${since}`;
     case 'partial':
       return `partly synced at ${sync.completedAt}: ${passFailure(sync, guidance)}`;
     case 'failed':

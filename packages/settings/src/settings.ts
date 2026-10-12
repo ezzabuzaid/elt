@@ -87,10 +87,14 @@ export class Settings implements Disposable {
     this.settings = new DatabaseSync(path, { timeout: writerWaitMs });
     try {
       chmodSync(path, 0o600);
-      if (this.layout() !== storeLayout) this.rebuild();
+      // A new file starts at layout 0, so it is built like an older one.
+      const built = this.layout() !== storeLayout;
+      if (built) this.rebuild();
       this.settings.exec(
         `CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failure_type TEXT NOT NULL CHECK (failure_type IN ('config', 'system')), failed_at TEXT NOT NULL);`,
       );
+      // Readers find selected_connectors before anything is selected.
+      if (built) this.#publish();
     } catch (error) {
       this.settings.close();
       throw error;
@@ -183,7 +187,7 @@ export class Settings implements Disposable {
       this.settings.exec('ROLLBACK');
       throw error;
     }
-    this.publish();
+    this.#publish();
   }
 
   // Every import directory but the selected one of each connector, including
@@ -241,7 +245,7 @@ export class Settings implements Disposable {
   }
 
   // Publishes selected_connectors and the catalog listing it; safe to repeat.
-  publish() {
+  #publish() {
     publishSQLiteViews(this.settings, { views: [selectedConnectors] });
     installSQLiteCatalog({ path: this.#path });
   }
