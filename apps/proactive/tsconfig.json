@@ -16,6 +16,9 @@
       "path": "../../packages/sources/slack/desktop"
     },
     {
+      "path": "../../packages/sources/whatsapp/desktop"
+    },
+    {
       "path": "../../packages/sources/apple/messages"
     },
     {

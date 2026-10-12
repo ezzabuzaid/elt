@@ -17,10 +17,11 @@ import { AppleCalendarSource } from '@workspace/source-apple-calendar/apple-cale
 import { AppleMailSource } from '@workspace/source-apple-mail/apple-mail-source';
 import { AppleMessagesSource } from '@workspace/source-apple-messages/apple-messages-source';
 import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-desktop-source';
+import { WhatsAppDesktopSource } from '@workspace/source-whatsapp-desktop/whatsapp-desktop-source';
 
 if (process.platform !== 'darwin')
   throw new Error(
-    'proactive reads Calendar, Mail, Messages and Slack on a Mac.',
+    'proactive reads Calendar, Mail, Messages, Slack and WhatsApp on a Mac.',
   );
 
 const warehouseUrl = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
@@ -39,6 +40,13 @@ const slack = new SlackDesktopSource();
 const slackDestination = new PostgresDestination({
   url: warehouseUrl,
   schema: 'slack',
+});
+// WhatsApp's personal chats, with who the people in them are; readers see
+// each stream as marts.whatsapp_<stream>.
+const whatsapp = new WhatsAppDesktopSource();
+const whatsappDestination = new PostgresDestination({
+  url: warehouseUrl,
+  schema: 'whatsapp',
 });
 const calendarEnd = new Date();
 calendarEnd.setUTCFullYear(calendarEnd.getUTCFullYear() + 1);
@@ -113,6 +121,39 @@ export default new Pipeline({
               ),
             {
               id: `slack:${stream.name}`,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            },
+          ),
+      ),
+    }),
+    new Connection({
+      name: 'whatsapp',
+      source: whatsapp,
+      destination: whatsappDestination,
+      checkpoints: new PostgresCheckpointStore({
+        url: warehouseUrl,
+        schema: 'whatsapp',
+      }),
+      steps: [
+        whatsapp.chats,
+        whatsapp.messages,
+        whatsapp.messageReactions,
+        whatsapp.users,
+        whatsapp.contacts,
+        whatsapp.pushNames,
+      ].map(
+        (stream) =>
+          new Copy(
+            stream,
+            whatsappDestination
+              .table(`raw_${stream.name}`)
+              .withReaderView(
+                'marts',
+                `whatsapp_${stream.name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`,
+              ),
+            {
+              id: `whatsapp:${stream.name}`,
               syncMode: 'incremental',
               destinationSyncMode: 'append_dedup',
             },

@@ -1,7 +1,7 @@
 # Proactive rules
 
-`npx nx run proactive:start` imports Calendar, Mail, Messages and Slack into the local
-Postgres warehouse, evaluates the rules once, acts on new matches, and exits.
+`npx nx run proactive:start` imports Calendar, Mail, Messages, Slack and WhatsApp into
+the local Postgres warehouse, evaluates the rules once, acts on new matches, and exits.
 It is not a background watcher. The first successful import establishes a
 baseline without acting on historical messages.
 
@@ -38,7 +38,7 @@ and Mail conversations. A generic title such as “Planning meeting” produces
 a Calendar-only brief unless its URL occurs in a conversation. Matching is
 literal, so paraphrases can be missed; the generator filters unrelated material
 inside selected conversations. Only locally available messages and bodies
-are included. WhatsApp is not part of this app's pipeline.
+are included. This rule does not read WhatsApp.
 
 Generation uses the installed, signed-in `codex` CLI with its default model,
 a read-only sandbox and no user configuration. The prompt asks

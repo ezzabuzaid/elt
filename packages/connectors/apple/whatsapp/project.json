@@ -1,0 +1,12 @@
+{
+  "name": "connector-apple-whatsapp",
+  "sourceRoot": "packages/connectors/apple/whatsapp/src",
+  "projectType": "library",
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/connectors/apple/whatsapp/dist/*.test.js\""
+    }
+  }
+}

@@ -29,8 +29,8 @@ const sql = stack.adopt(
 // A rule starts from what the marts held before this run's pass, so the first
 // run, with nothing loaded yet, loads first and tells nothing.
 const loaded =
-  await sql`SELECT connector FROM marts.sync_status WHERE connector IN ('apple-messages', 'slack', 'apple-calendar', 'apple-mail') AND last_successful_sync_at IS NOT NULL`;
-if (loaded.length !== 4) {
+  await sql`SELECT connector FROM marts.sync_status WHERE connector IN ('apple-messages', 'slack', 'whatsapp', 'apple-calendar', 'apple-mail') AND last_successful_sync_at IS NOT NULL`;
+if (loaded.length !== 5) {
   await pipeline.run();
 }
 

@@ -574,6 +574,7 @@ test('the sidebar page describes each connector’s import and switches one conn
       'notification-center': false,
       slack: false,
       wallet: false,
+      whatsapp: false,
     },
   );
   assert.deepEqual(

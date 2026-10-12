@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/connector-apple-whatsapp",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/whatsapp-connector.js",
+  "contextCompiler": {
+    "name": "whatsapp",
+    "title": "WhatsApp"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
+    "@workspace/source-whatsapp-desktop": "0.0.1"
+  }
+}

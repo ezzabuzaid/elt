@@ -39,6 +39,7 @@ test('every connector folder loads as its connector for the host, and one that c
     'safari',
     'slack',
     'wallet',
+    'whatsapp',
   ]);
   const callHistory = connectors.find(({ name }) => name === 'call-history');
   assert.equal(
@@ -64,6 +65,12 @@ test('every connector folder loads as its connector for the host, and one that c
   assert.equal(
     wallet?.guidance(),
     'No app needs to be open: macOS keeps the passes in Wallet on this Mac, with those iCloud brings from your iPhone.',
+  );
+  const whatsapp = connectors.find(({ name }) => name === 'whatsapp');
+  assert.equal(whatsapp?.title, 'WhatsApp');
+  assert.equal(
+    whatsapp?.guidance(),
+    'Turn on Terminal in System Settings › Privacy & Security › Full Disk Access, then quit and reopen Terminal. macOS does not ask for this access. Open WhatsApp and let it run: it keeps what it has synced from your phone, and saves new messages to this Mac while it runs.',
   );
   const photos = connectors.find(({ name }) => name === 'photos');
   assert.equal(

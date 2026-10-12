@@ -13,6 +13,7 @@
     "@workspace/source-apple-mail": "0.0.1",
     "@workspace/source-apple-messages": "0.0.1",
     "@workspace/source-slack-desktop": "0.0.1",
+    "@workspace/source-whatsapp-desktop": "0.0.1",
     "postgres": "^3.4.9"
   }
 }
