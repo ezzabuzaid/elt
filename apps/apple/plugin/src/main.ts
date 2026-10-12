@@ -16,8 +16,15 @@ import {
   connectorSchema,
 } from './apple-plugin.ts';
 import { chatContext } from './chat-status.ts';
+import {
+  connectorChoices,
+  connectorRows,
+  connectorSelectionSchema,
+  updateConnector,
+} from './connector-page.ts';
+import { openFullDiskAccessSettings } from './full-disk-access.ts';
 import { importPending } from './importing.ts';
-import { settingsRead, settingsUpdate } from './native-settings.ts';
+import { choicesResult, connectorsResult } from './page/contract.ts';
 import { ProactiveStore } from './proactive-store.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
@@ -57,7 +64,18 @@ const { version } = z
     ),
   );
 const mcpServer = new McpServer(
-  { name: 'apple', version },
+  {
+    name: 'apple',
+    version,
+    // ChatGPT shows the server's icon beside the sidebar page.
+    icons: [
+      {
+        src: `data:image/png;base64,${readFileSync(join(install, 'assets/composer-icon.png')).toString('base64')}`,
+        mimeType: 'image/png',
+        sizes: ['any'],
+      },
+    ],
+  },
   {
     instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.connectors.map(({ title }) => title))} content the user chose into private SQLite files on this Mac, once per connector while Codex is open; an imported connector is not refreshed. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
   },
@@ -132,73 +150,163 @@ mcpServer.registerTool(
     return structured(saved);
   },
 );
-// The plugin page's Settings section: a switch per connector, described by its
-// import status (the openai/settings extension; ChatGPT calls both tools).
-const switches = z.record(z.string(), z.boolean());
-mcpServer.registerTool(
-  'apple_settings_read',
-  {
-    title: 'Read Apple settings',
-    description:
-      'Read which Apple connectors are connected and each one’s import status, for the plugin’s Settings page. Does not read Apple app content.',
-    inputSchema: {},
-    outputSchema: {
-      schema: z.strictObject({
-        type: z.literal('object'),
-        properties: z.record(
-          z.string(),
-          z.strictObject({
-            type: z.literal('boolean'),
-            title: z.string(),
-            description: z.string(),
-          }),
-        ),
-      }),
-      values: switches,
-      layout: z.array(
-        z.strictObject({
-          kind: z.literal('group'),
-          title: z.string(),
-          items: z.array(
-            z.strictObject({
-              kind: z.literal('property'),
-              property: z.string(),
-            }),
-          ),
-        }),
-      ),
+// Tools only the hooks, the Apple page and the plugin page call; Codex keeps
+// them from the model.
+const appOnly = { ui: { visibility: ['app' as const] } };
+// The Apple page: an MCP App ChatGPT lists in its sidebar, where the user
+// switches connectors on and off, narrows them and watches their imports.
+// ext-apps 1.7.5's registerAppTool and registerAppResource only add these
+// keys, and its declarations do not resolve under NodeNext.
+const page = 'ui://apple/page.html';
+const mimeType = 'text/html;profile=mcp-app';
+mcpServer.registerResource('Apple page', page, { mimeType }, async () => ({
+  contents: [
+    {
+      uri: page,
+      mimeType,
+      text: readFileSync(new URL('page.html', import.meta.url), 'utf8'),
     },
+  ],
+}));
+mcpServer.registerTool(
+  'apple_page',
+  {
+    title: 'Apple',
+    description:
+      'Open the Apple page, where the user chooses connectors and sees each import’s status.',
+    inputSchema: {},
     annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: {
+      ui: { resourceUri: page, visibility: ['app'] },
+      'openai/ui': { entrypoints: [{ type: 'global' }] },
+    },
+  },
+  async () => ({ content: [] }),
+);
+mcpServer.registerTool(
+  'apple_connectors',
+  {
+    title: 'List Apple connectors',
+    description:
+      'Every Apple connector for the Apple page: whether it is connected, what it imports and its import status.',
+    inputSchema: {},
+    outputSchema: connectorsResult,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: appOnly,
   },
   async () => {
     await plugin.refresh();
-    return { content: [], structuredContent: settingsRead(plugin) };
+    return structured({ connectors: connectorRows(plugin) });
   },
 );
 mcpServer.registerTool(
-  'apple_settings_update',
+  'apple_connector_choices',
   {
-    title: 'Update Apple settings',
+    title: 'List one Apple connector’s choices',
     description:
-      'Connect or disconnect Apple connectors from the plugin’s Settings page. A connector switched on imports everything by default; one switched off has its imported copy deleted. Other connectors keep their scope.',
+      'The accounts and collections one connector can be narrowed to, read from its Apple app, which may prompt for macOS access.',
+    inputSchema: { connector: connectorSchema },
+    outputSchema: choicesResult,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: appOnly,
+  },
+  async ({ connector }) => {
+    await plugin.refresh();
+    return structured(await connectorChoices(plugin, connector));
+  },
+);
+mcpServer.registerTool(
+  'apple_connector_update',
+  {
+    title: 'Change one Apple connector',
+    description:
+      'Connect, narrow or disconnect one connector from the Apple page; every other connector keeps its selection. A changed selection imports afresh, and a disconnected connector has its imported copy deleted.',
     inputSchema: {
-      set: switches.meta({ minProperties: 1 }),
+      connector: connectorSchema,
+      selection: connectorSelectionSchema.nullable(),
     },
-    outputSchema: { values: switches },
+    outputSchema: connectorsResult,
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
       openWorldHint: false,
     },
+    _meta: appOnly,
   },
-  async ({ set }) => {
-    if (Object.keys(set).length === 0)
-      throw new Error('Set at least one connector.');
+  async ({ connector, selection }) => {
     await plugin.refresh();
-    const saved = await settingsUpdate(plugin, set);
+    const connectors = await updateConnector(plugin, connector, selection);
     void importPending(plugin);
-    return { content: [], structuredContent: saved };
+    return structured({ connectors });
+  },
+);
+mcpServer.registerTool(
+  'apple_open_full_disk_access',
+  {
+    title: 'Open Full Disk Access',
+    description:
+      'Open the Full Disk Access list in System Settings, where the user allows ChatGPT.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: appOnly,
+  },
+  async () => {
+    await openFullDiskAccessSettings();
+    return { content: [] };
+  },
+);
+// The plugin page's native Settings section (the openai/settings extension)
+// only opens the Apple page. ChatGPT shows the section when its capability
+// names a read and an update tool the server lists, so the update tool stays
+// and refuses.
+mcpServer.registerTool(
+  'apple_settings_read',
+  {
+    title: 'Read Apple settings',
+    description:
+      'The plugin page’s Settings section: a button that opens the Apple page.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: appOnly,
+  },
+  async () => ({
+    content: [],
+    structuredContent: {
+      schema: { type: 'object', properties: {} },
+      values: {},
+      layout: [
+        {
+          kind: 'group',
+          title: 'Connectors',
+          items: [
+            {
+              kind: 'tool',
+              tool: 'apple_page',
+              title: 'Open the Apple page',
+              description:
+                'Choose connectors, narrow what they import and see each import’s status.',
+            },
+          ],
+        },
+      ],
+    },
+  }),
+);
+mcpServer.registerTool(
+  'apple_settings_update',
+  {
+    title: 'Update Apple settings',
+    description:
+      'Apple keeps no settings on the plugin page; connectors change on the Apple page.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: appOnly,
+  },
+  () => {
+    throw new Error(
+      'Apple keeps no settings here: choose connectors on the Apple page.',
+    );
   },
 );
 mcpServer.server.registerCapabilities({
@@ -220,7 +328,7 @@ mcpServer.registerTool(
       'Apple status for the plugin’s SessionStart and UserPromptSubmit hooks.',
     inputSchema: { event: z.enum(['SessionStart', 'UserPromptSubmit']) },
     annotations: { readOnlyHint: true, openWorldHint: false },
-    _meta: { ui: { visibility: ['app'] } },
+    _meta: appOnly,
   },
   async ({ event }) => {
     // Meeting prep and the Apple gardener run in long-lived chats that keep

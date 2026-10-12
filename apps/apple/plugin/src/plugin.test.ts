@@ -9,11 +9,6 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
-import {
-  OpenAISettingsReadResultSchema,
-  OpenAISettingsUpdateResultSchema,
-} from '@openai/mcp-extensions/server';
-
 import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
 import { Connectors } from '@workspace/connector-apple-manifest/connectors';
 import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
@@ -21,8 +16,8 @@ import { type Selection, importDirectory } from '@workspace/settings';
 
 import { ApplePlugin } from './apple-plugin.ts';
 import { chatStatus } from './chat-status.ts';
+import { connectorRows, updateConnector } from './connector-page.ts';
 import { importPending } from './importing.ts';
-import { settingsRead, settingsUpdate } from './native-settings.ts';
 
 // The committed plugin, as Codex installs it.
 const install = resolve('plugins/apple');
@@ -388,8 +383,8 @@ test('a selected connector that is no longer loaded is reported, keeps its impor
     plugin.configure({
       connectors: [{ ...photos, includeAttachments: false }],
     });
-  const switches = settingsRead(plugin).values;
-  const { values } = await settingsUpdate(plugin, { photos: false });
+  const listed = connectorRows(plugin).find(({ name }) => name === 'photos');
+  const rows = await updateConnector(plugin, 'photos', null);
 
   assert.equal(reported?.title, 'photos');
   assert.match(
@@ -405,60 +400,103 @@ test('a selected connector that is no longer loaded is reported, keeps its impor
     changed,
     /No connector named photos is loaded, so its selection cannot change/,
   );
-  assert.equal(switches.photos, true);
-  assert.equal(values.photos, undefined);
+  assert.deepEqual(
+    {
+      title: listed?.title,
+      loaded: listed?.loaded,
+      selected: listed?.selection !== null,
+    },
+    { title: 'photos', loaded: false, selected: true },
+  );
+  assert.match(
+    String(listed?.status.text),
+    /No connector named photos is loaded/,
+  );
+  assert.equal(
+    rows.some(({ name }) => name === 'photos'),
+    false,
+  );
   assert.deepEqual(
     plugin.status().connectors.map(({ connector }) => connector),
     ['notes'],
   );
 });
 
-test('the Settings page switches connectors on and off and describes each import as OpenAI’s settings schema requires', async () => {
+test('the sidebar page describes each connector’s import and switches one connector without touching the others or moving its row', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
   const plugin = await applePlugin(install, scratch.path);
-  const described = () => {
-    const result = settingsRead(plugin);
-    OpenAISettingsReadResultSchema.parse(result);
-    return Object.fromEntries(
-      Object.entries(result.schema.properties).map(([name, field]) => [
-        name,
-        field.description,
-      ]),
-    );
-  };
-  assert.equal(described().notes, 'Not connected.');
+  const statusOf = (name: string) =>
+    connectorRows(plugin).find((row) => row.name === name)?.status;
+  const described = (name: string) => statusOf(name)?.text;
+  const order = connectorRows(plugin).map(({ name }) => name);
+  assert.equal(described('notes'), 'Not connected.');
 
   const notes = {
     connector: 'notes' as const,
     scope: { collectionIds: ['FOLDER-NOTES'] },
     includeAttachments: true,
   };
-  await plugin.configure({ connectors: [notes] });
-  assert.equal(described().notes, 'Waiting to import.');
+  await updateConnector(plugin, 'notes', {
+    scope: notes.scope,
+    includeAttachments: true,
+  });
+  assert.equal(described('notes'), 'Waiting to import.');
   const begin = await passes(plugin, notes);
   await (await begin()).finish();
-  assert.equal(described().notes, 'Synced just now · 1 folder.');
-  // The page adds the connector's permissions guidance to the error once.
+  assert.equal(described('notes'), 'Synced just now · 1 folder.');
+  // The page adds the connector's permissions guidance to the error once,
+  // and offers to open Full Disk Access, since granting it is the fix.
   await (await begin()).fail(new Error('Notes could not be opened.'), 'config');
-  assert.equal(
-    described().notes,
-    `Last sync failed: Notes could not be opened. ${plugin.connector('notes').guidance()}`,
-  );
+  assert.deepEqual(statusOf('notes'), {
+    state: 'failed',
+    text: `Last sync failed: Notes could not be opened. ${plugin.connector('notes').guidance()}`,
+    fullDiskAccess: true,
+  });
   // A failure granting access cannot fix shows only what went wrong.
   await (await begin()).fail(new Error('Notes crashed.'), 'system');
-  assert.equal(described().notes, 'Last sync failed: Notes crashed.');
+  assert.deepEqual(statusOf('notes'), {
+    state: 'failed',
+    text: 'Last sync failed: Notes crashed.',
+    fullDiskAccess: false,
+  });
   await begin();
-  assert.match(String(described().notes), /^Importing since /);
+  assert.match(String(described('notes')), /^Importing since /);
+  // Contacts needs no Full Disk Access, so its access failure does not offer
+  // to open it.
+  const contacts = {
+    connector: 'contacts' as const,
+    scope: {},
+    includeAttachments: true,
+  };
+  await updateConnector(plugin, 'contacts', {
+    scope: {},
+    includeAttachments: true,
+  });
+  await (
+    await (
+      await passes(plugin, contacts)
+    )()
+  ).fail(new Error('Contacts could not be opened.'), 'config');
+  assert.deepEqual(statusOf('contacts'), {
+    state: 'failed',
+    text: `Last sync failed: Contacts could not be opened. ${plugin.connector('contacts').guidance()}`,
+    fullDiskAccess: false,
+  });
+  await updateConnector(plugin, 'contacts', null);
 
   // Switching Mail on keeps Notes as it was chosen; switching Notes off
-  // disconnects it and removes its import.
+  // disconnects it and removes its import. No row moves.
   imported(scratch.path, notes);
+  const rows = await updateConnector(plugin, 'mail', {
+    scope: {},
+    includeAttachments: true,
+  });
   assert.deepEqual(
-    OpenAISettingsUpdateResultSchema.parse(
-      await settingsUpdate(plugin, { mail: true }),
-    ).values,
+    Object.fromEntries(
+      rows.map(({ name, selection }) => [name, selection !== null]),
+    ),
     {
       mail: true,
       notes: true,
@@ -477,17 +515,67 @@ test('the Settings page switches connectors on and off and describes each import
       wallet: false,
     },
   );
+  assert.deepEqual(
+    rows.map(({ name }) => name),
+    order,
+  );
   const [kept, mail] = plugin.status().connectors;
   assert.deepEqual(kept?.scope, notes.scope);
   assert.deepEqual(mail?.scope, {});
   assert.equal(mail?.includeAttachments, true);
-  assert.equal(described().mail, 'Waiting to import.');
-  await settingsUpdate(plugin, { notes: false });
+  assert.equal(described('mail'), 'Waiting to import.');
+  await updateConnector(plugin, 'notes', null);
   assert.deepEqual(
     plugin.status().connectors.map(({ connector }) => connector),
     ['mail'],
   );
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
+});
+
+test('the sidebar page narrows a connector by date, says which connectors it can date, and widens a narrowed one back to everything', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = await applePlugin(install, scratch.path);
+  const dates = {
+    startAt: '2026-01-01T00:00:00.000Z',
+    endAt: '2026-02-01T00:00:00.000Z',
+  };
+
+  await updateConnector(plugin, 'calendar', {
+    scope: dates,
+    includeAttachments: true,
+  });
+  await updateConnector(plugin, 'notes', {
+    scope: { collectionIds: ['FOLDER-NOTES'] },
+    includeAttachments: false,
+  });
+  const rows = await updateConnector(plugin, 'notes', {
+    scope: {},
+    includeAttachments: true,
+  });
+
+  const row = (name: string) => rows.find((item) => item.name === name);
+  assert.deepEqual(row('calendar')?.selection, {
+    scope: dates,
+    includeAttachments: true,
+  });
+  assert.equal(typeof row('calendar')?.datedBy, 'string');
+  assert.equal(row('contacts')?.datedBy, null);
+  assert.deepEqual(row('notes')?.selection, {
+    scope: {},
+    includeAttachments: true,
+  });
+  assert.deepEqual(
+    plugin.status().connectors.map(({ connector, scope }) => ({
+      connector,
+      scope,
+    })),
+    [
+      { connector: 'calendar', scope: dates },
+      { connector: 'notes', scope: {} },
+    ],
+  );
 });
 
 test('once another plugin version replaces this one, its server refuses to change connectors and imports nothing', async () => {
@@ -518,7 +606,8 @@ test('once another plugin version replaces this one, its server refuses to chang
     /open a new chat/,
   );
   await assert.rejects(
-    () => settingsUpdate(plugin, { mail: true }),
+    () =>
+      updateConnector(plugin, 'mail', { scope: {}, includeAttachments: true }),
     /open a new chat/,
   );
 

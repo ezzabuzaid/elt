@@ -15,7 +15,7 @@ Say only what the user needs now. Write every reply as the `wait-what` skill tea
 
 - Give the context first, in one sentence: what happened. Then give the steps.
 - Use ASD-STE100 Simplified Technical English: short sentences of 20 words or fewer, active voice, one instruction per sentence, one meaning per word.
-- Use the words the user sees, and one word for one thing: connector, import, Plugins › Apple, Trust all, meeting prep, Apple gardener.
+- Use the words the user sees, and one word for one thing: connector, import, Apple page, Plugins › Apple, Trust all, meeting prep, Apple gardener.
 - Write each action the user must take as a numbered step. Do not explain how the plugin works unless the user asks.
 - Speak about the plugin and what it does, never about this skill: do not name it, quote it or describe its steps.
 
@@ -69,10 +69,10 @@ Read each connector's state as `$query-apple` describes. Then reply in this shap
 Use these facts only when the user asks:
 
 - The plugin imports each connector once while Codex is open. It finishes an interrupted, failed or partial import the next time Codex opens. It does not refresh an imported connector yet, and nothing runs after Codex closes.
-- Plugins › Apple › Settings switches each connector on or off and shows its sync status. A connector that is switched on imports everything.
+- The Apple page switches each connector on or off and shows its import status. Open it from Explore in the ChatGPT sidebar and pin it, or from Plugins › Apple › Settings. A connector that is switched on imports everything. Its detail page narrows it to accounts, folders, dates or attachments.
 - The hooks give each new chat the Apple status. They let meeting prep and the Apple gardener skip checks with nothing to do, and let meeting prep open each meeting's chat without asking.
 - `extraction_coverage` gives what each pass loaded per stream.
-- To narrow a connector, such as to one mailbox or one Notes folder, follow "Set up in chat" for that connector.
+- To narrow a connector, such as to one mailbox or one Notes folder, open it on the Apple page, or follow "Set up in chat" for that connector.
 
 ## Turn on meeting prep
 

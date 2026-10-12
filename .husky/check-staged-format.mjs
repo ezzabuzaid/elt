@@ -9,6 +9,7 @@ import { check, getFileInfo, resolveConfig } from 'prettier';
 
 const extensions = new Set([
   '.ts',
+  '.tsx',
   '.mts',
   '.cts',
   '.js',
@@ -16,6 +17,8 @@ const extensions = new Set([
   '.cjs',
   '.json',
   '.md',
+  '.css',
+  '.html',
   '.yml',
   '.yaml',
 ]);

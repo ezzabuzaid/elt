@@ -15,6 +15,10 @@
       "dependsOn": ["bundle"],
       "command": "rm -rf dist/apple-plugin-marketplace && mkdir -p dist/apple-plugin-marketplace/.agents/plugins dist/apple-plugin-marketplace/plugins && cp .agents/plugins/marketplace.json dist/apple-plugin-marketplace/.agents/plugins/ && cp -R plugins/apple dist/apple-plugin-marketplace/plugins/"
     },
+    "install": {
+      "dependsOn": ["marketplace"],
+      "command": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex plugin add apple@context-compiler"
+    },
     "test": {
       "dependsOn": ["build", "bundle"],
       "command": "node --test \"apps/apple/plugin/dist/*.test.js\""

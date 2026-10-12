@@ -6,7 +6,11 @@
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
+  "exclude": ["src/page"],
   "references": [
+    {
+      "path": "./src/page"
+    },
     {
       "path": "../../../packages/sources/apple/macos"
     },

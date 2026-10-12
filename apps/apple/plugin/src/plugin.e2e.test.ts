@@ -30,7 +30,7 @@ import {
 import {
   OpenAISettingsCapabilitySchema,
   OpenAISettingsReadResultSchema,
-  OpenAISettingsUpdateResultSchema,
+  OpenAIUiToolMetadataSchema,
 } from '@openai/mcp-extensions/server';
 
 // NoteStore.sqlite's tables as macOS 26.6.2 creates them (schema only, no
@@ -451,31 +451,72 @@ test(
     const transport = await connect(client);
     const otherTransport = await connect(other);
     try {
-      assert.deepEqual(
-        (await client.listTools()).tools.map((tool) => tool.name).sort(),
-        [
-          'apple_configure',
-          'apple_context',
-          'apple_meeting_chat',
-          'apple_options',
-          'apple_person_note',
-          'apple_settings_read',
-          'apple_settings_update',
-          'apple_setup',
-        ],
+      const { tools } = await client.listTools();
+      assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+        'apple_configure',
+        'apple_connector_choices',
+        'apple_connector_update',
+        'apple_connectors',
+        'apple_context',
+        'apple_meeting_chat',
+        'apple_open_full_disk_access',
+        'apple_options',
+        'apple_page',
+        'apple_person_note',
+        'apple_settings_read',
+        'apple_settings_update',
+        'apple_setup',
+      ]);
+      const metaOf = (name: string) =>
+        tools.find((tool) => tool.name === name)?._meta;
+      // Only the hooks, the Apple page and the plugin page call these; Codex
+      // keeps them from the model.
+      for (const name of [
+        'apple_context',
+        'apple_connectors',
+        'apple_connector_choices',
+        'apple_connector_update',
+        'apple_open_full_disk_access',
+        'apple_settings_read',
+        'apple_settings_update',
+      ])
+        assert.deepEqual(metaOf(name), { ui: { visibility: ['app'] } }, name);
+      // ChatGPT lists the Apple page in its sidebar and opens it from the
+      // page's own resource.
+      const pageMeta = metaOf('apple_page');
+      assert.deepEqual(pageMeta, {
+        ui: { resourceUri: 'ui://apple/page.html', visibility: ['app'] },
+        'openai/ui': { entrypoints: [{ type: 'global' }] },
+      });
+      OpenAIUiToolMetadataSchema.parse(pageMeta?.['openai/ui']);
+      const { contents: pages } = await client.readResource({
+        uri: 'ui://apple/page.html',
+      });
+      assert.equal(pages.length, 1);
+      const [pageResource] = pages;
+      assert.equal(pageResource?.mimeType, 'text/html;profile=mcp-app');
+      assert.match(
+        String(pageResource && 'text' in pageResource ? pageResource.text : ''),
+        /^<!doctype html>[\s\S]*<div id="root"><\/div>\s*<script type="module">[\s\S]{10000,}<\/script>\s*<\/body>/,
       );
-      // Only the hooks call apple_context; Codex keeps it from the model.
-      assert.deepEqual(
-        (await client.listTools()).tools.find(
-          (tool) => tool.name === 'apple_context',
-        )?._meta,
-        { ui: { visibility: ['app'] } },
-      );
+      for (const name of [
+        'apple_connectors',
+        'apple_connector_choices',
+        'apple_connector_update',
+        'apple_open_full_disk_access',
+      ])
+        assert.ok(
+          pageResource &&
+            'text' in pageResource &&
+            pageResource.text.includes(`"${name}"`),
+          name,
+        );
       // Codex shows these instructions with the tools.
       assert.match(String(client.getInstructions()), /\$query-apple/);
       // The server names the installed version, which decides who leads.
       assert.equal(client.getServerVersion()?.version, manifest.version);
-      // The plugin page's native Settings section names two of those tools.
+      // The plugin page's native Settings section names two of those tools,
+      // as ChatGPT requires, and holds only a button to the Apple page.
       assert.deepEqual(
         OpenAISettingsCapabilitySchema.parse(
           client.getServerCapabilities()?.experimental?.['openai/settings'],
@@ -485,6 +526,21 @@ test(
           updateTool: 'apple_settings_update',
         },
       );
+      const nativeSettings = OpenAISettingsReadResultSchema.parse(
+        (await call(client, 'apple_settings_read', {})).structuredContent,
+      );
+      assert.deepEqual(nativeSettings.schema.properties, {});
+      assert.deepEqual(
+        nativeSettings.layout?.flatMap(({ items }) =>
+          items.map((item) => (item.kind === 'tool' ? item.tool : item)),
+        ),
+        ['apple_page'],
+      );
+      const nativeUpdate = await call(client, 'apple_settings_update', {
+        set: { notes: true },
+      });
+      assert.equal(nativeUpdate.isError, true);
+      assert.match(JSON.stringify(nativeUpdate.content), /Apple page/);
       assert.deepEqual(selected(), []);
       assert.match(
         await context(client, 'SessionStart'),
@@ -550,22 +606,64 @@ test(
         ).rows,
         [{ id: 'NOTE-RICH' }],
       );
-      const settings = OpenAISettingsReadResultSchema.parse(
-        (await call(client, 'apple_settings_read', {})).structuredContent,
-      );
-      assert.equal(settings.values.notes, true);
-      assert.equal(settings.values.mail, false);
-      const notesSetting = settings.schema.properties?.notes;
-      assert.ok(
-        typeof notesSetting === 'object' &&
-          notesSetting !== null &&
-          'description' in notesSetting &&
-          typeof notesSetting.description === 'string',
-      );
+      // The Apple page lists Notes as imported and Mail as not connected,
+      // and offers Notes' accounts and folders to narrow it by.
+      const rowOf = async (client: Client, name: string) =>
+        (await invoke(client, 'apple_connectors', {})).connectors.find(
+          (row: { name: string }) => row.name === name,
+        );
+      const notesRow = await rowOf(client, 'notes');
+      assert.deepEqual(notesRow.selection, {
+        scope: {},
+        includeAttachments: true,
+      });
+      assert.deepEqual(notesRow.narrowsBy, {
+        accountIds: true,
+        collectionIds: true,
+      });
       assert.match(
-        notesSetting.description,
+        notesRow.status.text,
         /^Synced (just now|\d+ seconds? ago) · everything\.$/,
       );
+      assert.deepEqual((await rowOf(client, 'mail')).status, {
+        state: 'off',
+        text: 'Not connected.',
+        fullDiskAccess: false,
+      });
+      const notesChoices = await invoke(client, 'apple_connector_choices', {
+        connector: 'notes',
+      });
+      assert.deepEqual(
+        notesChoices.choices.map(
+          ({
+            scope,
+            options,
+          }: {
+            scope: string;
+            options: { id: string; label: string }[];
+          }) => ({ scope, options }),
+        ),
+        [
+          {
+            scope: 'accountIds',
+            options: [{ id: 'ACCOUNT-1', label: 'iCloud' }],
+          },
+          {
+            scope: 'collectionIds',
+            options: [
+              { id: 'FOLDER-NOTES', label: 'iCloud / Notes' },
+              { id: 'FOLDER-TRASH', label: 'iCloud / Recently Deleted' },
+              { id: 'FOLDER-CHILD', label: 'iCloud / Child' },
+            ],
+          },
+        ],
+      );
+      assert.equal(notesChoices.datedBy, 'date last edited');
+      assert.deepEqual(notesChoices.defaultSelection, {
+        scope: {},
+        includeAttachments: true,
+      });
+      assert.match(notesChoices.note, /^Exact containing folders/);
       const write = read(synced.database, 'DELETE FROM raw_notes;');
       assert.match(write.stderr, /readonly/);
       assert.equal(
@@ -605,6 +703,11 @@ test(
       assert.ok(kept && messages?.sync);
       assert.equal(kept.database, synced.database);
       assert.match(String(messages.sync.error), /Full Disk Access/);
+      // The Apple page offers to open Full Disk Access for it.
+      const messagesRow = await rowOf(client, 'messages');
+      assert.equal(messagesRow.status.state, 'failed');
+      assert.match(messagesRow.status.text, /Full Disk Access/);
+      assert.equal(messagesRow.status.fullDiskAccess, true);
       assert.match(
         await context(client, 'UserPromptSubmit'),
         /^- Messages: last sync failed at .*Full Disk Access.*; no data yet\. Database: messages\//m,
@@ -634,14 +737,19 @@ test(
       await transport.close();
       retitle('Groceries (edited)');
 
-      // Switching Notes off on the Settings page disconnects it and deletes
-      // its import; Messages stays selected.
-      const switched = OpenAISettingsUpdateResultSchema.parse(
-        (await call(other, 'apple_settings_update', { set: { notes: false } }))
-          .structuredContent,
+      // Switching Notes off on the Apple page, which names only Notes,
+      // disconnects it and deletes its import; Messages, which a chat added
+      // after setup, stays selected.
+      const switched = await invoke(other, 'apple_connector_update', {
+        connector: 'notes',
+        selection: null,
+      });
+      assert.deepEqual(
+        switched.connectors
+          .filter(({ selection }: { selection: unknown }) => selection !== null)
+          .map(({ name }: { name: string }) => name),
+        ['messages'],
       );
-      assert.equal(switched.values.notes, false);
-      assert.equal(switched.values.messages, true);
       assert.equal(existsSync(synced.database), false);
       assert.deepEqual(
         selected().map(({ connector }) => connector),
@@ -663,10 +771,39 @@ test(
       );
       // An imported connector is not refreshed; switched on again, Notes
       // imports afresh, with the change made since, through the new leader.
-      await call(other, 'apple_settings_update', { set: { notes: true } });
+      await invoke(other, 'apple_connector_update', {
+        connector: 'notes',
+        selection: { scope: {}, includeAttachments: true },
+      });
       assert.equal(
         (await imported('Groceries (edited)')).database,
         synced.database,
+      );
+      // Narrowing Notes to one folder on the Apple page imports it afresh
+      // into a new copy, removes the old one and keeps Messages.
+      await invoke(other, 'apple_connector_update', {
+        connector: 'notes',
+        selection: {
+          scope: { collectionIds: ['FOLDER-NOTES'] },
+          includeAttachments: true,
+        },
+      });
+      const narrowed = notesOf(
+        await settled('imported the narrowed Notes', (connectors) => {
+          const notes = notesOf(connectors);
+          return (
+            notes?.sync?.status === 'succeeded' &&
+            notes.database !== synced.database
+          );
+        }),
+      );
+      assert.deepEqual(JSON.parse(String(narrowed?.scope)), {
+        collectionIds: ['FOLDER-NOTES'],
+      });
+      assert.equal(existsSync(synced.database), false);
+      assert.deepEqual(
+        selected().map(({ connector }) => connector),
+        ['messages', 'notes'],
       );
 
       // Installing another version deletes this one's folder. The chat still
@@ -679,9 +816,20 @@ test(
         assert.match(updated, /open a new chat/);
         assert.match(updated, /apple_person_note/);
       }
-      const refused = await call(other, 'apple_settings_read', {});
-      assert.equal(refused.isError, true);
-      assert.match(JSON.stringify(refused.content), /open a new chat/);
+      for (const [name, args] of [
+        ['apple_connectors', {}],
+        [
+          'apple_connector_update',
+          {
+            connector: 'mail',
+            selection: { scope: {}, includeAttachments: true },
+          },
+        ],
+      ] as const) {
+        const refused = await call(other, name, args);
+        assert.equal(refused.isError, true, name);
+        assert.match(JSON.stringify(refused.content), /open a new chat/);
+      }
       const noted = await call(other, 'apple_person_note', {
         email: 'ann@example.com',
         name: 'Ann',

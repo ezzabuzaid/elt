@@ -1,0 +1,173 @@
+/* The Apple page's layout over OpenAI's MCP App styles. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.header.detail {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.row-title {
+  padding: 0;
+  border: 0;
+  color: var(--foreground);
+  background: none;
+  font: inherit;
+  font-weight: var(--font-weight-medium, 500);
+  text-align: left;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+span.row-title {
+  cursor: default;
+}
+
+.status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.switch {
+  appearance: none;
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex: none;
+  margin: 0;
+  border-radius: 9px;
+  background: var(--muted);
+  cursor: var(--cursor-interaction, pointer);
+  transition: background 120ms ease-out;
+}
+
+.switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--background);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+  content: '';
+  transition: transform 120ms ease-out;
+}
+
+.switch:checked {
+  background: var(--primary);
+}
+
+.switch:checked::after {
+  transform: translateX(14px);
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.card h3 {
+  margin-bottom: 12px;
+}
+
+.scope {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choice legend {
+  margin-bottom: 8px;
+  font-weight: var(--font-weight-medium, 500);
+  text-transform: capitalize;
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-left: 24px;
+}
+
+.dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog {
+  max-width: 360px;
+  border: 1px solid var(--border);
+  background: var(--background);
+}
+
+.dialog p {
+  margin: 8px 0 16px;
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 35%);
+}
