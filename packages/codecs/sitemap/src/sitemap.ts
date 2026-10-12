@@ -1,6 +1,7 @@
 import { gunzipSync } from 'node:zlib';
 
 import { XMLParser } from 'fast-xml-parser';
+import { z } from 'zod';
 
 export class SitemapFormatError extends Error {
   override readonly name = 'SitemapFormatError';
@@ -41,26 +42,65 @@ export function decodeSitemap(bytes: Uint8Array): string {
 }
 
 // The documents a sitemap can be, as fast-xml-parser shapes them: namespace
-// prefixes removed, attributes under @, repeated elements always arrays.
-type SitemapDocument = {
-  readonly urlset?: { readonly url?: readonly { readonly loc: string }[] };
-  readonly sitemapindex?: {
-    readonly sitemap?: readonly { readonly loc: string }[];
-  };
-  readonly rss?: {
-    readonly channel?: {
-      readonly item?: readonly { readonly link?: readonly string[] }[];
-    };
-  };
-  readonly feed?: {
-    readonly entry?: readonly {
-      readonly link?: readonly {
-        readonly '@href'?: string;
-        readonly '@rel'?: string;
-      }[];
-    }[];
-  };
-};
+// prefixes removed, attributes under @, the elements isArray names always
+// arrays, a repeated element it does not name an array, and an element with
+// neither children nor attributes ''.
+const empty = z.literal('');
+const entry = z.object({ loc: z.string() });
+const urlset = z.object({ url: z.array(entry).optional() });
+const sitemapindex = z.object({ sitemap: z.array(entry).optional() });
+// RSS 2.0 makes every element of an item optional, so an item may name no page.
+const rss = z.object({
+  channel: z
+    .union([
+      empty,
+      z.object({
+        item: z
+          .array(
+            z.union([
+              empty,
+              z.object({ link: z.array(z.string()).optional() }),
+            ]),
+          )
+          .optional(),
+      }),
+    ])
+    .optional(),
+});
+const feed = z.object({
+  entry: z
+    .array(
+      z.union([
+        empty,
+        z.object({
+          link: z
+            .array(
+              z.object({
+                '@href': z.string().optional(),
+                '@rel': z.string().optional(),
+              }),
+            )
+            .optional(),
+        }),
+      ]),
+    )
+    .optional(),
+});
+
+// The document under its root element, or every way it breaks the format,
+// such as a <url> without exactly one <loc>. An empty root lists nothing.
+function parseRoot<Schema extends z.ZodType>(
+  root: string,
+  schema: Schema,
+  value: unknown,
+): z.infer<Schema> | undefined {
+  if (value === '') return undefined;
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw new SitemapFormatError(
+    `<${root}> ${parsed.error.issues.map(({ path, message }) => `${path.join('.')}: ${message}`).join('; ')}`,
+  );
+}
 
 /**
  * The page URLs and child sitemaps one sitemap lists: an XML url set, a
@@ -79,7 +119,7 @@ export function parseSitemap(text: string): SitemapListing {
         );
     return { pages: lines, sitemaps: [] };
   }
-  let document: SitemapDocument;
+  let document: unknown;
   try {
     document = parser.parse(text, true);
   } catch (error) {
@@ -87,30 +127,49 @@ export function parseSitemap(text: string): SitemapListing {
     if (!Error.isError(error)) throw error;
     throw new SitemapFormatError(error.message);
   }
-  const loc = ({ loc }: { loc: string }) => loc.trim();
-  if (document.urlset)
-    return { pages: (document.urlset.url ?? []).map(loc), sitemaps: [] };
-  if (document.sitemapindex)
-    return {
-      pages: [],
-      sitemaps: (document.sitemapindex.sitemap ?? []).map(loc),
-    };
-  if (document.rss)
-    return {
-      pages: (document.rss.channel?.item ?? []).flatMap(
-        (item) => item.link ?? [],
-      ),
-      sitemaps: [],
-    };
-  if (document.feed)
-    return {
-      pages: (document.feed.entry ?? []).flatMap((entry) =>
-        (entry.link ?? [])
-          .filter((link) => (link['@rel'] ?? 'alternate') === 'alternate')
-          .flatMap((link) => link['@href'] ?? []),
-      ),
-      sitemaps: [],
-    };
+  const loc = ({ loc }: z.infer<typeof entry>) => loc.trim();
+  if (typeof document === 'object' && document !== null) {
+    if ('urlset' in document) {
+      const set = parseRoot('urlset', urlset, document.urlset);
+      return { pages: (set?.url ?? []).map(loc), sitemaps: [] };
+    }
+    if ('sitemapindex' in document) {
+      const index = parseRoot(
+        'sitemapindex',
+        sitemapindex,
+        document.sitemapindex,
+      );
+      return {
+        pages: [],
+        sitemaps: (index?.sitemap ?? []).map(loc),
+      };
+    }
+    if ('rss' in document) {
+      const channel = parseRoot('rss', rss, document.rss)?.channel;
+      return {
+        pages:
+          channel === undefined || channel === ''
+            ? []
+            : (channel.item ?? []).flatMap((item) =>
+                item === '' ? [] : (item.link ?? []),
+              ),
+        sitemaps: [],
+      };
+    }
+    if ('feed' in document) {
+      const atom = parseRoot('feed', feed, document.feed);
+      return {
+        pages: (atom?.entry ?? []).flatMap((item) =>
+          item === ''
+            ? []
+            : (item.link ?? [])
+                .filter((link) => (link['@rel'] ?? 'alternate') === 'alternate')
+                .flatMap((link) => link['@href'] ?? []),
+        ),
+        sitemaps: [],
+      };
+    }
+  }
   throw new SitemapFormatError(
     'not a sitemap, sitemap index, RSS or Atom document',
   );

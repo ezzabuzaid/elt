@@ -2117,6 +2117,19 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
       /could not be read/,
     ],
     ['nested too deep', nested(5), /nest deeper than 3 levels/],
+    [
+      'a url without a loc',
+      { 'https://example.com/s.xml': '<urlset><url></url></urlset>' },
+      /<urlset> url\.0:/,
+    ],
+    [
+      'a sitemap entry with two locs',
+      {
+        'https://example.com/s.xml':
+          '<sitemapindex><sitemap><loc>https://example.com/a.xml</loc><loc>https://example.com/b.xml</loc></sitemap></sitemapindex>',
+      },
+      /<sitemapindex> sitemap\.0\.loc:/,
+    ],
   ];
   for (const [label, broken, reason] of cases) {
     using searchConsole = google({
@@ -2175,6 +2188,89 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
     );
     assert.match(String(bad?.readError), reason, label);
   }
+});
+
+test(
+  'watching with a poll longer than a Node timer can hold sleeps without overflowing it',
+  { timeout: 10_000 },
+  async () => {
+    using searchConsole = google({
+      reply: () => ({
+        siteEntry: [{ permissionLevel: 'siteOwner', siteUrl: SITE }],
+      }),
+    });
+    await using warehouse = await searchConsoleDatabase();
+    const { destination } = warehouse;
+    const source = new SearchConsoleSource({
+      pollIntervalMs: 2 ** 31,
+      requester: searchConsole.requester,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    const overflows: string[] = [];
+    const onWarning = (warning: Error) => {
+      if (warning.name === 'TimeoutOverflowWarning')
+        overflows.push(warning.message);
+    };
+    process.on('warning', onWarning);
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [new Copy(source.sites, destination.table('sites'))],
+        }),
+      ],
+    }).watch({ signal: controller.signal });
+
+    try {
+      await watching.next();
+      await sleep(200);
+
+      assert.deepEqual(overflows, []);
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+      process.off('warning', onWarning);
+    }
+  },
+);
+
+test('an RSS item without a link lists no page', async () => {
+  using searchConsole = google({
+    reply: property({ sitemaps: ['https://example.com/feed.rss'] }),
+    files: {
+      'https://example.com/feed.rss':
+        '<rss version="2.0"><channel><item></item><item><title>No link</title></item><item><link>https://example.com/r</link></item></channel></rss>',
+    },
+  });
+  await using warehouse = await searchConsoleDatabase();
+  const { destination, sql } = warehouse;
+  const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
+    searchTypes: ['WEB'],
+    siteUrls: [SITE],
+  });
+
+  await new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [new Copy(source.sitemaps, destination.table('sitemaps'))],
+      }),
+    ],
+  }).run();
+
+  assert.deepEqual(
+    (await sql`SELECT "urlsRead"::int, "readError" FROM sitemaps`).map(
+      (row) => ({ ...row }),
+    ),
+    [{ urlsRead: 1, readError: null }],
+  );
 });
 
 test('a pass that cannot read a sitemap deletes no URL it may list, and the next complete pass deletes the ones gone', async () => {

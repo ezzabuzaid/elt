@@ -58,6 +58,10 @@ export type SearchConsoleOptions = {
   readonly pollIntervalMs?: number;
 };
 
+// The longest delay a Node timer holds; a longer one fires at once, so a
+// longer sleep wakes early and the watch checks its due times again.
+const TIMER_MAX = 2 ** 31 - 1;
+
 // Days of daily totals the change probe compares.
 const PROBE_DAYS = 28;
 
@@ -348,9 +352,13 @@ export class SearchConsoleSource extends Source<SearchConsoleScan> {
       signal: learned.signal,
     });
     try {
-      await sleep(Math.max(0, wake - Date.now()), undefined, {
-        signal: AbortSignal.any([signal, learned.signal]),
-      });
+      await sleep(
+        Math.min(Math.max(0, wake - Date.now()), TIMER_MAX),
+        undefined,
+        {
+          signal: AbortSignal.any([signal, learned.signal]),
+        },
+      );
     } catch (error) {
       if (signal.aborted || !learned.signal.aborted) throw error;
     } finally {
