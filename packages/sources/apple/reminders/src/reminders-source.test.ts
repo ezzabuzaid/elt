@@ -34,6 +34,7 @@ import {
 import {
   type AccountDocument,
   type DateComponentsDocument,
+  EventKitChangingError,
   type ParticipantDocument,
   type ReminderDocument,
   RemindersStore,
@@ -792,6 +793,64 @@ test(
     );
   },
 );
+
+test('Reminders lists its accounts and lists without reading reminders, while every reminder read changes', async () => {
+  await using stub = await StubEventKitHelper.create();
+  stub
+    .answer(remindersRead, {
+      documents: [
+        recordedReminders.account,
+        recordedReminders.list,
+        recordedReminders.buyMilk,
+      ],
+    })
+    .answer(
+      { entity: 'reminders', collectionsOnly: true },
+      { documents: [recordedReminders.account, recordedReminders.list] },
+    )
+    .watch({ changeDuringReadsOf: remindersRead });
+  const source = new AppleRemindersSource({
+    store: new RemindersStore(stub.path),
+  });
+
+  const rows = await readRows(source, [source.accounts, source.lists]);
+
+  assert.deepEqual(
+    rows(source.accounts).map(({ id }) => id),
+    [recordedReminders.account.id],
+  );
+  assert.deepEqual(
+    rows(source.lists).map(({ id }) => id),
+    [recordedReminders.list.id],
+  );
+  assert.equal(stub.reads(remindersRead), 0);
+});
+
+test('a Reminders run that reads reminders with its lists still needs one reminder read the store holds still for', async () => {
+  await using stub = await StubEventKitHelper.create();
+  stub
+    .answer(remindersRead, {
+      documents: [
+        recordedReminders.account,
+        recordedReminders.list,
+        recordedReminders.buyMilk,
+      ],
+    })
+    .answer(
+      { entity: 'reminders', collectionsOnly: true },
+      { documents: [recordedReminders.account, recordedReminders.list] },
+    )
+    .watch({ changeDuringReadsOf: remindersRead });
+  const source = new AppleRemindersSource({
+    store: new RemindersStore(stub.path),
+  });
+
+  await assert.rejects(
+    readRows(source, [source.lists, source.reminders]),
+    EventKitChangingError,
+  );
+  assert.equal(stub.reads(remindersRead), 5);
+});
 
 test('Reminders extracts the attendees EventKit returns, which a test cannot create', async () => {
   await using stub = await StubEventKitHelper.create();

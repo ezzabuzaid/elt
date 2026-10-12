@@ -297,6 +297,43 @@ test('a read gives up when the store changes during every attempt', async () => 
   assert.equal(stub.reads(remindersRead), 5);
 });
 
+const collectionsRead: HelperRequest = {
+  entity: 'reminders',
+  collectionsOnly: true,
+};
+
+test('a read of only the accounts and lists repeats when the store changes while it runs', async () => {
+  await using stub = await StubEventKitHelper.create();
+  stub
+    .answer(
+      collectionsRead,
+      { documents: [account('before')] },
+      { documents: [account('after')] },
+    )
+    .watch({ changeDuringFirstRead: true });
+
+  const { accounts } = await new RemindersStore(stub.path).collections({});
+
+  assert.deepEqual(
+    accounts.map(({ name }) => name),
+    ['after'],
+  );
+  assert.equal(stub.reads(collectionsRead), 2);
+});
+
+test('a read of only the accounts and lists gives up when the store changes during every attempt', async () => {
+  await using stub = await StubEventKitHelper.create();
+  stub
+    .answer(collectionsRead, { documents: [account('a1')] })
+    .watch({ everyMs: 20 });
+
+  await assert.rejects(
+    new RemindersStore(stub.path).collections({}),
+    EventKitChangingError,
+  );
+  assert.equal(stub.reads(collectionsRead), 5);
+});
+
 test('missing access fails reads and watches with the entity’s own error', async () => {
   const denied = (marker: string) =>
     `${marker}: full access is required; status=2\n`;

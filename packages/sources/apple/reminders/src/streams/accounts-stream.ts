@@ -33,6 +33,7 @@ export class AccountsStream extends AppleRemindersStream<
   AccountDocument
 > {
   readonly name = 'accounts';
+  override readonly readsReminders = false;
   readonly jsonSchema = {
     type: 'object',
     description:

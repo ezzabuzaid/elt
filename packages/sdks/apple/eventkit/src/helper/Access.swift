@@ -70,6 +70,8 @@ private func requestThroughOsascript(_ entity: Entity) throws {
 
 struct ReadRequest: Decodable {
   let entity: Entity
+  // Write only the accounts and calendars, without their items or a window.
+  let collectionsOnly: Bool?
   // Calendar's requested UTC interval, as canonical ISO timestamps.
   let startAt: String?
   let endAt: String?

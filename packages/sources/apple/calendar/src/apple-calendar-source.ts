@@ -163,17 +163,31 @@ export class AppleCalendarSource extends Source<CalendarScan> {
 
   // Every selected stream reads from one change-free EventKit read, so
   // occurrences match their calendars and ICS rows their items. The private
-  // ICS export is asked for only when an ICS stream is selected.
+  // ICS export is asked for only when an ICS stream is selected. A run of
+  // only the account and calendar listings reads no events: the export of
+  // every event in the window is the read a busy store never holds still for.
   protected override async open(
     streams: readonly Stream[],
   ): Promise<CalendarScan> {
+    const scope = {
+      accountIds: this.scope.accountIds,
+      calendarIds: this.scope.collectionIds,
+    };
+    if (!streams.some((stream) => readerOf(stream).dated))
+      return new CalendarScan(
+        {
+          ...(await this.#store.collections(scope)),
+          occurrences: [],
+          icsExports: [],
+        },
+        this.#attachments,
+      );
     try {
       const contents = await this.#store.read({
         startAt: this.startAt,
         endAt: this.endAt,
         ics: streams.some((stream) => readerOf(stream).requiresIcs),
-        accountIds: this.scope.accountIds,
-        calendarIds: this.scope.collectionIds,
+        ...scope,
       });
       return new CalendarScan(contents, this.#attachments);
     } catch (error) {

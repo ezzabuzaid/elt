@@ -35,7 +35,10 @@ export type HelperWatch =
   // A store change every `everyMs` milliseconds.
   | { readonly everyMs: number }
   // One store change while the first read runs.
-  | { readonly changeDuringFirstRead: true };
+  | { readonly changeDuringFirstRead: true }
+  // A store change while each read of request runs: a store too busy to hold
+  // still for that read, whatever else it is asked.
+  | { readonly changeDuringReadsOf: HelperRequest };
 
 type Scenario = {
   readonly reads: readonly {
@@ -178,6 +181,17 @@ if (command === 'read') {
     while (!existsSync(here('read-started'))) await sleep(5);
     write('changed');
     stay();
+  } else if ('changeDuringReadsOf' in watch) {
+    write('changed');
+    const counter = here('reads-' + key(watch.changeDuringReadsOf));
+    const reads = () => (existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0);
+    for (let seen = reads(); ; await sleep(5)) {
+      const now = reads();
+      if (now > seen) {
+        seen = now;
+        write('changed');
+      }
+    }
   } else {
     for (const line of watch.lines) write(line);
     if (watch.then === 'wait') stay();

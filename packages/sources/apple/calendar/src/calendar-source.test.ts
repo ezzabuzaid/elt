@@ -42,6 +42,7 @@ import {
   type AccountDocument,
   type AlarmDocument,
   CalendarStore,
+  EventKitChangingError,
   type IcsDocument,
   IcsExportUnavailableError,
   type OccurrenceDocument,
@@ -866,6 +867,69 @@ test('Calendar extracts the organizer and attendees EventKit returns, which a te
       isCurrentUser: false,
     },
   ]);
+});
+
+test('Calendar lists its accounts and calendars without reading events, while every event read changes', async () => {
+  await using stub = await StubEventKitHelper.create();
+  const events = eventsRead(january);
+  stub
+    .answer(events, { documents: [account(), calendar(), occurrence()] })
+    .answer(
+      { entity: 'events', collectionsOnly: true },
+      { documents: [account(), calendar()] },
+    )
+    .watch({ changeDuringReadsOf: events });
+  const source = new AppleCalendarSource({
+    store: new CalendarStore(stub.path),
+    ...january,
+  });
+
+  const rows = await readRows(source, [source.accounts, source.calendars]);
+
+  assert.deepEqual(rows(source.accounts), [
+    { id: 'account-1', name: 'Default', type: 0, isDelegate: false },
+  ]);
+  assert.deepEqual(rows(source.calendars), [
+    {
+      id: 'calendar-1',
+      accountId: 'account-1',
+      name: 'Synthetic calendar',
+      type: 0,
+      writable: true,
+      subscribed: false,
+      immutable: false,
+      colorRed: 0.7960784435272217,
+      colorGreen: 0.1882352977991104,
+      colorBlue: 0.8784313797950745,
+      colorAlpha: 1,
+      supportedAvailabilities: 0,
+      allowedEntityTypes: 1,
+      description: 'Synthetic calendar for recorded EventKit test data',
+    },
+  ]);
+  assert.equal(stub.reads(events), 0);
+});
+
+test('a Calendar run that reads events with its listings still needs one event read the store holds still for', async () => {
+  await using stub = await StubEventKitHelper.create();
+  const events = eventsRead(january);
+  stub
+    .answer(events, { documents: [account(), calendar(), occurrence()] })
+    .answer(
+      { entity: 'events', collectionsOnly: true },
+      { documents: [account(), calendar()] },
+    )
+    .watch({ changeDuringReadsOf: events });
+  const source = new AppleCalendarSource({
+    store: new CalendarStore(stub.path),
+    ...january,
+  });
+
+  await assert.rejects(
+    readRows(source, [source.accounts, source.events]),
+    EventKitChangingError,
+  );
+  assert.equal(stub.reads(events), 5);
 });
 
 test(

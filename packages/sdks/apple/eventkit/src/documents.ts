@@ -1,6 +1,8 @@
 // What the eventkit helper reads as its `read` argument.
 export type HelperRequest = {
   readonly entity: 'events' | 'reminders';
+  // Write only the accounts and calendars, without their items or a window.
+  readonly collectionsOnly?: true;
   // Calendar's UTC interval, as canonical ISO timestamps.
   readonly startAt?: string;
   readonly endAt?: string;

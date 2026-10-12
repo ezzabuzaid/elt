@@ -39,6 +39,12 @@ const catalog = new Catalog(
 const readersByName = new Map<string, RemindersReader>(
   Object.values(readers).map((reader) => [reader.name, reader]),
 );
+const readerOf = (stream: Stream): RemindersReader => {
+  const reader = readersByName.get(stream.name);
+  if (reader === undefined)
+    throw new Error(`Apple Reminders has no stream ${stream.name}`);
+  return reader;
+};
 
 // Adapter: native EventKit records enter the existing Source/Copy/Pipeline contract.
 export class AppleRemindersSource extends Source<RemindersScan> {
@@ -86,14 +92,22 @@ export class AppleRemindersSource extends Source<RemindersScan> {
   }
 
   // One change-free read for every selected stream, so reminders match their
-  // lists and alarms their reminders.
-  protected override async open(): Promise<RemindersScan> {
-    return new RemindersScan(
-      await this.#store.read({
-        accountIds: this.scope.accountIds,
-        calendarIds: this.scope.collectionIds,
-      }),
-    );
+  // lists and alarms their reminders. A run of only the account and list
+  // listings reads no reminders: the read of every reminder is the one a busy
+  // store never holds still for.
+  protected override async open(
+    streams: readonly Stream[],
+  ): Promise<RemindersScan> {
+    const scope = {
+      accountIds: this.scope.accountIds,
+      calendarIds: this.scope.collectionIds,
+    };
+    if (!streams.some((stream) => readerOf(stream).readsReminders))
+      return new RemindersScan({
+        ...(await this.#store.collections(scope)),
+        reminders: [],
+      });
+    return new RemindersScan(await this.#store.read(scope));
   }
 
   protected override async *extract(
@@ -102,10 +116,7 @@ export class AppleRemindersSource extends Source<RemindersScan> {
     _partition: null,
     scan: RemindersScan,
   ): AsyncGenerator<SourceMessage> {
-    const reader = readersByName.get(stream.name);
-    if (reader === undefined)
-      throw new Error(`Apple Reminders has no stream ${stream.name}`);
-    const records = reader.read(scan);
+    const records = readerOf(stream).read(scan);
     if (syncMode === 'incremental') yield* diffSnapshot(stream, records, state);
     else for (const data of records) yield { stream: stream.name, data };
   }

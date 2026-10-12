@@ -75,6 +75,7 @@ export class ListsStream extends AppleRemindersStream<
   CalendarDocument
 > {
   readonly name = 'lists';
+  override readonly readsReminders = false;
   readonly jsonSchema = {
     type: 'object',
     description:

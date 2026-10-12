@@ -83,6 +83,10 @@ struct IcsDocument: Encodable {
 private let windowMs: Int64 = 365 * 24 * 60 * 60 * 1000
 
 func readEvents(_ request: ReadRequest, store: EKEventStore, lines: Lines) throws {
+  if request.collectionsOnly == true {
+    _ = try writeAccountsAndCalendars(request, store: store, lines: lines, notes: notes)
+    return
+  }
   guard let startAt = request.startAt.flatMap(epochMs), let endAt = request.endAt.flatMap(epochMs),
     startAt < endAt
   else { throw HelperError("Calendar requires canonical UTC startAt < endAt timestamps") }

@@ -95,7 +95,7 @@ struct ReminderDocument: Encodable {
 
 func readReminders(_ request: ReadRequest, store: EKEventStore, lines: Lines) throws {
   let lists = try writeAccountsAndCalendars(request, store: store, lines: lines)
-  if request.scoped && lists.isEmpty { return }
+  if request.collectionsOnly == true || request.scoped && lists.isEmpty { return }
   // Unscoped reads pass nil: every list, completed reminders included.
   let predicate = store.predicateForReminders(in: request.scoped ? lists : nil)
   for reminder in try fetch(predicate, store: store) {

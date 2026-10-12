@@ -21,6 +21,7 @@ export const remindersFields = {
 // What the source needs from any Reminders stream, whatever its record type.
 export type RemindersReader = {
   readonly name: string;
+  readonly readsReminders: boolean;
   describe(): Stream;
   read(scan: RemindersScan): Record<string, unknown>[];
 };
@@ -45,6 +46,9 @@ export abstract class AppleRemindersStream<P extends Properties, Row> {
   // Every read is the whole store, so incremental copies diff snapshots.
   readonly sourceDefinedCursor = true;
   readonly emitsDeletes = true;
+  // Whether the stream reads reminders; the account and list listings read
+  // none.
+  readonly readsReminders: boolean = true;
   #stream?: Stream;
 
   describe(): Stream {

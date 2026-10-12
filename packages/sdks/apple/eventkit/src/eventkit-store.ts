@@ -44,36 +44,20 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
     this.#helper = helper;
   }
 
-  // EventKit has no read transaction. Reads run while a watcher counts
-  // EKEventStoreChangedNotification and repeat when a change arrived during
-  // them or within settleMs after.
   async read(query: Query): Promise<Contents> {
-    const controller = new AbortController();
-    const changes = this.watch(controller.signal)[Symbol.asyncIterator]();
-    let count = 0;
-    let failure: { error: unknown } | undefined;
-    // The watcher's first notification only confirms the subscription.
-    await changes.next();
-    const counting = (async () => {
-      try {
-        while (!(await changes.next()).done) count++;
-      } catch (error) {
-        if (!controller.signal.aborted) failure = { error };
-      }
-    })();
-    try {
-      for (let attempt = 1; attempt <= attempts; attempt++) {
-        const before = count;
-        const contents = await this.#readOnce(query);
-        await sleep(settleMs);
-        if (failure !== undefined) throw failure.error;
-        if (count === before) return contents;
-      }
-      throw new EventKitChangingError(this.entity, attempts);
-    } finally {
-      controller.abort();
-      await counting;
-    }
+    return this.#consistent(async () => {
+      const documents = await this.#documents(query, this.request(query));
+      return this.contents(scoped(query, documents), documents);
+    });
+  }
+
+  // The accounts and calendars read(query) returns, without their items or a
+  // window: a short read, which a store too busy for the whole read holds
+  // still for.
+  async collections(query: EventKitQuery): Promise<Collections> {
+    return this.#consistent(async () =>
+      scoped(query, await this.#documents(query, { collectionsOnly: true })),
+    );
   }
 
   // Yields changed once the subscription is confirmed and once per store
@@ -155,24 +139,58 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
       : error;
   }
 
-  async #readOnce(query: Query): Promise<Contents> {
-    const request: HelperRequest = {
-      entity: this.entity,
-      ...this.request(query),
-      accountIds: query.accountIds,
-      collectionIds: query.calendarIds,
-    };
+  // EventKit has no read transaction. Reads run while a watcher counts
+  // EKEventStoreChangedNotification and repeat when a change arrived during
+  // them or within settleMs after.
+  async #consistent<T>(readOnce: () => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const changes = this.watch(controller.signal)[Symbol.asyncIterator]();
+    let count = 0;
+    let failure: { error: unknown } | undefined;
+    // The watcher's first notification only confirms the subscription.
+    await changes.next();
+    const counting = (async () => {
+      try {
+        while (!(await changes.next()).done) count++;
+      } catch (error) {
+        if (!controller.signal.aborted) failure = { error };
+      }
+    })();
+    try {
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const before = count;
+        const result = await readOnce();
+        await sleep(settleMs);
+        if (failure !== undefined) throw failure.error;
+        if (count === before) return result;
+      }
+      throw new EventKitChangingError(this.entity, attempts);
+    } finally {
+      controller.abort();
+      await counting;
+    }
+  }
+
+  async #documents(
+    query: EventKitQuery,
+    request: Omit<HelperRequest, 'entity' | 'accountIds' | 'collectionIds'>,
+  ): Promise<EventKitDocument[]> {
     const documents: EventKitDocument[] = [];
     try {
       for await (const line of nativeProcess.lines(this.#helper, [
         'read',
-        JSON.stringify(request),
+        JSON.stringify({
+          entity: this.entity,
+          ...request,
+          accountIds: query.accountIds,
+          collectionIds: query.calendarIds,
+        } satisfies HelperRequest),
       ]))
         documents.push(inContentOrder(JSON.parse(line)));
     } catch (error) {
       throw this.failure(error);
     }
-    return this.contents(scoped(query, documents), documents);
+    return documents;
   }
 }
 
