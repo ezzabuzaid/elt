@@ -17,7 +17,7 @@
     },
     "install": {
       "dependsOn": ["marketplace"],
-      "command": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex plugin add apple@context-compiler"
+      "command": "node apps/apple/plugin/stamp-install.mjs && /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex plugin add apple@context-compiler"
     },
     "test": {
       "dependsOn": ["build", "bundle"],
