@@ -77,6 +77,15 @@ export class ProtobufMessage {
     return Number(field.value);
   }
 
+  // A uint64 field whole, for values past Number's safe integers.
+  uint64(number: number): bigint | undefined {
+    const field = this.#last(number);
+    if (field === undefined) return undefined;
+    if (field.wire !== 0)
+      throw new TypeError(`Protobuf field ${number} is not a varint`);
+    return field.value;
+  }
+
   // An int64 field: negative values arrive as ten-byte two's complement.
   int(number: number): number | undefined {
     const field = this.#last(number);
