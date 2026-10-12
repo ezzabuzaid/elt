@@ -34,8 +34,6 @@ export class MeetingBriefWriter {
         '--skip-git-repo-check',
         '--cd',
         scratch.path,
-        '--model',
-        'gpt-6.1-sol',
         '--output-last-message',
         output,
         '-',

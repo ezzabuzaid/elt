@@ -1,17 +1,19 @@
-import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
 import postgres from 'postgres';
 
-import { Eca, type Warehouse } from '@workspace/eca';
+import type { Warehouse } from '@workspace/eca';
 
+import { Automations } from './automations.ts';
+import { CareemCalories } from './careem-calories.ts';
+import { ClayBdAgentMessages } from './clay-bd-agent-messages.ts';
+import { ClayDataHubMcpMessages } from './clay-data-hub-mcp-messages.ts';
 import { EarlyMonthSpend } from './early-month-spend.ts';
 import { KeywordText } from './keyword-text.ts';
 import { MeetingBriefWriter } from './meeting-brief-writer.ts';
 import { MissingMidMonthCredit } from './missing-mid-month-credit.ts';
 import pipeline from './pipeline.ts';
-import { type MeetingBrief, PlanningMeetings } from './planning-meetings.ts';
+import { PlanningMeetings } from './planning-meetings.ts';
 import { SpendSpike } from './spend-spike.ts';
 
 // Conditions read the marts as agent_reader, which can read nothing else.
@@ -42,62 +44,29 @@ const warehouse: Warehouse<postgres.Sql> = {
     }
   },
 };
-const eca = new Eca<
-  postgres.Sql,
-  | { spent: number }
-  | { spent: number; usual: number }
-  | { due: string }
-  | { text: string }
-  | MeetingBrief
->({
-  warehouse,
-});
-
-await eca.add({ condition: new EarlyMonthSpend() });
-await eca.add({ condition: new SpendSpike() });
-await eca.add({ condition: new MissingMidMonthCredit() });
-await eca.add({ condition: new KeywordText() });
-await eca.add({ condition: new PlanningMeetings() });
-const briefs = new MeetingBriefWriter(
-  fileURLToPath(
-    new URL('../../../outputs/proactive/meeting-briefs/', import.meta.url),
+const outputs = new URL('../../../outputs/proactive/', import.meta.url);
+const automations = new Automations({ warehouse });
+await automations.add(new EarlyMonthSpend());
+await automations.add(new SpendSpike());
+await automations.add(new MissingMidMonthCredit());
+await automations.add(new KeywordText());
+await automations.add(new ClayBdAgentMessages());
+await automations.add(new ClayDataHubMcpMessages());
+await automations.add(
+  new PlanningMeetings(
+    new MeetingBriefWriter(fileURLToPath(new URL('meeting-briefs/', outputs))),
   ),
+);
+await automations.add(
+  new CareemCalories(fileURLToPath(new URL('agent/', outputs))),
 );
 
 const stop = new AbortController();
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => stop.abort());
 }
-
-const run = promisify(execFile);
-for await (const match of eca.watch({ signal: stop.signal })) {
-  // A rule whose condition threw is evaluated again at the next commit.
-  if ('error' in match) {
-    process.stderr.write(`A rule failed: ${String(match.error)}\n`);
-    continue;
-  }
-  const brief =
-    'meeting' in match.data
-      ? await briefs.write(match.data, stop.signal)
-      : null;
-  if (brief !== null) process.stdout.write(`Meeting brief: ${brief}\n`);
-  const message =
-    'meeting' in match.data
-      ? `Planning brief ready: ${match.data.meeting.name}\n${brief}`
-      : 'usual' in match.data
-        ? `You spent ${match.data.spent} JOD in ${match.key}, over twice your usual ${match.data.usual} JOD a week.`
-        : 'spent' in match.data
-          ? `You spent ${match.data.spent} JOD in the first 10 days of ${match.key}.`
-          : 'due' in match.data
-            ? `The mid-month credit of ${match.key} has not arrived. It was due by ${match.data.due}.`
-            : match.data.text;
-  await run('/usr/bin/osascript', [
-    '-e',
-    'on run argv',
-    '-e',
-    'display notification (item 1 of argv) with title "Proactive"',
-    '-e',
-    'end run',
-    message,
-  ]);
+// A failed automation does not stop the others, but the run still exits
+// non-zero so the failure is not silent.
+if ((await automations.run(stop.signal)) > 0) {
+  process.exitCode = 1;
 }

@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 
 import type postgres from 'postgres';
 
-import type { Condition, Match } from '@workspace/eca';
+import type { Match } from '@workspace/eca';
+
+import { Automation } from './automation.ts';
+import type { MeetingBriefWriter } from './meeting-brief-writer.ts';
 
 type Meeting = {
   eventId: string;
@@ -36,11 +39,20 @@ export type MeetingBrief = {
 
 // A revision is a new match: changing a meeting or one of its conversations
 // refreshes its one brief, without changing Eca's new-key semantics.
-export class PlanningMeetings implements Condition<postgres.Sql, MeetingBrief> {
+export class PlanningMeetings extends Automation<MeetingBrief> {
+  readonly #briefs: MeetingBriefWriter;
   readonly #now: () => Date;
 
-  constructor(now: () => Date = () => new Date()) {
+  constructor(briefs: MeetingBriefWriter, now: () => Date = () => new Date()) {
+    super();
+    this.#briefs = briefs;
     this.#now = now;
+  }
+
+  async act({ data }: Match<MeetingBrief>, signal: AbortSignal) {
+    const path = await this.#briefs.write(data, signal);
+    process.stdout.write(`Meeting brief: ${path}\n`);
+    return `Planning brief ready: ${data.meeting.name}\n${path}`;
   }
 
   async evaluate(sql: postgres.Sql): Promise<Match<MeetingBrief>[]> {

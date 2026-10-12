@@ -1,6 +1,8 @@
 import type postgres from 'postgres';
 
-import type { Condition } from '@workspace/eca';
+import type { Match } from '@workspace/eca';
+
+import { NotifyAutomation } from './notify-automation.ts';
 
 // "When a week's card spend passes twice my usual, tell me": the card
 // purchases Arab Bank texts about, by the time of each SMS on the user's
@@ -8,10 +10,14 @@ import type { Condition } from '@workspace/eca';
 // of the 8 weeks before it, where a week without purchases counts as 0, keyed
 // by week so each week is told once. early-month-spend.ts parses the same
 // template; a fix to the parse belongs in both (ADR 0004 of eca).
-export class SpendSpike implements Condition<
-  postgres.Sql,
-  { spent: number; usual: number }
-> {
+export class SpendSpike extends NotifyAutomation<{
+  spent: number;
+  usual: number;
+}> {
+  message({ key, data }: Match<{ spent: number; usual: number }>) {
+    return `You spent ${data.spent} JOD in ${key}, over twice your usual ${data.usual} JOD a week.`;
+  }
+
   async evaluate(sql: postgres.Sql) {
     const fils = new Map<string, number>();
     let first: Temporal.PlainDate | undefined;

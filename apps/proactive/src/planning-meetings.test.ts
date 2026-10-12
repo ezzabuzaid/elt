@@ -86,7 +86,10 @@ test('planning briefs follow new meetings and related evidence, without retrigge
     ('past', 'own', 'Atlas planning', '2026-10-10T09:00Z', '2026-10-10T10:00Z'),
     ('subscription', 'holidays', 'Atlas planning', '2026-10-12T09:00Z', '2026-10-12T10:00Z'),
     ('ordinary', 'own', 'Dentist', '2026-10-12T09:00Z', '2026-10-12T10:00Z')`;
-  const condition = new PlanningMeetings(() => new Date('2026-10-11T12:00Z'));
+  const condition = new PlanningMeetings(
+    new MeetingBriefWriter(tmpdir()),
+    () => new Date('2026-10-11T12:00Z'),
+  );
   const eca = new Eca<postgres.Sql, MeetingBrief>({
     warehouse: {
       sql,
@@ -209,7 +212,7 @@ import assert from 'node:assert/strict';
 let prompt = '';
 for await (const chunk of process.stdin) prompt += chunk;
 assert.ok(process.argv.includes('--ignore-user-config'));
-assert.equal(process.argv[process.argv.indexOf('--model') + 1], 'gpt-6.1-sol');
+assert.ok(!process.argv.includes('--model'));
 assert.ok(prompt.includes('untrusted content'));
 const brief = JSON.parse(prompt.slice(prompt.indexOf('\\n{') + 1));
 if (brief.meeting.name === 'fail') process.exit(1);
@@ -250,4 +253,52 @@ await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1],
     1,
     'temporary directories are removed',
   );
+});
+
+test('a new planning match writes its brief and tells the user where it is', async () => {
+  await using directory = await mkdtempDisposable(
+    join(tmpdir(), 'proactive-test-'),
+  );
+  const executable = join(directory.path, 'codex');
+  // The real Codex service requires an authenticated, paid network request.
+  // This executable stands in for that external boundary.
+  await writeFile(
+    executable,
+    `#!${process.execPath}
+import { writeFile } from 'node:fs/promises';
+let prompt = '';
+for await (const chunk of process.stdin) prompt += chunk;
+const brief = JSON.parse(prompt.slice(prompt.indexOf('\\n{') + 1));
+await writeFile(process.argv[process.argv.indexOf('--output-last-message') + 1], '# ' + brief.meeting.name);
+`,
+    { mode: 0o700 },
+  );
+  const outputs = join(directory.path, 'briefs');
+  const planning = new PlanningMeetings(
+    new MeetingBriefWriter(outputs, executable),
+  );
+  const brief: MeetingBrief = {
+    meeting: {
+      eventId: 'atlas',
+      name: 'Atlas planning',
+      startAt: new Date('2026-10-12T09:00Z'),
+      endAt: new Date('2026-10-12T10:00Z'),
+      body: null,
+      location: null,
+      url: null,
+      attendees: [],
+    },
+    conversations: [],
+    coverage: [],
+  };
+
+  const receipt = await planning.act(
+    { key: 'atlas', data: brief },
+    new AbortController().signal,
+  );
+
+  const [title, path = ''] = receipt.split('\n');
+  assert.equal(title, 'Planning brief ready: Atlas planning');
+  assert.ok(path.startsWith(outputs));
+  assert.equal(await readFile(path, 'utf8'), '# Atlas planning');
 });

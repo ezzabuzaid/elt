@@ -1,14 +1,17 @@
 import type postgres from 'postgres';
 
-import type { Condition } from '@workspace/eca';
+import type { Match } from '@workspace/eca';
+
+import { NotifyAutomation } from './notify-automation.ts';
 
 // "When I spend over 200 JOD in the first 10 days of a month, tell me": the
 // card purchases Arab Bank texts about, by the time of each SMS on the user's
 // clock, keyed by month so each month is told once.
-export class EarlyMonthSpend implements Condition<
-  postgres.Sql,
-  { spent: number }
-> {
+export class EarlyMonthSpend extends NotifyAutomation<{ spent: number }> {
+  message({ key, data }: Match<{ spent: number }>) {
+    return `You spent ${data.spent} JOD in the first 10 days of ${key}.`;
+  }
+
   async evaluate(sql: postgres.Sql) {
     const fils = new Map<string, number>();
     for (const {

@@ -1,9 +1,27 @@
 # Proactive rules
 
 `npx nx run proactive:start` imports Calendar, Mail, Messages and Slack into the local
-Postgres warehouse, evaluates the rules once, displays macOS notifications for
-new matches, and exits. It is not a background watcher. The first successful
-import establishes a baseline without notifying about historical messages.
+Postgres warehouse, evaluates the rules once, acts on new matches, and exits.
+It is not a background watcher. The first successful import establishes a
+baseline without acting on historical messages.
+
+Each rule is an automation (`automation.ts`): `evaluate` reads the warehouse,
+and `act` does the work for one new match and returns a short receipt, which
+`Automations` shows as a macOS notification. A `NotifyAutomation` only tells
+the user. An `AgentAutomation` gives its instruction and the match to Codex
+(its default model for the signed-in account, no user configuration), which may write only in
+`outputs/proactive/agent/`; the agent's last message is the receipt. When an
+automation fails, in its condition or its action, the failure goes to stderr
+and the other automations still act. A failed action is not retried. A run
+with a failure exits with code 1.
+
+**CareemCalories:** when a Careem delivery receipt arrives in Mail, the agent
+logs the calorie intake of the order in `outputs/proactive/agent/food-log.md`:
+one row per order with the date, restaurant, dishes and estimated kcal. Each
+order ID acts once. The receipt names the restaurant and the dishes, but no
+calories, so the agent estimates them. Receipts from July 2026 on have no
+text part; the rule gives the agent the text of the HTML part. A receipt
+reaches the warehouse only after Mail.app fetched it.
 
 **PlanningMeetings:** when a new future planning meeting is imported, write a
 brief with recent decisions, unresolved questions, relevant conversations and
@@ -22,7 +40,7 @@ literal, so paraphrases can be missed; the generator filters unrelated material
 inside selected conversations. Only locally available messages and bodies
 are included. WhatsApp is not part of this app's pipeline.
 
-Generation uses the installed, signed-in `codex` CLI with `gpt-6.1-sol`,
+Generation uses the installed, signed-in `codex` CLI with its default model,
 a read-only sandbox and no user configuration. The prompt asks
 for source citations and coverage gaps. An empty or failed generation leaves
 the previous file intact and fails the run. Cancelled or past meetings stop
@@ -44,12 +62,48 @@ Amman:
   on days 7 to 12 does not count, because a different credit of the same
   size arrives then; thus a mid-month credit that comes early notifies too.
 
+Both Slack rules require Clay McCoy as the sender in Delivery Associates:
+
+- **ClayBdAgentMessages:** messages about the business development agent,
+  including its proposal workflow, team composition, relevant-experience
+  section and Generate Section control in the Ezz/Mo/Clay work conversation.
+- **ClayDataHubMcpMessages:** messages about the Data Hub MCP, connector or
+  plugin, including its semantic layer, case-study writer and colleague-bio
+  skills in that work conversation.
+
+Both use explicit topic phrases and recognizable follow-ups. A follow-up such
+as "still missing elements" inherits its loaded thread's context, or the
+preceding discussion in the same conversation with at most a four-hour gap.
+Other participants can establish context; only Clay's messages notify.
+Unrelated top-level subjects reset conversation context. Threads keep their
+parent's topic even across intervening replies. A message
+that explicitly names a topic is checked against that topic rather than
+inheriting the preceding one. A message about both topics can match both rules.
+
+This is deterministic text matching, not an AI classifier. An unrecognized
+paraphrase or a follow-up without a topic anchor in the loaded history may
+not match. Neither Clay's identity nor the work conversation alone is enough
+to trigger a notification.
+
+The conditions were grounded in the Slack import synced on 9 October 2026:
+Clay's BD-agent feedback of 15 and 21 September; Data Hub MCP requests of
+7–8 October; and his LIH brief comparison and confirmation of 9 October.
+The recent Data Hub Claude session identifies the work as MCP, not MCB:
+project-brief access through SQL and exporting BD prompts for proposal skills.
+
+Only messages saved by Slack on this Mac are available, and thread replies
+must have been loaded by the app. Slack saves periodically. Each rule keys a
+message by workspace, conversation and exact Slack timestamp; a reply present
+in both streams or a later edit does not create a second alert for that rule.
+Matches carry the Slack link as well as the message text.
+
 Rules keep their keys only during one run. A restart takes a new baseline from
-the warehouse before refreshing, as the other proactive rules do. No schedule
-or persistent background process is installed.
+the warehouse before refreshing. No schedule or persistent background process
+is installed.
 
 Run `npx nx run proactive:typecheck` and `npx nx run proactive:test`. Tests use
 the already-running local Postgres server (or `TEST_DATABASE_URL`), create one
-temporary database per database test and drop it when done. The generator test
-uses a local executable in place of the authenticated Codex service; it makes
-no AI request.
+temporary database per database test and drop it when done. The generator and
+agent tests use a local executable in place of the authenticated Codex
+service, and the automations test one in place of `osascript`; they make no AI
+request and show no notification.
