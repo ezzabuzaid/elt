@@ -3,24 +3,13 @@ import { useState } from 'react';
 import { messageOf } from './call-tool.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import type { ConnectorRow, ConnectorSelection } from './contract.ts';
-
-// What the page sends for one connector; what a selection leaves out takes
-// the defaults setup uses.
-export type Update = (
-  connector: string,
-  selection: Partial<ConnectorSelection> | null,
-) => Promise<void>;
+import { usePage } from './page-context.tsx';
 
 // A connector's on/off switch. Turning one on imports everything, which its
 // detail page can narrow; turning one off deletes its import, so it asks
 // first. A connector that is not loaded can only be turned off.
-export function ConnectorSwitch({
-  row,
-  onUpdate,
-}: {
-  row: ConnectorRow;
-  onUpdate: Update;
-}) {
+export function ConnectorSwitch({ row }: { row: ConnectorRow }) {
+  const { update } = usePage();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -29,7 +18,7 @@ export function ConnectorSwitch({
   const change = async (selection: Partial<ConnectorSelection> | null) => {
     setBusy(true);
     try {
-      await onUpdate(row.name, selection);
+      await update(row.name, selection);
       setFailure(null);
     } catch (error) {
       setFailure(messageOf(error));

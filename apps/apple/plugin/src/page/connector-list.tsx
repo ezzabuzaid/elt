@@ -1,22 +1,11 @@
 import { ConnectorStatus } from './connector-status.tsx';
-import { ConnectorSwitch, type Update } from './connector-switch.tsx';
+import { ConnectorSwitch } from './connector-switch.tsx';
 import type { ConnectorRow } from './contract.ts';
+import { usePage } from './page-context.tsx';
 
-// Every connector with its switch and import status; a loaded connector opens
-// its detail page.
-export function ConnectorList({
-  rows,
-  failure,
-  onOpen,
-  onUpdate,
-  onOpenFullDiskAccess,
-}: {
-  rows: readonly ConnectorRow[];
-  failure: string | null;
-  onOpen: (connector: string) => void;
-  onUpdate: Update;
-  onOpenFullDiskAccess: () => Promise<void>;
-}) {
+// Every connector with its switch and import status.
+export function ConnectorList() {
+  const { rows, failure } = usePage();
   return (
     <main className="page">
       <header className="header">
@@ -28,40 +17,50 @@ export function ConnectorList({
           {failure}
         </p>
       )}
-      <ul className="rows">
-        {rows.map((row) => (
-          <li key={row.name} className="row">
-            <div className="row-text">
-              {row.loaded ? (
-                <button
-                  type="button"
-                  className="row-title"
-                  onClick={() => onOpen(row.name)}
-                >
-                  {row.title}
-                </button>
-              ) : (
-                <span className="row-title">{row.title}</span>
-              )}
-              <ConnectorStatus
-                row={row}
-                onOpenFullDiskAccess={onOpenFullDiskAccess}
-              />
-            </div>
-            <ConnectorSwitch row={row} onUpdate={onUpdate} />
-            {row.loaded && (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                aria-label={`Open ${row.title}`}
-                onClick={() => onOpen(row.name)}
-              >
-                ›
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
+      {rows === null ? (
+        <p className="text-muted">Reading your connectors…</p>
+      ) : (
+        <ul className="rows">
+          {rows.map((row) => (
+            <ConnectorItem key={row.name} row={row} />
+          ))}
+        </ul>
+      )}
     </main>
+  );
+}
+
+// A connector that is not loaded has no page of its own: it can only be
+// switched off.
+function ConnectorItem({ row }: { row: ConnectorRow }) {
+  const { open } = usePage();
+  return (
+    <li className="row">
+      <div className="row-text">
+        {row.loaded ? (
+          <button
+            type="button"
+            className="row-title"
+            onClick={() => open(row.name)}
+          >
+            {row.title}
+          </button>
+        ) : (
+          <span className="row-title">{row.title}</span>
+        )}
+        <ConnectorStatus row={row} />
+      </div>
+      <ConnectorSwitch row={row} />
+      {row.loaded && (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          aria-label={`Open ${row.title}`}
+          onClick={() => open(row.name)}
+        >
+          ›
+        </button>
+      )}
+    </li>
   );
 }
