@@ -208,6 +208,12 @@
     },
     {
       "path": "./apps/proactive"
+    },
+    {
+      "path": "./packages/sdks/google/search-console"
+    },
+    {
+      "path": "./packages/codecs/sitemap"
     }
   ]
 }

@@ -1,0 +1,13 @@
+{
+  "name": "sdk-google-search-console",
+  "sourceRoot": "packages/sdks/google/search-console/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/google/search-console/dist/*.test.js\""
+    }
+  }
+}

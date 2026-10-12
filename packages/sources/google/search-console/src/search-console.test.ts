@@ -1,48 +1,248 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { gzipSync } from 'node:zlib';
 
-import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
-import { GaxiosError } from '@workspace/google-auth';
+import { type PathParams, http } from 'msw';
+import { setupServer } from 'msw/node';
+import postgres from 'postgres';
 
+import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
 import {
-  SearchConsoleApi,
-  SearchConsoleQuotaError,
-} from './search-console-api.ts';
+  PostgresCheckpointStore,
+  PostgresDestination,
+} from '@workspace/elt-postgresql';
+import { GoogleGrant, GoogleOAuthApp } from '@workspace/google-auth';
+
 import { SearchConsoleSource } from './search-console-source.ts';
-import { searchConsoleDatabase } from './test-warehouse.ts';
 
 const testServer =
   process.env.TEST_DATABASE_URL ??
   'postgres://postgres:postgres@127.0.0.1:55432/postgres';
 
 const SITE = 'sc-domain:example.com';
-const NOW = () => new Date('2026-09-22T00:00:00.000Z');
+const RAW = 'google_search_console';
 
+/**
+ * A database of its own for one test, dropped when the test ends: the Search
+ * Console destination and checkpoints in the raw schema, and a session whose
+ * unqualified names resolve there.
+ */
+async function searchConsoleDatabase() {
+  await using stack = new AsyncDisposableStack();
+  const admin = postgres(testServer, { max: 1, onnotice: () => {} });
+  stack.defer(() => admin.end());
+  const name = `elt_test_${randomUUID().replaceAll('-', '')}`;
+  try {
+    await admin.unsafe(`CREATE DATABASE "${name}"`);
+  } catch (cause) {
+    throw new Error(
+      `Test Postgres at ${new URL(testServer).host} is unavailable. Start it with: npx nx run infra:up`,
+      { cause },
+    );
+  }
+  stack.defer(async () => {
+    await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);
+  });
+  const url = new URL(testServer);
+  url.pathname = `/${name}`;
+  const sql = postgres(url.href, {
+    max: 1,
+    onnotice: () => {},
+    connection: { search_path: RAW },
+  });
+  stack.defer(() => sql.end());
+  const resources = stack.move();
+  return {
+    sql,
+    destination: new PostgresDestination({ url: url.href, schema: RAW }),
+    checkpoints: new PostgresCheckpointStore({ url: url.href, schema: RAW }),
+    [Symbol.asyncDispose]: () => resources.disposeAsync(),
+  };
+}
+
+type Warehouse = Awaited<ReturnType<typeof searchConsoleDatabase>>;
+
+// A real OAuth client over a grant whose access token is fresh, so it calls
+// the API at once and never the token endpoint.
+function signedIn() {
+  return new GoogleOAuthApp({
+    clientId: 'client-id',
+    clientSecret: 'client-secret',
+  }).client(
+    new GoogleGrant({
+      kind: 'GOOGLE_BIGQUERY_OAUTH',
+      clientId: 'client-id',
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      scope: 'https://www.googleapis.com/auth/webmasters.readonly',
+    }),
+  );
+}
+
+// A call Search Console received: its path, the property it names in the
+// path or the body, and its JSON body.
 type Call = {
-  url: string;
-  data?: Record<string, unknown>;
+  readonly path: string;
+  readonly site: unknown;
+  readonly body: Readonly<Record<string, unknown>>;
 };
 
-function recorder(reply: (call: Call) => unknown) {
+/**
+ * Google's side of the wire for one test, stubbed below fetch with msw. Each
+ * Search Console call is answered with what `reply` returns for it, a JSON
+ * body or a whole Response, and each URL in `files` with its content, or
+ * with the status a number names. Any other request fails the test.
+ */
+function google({
+  reply,
+  files = {},
+}: {
+  reply: (call: Call) => unknown;
+  files?: Readonly<Record<string, string | Uint8Array<ArrayBuffer> | number>>;
+}) {
   const calls: Call[] = [];
-  return {
-    calls,
-    requester: {
-      async request(options: {
-        url: string;
-        method?: string;
-        data?: Record<string, unknown>;
-      }) {
-        const call: Call = {
-          url: options.url,
-          ...(options.data ? { data: options.data } : {}),
+  const fetched: string[] = [];
+  const waiting = new Set<{
+    done: (calls: readonly Call[]) => boolean;
+    resolve: () => void;
+  }>();
+  const server = setupServer(
+    http.all<PathParams, Record<string, unknown>>(
+      'https://searchconsole.googleapis.com/*',
+      async ({ request }) => {
+        const path = new URL(request.url).pathname;
+        const body = request.method === 'POST' ? await request.json() : {};
+        // /webmasters/v3/sites/<property>/... names it in the path.
+        const [, , , , property] = path.split('/');
+        const call = {
+          path,
+          site:
+            property === undefined
+              ? body.siteUrl
+              : decodeURIComponent(property),
+          body,
         };
         calls.push(call);
-        return { data: reply(call) };
+        for (const waiter of waiting)
+          if (waiter.done(calls)) {
+            waiting.delete(waiter);
+            waiter.resolve();
+          }
+        const answer = await reply(call);
+        return answer instanceof Response ? answer : Response.json(answer);
+      },
+    ),
+    ...Object.entries(files).map(([url, content]) =>
+      http.get(url, () => {
+        fetched.push(url);
+        return typeof content === 'number'
+          ? new Response(null, { status: content })
+          : new Response(content);
+      }),
+    ),
+  );
+  server.listen({ onUnhandledRequest: 'error' });
+  return {
+    calls,
+    fetched,
+    requester: signedIn(),
+    // Resolves once the calls received so far satisfy done.
+    until(done: (calls: readonly Call[]) => boolean): Promise<void> {
+      if (done(calls)) return Promise.resolve();
+      const { promise, resolve } = Promise.withResolvers<void>();
+      waiting.add({ done, resolve });
+      return promise;
+    },
+    [Symbol.dispose]: () => server.close(),
+  };
+}
+
+type Google = ReturnType<typeof google>;
+
+// An error as Google's APIs answer one.
+function refusal(
+  status: number,
+  reason: string,
+  message: string,
+  headers?: HeadersInit,
+) {
+  return Response.json(
+    {
+      error: {
+        code: status,
+        message,
+        errors: [{ message, domain: 'global', reason }],
       },
     },
+    { status, headers },
+  );
+}
+
+// Sent with every refusal the policy retries, so the real default policy
+// retries at once instead of backing off for seconds. Live, the daily quota's
+// 429 carries no Retry-After.
+const RETRY_NOW = { 'retry-after': '0' };
+
+const forbidden = (site: string) =>
+  refusal(
+    403,
+    'forbidden',
+    `User does not have sufficient permission for site '${site}'. See also: https://support.google.com/webmasters/answer/2451999.`,
+  );
+// Live, an exhausted daily quota answers 429 rateLimitExceeded with this
+// message.
+const quotaExceeded = () =>
+  refusal(429, 'rateLimitExceeded', `Quota exceeded for ${SITE}.`, RETRY_NOW);
+const serverError = () =>
+  refusal(500, 'backendError', 'Internal error encountered.', RETRY_NOW);
+
+// The Pacific day `offset` days from today, as Search Console dates its data.
+const day = (offset: number) =>
+  Temporal.Now.plainDateISO('America/Los_Angeles')
+    .add({ days: offset })
+    .toString();
+const monthsBack = (months: number) =>
+  Temporal.Now.plainDateISO('America/Los_Angeles')
+    .subtract({ months })
+    .toString();
+
+// The watch's change probe: the last 28 days of daily web totals.
+const isProbe = (call: Call) => call.body.startDate === day(-28);
+
+// A read as the tests name it: what it lists, inspects or queries, and for a
+// query, its dimensions and first day.
+const query = (site: string, dimensions: string, from: string) =>
+  `${site} ${dimensions} from ${from}`;
+function label({ path, site, body }: Call): string {
+  if (path.endsWith('/sitemaps')) return `sitemaps of ${String(site)}`;
+  if (path.endsWith('index:inspect'))
+    return `inspect ${String(body.inspectionUrl)}`;
+  return query(String(site), String(body.dimensions), String(body.startDate));
+}
+const reads = ({ calls }: Google) =>
+  calls.filter((call) => !isProbe(call)).map(label);
+
+/**
+ * Half a second of a watch whose next pass was asked for, cut short by the
+ * first read: what it probed and what it read meanwhile. A watch that reloads
+ * an unchanged property reads within it.
+ */
+async function quietly(searchConsole: Google) {
+  const { calls, until } = searchConsole;
+  const probed = calls.filter(isProbe);
+  const read = reads(searchConsole).length;
+  await Promise.race([
+    sleep(500),
+    until(
+      (received) => received.filter((call) => !isProbe(call)).length > read,
+    ),
+  ]);
+  return {
+    probed: calls.filter(isProbe).slice(probed.length),
+    read: reads(searchConsole).slice(read),
   };
 }
 
@@ -59,28 +259,104 @@ const sitemapEntry = (path: string) => ({
   contents: [{ type: 'web', submitted: '1', indexed: '0' }],
 });
 
-const analyticsCalls = (calls: readonly Call[]) =>
-  calls.filter((call) => call.url.includes('searchAnalytics/query'));
+const ALL_INSPECTIONS = [
+  'urlInspection',
+  'urlInspectionSitemaps',
+  'urlInspectionReferrers',
+] as const;
+
+/**
+ * Search Console's answers for one property: the sitemaps its API lists, the
+ * pages its search analytics show, and each URL's inspection, an index status
+ * or a whole Response such as a refusal.
+ */
+function property({
+  sitemaps = [],
+  pages = [],
+  inspect = (url) => ({ verdict: 'PASS', referringUrls: [url] }),
+}: {
+  sitemaps?: readonly string[];
+  pages?: readonly string[];
+  inspect?: (url: string) => Record<string, unknown> | Response;
+}) {
+  return ({ path, body }: Call): unknown => {
+    if (path.endsWith('/sitemaps'))
+      return { sitemap: sitemaps.map(sitemapEntry) };
+    if (path.endsWith('index:inspect')) {
+      const reply = inspect(String(body.inspectionUrl));
+      return reply instanceof Response
+        ? reply
+        : { inspectionResult: { indexStatusResult: reply } };
+    }
+    return {
+      rows: pages.map((page) => ({
+        clicks: 0,
+        ctr: 0,
+        impressions: 1,
+        keys: [page],
+        position: 1,
+      })),
+    };
+  };
+}
+
+// The URLs Google was asked to inspect, in the order the calls arrived.
+const inspected = ({ calls }: Google) =>
+  calls
+    .filter(({ path }) => path.endsWith('index:inspect'))
+    .map(({ body }) => body.inspectionUrl);
+
+async function inspectionRun(
+  source: SearchConsoleSource,
+  { destination, checkpoints }: Warehouse,
+  streams: readonly (typeof ALL_INSPECTIONS)[number][] = ['urlInspection'],
+) {
+  return new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: streams.map(
+          (name) =>
+            new Copy(source[name], destination.table(name), {
+              id: name,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
+        ),
+      }),
+    ],
+  }).run();
+}
+
+async function inspectionRows({ sql }: Warehouse, table = 'urlInspection') {
+  return (await sql`SELECT * FROM ${sql(table)} ORDER BY "inspectionUrl"`).map(
+    (row) => ({ ...row }),
+  );
+}
 
 test('Search Console maps positional analytics keys onto its dimensions', async () => {
-  const { requester, calls } = recorder(() => ({
-    metadata: { firstIncompleteDate: '2026-09-21' },
-    rows: [
-      {
-        clicks: 0,
-        impressions: 340,
-        keys: ['2026-09-20', 'context compiler'],
-        ctr: 0,
-        position: 8.1,
-      },
-    ],
-  }));
-  await using warehouse = await searchConsoleDatabase(testServer);
+  using searchConsole = google({
+    reply: () => ({
+      metadata: { firstIncompleteDate: day(0) },
+      rows: [
+        {
+          clicks: 0,
+          impressions: 340,
+          keys: [day(-1), 'context compiler'],
+          ctr: 0,
+          position: 8.1,
+        },
+      ],
+    }),
+  });
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
     searchTypes: ['WEB'],
-    now: NOW,
-    requester,
     siteUrls: [SITE],
   });
   const copy = new Copy(
@@ -102,54 +378,58 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
     { ...loaded },
     {
       clicks: 0,
-      date: '2026-09-20',
+      date: day(-1),
       impressions: 340,
       position: 8.1,
       query: 'context compiler',
     },
   );
-  const [request] = analyticsCalls(calls);
-  assert.deepEqual(request?.data, {
-    dataState: 'ALL',
-    dimensions: ['date', 'query'],
-    // NOW, 2026-09-22T00:00Z, is still the 21st in Pacific Time.
-    endDate: '2026-09-21',
-    rowLimit: 25_000,
-    // Sixteen calendar months before 2026-09-21, not 480 days.
-    startDate: '2025-05-21',
-    startRow: 0,
-    type: 'WEB',
-  });
-});
-
-test('a restated day replaces the loaded row and the checkpoint stops at the settled date', async () => {
-  let clicks = 12;
-  let firstIncompleteDate = '2026-09-21';
-  const { requester, calls } = recorder(() => ({
-    metadata: { firstIncompleteDate },
-    rows: [
+  assert.deepEqual(
+    searchConsole.calls.map(({ body }) => body),
+    [
       {
-        clicks,
-        ctr: 0.035,
-        impressions: 340,
-        keys: ['2026-09-20', 'context compiler'],
-        position: 8.1,
-      },
-      {
-        clicks: 5,
-        ctr: 0.05,
-        impressions: 100,
-        keys: ['2026-09-21', 'context compiler'],
-        position: 7,
+        dataState: 'ALL',
+        dimensions: ['date', 'query'],
+        // Today in Pacific Time, and sixteen calendar months before it.
+        endDate: day(0),
+        rowLimit: 25_000,
+        startDate: monthsBack(16),
+        startRow: 0,
+        type: 'WEB',
       },
     ],
-  }));
-  await using warehouse = await searchConsoleDatabase(testServer);
+  );
+});
+
+test('a restated day replaces the loaded row, and the next read starts at the last settled day', async () => {
+  let clicks = 12;
+  let firstIncompleteDate = day(0);
+  using searchConsole = google({
+    reply: () => ({
+      metadata: { firstIncompleteDate },
+      rows: [
+        {
+          clicks,
+          ctr: 0.035,
+          impressions: 340,
+          keys: [day(-1), 'context compiler'],
+          position: 8.1,
+        },
+        {
+          clicks: 5,
+          ctr: 0.05,
+          impressions: 100,
+          keys: [day(0), 'context compiler'],
+          position: 7,
+        },
+      ],
+    }),
+  });
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
     searchTypes: ['WEB'],
-    now: NOW,
-    requester,
     siteUrls: [SITE],
   });
   const copy = new Copy(
@@ -172,62 +452,266 @@ test('a restated day replaces the loaded row and the checkpoint stops at the set
       }),
     ],
   });
-
-  await pipeline.run();
   const loaded = async () =>
     (
       await sql`SELECT date::text, clicks::int, settled FROM search_analytics ORDER BY date`
     ).map((row) => ({ ...row }));
-  // Where the property's own partition state says the next read starts.
-  const saved = async () => {
-    const [row] = await sql`
-      SELECT state #> '{state,partitions,0,partition}' AS partition,
-        state #>> '{state,partitions,0,state,date}' AS date
-      FROM _elt_checkpoints WHERE id = ${'search-analytics'}`;
-    return { ...row };
-  };
-  // The 21st is still being collected, and its row says so.
+
+  await pipeline.run();
+  // Today is still being collected, and its row says so.
   assert.deepEqual(await loaded(), [
-    { clicks: 12, date: '2026-09-20', settled: true },
-    { clicks: 5, date: '2026-09-21', settled: false },
+    { clicks: 12, date: day(-1), settled: true },
+    { clicks: 5, date: day(0), settled: false },
   ]);
-  // firstIncompleteDate is 2026-09-21, so the last settled day is the 20th,
-  // kept as the property's own partition state.
-  const checkpoint = (date: string) => ({ partition: { siteUrl: SITE }, date });
-  assert.deepEqual(await saved(), checkpoint('2026-09-20'));
 
   clicks = 19;
-  firstIncompleteDate = '2026-09-22';
+  firstIncompleteDate = day(1);
   await pipeline.run();
-  // One row per day still, carrying the restated metric, and the 21st has
+  // One row per day still, carrying the restated metric, and today has
   // settled since.
   assert.deepEqual(await loaded(), [
-    { clicks: 19, date: '2026-09-20', settled: true },
-    { clicks: 5, date: '2026-09-21', settled: true },
+    { clicks: 19, date: day(-1), settled: true },
+    { clicks: 5, date: day(0), settled: true },
   ]);
-  assert.deepEqual(await saved(), checkpoint('2026-09-21'));
-  // The second run resumes at the settled day rather than after it.
-  assert.equal(analyticsCalls(calls).at(-1)?.data?.startDate, '2026-09-20');
+
+  await pipeline.run();
+  // The first read covers the whole history; each later one starts at the
+  // last day the read before it saw settled, read again rather than after it.
+  assert.deepEqual(
+    searchConsole.calls.map(({ body }) => body.startDate),
+    [monthsBack(16), day(-1), day(0)],
+  );
+});
+
+test('a re-read deletes the query rows and days Google stopped reporting, and keeps the days before it', async () => {
+  let firstIncompleteDate = day(-1);
+  let queries: [date: string, query: string][] = [
+    [day(-4), 'older'],
+    [day(-3), 'older'],
+    [day(-2), 'kept'],
+    [day(-2), 'dropped'],
+    [day(-1), 'emptied'],
+  ];
+  using searchConsole = google({
+    // Like Google, it answers only the days the request asks for.
+    reply: ({ body }) => ({
+      metadata: { firstIncompleteDate },
+      rows: queries
+        .filter(
+          ([date]) =>
+            date >= String(body.startDate) && date <= String(body.endDate),
+        )
+        .map((keys) => ({
+          clicks: 1,
+          ctr: 0.1,
+          impressions: 10,
+          keys,
+          position: 3,
+        })),
+    }),
+  });
+  await using warehouse = await searchConsoleDatabase();
+  const { destination, checkpoints, sql } = warehouse;
+  const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
+    searchTypes: ['WEB'],
+    siteUrls: [SITE],
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(
+            source.searchAnalyticsQueries,
+            destination.table('queries'),
+            {
+              id: 'queries',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            },
+          ),
+        ],
+      }),
+    ],
+  });
+  await pipeline.run();
+
+  // The next read starts at the last settled day, so it asks for neither
+  // older day. Of the two days it reads, Google drops one query from the
+  // first and every query from the second, as it does when a day's few
+  // searches were all rare.
+  firstIncompleteDate = day(0);
+  queries = [
+    [day(-4), 'older'],
+    [day(-3), 'older'],
+    [day(-2), 'kept'],
+  ];
+  await pipeline.run();
+
+  assert.deepEqual(
+    (await sql`SELECT date::text, query FROM queries ORDER BY date, query`).map(
+      (row) => ({ ...row }),
+    ),
+    [
+      { date: day(-4), query: 'older' },
+      { date: day(-3), query: 'older' },
+      { date: day(-2), query: 'kept' },
+    ],
+  );
+});
+
+test('a re-read day keeps its unchanged query and page rows beside the ones that changed', async () => {
+  let restated = 1;
+  using searchConsole = google({
+    reply: () => ({
+      metadata: { firstIncompleteDate: day(-1) },
+      rows: [
+        {
+          clicks: 1,
+          ctr: 0.1,
+          impressions: 10,
+          keys: [day(-2), 'same'],
+          position: 3,
+        },
+        {
+          clicks: restated,
+          ctr: 0.1,
+          impressions: 40,
+          keys: [day(-2), 'restated'],
+          position: 3,
+        },
+      ],
+    }),
+  });
+  await using warehouse = await searchConsoleDatabase();
+  const { destination, checkpoints, sql } = warehouse;
+  const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
+    searchTypes: ['WEB'],
+    siteUrls: [SITE],
+  });
+  const incremental = (stream: typeof source.sitemaps, table: string) =>
+    new Copy(stream, destination.table(table), {
+      id: table,
+      syncMode: 'incremental',
+      destinationSyncMode: 'append_dedup',
+    });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          incremental(source.searchAnalyticsQueries, 'queries'),
+          incremental(source.searchAnalyticsPages, 'pages'),
+        ],
+      }),
+    ],
+  });
+  await pipeline.run();
+
+  restated = 4;
+  await pipeline.run();
+
+  for (const [table, column] of [
+    ['queries', 'query'],
+    ['pages', 'page'],
+  ] as const)
+    assert.deepEqual(
+      (
+        await sql`SELECT ${sql(column)} AS key, clicks::int FROM ${sql(table)} ORDER BY key`
+      ).map((row) => ({ ...row })),
+      [
+        { key: 'restated', clicks: 4 },
+        { key: 'same', clicks: 1 },
+      ],
+      table,
+    );
+});
+
+test('a search type whose re-read day reports nothing loses that day’s total, while the other types keep theirs', async () => {
+  let discover = [day(-2), day(-1)];
+  using searchConsole = google({
+    reply: ({ body }) => ({
+      metadata: { firstIncompleteDate: day(-1) },
+      rows:
+        body.type === 'DISCOVER'
+          ? discover.map((date) => ({
+              clicks: 1,
+              ctr: 0.1,
+              impressions: 10,
+              keys: [date],
+            }))
+          : [
+              {
+                clicks: 5,
+                ctr: 0.1,
+                impressions: 50,
+                keys: [day(-1)],
+                position: 3,
+              },
+            ],
+    }),
+  });
+  await using warehouse = await searchConsoleDatabase();
+  const { destination, checkpoints, sql } = warehouse;
+  const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
+    searchTypes: ['WEB', 'DISCOVER'],
+    siteUrls: [SITE],
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints,
+        steps: [
+          new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
+            id: 'daily',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+  await pipeline.run();
+
+  discover = [day(-2)];
+  await pipeline.run();
+
+  assert.deepEqual(
+    (
+      await sql`SELECT date::text, "searchType" FROM daily ORDER BY date, "searchType"`
+    ).map((row) => ({ ...row })),
+    [
+      { date: day(-2), searchType: 'DISCOVER' },
+      { date: day(-1), searchType: 'WEB' },
+    ],
+  );
 });
 
 test('a fractional click count is refused rather than stored', async () => {
-  const { requester } = recorder(() => ({
-    rows: [
-      {
-        clicks: 1.5,
-        ctr: 0.5,
-        impressions: 3,
-        keys: ['2026-09-20'],
-        position: 2,
-      },
-    ],
-  }));
-  await using warehouse = await searchConsoleDatabase(testServer);
+  using searchConsole = google({
+    reply: () => ({
+      rows: [
+        { clicks: 1.5, ctr: 0.5, impressions: 3, keys: [day(-1)], position: 2 },
+      ],
+    }),
+  });
+  await using warehouse = await searchConsoleDatabase();
   const { destination } = warehouse;
   const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
     searchTypes: ['WEB'],
-    now: NOW,
-    requester,
     siteUrls: [SITE],
   });
 
@@ -249,25 +733,28 @@ test('a fractional click count is refused rather than stored', async () => {
 });
 
 test('analytics pagination follows startRow until a short page', async () => {
+  const days = Array.from({ length: 9 }, (_, offset) => day(-1 - offset));
   const page = (start: number, size: number) =>
     Array.from({ length: size }, (_, index) => ({
       clicks: 1,
       ctr: 0.1,
       impressions: 2,
-      keys: [`2026-09-0${((start + index) % 9) + 1}`, `q-${start + index}`],
+      keys: [days[(start + index) % days.length], `q-${start + index}`],
       position: 1,
     }));
-  const { requester, calls } = recorder((call) => {
-    const startRow = Number(call.data?.['startRow'] ?? 0);
-    const rowLimit = Number(call.data?.['rowLimit'] ?? 0);
-    return { rows: startRow === 0 ? page(0, rowLimit) : page(rowLimit, 3) };
+  using searchConsole = google({
+    reply: ({ body }) => {
+      const rowLimit = Number(body.rowLimit);
+      return {
+        rows: body.startRow === 0 ? page(0, rowLimit) : page(rowLimit, 3),
+      };
+    },
   });
-  await using warehouse = await searchConsoleDatabase(testServer);
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
+    requester: searchConsole.requester,
     searchTypes: ['WEB'],
-    now: NOW,
-    requester,
     siteUrls: [SITE],
   });
   const copy = new Copy(
@@ -275,41 +762,48 @@ test('analytics pagination follows startRow until a short page', async () => {
     destination.table('rows'),
   );
   // Extraction is lazy: nothing is requested until the destination pulls.
-  assert.equal(analyticsCalls(calls).length, 0);
+  assert.equal(searchConsole.calls.length, 0);
+
   await new Pipeline({
     connections: [
       new Connection({ name: 'test', source, destination, steps: [copy] }),
     ],
   }).run();
-  const requests = analyticsCalls(calls);
-  assert.equal(requests.length, 2, 'a full page is followed by one more');
-  assert.equal(requests[0]?.data?.['startRow'], 0);
-  assert.equal(requests[1]?.data?.['startRow'], 25_000);
+
+  assert.deepEqual(
+    searchConsole.calls.map(({ body }) => body.startRow),
+    [0, 25_000],
+    'a full page is followed by one more',
+  );
   const [total] = await sql`SELECT count(*)::int AS count FROM rows`;
   assert.deepEqual({ ...total }, { count: 25_003 });
 });
 
 test('sitemaps convert int64 text and second-precision times', async () => {
-  const { requester } = recorder(() => ({
-    sitemap: [
-      {
-        ...sitemapEntry('https://example.com/sitemap.xml'),
-        contents: [{ submitted: '512', type: 'web' }],
-        errors: '2',
-        lastDownloaded: '2026-09-20T10:30:00Z',
-        lastSubmitted: '2026-09-19T08:00:00.250Z',
-      },
-    ],
-  }));
-  await using warehouse = await searchConsoleDatabase(testServer);
+  using searchConsole = google({
+    reply: () => ({
+      sitemap: [
+        {
+          ...sitemapEntry('https://example.com/sitemap.xml'),
+          contents: [{ submitted: '512', type: 'web' }],
+          errors: '2',
+          lastDownloaded: '2026-09-20T10:30:00Z',
+          lastSubmitted: '2026-09-19T08:00:00.250Z',
+        },
+      ],
+    }),
+    files: {
+      'https://example.com/sitemap.xml':
+        'https://example.com/a\nhttps://example.com/b\n',
+    },
+  });
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
-    fetch: async () =>
-      new Response('https://example.com/a\nhttps://example.com/b\n'),
-    now: NOW,
-    requester,
+    requester: searchConsole.requester,
     siteUrls: [SITE],
   });
+
   await new Pipeline({
     connections: [
       new Connection({
@@ -354,115 +848,82 @@ test('sitemaps convert int64 text and second-precision times', async () => {
 });
 
 test('inspection covers every sitemap and search URL once, shared by all three streams', async () => {
-  const { requester, calls } = recorder((call) => {
-    if (call.url.endsWith('/sitemaps'))
-      return { sitemap: [sitemapEntry('https://example.com/sitemap.xml')] };
-    if (call.url.includes('searchAnalytics/query'))
-      // A later startRow exhausts the range, which ends the paging loop.
+  using searchConsole = google({
+    reply: ({ path }) => {
+      if (path.endsWith('/sitemaps'))
+        return { sitemap: [sitemapEntry('https://example.com/sitemap.xml')] };
+      if (path.endsWith('/searchAnalytics/query'))
+        return {
+          rows: [
+            {
+              clicks: 1,
+              ctr: 1,
+              impressions: 9,
+              keys: ['https://example.com/a'],
+              position: 1,
+            },
+            // A sitelink anchor is the same document as its page.
+            {
+              clicks: 0,
+              ctr: 0,
+              impressions: 4,
+              keys: ['https://example.com/b#intro'],
+              position: 2,
+            },
+            // Not under the property, so it cannot be inspected.
+            {
+              clicks: 0,
+              ctr: 0,
+              impressions: 1,
+              keys: ['https://other.org/x'],
+              position: 9,
+            },
+          ],
+        };
       return {
-        rows:
-          Number(call.data?.['startRow'] ?? 0) > 0
-            ? []
-            : [
-                {
-                  clicks: 1,
-                  ctr: 1,
-                  impressions: 9,
-                  keys: ['https://example.com/a'],
-                  position: 1,
-                },
-                // A sitelink anchor is the same document as its page.
-                {
-                  clicks: 0,
-                  ctr: 0,
-                  impressions: 4,
-                  keys: ['https://example.com/b#intro'],
-                  position: 2,
-                },
-                // Not under the property, so it cannot be inspected.
-                {
-                  clicks: 0,
-                  ctr: 0,
-                  impressions: 1,
-                  keys: ['https://other.org/x'],
-                  position: 9,
-                },
-              ],
-      };
-    return {
-      inspectionResult: {
-        inspectionResultLink: 'https://search.google.com/inspect',
-        indexStatusResult: {
-          coverageState: 'Submitted and indexed',
-          lastCrawlTime: '2026-09-18T04:05:06Z',
-          referringUrls: ['https://example.com/hub'],
-          sitemap: ['https://example.com/sitemap.xml'],
-          verdict: 'PASS',
+        inspectionResult: {
+          inspectionResultLink: 'https://search.google.com/inspect',
+          indexStatusResult: {
+            coverageState: 'Submitted and indexed',
+            lastCrawlTime: '2026-09-18T04:05:06Z',
+            referringUrls: ['https://example.com/hub'],
+            sitemap: ['https://example.com/sitemap.xml'],
+            verdict: 'PASS',
+          },
         },
-      },
-    };
+      };
+    },
+    files: {
+      'https://example.com/sitemap.xml':
+        '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/a</loc></url><url><loc>https://example.com/c?x=1&amp;y=2</loc></url></urlset>',
+    },
   });
-  const fetched: string[] = [];
-  const fetch = async (url: string) => {
-    fetched.push(url);
-    return new Response(
-      '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/a</loc></url><url><loc>https://example.com/c?x=1&amp;y=2</loc></url></urlset>',
-    );
-  };
-  await using warehouse = await searchConsoleDatabase(testServer);
-  const { destination, checkpoints, sql } = warehouse;
+  await using warehouse = await searchConsoleDatabase();
+  const { sql } = warehouse;
   const source = new SearchConsoleSource({
-    fetch,
-    now: NOW,
-    requester,
+    requester: searchConsole.requester,
     searchTypes: ['WEB'],
     siteUrls: [SITE],
   });
-  const pipeline = new Pipeline({
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints,
-        steps: (
-          [
-            [source.urlInspection, 'inspection'],
-            [source.urlInspectionSitemaps, 'inspection_sitemaps'],
-            [source.urlInspectionReferrers, 'inspection_referrers'],
-          ] as const
-        ).map(
-          ([stream, table]) =>
-            new Copy(stream, destination.table(table), {
-              id: table,
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-            }),
-        ),
-      }),
-    ],
-  });
-  const inspected = () =>
-    calls
-      .filter((call) => call.url.endsWith('index:inspect'))
-      .map((call) => call.data?.['inspectionUrl']);
+  const started = new Date();
 
-  await pipeline.run();
+  await inspectionRun(source, warehouse, ALL_INSPECTIONS);
+  const finished = new Date();
   // Three distinct pages, each inspected once although three streams load it.
-  assert.deepEqual(inspected().sort(), [
+  assert.deepEqual(inspected(searchConsole).toSorted(), [
     'https://example.com/a',
     'https://example.com/b',
     'https://example.com/c?x=1&y=2',
   ]);
-  assert.deepEqual(fetched, ['https://example.com/sitemap.xml']);
+  assert.deepEqual(searchConsole.fetched, ['https://example.com/sitemap.xml']);
   // The same day, every URL is fresh: no inspection call at all.
-  await pipeline.run();
-  assert.equal(inspected().length, 3);
+  await inspectionRun(source, warehouse, ALL_INSPECTIONS);
+  assert.equal(inspected(searchConsole).length, 3);
 
+  const rows =
+    await sql`SELECT "inspectionUrl", "inSitemap", "inSearchAnalytics", verdict, "inspectedAt" FROM "urlInspection" ORDER BY "inspectionUrl"`;
   assert.deepEqual(
-    (
-      await sql`SELECT "inspectionUrl", "inSitemap", "inSearchAnalytics", verdict, "inspectedAt" FROM inspection ORDER BY "inspectionUrl"`
-    ).map((row) => ({ ...row })),
+    rows.map(({ inspectedAt: _, ...row }) => row),
     (
       [
         ['https://example.com/a', true, true],
@@ -474,97 +935,104 @@ test('inspection covers every sitemap and search URL once, shared by all three s
       inSitemap,
       inSearchAnalytics,
       verdict: 'PASS',
-      inspectedAt: NOW(),
     })),
   );
-  for (const table of ['inspection_sitemaps', 'inspection_referrers']) {
+  for (const { inspectedAt } of rows)
+    assert.ok(
+      inspectedAt >= started && inspectedAt <= finished,
+      `inspected during the first run, at ${inspectedAt}`,
+    );
+  for (const table of ['urlInspectionSitemaps', 'urlInspectionReferrers']) {
     const [total] = await sql`SELECT count(*)::int AS count FROM ${sql(table)}`;
     assert.equal(total?.count, 3);
   }
 });
 
-test('watching invalidates only when the property actually changed', async () => {
-  let clicks = 12;
-  const { requester, calls } = recorder(() => ({
-    metadata: { firstIncompleteDate: '2026-09-21' },
-    rows: [
-      {
-        clicks,
-        ctr: 0.03,
-        impressions: 340,
-        keys: ['2026-09-20'],
-        position: 8,
-      },
-    ],
-  }));
-  await using warehouse = await searchConsoleDatabase(testServer);
-  const { destination, sql } = warehouse;
-  const source = new SearchConsoleSource({
-    searchTypes: ['WEB'],
-    now: NOW,
-    pollIntervalMs: 1,
-    requester,
-    siteUrls: [SITE],
-  });
-  // One key per row is the daily grain.
-  const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
-  const controller = new AbortController();
-  const watching = new Pipeline({
-    connections: [
-      new Connection({ name: 'test', source, destination, steps: [copy] }),
-    ],
-  }).watch({
-    signal: controller.signal,
-  });
+test(
+  'watching reloads the property only when it changed',
+  { timeout: 10_000 },
+  async () => {
+    let clicks = 12;
+    using searchConsole = google({
+      reply: () => ({
+        metadata: { firstIncompleteDate: day(0) },
+        rows: [
+          { clicks, ctr: 0.03, impressions: 340, keys: [day(-1)], position: 8 },
+        ],
+      }),
+    });
+    await using warehouse = await searchConsoleDatabase();
+    const { destination, sql } = warehouse;
+    const source = new SearchConsoleSource({
+      pollIntervalMs: 1,
+      requester: searchConsole.requester,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    const copy = new Copy(
+      source.searchAnalyticsDaily,
+      destination.table('rows'),
+    );
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      connections: [
+        new Connection({ name: 'test', source, destination, steps: [copy] }),
+      ],
+    }).watch({ signal: controller.signal });
+    const history = query(SITE, 'date', monthsBack(16));
 
-  try {
-    assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 1, deleted: 0, failures: [], cancelled: false },
-    ]);
-    const afterFirst = calls.length;
-    // The property is unchanged, so ticks probe without ever extracting.
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.ok(calls.length > afterFirst, 'the watcher keeps probing');
-    clicks = 19;
-    assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 1, deleted: 0, failures: [], cancelled: false },
-    ]);
-    const [row] = await sql`SELECT clicks::int FROM rows`;
-    assert.equal(row?.clicks, 19);
-  } finally {
-    controller.abort();
-  }
-});
+    try {
+      assert.deepEqual((await watching.next()).value?.outcomes, [
+        { copy, count: 1, deleted: 0, failures: [], cancelled: false },
+      ]);
+      assert.deepEqual(reads(searchConsole), [history]);
+      // Asked for its next pass, the watch probes the unchanged property and
+      // reads nothing.
+      const next = watching.next();
+      const { probed, read } = await quietly(searchConsole);
+      assert.ok(probed.length >= 3, `probed ${probed.length} times`);
+      assert.deepEqual(read, []);
+      clicks = 19;
+      assert.deepEqual((await next).value?.outcomes, [
+        { copy, count: 1, deleted: 0, failures: [], cancelled: false },
+      ]);
+      assert.deepEqual(reads(searchConsole), [history, history]);
+      const [row] = await sql`SELECT clicks::int FROM rows`;
+      assert.equal(row?.clicks, 19);
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
 
 test('a feed report keeps an absent position as unknown, not as rank one', async () => {
-  const { requester } = recorder((call) => {
-    const type = String(call.data?.['type']);
-    // Google's Discover and Google News responses omit position on every row,
-    // including zero-traffic rows.
-    if (type === 'DISCOVER' || type === 'GOOGLE_NEWS')
-      return {
-        rows: [{ clicks: 0, ctr: 0, impressions: 0, keys: ['2026-09-20'] }],
-      };
-    return {
-      rows: [
-        {
-          clicks: 4,
-          ctr: 0.02,
-          impressions: 200,
-          keys: ['2026-09-20'],
-          position: 1.5,
-        },
-      ],
-    };
+  using searchConsole = google({
+    reply: ({ body }) =>
+      // Google's Discover and Google News responses omit position on every
+      // row, including zero-traffic rows.
+      body.type === 'DISCOVER' || body.type === 'GOOGLE_NEWS'
+        ? { rows: [{ clicks: 0, ctr: 0, impressions: 0, keys: [day(-1)] }] }
+        : {
+            rows: [
+              {
+                clicks: 4,
+                ctr: 0.02,
+                impressions: 200,
+                keys: [day(-1)],
+                position: 1.5,
+              },
+            ],
+          },
   });
-  await using warehouse = await searchConsoleDatabase(testServer);
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
-    now: NOW,
-    requester,
+    requester: searchConsole.requester,
     searchTypes: ['WEB', 'DISCOVER', 'GOOGLE_NEWS'],
     siteUrls: [SITE],
   });
+
   await new Pipeline({
     connections: [
       new Connection({
@@ -590,40 +1058,7 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
   );
 });
 
-test('the history window clamps to the last day of a shorter start month', async () => {
-  const requests: string[] = [];
-  const { requester } = recorder((call) => {
-    if (call.data?.['startDate']) requests.push(String(call.data['startDate']));
-    return { rows: [] };
-  });
-  await using warehouse = await searchConsoleDatabase(testServer);
-  const { destination } = warehouse;
-  // Sixteen months before 31 March is 30 November, which has no 31st. An
-  // unclamped subtraction rolls into December and drops a month of history.
-  const source = new SearchConsoleSource({
-    now: () => new Date('2026-03-31T00:00:00.000Z'),
-    requester,
-    searchTypes: ['WEB'],
-    siteUrls: [SITE],
-  });
-  await new Pipeline({
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        steps: [
-          new Copy(source.searchAnalyticsDaily, destination.table('daily')),
-        ],
-      }),
-    ],
-  }).run();
-
-  assert.deepEqual(requests, ['2024-11-30']);
-});
-
 test('the country breakdown is a trailing snapshot, diffed rather than resumed by date', async () => {
-  const windows: string[] = [];
   let rows: Record<string, unknown>[] = [
     {
       clicks: 3,
@@ -642,16 +1077,12 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
     // Google's own row, with one key too few: skipped, not fatal.
     { clicks: 9, ctr: 0.2, impressions: 90, keys: ['zzz'], position: 2 },
   ];
-  const { requester } = recorder((call) => {
-    if (call.data?.['startDate']) windows.push(String(call.data['startDate']));
-    return { rows };
-  });
-  await using warehouse = await searchConsoleDatabase(testServer);
+  using searchConsole = google({ reply: () => ({ rows }) });
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     breakdownMonths: 3,
-    now: NOW,
-    requester,
+    requester: searchConsole.requester,
     siteUrls: [SITE],
   });
   const copy = new Copy(
@@ -688,7 +1119,10 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
   assert.deepEqual(await pipeline.run(), [{ copy, count: 1, deleted: 1 }]);
 
   // The window trails the clock; no date checkpoint narrows it.
-  assert.deepEqual(windows, ['2026-06-21', '2026-06-21']);
+  assert.deepEqual(
+    searchConsole.calls.map(({ body }) => body.startDate),
+    [monthsBack(3), monthsBack(3)],
+  );
   assert.deepEqual(
     (
       await sql`SELECT "siteUrl", country, device, clicks::int, "startDate"::text, "endDate"::text FROM countries`
@@ -698,9 +1132,9 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
         clicks: 4,
         country: 'usa',
         device: 'DESKTOP',
-        endDate: '2026-09-21',
+        endDate: day(0),
         siteUrl: SITE,
-        startDate: '2026-06-21',
+        startDate: monthsBack(3),
       },
     ],
   );
@@ -708,8 +1142,7 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
 
 test('every stream but sites carries its property and keys by it first', async () => {
   const source = new SearchConsoleSource({
-    now: NOW,
-    requester: recorder(() => ({})).requester,
+    requester: signedIn(),
     siteUrls: [SITE],
   });
 
@@ -726,38 +1159,53 @@ test('every stream but sites carries its property and keys by it first', async (
   );
 });
 
+test('the country breakdown declares web search over its trailing window as its coverage, whatever report types the source reads', () => {
+  const source = new SearchConsoleSource({
+    requester: signedIn(),
+    searchTypes: ['WEB', 'DISCOVER'],
+    siteUrls: [SITE],
+  });
+
+  assert.deepEqual(source.coverage(source.searchAnalyticsCountries).selection, {
+    siteUrls: [SITE],
+    searchTypes: ['WEB'],
+    breakdownMonths: 3,
+    timeZone: 'America/Los_Angeles',
+  });
+});
+
 test('two properties share tables through one source without deleting each other', async () => {
   const A = 'sc-domain:a.example';
   const B = 'sc-domain:b.example';
-  const sitemaps: Record<string, unknown[]> = {
-    [A]: [sitemapEntry('https://a.example/sitemap.xml')],
-    [B]: [sitemapEntry('https://b.example/sitemap.xml')],
+  const sitemaps: Record<string, string[]> = {
+    [A]: ['https://a.example/sitemap.xml'],
+    [B]: ['https://b.example/sitemap.xml'],
   };
-  const { requester } = recorder((call) => {
-    const site = decodeURIComponent(
-      call.url.split('/sites/')[1]?.split('/')[0] ?? '',
-    );
-    if (call.url.endsWith('/sitemaps')) return { sitemap: sitemaps[site] };
-    const dimensions = call.data?.['dimensions'];
-    const keys =
-      Array.isArray(dimensions) && dimensions.includes('date')
-        ? ['2026-09-20']
+  using searchConsole = google({
+    reply: ({ path, site, body }) => {
+      if (path.endsWith('/sitemaps'))
+        return { sitemap: sitemaps[String(site)]?.map(sitemapEntry) };
+      const keys = String(body.dimensions).includes('date')
+        ? [day(-1)]
         : ['usa', 'DESKTOP'];
-    return {
-      rows: [{ clicks: 1, ctr: 0.1, impressions: 10, keys, position: 3 }],
-    };
+      return {
+        rows: [{ clicks: 1, ctr: 0.1, impressions: 10, keys, position: 3 }],
+      };
+    },
+    files: {
+      'https://a.example/sitemap.xml': '',
+      'https://b.example/sitemap.xml': '',
+    },
   });
-  await using warehouse = await searchConsoleDatabase(testServer);
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
-  const pipeline = (siteUrls: string[], name = 'search-console') => {
+  const pipeline = (siteUrls: string[], name: string) => {
     const source = new SearchConsoleSource({
-      fetch: async () => new Response(''),
-      now: NOW,
-      requester,
+      requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls,
     });
-    const listing = (stream: typeof source.sitemaps, table: string) =>
+    const incremental = (stream: typeof source.sitemaps, table: string) =>
       new Copy(stream, destination.table(table), {
         id: `${name}:${stream.name}`,
         syncMode: 'incremental',
@@ -771,22 +1219,18 @@ test('two properties share tables through one source without deleting each other
           destination,
           checkpoints,
           steps: [
-            listing(source.sitemaps, 'sitemaps'),
-            new Copy(source.searchAnalyticsDaily, destination.table('daily'), {
-              id: `${name}:searchAnalyticsDaily`,
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-            }),
-            listing(source.searchAnalyticsCountries, 'countries'),
+            incremental(source.sitemaps, 'sitemaps'),
+            incremental(source.searchAnalyticsDaily, 'daily'),
+            incremental(source.searchAnalyticsCountries, 'countries'),
           ],
         }),
       ],
     });
   };
 
-  await pipeline([A, B]).run();
+  await pipeline([A, B], 'search-console').run();
   sitemaps[A] = [];
-  const counts = (await pipeline([A, B]).run()).map(
+  const counts = (await pipeline([A, B], 'search-console').run()).map(
     ({ copy, count, deleted }) => [copy.from.name, count, deleted],
   );
 
@@ -795,12 +1239,12 @@ test('two properties share tables through one source without deleting each other
     ['searchAnalyticsDaily', 2, 0],
     ['searchAnalyticsCountries', 0, 0],
   ]);
-  // A second pipeline is a second writer, even for a property the first
-  // does not list.
-  await assert.rejects(
-    pipeline(['sc-domain:c.example'], 'other').run(),
-    /Target sitemaps is written by \{"copy":"search-console:sitemaps"\}; \{"copy":"other:sitemaps"\} cannot write it/,
-  );
+  // A second pipeline is a second writer, even for a property the first does
+  // not list: it is refused before it asks Google anything, and writes
+  // nothing.
+  const asked = searchConsole.calls.length;
+  await assert.rejects(pipeline(['sc-domain:c.example'], 'other').run());
+  assert.equal(searchConsole.calls.length, asked);
   const sites = async (table: string) =>
     (await sql`SELECT "siteUrl" FROM ${sql(table)} ORDER BY "siteUrl"`).map(
       (row) => row.siteUrl,
@@ -811,27 +1255,29 @@ test('two properties share tables through one source without deleting each other
 });
 
 test('an unverified property is not offered as a readable site', async () => {
-  const { requester } = recorder(() => ({
-    siteEntry: [
-      { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:owned.example' },
-      {
-        permissionLevel: 'siteRestrictedUser',
-        siteUrl: 'sc-domain:shared.example',
-      },
-      // Listed by Google, but its history cannot be read.
-      {
-        permissionLevel: 'siteUnverifiedUser',
-        siteUrl: 'sc-domain:other.example',
-      },
-    ],
-  }));
-  await using warehouse = await searchConsoleDatabase(testServer);
+  using searchConsole = google({
+    reply: () => ({
+      siteEntry: [
+        { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:owned.example' },
+        {
+          permissionLevel: 'siteRestrictedUser',
+          siteUrl: 'sc-domain:shared.example',
+        },
+        // Listed by Google, but its history cannot be read.
+        {
+          permissionLevel: 'siteUnverifiedUser',
+          siteUrl: 'sc-domain:other.example',
+        },
+      ],
+    }),
+  });
+  await using warehouse = await searchConsoleDatabase();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
-    now: NOW,
-    requester,
+    requester: searchConsole.requester,
     siteUrls: [SITE],
   });
+
   await new Pipeline({
     connections: [
       new Connection({
@@ -857,160 +1303,36 @@ test('an unverified property is not offered as a readable site', async () => {
   );
 });
 
-// The GaxiosError google-auth-library throws for a real 429: `status`, a
-// `Headers` object, and Google's error body.
-function httpError(
-  status: number,
-  { retryAfter, reason }: { retryAfter?: string; reason?: string } = {},
-) {
-  return googleError(
-    status,
-    { error: { code: status, errors: reason ? [{ reason }] : [] } },
-    retryAfter === undefined ? {} : { 'retry-after': retryAfter },
-  );
-}
-
-function sequence(outcomes: readonly unknown[]) {
-  let calls = 0;
-  return {
-    get calls() {
-      return calls;
-    },
-    requester: {
-      async request() {
-        const outcome = outcomes[Math.min(calls, outcomes.length - 1)];
-        calls += 1;
-        if (outcome instanceof Error) throw outcome;
-        return { data: outcome };
-      },
-    },
-  };
-}
-
-const fast = { attempts: 3, baseDelayMs: 1, maxDelayMs: 2000 };
-
-test('a rate limit waits for the Retry-After the server asks for', async () => {
-  const api = sequence([
-    httpError(429, { retryAfter: '1' }),
-    { siteEntry: [] },
-  ]);
-  const started = performance.now();
-
-  assert.deepEqual(
-    await new SearchConsoleApi(api.requester, { retry: fast }).sites(),
-    { siteEntry: [] },
-  );
-  assert.equal(api.calls, 2);
-  assert.ok(performance.now() - started >= 950, 'waited the requested second');
-});
-
-test('a Retry-After longer than the policy allows fails without waiting', async () => {
-  const api = sequence([httpError(429, { retryAfter: '120' })]);
-  const started = performance.now();
-
-  await assert.rejects(
-    new SearchConsoleApi(api.requester, { retry: fast }).sites(),
-    (error: unknown) => {
-      assert.ok(error instanceof SearchConsoleQuotaError);
-      assert.equal(error.attempts, 1);
-      return true;
-    },
-  );
-  assert.equal(api.calls, 1);
-  assert.ok(performance.now() - started < 500);
-});
-
-test('rate limits that never clear report how many attempts were made', async () => {
-  const api = sequence([httpError(429)]);
-
-  await assert.rejects(
-    new SearchConsoleApi(api.requester, { retry: fast }).sites(),
-    (error: unknown) => {
-      assert.ok(error instanceof SearchConsoleQuotaError);
-      assert.equal(error.status, 429);
-      assert.equal(error.attempts, 3);
-      return true;
-    },
-  );
-  assert.equal(api.calls, 3);
-});
-
-test('a rate-limit 403 is retried but a scope 403 is not', async () => {
-  const limited = sequence([
-    httpError(403, { reason: 'userRateLimitExceeded' }),
-    { siteEntry: [] },
-  ]);
-  assert.deepEqual(
-    await new SearchConsoleApi(limited.requester, { retry: fast }).sites(),
-    { siteEntry: [] },
-  );
-  assert.equal(limited.calls, 2);
-
-  // The same status Google uses for a missing scope or a disabled API.
-  const scope = httpError(403, { reason: 'insufficientPermissions' });
-  const denied = sequence([scope]);
-  await assert.rejects(
-    new SearchConsoleApi(denied.requester, { retry: fast }).sites(),
-    (error: unknown) => error === scope,
-  );
-  assert.equal(denied.calls, 1);
-});
-
-test('a server error is retried, and one that persists passes through unchanged', async () => {
-  const recovering = sequence([httpError(503), { siteEntry: [] }]);
-  assert.deepEqual(
-    await new SearchConsoleApi(recovering.requester, { retry: fast }).sites(),
-    { siteEntry: [] },
-  );
-  assert.equal(recovering.calls, 2);
-
-  const failure = httpError(500);
-  const failing = sequence([failure]);
-  await assert.rejects(
-    new SearchConsoleApi(failing.requester, { retry: fast }).sites(),
-    (error: unknown) => error === failure,
-  );
-  assert.equal(failing.calls, 3);
-});
-
 test(
   'aborting a watcher stops a rate-limit wait instead of sitting it out',
-  {
-    timeout: 5000,
-  },
+  { timeout: 5000 },
   async () => {
     let loaded = false;
-    const limited = Promise.withResolvers<void>();
-    const requester = {
-      async request() {
-        // Every probe and the load of the first pass succeed; the next probe is
-        // told to come back in 45 seconds. The watcher keeps probing while the
-        // warehouse connects, so the first pass can take more than two calls.
-        if (!loaded)
-          return {
-            data: {
+    using searchConsole = google({
+      // Every probe and the read of the first pass succeed; from then on
+      // Google asks the watcher to come back in 45 seconds.
+      reply: () =>
+        loaded
+          ? refusal(429, 'rateLimitExceeded', 'Rate Limit Exceeded', {
+              'retry-after': '45',
+            })
+          : {
               rows: [
                 {
                   clicks: 1,
                   ctr: 0.1,
                   impressions: 9,
-                  keys: ['2026-09-20'],
+                  keys: [day(-1)],
                   position: 2,
                 },
               ],
             },
-          };
-        limited.resolve();
-        throw httpError(429, { retryAfter: '45' });
-      },
-    };
-    await using warehouse = await searchConsoleDatabase(testServer);
+    });
+    await using warehouse = await searchConsoleDatabase();
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
-      now: NOW,
       pollIntervalMs: 1,
-      requester,
-      retry: { attempts: 3, baseDelayMs: 1, maxDelayMs: 60_000 },
+      requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
@@ -1023,66 +1345,64 @@ test(
       connections: [
         new Connection({ name: 'test', source, destination, steps: [copy] }),
       ],
-    }).watch({
-      signal: controller.signal,
-    });
+    }).watch({ signal: controller.signal });
 
-    assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 1, deleted: 0, failures: [], cancelled: false },
-    ]);
-    loaded = true;
-    await limited.promise;
-    const started = performance.now();
-    controller.abort();
+    try {
+      assert.deepEqual((await watching.next()).value?.outcomes, [
+        { copy, count: 1, deleted: 0, failures: [], cancelled: false },
+      ]);
+      assert.deepEqual(reads(searchConsole), [
+        query(SITE, 'date', monthsBack(16)),
+      ]);
+      loaded = true;
+      const answered = searchConsole.calls.length;
+      await searchConsole.until((calls) => calls.length > answered);
+      // Long enough for the refusal to reach the watcher, which then waits.
+      await sleep(100);
+      const started = performance.now();
+      controller.abort();
 
-    assert.deepEqual(await watching.next(), { done: true, value: undefined });
-    assert.ok(
-      performance.now() - started < 1000,
-      'closed without the 45 s wait',
-    );
+      assert.deepEqual(await watching.next(), {
+        done: true,
+        value: undefined,
+      });
+      assert.ok(
+        performance.now() - started < 1000,
+        'closed without the 45 s wait',
+      );
+      assert.equal(searchConsole.calls.length, answered + 1);
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+    }
   },
 );
 
 test(
   'aborting a watcher cancels its in-flight probe as an AbortError',
-  {
-    timeout: 5000,
-  },
+  { timeout: 5000 },
   async () => {
     let served = 0;
-    const probing = Promise.withResolvers<void>();
-    const requester = {
-      request({ signal }: { signal?: AbortSignal }) {
-        served += 1;
-        if (served === 1)
-          return Promise.resolve({
-            data: {
+    using searchConsole = google({
+      // The first probe is answered; the next one never is.
+      reply: () =>
+        served++ === 0
+          ? {
               rows: [
                 {
                   clicks: 1,
                   ctr: 0.1,
                   impressions: 9,
-                  keys: ['2026-09-20'],
+                  keys: [day(-1)],
                   position: 2,
                 },
               ],
-            },
-          });
-        probing.resolve();
-        // gaxios rejects a cancelled fetch with a generic error, not AbortError.
-        return new Promise<never>((_, reject) => {
-          signal?.addEventListener('abort', () =>
-            reject(
-              new Error('The operation was aborted.', { cause: signal.reason }),
-            ),
-          );
-        });
-      },
-    };
+            }
+          : new Promise(() => {}),
+    });
     const source = new SearchConsoleSource({
-      now: NOW,
       pollIntervalMs: 1,
-      requester,
+      requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
@@ -1092,54 +1412,70 @@ test(
       streams: [source.searchAnalyticsDaily],
     });
 
-    await watching.next();
-    const polling = watching.next();
-    await probing.promise;
-    controller.abort();
+    try {
+      assert.deepEqual((await watching.next()).value, [
+        source.searchAnalyticsDaily,
+      ]);
+      const polling = watching.next();
+      await searchConsole.until((calls) => calls.length === 2);
+      controller.abort();
 
-    await assert.rejects(polling, { name: 'AbortError' });
+      await assert.rejects(polling, { name: 'AbortError' });
+      assert.deepEqual(searchConsole.calls.map(isProbe), [true, true]);
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+    }
   },
 );
 
-test('aborting a watch while it waits for its next poll ends it at once', async () => {
-  const { requester } = recorder(() => ({ rows: [] }));
-  const source = new SearchConsoleSource({
-    now: NOW,
-    requester,
-    searchTypes: ['WEB'],
-    siteUrls: [SITE],
-  });
-  const controller = new AbortController();
-  const watching = source.watch({
-    signal: controller.signal,
-    streams: [source.searchAnalyticsDaily],
-  });
-  await watching.next();
+test(
+  'aborting a watch while it waits for its next poll ends it at once',
+  { timeout: 5000 },
+  async () => {
+    using searchConsole = google({ reply: () => ({ rows: [] }) });
+    const source = new SearchConsoleSource({
+      requester: searchConsole.requester,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    const controller = new AbortController();
+    const watching = source.watch({
+      signal: controller.signal,
+      streams: [source.searchAnalyticsDaily],
+    });
 
-  // The next poll is six hours away.
-  const waiting = watching.next();
-  controller.abort();
+    try {
+      await watching.next();
+      // The next poll is six hours away.
+      const waiting = watching.next();
+      controller.abort();
 
-  await assert.rejects(
-    Promise.race([
-      waiting,
-      sleep(1_000).then(() => assert.fail('still waiting a second later')),
-    ]),
-    { name: 'AbortError' },
-  );
-});
+      await assert.rejects(
+        Promise.race([
+          waiting,
+          sleep(1_000).then(() => assert.fail('still waiting a second later')),
+        ]),
+        { name: 'AbortError' },
+      );
+      assert.equal(searchConsole.calls.length, 1);
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
 
 test('an incremental sites copy deletes a property that is no longer listed', async () => {
   let siteEntry = [
     { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:a.example' },
     { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:b.example' },
   ];
-  const { requester } = recorder(() => ({ siteEntry }));
-  await using warehouse = await searchConsoleDatabase(testServer);
+  using searchConsole = google({ reply: () => ({ siteEntry }) });
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
-    now: NOW,
-    requester,
+    requester: searchConsole.requester,
     siteUrls: [SITE],
   });
   const copy = new Copy(source.sites, destination.table('sites'), {
@@ -1173,73 +1509,45 @@ test('an incremental sites copy deletes a property that is no longer listed', as
   );
 });
 
-// Built as gaxios builds one: from a response whose body it has already read
-// into `data`. GaxiosError drops `data` from a response with an unread body.
-function googleError(
-  status: number,
-  data: unknown = {},
-  headers: Record<string, string> = {},
-) {
-  const config = {
-    url: new URL('https://searchconsole.googleapis.com/'),
-    headers: new Headers(),
-  };
-  const response = new Response(JSON.stringify(data), { status, headers });
-  void response.text();
-  return new GaxiosError(
-    `Request failed with status code ${status}`,
-    config,
-    Object.assign(response, { config, data }),
-  );
-}
-
-const siteOf = (call: Call) =>
-  decodeURIComponent(call.url.split('/sites/')[1]?.split('/')[0] ?? '') ||
-  String(call.data?.['siteUrl']);
-
 test('one source loads every property; a newly listed one backfills while the others resume', async () => {
   const A = 'sc-domain:a.example';
   const B = 'sc-domain:b.example';
-  const { requester, calls } = recorder((call) => {
-    const site = siteOf(call);
-    if (call.url.includes('index:inspect'))
-      return { inspectionResult: { indexStatusResult: { verdict: site } } };
-    const pages = call.data?.['dimensions'];
-    // A later startRow exhausts the range, which ends the paging loop.
-    if (Array.isArray(pages) && pages.includes('page'))
+  using searchConsole = google({
+    reply: ({ path, site, body }) => {
+      if (path.endsWith('/sitemaps')) return {};
+      if (path.endsWith('index:inspect'))
+        return { inspectionResult: { indexStatusResult: { verdict: site } } };
+      if (String(body.dimensions) === 'page')
+        return {
+          rows: [
+            {
+              clicks: 1,
+              ctr: 1,
+              impressions: 1,
+              keys: [`https://${String(site).replace('sc-domain:', '')}/`],
+              position: 1,
+            },
+          ],
+        };
       return {
-        rows:
-          Number(call.data?.['startRow'] ?? 0) > 0
-            ? []
-            : [
-                {
-                  clicks: 1,
-                  ctr: 1,
-                  impressions: 1,
-                  keys: [`https://${site.replace('sc-domain:', '')}/`],
-                  position: 1,
-                },
-              ],
+        metadata: { firstIncompleteDate: day(0) },
+        rows: [
+          {
+            clicks: site === A ? 3 : 7,
+            ctr: 0.1,
+            impressions: 30,
+            keys: [day(-1)],
+            position: 2,
+          },
+        ],
       };
-    return {
-      metadata: { firstIncompleteDate: '2026-09-21' },
-      rows: [
-        {
-          clicks: site === A ? 3 : 7,
-          ctr: 0.1,
-          impressions: 30,
-          keys: ['2026-09-20'],
-          position: 2,
-        },
-      ],
-    };
+    },
   });
-  await using warehouse = await searchConsoleDatabase(testServer);
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const run = (siteUrls: string[]) => {
     const source = new SearchConsoleSource({
-      now: NOW,
-      requester,
+      requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls,
     });
@@ -1268,16 +1576,17 @@ test('one source loads every property; a newly listed one backfills while the ot
   };
 
   await run([A]);
-  const firstRun = calls.length;
+  const firstRun = searchConsole.calls.length;
   await run([A, B]);
 
-  const windows = analyticsCalls(calls.slice(firstRun))
-    .filter((call) => call.data?.['dimensions']?.toString() === 'date')
-    .map((call) => [siteOf(call), call.data?.['startDate']]);
+  const windows = searchConsole.calls
+    .slice(firstRun)
+    .filter(({ body }) => String(body.dimensions) === 'date')
+    .map(({ site, body }) => [site, body.startDate]);
   // A resumes at its settled day; B has no state yet, so it backfills.
   assert.deepEqual(windows, [
-    [A, '2026-09-20'],
-    [B, '2025-05-21'],
+    [A, day(-1)],
+    [B, monthsBack(16)],
   ]);
   assert.deepEqual(
     (
@@ -1303,32 +1612,26 @@ test('a property without permission is reported by name while the others load an
   const A = 'sc-domain:a.example';
   const B = 'sc-domain:b.example';
   let denied = true;
-  const { requester } = recorder((call) => {
-    if (denied && siteOf(call) === B)
-      throw googleError(403, {
-        error: {
-          message: `User does not have sufficient permission for site '${B}'.`,
-          errors: [{ reason: 'forbidden' }],
-        },
-      });
-    return {
-      rows: [
-        {
-          clicks: 1,
-          ctr: 1,
-          impressions: 1,
-          keys: ['2026-09-20'],
-          position: 1,
-        },
-      ],
-    };
+  using searchConsole = google({
+    reply: ({ site }) =>
+      denied && site === B
+        ? forbidden(B)
+        : {
+            rows: [
+              {
+                clicks: 1,
+                ctr: 1,
+                impressions: 1,
+                keys: [day(-1)],
+                position: 1,
+              },
+            ],
+          },
   });
-  await using warehouse = await searchConsoleDatabase(testServer);
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
-    now: NOW,
-    requester,
-    retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    requester: searchConsole.requester,
     searchTypes: ['WEB'],
     siteUrls: [A, B],
   });
@@ -1353,18 +1656,11 @@ test('a property without permission is reported by name while the others load an
     (await sql`SELECT DISTINCT "siteUrl" FROM daily ORDER BY "siteUrl"`).map(
       (row) => row.siteUrl,
     );
-  const saved = async () =>
-    (
-      await sql<
-        {
-          state: {
-            state: { partitions: { partition: { siteUrl: string } }[] };
-          };
-        }[]
-      >`SELECT state FROM _elt_checkpoints`
-    ).flatMap(({ state }) =>
-      state.state.partitions.map(({ partition }) => partition.siteUrl),
-    );
+  // Where each property's read of the run after `from` calls starts.
+  const starts = (from: number) =>
+    searchConsole.calls
+      .slice(from)
+      .map(({ site, body }) => [site, body.startDate]);
 
   const error = await pipeline.run().then(
     () => assert.fail('run should report the property without permission'),
@@ -1375,47 +1671,49 @@ test('a property without permission is reported by name while the others load an
   assert.ok(error instanceof PipelineError, String(error));
   assert.match(
     error.message,
-    /daily \{"siteUrl":"sc-domain:b\.example"\}: .*status code 403/,
+    /daily \{"siteUrl":"sc-domain:b\.example"\}: User does not have sufficient permission for site 'sc-domain:b\.example'\./,
   );
   assert.deepEqual(await loaded(), [A]);
-  assert.deepEqual(await saved(), [A]);
 
   denied = false;
+  const second = searchConsole.calls.length;
   await pipeline.run();
   assert.deepEqual(await loaded(), [A, B]);
-  assert.deepEqual(await saved(), [A, B]);
+  // A resumes where its load left off; B kept no checkpoint, so it reads its
+  // whole history.
+  assert.deepEqual(starts(second), [
+    [A, day(0)],
+    [B, monthsBack(16)],
+  ]);
+  const third = searchConsole.calls.length;
+  await pipeline.run();
+  assert.deepEqual(starts(third), [
+    [A, day(0)],
+    [B, day(0)],
+  ]);
 });
 
 test('a property Google refuses to the user is a config failure, and a quota refusal or a server error is a system failure', async () => {
-  const refusals: Record<string, Error> = {
-    'sc-domain:forbidden.example': googleError(403, {
-      error: {
-        message:
-          "User does not have sufficient permission for site 'sc-domain:forbidden.example'.",
-        errors: [{ reason: 'forbidden' }],
-      },
-    }),
-    'sc-domain:unauthenticated.example': googleError(401, {
-      error: {
-        message: 'Request had invalid authentication credentials.',
-        errors: [{ reason: 'authError' }],
-        status: 'UNAUTHENTICATED',
-      },
-    }),
-    'sc-domain:limited.example': httpError(403, {
-      reason: 'rateLimitExceeded',
-    }),
-    'sc-domain:broken.example': httpError(500),
+  const refusals: Record<string, () => Response> = {
+    'sc-domain:forbidden.example': () =>
+      forbidden('sc-domain:forbidden.example'),
+    'sc-domain:unauthenticated.example': () =>
+      refusal(
+        401,
+        'authError',
+        'Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.',
+      ),
+    'sc-domain:limited.example': () =>
+      refusal(403, 'rateLimitExceeded', 'Rate Limit Exceeded', RETRY_NOW),
+    'sc-domain:broken.example': serverError,
   };
-  const { requester } = recorder((call) => {
-    throw refusals[siteOf(call)];
+  using searchConsole = google({
+    reply: ({ site }) => refusals[String(site)]?.(),
   });
-  await using warehouse = await searchConsoleDatabase(testServer);
+  await using warehouse = await searchConsoleDatabase();
   const { destination, checkpoints } = warehouse;
   const source = new SearchConsoleSource({
-    now: NOW,
-    requester,
-    retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    requester: searchConsole.requester,
     searchTypes: ['WEB'],
     siteUrls: Object.keys(refusals),
   });
@@ -1455,50 +1753,65 @@ test('a property Google refuses to the user is a config failure, and a quota ref
       ['sc-domain:broken.example', 'system'],
     ],
   );
+  // Only the user can fix a refusal, so it is tried once; the rate limit and
+  // the server error are tried five times.
+  assert.deepEqual(
+    Object.keys(refusals).map((site) => [
+      site,
+      searchConsole.calls.filter((call) => call.site === site).length,
+    ]),
+    [
+      ['sc-domain:forbidden.example', 1],
+      ['sc-domain:unauthenticated.example', 1],
+      ['sc-domain:limited.example', 5],
+      ['sc-domain:broken.example', 5],
+    ],
+  );
 });
 
-test(
-  'under a watch, a copy that failed on a denied property and on a server error loads again about ten seconds later with no change in traffic',
-  { timeout: 30_000 },
-  async () => {
-    const A = 'sc-domain:a.example';
-    const B = 'sc-domain:b.example';
-    let refusing = true;
-    const { requester } = recorder((call) => {
-      if (refusing && siteOf(call) === A)
-        throw googleError(403, {
-          error: {
-            message: `User does not have sufficient permission for site '${A}'.`,
-            errors: [{ reason: 'forbidden' }],
-          },
-        });
-      if (refusing) throw httpError(500);
-      return {
-        metadata: { firstIncompleteDate: '2026-09-21' },
-        rows: [
-          {
-            clicks: 1,
-            ctr: 0.1,
-            impressions: 10,
-            keys: ['2026-09-20'],
-            position: 2,
-          },
-        ],
-      };
-    });
-    await using warehouse = await searchConsoleDatabase(testServer);
+test('a grant Google no longer refreshes is a config failure, asked once', async () => {
+  let refreshes = 0;
+  const calls: string[] = [];
+  const server = setupServer(
+    http.post('https://oauth2.googleapis.com/token', () => {
+      refreshes += 1;
+      return Response.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Token has been expired or revoked.',
+        },
+        { status: 400 },
+      );
+    }),
+    http.all('https://searchconsole.googleapis.com/*', ({ request }) => {
+      calls.push(request.url);
+      return Response.json({});
+    }),
+  );
+  server.listen({ onUnhandledRequest: 'error' });
+  try {
+    await using warehouse = await searchConsoleDatabase();
     const { destination, checkpoints } = warehouse;
     const source = new SearchConsoleSource({
-      now: NOW,
-      // No poll within the test: nothing but a retry loads the copy again.
-      pollIntervalMs: 60_000,
-      requester,
-      retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+      // The access token expired, so the first call refreshes it.
+      requester: new GoogleOAuthApp({
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+      }).client(
+        new GoogleGrant({
+          kind: 'GOOGLE_BIGQUERY_OAUTH',
+          clientId: 'client-id',
+          accessToken: 'access-token',
+          refreshToken: 'refresh-token',
+          expiresAt: 1,
+          scope: 'https://www.googleapis.com/auth/webmasters.readonly',
+        }),
+      ),
       searchTypes: ['WEB'],
-      siteUrls: [A, B],
+      siteUrls: [SITE],
     });
-    const controller = new AbortController();
-    const watching = new Pipeline({
+
+    const error = await new Pipeline({
       connections: [
         new Connection({
           name: 'test',
@@ -1514,312 +1827,246 @@ test(
           ],
         }),
       ],
+    })
+      .run()
+      .then(
+        () => assert.fail('the grant was refused'),
+        (error: unknown) => error,
+      );
+
+    // Only the user can fix it by connecting again.
+    assert.ok(error instanceof PipelineError, String(error));
+    assert.deepEqual(
+      error.results[0]?.failures.map(({ failureType }) => failureType),
+      ['config'],
+    );
+    assert.equal(refreshes, 1);
+    assert.deepEqual(calls, []);
+  } finally {
+    server.close();
+  }
+});
+
+test(
+  'watching reloads the properties when only one of them changed',
+  { timeout: 10_000 },
+  async () => {
+    const A = 'sc-domain:a.example';
+    const B = 'sc-domain:b.example';
+    const clicks: Record<string, number> = { [A]: 3, [B]: 7 };
+    using searchConsole = google({
+      reply: ({ site }) => ({
+        metadata: { firstIncompleteDate: day(0) },
+        rows: [
+          {
+            clicks: clicks[String(site)],
+            ctr: 0.1,
+            impressions: 30,
+            keys: [day(-1)],
+            position: 2,
+          },
+        ],
+      }),
+    });
+    await using warehouse = await searchConsoleDatabase();
+    const { destination, sql } = warehouse;
+    const source = new SearchConsoleSource({
+      pollIntervalMs: 1,
+      requester: searchConsole.requester,
+      searchTypes: ['WEB'],
+      siteUrls: [A, B],
+    });
+    const copy = new Copy(
+      source.searchAnalyticsDaily,
+      destination.table('rows'),
+    );
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      connections: [
+        new Connection({ name: 'test', source, destination, steps: [copy] }),
+      ],
     }).watch({ signal: controller.signal });
-    // Ends a watch that never loads the copy again, so the test fails, not hangs.
-    const deadline = setTimeout(() => controller.abort(), 20_000);
+    const histories = [
+      query(A, 'date', monthsBack(16)),
+      query(B, 'date', monthsBack(16)),
+    ];
 
     try {
-      const failed = await watching.next();
-      const failedAt = Date.now();
-      refusing = false;
-      const retried = await watching.next();
-      const waited = Date.now() - failedAt;
-
-      if (failed.done || retried.done)
-        assert.fail('the copy was not loaded again');
+      assert.deepEqual((await watching.next()).value?.outcomes, [
+        { copy, count: 2, deleted: 0, failures: [], cancelled: false },
+      ]);
+      assert.deepEqual(reads(searchConsole).toSorted(), histories);
+      // Asked for its next pass, the watch probes both unchanged properties
+      // and reads nothing.
+      const next = watching.next();
+      const { probed, read } = await quietly(searchConsole);
       assert.deepEqual(
-        failed.value.outcomes[0]?.failures.map(({ partition, failureType }) => [
-          partition?.siteUrl,
-          failureType,
-        ]),
+        [...new Set(probed.map(({ site }) => site))].toSorted(),
+        [A, B],
+        'every property is probed',
+      );
+      assert.deepEqual(read, []);
+      clicks[B] = 9;
+      assert.deepEqual((await next).value?.outcomes, [
+        { copy, count: 2, deleted: 0, failures: [], cancelled: false },
+      ]);
+      assert.deepEqual(
+        reads(searchConsole).toSorted(),
+        [...histories, ...histories].toSorted(),
+      );
+      assert.deepEqual(
+        (
+          await sql`SELECT "siteUrl", clicks::int FROM rows ORDER BY "siteUrl"`
+        ).map((row) => [row.siteUrl, row.clicks]),
         [
-          [A, 'config'],
-          [B, 'system'],
+          [A, 3],
+          [B, 9],
         ],
       );
-      assert.deepEqual(
-        retried.value.outcomes.map(({ count, failures }) => [
-          count,
-          failures.length,
-        ]),
-        [[2, 0]],
-      );
-      assert.ok(
-        waited >= 9_000 && waited < 20_000,
-        `loaded again after ${waited} ms`,
-      );
     } finally {
-      clearTimeout(deadline);
       controller.abort();
       await watching.return(undefined);
     }
   },
 );
 
-test('watching invalidates when only one of several properties changed', async () => {
-  const A = 'sc-domain:a.example';
-  const B = 'sc-domain:b.example';
-  const clicks: Record<string, number> = { [A]: 3, [B]: 7 };
-  const { requester, calls } = recorder((call) => ({
-    metadata: { firstIncompleteDate: '2026-09-21' },
-    rows: [
+test(
+  'a property without permission is reported in each batch while watching goes on for the others',
+  { timeout: 10_000 },
+  async () => {
+    const A = 'sc-domain:a.example';
+    const B = 'sc-domain:b.example';
+    const clicks: Record<string, number> = { [A]: 3, [B]: 7 };
+    let denied = true;
+    using searchConsole = google({
+      reply: ({ site }) =>
+        denied && site === B
+          ? forbidden(B)
+          : {
+              metadata: { firstIncompleteDate: day(0) },
+              rows: [
+                {
+                  clicks: clicks[String(site)],
+                  ctr: 0.1,
+                  impressions: 30,
+                  keys: [day(-1)],
+                  position: 2,
+                },
+              ],
+            },
+    });
+    await using warehouse = await searchConsoleDatabase();
+    const { destination, checkpoints, sql } = warehouse;
+    const source = new SearchConsoleSource({
+      pollIntervalMs: 1,
+      requester: searchConsole.requester,
+      searchTypes: ['WEB'],
+      siteUrls: [A, B],
+    });
+    const copy = new Copy(
+      source.searchAnalyticsDaily,
+      destination.table('rows'),
       {
-        clicks: clicks[siteOf(call)],
-        ctr: 0.1,
-        impressions: 30,
-        keys: ['2026-09-20'],
-        position: 2,
+        id: 'rows',
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
       },
-    ],
-  }));
-  await using warehouse = await searchConsoleDatabase(testServer);
-  const { destination, sql } = warehouse;
-  const source = new SearchConsoleSource({
-    now: NOW,
-    pollIntervalMs: 1,
-    requester,
-    searchTypes: ['WEB'],
-    siteUrls: [A, B],
-  });
-  const copy = new Copy(source.searchAnalyticsDaily, destination.table('rows'));
-  const controller = new AbortController();
-  const watching = new Pipeline({
-    connections: [
-      new Connection({ name: 'test', source, destination, steps: [copy] }),
-    ],
-  }).watch({
-    signal: controller.signal,
-  });
-
-  try {
-    assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 2, deleted: 0, failures: [], cancelled: false },
-    ]);
-    const probed = calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.deepEqual(
-      [...new Set(calls.slice(probed).map(siteOf))].sort(),
-      [A, B],
-      'every property is probed',
     );
-    clicks[B] = 9;
-    assert.deepEqual((await watching.next()).value?.outcomes, [
-      { copy, count: 2, deleted: 0, failures: [], cancelled: false },
-    ]);
-    assert.deepEqual(
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [copy],
+        }),
+      ],
+    }).watch({ signal: controller.signal });
+    const batch = async () => {
+      const before = reads(searchConsole).length;
+      const next = await watching.next();
+      if (next.done) assert.fail('watching ended');
+      const [outcome] = next.value.outcomes;
+      return {
+        count: outcome?.count,
+        failed: outcome?.failures.map(({ partition, error, failureType }) => [
+          partition?.siteUrl,
+          failureType,
+          error instanceof Error ? error.message : error,
+        ]),
+        reads: reads(searchConsole).slice(before).toSorted(),
+      };
+    };
+    const refused = [
+      B,
+      'config',
+      `User does not have sufficient permission for site '${B}'. See also: https://support.google.com/webmasters/answer/2451999.`,
+    ];
+    const loaded = async () =>
       (
         await sql`SELECT "siteUrl", clicks::int FROM rows ORDER BY "siteUrl"`
-      ).map((row) => [row.siteUrl, row.clicks]),
-      [
-        [A, 3],
-        [B, 9],
-      ],
-    );
-  } finally {
-    controller.abort();
-  }
-});
+      ).map((row) => [row.siteUrl, row.clicks]);
 
-test('a property without permission is reported in each batch while watching goes on for the others', async () => {
-  const A = 'sc-domain:a.example';
-  const B = 'sc-domain:b.example';
-  const clicks: Record<string, number> = { [A]: 3, [B]: 7 };
-  let denied = true;
-  const { requester } = recorder((call) => {
-    if (denied && siteOf(call) === B)
-      throw googleError(403, {
-        error: {
-          message: `User does not have sufficient permission for site '${B}'.`,
-          errors: [{ reason: 'forbidden' }],
-        },
+    try {
+      assert.deepEqual(await batch(), {
+        count: 1,
+        failed: [refused],
+        reads: [
+          query(A, 'date', monthsBack(16)),
+          query(B, 'date', monthsBack(16)),
+        ],
       });
-    return {
-      metadata: { firstIncompleteDate: '2026-09-21' },
-      rows: [
-        {
-          clicks: clicks[siteOf(call)],
-          ctr: 0.1,
-          impressions: 30,
-          keys: ['2026-09-20'],
-          position: 2,
-        },
-      ],
-    };
-  });
-  await using warehouse = await searchConsoleDatabase(testServer);
-  const { destination, checkpoints, sql } = warehouse;
-  const source = new SearchConsoleSource({
-    now: NOW,
-    pollIntervalMs: 1,
-    requester,
-    retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
-    searchTypes: ['WEB'],
-    siteUrls: [A, B],
-  });
-  const copy = new Copy(
-    source.searchAnalyticsDaily,
-    destination.table('rows'),
-    {
-      id: 'rows',
-      syncMode: 'incremental',
-      destinationSyncMode: 'append_dedup',
-    },
-  );
-  const controller = new AbortController();
-  const watching = new Pipeline({
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints,
-        steps: [copy],
-      }),
-    ],
-  }).watch({ signal: controller.signal });
-  const batch = async () => {
-    const next = await watching.next();
-    if (next.done) assert.fail('watching ended');
-    const [outcome] = next.value.outcomes;
-    return {
-      count: outcome?.count,
-      failed: outcome?.failures.map(({ partition, error }) => [
-        partition?.siteUrl,
-        String(error).includes('status code 403'),
-      ]),
-    };
-  };
-  const loaded = async () =>
-    (await sql`SELECT "siteUrl", clicks::int FROM rows ORDER BY "siteUrl"`).map(
-      (row) => [row.siteUrl, row.clicks],
-    );
-
-  try {
-    assert.deepEqual(await batch(), { count: 1, failed: [[B, true]] });
-    clicks[A] = 5;
-    assert.deepEqual(await batch(), { count: 1, failed: [[B, true]] });
-    assert.deepEqual(await loaded(), [[A, 5]]);
-    denied = false;
-    // A's row has not changed since, so only B's is written.
-    assert.deepEqual(await batch(), { count: 1, failed: [] });
-    assert.deepEqual(await loaded(), [
-      [A, 5],
-      [B, 7],
-    ]);
-  } finally {
-    controller.abort();
-  }
-});
-
-// A property whose sitemaps, search pages and inspection replies a test sets.
-function inspectionProperty({
-  sitemaps = {},
-  pages = [],
-  inspect = (url: string) => ({ verdict: 'PASS', referringUrls: [url] }),
-}: {
-  sitemaps?: Record<string, string | Uint8Array | number>;
-  pages?: string[];
-  inspect?: (url: string) => Record<string, unknown> | Error;
-}) {
-  const inspected: string[] = [];
-  const requester = {
-    async request(options: { url: string; data?: Record<string, unknown> }) {
-      if (options.url.endsWith('/sitemaps'))
-        return {
-          data: {
-            sitemap: Object.keys(sitemaps)
-              .filter((path) => !path.startsWith('!'))
-              .map(sitemapEntry),
-          },
-        };
-      if (options.url.includes('searchAnalytics/query'))
-        return {
-          data: {
-            rows:
-              Number(options.data?.['startRow'] ?? 0) > 0
-                ? []
-                : pages.map((page) => ({
-                    clicks: 0,
-                    ctr: 0,
-                    impressions: 1,
-                    keys: [page],
-                    position: 1,
-                  })),
-          },
-        };
-      const url = String(options.data?.['inspectionUrl']);
-      inspected.push(url);
-      const reply = inspect(url);
-      if (reply instanceof Error) throw reply;
-      return { data: { inspectionResult: { indexStatusResult: reply } } };
-    },
-  };
-  const fetch = async (url: string) => {
-    const body = sitemaps[url] ?? sitemaps[`!${url}`];
-    if (body === undefined) return new Response('missing', { status: 404 });
-    if (typeof body === 'number') return new Response('', { status: body });
-    return new Response(typeof body === 'string' ? body : new Uint8Array(body));
-  };
-  return { requester, fetch, inspected };
-}
-
-type Warehouse = Awaited<ReturnType<typeof searchConsoleDatabase>>;
-
-async function inspectionRun(
-  source: SearchConsoleSource,
-  { destination, checkpoints }: Warehouse,
-  streams: readonly (
-    'urlInspection' | 'urlInspectionSitemaps' | 'urlInspectionReferrers'
-  )[] = ['urlInspection'],
-) {
-  return new Pipeline({
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints,
-        steps: streams.map(
-          (name) =>
-            new Copy(source[name], destination.table(name), {
-              id: name,
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-            }),
-        ),
-      }),
-    ],
-  }).run();
-}
-
-async function inspectionRows({ sql }: Warehouse, table = 'urlInspection') {
-  return (await sql`SELECT * FROM ${sql(table)} ORDER BY "inspectionUrl"`).map(
-    (row) => ({ ...row }),
-  );
-}
+      clicks[A] = 5;
+      // A resumes at its settled day; B, never loaded, asks for its whole
+      // history again.
+      assert.deepEqual(await batch(), {
+        count: 1,
+        failed: [refused],
+        reads: [query(A, 'date', day(-1)), query(B, 'date', monthsBack(16))],
+      });
+      assert.deepEqual(await loaded(), [[A, 5]]);
+      denied = false;
+      // A's row has not changed since, so only B's is written.
+      assert.deepEqual(await batch(), {
+        count: 1,
+        failed: [],
+        reads: [query(A, 'date', day(-1)), query(B, 'date', monthsBack(16))],
+      });
+      assert.deepEqual(await loaded(), [
+        [A, 5],
+        [B, 7],
+      ]);
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
 
 test('sitemaps in every format feed the inspection universe', async () => {
-  const property = inspectionProperty({
-    sitemaps: {
+  using searchConsole = google({
+    reply: property({ sitemaps: ['https://example.com/index.xml'] }),
+    files: {
       'https://example.com/index.xml':
         '<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>https://example.com/pages.xml.gz</loc></sitemap><sitemap><loc>https://example.com/list.txt</loc></sitemap><sitemap><loc>https://example.com/feed.rss</loc></sitemap><sitemap><loc>https://example.com/atom.xml</loc></sitemap></sitemapindex>',
-      '!https://example.com/pages.xml.gz': gzipSync(
+      'https://example.com/pages.xml.gz': gzipSync(
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/q?x=1&amp;y=2</loc></url><url><loc>https://example.com/q?x=1&#38;y=2</loc></url><url><loc>https://example.com/q?x=1&#x26;y=2#top</loc></url><url><loc><![CDATA[https://example.com/c?a=1&b=2]]></loc></url></urlset>',
       ),
-      '!https://example.com/list.txt':
+      'https://example.com/list.txt':
         'https://example.com/t\nhttps://blog.example.com/t\nhttps://elsewhere.org/t\n',
-      '!https://example.com/feed.rss':
+      'https://example.com/feed.rss':
         '<rss version="2.0"><channel><item><link>https://example.com/r</link></item></channel></rss>',
-      '!https://example.com/atom.xml':
+      'https://example.com/atom.xml':
         '<feed xmlns="http://www.w3.org/2005/Atom"><link rel="self" href="https://example.com/atom.xml"/><entry><link href="https://example.com/a"/></entry></feed>',
     },
   });
-  await using warehouse = await searchConsoleDatabase(testServer);
+  await using warehouse = await searchConsoleDatabase();
 
   await inspectionRun(
     new SearchConsoleSource({
-      ...property,
-      now: NOW,
+      requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     }),
@@ -1827,7 +2074,7 @@ test('sitemaps in every format feed the inspection universe', async () => {
   );
 
   // Entity forms and anchors collapse to one URL; other hosts are dropped.
-  assert.deepEqual(property.inspected.sort(), [
+  assert.deepEqual(inspected(searchConsole).toSorted(), [
     'https://blog.example.com/t',
     'https://example.com/a',
     'https://example.com/c?a=1&b=2',
@@ -1838,16 +2085,19 @@ test('sitemaps in every format feed the inspection universe', async () => {
 });
 
 test('an unreadable sitemap is recorded as data and inspection covers everything else', async () => {
+  // s.xml indexes i1.xml, which indexes i2.xml, and so on.
   const nested = (depth: number): Record<string, string> =>
     Object.fromEntries(
       Array.from({ length: depth }, (_, level) => [
-        `${level === 0 ? '' : '!'}https://example.com/i${level}.xml`,
+        level === 0
+          ? 'https://example.com/s.xml'
+          : `https://example.com/i${level}.xml`,
         `<sitemapindex><sitemap><loc>https://example.com/i${level + 1}.xml</loc></sitemap></sitemapindex>`,
       ]),
     );
   const cases: [
     string,
-    Record<string, string | Uint8Array | number>,
+    Record<string, string | Uint8Array<ArrayBuffer> | number>,
     RegExp,
   ][] = [
     ['missing', { 'https://example.com/s.xml': 404 }, /HTTP 404/],
@@ -1869,18 +2119,20 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
     ['nested too deep', nested(5), /nest deeper than 3 levels/],
   ];
   for (const [label, broken, reason] of cases) {
-    const property = inspectionProperty({
-      pages: ['https://example.com/p'],
-      sitemaps: {
+    using searchConsole = google({
+      reply: property({
+        pages: ['https://example.com/p'],
+        sitemaps: ['https://example.com/s.xml', 'https://example.com/good.xml'],
+      }),
+      files: {
         ...broken,
         'https://example.com/good.xml': 'https://example.com/g\n',
       },
     });
-    await using warehouse = await searchConsoleDatabase(testServer);
+    await using warehouse = await searchConsoleDatabase();
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
-      ...property,
-      now: NOW,
+      requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
@@ -1899,7 +2151,7 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
 
     // The good sitemap's page and the search page are still inspected.
     assert.deepEqual(
-      property.inspected.sort(),
+      inspected(searchConsole).toSorted(),
       ['https://example.com/g', 'https://example.com/p'],
       label,
     );
@@ -1925,151 +2177,245 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
   }
 });
 
-test('rolling refresh inspects new URLs first, then the stalest, and skips fresh ones', async () => {
-  const pages = ['https://example.com/a', 'https://example.com/b'];
-  const property = inspectionProperty({ pages });
-  let clock = NOW().getTime();
-  const source = () =>
-    new SearchConsoleSource({
-      ...property,
-      inspectionConcurrency: 1,
-      now: () => new Date(clock),
-      searchTypes: ['WEB'],
-      siteUrls: [SITE],
+test('a pass that cannot read a sitemap deletes no URL it may list, and the next complete pass deletes the ones gone', async () => {
+  const SITEMAP = 'https://example.com/sitemap.xml';
+  await using warehouse = await searchConsoleDatabase();
+  // The host builds a source for every run.
+  const pass = async (sitemap: string | number, pages: string[]) => {
+    using searchConsole = google({
+      reply: property({ sitemaps: [SITEMAP], pages }),
+      files: { [SITEMAP]: sitemap },
     });
-  const hour = 60 * 60 * 1000;
-  await using warehouse = await searchConsoleDatabase(testServer);
-  const calls = async () => {
-    const before = property.inspected.length;
-    await inspectionRun(source(), warehouse);
-    return property.inspected.slice(before);
+    const [outcome] = await inspectionRun(
+      new SearchConsoleSource({
+        requester: searchConsole.requester,
+        searchTypes: ['WEB'],
+        siteUrls: [SITE],
+      }),
+      warehouse,
+    );
+    return {
+      inspected: inspected(searchConsole),
+      deleted: outcome?.deleted,
+      loaded: (await inspectionRows(warehouse)).map((row) => row.inspectionUrl),
+    };
   };
 
-  assert.deepEqual(await calls(), pages);
-  clock += 12 * hour;
-  pages.push('https://example.com/c');
-  assert.deepEqual(await calls(), ['https://example.com/c']);
-  clock += 18 * hour;
-  pages.push('https://example.com/d');
-  // a and b are 30 h old, c only 18 h: the new d goes first, c waits.
-  assert.deepEqual(await calls(), [
-    'https://example.com/d',
-    'https://example.com/a',
-    'https://example.com/b',
-  ]);
+  assert.deepEqual(await pass('https://example.com/x\n', []), {
+    inspected: ['https://example.com/x'],
+    deleted: 0,
+    loaded: ['https://example.com/x'],
+  });
+  // The sitemap answers 503 once: x may still be listed, so it stays, while
+  // a page the search analytics show is inspected as usual.
+  assert.deepEqual(await pass(503, ['https://example.com/y']), {
+    inspected: ['https://example.com/y'],
+    deleted: 0,
+    loaded: ['https://example.com/x', 'https://example.com/y'],
+  });
+  // Read again, the sitemap no longer lists x.
+  assert.deepEqual(await pass('', ['https://example.com/y']), {
+    inspected: [],
+    deleted: 1,
+    loaded: ['https://example.com/y'],
+  });
 });
 
-test('the daily quota stops inspection cleanly and resumes after Pacific midnight', async () => {
-  for (const [start, reset] of [
-    ['2026-09-22T00:00:00.000Z', '2026-09-22T07:00:00.000Z'],
-    ['2026-12-01T12:00:00.000Z', '2026-12-02T08:00:00.000Z'],
-  ] as const) {
-    let allowed = 2;
-    const property = inspectionProperty({
-      pages: ['a', 'b', 'c', 'd'].map((page) => `https://example.com/${page}`),
-      inspect: () =>
-        allowed-- > 0
-          ? { verdict: 'PASS' }
-          : httpError(429, { reason: 'rateLimitExceeded' }),
-    });
-    let clock = Date.parse(start);
-    const source = new SearchConsoleSource({
-      ...property,
-      inspectionConcurrency: 1,
-      now: () => new Date(clock),
-      retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
-      searchTypes: ['WEB'],
-      siteUrls: [SITE],
-    });
-    await using warehouse = await searchConsoleDatabase(testServer);
+test(
+  'rolling refresh inspects new URLs first, then the stalest, and skips fresh ones',
+  { timeout: 10_000 },
+  async () => {
+    const pages = ['https://example.com/a', 'https://example.com/b'];
+    using searchConsole = google({ reply: property({ pages }) });
+    await using warehouse = await searchConsoleDatabase();
+    const refreshMs = 2000;
+    // The host builds a source for every run.
+    const run = async () => {
+      const before = inspected(searchConsole).length;
+      await inspectionRun(
+        new SearchConsoleSource({
+          requester: searchConsole.requester,
+          inspectionConcurrency: 1,
+          inspectionRefreshHours: refreshMs / 3_600_000,
+          searchTypes: ['WEB'],
+          siteUrls: [SITE],
+        }),
+        warehouse,
+      );
+      return inspected(searchConsole).slice(before);
+    };
 
-    await inspectionRun(source, warehouse);
-    // Live, the exhausted daily quota answers 429 rateLimitExceeded with no
-    // Retry-After ("Quota exceeded for sc-domain:limerence.sh.").
-    assert.deepEqual(property.inspected, [
+    assert.deepEqual(await run(), pages);
+    const firstInspected = Date.now();
+    await sleep(refreshMs / 2);
+    pages.push('https://example.com/c');
+    assert.deepEqual(await run(), ['https://example.com/c']);
+    await sleep(firstInspected + refreshMs - Date.now());
+    pages.push('https://example.com/d');
+    // a and b are due again, c is still fresh: the new d goes first, c waits.
+    assert.deepEqual(await run(), [
+      'https://example.com/d',
       'https://example.com/a',
       'https://example.com/b',
-      'https://example.com/c',
     ]);
-    assert.deepEqual(
-      (await inspectionRows(warehouse)).map((row) => row.inspectionUrl),
-      ['https://example.com/a', 'https://example.com/b'],
-    );
-    clock = Date.parse(reset) - 1;
-    await inspectionRun(source, warehouse);
-    assert.equal(property.inspected.length, 3, 'no call before the reset');
-    clock = Date.parse(reset);
-    allowed = 10;
-    await inspectionRun(source, warehouse);
-    assert.deepEqual(property.inspected.slice(3), [
-      'https://example.com/c',
-      'https://example.com/d',
-    ]);
-  }
-});
+  },
+);
 
-test('one inspection serves all three streams, and a URL that leaves is deleted from each', async () => {
-  const pages = ['https://example.com/a', 'https://example.com/b'];
-  let referrers = 2;
-  const property = inspectionProperty({
-    pages,
-    inspect: (url) => ({
-      verdict: 'PASS',
-      sitemap: ['https://example.com/sitemap.xml'],
-      referringUrls: Array.from(
-        { length: referrers },
-        (_, n) => `${url}/r${n}`,
-      ),
+test('the daily quota stops inspection cleanly, and no inspection stream makes a call before the quota resets', async () => {
+  let allowed = 2;
+  using searchConsole = google({
+    reply: property({
+      pages: ['a', 'b', 'c', 'd'].map((page) => `https://example.com/${page}`),
+      inspect: () => (allowed-- > 0 ? { verdict: 'PASS' } : quotaExceeded()),
     }),
   });
-  let clock = NOW().getTime();
+  await using warehouse = await searchConsoleDatabase();
   const source = new SearchConsoleSource({
-    ...property,
-    now: () => new Date(clock),
+    requester: searchConsole.requester,
+    inspectionConcurrency: 1,
     searchTypes: ['WEB'],
     siteUrls: [SITE],
   });
-  const all = [
-    'urlInspection',
-    'urlInspectionSitemaps',
-    'urlInspectionReferrers',
-  ] as const;
-  await using warehouse = await searchConsoleDatabase(testServer);
 
-  await inspectionRun(source, warehouse, ['urlInspection']);
-  // The other two streams load later: they reuse the inspections already made.
-  await inspectionRun(source, warehouse, all);
-  assert.equal(property.inspected.length, 2);
-
-  pages.pop();
-  referrers = 1;
-  clock += 25 * 60 * 60 * 1000;
-  await inspectionRun(source, warehouse, all);
-
-  assert.equal(property.inspected.length, 3);
-  for (const table of all)
-    assert.deepEqual(
-      [
-        ...new Set(
-          (await inspectionRows(warehouse, table)).map(
-            (row) => row.inspectionUrl,
-          ),
-        ),
-      ],
-      ['https://example.com/a'],
-      table,
-    );
+  await inspectionRun(source, warehouse, ALL_INSPECTIONS);
+  // The refused URL is tried five times, then the run stops inspecting and
+  // succeeds with what it loaded; the streams read with it ask no more.
+  assert.deepEqual(inspected(searchConsole), [
+    'https://example.com/a',
+    'https://example.com/b',
+    ...Array(5).fill('https://example.com/c'),
+  ]);
   assert.deepEqual(
-    (await inspectionRows(warehouse, 'urlInspectionReferrers')).map(
-      (row) => row.referringUrl,
-    ),
-    ['https://example.com/a/r0'],
+    (await inspectionRows(warehouse)).map((row) => row.inspectionUrl),
+    ['https://example.com/a', 'https://example.com/b'],
   );
+  await inspectionRun(source, warehouse, ALL_INSPECTIONS);
+  assert.equal(inspected(searchConsole).length, 7, 'no call before the reset');
 });
+
+test('with inspections in flight the daily quota keeps what loaded, and a source built for the next run makes no inspection call before the quota resets', async (t) => {
+  const pages = ['a', 'b', 'c', 'd', 'e', 'f'].map(
+    (page) => `https://example.com/${page}`,
+  );
+  let allowed = 2;
+  using searchConsole = google({
+    reply: property({
+      pages,
+      inspect: () => (allowed-- > 0 ? { verdict: 'PASS' } : quotaExceeded()),
+    }),
+  });
+  await using warehouse = await searchConsoleDatabase();
+  // The host builds a client and a source for every run.
+  const run = async () => {
+    const before = inspected(searchConsole).length;
+    await inspectionRun(
+      new SearchConsoleSource({
+        requester: signedIn(),
+        inspectionConcurrency: 3,
+        searchTypes: ['WEB'],
+        siteUrls: [SITE],
+      }),
+      warehouse,
+    );
+    return inspected(searchConsole).slice(before);
+  };
+  const loaded = async () =>
+    (await inspectionRows(warehouse)).map((row) => row.inspectionUrl);
+
+  const first = await run();
+  const kept = await loaded();
+  // The two inspections Google allowed load. Once the quota ran out no
+  // worker took another URL, so the last one never went out.
+  assert.equal(kept.length, 2, String(first));
+  assert.ok(!first.includes('https://example.com/f'), String(first));
+  const rest = pages.filter((page) => !kept.includes(page));
+
+  // The checkpoint keeps when the quota resets, so a new source asks nothing
+  // before it.
+  assert.deepEqual(await run(), []);
+  assert.deepEqual(await loaded(), kept);
+
+  allowed = Number.POSITIVE_INFINITY;
+  // Pacific midnight cannot come during a test, so the clock moves to it.
+  t.mock.timers.enable({
+    apis: ['Date'],
+    now: Temporal.Now.plainDateISO('America/Los_Angeles')
+      .add({ days: 1 })
+      .toZonedDateTime('America/Los_Angeles').epochMilliseconds,
+  });
+  try {
+    assert.deepEqual((await run()).toSorted(), rest);
+    assert.deepEqual(await loaded(), pages);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test(
+  'one inspection serves all three streams, and a URL that leaves is deleted from each',
+  { timeout: 10_000 },
+  async () => {
+    const pages = ['https://example.com/a', 'https://example.com/b'];
+    let referrers = 2;
+    using searchConsole = google({
+      reply: property({
+        pages,
+        inspect: (url) => ({
+          verdict: 'PASS',
+          sitemap: ['https://example.com/sitemap.xml'],
+          referringUrls: Array.from(
+            { length: referrers },
+            (_, n) => `${url}/r${n}`,
+          ),
+        }),
+      }),
+    });
+    const refreshMs = 2000;
+    const source = new SearchConsoleSource({
+      requester: searchConsole.requester,
+      inspectionRefreshHours: refreshMs / 3_600_000,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    await using warehouse = await searchConsoleDatabase();
+
+    await inspectionRun(source, warehouse, ['urlInspection']);
+    // The other two streams load in a later read: they share one new
+    // inspection per URL, since a read reuses only the inspections it made.
+    await inspectionRun(source, warehouse, ALL_INSPECTIONS);
+    const lastInspected = Date.now();
+    assert.equal(inspected(searchConsole).length, 4);
+
+    pages.pop();
+    referrers = 1;
+    await sleep(lastInspected + refreshMs - Date.now());
+    await inspectionRun(source, warehouse, ALL_INSPECTIONS);
+
+    assert.equal(inspected(searchConsole).length, 5);
+    for (const table of ALL_INSPECTIONS)
+      assert.deepEqual(
+        [
+          ...new Set(
+            (await inspectionRows(warehouse, table)).map(
+              (row) => row.inspectionUrl,
+            ),
+          ),
+        ],
+        ['https://example.com/a'],
+        table,
+      );
+    assert.deepEqual(
+      (await inspectionRows(warehouse, 'urlInspectionReferrers')).map(
+        (row) => row.referringUrl,
+      ),
+      ['https://example.com/a/r0'],
+    );
+  },
+);
 
 test('the three inspection streams read together inspect each URL once', async () => {
   const pages = ['https://example.com/a', 'https://example.com/b'];
-  const property = inspectionProperty({
+  const answer = property({
     pages,
     inspect: (url) => ({
       verdict: 'PASS',
@@ -2077,33 +2423,25 @@ test('the three inspection streams read together inspect each URL once', async (
       referringUrls: [`${url}/r0`],
     }),
   });
-  // Slow inspections keep one stream's calls in flight while the others plan.
-  const requester = {
-    async request(options: { url: string; data?: Record<string, unknown> }) {
-      if (options.data?.['inspectionUrl'] !== undefined)
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      return property.requester.request(options);
+  using searchConsole = google({
+    // Slow inspections keep one stream's calls in flight while the others plan.
+    reply: async (call) => {
+      if (call.path.endsWith('index:inspect')) await sleep(20);
+      return answer(call);
     },
-  };
+  });
   const source = new SearchConsoleSource({
-    ...property,
-    requester,
-    now: NOW,
+    requester: searchConsole.requester,
     searchTypes: ['WEB'],
     siteUrls: [SITE],
     streamConcurrency: 3,
   });
-  const all = [
-    'urlInspection',
-    'urlInspectionSitemaps',
-    'urlInspectionReferrers',
-  ] as const;
-  await using warehouse = await searchConsoleDatabase(testServer);
+  await using warehouse = await searchConsoleDatabase();
 
-  await inspectionRun(source, warehouse, all);
+  await inspectionRun(source, warehouse, ALL_INSPECTIONS);
 
-  assert.deepEqual(property.inspected.toSorted(), pages);
-  for (const table of all)
+  assert.deepEqual(inspected(searchConsole).toSorted(), pages);
+  for (const table of ALL_INSPECTIONS)
     assert.deepEqual(
       [
         ...new Set(
@@ -2117,53 +2455,34 @@ test('the three inspection streams read together inspect each URL once', async (
     );
 });
 
-test('inspections run concurrently, a rejected URL becomes a row, and a server error fails', async () => {
+test('inspections run concurrently, and a URL Google rejects becomes a row', async () => {
   let inFlight = 0;
   let peak = 0;
   const pages = Array.from({ length: 7 }, (_, n) => `https://example.com/${n}`);
-  const requester = {
-    async request(options: { url: string; data?: Record<string, unknown> }) {
-      if (options.url.endsWith('/sitemaps')) return { data: {} };
-      if (options.url.includes('searchAnalytics/query'))
-        return {
-          data: {
-            rows:
-              Number(options.data?.['startRow'] ?? 0) > 0
-                ? []
-                : pages.map((page) => ({
-                    clicks: 0,
-                    ctr: 0,
-                    impressions: 1,
-                    keys: [page],
-                    position: 1,
-                  })),
-          },
-        };
-      const url = String(options.data?.['inspectionUrl']);
+  const answer = property({
+    pages,
+    inspect: (url) =>
+      url.endsWith('/3')
+        ? refusal(400, 'badRequest', 'Invalid URL')
+        : { verdict: 'PASS' },
+  });
+  using searchConsole = google({
+    reply: async (call) => {
+      if (!call.path.endsWith('index:inspect')) return answer(call);
       inFlight++;
       peak = Math.max(peak, inFlight);
       // Later URLs answer sooner, so completions arrive out of order.
-      await new Promise((resolve) =>
-        setTimeout(resolve, 20 - pages.indexOf(url) * 2),
-      );
+      await sleep(20 - pages.indexOf(String(call.body.inspectionUrl)) * 2);
       inFlight--;
-      if (url.endsWith('/3'))
-        throw googleError(400, {
-          error: { code: 400, message: 'Invalid URL' },
-        });
-      return {
-        data: { inspectionResult: { indexStatusResult: { verdict: 'PASS' } } },
-      };
+      return answer(call);
     },
-  };
-  await using warehouse = await searchConsoleDatabase(testServer);
+  });
+  await using warehouse = await searchConsoleDatabase();
 
   await inspectionRun(
     new SearchConsoleSource({
-      fetch: async () => new Response(''),
       inspectionConcurrency: 3,
-      now: NOW,
-      requester,
+      requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     }),
@@ -2183,38 +2502,51 @@ test('inspections run concurrently, a rejected URL becomes a row, and a server e
     ),
   );
   assert.equal(rows[3]?.errorMessage, 'Invalid URL');
+});
 
-  const failing = inspectionProperty({
-    pages,
-    inspect: (url) =>
-      url.endsWith('/5') ? googleError(500) : { verdict: 'PASS' },
+test('a server error during inspection fails the run and keeps none of its inspections', async () => {
+  const pages = Array.from({ length: 7 }, (_, n) => `https://example.com/${n}`);
+  let failing = true;
+  using searchConsole = google({
+    reply: property({
+      pages,
+      inspect: (url) =>
+        failing && url.endsWith('/5') ? serverError() : { verdict: 'PASS' },
+    }),
   });
-  await using broken = await searchConsoleDatabase(testServer);
-  await assert.rejects(
+  await using warehouse = await searchConsoleDatabase();
+  const run = () =>
     inspectionRun(
       new SearchConsoleSource({
-        ...failing,
-        now: NOW,
-        retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+        requester: searchConsole.requester,
         searchTypes: ['WEB'],
         siteUrls: [SITE],
       }),
-      broken,
-    ),
-    /status code 500/,
+      warehouse,
+    );
+
+  await assert.rejects(run(), (error: unknown) => {
+    assert.ok(error instanceof PipelineError, String(error));
+    assert.match(
+      error.message,
+      /urlInspection \{"siteUrl":"sc-domain:example\.com"\}: Internal error encountered\./,
+    );
+    return true;
+  });
+  assert.equal(
+    inspected(searchConsole).filter((url) => url === pages[5]).length,
+    5,
   );
-  assert.deepEqual(
-    [...(await broken.sql`SELECT id FROM _elt_checkpoints`)],
-    [],
-  );
+  failing = false;
+  const before = inspected(searchConsole).length;
+  await run();
+
+  // The failed run committed nothing, so every URL is inspected again.
+  assert.deepEqual(inspected(searchConsole).slice(before).toSorted(), pages);
 });
 
 test('inspection options are validated', () => {
-  const base = {
-    now: NOW,
-    requester: recorder(() => ({})).requester,
-    siteUrls: [SITE],
-  };
+  const base = { requester: signedIn(), siteUrls: [SITE] };
   for (const inspectionRefreshHours of [0, -1, Number.NaN])
     assert.throws(
       () => new SearchConsoleSource({ ...base, inspectionRefreshHours }),
@@ -2232,131 +2564,219 @@ test('inspection options are validated', () => {
     );
 });
 
-test('watching wakes inspection streams when URLs fall due, not when traffic changes', async () => {
-  let clicks = 1;
-  const property = inspectionProperty({ pages: ['https://example.com/a'] });
-  const requester = {
-    async request(options: { url: string; data?: Record<string, unknown> }) {
-      const dimensions = options.data?.['dimensions'];
-      if (Array.isArray(dimensions) && dimensions.includes('date'))
-        return {
-          data: {
-            rows: [
-              {
-                clicks,
-                ctr: 0.1,
-                impressions: 10,
-                keys: ['2026-09-20'],
-                position: 1,
-              },
-            ],
-          },
-        };
-      return property.requester.request(options);
-    },
-  };
-  const source = new SearchConsoleSource({
-    fetch: property.fetch,
-    // 36 ms: the inspection falls due again almost at once.
-    inspectionRefreshHours: 0.00001,
-    pollIntervalMs: 5,
-    requester,
-    searchTypes: ['WEB'],
-    siteUrls: [SITE],
-  });
-  await using warehouse = await searchConsoleDatabase(testServer);
-  const { destination, checkpoints } = warehouse;
-  const copy = (stream: typeof source.urlInspection, id: string, extra = {}) =>
-    new Copy(stream, destination.table(id), {
-      id,
-      syncMode: 'incremental',
-      destinationSyncMode: 'append_dedup',
-      ...extra,
+test(
+  'watching wakes inspection streams when URLs fall due, not when traffic changes',
+  { timeout: 10_000 },
+  async () => {
+    let clicks = 1;
+    const answer = property({ pages: ['https://example.com/a'] });
+    using searchConsole = google({
+      reply: (call) =>
+        String(call.body.dimensions) === 'date'
+          ? {
+              rows: [
+                {
+                  clicks,
+                  ctr: 0.1,
+                  impressions: 10,
+                  keys: [day(-1)],
+                  position: 1,
+                },
+              ],
+            }
+          : answer(call),
     });
-  const controller = new AbortController();
-  const watching = new Pipeline({
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints,
-        steps: [
-          copy(source.urlInspection, 'inspection'),
-          copy(source.searchAnalyticsDaily, 'daily'),
-        ],
-      }),
-    ],
-  }).watch({ signal: controller.signal });
-  const passes = async (count: number) => {
-    const names: string[][] = [];
-    for (let n = 0; n < count; n++) {
-      const { value } = await watching.next();
-      names.push(
-        value
-          ? value.outcomes.map(
-              (result: { copy: { from: { name: string } } }) =>
-                result.copy.from.name,
-            )
-          : [],
-      );
-    }
-    return names;
-  };
+    await using warehouse = await searchConsoleDatabase();
+    const { destination, checkpoints } = warehouse;
+    const refreshMs = 2000;
+    const source = new SearchConsoleSource({
+      inspectionRefreshHours: refreshMs / 3_600_000,
+      pollIntervalMs: 5,
+      requester: searchConsole.requester,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    const incremental = (stream: typeof source.urlInspection, id: string) =>
+      new Copy(stream, destination.table(id), {
+        id,
+        syncMode: 'incremental',
+        destinationSyncMode: 'append_dedup',
+      });
+    const pipeline = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints,
+          steps: [
+            incremental(source.urlInspection, 'inspection'),
+            incremental(source.searchAnalyticsDaily, 'daily'),
+          ],
+        }),
+      ],
+    });
+    // Loaded once already, the source knows when the URL next falls due.
+    await pipeline.run();
+    const controller = new AbortController();
+    const watching = pipeline.watch({ signal: controller.signal });
+    const pass = async () => {
+      const before = reads(searchConsole).length;
+      const next = await watching.next();
+      if (next.done) assert.fail('watching ended');
+      return {
+        streams: next.value.outcomes.map(({ copy }) => copy.from.name),
+        reads: reads(searchConsole).slice(before).toSorted(),
+      };
+    };
+    const discovery = [
+      query(SITE, 'page', monthsBack(16)),
+      `sitemaps of ${SITE}`,
+    ];
 
-  try {
-    assert.deepEqual(await passes(1), [
-      ['urlInspection', 'searchAnalyticsDaily'],
-    ]);
-    // With traffic unchanged, only the due inspection wakes the pipeline.
-    assert.deepEqual(await passes(1), [['urlInspection']]);
-    assert.ok(property.inspected.length >= 2);
-    clicks = 9;
-    const seen = await passes(4);
-    assert.ok(
-      seen.some((names) => names.includes('searchAnalyticsDaily')),
-      'a traffic change re-extracts the analytics stream',
-    );
-    assert.ok(
-      seen.every(
-        (names) =>
-          !(names.includes('searchAnalyticsDaily') && names.length === 2),
-      ) || seen.some((names) => names.length === 1),
-    );
-  } finally {
-    controller.abort();
-  }
-});
+    try {
+      // The first check wakes every stream; the URL is still fresh.
+      assert.deepEqual(await pass(), {
+        streams: ['urlInspection', 'searchAnalyticsDaily'],
+        reads: [query(SITE, 'date', day(0)), ...discovery].toSorted(),
+      });
+      clicks = 9;
+      // A traffic change wakes the analytics stream alone.
+      assert.deepEqual(await pass(), {
+        streams: ['searchAnalyticsDaily'],
+        reads: [query(SITE, 'date', day(0))],
+      });
+      // With traffic unchanged since, only the URL falling due wakes the
+      // pipeline, and inspects it again.
+      assert.deepEqual(await pass(), {
+        streams: ['urlInspection'],
+        reads: ['inspect https://example.com/a', ...discovery].toSorted(),
+      });
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
+
+test(
+  'watching rereads the analytics alone when the totals change, and the listings alone when a sitemap is submitted',
+  { timeout: 10_000 },
+  async () => {
+    const listed = ['https://example.com/a.xml'];
+    let clicks = 1;
+    using searchConsole = google({
+      reply: ({ path }) => {
+        if (path.endsWith('/v3/sites'))
+          return {
+            siteEntry: [{ permissionLevel: 'siteOwner', siteUrl: SITE }],
+          };
+        if (path.endsWith('/sitemaps'))
+          return { sitemap: listed.map(sitemapEntry) };
+        return {
+          rows: [
+            { clicks, ctr: 0.1, impressions: 10, keys: [day(-1)], position: 1 },
+          ],
+        };
+      },
+      files: {
+        'https://example.com/a.xml': 'https://example.com/a\n',
+        'https://example.com/b.xml': 'https://example.com/b\n',
+      },
+    });
+    await using warehouse = await searchConsoleDatabase();
+    const { destination } = warehouse;
+    const source = new SearchConsoleSource({
+      pollIntervalMs: 5,
+      requester: searchConsole.requester,
+      searchTypes: ['WEB'],
+      siteUrls: [SITE],
+    });
+    const controller = new AbortController();
+    const watching = new Pipeline({
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          steps: [
+            source.sites,
+            source.sitemaps,
+            source.sitemapContents,
+            source.searchAnalyticsDaily,
+          ].map((stream) => new Copy(stream, destination.table(stream.name))),
+        }),
+      ],
+    }).watch({ signal: controller.signal });
+    // A probe lists the sites and sitemaps with the same calls a read makes,
+    // so a pass shows in what it loaded, queried and downloaded.
+    const queried = () =>
+      searchConsole.calls
+        .filter((call) => call.path.endsWith('/query') && !isProbe(call))
+        .map(label);
+    const pass = async () => {
+      const before = {
+        queried: queried().length,
+        fetched: searchConsole.fetched.length,
+      };
+      const next = await watching.next();
+      if (next.done) assert.fail('watching ended');
+      return {
+        streams: next.value.outcomes.map(({ copy }) => copy.from.name),
+        queried: queried().slice(before.queried),
+        fetched: searchConsole.fetched.slice(before.fetched),
+      };
+    };
+    const history = query(SITE, 'date', monthsBack(16));
+
+    try {
+      assert.deepEqual(await pass(), {
+        streams: [
+          'sites',
+          'sitemaps',
+          'sitemapContents',
+          'searchAnalyticsDaily',
+        ],
+        queried: [history],
+        fetched: ['https://example.com/a.xml'],
+      });
+      clicks = 9;
+      assert.deepEqual(await pass(), {
+        streams: ['searchAnalyticsDaily'],
+        queried: [history],
+        fetched: [],
+      });
+      listed.push('https://example.com/b.xml');
+      assert.deepEqual(await pass(), {
+        streams: ['sites', 'sitemaps', 'sitemapContents'],
+        queried: [],
+        fetched: ['https://example.com/a.xml', 'https://example.com/b.xml'],
+      });
+    } finally {
+      controller.abort();
+      await watching.return(undefined);
+    }
+  },
+);
 
 test(
   'under a watch, an inspection stream whose pass failed, the first one or one when its URL fell due, is inspected again at the next poll though no due time moved',
   { timeout: 15_000 },
   async () => {
     let denied = true;
-    const property = inspectionProperty({ pages: ['https://example.com/a'] });
-    const requester = {
-      async request(options: { url: string; data?: Record<string, unknown> }) {
-        if (denied)
-          throw googleError(403, {
-            error: {
-              message: `User does not have sufficient permission for site '${SITE}'.`,
-              errors: [{ reason: 'forbidden' }],
-            },
-          });
-        return property.requester.request(options);
-      },
-    };
+    const answer = property({ pages: ['https://example.com/a'] });
+    using searchConsole = google({
+      reply: (call) => (denied ? forbidden(SITE) : answer(call)),
+    });
     const source = new SearchConsoleSource({
-      fetch: property.fetch,
       // 360 ms: the URL falls due again soon after it is inspected.
       inspectionRefreshHours: 0.0001,
       pollIntervalMs: 500,
-      requester,
-      retry: { attempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+      requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
-    await using warehouse = await searchConsoleDatabase(testServer);
+    await using warehouse = await searchConsoleDatabase();
     const { destination, checkpoints } = warehouse;
     const controller = new AbortController();
     const watching = new Pipeline({
@@ -2376,31 +2796,37 @@ test(
         }),
       ],
     }).watch({ signal: controller.signal });
-    // Waits for the next pass that loads, or fails to load, the inspections.
-    const until = async (loads: boolean) => {
-      for (;;) {
-        const next = await watching.next();
-        if (next.done) assert.fail('the inspections were not read again');
-        if ((next.value.outcomes[0]?.failures.length === 0) === loads) return;
-      }
+    const pass = async () => {
+      const before = reads(searchConsole).length;
+      const next = await watching.next();
+      if (next.done) assert.fail('the inspections were not read again');
+      return {
+        failed: next.value.outcomes.flatMap(({ failures }) =>
+          failures.map(({ failureType }) => failureType),
+        ),
+        reads: reads(searchConsole).slice(before).toSorted(),
+      };
     };
-    // Ends a watch that never reads them again, so the test fails, not hangs.
-    const deadline = setTimeout(() => controller.abort(), 10_000);
+    // A refused pass stops at the sitemap listing; a loaded one inspects.
+    const refused = { failed: ['config'], reads: [`sitemaps of ${SITE}`] };
+    const inspecting = {
+      failed: [],
+      reads: [
+        'inspect https://example.com/a',
+        query(SITE, 'page', monthsBack(16)),
+        `sitemaps of ${SITE}`,
+      ],
+    };
 
     try {
-      await until(false);
+      assert.deepEqual(await pass(), refused);
       denied = false;
-      await until(true);
-      const first = property.inspected.length;
+      assert.deepEqual(await pass(), inspecting);
       denied = true;
-      await until(false);
+      assert.deepEqual(await pass(), refused);
       denied = false;
-      await until(true);
-
-      assert.equal(first, 1);
-      assert.ok(property.inspected.length >= 2, String(property.inspected));
+      assert.deepEqual(await pass(), inspecting);
     } finally {
-      clearTimeout(deadline);
       controller.abort();
       await watching.return(undefined);
     }
@@ -2411,16 +2837,18 @@ test(
   'under a watch, an inspection that falls due sooner than the next poll is made when it falls due',
   { timeout: 15_000 },
   async () => {
-    const property = inspectionProperty({ pages: ['https://example.com/a'] });
+    using searchConsole = google({
+      reply: property({ pages: ['https://example.com/a'] }),
+    });
     const source = new SearchConsoleSource({
-      ...property,
       // 360 ms: the URL falls due again soon after it is inspected.
       inspectionRefreshHours: 0.0001,
       pollIntervalMs: 60_000,
+      requester: searchConsole.requester,
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
-    await using warehouse = await searchConsoleDatabase(testServer);
+    await using warehouse = await searchConsoleDatabase();
     const { destination, checkpoints } = warehouse;
     const controller = new AbortController();
     const watching = new Pipeline({
@@ -2440,23 +2868,26 @@ test(
         }),
       ],
     }).watch({ signal: controller.signal });
-    // Ends a watch that waits for its next poll, so the test fails, not hangs.
-    const deadline = setTimeout(() => controller.abort(), 10_000);
+    const inspecting = [
+      'inspect https://example.com/a',
+      query(SITE, 'page', monthsBack(16)),
+      `sitemaps of ${SITE}`,
+    ];
 
     try {
       await watching.next();
+      assert.deepEqual(reads(searchConsole).toSorted(), inspecting);
       const inspectedAt = Date.now();
       const due = await watching.next();
       const waited = Date.now() - inspectedAt;
 
       assert.equal(due.done, false, 'the due inspection waited for the poll');
-      assert.deepEqual(property.inspected, [
-        'https://example.com/a',
-        'https://example.com/a',
-      ]);
+      assert.deepEqual(
+        reads(searchConsole).slice(inspecting.length).toSorted(),
+        inspecting,
+      );
       assert.ok(waited < 5_000, `inspected again after ${waited} ms`);
     } finally {
-      clearTimeout(deadline);
       controller.abort();
       await watching.return(undefined);
     }

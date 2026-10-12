@@ -1,9 +1,15 @@
-import type { DeleteMessage, Stream } from '@workspace/elt';
-
-import type { UrlInspection } from './url-inspection.ts';
+import type { UrlInspection } from '@workspace/sdk-google-search-console';
 
 // Where a URL was discovered for inspection.
 export type Discovery = { readonly sitemap: boolean; readonly search: boolean };
+
+// Every URL a property can be inspected for, and whether each sitemap the
+// property lists was read: a sitemap that could not be read may still list a
+// URL missing from the others, so that URL is not gone.
+export type Universe = {
+  readonly urls: ReadonlyMap<string, Discovery>;
+  readonly complete: boolean;
+};
 
 // Per URL: when the stream last loaded its inspection and how many rows that
 // inspection produced (one for urlInspection, the array length for the
@@ -11,24 +17,11 @@ export type Discovery = { readonly sitemap: boolean; readonly search: boolean };
 // deleted without reading the destination.
 export type Inspected = { readonly at: string; readonly rows: number };
 
-// The checkpoint this stream writes for a property: the source's own STATE,
-// so it is read as written.
-export type InspectionState = {
-  readonly inspected: Readonly<Record<string, Inspected>>;
-};
-
-export function readInspectionState(state: unknown): Map<string, Inspected> {
-  return new Map(
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what this source wrote; own state is not re-validated
-    Object.entries((state as InspectionState | null)?.inspected ?? {}),
-  );
-}
-
 /**
  * What one run of one inspection stream does for a property: reuse an
- * inspection another stream already made this run, call the API only for
+ * inspection another stream already made this read, call the API only for
  * URLs never inspected or older than the refresh age (never-inspected first,
- * then stalest), and delete URLs that left the universe.
+ * then stalest), and delete URLs that left a complete universe.
  */
 export function planInspections({
   saved,
@@ -38,20 +31,20 @@ export function planInspections({
   refreshMs,
 }: {
   saved: ReadonlyMap<string, Inspected>;
-  universe: ReadonlyMap<string, Discovery>;
+  universe: Universe;
   cached: ReadonlyMap<string, UrlInspection>;
   now: number;
   refreshMs: number;
 }): {
   reuse: UrlInspection[];
   due: string[];
-  gone: string[];
+  gone: [string, Inspected][];
   nextDue: number;
 } {
   const reuse: UrlInspection[] = [];
   const due: { url: string; at: number }[] = [];
   let nextDue = Number.POSITIVE_INFINITY;
-  for (const url of universe.keys()) {
+  for (const url of universe.urls.keys()) {
     const seen = saved.get(url)?.at;
     const inspection = cached.get(url);
     if (
@@ -72,44 +65,20 @@ export function planInspections({
     }
     due.push({ url, at });
   }
-  due.sort((left, right) =>
-    left.at !== right.at
-      ? left.at - right.at
-      : left.url < right.url
-        ? -1
-        : left.url > right.url
-          ? 1
-          : 0,
-  );
+  due.sort((left, right) => {
+    if (left.at !== right.at) return left.at - right.at;
+    if (left.url < right.url) return -1;
+    if (left.url > right.url) return 1;
+    return 0;
+  });
   return {
     reuse,
     due: due.map(({ url }) => url),
-    gone: [...saved.keys()].filter((url) => !universe.has(url)).sort(),
+    gone: universe.complete
+      ? [...saved]
+          .filter(([url]) => !universe.urls.has(url))
+          .sort(([left], [right]) => (left < right ? -1 : 1))
+      : [],
     nextDue,
   };
-}
-
-// Deletions for every row a URL held in this stream, keyed like its rows.
-export function deletions(
-  stream: Stream,
-  siteUrl: string,
-  inspectionUrl: string,
-  from: number,
-  to: number,
-): DeleteMessage[] {
-  if (stream.name === 'urlInspection')
-    return from === 0 && to > 0
-      ? [
-          {
-            type: 'DELETE',
-            stream: stream.name,
-            key: { siteUrl, inspectionUrl },
-          },
-        ]
-      : [];
-  return Array.from({ length: Math.max(0, to - from) }, (_, offset) => ({
-    type: 'DELETE' as const,
-    stream: stream.name,
-    key: { siteUrl, inspectionUrl, position: from + offset },
-  }));
 }

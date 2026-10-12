@@ -1,5 +1,7 @@
 import { setTimeout as wait } from 'node:timers/promises';
 
+import { z } from 'zod';
+
 import {
   GaxiosError,
   type GoogleRequester,
@@ -33,22 +35,16 @@ export class SearchConsoleQuotaError extends Error {
   }
 }
 
-export type RetryPolicy = {
+const RETRY = {
   /** Total tries, including the first. */
-  readonly attempts: number;
-  readonly baseDelayMs: number;
+  attempts: 5,
+  baseDelayMs: 1000,
   /**
    * The longest single wait. A Retry-After beyond it fails the call at once
    * rather than stalling a pipeline for longer than anyone would wait.
    */
-  readonly maxDelayMs: number;
-};
-
-export const DEFAULT_RETRY: RetryPolicy = Object.freeze({
-  attempts: 5,
-  baseDelayMs: 1000,
   maxDelayMs: 60_000,
-});
+} as const;
 
 // Google reports some rate limits as 403 with one of these reasons. Every other
 // 403, such as an insufficient scope or a disabled API, is not worth retrying.
@@ -71,70 +67,88 @@ export type SearchAnalyticsRequest = {
 
 export type CallOptions = { readonly signal?: AbortSignal };
 
-// Response shapes as the API returns them live. int64 counts arrive as
-// decimal strings; proto3 omits unset fields, such as position on feed
-// reports and the arrays of an inspection that has none.
-export type SitesResponse = {
-  readonly siteEntry?: readonly {
-    readonly siteUrl: string;
-    readonly permissionLevel: string;
-  }[];
-};
+// Response shapes as the API returns them live, parsed at the one place each
+// body is read. int64 counts arrive as decimal strings; proto3 omits unset
+// fields, such as position on feed reports and the arrays of an inspection
+// that has none.
+const sitesResponse = z.object({
+  siteEntry: z
+    .array(z.object({ siteUrl: z.string(), permissionLevel: z.string() }))
+    .optional(),
+});
 
-export type SitemapResponse = {
-  readonly path: string;
-  readonly type: string;
-  readonly lastSubmitted: string;
-  // Absent until Google has downloaded the sitemap once.
-  readonly lastDownloaded?: string;
-  readonly isPending: boolean;
-  readonly isSitemapsIndex: boolean;
-  readonly warnings: string;
-  readonly errors: string;
-  readonly contents?: readonly {
-    readonly type: string;
-    readonly submitted: string;
-    // Deprecated by Google; live it reports "0" regardless.
-    readonly indexed?: string;
-  }[];
-};
+const sitemapsResponse = z.object({
+  sitemap: z
+    .array(
+      z.object({
+        path: z.string(),
+        type: z.string(),
+        lastSubmitted: z.string(),
+        // Absent until Google has downloaded the sitemap once.
+        lastDownloaded: z.string().optional(),
+        isPending: z.boolean(),
+        isSitemapsIndex: z.boolean(),
+        warnings: z.string(),
+        errors: z.string(),
+        contents: z
+          .array(
+            z.object({
+              type: z.string(),
+              submitted: z.string(),
+              // Deprecated by Google; live it reports "0" regardless.
+              indexed: z.string().optional(),
+            }),
+          )
+          .optional(),
+      }),
+    )
+    .optional(),
+});
 
-export type SitemapsResponse = {
-  readonly sitemap?: readonly SitemapResponse[];
-};
+const searchAnalyticsResponse = z.object({
+  rows: z
+    .array(
+      z.object({
+        keys: z.array(z.string()),
+        clicks: z.number(),
+        impressions: z.number(),
+        ctr: z.number(),
+        position: z.number().optional(),
+      }),
+    )
+    .optional(),
+  metadata: z.object({ firstIncompleteDate: z.string().optional() }).optional(),
+});
 
-export type SearchAnalyticsResponse = {
-  readonly rows?: readonly {
-    readonly keys: readonly string[];
-    readonly clicks: number;
-    readonly impressions: number;
-    readonly ctr: number;
-    readonly position?: number;
-  }[];
-  readonly metadata?: { readonly firstIncompleteDate?: string };
-};
+const verdict = z.object({ verdict: z.string().optional() }).optional();
 
-export type InspectionResult = {
-  readonly inspectionResultLink?: string;
-  readonly indexStatusResult?: {
-    readonly verdict?: string;
-    readonly coverageState?: string;
-    readonly robotsTxtState?: string;
-    readonly indexingState?: string;
-    readonly lastCrawlTime?: string;
-    readonly pageFetchState?: string;
-    readonly googleCanonical?: string;
-    readonly userCanonical?: string;
-    readonly crawledAs?: string;
-    readonly sitemap?: readonly string[];
-    readonly referringUrls?: readonly string[];
-  };
-  readonly mobileUsabilityResult?: { readonly verdict?: string };
-  readonly richResultsResult?: { readonly verdict?: string };
-  readonly ampResult?: { readonly verdict?: string };
-};
+const inspectionResult = z.object({
+  inspectionResultLink: z.string().optional(),
+  indexStatusResult: z
+    .object({
+      verdict: z.string().optional(),
+      coverageState: z.string().optional(),
+      robotsTxtState: z.string().optional(),
+      indexingState: z.string().optional(),
+      lastCrawlTime: z.string().optional(),
+      pageFetchState: z.string().optional(),
+      googleCanonical: z.string().optional(),
+      userCanonical: z.string().optional(),
+      crawledAs: z.string().optional(),
+      sitemap: z.array(z.string()).optional(),
+      referringUrls: z.array(z.string()).optional(),
+    })
+    .optional(),
+  mobileUsabilityResult: verdict,
+  richResultsResult: verdict,
+  ampResult: verdict,
+});
 
-export type InspectResponse = { readonly inspectionResult?: InspectionResult };
+export type InspectionResult = z.infer<typeof inspectionResult>;
+
+const inspectResponse = z.object({
+  inspectionResult: inspectionResult.optional(),
+});
 
 /**
  * The transport for one Search Console property. `sites`, `sitemaps` and
@@ -145,67 +159,57 @@ export type InspectResponse = { readonly inspectionResult?: InspectionResult };
 export class SearchConsoleApi {
   readonly #requester: GoogleRequester;
 
-  readonly #retry: RetryPolicy;
-
-  constructor(
-    requester: GoogleRequester,
-    { retry = DEFAULT_RETRY }: { retry?: RetryPolicy } = {},
-  ) {
+  constructor(requester: GoogleRequester) {
     if (typeof requester?.request !== 'function')
       throw new TypeError('Search Console requires an authenticated requester');
     this.#requester = requester;
-    if (
-      !Number.isSafeInteger(retry.attempts) ||
-      retry.attempts < 1 ||
-      !(retry.baseDelayMs >= 0) ||
-      !(retry.maxDelayMs >= retry.baseDelayMs)
-    )
-      throw new TypeError(
-        'retry needs at least one attempt and 0 <= baseDelayMs <= maxDelayMs',
-      );
-    this.#retry = Object.freeze({ ...retry });
     Object.freeze(this);
   }
 
-  sites(options: CallOptions = {}): Promise<SitesResponse> {
-    return this.#send('GET', 'webmasters/v3/sites', undefined, options);
-  }
-
-  sitemaps(
-    siteUrl: string,
-    options: CallOptions = {},
-  ): Promise<SitemapsResponse> {
-    return this.#send(
-      'GET',
-      `webmasters/v3/sites/${encodeURIComponent(siteUrl)}/sitemaps`,
-      undefined,
-      options,
+  async sites(options: CallOptions = {}) {
+    return sitesResponse.parse(
+      await this.#send('GET', 'webmasters/v3/sites', undefined, options),
     );
   }
 
-  searchAnalytics(
+  async sitemaps(siteUrl: string, options: CallOptions = {}) {
+    return sitemapsResponse.parse(
+      await this.#send(
+        'GET',
+        `webmasters/v3/sites/${encodeURIComponent(siteUrl)}/sitemaps`,
+        undefined,
+        options,
+      ),
+    );
+  }
+
+  async searchAnalytics(
     siteUrl: string,
     request: SearchAnalyticsRequest,
     options: CallOptions = {},
-  ): Promise<SearchAnalyticsResponse> {
-    return this.#send(
-      'POST',
-      `webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
-      { ...request },
-      options,
+  ) {
+    return searchAnalyticsResponse.parse(
+      await this.#send(
+        'POST',
+        `webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
+        { ...request },
+        options,
+      ),
     );
   }
 
-  inspect(
+  async inspect(
     siteUrl: string,
     inspectionUrl: string,
     options: CallOptions = {},
-  ): Promise<InspectResponse> {
-    return this.#send(
-      'POST',
-      'v1/urlInspection/index:inspect',
-      { inspectionUrl, siteUrl },
-      options,
+  ) {
+    return inspectResponse.parse(
+      await this.#send(
+        'POST',
+        'v1/urlInspection/index:inspect',
+        { inspectionUrl, siteUrl },
+        options,
+      ),
     );
   }
 
@@ -214,12 +218,12 @@ export class SearchConsoleApi {
    * wraps a cancelled fetch in a generic error, so the signal's own reason is
    * rethrown to keep an abort recognizable as one.
    */
-  async #send<Response>(
+  async #send(
     method: 'GET' | 'POST',
     path: string,
     data: Record<string, unknown> | undefined,
     { signal }: CallOptions,
-  ): Promise<Response> {
+  ): Promise<unknown> {
     for (let attempt = 1; ; attempt += 1) {
       try {
         const response = await this.#requester.request({
@@ -228,8 +232,7 @@ export class SearchConsoleApi {
           ...(data === undefined ? {} : { data }),
           ...(signal === undefined ? {} : { signal }),
         });
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the API's own response body; GoogleRequester keeps it unknown, and the records built from it pass validateRecords
-        return response.data as Response;
+        return response.data;
       } catch (cause) {
         signal?.throwIfAborted();
         const status = statusOf(cause);
@@ -241,7 +244,7 @@ export class SearchConsoleApi {
         if (!rateLimited && !(status && TRANSIENT_STATUSES.has(status)))
           throw cause;
         const delay = this.#delay(cause, attempt);
-        if (attempt < this.#retry.attempts && delay !== undefined) {
+        if (attempt < RETRY.attempts && delay !== undefined) {
           await wait(delay, undefined, { signal });
           continue;
         }
@@ -265,10 +268,10 @@ export class SearchConsoleApi {
   #delay(error: unknown, attempt: number): number | undefined {
     const requested = retryAfterMs(error);
     if (requested !== undefined)
-      return requested <= this.#retry.maxDelayMs ? requested : undefined;
+      return requested <= RETRY.maxDelayMs ? requested : undefined;
     const ceiling = Math.min(
-      this.#retry.maxDelayMs,
-      this.#retry.baseDelayMs * 2 ** (attempt - 1),
+      RETRY.maxDelayMs,
+      RETRY.baseDelayMs * 2 ** (attempt - 1),
     );
     return Math.random() * ceiling;
   }

@@ -17,16 +17,6 @@ export type UrlInspection = {
   readonly error: { readonly status: number; readonly message: string } | null;
 };
 
-export type InspectionClock = {
-  now(): number;
-  sleep(ms: number): Promise<void>;
-};
-
-export const systemInspectionClock: InspectionClock = {
-  now: () => Date.now(),
-  sleep: (ms) => wait(ms),
-};
-
 // A bad URL is Google's verdict on that URL alone; anything else (auth, a
 // revoked property, a server fault) would fail every URL the same way.
 const REJECTED_URL_STATUSES = new Set([400, 404]);
@@ -36,7 +26,8 @@ const REJECTED_URL_STATUSES = new Set([400, 404]);
  * Google, so the pool keeps `concurrency` in flight while pacing starts under
  * the per-minute ceiling; a quota refusal can then only mean the daily quota.
  * On that refusal no new call starts, the ones in flight finish, and the
- * inspections that succeeded are returned with `exhausted` set.
+ * inspections that succeeded are returned with `exhausted` set. An abort of
+ * signal stops the calls in flight and the pacing waits.
  */
 export async function inspectUrls(
   api: SearchConsoleApi,
@@ -44,11 +35,16 @@ export async function inspectUrls(
   urls: readonly string[],
   {
     concurrency,
-    clock = systemInspectionClock,
-  }: { concurrency: number; clock?: InspectionClock },
+    signal,
+  }: { concurrency: number; signal: AbortSignal | undefined },
 ): Promise<{ inspections: UrlInspection[]; exhausted: boolean }> {
   const results: (UrlInspection | undefined)[] = [];
+  // A call that fails for every URL stops the others.
   const controller = new AbortController();
+  const stop = AbortSignal.any([
+    controller.signal,
+    ...(signal === undefined ? [] : [signal]),
+  ]);
   const starts: number[] = [];
   let next = 0;
   let exhausted = false;
@@ -56,14 +52,18 @@ export async function inspectUrls(
 
   const pace = async () => {
     for (;;) {
-      const now = clock.now();
+      const now = Date.now();
       while (starts.length > 0 && now - (starts[0] ?? 0) >= 60_000)
         starts.shift();
-      if (starts.length < URL_INSPECTION_QUOTA.perMinute) {
+      const [oldest] = starts;
+      if (
+        oldest === undefined ||
+        starts.length < URL_INSPECTION_QUOTA.perMinute
+      ) {
         starts.push(now);
         return;
       }
-      await clock.sleep(60_000 - (now - (starts[0] ?? 0)));
+      await wait(60_000 - (now - oldest), undefined, { signal });
     }
   };
 
@@ -75,11 +75,11 @@ export async function inspectUrls(
       if (exhausted || failure !== undefined) return;
       try {
         const { inspectionResult } = await api.inspect(siteUrl, inspectionUrl, {
-          signal: controller.signal,
+          signal: stop,
         });
         results[index] = {
           inspectionUrl,
-          inspectedAt: new Date(clock.now()).toISOString(),
+          inspectedAt: new Date().toISOString(),
           result: inspectionResult ?? {},
           error: null,
         };
@@ -89,7 +89,7 @@ export async function inspectUrls(
         else if (status !== undefined && REJECTED_URL_STATUSES.has(status))
           results[index] = {
             inspectionUrl,
-            inspectedAt: new Date(clock.now()).toISOString(),
+            inspectedAt: new Date().toISOString(),
             result: null,
             error: { status, message: messageOf(error) },
           };

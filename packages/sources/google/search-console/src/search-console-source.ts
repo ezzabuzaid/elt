@@ -1,63 +1,46 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { MemoryStore, Mutex } from '@zukhruf/mutex';
-
 import {
   Catalog,
   type CopyConfiguration,
   type ExtractionCoverage,
   type FailureType,
   type Partition,
-  type RecordMessage,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
   type Stream,
-  diffSnapshot,
-  isCalendarDate,
-  validateRecords,
 } from '@workspace/elt';
-import { messageOf, statusOf } from '@workspace/google-auth';
-
 import {
-  nextPacificMidnight,
-  pageUrl,
-  underProperty,
-} from './inspection-scope.ts';
+  GoogleGrantRevokedError,
+  messageOf,
+  statusOf,
+} from '@workspace/google-auth';
 import {
-  type Discovery,
-  deletions,
-  planInspections,
-  readInspectionState,
-} from './rolling-inspection.ts';
-import {
-  type SearchAnalyticsRow,
-  addDays,
-  earlier,
+  SearchConsoleApi,
   readSearchAnalytics,
-  subMonths,
   today,
-} from './search-analytics-query.ts';
-import { type RetryPolicy, SearchConsoleApi } from './search-console-api.ts';
+} from '@workspace/sdk-google-search-console';
+
+import { addDays } from './calendar-dates.ts';
+import { DatedAnalyticsStream } from './dated-analytics-stream.ts';
 import {
-  type SearchAnalyticsGrain,
-  searchAnalyticsFields,
-  searchAnalyticsGrains,
-  searchConsoleStream,
-  sitemapContentsFields,
-  sitemapsFields,
-  sitesFields,
-  urlInspectionFields,
-  urlInspectionReferrersFields,
-  urlInspectionSitemapsFields,
-} from './search-console-schema.ts';
-import { type SitemapFetch, readSitemaps } from './sitemap-urls.ts';
-import {
-  type InspectionClock,
-  type UrlInspection,
-  inspectUrls,
-  systemInspectionClock,
-} from './url-inspection.ts';
+  type InspectionOptions,
+  InspectionStream,
+} from './inspection-stream.ts';
+import { RETENTION_MONTHS } from './search-analytics.ts';
+import { SearchConsoleScan } from './search-console-scan.ts';
+import type { SearchConsoleStream } from './search-console-stream.ts';
+import { SearchAnalyticsCountriesStream } from './streams/search-analytics-countries-stream.ts';
+import { SearchAnalyticsDailyStream } from './streams/search-analytics-daily-stream.ts';
+import { SearchAnalyticsPagesStream } from './streams/search-analytics-pages-stream.ts';
+import { SearchAnalyticsQueriesStream } from './streams/search-analytics-queries-stream.ts';
+import { SitemapContentsStream } from './streams/sitemap-contents-stream.ts';
+import { SitemapsStream } from './streams/sitemaps-stream.ts';
+import { SitesStream } from './streams/sites-stream.ts';
+import { UrlInspectionReferrersStream } from './streams/url-inspection-referrers-stream.ts';
+import { UrlInspectionSitemapsStream } from './streams/url-inspection-sitemaps-stream.ts';
+import { UrlInspectionStream } from './streams/url-inspection-stream.ts';
 
 export type SearchAnalyticsType =
   'WEB' | 'IMAGE' | 'VIDEO' | 'NEWS' | 'DISCOVER' | 'GOOGLE_NEWS';
@@ -65,7 +48,6 @@ export type SearchAnalyticsType =
 export type SearchConsoleOptions = {
   readonly requester: ConstructorParameters<typeof SearchConsoleApi>[0];
   readonly siteUrls: readonly string[];
-  readonly retry?: RetryPolicy;
   readonly searchTypes?: readonly SearchAnalyticsType[];
   readonly breakdownMonths?: number;
   // A URL is inspected again once its last inspection is this old.
@@ -74,23 +56,10 @@ export type SearchConsoleOptions = {
   // How many streams read at once; their API calls overlap.
   readonly streamConcurrency?: number;
   readonly pollIntervalMs?: number;
-  readonly now?: () => Date;
-  // Downloads the property's sitemaps; injectable for tests.
-  readonly fetch?: SitemapFetch;
-  readonly inspectionClock?: InspectionClock;
 };
 
 // Days of daily totals the change probe compares.
 const PROBE_DAYS = 28;
-// How long one property's URL universe serves the other inspection streams
-// of the same pass.
-const UNIVERSE_REUSE_MS = 15 * 60 * 1000;
-
-const INSPECTION_STREAMS = new Set([
-  'urlInspection',
-  'urlInspectionSitemaps',
-  'urlInspectionReferrers',
-]);
 
 const SEARCH_TYPES = [
   'WEB',
@@ -101,14 +70,7 @@ const SEARCH_TYPES = [
   'GOOGLE_NEWS',
 ] as const satisfies readonly SearchAnalyticsType[];
 
-// Search Console keeps the last sixteen months of performance data.
-const RETENTION_MONTHS = 16;
-
-function isGrain(name: string): name is SearchAnalyticsGrain {
-  return Object.hasOwn(searchAnalyticsGrains, name);
-}
-
-export class SearchConsoleSource extends Source {
+export class SearchConsoleSource extends Source<SearchConsoleScan> {
   readonly identity: string;
   readonly siteUrls: readonly string[];
   readonly searchTypes: readonly SearchAnalyticsType[];
@@ -131,36 +93,14 @@ export class SearchConsoleSource extends Source {
   readonly #api: SearchConsoleApi;
   protected readonly catalog: Catalog;
   protected override readonly concurrency: number;
-  readonly #now: () => Date;
-  readonly #fetch: SitemapFetch;
-  readonly #clock: InspectionClock;
-  // Inspections made by this instance, per property and URL, so the three
-  // inspection streams share one API call per URL.
-  readonly #inspected = new Map<string, Map<string, UrlInspection>>();
-  // Each property's URL universe for the current pass: computed by the first
-  // inspection stream that reads it and reused once by each of the others,
-  // while it is fresh; a stream that already used it starts a new pass.
-  readonly #universes = new Map<
-    string,
-    {
-      urls: Promise<Map<string, Discovery>>;
-      consumers: Set<string>;
-      at: number;
-    }
-  >();
-  // No inspection call is made for a property before this time (epoch ms),
-  // after Google refused one for the daily quota.
-  readonly #quotaResetAt = new Map<string, number>();
+  // How each stream reads, by the stream it reads.
+  readonly #readers: ReadonlyMap<Stream, SearchConsoleStream>;
   // When each inspection stream next has a URL due, per property, learned
   // from the checkpoints its extractions received; observe() sleeps on it.
   readonly #dueAt = new Map<string, number>();
   // Wakes a sleeping observe() whenever an extraction learns a due time, which
   // can be sooner than the one it went to sleep on.
   readonly #dueLearned = new EventTarget();
-  // Inspection streams read at once take turns per property to plan and
-  // inspect, so each sees what the one before it inspected and no URL is
-  // inspected twice; different properties never wait on each other.
-  readonly #inspecting = new Mutex(new MemoryStore());
 
   constructor(options: SearchConsoleOptions) {
     super();
@@ -172,8 +112,6 @@ export class SearchConsoleSource extends Source {
       inspectionConcurrency = 16,
       streamConcurrency = 4,
       pollIntervalMs = 6 * 60 * 60 * 1000,
-      now = () => new Date(),
-      fetch = globalThis.fetch,
     } = options;
     if (
       !Array.isArray(siteUrls) ||
@@ -210,6 +148,10 @@ export class SearchConsoleSource extends Source {
       throw new TypeError(
         'streamConcurrency must be a whole number of at least one',
       );
+    if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 1)
+      throw new TypeError(
+        'pollIntervalMs must be a whole number of milliseconds of at least one',
+      );
     this.siteUrls = Object.freeze([...siteUrls]);
     this.searchTypes = Object.freeze([...searchTypes]);
     this.breakdownMonths = breakdownMonths;
@@ -217,87 +159,47 @@ export class SearchConsoleSource extends Source {
     this.inspectionConcurrency = inspectionConcurrency;
     this.concurrency = streamConcurrency;
     this.pollIntervalMs = pollIntervalMs;
-    this.#now = now;
-    this.#fetch = fetch;
-    // Inspection times come from the same clock as every other date here.
-    this.#clock = options.inspectionClock ?? {
-      now: () => now().getTime(),
-      sleep: systemInspectionClock.sleep,
-    };
     // The report types change which rows exist, so they bind a checkpoint.
     // The window does not: it moves with the clock and state resumes it. Nor
     // do the properties: each is a partition with its own checkpoint.
     this.identity = `search-console:${this.searchTypes.join('+')}`;
-    this.#api = new SearchConsoleApi(options.requester, {
-      ...(options.retry ? { retry: options.retry } : {}),
-    });
-
-    this.sites = searchConsoleStream({
-      name: 'sites',
-      fields: sitesFields,
-      primaryKey: ['siteUrl'],
-    });
-    // Every stream but sites is read once per property, the partition every
-    // row carries; sites is the grant's own list, the same for all of them.
-    this.sitemaps = searchConsoleStream({
-      name: 'sitemaps',
-      partitionKey: ['siteUrl'],
-      fields: sitemapsFields,
-      primaryKey: ['siteUrl', 'path'],
-    });
-    this.sitemapContents = searchConsoleStream({
-      name: 'sitemapContents',
-      partitionKey: ['siteUrl'],
-      fields: sitemapContentsFields,
-      primaryKey: ['siteUrl', 'sitemapPath', 'type'],
-    });
-    // Every row carries its property, so several properties share one table.
-    // A grain carrying the date dimension resumes on it and diffs the days it
-    // reads again; one without is a complete trailing view on every read.
-    const grain = (name: SearchAnalyticsGrain): Stream =>
-      searchConsoleStream({
-        name,
-        partitionKey: ['siteUrl'],
-        fields: searchAnalyticsFields(name),
-        primaryKey: ['siteUrl', ...searchAnalyticsGrains[name].key],
-      });
-    this.searchAnalyticsDaily = grain('searchAnalyticsDaily');
-    this.searchAnalyticsQueries = grain('searchAnalyticsQueries');
-    this.searchAnalyticsPages = grain('searchAnalyticsPages');
-    this.searchAnalyticsCountries = grain('searchAnalyticsCountries');
-    this.urlInspection = searchConsoleStream({
-      name: 'urlInspection',
-      partitionKey: ['siteUrl'],
-      fields: urlInspectionFields,
-      primaryKey: ['siteUrl', 'inspectionUrl'],
-      rolling: true,
-    });
-    this.urlInspectionSitemaps = searchConsoleStream({
-      name: 'urlInspectionSitemaps',
-      partitionKey: ['siteUrl'],
-      fields: urlInspectionSitemapsFields,
-      primaryKey: ['siteUrl', 'inspectionUrl', 'position'],
-      rolling: true,
-    });
-    this.urlInspectionReferrers = searchConsoleStream({
-      name: 'urlInspectionReferrers',
-      partitionKey: ['siteUrl'],
-      fields: urlInspectionReferrersFields,
-      primaryKey: ['siteUrl', 'inspectionUrl', 'position'],
-      rolling: true,
-    });
-    this.catalog = new Catalog([
-      this.sites,
-      this.sitemaps,
-      this.sitemapContents,
-      this.searchAnalyticsDaily,
-      this.searchAnalyticsQueries,
-      this.searchAnalyticsPages,
-      this.searchAnalyticsCountries,
-      this.urlInspection,
-      this.urlInspectionSitemaps,
-      this.urlInspectionReferrers,
-    ]);
+    this.#api = new SearchConsoleApi(options.requester);
+    const inspection: InspectionOptions = {
+      refreshHours: inspectionRefreshHours,
+      concurrency: inspectionConcurrency,
+      due: (stream, siteUrl, at) => {
+        this.#dueAt.set(`${stream}\0${siteUrl}`, at);
+        this.#dueLearned.dispatchEvent(new Event('learned'));
+      },
+    };
+    const readers = {
+      sites: new SitesStream(),
+      sitemaps: new SitemapsStream(),
+      sitemapContents: new SitemapContentsStream(),
+      searchAnalyticsDaily: new SearchAnalyticsDailyStream(this.searchTypes),
+      searchAnalyticsQueries: new SearchAnalyticsQueriesStream(),
+      searchAnalyticsPages: new SearchAnalyticsPagesStream(),
+      searchAnalyticsCountries: new SearchAnalyticsCountriesStream(
+        breakdownMonths,
+      ),
+      urlInspection: new UrlInspectionStream(inspection),
+      urlInspectionSitemaps: new UrlInspectionSitemapsStream(inspection),
+      urlInspectionReferrers: new UrlInspectionReferrersStream(inspection),
+    };
+    this.sites = readers.sites.stream;
+    this.sitemaps = readers.sitemaps.stream;
+    this.sitemapContents = readers.sitemapContents.stream;
+    this.searchAnalyticsDaily = readers.searchAnalyticsDaily.stream;
+    this.searchAnalyticsQueries = readers.searchAnalyticsQueries.stream;
+    this.searchAnalyticsPages = readers.searchAnalyticsPages.stream;
+    this.searchAnalyticsCountries = readers.searchAnalyticsCountries.stream;
+    this.urlInspection = readers.urlInspection.stream;
+    this.urlInspectionSitemaps = readers.urlInspectionSitemaps.stream;
+    this.urlInspectionReferrers = readers.urlInspectionReferrers.stream;
+    this.#readers = new Map(
+      Object.values(readers).map((reader) => [reader.stream, reader]),
+    );
+    this.catalog = new Catalog([...this.#readers.keys()]);
     Object.freeze(this);
   }
 
@@ -305,44 +207,42 @@ export class SearchConsoleSource extends Source {
     return this.siteUrls.map((siteUrl) => ({ siteUrl }));
   }
 
-  /**
-   * Search Console publishes no change notification, so observation polls. A
-   * tick first reads a cheap daily summary and only invalidates the analytics
-   * and listing streams when the settled boundary moved or a day's totals
-   * changed. Inspections do not follow traffic: the inspection streams wake
-   * when their next URL falls due, a time this source learned from the
-   * checkpoints its own extractions received.
-   */
-  // Each stream is an independent API read; there is no snapshot to pin.
-  protected override async open(): Promise<AsyncDisposableStack> {
-    return new AsyncDisposableStack();
+  // Each read shares its calls to Google through one scan, and asks again.
+  protected override async open(): Promise<SearchConsoleScan> {
+    return new SearchConsoleScan(this.#api, this.searchTypes);
   }
 
   override coverage(stream: Stream): ExtractionCoverage {
-    if (stream === this.sites)
+    const reader = this.#reader(stream);
+    if (reader instanceof SitesStream)
       return {
         description:
           'All properties the Google grant can read, excluding unverified users. Not restricted to the configured siteUrls used by the other streams.',
         selection: {},
       };
-    if (stream.name.startsWith('searchAnalytics')) {
-      const countries = stream === this.searchAnalyticsCountries;
+    if (reader instanceof SearchAnalyticsCountriesStream)
       return {
-        description: countries
-          ? 'Configured siteUrls, WEB country/device breakdown over breakdownMonths before the read date through that date, inclusive, in Pacific Time. The complete trailing window is read each pass. Google may withhold rows; success is not proof of all traffic.'
-          : 'Configured siteUrls and searchTypes. Initial daily extraction requests sixteen months through the read date, inclusive, in Pacific Time; subsequent incremental passes resume each property checkpoint and reread unsettled days. The configured history policy is not the actual resumed request interval or observed row dates. Google may withhold breakdown rows; success does not make them authoritative totals.',
+        description:
+          'Configured siteUrls, WEB country/device breakdown over breakdownMonths before the read date through that date, inclusive, in Pacific Time. The complete trailing window is read each pass. Google may withhold rows; success is not proof of all traffic.',
         selection: {
           siteUrls: this.siteUrls,
-          searchTypes:
-            stream === this.searchAnalyticsDaily ? this.searchTypes : ['WEB'],
-          ...(countries
-            ? { breakdownMonths: this.breakdownMonths }
-            : { initialHistoryMonths: 16 }),
+          searchTypes: ['WEB'],
+          breakdownMonths: this.breakdownMonths,
           timeZone: 'America/Los_Angeles',
         },
       };
-    }
-    if (stream.name.startsWith('urlInspection'))
+    if (reader instanceof DatedAnalyticsStream)
+      return {
+        description:
+          'Configured siteUrls and searchTypes. Initial daily extraction requests sixteen months through the read date, inclusive, in Pacific Time; subsequent incremental passes resume each property checkpoint and reread unsettled days. The configured history policy is not the actual resumed request interval or observed row dates. Google may withhold breakdown rows; success does not make them authoritative totals.',
+        selection: {
+          siteUrls: this.siteUrls,
+          searchTypes: reader.searchTypes,
+          initialHistoryMonths: RETENTION_MONTHS,
+          timeZone: 'America/Los_Angeles',
+        },
+      };
+    if (reader instanceof InspectionStream)
       return {
         description:
           'Configured siteUrls. URLs discovered from sitemaps and sixteen months of search analytics; inspect new or due URLs according to inspectionRefreshHours until none remain or the daily quota is exhausted. A successful quota-limited pass can leave due URLs pending until Pacific midnight. Not all site URLs can be discovered. Prior inspections remain stored; this pass does not reinspect every stored URL.',
@@ -352,6 +252,7 @@ export class SearchConsoleSource extends Source {
           inspectionRefreshHours: this.inspectionRefreshHours,
         },
       };
+    // sitemaps and sitemapContents
     return {
       description:
         'Sitemaps or sitemap content counts returned for each configured siteUrl. No date filter. Sitemap metadata can load even if downloading its URL listing fails; consult readError in raw metadata for that availability.',
@@ -359,28 +260,55 @@ export class SearchConsoleSource extends Source {
     };
   }
 
-  // Google refused the grant, or the grant cannot read the property, so only
-  // the user can fix it. A rate limit Google sends as a 403 never gets here:
-  // the API turns it into a SearchConsoleQuotaError once retries run out.
+  // Google refused the grant, will no longer refresh it, or the grant cannot
+  // read the property, so only the user can fix it. A rate limit Google sends
+  // as a 403 never gets here: the API turns it into a SearchConsoleQuotaError
+  // once retries run out.
   override failureType(error: unknown): FailureType {
     const status = statusOf(error);
-    return status === 401 || status === 403 ? 'config' : 'system';
+    return status === 401 ||
+      status === 403 ||
+      GoogleGrantRevokedError.matches(error)
+      ? 'config'
+      : 'system';
   }
 
+  /**
+   * Search Console publishes no change notification, so observation polls. A
+   * tick reads two cheap probes, each waking only the streams whose data it
+   * covers: the daily web totals wake the analytics streams when the settled
+   * boundary moved or a day's totals changed, and the property list with
+   * each property's sitemap list wakes the listing streams when either
+   * changed. Inspections follow neither: the inspection streams wake when
+   * their next URL falls due, a time this source learned from the
+   * checkpoints its own extractions received.
+   */
   protected override async *observe({
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    const inspections = streams.filter((stream) =>
-      INSPECTION_STREAMS.has(stream.name),
+    const inspections = streams.filter(
+      (stream) => this.#reader(stream) instanceof InspectionStream,
     );
-    const others = streams.filter(
-      (stream) => !INSPECTION_STREAMS.has(stream.name),
+    const analytics = streams.filter((stream) => {
+      const reader = this.#reader(stream);
+      return (
+        reader instanceof DatedAnalyticsStream ||
+        reader instanceof SearchAnalyticsCountriesStream
+      );
+    });
+    const listings = streams.filter(
+      (stream) => !inspections.includes(stream) && !analytics.includes(stream),
     );
-    let fingerprint =
-      others.length > 0 ? await this.#fingerprint(signal) : undefined;
+    const probes = [];
+    for (const [woken, fingerprint] of [
+      [analytics, () => this.#totals(signal)],
+      [listings, () => this.#listings(signal)],
+    ] as const)
+      if (woken.length > 0)
+        probes.push({ woken, fingerprint, seen: await fingerprint() });
     // The first check wakes every stream, the inspection streams included.
-    let woke = this.#now().getTime();
+    let woke = Date.now();
     yield streams;
     let probeAt = Date.now() + this.pollIntervalMs;
     while (!signal.aborted) {
@@ -389,22 +317,24 @@ export class SearchConsoleSource extends Source {
       const due = this.#nextDue(inspections);
       const inspectAt = due > woke ? due : woke + this.pollIntervalMs;
       const wake = Math.min(
-        others.length > 0 ? probeAt : Number.POSITIVE_INFINITY,
+        probes.length > 0 ? probeAt : Number.POSITIVE_INFINITY,
         inspections.length > 0 ? inspectAt : Number.POSITIVE_INFINITY,
         Date.now() + this.pollIntervalMs,
       );
       await this.#sleep(wake, signal);
       const changed: Stream[] = [];
-      if (others.length > 0 && Date.now() >= probeAt) {
+      if (probes.length > 0 && Date.now() >= probeAt) {
         probeAt = Date.now() + this.pollIntervalMs;
-        const current = await this.#fingerprint(signal);
-        if (current !== fingerprint) {
-          fingerprint = current;
-          changed.push(...others);
+        for (const probe of probes) {
+          const current = await probe.fingerprint();
+          if (current !== probe.seen) {
+            probe.seen = current;
+            changed.push(...probe.woken);
+          }
         }
       }
-      if (inspections.length > 0 && this.#now().getTime() >= inspectAt) {
-        woke = this.#now().getTime();
+      if (inspections.length > 0 && Date.now() >= inspectAt) {
+        woke = Date.now();
         changed.push(...inspections);
       }
       if (changed.length > 0) yield changed;
@@ -441,483 +371,90 @@ export class SearchConsoleSource extends Source {
     return due;
   }
 
-  protected override async *extract(
+  protected override extract(
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
-  ): AsyncGenerator<SourceMessage> {
-    const { stream } = configuration;
-    if (stream.name === 'sites') {
-      yield* this.#listing(configuration, state, await this.#readSites());
-      return;
-    }
-    const siteUrl = partition?.siteUrl;
-    if (typeof siteUrl !== 'string')
-      throw new TypeError(
-        `Search Console stream ${stream.name} is read per property`,
-      );
-    if (isGrain(stream.name)) {
-      yield* this.#extractAnalytics(
-        stream,
-        stream.name,
-        configuration,
-        state,
-        siteUrl,
-      );
-      return;
-    }
-    if (INSPECTION_STREAMS.has(stream.name)) {
-      yield* this.#extractInspections(stream, state, siteUrl);
-      return;
-    }
-    yield* this.#listing(
+    scan: SearchConsoleScan,
+    signal: AbortSignal | undefined,
+  ): AsyncIterable<SourceMessage> {
+    return this.#reader(configuration.stream).extract(
       configuration,
       state,
-      await this.#readSitemaps(stream.name, siteUrl),
+      partition,
+      scan,
+      signal,
     );
   }
 
-  // Sites, sitemaps and the dateless grain are complete lists on every read,
-  // so an incremental copy diffs them with the previous snapshot.
-  async *#listing(
-    { stream, syncMode }: CopyConfiguration,
-    state: unknown,
-    records: readonly Record<string, unknown>[],
-  ): AsyncGenerator<SourceMessage> {
-    if (syncMode === 'incremental')
-      yield* diffSnapshot(
-        stream,
-        validateRecords(stream, records, 'Search Console'),
-        state,
-      );
-    else yield* this.#records(stream, records);
+  #reader(stream: Stream): SearchConsoleStream {
+    const reader = this.#readers.get(stream);
+    if (reader === undefined)
+      throw new TypeError(`Search Console has no stream ${stream.name}`);
+    return reader;
   }
 
-  *#records(
-    stream: Stream,
-    records: readonly Record<string, unknown>[],
-  ): Generator<RecordMessage> {
-    for (const data of validateRecords(stream, records, 'Search Console'))
-      yield { stream: stream.name, data };
-  }
-
-  /**
-   * One grain, one window. The daily totals repeat per report type and carry
-   * it as data; the breakdowns are web-only, because Google anonymizes rare
-   * rows and a wider grain loses more of the property's real traffic.
-   */
-  async *#extractAnalytics(
-    stream: Stream,
-    name: SearchAnalyticsGrain,
-    configuration: CopyConfiguration,
-    state: unknown,
-    siteUrl: string,
-  ): AsyncGenerator<SourceMessage> {
-    const grain = searchAnalyticsGrains[name];
-    const endDate = today(this.#now());
-    if (!grain.dimensions.includes('date')) {
-      const startDate = subMonths(endDate, this.breakdownMonths);
-      const page = await readSearchAnalytics(this.#api, siteUrl, {
-        dataState: 'ALL',
-        dimensions: [...grain.dimensions],
-        endDate,
-        startDate,
-        type: 'WEB',
-      });
-      yield* this.#listing(
-        configuration,
-        state,
-        this.#rows(name, page.rows, siteUrl, () => ({ startDate, endDate })),
-      );
-      return;
-    }
-    const opening = subMonths(endDate, RETENTION_MONTHS);
-    const saved = readCheckpoint(state);
-    const startDate =
-      configuration.syncMode === 'incremental'
-        ? earlier(saved?.date ?? opening, endDate)
-        : opening;
-    const types =
-      name === 'searchAnalyticsDaily' ? this.searchTypes : (['WEB'] as const);
-
-    const rows: Record<string, unknown>[] = [];
-    let settled: string | undefined;
-    for (const type of types) {
-      const page = await readSearchAnalytics(this.#api, siteUrl, {
-        dataState: 'ALL',
-        dimensions: [...grain.dimensions],
-        endDate,
-        startDate,
-        type,
-      });
-      const { firstIncompleteDate } = page;
-      rows.push(
-        ...this.#rows(name, page.rows, siteUrl, (row) => ({
-          ...(name === 'searchAnalyticsDaily' ? { searchType: type } : {}),
-          settled:
-            firstIncompleteDate === undefined ||
-            String(row.date) < firstIncompleteDate,
-        })),
-      );
-      if (firstIncompleteDate === undefined) continue;
-      // Report types settle independently, so the checkpoint keeps the
-      // earliest boundary and re-reads the rest next run.
-      const boundary = addDays(firstIncompleteDate, -1);
-      settled = settled === undefined ? boundary : earlier(settled, boundary);
-    }
-    if (configuration.syncMode !== 'incremental') {
-      yield* this.#records(stream, rows);
-      return;
-    }
-    // Google may still restate every day from the next read's first, so the
-    // snapshot keeps those days: a row a re-read no longer returns is deleted,
-    // and the days before stay as loaded.
-    const date = earlier(settled ?? endDate, endDate);
-    for await (const message of diffSnapshot(
-      stream,
-      validateRecords(stream, rows, 'Search Console'),
-      saved?.diff ?? null,
-      { keeps: (record) => String(record.date) >= date },
-    ))
-      yield 'type' in message && message.type === 'STATE'
-        ? { ...message, state: { date, diff: message.state } }
-        : message;
-  }
-
-  #rows(
-    name: SearchAnalyticsGrain,
-    rows: readonly SearchAnalyticsRow[],
-    siteUrl: string,
-    extra: (row: Record<string, unknown>) => Record<string, unknown>,
-  ): Record<string, unknown>[] {
-    const { dimensions } = searchAnalyticsGrains[name];
-    return rows.flatMap((row) => {
-      // A row whose keys disagree with the requested dimensions is Google's
-      // doing; skipping it keeps one malformed row from failing the copy.
-      if (row.keys.length !== dimensions.length) return [];
-      const keyed = {
-        siteUrl,
-        ...Object.fromEntries(
-          dimensions.map((dimension, index) => [dimension, row.keys[index]]),
-        ),
-      };
-      return [
-        {
-          ...keyed,
-          ...extra(keyed),
-          clicks: row.clicks,
-          ctr: row.ctr,
-          impressions: row.impressions,
-          position: row.position,
-        },
-      ];
-    });
-  }
-
-  /**
-   * Properties the grant can read. An unverified user is listed but cannot
-   * read a property's history, so it is not one this connector can extract.
-   */
-  async #readSites(): Promise<Record<string, unknown>[]> {
-    const { siteEntry = [] } = await this.#api.sites();
-    return siteEntry
-      .filter((entry) => entry.permissionLevel !== 'siteUnverifiedUser')
-      .map(({ siteUrl, permissionLevel }) => ({ permissionLevel, siteUrl }));
-  }
-
-  async #readSitemaps(
-    name: string,
-    siteUrl: string,
-  ): Promise<Record<string, unknown>[]> {
-    const { sitemap: sitemaps = [] } = await this.#api.sitemaps(siteUrl);
-    if (name === 'sitemaps') {
-      const reads = await readSitemaps(
-        this.#fetch,
-        sitemaps.map(({ path }) => path),
-      );
-      return sitemaps.map((sitemap) => ({
-        siteUrl,
-        path: sitemap.path,
-        type: sitemap.type,
-        lastSubmitted: instant(sitemap.lastSubmitted),
-        lastDownloaded: instant(sitemap.lastDownloaded),
-        isPending: sitemap.isPending,
-        isSitemapsIndex: sitemap.isSitemapsIndex,
-        // int64 counts arrive as decimal strings.
-        warnings: Number(sitemap.warnings),
-        errors: Number(sitemap.errors),
-        urlsRead: reads.get(sitemap.path)?.urls?.length ?? null,
-        readError: reads.get(sitemap.path)?.error ?? null,
-      }));
-    }
-    return sitemaps.flatMap(({ path, contents = [] }) =>
-      contents.map((content) => ({
-        siteUrl,
-        sitemapPath: path,
-        type: content.type,
-        submitted: Number(content.submitted),
-        indexed: content.indexed === undefined ? null : Number(content.indexed),
-      })),
-    );
-  }
-
-  /**
-   * One rolling pass of one inspection stream over one property: delete URLs
-   * that left the universe, reuse inspections another stream already made,
-   * and inspect never-inspected then stalest URLs until none is due or the
-   * daily quota runs out. Progress is kept per URL in the stream's state.
-   */
-  async *#extractInspections(
-    stream: Stream,
-    state: unknown,
-    siteUrl: string,
-  ): AsyncGenerator<SourceMessage> {
-    const saved = readInspectionState(state);
-    const universe = await this.#universe(siteUrl, stream.name);
-    const { plan, inspections } = await this.#inspecting.acquire(
-      siteUrl,
-      async () => {
-        const cached = this.#inspected.get(siteUrl) ?? new Map();
-        this.#inspected.set(siteUrl, cached);
-        const refreshMs = this.inspectionRefreshHours * 60 * 60 * 1000;
-        const plan = planInspections({
-          saved,
-          universe,
-          cached,
-          now: this.#now().getTime(),
-          refreshMs,
-        });
-        const inspections = [...plan.reuse];
-        let nextDue = plan.nextDue;
-        const resetAt = this.#quotaResetAt.get(siteUrl) ?? 0;
-        if (plan.due.length > 0 && this.#now().getTime() >= resetAt) {
-          const { inspections: made, exhausted } = await inspectUrls(
+  // Each property's daily web totals; a change in any of them wakes the
+  // analytics streams.
+  async #totals(signal: AbortSignal): Promise<string> {
+    const totals = [];
+    for (const siteUrl of this.siteUrls)
+      totals.push(
+        await this.#probe(signal, async () => {
+          const endDate = today(new Date());
+          const page = await readSearchAnalytics(
             this.#api,
             siteUrl,
-            plan.due,
-            { concurrency: this.inspectionConcurrency, clock: this.#clock },
+            {
+              dataState: 'ALL',
+              dimensions: ['date'],
+              endDate,
+              startDate: addDays(endDate, -PROBE_DAYS),
+              type: 'WEB',
+            },
+            { signal },
           );
-          for (const inspection of made) {
-            cached.set(inspection.inspectionUrl, inspection);
-            nextDue = Math.min(
-              nextDue,
-              Date.parse(inspection.inspectedAt) + refreshMs,
-            );
-          }
-          inspections.push(...made);
-          if (exhausted) {
-            const reset = nextPacificMidnight(this.#now()).getTime();
-            this.#quotaResetAt.set(siteUrl, reset);
-            nextDue = Math.min(nextDue, reset);
-          }
-        } else if (plan.due.length > 0) nextDue = Math.min(nextDue, resetAt);
-        this.#dueAt.set(`${stream.name}\0${siteUrl}`, nextDue);
-        this.#dueLearned.dispatchEvent(new Event('learned'));
-        return { plan, inspections };
-      },
-    );
+          return {
+            firstIncompleteDate: page.firstIncompleteDate,
+            rows: page.rows.map((row) => [
+              row.keys[0],
+              row.clicks,
+              row.impressions,
+            ]),
+          };
+        }),
+      );
+    return JSON.stringify(totals);
+  }
 
-    const next = new Map(saved);
-    for (const url of plan.gone) {
-      yield* deletions(stream, siteUrl, url, 0, saved.get(url)?.rows ?? 0);
-      next.delete(url);
-    }
-    inspections.sort((left, right) =>
-      left.inspectionUrl < right.inspectionUrl ? -1 : 1,
-    );
-    for (const inspection of inspections) {
-      const rows = this.#inspectionRows(
-        stream.name,
-        siteUrl,
-        inspection,
-        universe.get(inspection.inspectionUrl) ?? {
-          sitemap: false,
-          search: false,
-        },
-      );
-      for (const data of validateRecords(stream, rows, 'Search Console'))
-        yield { stream: stream.name, data };
-      const before = saved.get(inspection.inspectionUrl)?.rows ?? 0;
-      yield* deletions(
-        stream,
-        siteUrl,
-        inspection.inspectionUrl,
-        rows.length,
-        before,
-      );
-      next.set(inspection.inspectionUrl, {
-        at: inspection.inspectedAt,
-        rows: rows.length,
-      });
-    }
-    yield {
-      type: 'STATE',
-      stream: stream.name,
-      state: {
-        inspected: Object.fromEntries(
-          [...next].sort(([left], [right]) => (left < right ? -1 : 1)),
+  // The properties the grant lists and each property's sitemaps, as Google
+  // returns them; a change in any of them wakes the listing streams.
+  async #listings(signal: AbortSignal): Promise<string> {
+    const lists = [
+      await this.#probe(signal, () => this.#api.sites({ signal })),
+    ];
+    for (const siteUrl of this.siteUrls)
+      lists.push(
+        await this.#probe(signal, () =>
+          this.#api.sitemaps(siteUrl, { signal }),
         ),
-      },
-    };
+      );
+    return JSON.stringify(lists);
   }
 
-  #inspectionRows(
-    name: string,
-    siteUrl: string,
-    { inspectionUrl, inspectedAt, result, error }: UrlInspection,
-    { sitemap, search }: Discovery,
-  ): Record<string, unknown>[] {
-    const status = result?.indexStatusResult;
-    if (name === 'urlInspection')
-      return [
-        {
-          siteUrl,
-          inspectionUrl,
-          verdict: status?.verdict ?? null,
-          coverageState: status?.coverageState ?? null,
-          robotsTxtState: status?.robotsTxtState ?? null,
-          indexingState: status?.indexingState ?? null,
-          pageFetchState: status?.pageFetchState ?? null,
-          crawledAs: status?.crawledAs ?? null,
-          googleCanonical: status?.googleCanonical ?? null,
-          userCanonical: status?.userCanonical ?? null,
-          lastCrawlTime: instant(status?.lastCrawlTime),
-          inspectionResultLink: result?.inspectionResultLink ?? null,
-          mobileUsabilityVerdict:
-            result?.mobileUsabilityResult?.verdict ?? null,
-          richResultsVerdict: result?.richResultsResult?.verdict ?? null,
-          ampVerdict: result?.ampResult?.verdict ?? null,
-          inSitemap: sitemap,
-          inSearchAnalytics: search,
-          inspectedAt,
-          errorStatus: error?.status ?? null,
-          errorMessage: error?.message ?? null,
-        },
-      ];
-    const values =
-      name === 'urlInspectionSitemaps'
-        ? status?.sitemap
-        : status?.referringUrls;
-    const column =
-      name === 'urlInspectionSitemaps' ? 'sitemap' : 'referringUrl';
-    return (values ?? []).map((value, position) => ({
-      siteUrl,
-      inspectionUrl,
-      position,
-      [column]: value,
-    }));
-  }
-
-  /**
-   * Every URL the property can be inspected for: each URL its sitemaps list
-   * and each page its search analytics history shows, fragments stripped and
-   * limited to the property. The first inspection stream of a pass computes
-   * it; each other stream reuses it once, so a pass reads sitemaps once.
-   */
-  #universe(siteUrl: string, stream: string): Promise<Map<string, Discovery>> {
-    const current = this.#universes.get(siteUrl);
-    const now = this.#clock.now();
-    if (
-      current !== undefined &&
-      !current.consumers.has(stream) &&
-      now - current.at < UNIVERSE_REUSE_MS
-    ) {
-      current.consumers.add(stream);
-      return current.urls;
+  // A call that fails is part of the fingerprint, not the end of watching:
+  // when it starts or stops failing, the extraction that follows reports it
+  // or loads it, while the other calls keep being watched.
+  async #probe(
+    signal: AbortSignal,
+    call: () => Promise<unknown>,
+  ): Promise<unknown> {
+    signal.throwIfAborted();
+    try {
+      return await call();
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return { failed: messageOf(error) };
     }
-    const urls = this.#discover(siteUrl);
-    this.#universes.set(siteUrl, {
-      urls,
-      consumers: new Set([stream]),
-      at: now,
-    });
-    return urls;
   }
-
-  async #discover(siteUrl: string): Promise<Map<string, Discovery>> {
-    const { sitemap = [] } = await this.#api.sitemaps(siteUrl);
-    const listed = sitemap.map(({ path }) => path);
-    // An unreadable sitemap is reported on the sitemaps stream; inspection
-    // still covers every URL the other sources show.
-    const sitemapUrls = [
-      ...(await readSitemaps(this.#fetch, listed)).values(),
-    ].flatMap((read) => read.urls ?? []);
-    const searchUrls = new Set<string>();
-    const endDate = today(this.#now());
-    for (const type of this.searchTypes) {
-      const page = await readSearchAnalytics(this.#api, siteUrl, {
-        dataState: 'ALL',
-        dimensions: ['page'],
-        endDate,
-        startDate: subMonths(endDate, RETENTION_MONTHS),
-        type,
-      });
-      for (const row of page.rows)
-        if (row.keys[0] !== undefined) searchUrls.add(row.keys[0]);
-    }
-    const universe = new Map<string, Discovery>();
-    const add = (raw: string, from: 'sitemap' | 'search') => {
-      const url = pageUrl(raw);
-      if (url === undefined || !underProperty(siteUrl, url)) return;
-      const known = universe.get(url) ?? { sitemap: false, search: false };
-      universe.set(url, { ...known, [from]: true });
-    };
-    for (const url of sitemapUrls) add(url, 'sitemap');
-    for (const url of searchUrls) add(url, 'search');
-    return universe;
-  }
-
-  // One probe per property; a change in any of them invalidates the streams.
-  // A property whose probe fails is part of the fingerprint, not the end of
-  // watching: when it starts or stops failing, the extraction that follows
-  // reports it or loads it, while the other properties keep being watched.
-  async #fingerprint(signal: AbortSignal): Promise<string> {
-    const probes = [];
-    for (const siteUrl of this.siteUrls) {
-      signal.throwIfAborted();
-      const endDate = today(this.#now());
-      try {
-        const page = await readSearchAnalytics(
-          this.#api,
-          siteUrl,
-          {
-            dataState: 'ALL',
-            dimensions: ['date'],
-            endDate,
-            startDate: addDays(endDate, -PROBE_DAYS),
-            type: 'WEB',
-          },
-          { signal },
-        );
-        probes.push({
-          siteUrl,
-          firstIncompleteDate: page.firstIncompleteDate ?? null,
-          rows: page.rows.map((row) => [
-            row.keys[0],
-            row.clicks,
-            row.impressions,
-          ]),
-        });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        probes.push({ siteUrl, failed: messageOf(error) });
-      }
-    }
-    return JSON.stringify(probes);
-  }
-}
-
-// The analytics checkpoint holds the day the next read starts from, the last
-// settled one, and the diff's state for the days from it.
-function readCheckpoint(
-  state: unknown,
-): { readonly date: string; readonly diff: unknown } | null {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the checkpoint holds what this source wrote; own state is not re-validated
-  return state as { date: string; diff: unknown } | null;
-}
-
-// Google reports some instants to the second (2026-09-14T19:44:28Z); they
-// load in the canonical millisecond form every other timestamp uses.
-function instant(value: string | undefined): string | null {
-  return value === undefined ? null : new Date(value).toISOString();
 }

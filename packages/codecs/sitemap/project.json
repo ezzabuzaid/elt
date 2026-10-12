@@ -1,0 +1,9 @@
+{
+  "name": "codec-sitemap",
+  "sourceRoot": "packages/codecs/sitemap/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:codec"],
+  "targets": {
+    "format": {}
+  }
+}
