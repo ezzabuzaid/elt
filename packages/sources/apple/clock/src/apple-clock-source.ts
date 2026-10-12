@@ -130,8 +130,7 @@ export class AppleClockSource extends Source<ClockSnapshot> {
           seen.set(store, version);
           changed.add(store);
         }
-        if (changed.size)
-          yield streams.filter((stream) => changed.has(readerOf(stream).store));
+        yield streams.filter((stream) => changed.has(readerOf(stream).store));
       }
     } catch (error) {
       if (!(

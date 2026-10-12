@@ -39,6 +39,16 @@ export abstract class SyncHistory<Target extends DestinationTarget> {
     connection: Connection<Target>,
     copies: readonly DeclaredCopy<Target>[],
   ): Promise<RecordedPass<Target>>;
+
+  // Durable when it resolves: at that moment a watch's source checked these
+  // streams and found them unchanged since their last copy loaded, so readers
+  // see them current as of then though no pass read them, as a Debezium
+  // heartbeat moves a connector's position with no change to carry.
+  abstract checked(
+    connection: Connection<Target>,
+    streams: readonly string[],
+    at: Date,
+  ): Promise<void>;
 }
 
 export function copyStatus({

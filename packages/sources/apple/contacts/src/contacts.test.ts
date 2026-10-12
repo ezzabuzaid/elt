@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   Connection,
@@ -1561,4 +1562,69 @@ test('Contacts reads as documented views whose joins keep one row per contact', 
     await readFile(String(images[0]?.attachmentRef)),
     Buffer.from('not really a jpeg'),
   );
+});
+
+test('a Contacts watch keeps every stream current while contactsd changes nothing', async () => {
+  await using dir = await mkdtempDisposable(
+    join(tmpdir(), 'elt-contacts-current-'),
+  );
+  const directory = addressBookFixture(join(dir.path, 'AddressBook'));
+  const source = new AppleContactsSource(directory);
+  const data = join(dir.path, 'out.sqlite');
+  const destination = new SQLiteDestination({ path: data });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const { streams } = await source.discover();
+  const watching = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(dir.path, 'state.sqlite'),
+        }),
+        steps: streams.map(
+          (stream) => new Copy(stream, destination.table(stream.name)),
+        ),
+      }),
+    ],
+  }).watch({ signal: AbortSignal.timeout(30_000) });
+  try {
+    await watching.next();
+    using out = new DatabaseSync(data, { readOnly: true });
+    const status = out.prepare(
+      'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
+    );
+    const [pass] = out
+      .prepare('SELECT started_at, completed_at FROM sync_attempts')
+      .all();
+    // Nothing changes, so only the watch's next check can move current_as_of.
+    for (
+      let tries = 0;
+      status
+        .all()
+        .some(
+          ({ current_as_of }) =>
+            String(current_as_of) <= String(pass?.started_at),
+        );
+      tries++
+    ) {
+      if (tries > 100)
+        assert.fail(`not current: ${JSON.stringify(status.all())}`);
+      await sleep(100);
+    }
+
+    assert.equal(
+      out.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
+      1,
+    );
+    for (const row of status.all()) {
+      assert.equal(row.status, 'succeeded', String(row.stream));
+      assert.equal(row.last_successful_sync_at, pass?.completed_at);
+    }
+  } finally {
+    await watching.return(undefined);
+  }
 });

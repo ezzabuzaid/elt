@@ -184,8 +184,7 @@ export class AppleSafariSource extends Source<SafariScan> {
           seen.set(store, current);
           changed.add(store);
         }
-        if (changed.size > 0)
-          yield streams.filter((stream) => changed.has(readerOf(stream).store));
+        yield streams.filter((stream) => changed.has(readerOf(stream).store));
       }
     } catch (error) {
       if (!(error instanceof Error && error.name === 'AbortError')) throw error;

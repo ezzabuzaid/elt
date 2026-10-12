@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -612,3 +613,63 @@ test(
     );
   },
 );
+
+test('a quiet watch reports a check that found the store unchanged each second, once the helper confirms its subscription', async () => {
+  await using stub = await StubEventKitHelper.create();
+  stub.watch({ lines: ['changed'], then: 'wait' });
+  const controller = new AbortController();
+  const checks = new CalendarStore(stub.path).checks(controller.signal);
+  const running = () =>
+    execFile('pgrep', ['-P', String(process.pid), '-f', `${stub.path} watch`]);
+
+  const subscribed = await checks.next();
+  const quiet = await checks.next();
+  const pending = checks.next();
+  controller.abort();
+
+  assert.deepEqual([subscribed.value, quiet.value], ['changed', 'unchanged']);
+  assert.deepEqual(await pending, { value: undefined, done: true });
+  await assert.rejects(running(), { code: 1 });
+});
+
+test(
+  'a consumer that stops reading checks stops the helper process',
+  { timeout: 10_000 },
+  async () => {
+    await using stub = await StubEventKitHelper.create();
+    stub.watch({ lines: ['changed'], then: 'wait' });
+    const checks = new CalendarStore(stub.path).checks(
+      new AbortController().signal,
+    );
+    const running = () =>
+      execFile('pgrep', [
+        '-P',
+        String(process.pid),
+        '-f',
+        `${stub.path} watch`,
+      ]);
+
+    await checks.next();
+    assert.deepEqual(await checks.next(), { value: 'unchanged', done: false });
+    await running();
+    const stopped = await checks.return(undefined);
+
+    assert.deepEqual(stopped, { value: undefined, done: true });
+    await assert.rejects(running(), { code: 1 });
+  },
+);
+
+test('no check says the store held still before the helper confirms its subscription', async () => {
+  await using stub = await StubEventKitHelper.create();
+  stub.watch({ lines: [], then: 'wait' });
+  const controller = new AbortController();
+  const checks = new CalendarStore(stub.path).checks(controller.signal);
+
+  const first = checks.next();
+  // Longer than a check takes once subscribed.
+  const seen = await Promise.race([first, sleep(1500).then(() => 'nothing')]);
+  controller.abort();
+
+  assert.equal(seen, 'nothing');
+  assert.deepEqual(await first, { value: undefined, done: true });
+});

@@ -192,6 +192,7 @@ export class ApplePlugin {
                 startedAt: failure.failedAt,
                 completedAt: failure.failedAt,
                 lastSucceededAt: pass?.lastSucceededAt ?? null,
+                currentAsOf: pass?.currentAsOf ?? null,
                 error: failure.error,
                 failureType: failure.failureType,
               };

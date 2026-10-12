@@ -4,6 +4,7 @@ import type { SQLiteView } from './sqlite-views.ts';
 
 export const attempts = '"_elt_sync_attempts"';
 export const coverage = '"_elt_extraction_coverage"';
+export const checks = '"_elt_stream_checks"';
 export const now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 const status = `"status" TEXT NOT NULL DEFAULT 'running' CHECK ("status" IN ('running', 'succeeded', 'partial', 'failed', 'cancelled'))`;
@@ -29,7 +30,26 @@ export const syncHistoryTables = [
     "failures" TEXT NOT NULL DEFAULT '[]' CHECK (json_valid("failures")),
     PRIMARY KEY ("attempt_id", "stream")
   ) STRICT`,
+  // Each stream's latest check by a watch that found it unchanged.
+  `CREATE TABLE IF NOT EXISTS ${checks} (
+    "connector" TEXT NOT NULL, "stream" TEXT NOT NULL, "checked_at" TEXT NOT NULL,
+    PRIMARY KEY ("connector", "stream")
+  ) STRICT`,
 ] as const;
+
+// When each declared stream last matched its upstream: the start of its last
+// successful pass, or a later check that found it unchanged.
+const currency = `"stream_success" AS (
+        SELECT a."connector", c."stream", a."started_at",
+          row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."completed_at" DESC, a."id" DESC) AS "rank"
+        FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id" WHERE c."status" = 'succeeded'
+      ), "currency" AS (
+        SELECT d."connector", d."stream",
+          CASE WHEN s."started_at" IS NULL THEN NULL ELSE max(s."started_at", coalesce(k."checked_at", s."started_at")) END AS "current_as_of"
+        FROM (SELECT DISTINCT a."connector", c."stream" FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id") d
+        LEFT JOIN "stream_success" s ON s."connector" = d."connector" AND s."stream" = d."stream" AND s."rank" = 1
+        LEFT JOIN ${checks} k ON k."connector" = d."connector" AND k."stream" = d."stream"
+      )`;
 
 // The same relations Postgres publishes; SQLite ranks with window functions
 // where Postgres uses DISTINCT ON and LATERAL.
@@ -41,17 +61,18 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
       c."sync_mode", c."destination_sync_mode", c."description", c."selection",
       c."status", c."written_count", c."deleted_count", c."failures"
       FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"`,
-  sync_status: `WITH "success" AS (
+  sync_status: `WITH ${currency}, "success" AS (
         SELECT "connector", "id", "completed_at", row_number() OVER (PARTITION BY "connector" ORDER BY "completed_at" DESC, "id" DESC) AS "rank"
         FROM ${attempts} WHERE "status" = 'succeeded'
       ), "latest" AS (
         SELECT *, row_number() OVER (PARTITION BY "connector" ORDER BY "id" DESC) AS "rank" FROM ${attempts}
       )
       SELECT a."connector", a."id" AS "latest_attempt_id", a."started_at", a."completed_at", a."status", a."error", a."failure_type",
-        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
+        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at",
+        (SELECT CASE WHEN count(*) = count(c."current_as_of") THEN min(c."current_as_of") END FROM "currency" c WHERE c."connector" = a."connector") AS "current_as_of"
       FROM "latest" a LEFT JOIN "success" s ON s."connector" = a."connector" AND s."rank" = 1
       WHERE a."rank" = 1 ORDER BY a."connector"`,
-  stream_status: `WITH "declared" AS (
+  stream_status: `WITH ${currency}, "declared" AS (
         SELECT a."connector", c."stream", c."target_schema", c."target_table", a."id", a."started_at", a."completed_at", c."status",
           row_number() OVER (PARTITION BY a."connector", c."stream" ORDER BY a."id" DESC) AS "rank"
         FROM ${coverage} c JOIN ${attempts} a ON a."id" = c."attempt_id"
@@ -62,8 +83,9 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
       )
       SELECT d."connector", d."stream", d."target_schema", d."target_table",
         d."id" AS "latest_attempt_id", d."started_at", d."completed_at", d."status",
-        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at"
+        s."id" AS "last_successful_attempt_id", s."completed_at" AS "last_successful_sync_at", c."current_as_of"
       FROM "declared" d LEFT JOIN "success" s ON s."connector" = d."connector" AND s."stream" = d."stream" AND s."rank" = 1
+      LEFT JOIN "currency" c ON c."connector" = d."connector" AND c."stream" = d."stream"
       WHERE d."rank" = 1 ORDER BY d."connector", d."stream"`,
 };
 

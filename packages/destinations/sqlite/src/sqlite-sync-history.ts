@@ -15,6 +15,7 @@ import {
 import { SQLiteDestination } from './sqlite-destination.ts';
 import {
   attempts,
+  checks,
   coverage,
   now,
   syncHistoryTables,
@@ -37,6 +38,20 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
 
   override validate(connection: Connection<SQLiteTable>): void {
     this.#path(connection);
+  }
+
+  override async checked(
+    connection: Connection<SQLiteTable>,
+    streams: readonly string[],
+    at: Date,
+  ): Promise<void> {
+    write(this.#path(connection), (database) => {
+      const check = database.prepare(
+        `INSERT INTO ${checks} ("connector", "stream", "checked_at") VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET "checked_at" = excluded."checked_at"`,
+      );
+      for (const stream of streams)
+        check.run(connection.name, stream, at.toISOString());
+    });
   }
 
   // Every selected stream is declared before reading, even if it produces no

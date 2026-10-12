@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import { EventEmitter, on } from 'node:events';
 import {
   mkdtempDisposable,
   readFile,
@@ -9,6 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import postgres from 'postgres';
 
@@ -4931,4 +4933,192 @@ test('rows past one JSON string stage in batches by size, and a record too large
     /"raw"\."docs" with key \{"id":"huge"\} is too large to stage: its largest value, in column body, is 270000000 bytes/,
   );
   assert.deepEqual({ ...(await stored()) }, { rows: 600, shortest: 2 ** 20 });
+});
+
+// Two streams of one record each, a read the test can make fail, and a
+// watcher the test drives: each check event is one check of the upstream,
+// naming the streams that changed since the previous check, possibly none.
+class CheckedSource extends Source {
+  readonly identity = 'checked';
+  readonly checks = new EventEmitter();
+  readonly failing = new Set<string>();
+  readonly a = new Stream({
+    name: 'a',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+  readonly b = new Stream({ ...this.a, name: 'b' });
+  protected readonly catalog = new Catalog([this.a, this.b]);
+
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
+  protected override async open() {
+    return new AsyncDisposableStack();
+  }
+
+  protected override async *observe({ streams, signal }: SourceWatchOptions) {
+    await using checks = on(this.checks, 'check', { signal });
+    yield streams;
+    for await (const [changed] of checks) yield changed;
+  }
+
+  protected override async *extract(configuration: CopyConfiguration) {
+    const { name } = configuration.stream;
+    if (this.failing.has(name)) throw new Error(`${name} cannot be read`);
+    yield { stream: name, data: { id: 'one' } };
+  }
+}
+
+// The checked source loaded into a schema of its own with the warehouse's
+// sync history, and what readers see of each stream and of the connector.
+async function checkedPipeline(url: string, sql: postgres.Sql) {
+  const source = new CheckedSource();
+  const destination = new PostgresDestination({ url, schema: 'checked' });
+  const history = new PostgresSyncHistory({ url });
+  await history.install();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'checked',
+        source,
+        destination,
+        checkpoints: new PostgresCheckpointStore({ url, schema: 'checked' }),
+        steps: [
+          new Copy(source.a, destination.table('a')),
+          new Copy(source.b, destination.table('b')),
+        ],
+      }),
+    ],
+  });
+  const streams = async () =>
+    Object.fromEntries(
+      (
+        await sql<
+          {
+            stream: string;
+            last_successful_sync_at: Date | null;
+            current_as_of: Date | null;
+          }[]
+        >`SELECT stream, last_successful_sync_at, current_as_of FROM marts.stream_status ORDER BY stream`
+      ).map(({ stream, ...times }) => [stream, times]),
+    );
+  const connector = async () =>
+    (
+      await sql<
+        { current_as_of: Date | null }[]
+      >`SELECT current_as_of FROM marts.sync_status`
+    )[0]?.current_as_of;
+  const startedAt = async () =>
+    (
+      await sql<
+        { started_at: Date }[]
+      >`SELECT started_at FROM marts.sync_attempts ORDER BY attempt_id DESC LIMIT 1`
+    )[0]?.started_at;
+  // Waits until what a reader sees meets done.
+  const until = async (
+    done: (seen: Awaited<ReturnType<typeof streams>>) => boolean,
+  ) => {
+    for (let tries = 0; !done(await streams()); tries++) {
+      if (tries > 100)
+        assert.fail(`never happened: ${JSON.stringify(await streams())}`);
+      await sleep(50);
+    }
+  };
+  return { source, pipeline, streams, connector, startedAt, until };
+}
+
+test('under a watch, a stream whose change fails to load stays current only as of before that change, and so does its connector, while the others move on with the next check, in Postgres', async () => {
+  await using database = await scratchDatabase(server);
+  const { source, pipeline, streams, connector, until } = await checkedPipeline(
+    database.url,
+    database.sql,
+  );
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    const loaded = await streams();
+
+    // Both change, so this check vouches for neither; only b loads.
+    source.failing.add('a');
+    source.checks.emit('check', [source.a, source.b]);
+    const pass = await watching.next();
+    const checked = new Date();
+    source.checks.emit('check', []);
+    await until((seen) => Number(seen.b?.current_as_of) >= +checked);
+
+    const seen = await streams();
+    assert.equal(pass.value?.outcomes[0]?.failures.length, 1);
+    assert.deepEqual(seen.a?.current_as_of, loaded.a?.current_as_of);
+    assert.deepEqual(await connector(), loaded.a?.current_as_of);
+    assert.ok(Number(seen.b?.current_as_of) >= +checked);
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('under a watch, a check that finds nothing changed makes each stream current as of the check, while its last successful sync stays the pass, in Postgres', async () => {
+  await using database = await scratchDatabase(server);
+  const { source, pipeline, streams, until } = await checkedPipeline(
+    database.url,
+    database.sql,
+  );
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    const loaded = await streams();
+
+    const checked = new Date();
+    source.checks.emit('check', []);
+    await until((seen) =>
+      Object.values(seen).every(
+        ({ current_as_of }) => Number(current_as_of) >= +checked,
+      ),
+    );
+
+    const seen = await streams();
+    for (const stream of ['a', 'b']) {
+      assert.ok(Number(loaded[stream]?.current_as_of) < +checked);
+      assert.deepEqual(
+        seen[stream]?.last_successful_sync_at,
+        loaded[stream]?.last_successful_sync_at,
+      );
+    }
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('a run makes each stream it loaded current as of when its pass began, and the connector current only once every stream has loaded, in Postgres', async () => {
+  await using database = await scratchDatabase(server);
+  const { source, pipeline, streams, connector, startedAt } =
+    await checkedPipeline(database.url, database.sql);
+  source.failing.add('b');
+
+  await assert.rejects(pipeline.run(), PipelineError);
+  const partly = {
+    streams: await streams(),
+    connector: await connector(),
+    startedAt: await startedAt(),
+  };
+  source.failing.clear();
+  await pipeline.run();
+
+  assert.deepEqual(partly.streams.a?.current_as_of, partly.startedAt);
+  assert.equal(partly.streams.b?.current_as_of, null);
+  assert.equal(partly.connector, null);
+  const started = await startedAt();
+  assert.deepEqual((await streams()).a?.current_as_of, started);
+  assert.deepEqual((await streams()).b?.current_as_of, started);
+  assert.deepEqual(await connector(), started);
 });

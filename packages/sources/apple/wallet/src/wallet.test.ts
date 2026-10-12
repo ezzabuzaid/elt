@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   Connection,
@@ -20,6 +21,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import {
   PassBundleError,
@@ -1553,4 +1555,72 @@ test('this Mac’s Wallet loads every pass passd lists, as passd records it, and
       streamNames.map((name) => [name, { count: 0, deleted: 0 }]),
     ),
   );
+});
+
+test('a Wallet watch keeps every stream current while passd changes nothing', async () => {
+  await using dir = await mkdtempDisposable(
+    join(tmpdir(), 'elt-wallet-current-'),
+  );
+  {
+    using wallet = new ScratchWallet(dir.path);
+    wallet.add(storeCard);
+  }
+  const source = new AppleWalletSource({ directory: dir.path });
+  const data = join(dir.path, 'out.sqlite');
+  const destination = new SQLiteDestination({ path: data });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const { streams } = await source.discover();
+  const watching = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(dir.path, 'state.sqlite'),
+        }),
+        steps: streams.map(
+          (stream) => new Copy(stream, destination.table(stream.name)),
+        ),
+      }),
+    ],
+  }).watch({ signal: AbortSignal.timeout(30_000) });
+  try {
+    await watching.next();
+    using out = new DatabaseSync(data, { readOnly: true });
+    const status = out.prepare(
+      'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
+    );
+    const [pass] = out
+      .prepare('SELECT started_at, completed_at FROM sync_attempts')
+      .all();
+    // Nothing changes, so only the watch's next check can move current_as_of.
+    for (
+      let tries = 0;
+      status
+        .all()
+        .some(
+          ({ current_as_of }) =>
+            String(current_as_of) <= String(pass?.started_at),
+        );
+      tries++
+    ) {
+      if (tries > 100)
+        assert.fail(`not current: ${JSON.stringify(status.all())}`);
+      await sleep(100);
+    }
+
+    assert.equal(
+      out.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
+      1,
+    );
+    for (const row of status.all()) {
+      assert.equal(row.status, 'succeeded', String(row.stream));
+      assert.equal(row.last_successful_sync_at, pass?.completed_at);
+    }
+  } finally {
+    await watching.return(undefined);
+  }
 });

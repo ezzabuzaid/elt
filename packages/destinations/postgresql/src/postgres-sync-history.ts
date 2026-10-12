@@ -36,6 +36,20 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     this.#schema(connection);
   }
 
+  override async checked(
+    connection: Connection<PostgresTable>,
+    streams: readonly string[],
+    at: Date,
+  ): Promise<void> {
+    await this.#write(async (transaction) => {
+      for (const stream of streams)
+        await transaction`
+          INSERT INTO _warehouse.stream_checks (connector, stream, checked_at)
+          VALUES (${connection.name}, ${stream}, ${at})
+          ON CONFLICT (connector, stream) DO UPDATE SET checked_at = excluded.checked_at`;
+    });
+  }
+
   // Every selected stream is declared before reading, even if it produces no
   // rows or the process dies: an unfinished attempt stays running, never success.
   override async begin(

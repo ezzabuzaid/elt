@@ -21,7 +21,7 @@ function ago(instant: string | null): string {
 export class StatusCommand extends Command {
   readonly name = 'status';
   readonly summary =
-    "Show each selected connector's latest pass, last success and database";
+    "Show each selected connector's latest pass, last success, how current it is and database";
 
   protected configure(): void {}
 
@@ -37,11 +37,19 @@ export class StatusCommand extends Command {
           .map(({ title, error }) => `\n${title}: ${error}`);
         return [
           table(
-            ['Connector', 'State', 'Last success', 'Scope', 'Database'],
+            [
+              'Connector',
+              'State',
+              'Last success',
+              'Current as of',
+              'Scope',
+              'Database',
+            ],
             statuses.map((status) => [
               status.title,
               status.state,
               ago(status.lastSuccessAt),
+              ago(status.currentAsOf),
               status.selection,
               status.database === null
                 ? ''

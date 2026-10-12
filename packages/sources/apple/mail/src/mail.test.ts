@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { crc32, deflateSync } from 'node:zlib';
 
 import {
@@ -2657,4 +2658,80 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
       'userName',
       'usesSsl',
     ]);
+});
+
+test('a Mail watch keeps every stream current while Mail and the Accounts store hold still', async () => {
+  await using dir = await mkdtempDisposable(
+    join(tmpdir(), 'elt-mail-current-'),
+  );
+  const store = await fixture(join(dir.path, 'Mail'));
+  // Mail holds its index, and so its WAL, open the whole time; a first reader
+  // would otherwise create those files under the Mail root, which the watch
+  // counts as a change.
+  using mail = new DatabaseSync(store.index);
+  mail.prepare('SELECT count(*) FROM messages').get();
+  // FSEvents reports those writes a few milliseconds late, none after 200 ms
+  // (probed for #2235); a watch started sooner would see them.
+  await sleep(500);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: scratchAccounts(join(dir.path, 'Accounts4.sqlite')),
+  });
+  const data = join(dir.path, 'out.sqlite');
+  const destination = new SQLiteDestination({ path: data });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const { streams } = await source.discover();
+  const watching = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(dir.path, 'state.sqlite'),
+        }),
+        steps: streams.map(
+          (stream) => new Copy(stream, destination.table(stream.name)),
+        ),
+      }),
+    ],
+  }).watch({ signal: AbortSignal.timeout(30_000) });
+  try {
+    await watching.next();
+    using out = new DatabaseSync(data, { readOnly: true });
+    const status = out.prepare(
+      'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status',
+    );
+    const [pass] = out
+      .prepare('SELECT started_at, completed_at FROM sync_attempts')
+      .all();
+    // Nothing changes, so only the watch's next check can move current_as_of.
+    for (
+      let tries = 0;
+      status
+        .all()
+        .some(
+          ({ current_as_of }) =>
+            String(current_as_of) <= String(pass?.started_at),
+        );
+      tries++
+    ) {
+      if (tries > 100)
+        assert.fail(`not current: ${JSON.stringify(status.all())}`);
+      await sleep(100);
+    }
+
+    assert.equal(
+      out.prepare('SELECT count(*) AS n FROM sync_attempts').get()?.n,
+      1,
+    );
+    for (const row of status.all()) {
+      assert.equal(row.status, 'succeeded', String(row.stream));
+      assert.equal(row.last_successful_sync_at, pass?.completed_at);
+    }
+  } finally {
+    await watching.return(undefined);
+  }
 });

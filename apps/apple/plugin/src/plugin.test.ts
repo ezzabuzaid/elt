@@ -61,14 +61,34 @@ function imported(directory: string, item: Selection) {
 }
 
 // Begins passes of one connector selection's import, recorded in its
-// data.sqlite as a server's history records them.
+// data.sqlite as a server's history records them: each pass declares every
+// copy of the connection, and one that finishes loads them all.
 async function passes(plugin: ApplePlugin, item: Selection) {
   const { connection, destination } = await plugin
     .connector(item.connector)
     .connection(importDirectory(plugin.directory, item), item);
   const history = new SQLiteSyncHistory();
   await history.install([destination]);
-  return () => history.begin(connection, []);
+  const copies = connection.steps.map((copy) => ({
+    copy,
+    coverage: connection.source.coverage(copy.from),
+  }));
+  return async () => {
+    const pass = await history.begin(connection, copies);
+    return {
+      finish: () =>
+        pass.finish(
+          copies.map(({ copy }) => ({
+            copy,
+            count: 0,
+            deleted: 0,
+            failures: [],
+            cancelled: false,
+          })),
+        ),
+      fail: pass.fail,
+    };
+  };
 }
 
 test('Apple setup rejects invalid choices and fills the Calendar default range', async () => {
@@ -310,7 +330,7 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
     /^- Notes: importing since .*; no data yet\. Database: notes\//m,
   );
   assert.notEqual(importing.state, waiting.state);
-  await (await begin()).finish([]);
+  await (await begin()).finish();
   const synced = chatStatus(plugin);
   assert.match(synced.text, /^- Notes: synced at /m);
   assert.notEqual(synced.state, importing.state);
@@ -318,7 +338,7 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
   // Passes over data already imported change its times, not the state.
   const again = await begin();
   assert.equal(chatStatus(plugin).state, synced.state);
-  await again.finish([]);
+  await again.finish();
   assert.equal(chatStatus(plugin).state, synced.state);
 
   await (await begin()).fail(new Error('Notes could not be opened.'), 'config');
@@ -418,7 +438,7 @@ test('the Settings page switches connectors on and off and describes each import
   await plugin.configure({ connectors: [notes] });
   assert.equal(described().notes, 'Waiting to import.');
   const begin = await passes(plugin, notes);
-  await (await begin()).finish([]);
+  await (await begin()).finish();
   assert.equal(described().notes, 'Synced just now · 1 folder.');
   // The page adds the connector's permissions guidance to the error once.
   await (await begin()).fail(new Error('Notes could not be opened.'), 'config');

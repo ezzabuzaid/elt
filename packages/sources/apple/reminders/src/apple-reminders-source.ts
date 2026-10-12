@@ -81,7 +81,8 @@ export class AppleRemindersSource extends Source<RemindersScan> {
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for await (const _ of this.#store.watch(signal)) yield streams;
+    for await (const check of this.#store.checks(signal))
+      yield check === 'changed' ? streams : [];
   }
 
   // One change-free read for every selected stream, so reminders match their

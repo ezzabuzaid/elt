@@ -19,6 +19,11 @@ import { TargetOwnedError } from './writer.ts';
 // bounds a process's SIGTERM before SIGKILL.
 const stopGraceMs = 1000;
 
+// How often a watch records the checks that found its streams unchanged. A
+// source checks about every second; a reader needs current_as_of only to
+// about a minute, and every record is a write.
+const checkRecordMs = 60_000;
+
 // One connection's read over the copies it selected, and what each loaded.
 export type Pass<Target extends DestinationTarget> = {
   readonly connection: Connection<Target>;
@@ -179,6 +184,12 @@ export class Pipeline<Target extends DestinationTarget> {
       connection.steps.map((copy) => [copy.from.name, copy.from]),
     );
     const pending = new Set<string>();
+    // A check vouches for a stream only when nothing changed it, no pass is
+    // reading it, and its last copy loaded completely: a stream whose change
+    // failed to load stays current only as of before that change.
+    const loading = new Set<string>();
+    const loaded = new Set<string>();
+    let recordedAt = Number.NEGATIVE_INFINITY;
     let wake = Promise.withResolvers<void>();
     // An abort wakes the loop below, whether or not the source heeds it.
     watching.addEventListener('abort', () => wake.resolve(), { once: true });
@@ -205,6 +216,14 @@ export class Pipeline<Target extends DestinationTarget> {
             );
           initial = false;
           if (pending.size > 0) wake.resolve();
+          const now = Date.now();
+          const current = [...loaded].filter(
+            (name) => !pending.has(name) && !loading.has(name),
+          );
+          if (current.length > 0 && now - recordedAt >= checkRecordMs) {
+            recordedAt = now;
+            await this.history?.checked(connection, current, new Date(now));
+          }
         }
         if (initial && !watching.aborted)
           throw new TypeError('Watcher ended before its initial invalidation');
@@ -234,10 +253,17 @@ export class Pipeline<Target extends DestinationTarget> {
           pending.has(copy.from.name),
         );
         pending.clear();
+        for (const copy of steps) loading.add(copy.from.name);
         wake = Promise.withResolvers<void>();
         // Like a schedule after a failed sync, watching goes on: each pass
         // reports what did not load, and a later invalidation retries it.
-        yield await this.#pass(connection, steps, undefined);
+        const pass = await this.#pass(connection, steps, undefined);
+        for (const { copy, failures } of pass.outcomes) {
+          loading.delete(copy.from.name);
+          if (failures.length === 0) loaded.add(copy.from.name);
+          else loaded.delete(copy.from.name);
+        }
+        yield pass;
       }
       if (failed) throw failure;
     } catch (error) {

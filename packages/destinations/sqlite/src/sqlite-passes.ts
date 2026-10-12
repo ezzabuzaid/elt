@@ -21,9 +21,12 @@ export function readSQLite(path: string): DatabaseSync {
 // running: begun and not yet ended, or left so by a process that was killed.
 export type PassState = SyncStatus | 'running';
 
+// currentAsOf is when everything the connector loaded last matched its
+// upstream, as sync_status.current_as_of says.
 type Started = {
   readonly startedAt: string;
   readonly lastSucceededAt: string | null;
+  readonly currentAsOf: string | null;
 };
 
 // Only a pass that ended has completedAt, only one that did not load
@@ -59,6 +62,7 @@ export type StreamPassStatus = {
   readonly stream: string;
   readonly state: PassState;
   readonly lastSucceededAt: string | null;
+  readonly currentAsOf: string | null;
 };
 
 // The latest pass of a SQLite destination file and each stream's latest
@@ -78,7 +82,7 @@ export function readPassStatus(path: string): {
   if (installed === undefined) return { pass: null, streams: [] };
   const latest = data
     .prepare(
-      'SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at FROM sync_status',
+      'SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at, current_as_of FROM sync_status',
     )
     .get();
   return {
@@ -86,13 +90,14 @@ export function readPassStatus(path: string): {
       latest === undefined ? null : recorded(latest, passState(latest.status)),
     streams: data
       .prepare(
-        'SELECT stream, status, last_successful_sync_at FROM stream_status ORDER BY stream',
+        'SELECT stream, status, last_successful_sync_at, current_as_of FROM stream_status ORDER BY stream',
       )
       .all()
       .map((row) => ({
         stream: String(row.stream),
         state: passState(row.status),
         lastSucceededAt: text(row.last_successful_sync_at),
+        currentAsOf: text(row.current_as_of),
       })),
   };
 }
@@ -106,6 +111,7 @@ function recorded(
   const started = {
     startedAt: String(row.started_at),
     lastSucceededAt: text(row.last_successful_sync_at),
+    currentAsOf: text(row.current_as_of),
   };
   switch (state) {
     case 'running':

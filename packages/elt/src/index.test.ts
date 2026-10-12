@@ -1259,6 +1259,10 @@ class MemoryHistory extends SyncHistory<NamedTarget> {
   readonly log: string[] = [];
   readonly #finished = new Map<string, PromiseWithResolvers<void>>();
 
+  // The tests that use it read passes; checks are the SQLite and Postgres
+  // histories' tests.
+  override async checked(): Promise<void> {}
+
   finished(connection: string): Promise<void> {
     return this.#pass(connection).promise;
   }
@@ -1456,6 +1460,7 @@ test("connections read side by side, so one connection's pass never waits for an
 test("a recorded pass sees each copy's progress: what the source emitted, what committed, and how it ended", async () => {
   const progress: string[] = [];
   const history = new (class extends SyncHistory<NamedTarget> {
+    override async checked(): Promise<void> {}
     override async begin(): Promise<RecordedPass<NamedTarget>> {
       return {
         progress: ({ copy, status, emitted, committed }) =>
@@ -1512,6 +1517,7 @@ test("a recorded pass sees each copy's progress: what the source emitted, what c
 test('a copy that fails before reading still reports how it ended', async () => {
   const progress: string[] = [];
   const history = new (class extends SyncHistory<NamedTarget> {
+    override async checked(): Promise<void> {}
     override async begin(): Promise<RecordedPass<NamedTarget>> {
       return {
         progress: ({ copy, status }) =>
@@ -1534,6 +1540,7 @@ test('a copy that fails before reading still reports how it ended', async () => 
 
 test('a progress observer that throws never changes what loads', async () => {
   const history = new (class extends SyncHistory<NamedTarget> {
+    override async checked(): Promise<void> {}
     override async begin(): Promise<RecordedPass<NamedTarget>> {
       return {
         progress: () => {

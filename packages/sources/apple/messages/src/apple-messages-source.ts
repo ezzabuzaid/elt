@@ -112,9 +112,9 @@ export class AppleMessagesSource extends Source<MessagesScan> {
         signal,
       })) {
         const current = version.current;
-        if (current === seen) continue;
+        const changed = current === seen ? [] : streams;
         seen = current;
-        yield streams;
+        yield changed;
       }
     } catch (error) {
       if (!(error instanceof Error && error.name === 'AbortError')) throw error;

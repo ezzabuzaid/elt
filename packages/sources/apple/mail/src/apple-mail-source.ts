@@ -268,7 +268,7 @@ export class AppleMailSource extends Source<MailScan> {
         } else if (accountsCurrent !== accountsSeen) {
           accountsSeen = accountsCurrent;
           yield accountsSelected;
-        }
+        } else yield [];
       }
     } catch (error) {
       if (!(

@@ -64,7 +64,7 @@ export const syncHistoryRelations = {
   sync_status: {
     name: 'sync_status',
     description:
-      'One row per connector with its latest started attempt and independently its most recently completed successful pass. A watch pass covers only the streams that changed; see stream_status for each stream. A later failed, partial or unfinished pass does not erase prior success. Join extraction_coverage using the appropriate attempt ID: requested scope can change. NULL success means none recorded. These timestamps measure sync completion, not service liveness or source completeness.',
+      'One row per connector with its latest started attempt, independently its most recently completed successful pass, and how current its data is. A watch pass covers only the streams that changed; see stream_status for each stream. A later failed, partial or unfinished pass does not erase prior success. Join extraction_coverage using the appropriate attempt ID: requested scope can change. NULL success means none recorded. Judge freshness by current_as_of: last_successful_sync_at measures sync completion, not service liveness or source completeness.',
     columns: {
       connector: attempt.connector,
       latest_attempt_id:
@@ -78,12 +78,14 @@ export const syncHistoryRelations = {
         'Most recently completed all-copies-successful attempt; NULL if none. Its coverage may differ from the latest attempt.',
       last_successful_sync_at:
         'Completion time of that successful pass, advanced even if no rows changed. NULL if no successful pass was recorded. Never inferred from loaded_at or record modification dates.',
+      current_as_of:
+        "The oldest current_as_of among the connector's streams in stream_status: everything it loaded matched its upstream at least as of this time. NULL until every stream has loaded once. An old value means its data is that old: no pass or watch has refreshed it since, or a change failed to load.",
     },
   },
   stream_status: {
     name: 'stream_status',
     description:
-      'One row per connector and stream: the latest attempt that declared the stream, and independently the last attempt in which its copy succeeded. A watch pass reads only the streams its source reported changed, so a connector can succeed in sync_status while one of its streams last failed; judge a stream here. NULL success means that stream never completed.',
+      'One row per connector and stream: the latest attempt that declared the stream, independently the last attempt in which its copy succeeded, and how current the stream is. A watch pass reads only the streams its source reported changed, so a connector can succeed in sync_status while one of its streams last failed, and an unchanged stream keeps an old last_successful_sync_at while its watch keeps it current; judge a stream here, by current_as_of. NULL success means that stream never completed.',
     columns: {
       connector: attempt.connector,
       stream: 'Source stream name.',
@@ -100,6 +102,8 @@ export const syncHistoryRelations = {
         "Most recent completed attempt in which this stream's copy succeeded; NULL if none.",
       last_successful_sync_at:
         'Completion time of that attempt, advanced even if no rows changed. NULL if this stream never succeeded. Never inferred from loaded_at or record modification dates.',
+      current_as_of:
+        'When the stream last matched its upstream: when its last successful pass began reading, or a later check by a watch that found the stream unchanged since, whichever is later. A watch records its checks about once a minute. NULL if the stream never succeeded. A stream whose latest change failed to load keeps the time before that change, so its age is how stale it is; compare it with the current time to judge freshness.',
     },
   },
 } as const satisfies Record<string, ReaderRelation>;

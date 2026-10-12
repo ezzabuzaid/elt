@@ -13,9 +13,9 @@ import { passFailure } from './pass-failure.ts';
 const progress = (sync: PassStatus | null, guidance: string): string => {
   if (sync === null) return 'waiting for its first import';
   const since =
-    sync.lastSucceededAt === null
+    sync.currentAsOf === null
       ? 'no data yet'
-      : `data as of ${sync.lastSucceededAt}`;
+      : `data as of ${sync.currentAsOf}`;
   switch (sync.state) {
     case 'succeeded':
       return `synced at ${sync.completedAt}`;

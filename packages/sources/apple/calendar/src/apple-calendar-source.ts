@@ -157,7 +157,8 @@ export class AppleCalendarSource extends Source<CalendarScan> {
     streams,
     signal,
   }: SourceWatchOptions): AsyncGenerator<readonly Stream[]> {
-    for await (const _ of this.#store.watch(signal)) yield streams;
+    for await (const check of this.#store.checks(signal))
+      yield check === 'changed' ? streams : [];
   }
 
   // Every selected stream reads from one change-free EventKit read, so

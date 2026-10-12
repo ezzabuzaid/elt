@@ -172,8 +172,14 @@ export abstract class Source<
     return 'system';
   }
 
-  // Subscribe before yielding all selected streams once, then yield invalidations.
-  // Keep receiving changes until signal aborts, including while extraction runs.
+  // Each yield is one check of the upstream: the streams that changed since
+  // the previous check, possibly none. Subscribe before the first check, which
+  // names every selected stream, and keep checking until signal aborts,
+  // including while extraction runs. A check that finds nothing changed still
+  // yields, so readers see the unchanged streams current as of it. A check
+  // vouches for every selected stream: a source that checks only some of them
+  // at a time, such as one that refreshes others on a schedule, yields only
+  // what changed.
   protected abstract observe(
     options: SourceWatchOptions,
   ): AsyncIterable<readonly Stream[]>;

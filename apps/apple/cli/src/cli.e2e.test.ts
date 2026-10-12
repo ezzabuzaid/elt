@@ -2286,6 +2286,40 @@ test('sync watch --connector watches only the connectors it names', async () => 
   }
 });
 
+test('status says a watched connector is current as of the watch’s latest check while Safari changes nothing', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withSafari(mac.path);
+  cli(mac.path, 'setup', '--connector', 'safari');
+  const watch = started(mac.path, 'sync', 'watch', '--json');
+  try {
+    await watch.prints(({ connector }) => connector === 'safari');
+    const status = () =>
+      JSON.parse(cli(mac.path, 'status', '--json').stdout)[0];
+    const passed = status();
+
+    // A pass is current as of when it began, before it completed: only a
+    // later check can make the connector current past its last success.
+    let shown = status();
+    for (let tries = 0; !(shown.currentAsOf > passed.lastSuccessAt); tries++) {
+      if (tries > 50) assert.fail(`never checked: ${JSON.stringify(shown)}`);
+      await sleep(200);
+      shown = status();
+    }
+
+    assert.equal(shown.lastSuccessAt, passed.lastSuccessAt);
+    assert.ok(
+      shown.streams.every(
+        ({ currentAsOf }: { currentAsOf: string }) =>
+          currentAsOf > passed.lastSuccessAt,
+      ),
+      JSON.stringify(shown.streams),
+    );
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
+
 test('sync watch loads each change Safari commits until SIGTERM stops it, keeping every pass it finished', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   const history = await withSafari(mac.path);

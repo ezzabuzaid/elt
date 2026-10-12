@@ -73,11 +73,14 @@ export type ConnectorStatus = {
   readonly state: 'never' | PassState;
   readonly completedAt: string | null;
   readonly lastSuccessAt: string | null;
+  // When what it loaded last matched the app, as a watch keeps it.
+  readonly currentAsOf: string | null;
   readonly error: string | null;
   readonly streams: readonly {
     readonly stream: string;
     readonly state: PassState;
     readonly lastSuccessAt: string | null;
+    readonly currentAsOf: string | null;
   }[];
 };
 
@@ -358,6 +361,7 @@ export class Imports {
         state: 'never' as const,
         completedAt: null,
         lastSuccessAt: null,
+        currentAsOf: null,
         error: null,
         streams: [],
       };
@@ -386,15 +390,19 @@ export class Imports {
         state: pass.state,
         completedAt: pass.completedAt,
         lastSuccessAt: pass.lastSucceededAt,
+        currentAsOf: pass.currentAsOf,
         error:
           pass.error === null
             ? null
             : connector.failure(new Error(pass.error), pass.failureType),
-        streams: streams.map(({ stream, state, lastSucceededAt }) => ({
-          stream,
-          state,
-          lastSuccessAt: lastSucceededAt,
-        })),
+        streams: streams.map(
+          ({ stream, state, lastSucceededAt, currentAsOf }) => ({
+            stream,
+            state,
+            lastSuccessAt: lastSucceededAt,
+            currentAsOf,
+          }),
+        ),
       };
     });
   }

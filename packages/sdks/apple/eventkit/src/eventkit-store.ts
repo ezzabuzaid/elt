@@ -1,4 +1,4 @@
-import { setTimeout as sleep } from 'node:timers/promises';
+import { setInterval, setTimeout as sleep } from 'node:timers/promises';
 
 import type {
   AccountDocument,
@@ -12,6 +12,9 @@ import nativeProcess from './native-process.ts';
 
 // EventKit posts EKEventStoreChangedNotification up to this long after a change.
 const settleMs = 250;
+// How often checks says the store held still. While the helper subscribes,
+// EventKit posts every change, so a second with none means nothing changed.
+const checkMs = 1000;
 const attempts = 5;
 
 // The accounts and calendars a read covers; leaving both out reads all of them.
@@ -70,6 +73,47 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
     } finally {
       controller.abort();
       await counting;
+    }
+  }
+
+  // Yields changed once the subscription is confirmed and once per store
+  // change, and unchanged each checkMs in between: a quiet second under a
+  // live subscription is a check that found the store unchanged. A consumer
+  // that stops reading stops the helper, as an abort does: a change the watch
+  // still waits for would otherwise hold its return forever.
+  async *checks(signal: AbortSignal): AsyncGenerator<'changed' | 'unchanged'> {
+    const controller = new AbortController();
+    const checking = AbortSignal.any([signal, controller.signal]);
+    const changes = this.watch(checking)[Symbol.asyncIterator]();
+    try {
+      if ((await changes.next()).done) return;
+      yield 'changed';
+      const ticks = setInterval(checkMs, undefined, { signal: checking })[
+        Symbol.asyncIterator
+      ]();
+      const nextChange = () =>
+        changes.next().then(({ done }) => ({ done, changed: true }));
+      const nextTick = () =>
+        ticks.next().then(({ done }) => ({ done, changed: false }));
+      let change = nextChange();
+      let tick = nextTick();
+      for (;;) {
+        const next = await Promise.race([change, tick]);
+        if (next.done) return;
+        yield next.changed ? 'changed' : 'unchanged';
+        if (next.changed) change = nextChange();
+        else tick = nextTick();
+      }
+    } catch (error) {
+      if (!(
+        signal.aborted &&
+        error instanceof Error &&
+        error.name === 'AbortError'
+      ))
+        throw error;
+    } finally {
+      controller.abort();
+      await changes.return(undefined);
     }
   }
 

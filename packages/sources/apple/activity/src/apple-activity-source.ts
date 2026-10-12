@@ -190,7 +190,7 @@ export class AppleActivitySource extends Source<ActivityScan> {
           seen.set(stream, current);
           changed.push(stream);
         }
-        if (changed.length > 0) yield changed;
+        yield changed;
       }
     } catch (error) {
       if (!(error instanceof Error && error.name === 'AbortError')) throw error;

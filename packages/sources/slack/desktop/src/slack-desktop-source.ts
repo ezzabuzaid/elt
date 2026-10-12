@@ -149,9 +149,9 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
         signal,
       })) {
         const current = this.#store.version();
-        if (current === seen) continue;
+        const changed = current === seen ? [] : streams;
         seen = current;
-        yield streams;
+        yield changed;
       }
     } catch (error) {
       if (!(error instanceof Error && error.name === 'AbortError')) throw error;

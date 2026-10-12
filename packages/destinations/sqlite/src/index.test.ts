@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   Catalog,
@@ -6261,4 +6262,183 @@ test('a copy that declares its columns from the stream and stores its files keep
       await readFile(String(attachmentRef), 'utf8'),
       /^attachment of /,
     );
+});
+
+// Two streams of one record each, a read the test can make fail, and a
+// watcher the test drives: each check event is one check of the upstream,
+// naming the streams that changed since the previous check, possibly none.
+class CheckedSource extends Source {
+  readonly identity = 'checked';
+  readonly checks = new EventEmitter();
+  readonly failing = new Set<string>();
+  readonly a = new Stream({
+    name: 'a',
+    jsonSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+  readonly b = new Stream({ ...this.a, name: 'b' });
+  protected readonly catalog = new Catalog([this.a, this.b]);
+
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
+  protected override async open() {
+    return new AsyncDisposableStack();
+  }
+
+  protected override async *observe({ streams, signal }: SourceWatchOptions) {
+    await using checks = on(this.checks, 'check', { signal });
+    yield streams;
+    for await (const [changed] of checks) yield changed;
+  }
+
+  protected override async *extract(configuration: CopyConfiguration) {
+    const { name } = configuration.stream;
+    if (this.failing.has(name)) throw new Error(`${name} cannot be read`);
+    yield { stream: name, data: { id: 'one' } };
+  }
+}
+
+// The checked source loaded into one SQLite file with its sync history, and
+// what readers see of each stream and of the connector there.
+async function checkedPipeline(directory: string) {
+  const source = new CheckedSource();
+  const path = join(directory, 'data.sqlite');
+  const destination = new SQLiteDestination({ path });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'checked',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(directory, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.a, destination.table('a')),
+          new Copy(source.b, destination.table('b')),
+        ],
+      }),
+    ],
+  });
+  const read = (sql: string) => {
+    using database = new DatabaseSync(path, { readOnly: true });
+    return database
+      .prepare(sql)
+      .all()
+      .map((row) => ({ ...row }));
+  };
+  const streams = () =>
+    Object.fromEntries(
+      read(
+        'SELECT stream, last_successful_sync_at, current_as_of FROM stream_status ORDER BY stream',
+      ).map(({ stream, ...times }) => [String(stream), times]),
+    );
+  const connector = () =>
+    read('SELECT current_as_of FROM sync_status')[0]?.current_as_of;
+  const startedAt = () =>
+    read(
+      'SELECT started_at FROM sync_attempts ORDER BY attempt_id DESC LIMIT 1',
+    )[0]?.started_at;
+  // Waits until what a reader sees meets done.
+  const until = async (done: () => boolean) => {
+    for (let tries = 0; !done(); tries++) {
+      if (tries > 100)
+        assert.fail(`never happened: ${JSON.stringify(streams())}`);
+      await sleep(50);
+    }
+  };
+  return { source, pipeline, streams, connector, startedAt, until };
+}
+
+test('under a watch, a stream whose change fails to load stays current only as of before that change, and so does its connector, while the others move on with the next check', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const { source, pipeline, streams, connector, until } = await checkedPipeline(
+    scratch.path,
+  );
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    const loaded = streams();
+
+    // Both change, so this check vouches for neither; only b loads.
+    source.failing.add('a');
+    source.checks.emit('check', [source.a, source.b]);
+    const pass = await watching.next();
+    const checked = new Date().toISOString();
+    source.checks.emit('check', []);
+    await until(() => String(streams().b?.current_as_of) >= checked);
+
+    assert.equal(pass.value?.outcomes[0]?.failures.length, 1);
+    assert.equal(streams().a?.current_as_of, loaded.a?.current_as_of);
+    assert.equal(connector(), loaded.a?.current_as_of);
+    assert.ok(String(streams().b?.current_as_of) >= checked);
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('under a watch, a check that finds nothing changed makes each stream current as of the check, while its last successful sync stays the pass', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const { source, pipeline, streams, until } = await checkedPipeline(
+    scratch.path,
+  );
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    const loaded = streams();
+
+    const checked = new Date().toISOString();
+    source.checks.emit('check', []);
+    await until(() =>
+      Object.values(streams()).every(
+        ({ current_as_of }) => String(current_as_of) >= checked,
+      ),
+    );
+
+    for (const stream of ['a', 'b']) {
+      assert.ok(String(loaded[stream]?.current_as_of) < checked);
+      assert.equal(
+        streams()[stream]?.last_successful_sync_at,
+        loaded[stream]?.last_successful_sync_at,
+      );
+    }
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('a run makes each stream it loaded current as of when its pass began, and the connector current only once every stream has loaded', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const { source, pipeline, streams, connector, startedAt } =
+    await checkedPipeline(scratch.path);
+  source.failing.add('b');
+
+  await assert.rejects(pipeline.run(), PipelineError);
+  const partly = {
+    streams: streams(),
+    connector: connector(),
+    startedAt: startedAt(),
+  };
+  source.failing.clear();
+  await pipeline.run();
+
+  assert.equal(partly.streams.a?.current_as_of, partly.startedAt);
+  assert.equal(partly.streams.b?.current_as_of, null);
+  assert.equal(partly.connector, null);
+  assert.equal(streams().a?.current_as_of, startedAt());
+  assert.equal(streams().b?.current_as_of, startedAt());
+  assert.equal(connector(), startedAt());
 });
