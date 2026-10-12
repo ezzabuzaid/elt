@@ -32,6 +32,10 @@ Drive the app yourself before listing manual steps: open URLs, click menus and r
 
 While the user is at the machine, act without taking it over. Accessibility actions, row selection and row custom actions reach a background app without focus or the pointer. Only a context menu needs the app frontmost; bring it forward for a second or two after the input has been idle, then give focus back to the app the user was in. Never post a real click unless the target app is frontmost.
 
+## Restate the user's example before designing
+
+When the user names a capability, take its simplest literal reading and restate it as "when X, then Y" with the user's own example before you propose a mechanism. eca actions went this way: a design of rungs, typed proposals and host allowlists answered a question nobody asked. The user meant that an action is an instruction to an agent: when "I ordered food", run `codex "log my calorie intake from the food I ordered"`.
+
 ## Place each job with whoever can know it
 
 Before proposing where a fix lives, split the requirement into its jobs and name, for each, who can actually know it: the source, the elt engine, the destination, the plugin server, or the agent. A job belongs to that owner. A slow Mail answer, for example, split into three jobs: whether a message changed (only the Mail source knows), turning changes into upserts and deletions (a shared elt helper the source calls), and when to refresh (the source's `observe()`, run by the plugin server, not a skill telling the agent to sync).
