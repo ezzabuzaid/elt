@@ -150,8 +150,8 @@ mcpServer.registerTool(
     return structured(saved);
   },
 );
-// Tools only the hooks, the Apple page and the plugin page call; Codex keeps
-// them from the model.
+// Tools only the hooks and the Apple page call; Codex keeps them from the
+// model.
 const appOnly = { ui: { visibility: ['app' as const] } };
 // The Apple page: an MCP App ChatGPT lists in its sidebar, where the user
 // switches connectors on and off, narrows them and watches their imports.
@@ -178,7 +178,21 @@ mcpServer.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
     _meta: {
       ui: { resourceUri: page, visibility: ['app'] },
-      'openai/ui': { entrypoints: [{ type: 'global' }] },
+      // ChatGPT lists the page in its sidebar, and Settings search finds it by
+      // these terms. It drops the terms of a server that also has a native
+      // openai/settings section, so Apple has none.
+      'openai/ui': {
+        entrypoints: [
+          { type: 'global' },
+          {
+            type: 'settings',
+            searchTerms: [
+              'connectors',
+              ...plugin.connectors.map(({ title }) => title),
+            ],
+          },
+        ],
+      },
     },
   },
   async () => ({ content: [] }),
@@ -256,68 +270,6 @@ mcpServer.registerTool(
     return { content: [] };
   },
 );
-// The plugin page's native Settings section (the openai/settings extension)
-// only opens the Apple page. ChatGPT shows the section when its capability
-// names a read and an update tool the server lists, so the update tool stays
-// and refuses.
-mcpServer.registerTool(
-  'apple_settings_read',
-  {
-    title: 'Read Apple settings',
-    description:
-      'The plugin page’s Settings section: a button that opens the Apple page.',
-    inputSchema: {},
-    annotations: { readOnlyHint: true, openWorldHint: false },
-    _meta: appOnly,
-  },
-  async () => ({
-    content: [],
-    structuredContent: {
-      schema: { type: 'object', properties: {} },
-      values: {},
-      layout: [
-        {
-          kind: 'group',
-          title: 'Connectors',
-          items: [
-            {
-              kind: 'tool',
-              tool: 'apple_page',
-              title: 'Open the Apple page',
-              description:
-                'Choose connectors, narrow what they import and see each import’s status.',
-            },
-          ],
-        },
-      ],
-    },
-  }),
-);
-mcpServer.registerTool(
-  'apple_settings_update',
-  {
-    title: 'Update Apple settings',
-    description:
-      'Apple keeps no settings on the plugin page; connectors change on the Apple page.',
-    inputSchema: {},
-    annotations: { readOnlyHint: true, openWorldHint: false },
-    _meta: appOnly,
-  },
-  () => {
-    throw new Error(
-      'Apple keeps no settings here: choose connectors on the Apple page.',
-    );
-  },
-);
-mcpServer.server.registerCapabilities({
-  experimental: {
-    'openai/settings': {
-      readTool: 'apple_settings_read',
-      updateTool: 'apple_settings_update',
-    },
-  },
-});
-
 // Codex runs one server per chat, so this server's context is this chat's.
 const contextFor = chatContext(plugin);
 mcpServer.registerTool(

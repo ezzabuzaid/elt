@@ -62,6 +62,22 @@ export const choicesResult = {
   note: z.string().optional(),
 };
 
+// The Apple page's deep link, and the path in it that opens one connector's
+// page. The bare plugin name resolves to the one Apple plugin installed.
+export const pageLink = 'codex://plugins/apple/app/apple_page';
+
+const connectorPath = (connector: string) =>
+  `/connectors/${encodeURIComponent(connector)}`;
+
+export const connectorLink = (connector: string) =>
+  `${pageLink}?path=${encodeURIComponent(connectorPath(connector))}`;
+
+// The connector a deep link's path opens, if it names one.
+export function connectorIn(path: string): string | undefined {
+  const name = /^\/connectors\/([^/?#]+)/.exec(path)?.[1];
+  return name === undefined ? undefined : decodeURIComponent(name);
+}
+
 export type ConnectorSelection = z.infer<typeof selection>;
 export type ConnectorRow = z.infer<typeof row>;
 export type ConnectorChoices = z.infer<z.ZodObject<typeof choicesResult>>;

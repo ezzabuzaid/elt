@@ -124,7 +124,7 @@ The first message names the meeting and carries its step 1 row. Brief it from st
 
 ## Done when
 
-- Each brief rests on rows you read and names which connectors had nothing and which are not set up.
+- Each brief rests on rows you read and names which connectors had nothing and which are not set up, each not set up with its Apple page link: `codex://plugins/apple/app/apple_page?path=%2Fconnectors%2F<connector>`.
 - Times are the user's local time, and only the meetings the user asked about, or the plugin handed over, are briefed.
 - Each handed-over meeting has its own chat in the Apple section, recorded with `apple_meeting_chat`.
 - A heartbeat run ends with exactly one `<heartbeat>` block whose `<decision>` is `NOTIFY`, or `DONT_NOTIFY` only when the gate failed.

@@ -69,7 +69,7 @@ Read each connector's state as `$query-apple` describes. Then reply in this shap
 Use these facts only when the user asks:
 
 - The plugin imports each connector once while Codex is open. It finishes an interrupted, failed or partial import the next time Codex opens. It does not refresh an imported connector yet, and nothing runs after Codex closes.
-- The Apple page switches each connector on or off and shows its import status. Open it from Explore in the ChatGPT sidebar and pin it, or from Plugins › Apple › Settings. A connector that is switched on imports everything. Its detail page narrows it to accounts, folders, dates or attachments.
+- The Apple page switches each connector on or off and shows its import status. Open it from Explore in the ChatGPT sidebar and pin it, or find it in Settings search. Give the user its link: [Apple page](codex://plugins/apple/app/apple_page). The link to one connector's page ends in `?path=%2Fconnectors%2F<connector>`, such as `codex://plugins/apple/app/apple_page?path=%2Fconnectors%2Fcalendar`. A connector that is switched on imports everything. Its detail page narrows it to accounts, folders, dates or attachments.
 - The hooks give each new chat the Apple status. They let meeting prep and the Apple gardener skip checks with nothing to do, and let meeting prep open each meeting's chat without asking.
 - `extraction_coverage` gives what each pass loaded per stream.
 - To narrow a connector, such as to one mailbox or one Notes folder, open it on the Apple page, or follow "Set up in chat" for that connector.

@@ -27,11 +27,7 @@ import {
   ElicitRequestSchema,
   type ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import {
-  OpenAISettingsCapabilitySchema,
-  OpenAISettingsReadResultSchema,
-  OpenAIUiToolMetadataSchema,
-} from '@openai/mcp-extensions/server';
+import { OpenAIUiToolMetadataSchema } from '@openai/mcp-extensions/server';
 
 // NoteStore.sqlite's tables as macOS 26.6.2 creates them (schema only, no
 // data), in WAL mode like the real store.
@@ -463,32 +459,40 @@ test(
         'apple_options',
         'apple_page',
         'apple_person_note',
-        'apple_settings_read',
-        'apple_settings_update',
         'apple_setup',
       ]);
       const metaOf = (name: string) =>
         tools.find((tool) => tool.name === name)?._meta;
-      // Only the hooks, the Apple page and the plugin page call these; Codex
-      // keeps them from the model.
+      // Only the hooks and the Apple page call these; Codex keeps them from
+      // the model.
       for (const name of [
         'apple_context',
         'apple_connectors',
         'apple_connector_choices',
         'apple_connector_update',
         'apple_open_full_disk_access',
-        'apple_settings_read',
-        'apple_settings_update',
       ])
         assert.deepEqual(metaOf(name), { ui: { visibility: ['app'] } }, name);
-      // ChatGPT lists the Apple page in its sidebar and opens it from the
-      // page's own resource.
+      // ChatGPT lists the Apple page in its sidebar, finds it in Settings
+      // search by its connectors' names, and opens it from the page's own
+      // resource.
       const pageMeta = metaOf('apple_page');
-      assert.deepEqual(pageMeta, {
-        ui: { resourceUri: 'ui://apple/page.html', visibility: ['app'] },
-        'openai/ui': { entrypoints: [{ type: 'global' }] },
+      assert.deepEqual(pageMeta?.ui, {
+        resourceUri: 'ui://apple/page.html',
+        visibility: ['app'],
       });
-      OpenAIUiToolMetadataSchema.parse(pageMeta?.['openai/ui']);
+      const { entrypoints } = OpenAIUiToolMetadataSchema.parse(
+        pageMeta?.['openai/ui'],
+      );
+      assert.deepEqual(
+        entrypoints?.map(({ type }) => type),
+        ['global', 'settings'],
+      );
+      const searchTerms = entrypoints?.flatMap((entrypoint) =>
+        entrypoint.type === 'settings' ? (entrypoint.searchTerms ?? []) : [],
+      );
+      for (const term of ['connectors', 'Notes', 'Mail', 'Calendar'])
+        assert.ok(searchTerms?.includes(term), term);
       const { contents: pages } = await client.readResource({
         uri: 'ui://apple/page.html',
       });
@@ -515,36 +519,19 @@ test(
       assert.match(String(client.getInstructions()), /\$query-apple/);
       // The server names the installed version, which decides who leads.
       assert.equal(client.getServerVersion()?.version, manifest.version);
-      // The plugin page's native Settings section names two of those tools,
-      // as ChatGPT requires, and holds only a button to the Apple page.
-      assert.deepEqual(
-        OpenAISettingsCapabilitySchema.parse(
-          client.getServerCapabilities()?.experimental?.['openai/settings'],
-        ),
-        {
-          readTool: 'apple_settings_read',
-          updateTool: 'apple_settings_update',
-        },
+      // ChatGPT drops a page's Settings search terms while the server also
+      // has a native Settings section, so Apple has none.
+      assert.equal(
+        client.getServerCapabilities()?.experimental?.['openai/settings'],
+        undefined,
       );
-      const nativeSettings = OpenAISettingsReadResultSchema.parse(
-        (await call(client, 'apple_settings_read', {})).structuredContent,
-      );
-      assert.deepEqual(nativeSettings.schema.properties, {});
-      assert.deepEqual(
-        nativeSettings.layout?.flatMap(({ items }) =>
-          items.map((item) => (item.kind === 'tool' ? item.tool : item)),
-        ),
-        ['apple_page'],
-      );
-      const nativeUpdate = await call(client, 'apple_settings_update', {
-        set: { notes: true },
-      });
-      assert.equal(nativeUpdate.isError, true);
-      assert.match(JSON.stringify(nativeUpdate.content), /Apple page/);
       assert.deepEqual(selected(), []);
-      assert.match(
-        await context(client, 'SessionStart'),
-        /no connectors are set up\. Use \$setup-apple/,
+      // The chat can send the user to the Apple page by its deep link.
+      const started = await context(client, 'SessionStart');
+      assert.match(started, /no connectors are set up\. Use \$setup-apple/);
+      assert.ok(
+        started.includes('codex://plugins/apple/app/apple_page'),
+        started,
       );
       assert.equal(await context(client, 'UserPromptSubmit'), '');
       assert.deepEqual((await call(other, 'apple_setup')).content, [
@@ -711,6 +698,11 @@ test(
       assert.match(
         await context(client, 'UserPromptSubmit'),
         /^- Messages: last sync failed at .*Full Disk Access.*; no data yet\. Database: messages\//m,
+      );
+      // A connector whose import failed links to its own page.
+      assert.match(
+        await context(client, 'SessionStart'),
+        /^- Messages: last sync failed .* codex:\/\/plugins\/apple\/app\/apple_page\?path=%2Fconnectors%2Fmessages$/m,
       );
 
       // An unknown connector fails in the tool, which names it, not in the

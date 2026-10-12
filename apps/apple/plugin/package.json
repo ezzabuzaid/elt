@@ -5,6 +5,7 @@
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "1.31.0",
+    "@openai/mcp-extensions": "0.1.0",
     "@workspace/connector-apple-accounts": "0.0.1",
     "@workspace/connector-apple-activity": "0.0.1",
     "@workspace/connector-apple-books": "0.0.1",
@@ -32,7 +33,6 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@openai/mcp-extensions": "0.1.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@workspace/sdk-apple-eventkit": "0.0.1"

@@ -3,6 +3,7 @@ import { relative } from 'node:path';
 import type { PassStatus } from '@workspace/elt-sqlite';
 
 import type { ApplePlugin } from './apple-plugin.ts';
+import { connectorLink, pageLink } from './page/contract.ts';
 import { passFailure } from './pass-failure.ts';
 
 // What a chat's hooks add to the model's context: each selected connector,
@@ -29,6 +30,10 @@ const progress = (sync: PassStatus | null, guidance: string): string => {
       return `last sync failed at ${sync.completedAt}: ${passFailure(sync, guidance)}; ${since}`;
   }
 };
+
+// A failed or partial pass is one the user may fix, such as by granting access.
+const needsTheUser = (sync: PassStatus | null) =>
+  sync?.state === 'failed' || sync?.state === 'partial';
 
 // What a reader can do with a connector: wait for its first import, read it, or
 // not reach it. A pass starting or finishing over data already there changes
@@ -57,7 +62,7 @@ export function chatStatus(plugin: ApplePlugin): {
     return {
       state: state([]),
       text: [
-        'Apple: no connectors are set up. Use $setup-apple when the user asks about their Apple apps.',
+        `Apple: no connectors are set up. Use $setup-apple when the user asks about their Apple apps; the user can also choose connectors on the Apple page: ${pageLink}`,
         ...broken,
       ].join('\n'),
     };
@@ -77,19 +82,36 @@ export function chatStatus(plugin: ApplePlugin): {
       ]),
     ),
     text: [
-      `Apple connectors the user set up, each imported into its own SQLite file under "${plugin.directory}". Read them as $query-apple describes.`,
-      ...rows.map(({ title, database, sync, permissions, loaded, presets }) =>
-        // A selected connector that is not loaded does not import.
-        loaded === undefined
-          ? `- ${title}: ${permissions}`
-          : [
-              `- ${title}: ${progress(sync, permissions)}. ${database === null ? 'No database yet.' : `Database: ${relative(plugin.directory, database)}`}`,
-              ...(presets.length === 0
-                ? []
-                : [
-                    `  Presets in "${loaded.presetsFolder}": ${presets.map(({ name }) => name).join(', ')}`,
-                  ]),
-            ].join('\n'),
+      `Apple connectors the user set up, each imported into its own SQLite file under "${plugin.directory}". Read them as $query-apple describes. The user changes them on the Apple page: ${pageLink}`,
+      ...rows.map(
+        ({
+          connector,
+          title,
+          database,
+          sync,
+          permissions,
+          loaded,
+          presets,
+        }) => {
+          const page = `Its Apple page: ${connectorLink(connector)}`;
+          // A selected connector that is not loaded does not import.
+          if (loaded === undefined) return `- ${title}: ${permissions} ${page}`;
+          const where =
+            database === null
+              ? 'No database yet.'
+              : `Database: ${relative(plugin.directory, database)}`;
+          const fix = needsTheUser(sync) ? ` ${page}` : '';
+          const presetsLine =
+            presets.length === 0
+              ? []
+              : [
+                  `  Presets in "${loaded.presetsFolder}": ${presets.map(({ name }) => name).join(', ')}`,
+                ];
+          return [
+            `- ${title}: ${progress(sync, permissions)}. ${where}${fix}`,
+            ...presetsLine,
+          ].join('\n');
+        },
       ),
       ...broken,
     ].join('\n'),
