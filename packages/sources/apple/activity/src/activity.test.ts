@@ -1281,6 +1281,55 @@ test('Activity keeps an interaction archive whose root is nil as JSON null, not 
   );
 });
 
+test('Activity loads an app intent Biome stored without a verb, such as Clock’s alarm intent, with intentVerb NULL', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
+  const location = await activityFixture(scratch.path);
+  const archive = await binaryPlist(
+    scratch.path,
+    '<dict><key>intent</key><string>MTCreateAlarmIntent</string></dict>',
+  );
+  // Laid out as this Mac's Biome stored Clock's custom intent on 2026-10-11:
+  // intent type 2, no verb (field 5) and no group (field 12).
+  await writeSegment(scratch.path, 'App.Intent', 'local', '810000000000000', [
+    {
+      at: daysAgo(1),
+      payload: protobuf([
+        [1, 'double', appleSeconds(daysAgo(1))],
+        [2, 'string', 'com.apple.clock'],
+        [3, 'string', 'intents'],
+        [4, 'string', 'MTCreateAlarmIntent'],
+        [6, 'varint', 2],
+        [7, 'varint', 1],
+        [8, 'bytes', archive],
+        [9, 'string', 'ITEM-1'],
+        [10, 'varint', 0],
+        [11, 'varint', 1],
+      ]),
+    },
+  ]);
+  const activity = await appleImport(
+    new AppleActivitySource(location),
+    join(scratch.path, 'import'),
+  );
+
+  await activity.load();
+
+  assert.deepEqual(
+    activity.read(
+      'SELECT "bundleId", "intentClass", "intentVerb", "intentType", "groupId" FROM app_intents',
+    ),
+    [
+      {
+        bundleId: 'com.apple.clock',
+        intentClass: 'MTCreateAlarmIntent',
+        intentVerb: null,
+        intentType: 2,
+        groupId: null,
+      },
+    ],
+  );
+});
+
 test('an Activity watch wakes only the streams whose segments or database changed', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'activity-'));
   const location = await activityFixture(scratch.path);

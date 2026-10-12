@@ -27,8 +27,9 @@ const properties = {
     description: 'SiriKit intent class, such as INSendMessageIntent.',
   },
   intentVerb: {
-    ...text,
-    description: 'SiriKit intent verb, such as SendMessage.',
+    ...nullableText,
+    description:
+      'SiriKit intent verb, such as SendMessage; NULL for an intent the app defines itself, such as Clock’s MTCreateAlarmIntent (intentType 2), for which Biome stores none.',
   },
   intentType: { ...integerField, description: 'Biome intent type as stored.' },
   handlingStatus: {
@@ -84,7 +85,7 @@ export class AppIntentsStream extends BiomeActivityStream<
       bundleId: event.bundleId,
       sourceId: event.sourceId,
       intentClass: event.intentClass,
-      intentVerb: event.intentVerb,
+      intentVerb: event.intentVerb ?? null,
       intentType: event.intentType ?? null,
       handlingStatus: event.handlingStatus ?? null,
       direction: event.direction ?? null,

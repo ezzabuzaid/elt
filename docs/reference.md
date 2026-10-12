@@ -1561,6 +1561,7 @@ Checked live on 2026-10-05 against macOS 27.0 (26A428):
 - Only the iPhone of 11 remote device folders wrote within the week; its records spanned 27.95 days. `sync.db` names no device.
 - `knowledgeIntents` rows all came from the iPhone through knowledge sync; `discoverabilitySignals` reached back to 2025-02.
 - A load through `apple-cli` read 19 streams in 6 s; a second load wrote nothing.
+- On 2026-10-12, 3 of 307 `App.Intent` records, each Clock's `MTCreateAlarmIntent` with intent type 2, held no verb (field 5) and no group (field 12), so their `intentVerb` and `groupId` load as NULL. Every SiriKit intent (type 1) held a verb.
 
 Unverified: reading without Full Disk Access; what macOS stores for a device of platform 4; streams with no records here.
 
