@@ -15,6 +15,7 @@ import {
   CalendarUnavailableError,
   EventKitChangingError,
   IcsExportUnavailableError,
+  type OccurrenceDocument,
   RemindersStore,
   RemindersUnavailableError,
 } from './index.ts';
@@ -414,6 +415,67 @@ test('a Calendar read without the private ICS export fails with IcsExportUnavail
   await assert.rejects(
     new CalendarStore(stub.path).read({ ...january, ics: true }),
     IcsExportUnavailableError,
+  );
+});
+
+test('a Calendar read keeps one all-day occurrence that EventKit expands twice in its day, at two UTC offsets', async () => {
+  await using stub = await StubEventKitHelper.create();
+  // What EventKit returned on 2026-10-12 for the yearly Flag Day of a United
+  // States holidays calendar, read in Asia/Amman: 2016-06-14 from midnight at
+  // +03:00, and again from midnight at +02:00.
+  const flagDay = (startMs: number, endMs: number): OccurrenceDocument => ({
+    type: 'occurrence',
+    calendarId: 'holidays',
+    calendarItemId: 'flag-day',
+    name: 'Flag Day',
+    startMs,
+    endMs,
+    startDay: '2016-06-14',
+    endDay: '2016-06-14',
+    allDay: true,
+    occurrenceMs: startMs,
+    occurrenceDay: '2016-06-14',
+    detached: false,
+    status: 0,
+    availability: 1,
+    attendees: [],
+    alarms: [],
+    recurrenceRules: [
+      {
+        frequency: 3,
+        interval: 1,
+        firstDayOfWeek: 2,
+        daysOfTheWeek: [],
+        daysOfTheMonth: [14],
+        daysOfTheYear: [],
+        weeksOfTheYear: [],
+        monthsOfTheYear: [6],
+        setPositions: [],
+      },
+    ],
+  });
+  const june = {
+    startAt: '2016-06-01T00:00:00.000Z',
+    endAt: '2016-07-01T00:00:00.000Z',
+  };
+  stub.answer(
+    { entity: 'events', ...june, ics: false },
+    {
+      documents: [
+        flagDay(1465851600000, 1465937999000),
+        flagDay(1465855200000, 1465941599000),
+      ],
+    },
+  );
+
+  const { occurrences } = await new CalendarStore(stub.path).read({
+    ...june,
+    ics: false,
+  });
+
+  assert.deepEqual(
+    occurrences.map(({ startMs }) => startMs),
+    [1465851600000],
   );
 });
 

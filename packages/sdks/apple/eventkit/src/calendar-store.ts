@@ -40,15 +40,26 @@ export class CalendarStore extends EventKitStore<
     return { startAt, endAt, ics };
   }
 
+  // EventKit can expand one all-day occurrence twice in its day, at two UTC
+  // offsets: a yearly holiday read in Asia/Amman came back on 2016-06-14 from
+  // midnight at +03:00 and again at +02:00. An all-day occurrence fills its
+  // day, so an item has at most one starting on a day; the first is kept.
   protected contents(
     collections: Collections,
     documents: readonly EventKitDocument[],
   ): CalendarContents {
+    const days = new Set<string>();
     return {
       ...collections,
-      occurrences: documents.filter(
-        (document) => document.type === 'occurrence',
-      ),
+      occurrences: documents
+        .filter((document) => document.type === 'occurrence')
+        .filter(({ allDay, calendarId, calendarItemId, startDay }) => {
+          if (!allDay) return true;
+          const day = JSON.stringify([calendarId, calendarItemId, startDay]);
+          if (days.has(day)) return false;
+          days.add(day);
+          return true;
+        }),
       icsExports: documents.filter((document) => document.type === 'ics'),
     };
   }
