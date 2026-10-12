@@ -22,8 +22,6 @@ import {
 } from '@workspace/settings';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
-import { appleDirectory } from './apple-directory.ts';
-
 const ids = z.array(z.string().min(1).max(1024)).max(1000);
 
 // A connector by its name. Connectors are rediscovered on use, so the name
@@ -105,7 +103,7 @@ export class ApplePlugin {
     discovery: Connectors,
     host: AppleHost,
     install: string,
-    directory = appleDirectory(),
+    directory: string,
   ) {
     this.#discovery = discovery;
     this.#host = host;

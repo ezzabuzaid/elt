@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +13,7 @@ import { userConnectors } from '@workspace/connector-apple-manifest/user-connect
 
 import {
   ApplePlugin,
+  PluginUpdatedError,
   configurationSchema,
   connectorSchema,
 } from './apple-plugin.ts';
@@ -25,7 +27,6 @@ import {
 import { openFullDiskAccessSettings } from './full-disk-access.ts';
 import { importPending } from './importing.ts';
 import { choicesResult, connectorsResult } from './page/contract.ts';
-import { ProactiveStore } from './proactive-store.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
 if (process.platform !== 'darwin')
@@ -51,6 +52,9 @@ const plugin = new ApplePlugin(
     eventKitHelper: fileURLToPath(new URL('eventkit-helper', import.meta.url)),
   },
   install,
+  // Where the plugin keeps settings.sqlite and every import; the query-apple
+  // skill tells readers the same path.
+  join(homedir(), 'Library/Application Support/Context Compiler/Apple'),
 );
 // Each tool call and import pass rediscovers the connectors first, so one the
 // user adds or edits is used without restarting this server; a chat's tool
@@ -283,71 +287,13 @@ mcpServer.registerTool(
     _meta: appOnly,
   },
   async ({ event }) => {
-    // Meeting prep and the Apple gardener run in long-lived chats that keep
-    // this server after an update, and their records outlive it.
     if (plugin.updated())
       return {
-        content: [
-          {
-            type: 'text',
-            text: 'Apple was updated after this chat started, and this chat runs the old version. To set up Apple or change its connectors, open a new chat. The imports can still be read, and apple_meeting_chat and apple_person_note still work, so a Meeting prep or Apple gardener heartbeat here goes on with the work the Apple plugin hands it.',
-          },
-        ],
+        content: [{ type: 'text', text: new PluginUpdatedError().message }],
       };
     await plugin.refresh();
     const text = contextFor(event);
     return { content: text === null ? [] : [{ type: 'text', text }] };
-  },
-);
-
-// The proactive agent's records, written here because the agent's sandbox
-// cannot write the Apple folder; the heartbeat gates read them.
-mcpServer.registerTool(
-  'apple_meeting_chat',
-  {
-    title: 'Record a meeting chat',
-    description:
-      'Record the chat you created for a meeting the Meeting prep heartbeat handed over, by the meeting’s Calendar eventId and the chat’s threadId, so the meeting’s later changes and its archiving reach that chat.',
-    inputSchema: {
-      eventId: z.string().min(1),
-      threadId: z.string().min(1),
-    },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
-  },
-  async ({ eventId, threadId }) => {
-    using store = new ProactiveStore(plugin.directory);
-    store.recordChat(eventId, threadId);
-    return structured({ eventId, threadId });
-  },
-);
-mcpServer.registerTool(
-  'apple_person_note',
-  {
-    title: 'Save a person note',
-    description:
-      'Save the short note the Apple gardener keeps about a person, by their email, for later meeting briefs. Replaces that person’s previous note.',
-    inputSchema: {
-      email: z.email(),
-      name: z.string().min(1),
-      note: z.string().min(1).max(2000),
-    },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
-  },
-  async ({ email, name, note }) => {
-    using store = new ProactiveStore(plugin.directory);
-    const person = { email: email.toLowerCase(), name };
-    store.saveNote(person, note, new Date().toISOString());
-    return structured(person);
   },
 );
 
