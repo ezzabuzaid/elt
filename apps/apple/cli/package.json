@@ -31,5 +31,8 @@
     "@zukhruf/election": "0.3.19",
     "@zukhruf/single-flight": "0.3.19",
     "commander": "15.0.0"
+  },
+  "devDependencies": {
+    "@workspace/codec-chromium-indexeddb": "0.0.1"
   }
 }

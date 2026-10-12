@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./test": {
+      "types": "./dist/indexeddb-writer.d.ts",
+      "default": "./dist/indexeddb-writer.js"
     }
   },
   "devDependencies": {

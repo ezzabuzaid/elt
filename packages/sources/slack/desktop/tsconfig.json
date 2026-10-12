@@ -8,16 +8,19 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../../../sdks/slack/desktop"
+      "path": "../../apple/macos"
     },
     {
-      "path": "../../apple/macos"
+      "path": "../../../sdks/slack/desktop"
     },
     {
       "path": "../../../elt"
     },
     {
       "path": "../../../destinations/sqlite"
+    },
+    {
+      "path": "../../../codecs/chromium-indexeddb"
     }
   ]
 }

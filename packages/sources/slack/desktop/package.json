@@ -15,8 +15,7 @@
     "@workspace/source-apple-macos": "0.0.1"
   },
   "devDependencies": {
-    "@types/snappyjs": "0.7.1",
-    "@workspace/elt-sqlite": "0.0.1",
-    "snappyjs": "0.7.0"
+    "@workspace/codec-chromium-indexeddb": "0.0.1",
+    "@workspace/elt-sqlite": "0.0.1"
   }
 }

@@ -78,6 +78,9 @@
     },
     {
       "path": "../../../packages/connectors/apple/accounts"
+    },
+    {
+      "path": "../../../packages/codecs/chromium-indexeddb"
     }
   ]
 }

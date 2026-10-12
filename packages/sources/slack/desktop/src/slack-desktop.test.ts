@@ -13,10 +13,11 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import v8 from 'node:v8';
 
-import snappy from 'snappyjs';
-
+import {
+  type IndexedDBWrite,
+  IndexedDBWriter,
+} from '@workspace/codec-chromium-indexeddb/test';
 import {
   Connection,
   Copy,
@@ -40,345 +41,59 @@ import {
 
 import { SlackDesktopSource } from './slack-desktop-source.ts';
 
-// The Slack app keeps each signed-in workspace's client state in Chromium's
-// IndexedDB for app.slack.com: LevelDB files whose values Blink wraps, and
-// a blob file holding the Snappy-compressed V8 serialization of the state.
-// These writers lay the bytes out as Chromium does, so the store under test
-// is the upstream's own format, not a mock of the reader.
-
-const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
-  let crc = index;
-  for (let bit = 0; bit < 8; bit++)
-    crc = crc & 1 ? 0x82f63b78 ^ (crc >>> 1) : crc >>> 1;
-  return crc >>> 0;
-});
-
-// LevelDB's masked CRC-32C.
-function maskedCrc(...parts: Uint8Array[]): number {
-  let crc = 0xffffffff;
-  for (const part of parts)
-    for (const byte of part)
-      crc = (crcTable[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
-  crc = (crc ^ 0xffffffff) >>> 0;
-  return (((crc >>> 15) | (crc << 17)) + 0xa282ead8) >>> 0;
-}
-
-function varint(value: number): Buffer {
-  const bytes: number[] = [];
-  let rest = value;
-  while (rest >= 0x80) {
-    bytes.push((rest % 0x80) | 0x80);
-    rest = Math.floor(rest / 0x80);
-  }
-  bytes.push(rest);
-  return Buffer.from(bytes);
-}
-
-function fixed32(value: number): Buffer {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-}
-
-function fixed64(value: bigint): Buffer {
-  const bytes = Buffer.alloc(8);
-  bytes.writeBigUInt64LE(value);
-  return bytes;
-}
-
-const prefixed = (bytes: Uint8Array) =>
-  Buffer.concat([varint(bytes.length), bytes]);
-
-type Write = readonly [key: Buffer, value: Buffer | null];
-
-// A log of write batches, one record each, in 32 KiB blocks; a record that
-// crosses a block is split into first, middle and last fragments.
-function leveldbLog(
-  batches: readonly { sequence: number; writes: readonly Write[] }[],
-): Buffer {
-  const blockSize = 32768;
-  const out: Buffer[] = [];
-  let offset = 0;
-  for (const { sequence, writes } of batches) {
-    let payload = Buffer.concat([
-      fixed64(BigInt(sequence)),
-      fixed32(writes.length),
-      ...writes.map(([key, value]) =>
-        value === null
-          ? Buffer.concat([Buffer.of(0), prefixed(key)])
-          : Buffer.concat([Buffer.of(1), prefixed(key), prefixed(value)]),
-      ),
-    ]);
-    let first = true;
-    for (;;) {
-      const left = blockSize - (offset % blockSize);
-      if (left < 7) {
-        out.push(Buffer.alloc(left));
-        offset += left;
-        continue;
-      }
-      const fragment = payload.subarray(0, left - 7);
-      payload = payload.subarray(fragment.length);
-      const last = payload.length === 0;
-      const type = first && last ? 1 : first ? 2 : last ? 4 : 3;
-      const header = Buffer.alloc(7);
-      header.writeUInt32LE(maskedCrc(Buffer.of(type), fragment));
-      header.writeUInt16LE(fragment.length, 4);
-      header.writeUInt8(type, 6);
-      out.push(header, fragment);
-      offset += 7 + fragment.length;
-      first = false;
-      if (last) break;
-    }
-  }
-  return Buffer.concat(out);
-}
-
-// A table of one Snappy-compressed data block, its index and a footer. Keys
-// are internal keys: the user key, then the sequence shifted left 8 and the
-// type, 1 for a value.
-function leveldbTable(
-  entries: readonly { key: Buffer; sequence: number; value: Buffer | null }[],
-): Buffer {
-  const block = (pairs: readonly (readonly [Buffer, Buffer])[]) =>
-    Buffer.concat([
-      ...pairs.map(([key, value]) =>
-        Buffer.concat([
-          varint(0),
-          varint(key.length),
-          varint(value.length),
-          key,
-          value,
-        ]),
-      ),
-      fixed32(0),
-      fixed32(1),
-    ]);
-  const parts: Buffer[] = [];
-  let offset = 0;
-  const append = (contents: Buffer, compress: boolean) => {
-    const stored = compress ? Buffer.from(snappy.compress(contents)) : contents;
-    const type = Buffer.of(compress ? 1 : 0);
-    const handle = Buffer.concat([varint(offset), varint(stored.length)]);
-    parts.push(stored, type, fixed32(maskedCrc(stored, type)));
-    offset += stored.length + 5;
-    return handle;
-  };
-  // A deletion compaction kept is type 0 with an empty value.
-  const internal = entries.map(
-    ({ key, sequence, value }) =>
-      [
-        Buffer.concat([
-          key,
-          fixed64((BigInt(sequence) << 8n) | (value === null ? 0n : 1n)),
-        ]),
-        value ?? Buffer.alloc(0),
-      ] as const,
-  );
-  const data = append(block(internal), true);
-  const metaindex = append(block([]), false);
-  const lastKey = internal.at(-1)?.[0] ?? Buffer.alloc(0);
-  const index = append(block([[lastKey, data]]), false);
-  const footer = Buffer.alloc(48);
-  Buffer.concat([metaindex, index]).copy(footer);
-  footer.writeBigUInt64LE(0xdb4775248b80fb57n, 40);
-  return Buffer.concat([...parts, footer]);
-}
-
-// A MANIFEST of one version edit: Chromium's comparator, the first log to
-// replay, and the live tables.
-function manifest(logNumber: number, tables: readonly number[]): Buffer {
-  const edit = Buffer.concat([
-    varint(1),
-    prefixed(Buffer.from('idb_cmp1')),
-    varint(2),
-    varint(logNumber),
-    ...tables.flatMap((number) => [
-      varint(7),
-      varint(0),
-      varint(number),
-      varint(0),
-      prefixed(Buffer.alloc(8)),
-      prefixed(Buffer.alloc(8)),
-    ]),
-  ]);
-  const header = Buffer.alloc(7);
-  header.writeUInt32LE(maskedCrc(Buffer.of(1), edit));
-  header.writeUInt16LE(edit.length, 4);
-  header.writeUInt8(1, 6);
-  return Buffer.concat([header, edit]);
-}
-
-// IndexedDB's key prefix: one byte packing the byte lengths of the database,
-// object store and index ids, then each id in as few bytes as it needs.
-function keyPrefix(
-  database: number,
-  objectStore: number,
-  index: number,
-): Buffer {
-  const int = (value: number) => {
-    const bytes: number[] = [];
-    let rest = value;
-    do {
-      bytes.push(rest & 0xff);
-      rest >>>= 8;
-    } while (rest > 0);
-    return Buffer.from(bytes);
-  };
-  const [d, o, i] = [int(database), int(objectStore), int(index)];
-  return Buffer.concat([
-    Buffer.of(((d.length - 1) << 5) | ((o.length - 1) << 2) | (i.length - 1)),
-    d,
-    o,
-    i,
-  ]);
-}
-
-const utf16be = (text: string) => Buffer.from(text, 'utf16le').swap16();
-const withLength = (text: string) =>
-  Buffer.concat([varint(text.length), utf16be(text)]);
-const stringKey = (text: string) =>
-  Buffer.concat([Buffer.of(1), withLength(text)]);
-
-// Blink's envelope (version 21, no trailer) around V8's serialization in the
-// format Slack's V8 writes, 16; Node's V8 writes 15, which differs only in
-// buffer sizes, which a client state has none of.
-function serialized(state: unknown, version = 16): Buffer {
-  const serializer = new v8.Serializer();
-  serializer.writeHeader();
-  serializer.writeValue(state);
-  const bytes = serializer.releaseBuffer();
-  bytes[1] = version;
-  return Buffer.concat([Buffer.of(0xff, 0x15, 0xfe), Buffer.alloc(12), bytes]);
-}
-
-type ValueForm = 'blob' | 'compressed' | 'plain';
-
 type ClientRecord = {
   readonly team: string;
   readonly user: string;
   readonly state: unknown;
-  readonly form?: ValueForm;
+  readonly form?: IndexedDBWrite['form'];
   readonly version?: number;
 };
 
+// The Slack app keeps each signed-in workspace's client state in Chromium's
+// IndexedDB for app.slack.com, in a blob file unless a test says otherwise.
 const indexedDBPath = 'IndexedDB/https_app.slack.com_0.indexeddb.leveldb';
-const reduxDatabase = 2;
-const reduxStore = 1;
+
+const saved = ({
+  team,
+  user,
+  state,
+  form = 'blob',
+  version,
+}: ClientRecord): IndexedDBWrite => ({
+  database: 'reduxPersistence',
+  objectStore: 'reduxPersistenceStore',
+  key: `persist:slack-client-${team}-${user}`,
+  value: state,
+  form,
+  ...(version === undefined ? {} : { version }),
+});
+
+const dropped = (client: ClientRecord): IndexedDBWrite => ({
+  ...saved(client),
+  value: null,
+});
 
 // Writes the Slack app's store under home, as the app leaves it after saving
 // these clients: in a log, or compacted into a table with later writes in the
-// log. Each save takes the next blob number, as Chromium's does.
+// log.
 class SlackStore {
   readonly directory: string;
-  #sequence = 1;
-  #blob = 0x100;
+  readonly #indexedDB: IndexedDBWriter;
 
   constructor(home: string) {
     this.directory = join(
       home,
       'Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack',
     );
-  }
-
-  get #leveldb() {
-    return join(this.directory, indexedDBPath);
-  }
-
-  async #writes(clients: readonly ClientRecord[]): Promise<Write[]> {
-    const writes: Write[] = [
-      [
-        Buffer.concat([
-          keyPrefix(0, 0, 0),
-          Buffer.of(201),
-          withLength('https_app.slack.com_0@1'),
-          withLength('reduxPersistence'),
-        ]),
-        Buffer.of(reduxDatabase),
-      ],
-      [
-        Buffer.concat([
-          keyPrefix(reduxDatabase, 0, 0),
-          Buffer.of(50),
-          varint(reduxStore),
-          Buffer.of(0),
-        ]),
-        utf16be('reduxPersistenceStore'),
-      ],
-    ];
-    for (const client of clients) {
-      const key = stringKey(
-        `persist:slack-client-${client.team}-${client.user}`,
-      );
-      const value = serialized(client.state, client.version);
-      const form = client.form ?? 'blob';
-      let stored: Buffer;
-      if (form === 'plain') stored = value;
-      else {
-        const compressed = Buffer.concat([
-          Buffer.of(0xff, 0x11, 0x02),
-          Buffer.from(snappy.compress(value)),
-        ]);
-        if (form === 'compressed') stored = compressed;
-        else {
-          const number = this.#blob++;
-          const path = join(
-            this.directory,
-            'IndexedDB/https_app.slack.com_0.indexeddb.blob',
-            reduxDatabase.toString(16),
-            ((number & 0xff00) >> 8).toString(16).padStart(2, '0'),
-            number.toString(16),
-          );
-          await mkdir(join(path, '..'), { recursive: true });
-          await writeFile(path, compressed);
-          writes.push([
-            Buffer.concat([keyPrefix(reduxDatabase, reduxStore, 3), key]),
-            Buffer.concat([
-              Buffer.of(0),
-              varint(number),
-              withLength('application/vnd.blink-idb-value-wrapper'),
-              varint(compressed.length),
-            ]),
-          ]);
-          stored = Buffer.concat([
-            Buffer.of(0xff, 0x11, 0x01),
-            varint(compressed.length),
-            varint(0),
-          ]);
-        }
-      }
-      writes.push([
-        Buffer.concat([keyPrefix(reduxDatabase, reduxStore, 1), key]),
-        Buffer.concat([varint(1), stored]),
-      ]);
-    }
-    return writes;
+    this.#indexedDB = new IndexedDBWriter(join(this.directory, indexedDBPath));
   }
 
   // The app saving these clients and dropping these records, all in its log.
   async save(
     clients: readonly ClientRecord[],
-    dropped: readonly ClientRecord[] = [],
+    drops: readonly ClientRecord[] = [],
   ): Promise<void> {
-    await mkdir(this.#leveldb, { recursive: true });
-    const writes: Write[] = [
-      ...(await this.#writes(clients)),
-      ...dropped.map(({ team, user }): Write => [
-        Buffer.concat([
-          keyPrefix(reduxDatabase, reduxStore, 1),
-          stringKey(`persist:slack-client-${team}-${user}`),
-        ]),
-        null,
-      ]),
-    ];
-    const sequence = this.#sequence;
-    this.#sequence += writes.length;
-    await writeFile(join(this.#leveldb, 'CURRENT'), 'MANIFEST-000001\n');
-    await writeFile(join(this.#leveldb, 'MANIFEST-000001'), manifest(0, []));
-    await writeFile(
-      join(this.#leveldb, '000003.log'),
-      leveldbLog([{ sequence, writes }]),
-    );
+    await this.#indexedDB.save([...clients.map(saved), ...drops.map(dropped)]);
   }
 
   // The app having compacted these clients into a table, with the records
@@ -387,44 +102,12 @@ class SlackStore {
   async compact(
     compacted: readonly ClientRecord[],
     later: readonly ClientRecord[],
-    dropped: readonly ClientRecord[] = [],
+    drops: readonly ClientRecord[] = [],
     tableDropped: readonly ClientRecord[] = [],
   ): Promise<void> {
-    await rm(this.#leveldb, { recursive: true, force: true });
-    await mkdir(this.#leveldb, { recursive: true });
-    const tabled = [
-      ...(await this.#writes(compacted)),
-      ...tableDropped.map(({ team, user }): Write => [
-        Buffer.concat([
-          keyPrefix(reduxDatabase, reduxStore, 1),
-          stringKey(`persist:slack-client-${team}-${user}`),
-        ]),
-        null,
-      ]),
-    ].map(([key, value], index) => ({
-      key,
-      sequence: this.#sequence + index,
-      value,
-    }));
-    this.#sequence += tabled.length;
-    await writeFile(join(this.#leveldb, '000005.ldb'), leveldbTable(tabled));
-    const writes: Write[] = [
-      ...(await this.#writes(later)),
-      ...dropped.map(({ team, user }): Write => [
-        Buffer.concat([
-          keyPrefix(reduxDatabase, reduxStore, 1),
-          stringKey(`persist:slack-client-${team}-${user}`),
-        ]),
-        null,
-      ]),
-    ];
-    const sequence = this.#sequence;
-    this.#sequence += writes.length;
-    await writeFile(join(this.#leveldb, 'CURRENT'), 'MANIFEST-000004\n');
-    await writeFile(join(this.#leveldb, 'MANIFEST-000004'), manifest(6, [5]));
-    await writeFile(
-      join(this.#leveldb, '000006.log'),
-      leveldbLog([{ sequence, writes }]),
+    await this.#indexedDB.compact(
+      [...compacted.map(saved), ...tableDropped.map(dropped)],
+      [...later.map(saved), ...drops.map(dropped)],
     );
   }
 
@@ -2104,7 +1787,7 @@ test('a store compacted into a table reads as the app left it: later saves win a
 });
 
 test('a state kept compressed in LevelDB or plain decodes as one moved to a blob file', async () => {
-  const forms: ValueForm[] = ['blob', 'compressed', 'plain'];
+  const forms = ['blob', 'compressed', 'plain'] as const;
   const loaded = [];
   for (const form of forms) {
     const { dir, store, out } = await scratch();
