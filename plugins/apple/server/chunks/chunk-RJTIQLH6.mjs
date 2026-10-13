@@ -1406,23 +1406,21 @@ var Writer = class {
 
 // packages/elt/dist/core/pipeline.js
 var stopGraceMs = 1e3;
+var checkRecordMs = 6e4;
+var retryLimit = 5;
+var retryDelayMs = (failures) => Math.min(1e4 * 3 ** (failures - 1), 30 * 6e4);
 var PipelineError = class extends AggregateError {
   name = "PipelineError";
   results;
-  constructor(results, unrun) {
+  constructor(results) {
     const incomplete = results.filter(({ failures }) => failures.length > 0);
-    const errors = [
-      ...incomplete.flatMap(({ failures }) => failures.map(({ error }) => error)),
-      ...unrun
-    ];
-    super(errors, [
-      ...incomplete.length > 0 ? [
-        `The following copies did not load completely: ${incomplete.map(describeFailures).join("; ")}`
-      ] : [],
-      ...unrun.map(message)
-    ].join("; "), { cause: errors[0] });
+    const errors = incomplete.flatMap(({ failures }) => failures.map(({ error }) => error));
+    super(errors, `The following copies did not load completely: ${incomplete.map(describeFailures).join("; ")}`, { cause: errors[0] });
     this.results = Object.freeze([...results]);
   }
+};
+var WatchError = class extends AggregateError {
+  name = "WatchError";
 };
 var Pipeline = class {
   connections;
@@ -1452,19 +1450,23 @@ var Pipeline = class {
   async run(options) {
     const signal = options?.signal;
     await this.#declare();
-    const passes = await Promise.all(this.connections.map((connection) => this.#pass(connection, connection.steps, signal).then(({ outcomes }) => outcomes, (error) => connectionError(connection, error))));
-    const unrun = passes.filter((pass) => pass instanceof Error);
-    const results = passes.filter((pass) => !(pass instanceof Error)).flat();
+    const passes = await Promise.allSettled(this.connections.map((connection) => this.#pass(connection, connection.steps, signal)));
+    const unrecorded = passes.find((pass) => pass.status === "rejected");
+    if (unrecorded !== void 0)
+      throw unrecorded.reason;
+    const results = passes.flatMap((pass) => pass.status === "fulfilled" ? pass.value.outcomes : []);
     if (results.some(({ cancelled }) => cancelled))
       throw signal?.reason;
-    if (unrun.length > 0 || results.some(({ failures }) => failures.length > 0))
-      throw new PipelineError(results, unrun);
+    if (results.some(({ failures }) => failures.length > 0))
+      throw new PipelineError(results);
     return results.map(({ failures: _, cancelled: __, ...result }) => result);
   }
   // Each connection watches its own source and runs a pass for what changed.
   // A connection whose watcher fails stops alone, and its failure is recorded;
   // the rest keep watching. Once every connection stopped, or signal aborts,
-  // the failures are thrown together.
+  // the recorded failures are thrown together as a WatchError. An error the
+  // sync history could not record stops every connection and rejects as
+  // itself.
   async *watch({ signal }) {
     await this.#declare();
     if (signal.aborted)
@@ -1472,7 +1474,7 @@ var Pipeline = class {
     const controller = new AbortController();
     const watching = AbortSignal.any([signal, controller.signal]);
     const stopped = [];
-    const passes = interleave(this.connections.filter(({ steps }) => steps.length > 0).map((connection) => this.#watch(connection, watching, stopped)), Number.POSITIVE_INFINITY);
+    const passes = interleave(this.connections.filter(({ steps }) => steps.length > 0).map((connection) => this.#watch(connection, watching, controller, stopped)), Number.POSITIVE_INFINITY);
     try {
       for (let next = await passes.next(); !next.done; next = await passes.next())
         yield next.value;
@@ -1481,18 +1483,22 @@ var Pipeline = class {
       await passes.return(void 0);
     }
     if (stopped.length > 0)
-      throw new AggregateError(stopped, stopped.map(message).join("; "));
+      throw new WatchError(stopped, stopped.map(message).join("; "));
   }
-  async *#watch(connection, signal, stopped) {
+  async *#watch(connection, signal, everyone, stopped) {
     const controller = new AbortController();
     const watching = AbortSignal.any([signal, controller.signal]);
     const streams = new Map(connection.steps.map((copy) => [copy.from.name, copy.from]));
     const pending = /* @__PURE__ */ new Set();
+    const loading2 = /* @__PURE__ */ new Set();
+    const loaded = /* @__PURE__ */ new Set();
+    const retries = /* @__PURE__ */ new Map();
+    let recordedAt = Number.NEGATIVE_INFINITY;
     let wake = Promise.withResolvers();
     watching.addEventListener("abort", () => wake.resolve(), { once: true });
     let finished = false;
-    let failed = false;
     let failure;
+    let unrecorded;
     const receive = (async () => {
       let initial = true;
       try {
@@ -1510,39 +1516,78 @@ var Pipeline = class {
           initial = false;
           if (pending.size > 0)
             wake.resolve();
+          const now = Date.now();
+          const current = [...loaded].filter((name) => !pending.has(name) && !loading2.has(name));
+          if (current.length > 0 && now - recordedAt >= checkRecordMs) {
+            recordedAt = now;
+            try {
+              await this.history?.checked(connection, current, new Date(now));
+            } catch (error) {
+              unrecorded = { error };
+              return;
+            }
+          }
         }
         if (initial && !watching.aborted)
           throw new TypeError("Watcher ended before its initial invalidation");
       } catch (error) {
-        if (!(watching.aborted && error instanceof Error && error.name === "AbortError")) {
-          failed = true;
-          failure = error;
-        }
+        if (!(watching.aborted && error instanceof Error && error.name === "AbortError"))
+          failure = { error };
       } finally {
         finished = true;
         wake.resolve();
       }
     })();
     try {
-      while (!watching.aborted) {
-        if (failed)
-          throw failure;
+      while (!watching.aborted && failure === void 0 && unrecorded === void 0) {
+        if (!finished) {
+          for (const [name, { at }] of retries)
+            if (at <= Date.now())
+              pending.add(name);
+        }
         if (pending.size === 0) {
           if (finished)
-            return;
-          await wake.promise;
+            break;
+          const woken = wake;
+          const due = Math.min(...[...retries.values()].map(({ at }) => at));
+          const retrying = Number.isFinite(due) ? setTimeout(() => woken.resolve(), due - Date.now()) : void 0;
+          await woken.promise;
+          clearTimeout(retrying);
           continue;
         }
         const steps = connection.steps.filter((copy) => pending.has(copy.from.name));
         pending.clear();
+        for (const copy of steps)
+          loading2.add(copy.from.name);
         wake = Promise.withResolvers();
-        yield await this.#pass(connection, steps, void 0);
+        const pass = await this.#pass(connection, steps, void 0);
+        for (const { copy, failures } of pass.outcomes) {
+          const { name } = copy.from;
+          loading2.delete(name);
+          if (failures.length === 0)
+            loaded.add(name);
+          else
+            loaded.delete(name);
+          const inARow = (retries.get(name)?.failures ?? 0) + 1;
+          if (failures.some(({ failureType }) => failureType === "system") && inARow < retryLimit)
+            retries.set(name, {
+              failures: inARow,
+              at: Date.now() + retryDelayMs(inARow)
+            });
+          else
+            retries.delete(name);
+        }
+        yield pass;
       }
-      if (failed)
-        throw failure;
+      if (unrecorded !== void 0)
+        throw unrecorded.error;
+      if (failure !== void 0) {
+        await this.#recordFailure(connection, failure.error);
+        stopped.push(connectionError(connection, failure.error));
+      }
     } catch (error) {
-      stopped.push(connectionError(connection, error));
-      await this.#recordFailure(connection, error).catch((cause) => stopped.push(connectionError(connection, cause)));
+      everyone.abort();
+      throw error;
     } finally {
       controller.abort();
       const graced = new AbortController();
@@ -1563,24 +1608,24 @@ var Pipeline = class {
       copy,
       coverage: connection.source.coverage(copy.from)
     })));
-    let outcomes;
-    try {
-      outcomes = await replicate(connection.source, connection.destination, connection.checkpoints, steps, record?.progress?.bind(record), signal);
-    } catch (error) {
-      await record?.fail(error, connection.source.failureType(error));
-      throw error;
-    }
+    const outcomes = await replicate(connection.source, connection.destination, connection.checkpoints, steps, record?.progress?.bind(record), signal);
     await record?.finish(outcomes);
     return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
   }
-  async #recordFailure(connection, error) {
+  // Records why a connection stopped. When the history cannot, the
+  // SuppressedError holds both errors, as a failed dispose does.
+  async #recordFailure(connection, failure) {
     if (this.history === void 0)
       return;
-    const record = await this.history.begin(connection, connection.steps.map((copy) => ({
-      copy,
-      coverage: connection.source.coverage(copy.from)
-    })));
-    await record.fail(error, connection.source.failureType(error));
+    try {
+      const record = await this.history.begin(connection, connection.steps.map((copy) => ({
+        copy,
+        coverage: connection.source.coverage(copy.from)
+      })));
+      await record.fail(failure, connection.source.failureType(failure));
+    } catch (error) {
+      throw new SuppressedError(error, failure, `Connection ${connection.name} stopped (${message(failure)}), and its sync history could not record why: ${message(error)}`);
+    }
   }
   // Every declaration is checked before any connection reads, so a wiring
   // mistake stops the whole pipeline; the connection it belongs to records it.
@@ -1752,7 +1797,7 @@ async function* diffSnapshot(stream, records, state, options = {}) {
   for await (const data of records) {
     const key = deduplication.key(data);
     if (seen.has(key))
-      throw new TypeError(`Stream ${stream.name} returned key ${key} twice in one scan`);
+      throw new TypeError(`Stream ${stream.name} returned ${keyText(stream, key)} twice in one scan`);
     seen.add(key);
     const fingerprint = fingerprintOf(stream, data);
     if (options.keeps?.(data) ?? true)
@@ -1786,7 +1831,7 @@ async function* diffGroupedSnapshot(stream, groups, state, options = {}) {
   const seen = /* @__PURE__ */ new Set();
   const claim = (key) => {
     if (seen.has(key))
-      throw new TypeError(`Stream ${stream.name} returned key ${key} twice in one scan`);
+      throw new TypeError(`Stream ${stream.name} returned ${keyText(stream, key)} twice in one scan`);
     seen.add(key);
   };
   const current = /* @__PURE__ */ new Map();
@@ -1864,6 +1909,9 @@ function fingerprintIn(entry) {
 function readSnapshot(state) {
   const saved = state;
   return new Map(Object.entries(saved?.snapshot ?? {}));
+}
+function keyText(stream, key) {
+  return Object.entries(keyObject(stream, key)).map(([field, value]) => `${field} ${typeof value === "string" ? value : JSON.stringify(value)}`).join(", ");
 }
 function keyObject(stream, key) {
   const values = JSON.parse(key);
@@ -2095,7 +2143,7 @@ var syncHistoryRelations = {
   },
   sync_status: {
     name: "sync_status",
-    description: "One row per connector with its latest started attempt and independently its most recently completed successful pass. A watch pass covers only the streams that changed; see stream_status for each stream. A later failed, partial or unfinished pass does not erase prior success. Join extraction_coverage using the appropriate attempt ID: requested scope can change. NULL success means none recorded. These timestamps measure sync completion, not service liveness or source completeness.",
+    description: "One row per connector with its latest started attempt, independently its most recently completed successful pass, and how current its data is. A watch pass covers only the streams that changed; see stream_status for each stream. A later failed, partial or unfinished pass does not erase prior success. Join extraction_coverage using the appropriate attempt ID: requested scope can change. NULL success means none recorded. Judge freshness by current_as_of: last_successful_sync_at measures sync completion, not service liveness or source completeness.",
     columns: {
       connector: attempt.connector,
       latest_attempt_id: "Most recently started attempt for this connector; join sync_attempts or extraction_coverage by attempt_id.",
@@ -2105,12 +2153,13 @@ var syncHistoryRelations = {
       error: attempt.error,
       failure_type: attempt.failure_type,
       last_successful_attempt_id: "Most recently completed all-copies-successful attempt; NULL if none. Its coverage may differ from the latest attempt.",
-      last_successful_sync_at: "Completion time of that successful pass, advanced even if no rows changed. NULL if no successful pass was recorded. Never inferred from loaded_at or record modification dates."
+      last_successful_sync_at: "Completion time of that successful pass, advanced even if no rows changed. NULL if no successful pass was recorded. Never inferred from loaded_at or record modification dates.",
+      current_as_of: "The oldest current_as_of among the connector's streams in stream_status: everything it loaded matched its upstream at least as of this time. NULL until every stream has loaded once. An old value means its data is that old: no pass or watch has refreshed it since, or a change failed to load."
     }
   },
   stream_status: {
     name: "stream_status",
-    description: "One row per connector and stream: the latest attempt that declared the stream, and independently the last attempt in which its copy succeeded. A watch pass reads only the streams its source reported changed, so a connector can succeed in sync_status while one of its streams last failed; judge a stream here. NULL success means that stream never completed.",
+    description: "One row per connector and stream: the latest attempt that declared the stream, independently the last attempt in which its copy succeeded, and how current the stream is. A watch pass reads only the streams its source reported changed, so a connector can succeed in sync_status while one of its streams last failed, and an unchanged stream keeps an old last_successful_sync_at while its watch keeps it current; judge a stream here, by current_as_of. NULL success means that stream never completed.",
     columns: {
       connector: attempt.connector,
       stream: "Source stream name.",
@@ -2121,7 +2170,8 @@ var syncHistoryRelations = {
       completed_at: attempt.completed_at,
       status: "This stream's copy status in the latest attempt: running, succeeded, partial, failed or cancelled. Other streams of the same attempt may differ.",
       last_successful_attempt_id: "Most recent completed attempt in which this stream's copy succeeded; NULL if none.",
-      last_successful_sync_at: "Completion time of that attempt, advanced even if no rows changed. NULL if this stream never succeeded. Never inferred from loaded_at or record modification dates."
+      last_successful_sync_at: "Completion time of that attempt, advanced even if no rows changed. NULL if this stream never succeeded. Never inferred from loaded_at or record modification dates.",
+      current_as_of: "When the stream last matched its upstream: when its last successful pass began reading, or a later check by a watch that found the stream unchanged since, whichever is later. A watch records its checks about once a minute. NULL if the stream never succeeded. A stream whose latest change failed to load keeps the time before that change, so its age is how stale it is; compare it with the current time to judge freshness."
     }
   }
 };
@@ -2273,6 +2323,7 @@ export {
   TargetOwnedError,
   Writer,
   PipelineError,
+  WatchError,
   Pipeline,
   readerCatalog,
   reloadMode,

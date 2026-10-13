@@ -6,13 +6,6 @@ import {
   mailDataclass
 } from "../../chunks/chunk-7S2ED2XE.mjs";
 import {
-  isBinaryPlist,
-  isDictionary,
-  parseBinaryPlist,
-  plistJSON,
-  readPlist
-} from "../../chunks/chunk-CWCLYXDX.mjs";
-import {
   accounts,
   byId
 } from "../../chunks/chunk-FGFSL4M6.mjs";
@@ -20,6 +13,13 @@ import {
   selected,
   withinDates
 } from "../../chunks/chunk-YM7ADF2O.mjs";
+import {
+  isBinaryPlist,
+  isDictionary,
+  parseBinaryPlist,
+  plistJSON,
+  readPlist
+} from "../../chunks/chunk-CWCLYXDX.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
@@ -29,8 +29,7 @@ import {
 } from "../../chunks/chunk-DV4S52G7.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-G5BWDLSD.mjs";
-import "../../chunks/chunk-ORGWIAHM.mjs";
+} from "../../chunks/chunk-JEAXXDKR.mjs";
 import {
   Catalog,
   Source,
@@ -38,7 +37,7 @@ import {
   diffGroupedSnapshot,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-2UKXR4JG.mjs";
+} from "../../chunks/chunk-RJTIQLH6.mjs";
 import {
   __callDispose,
   __commonJS,
@@ -28142,7 +28141,8 @@ var AppleMailSource = class extends Source {
           } else if (accountsCurrent !== accountsSeen) {
             accountsSeen = accountsCurrent;
             yield accountsSelected;
-          }
+          } else
+            yield [];
         }
       } catch (error) {
         if (!(signal.aborted && error instanceof Error && error.name === "AbortError"))

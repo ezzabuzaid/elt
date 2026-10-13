@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
   ProtobufMessage
-} from "../../chunks/chunk-QMS7KGTZ.mjs";
+} from "../../chunks/chunk-T4P6QKHM.mjs";
 import {
   decodeArchive,
   plistJSON
@@ -12,8 +12,7 @@ import {
 } from "../../chunks/chunk-DV4S52G7.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-G5BWDLSD.mjs";
-import "../../chunks/chunk-ORGWIAHM.mjs";
+} from "../../chunks/chunk-JEAXXDKR.mjs";
 import {
   Catalog,
   Source,
@@ -22,7 +21,7 @@ import {
   diffSnapshot,
   expiredAfter,
   validateRecords
-} from "../../chunks/chunk-2UKXR4JG.mjs";
+} from "../../chunks/chunk-RJTIQLH6.mjs";
 import {
   __callDispose,
   __using
@@ -948,8 +947,8 @@ var properties2 = {
     description: "SiriKit intent class, such as INSendMessageIntent."
   },
   intentVerb: {
-    ...text4,
-    description: "SiriKit intent verb, such as SendMessage."
+    ...nullableText3,
+    description: "SiriKit intent verb, such as SendMessage; NULL for an intent the app defines itself, such as Clock\u2019s MTCreateAlarmIntent (intentType 2), for which Biome stores none."
   },
   intentType: { ...integerField, description: "Biome intent type as stored." },
   handlingStatus: {
@@ -993,7 +992,7 @@ var AppIntentsStream = class extends BiomeActivityStream {
       bundleId: event.bundleId,
       sourceId: event.sourceId,
       intentClass: event.intentClass,
-      intentVerb: event.intentVerb,
+      intentVerb: event.intentVerb ?? null,
       intentType: event.intentType ?? null,
       handlingStatus: event.handlingStatus ?? null,
       direction: event.direction ?? null,
@@ -2037,8 +2036,7 @@ var AppleActivitySource = class extends Source {
             seen.set(stream, current);
             changed.push(stream);
           }
-          if (changed.length > 0)
-            yield changed;
+          yield changed;
         }
       } catch (error) {
         if (!(error instanceof Error && error.name === "AbortError"))

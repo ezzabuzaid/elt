@@ -3,7 +3,7 @@ import {
   CalendarStore,
   CalendarUnavailableError,
   IcsExportUnavailableError
-} from "../../chunks/chunk-6QXV5BXK.mjs";
+} from "../../chunks/chunk-GJ2XX4Z6.mjs";
 import {
   accounts,
   collections,
@@ -14,8 +14,7 @@ import {
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-G5BWDLSD.mjs";
-import "../../chunks/chunk-ORGWIAHM.mjs";
+} from "../../chunks/chunk-JEAXXDKR.mjs";
 import {
   Catalog,
   Source,
@@ -23,7 +22,7 @@ import {
   diffSnapshot,
   isTimestamp,
   validateRecords
-} from "../../chunks/chunk-2UKXR4JG.mjs";
+} from "../../chunks/chunk-RJTIQLH6.mjs";
 import {
   __callDispose,
   __using
@@ -335,8 +334,8 @@ var CalendarStream = class {
   emitsDeletes = true;
   // Whether a read must ask EventKit for the private ICS export.
   requiresIcs = false;
-  // Whether the event window limits the stream; the account and calendar
-  // listings it does not.
+  // Whether the stream reads events, which the event window limits; the
+  // account and calendar listings read none.
   dated = true;
   #stream;
   describe() {
@@ -1266,20 +1265,31 @@ var AppleCalendarSource = class extends Source {
     };
   }
   async *observe({ streams, signal }) {
-    for await (const _ of this.#store.watch(signal))
-      yield streams;
+    for await (const check of this.#store.checks(signal))
+      yield check === "changed" ? streams : [];
   }
   // Every selected stream reads from one change-free EventKit read, so
   // occurrences match their calendars and ICS rows their items. The private
-  // ICS export is asked for only when an ICS stream is selected.
+  // ICS export is asked for only when an ICS stream is selected. A run of
+  // only the account and calendar listings reads no events: the export of
+  // every event in the window is the read a busy store never holds still for.
   async open(streams) {
+    const scope = {
+      accountIds: this.scope.accountIds,
+      calendarIds: this.scope.collectionIds
+    };
+    if (!streams.some((stream) => readerOf(stream).dated))
+      return new CalendarScan({
+        ...await this.#store.collections(scope),
+        occurrences: [],
+        icsExports: []
+      }, this.#attachments);
     try {
       const contents = await this.#store.read({
         startAt: this.startAt,
         endAt: this.endAt,
         ics: streams.some((stream) => readerOf(stream).requiresIcs),
-        accountIds: this.scope.accountIds,
-        calendarIds: this.scope.collectionIds
+        ...scope
       });
       return new CalendarScan(contents, this.#attachments);
     } catch (error) {

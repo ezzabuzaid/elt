@@ -1,18 +1,18 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
-  decodeArchive,
-  isBinaryPlist,
-  isDictionary,
-  parseBinaryPlist,
-  readPlist
-} from "../../chunks/chunk-CWCLYXDX.mjs";
-import {
   byId
 } from "../../chunks/chunk-FGFSL4M6.mjs";
 import {
   selected,
   withinDates
 } from "../../chunks/chunk-YM7ADF2O.mjs";
+import {
+  decodeArchive,
+  isBinaryPlist,
+  isDictionary,
+  parseBinaryPlist,
+  readPlist
+} from "../../chunks/chunk-CWCLYXDX.mjs";
 import {
   localAppleStoreCoverage
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
@@ -22,8 +22,7 @@ import {
 } from "../../chunks/chunk-DV4S52G7.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-G5BWDLSD.mjs";
-import "../../chunks/chunk-ORGWIAHM.mjs";
+} from "../../chunks/chunk-JEAXXDKR.mjs";
 import {
   Catalog,
   Source,
@@ -31,7 +30,7 @@ import {
   diffSnapshot,
   expiredAfter,
   validateRecords
-} from "../../chunks/chunk-2UKXR4JG.mjs";
+} from "../../chunks/chunk-RJTIQLH6.mjs";
 import {
   __callDispose,
   __using
@@ -2977,8 +2976,7 @@ var AppleSafariSource = class extends Source {
             seen.set(store, current);
             changed.add(store);
           }
-          if (changed.size > 0)
-            yield streams.filter((stream) => changed.has(readerOf(stream).store));
+          yield streams.filter((stream) => changed.has(readerOf(stream).store));
         }
       } catch (error) {
         if (!(error instanceof Error && error.name === "AbortError"))

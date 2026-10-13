@@ -1,5 +1,8 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 import {
+  eventKitFields
+} from "../../chunks/chunk-YUEL2AIL.mjs";
+import {
   isDictionary,
   readPlist
 } from "../../chunks/chunk-CWCLYXDX.mjs";
@@ -12,19 +15,15 @@ import {
   referenceDateInstant
 } from "../../chunks/chunk-DV4S52G7.mjs";
 import {
-  eventKitFields
-} from "../../chunks/chunk-YUEL2AIL.mjs";
-import {
   AppleConnector
-} from "../../chunks/chunk-G5BWDLSD.mjs";
-import "../../chunks/chunk-ORGWIAHM.mjs";
+} from "../../chunks/chunk-JEAXXDKR.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-2UKXR4JG.mjs";
+} from "../../chunks/chunk-RJTIQLH6.mjs";
 import {
   __callDispose,
   __using
@@ -1127,10 +1126,9 @@ var AppleWalletSource = class extends Source {
           signal
         })) {
           const current = version.current;
-          if (current === seen)
-            continue;
+          const changed = current === seen ? [] : streams;
           seen = current;
-          yield streams;
+          yield changed;
         }
       } catch (error) {
         if (!(error instanceof Error && error.name === "AbortError"))

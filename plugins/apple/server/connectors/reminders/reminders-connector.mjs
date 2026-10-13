@@ -2,29 +2,28 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 import {
   RemindersStore,
   RemindersUnavailableError
-} from "../../chunks/chunk-6QXV5BXK.mjs";
+} from "../../chunks/chunk-GJ2XX4Z6.mjs";
 import {
   accounts,
   collections,
   name
 } from "../../chunks/chunk-FGFSL4M6.mjs";
 import {
-  localAppleStoreCoverage
-} from "../../chunks/chunk-BRJ4TKR5.mjs";
-import {
   eventKitFields
 } from "../../chunks/chunk-YUEL2AIL.mjs";
 import {
+  localAppleStoreCoverage
+} from "../../chunks/chunk-BRJ4TKR5.mjs";
+import {
   AppleConnector
-} from "../../chunks/chunk-G5BWDLSD.mjs";
-import "../../chunks/chunk-ORGWIAHM.mjs";
+} from "../../chunks/chunk-JEAXXDKR.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-2UKXR4JG.mjs";
+} from "../../chunks/chunk-RJTIQLH6.mjs";
 import "../../chunks/chunk-ZGXE7NZW.mjs";
 
 // packages/sources/apple/reminders/dist/reminders-scan.js
@@ -72,6 +71,9 @@ var AppleRemindersStream = class {
   // Every read is the whole store, so incremental copies diff snapshots.
   sourceDefinedCursor = true;
   emitsDeletes = true;
+  // Whether the stream reads reminders; the account and list listings read
+  // none.
+  readsReminders = true;
   #stream;
   describe() {
     this.#stream ??= new Stream(this);
@@ -101,6 +103,7 @@ var properties = {
 };
 var AccountsStream = class extends AppleRemindersStream {
   name = "accounts";
+  readsReminders = false;
   jsonSchema = {
     type: "object",
     description: "One source record per EventKit account (EKSource) in this Mac's store, including accounts without reminder lists. An import scope keeps the selected accounts; a list scope also drops accounts owning no selected list. Relationships name source streams, not destination tables.",
@@ -426,6 +429,7 @@ var properties5 = {
 };
 var ListsStream = class extends AppleRemindersStream {
   name = "lists";
+  readsReminders = false;
   jsonSchema = {
     type: "object",
     description: "One source record per reminder list (an EventKit calendar for reminders) visible on this Mac. An import scope keeps only the selected lists. accountId refers to accounts.id; reminders.listId refers to id. Relationships name source streams, not destination tables.",
@@ -695,6 +699,12 @@ var readers = {
 };
 var catalog = new Catalog(Object.values(readers).map((reader) => reader.describe()));
 var readersByName = new Map(Object.values(readers).map((reader) => [reader.name, reader]));
+var readerOf = (stream) => {
+  const reader = readersByName.get(stream.name);
+  if (reader === void 0)
+    throw new Error(`Apple Reminders has no stream ${stream.name}`);
+  return reader;
+};
 var AppleRemindersSource = class extends Source {
   #store;
   identity = "apple-reminders:eventkit";
@@ -721,22 +731,27 @@ var AppleRemindersSource = class extends Source {
     return { ...localAppleStoreCoverage, selection: this.scope };
   }
   async *observe({ streams, signal }) {
-    for await (const _ of this.#store.watch(signal))
-      yield streams;
+    for await (const check of this.#store.checks(signal))
+      yield check === "changed" ? streams : [];
   }
   // One change-free read for every selected stream, so reminders match their
-  // lists and alarms their reminders.
-  async open() {
-    return new RemindersScan(await this.#store.read({
+  // lists and alarms their reminders. A run of only the account and list
+  // listings reads no reminders: the read of every reminder is the one a busy
+  // store never holds still for.
+  async open(streams) {
+    const scope = {
       accountIds: this.scope.accountIds,
       calendarIds: this.scope.collectionIds
-    }));
+    };
+    if (!streams.some((stream) => readerOf(stream).readsReminders))
+      return new RemindersScan({
+        ...await this.#store.collections(scope),
+        reminders: []
+      });
+    return new RemindersScan(await this.#store.read(scope));
   }
   async *extract({ stream, syncMode }, state, _partition, scan) {
-    const reader = readersByName.get(stream.name);
-    if (reader === void 0)
-      throw new Error(`Apple Reminders has no stream ${stream.name}`);
-    const records = reader.read(scan);
+    const records = readerOf(stream).read(scan);
     if (syncMode === "incremental")
       yield* diffSnapshot(stream, records, state);
     else

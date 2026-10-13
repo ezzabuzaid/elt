@@ -31,7 +31,7 @@ var EventKitChangingError = class extends Error {
 };
 
 // packages/sdks/apple/eventkit/dist/eventkit-store.js
-import { setTimeout as sleep } from "node:timers/promises";
+import { setInterval, setTimeout as sleep } from "node:timers/promises";
 
 // packages/sdks/apple/eventkit/dist/native-process.js
 import { spawn } from "node:child_process";
@@ -86,6 +86,7 @@ var native_process_default = new NativeProcess();
 
 // packages/sdks/apple/eventkit/dist/eventkit-store.js
 var settleMs = 250;
+var checkMs = 1e3;
 var attempts = 5;
 var EventKitStore = class {
   // The compiled helper (helper/*.swift). Its host decides where it lives:
@@ -94,38 +95,52 @@ var EventKitStore = class {
   constructor(helper) {
     this.#helper = helper;
   }
-  // EventKit has no read transaction. Reads run while a watcher counts
-  // EKEventStoreChangedNotification and repeat when a change arrived during
-  // them or within settleMs after.
   async read(query) {
+    return this.#consistent(async () => {
+      const documents = await this.#documents(query, this.request(query));
+      return this.contents(scoped(query, documents), documents);
+    });
+  }
+  // The accounts and calendars read(query) returns, without their items or a
+  // window: a short read, which a store too busy for the whole read holds
+  // still for.
+  async collections(query) {
+    return this.#consistent(async () => scoped(query, await this.#documents(query, { collectionsOnly: true })));
+  }
+  // Yields changed once the subscription is confirmed and once per store
+  // change, and unchanged each checkMs in between: a quiet second under a
+  // live subscription is a check that found the store unchanged. A consumer
+  // that stops reading stops the helper, as an abort does: a change the watch
+  // still waits for would otherwise hold its return forever.
+  async *checks(signal) {
     const controller = new AbortController();
-    const changes = this.watch(controller.signal)[Symbol.asyncIterator]();
-    let count = 0;
-    let failure;
-    await changes.next();
-    const counting = (async () => {
-      try {
-        while (!(await changes.next()).done)
-          count++;
-      } catch (error) {
-        if (!controller.signal.aborted)
-          failure = { error };
-      }
-    })();
+    const checking = AbortSignal.any([signal, controller.signal]);
+    const changes = this.watch(checking)[Symbol.asyncIterator]();
     try {
-      for (let attempt = 1; attempt <= attempts; attempt++) {
-        const before = count;
-        const contents = await this.#readOnce(query);
-        await sleep(settleMs);
-        if (failure !== void 0)
-          throw failure.error;
-        if (count === before)
-          return contents;
+      if ((await changes.next()).done)
+        return;
+      yield "changed";
+      const ticks = setInterval(checkMs, void 0, { signal: checking })[Symbol.asyncIterator]();
+      const nextChange = () => changes.next().then(({ done }) => ({ done, changed: true }));
+      const nextTick = () => ticks.next().then(({ done }) => ({ done, changed: false }));
+      let change = nextChange();
+      let tick = nextTick();
+      for (; ; ) {
+        const next = await Promise.race([change, tick]);
+        if (next.done)
+          return;
+        yield next.changed ? "changed" : "unchanged";
+        if (next.changed)
+          change = nextChange();
+        else
+          tick = nextTick();
       }
-      throw new EventKitChangingError(this.entity, attempts);
+    } catch (error) {
+      if (!(signal.aborted && error instanceof Error && error.name === "AbortError"))
+        throw error;
     } finally {
       controller.abort();
-      await counting;
+      await changes.return(void 0);
     }
   }
   // Yields once the subscription is confirmed, then once per store change.
@@ -145,24 +160,57 @@ var EventKitStore = class {
   failure(error) {
     return helperStderr(error).includes(this.accessMarker) ? this.accessDenied(error) : error;
   }
-  async #readOnce(query) {
-    const request = {
-      entity: this.entity,
-      ...this.request(query),
-      accountIds: query.accountIds,
-      collectionIds: query.calendarIds
-    };
+  // EventKit has no read transaction. Reads run while a watcher counts
+  // EKEventStoreChangedNotification and repeat when a change arrived during
+  // them or within settleMs after.
+  async #consistent(readOnce) {
+    const controller = new AbortController();
+    const changes = this.watch(controller.signal)[Symbol.asyncIterator]();
+    let count = 0;
+    let failure;
+    await changes.next();
+    const counting = (async () => {
+      try {
+        while (!(await changes.next()).done)
+          count++;
+      } catch (error) {
+        if (!controller.signal.aborted)
+          failure = { error };
+      }
+    })();
+    try {
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const before = count;
+        const result = await readOnce();
+        await sleep(settleMs);
+        if (failure !== void 0)
+          throw failure.error;
+        if (count === before)
+          return result;
+      }
+      throw new EventKitChangingError(this.entity, attempts);
+    } finally {
+      controller.abort();
+      await counting;
+    }
+  }
+  async #documents(query, request) {
     const documents = [];
     try {
       for await (const line of native_process_default.lines(this.#helper, [
         "read",
-        JSON.stringify(request)
+        JSON.stringify({
+          entity: this.entity,
+          ...request,
+          accountIds: query.accountIds,
+          collectionIds: query.calendarIds
+        })
       ]))
         documents.push(inContentOrder(JSON.parse(line)));
     } catch (error) {
       throw this.failure(error);
     }
-    return this.contents(scoped(query, documents), documents);
+    return documents;
   }
 };
 function helperStderr(error) {
@@ -233,10 +281,23 @@ var CalendarStore = class extends EventKitStore {
   request({ startAt, endAt, ics }) {
     return { startAt, endAt, ics };
   }
+  // EventKit can expand one all-day occurrence twice in its day, at two UTC
+  // offsets: a yearly holiday read in Asia/Amman came back on 2016-06-14 from
+  // midnight at +03:00 and again at +02:00. An all-day occurrence fills its
+  // day, so an item has at most one starting on a day; the first is kept.
   contents(collections, documents) {
+    const days = /* @__PURE__ */ new Set();
     return {
       ...collections,
-      occurrences: documents.filter((document) => document.type === "occurrence"),
+      occurrences: documents.filter((document) => document.type === "occurrence").filter(({ allDay, calendarId, calendarItemId, startDay }) => {
+        if (!allDay)
+          return true;
+        const day = JSON.stringify([calendarId, calendarItemId, startDay]);
+        if (days.has(day))
+          return false;
+        days.add(day);
+        return true;
+      }),
       icsExports: documents.filter((document) => document.type === "ics")
     };
   }

@@ -22,6 +22,7 @@ import {
   SyncHistory,
   Target,
   TargetOwnedError,
+  WatchError,
   Writer,
   copyStatus,
   declaredFormat,
@@ -38,7 +39,7 @@ import {
   reloadMode,
   syncHistoryRelations,
   validateRecords
-} from "../chunks/chunk-2UKXR4JG.mjs";
+} from "../chunks/chunk-RJTIQLH6.mjs";
 import "../chunks/chunk-ZGXE7NZW.mjs";
 export {
   Catalog,
@@ -63,6 +64,7 @@ export {
   SyncHistory,
   Target,
   TargetOwnedError,
+  WatchError,
   Writer,
   copyStatus,
   declaredFormat,

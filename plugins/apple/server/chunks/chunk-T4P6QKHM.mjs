@@ -66,6 +66,15 @@ var ProtobufMessage = class _ProtobufMessage {
       throw new TypeError(`Protobuf field ${number} exceeds a safe integer`);
     return Number(field.value);
   }
+  // A uint64 field whole, for values past Number's safe integers.
+  uint64(number) {
+    const field = this.#last(number);
+    if (field === void 0)
+      return void 0;
+    if (field.wire !== 0)
+      throw new TypeError(`Protobuf field ${number} is not a varint`);
+    return field.value;
+  }
   // An int64 field: negative values arrive as ten-byte two's complement.
   int(number) {
     const field = this.#last(number);
