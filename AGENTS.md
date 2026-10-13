@@ -40,6 +40,10 @@ When the user says a mechanism should not exist, remove it before you build any 
 
 When the user names a capability, take its simplest literal reading and restate it as "when X, then Y" with the user's own example before you propose a mechanism. eca actions went this way: a design of rungs, typed proposals and host allowlists answered a question nobody asked. The user meant that an action is an instruction to an agent: when "I ordered food", run `codex "log my calorie intake from the food I ordered"`.
 
+## Fix the overlap, not the order
+
+When a first-match lookup gives the right answer in only one order, two of its matchers overlap. Make the loose matcher exact; do not pin the order with a test or a comment. `MacOSDocumentParser` went this way: `ImageFormat` took any file that starts with `BM` for a bitmap, so `TextFormat` had to come first, and a text file with no extension that starts with `BMW` failed the copy in any order. A check of the bitmap's full header removed the overlap, and the order rule went with it.
+
 ## Place each job with whoever can know it
 
 Before proposing where a fix lives, split the requirement into its jobs and name, for each, who can actually know it: the source, the elt engine, the destination, the plugin server, or the agent. A job belongs to that owner. A slow Mail answer, for example, split into three jobs: whether a message changed (only the Mail source knows), turning changes into upserts and deletions (a shared elt helper the source calls), and when to refresh (the source's `observe()`, run by the plugin server, not a skill telling the agent to sync).

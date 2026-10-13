@@ -415,6 +415,15 @@ test('the document parser reads every attachment kind and throws only on unreada
   renderedText(photo, 'Invoice 4821 due Friday');
   const heic = join(files, 'receipt.heic');
   execFileSync('/usr/bin/sips', ['-s', 'format', 'heic', photo, '--out', heic]);
+  const bitmap = join(files, 'receipt.bmp');
+  execFileSync('/usr/bin/sips', [
+    '-s',
+    'format',
+    'bmp',
+    photo,
+    '--out',
+    bitmap,
+  ]);
   const blank = join(files, 'blank.png');
   renderedText(blank, null);
   const card =
@@ -431,6 +440,7 @@ test('the document parser reads every attachment kind and throws only on unreada
     ['photo', photo],
     ['heic', heic],
     ['noExtension', await file('GroupPhotoImage', await readFile(heic))],
+    ['bitmapNoExtension', await file('bitmapImage', await readFile(bitmap))],
     ['blankImage', blank],
     ['blankPdf', await file('blank.pdf', blankPdf)],
     ['text', await file('hello.txt', 'hello')],
@@ -441,6 +451,12 @@ test('the document parser reads every attachment kind and throws only on unreada
       'unknown',
       await file('pluginPayloadAttachment', Uint8Array.of(9, 9, 9, 9)),
     ],
+    // Text that opens like a bitmap, a GIF or a PDF header is none of them.
+    ['bitmapLikeText', await file('bitmapLikeText', 'BMW service due Friday')],
+    ['gifLikeText', await file('gifLikeText', 'GIF8 notes')],
+    ['pdfLikeText', await file('pdfLikeText', '%PDF notes')],
+    // Shorter than an icon header, so its missing fourth byte is not a zero.
+    ['shortFile', await file('shortFile', Uint8Array.of(0, 0, 1))],
   ] as const)
     attach(guid, filename);
   const source = new AppleMessagesSource(path);
@@ -484,6 +500,7 @@ test('the document parser reads every attachment kind and throws only on unreada
       photo: 'Invoice 4821 due Friday',
       heic: 'Invoice 4821 due Friday',
       noExtension: 'Invoice 4821 due Friday',
+      bitmapNoExtension: 'Invoice 4821 due Friday',
       blankImage: null,
       blankPdf: null,
       text: 'hello',
@@ -491,6 +508,10 @@ test('the document parser reads every attachment kind and throws only on unreada
       location: card,
       video: null,
       unknown: null,
+      bitmapLikeText: null,
+      gifLikeText: null,
+      pdfLikeText: null,
+      shortFile: null,
     },
   );
   for (const [name, content, message] of [
