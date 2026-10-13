@@ -445,7 +445,7 @@ packages/connectors/apple/ One package per Apple connector (connector-apple-<nam
                            AppleConnector (connector-apple-connector) and discovery
                            (connector-apple-manifest)
 apps/apple/plugin/     Codex plugin server, bundled into plugins/apple/server (apple-plugin)
-apps/apple/cli/        Terminal CLI over the Apple connectors: setup, sync, status, query (apple-cli)
+apps/apple/cli/        Terminal CLI: setup, sync, status, query (apple-cli)
 apps/google/           Google example app over the Search Console source
 apps/proactive/        Proactive rules over Calendar, Mail, Messages, Slack and WhatsApp
 docs/                  Detailed behavior and native API research
