@@ -16,14 +16,14 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-JEAXXDKR.mjs";
+} from "../../chunks/chunk-4RXDIBY4.mjs";
 import {
   Catalog,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-RJTIQLH6.mjs";
+} from "../../chunks/chunk-NZNT7H7R.mjs";
 import "../../chunks/chunk-ZGXE7NZW.mjs";
 
 // packages/sources/apple/reminders/dist/reminders-scan.js

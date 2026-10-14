@@ -937,7 +937,7 @@ var Source = class {
     yield new StreamStatus(name, "ENDED");
   }
   // Keeps each message to the stream whose extract emitted it, and replaces
-  // each record's staging path with the file reads it asked for.
+  // each record's file path with the file reads it asked for.
   async *resolved(configuration, messages) {
     for await (const message2 of messages) {
       if (message2 instanceof StreamStatus)
@@ -951,7 +951,7 @@ var Source = class {
         continue;
       }
       if (message2.file !== null && typeof message2.file !== "string")
-        throw new TypeError("File extraction must supply a staging path or explicit null");
+        throw new TypeError("File extraction must supply a file path or explicit null");
       const data = message2.data;
       if (data === null || typeof data !== "object" || Array.isArray(data))
         throw new TypeError("File metadata must be an object");
@@ -1354,7 +1354,7 @@ function validOperation(stream, message2) {
   }
   if (!("type" in message2) && "data" in message2 && Object.hasOwn(message2, "data")) {
     if (Object.hasOwn(message2, "file"))
-      throw new TypeError("Destinations cannot receive source staging paths");
+      throw new TypeError("Destinations cannot receive source file paths");
     wellFormed(message2.data, "Record");
     return { type: "RECORD", data: message2.data };
   }
