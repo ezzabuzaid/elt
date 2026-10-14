@@ -38,8 +38,10 @@ function describe(
   now: Date,
 ): string {
   switch (sync.state) {
+    // A pass a killed process left reads running until the next pass, so its
+    // date and age show it is not today's.
     case 'running':
-      return `Importing since ${new Date(sync.startedAt).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}.`;
+      return `Importing since ${new Date(sync.startedAt).toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} (${ago(sync.startedAt, now)}).`;
     case 'cancelled':
       return 'Stopped before it finished.';
     case 'succeeded':

@@ -376,6 +376,85 @@ test('once an import that failed before its pass can write again, its next pass 
   }
 });
 
+test('a pass a killed process left days ago reads importing with the day it began and how long ago, not as if it began today', async (t) => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = await photosPlugin(join(scratch.path, 'store'));
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  await plugin.configure({ connectors: [photos] });
+  // A pass begun and never finished, as a process killed mid-pass leaves it.
+  await (
+    await passes(plugin, photos)
+  )();
+  const started = new Date(
+    String(plugin.status().connectors[0]?.sync?.startedAt),
+  );
+  const day = (date: Date) =>
+    date.toLocaleString('en', { month: 'short', day: 'numeric' });
+  const time = (date: Date) =>
+    date.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' });
+  // The history stamps a pass with SQLite's clock; the page reads it on
+  // JavaScript's, three days and five hours on.
+  const later = new Date(started.getTime() + (3 * 24 + 5) * 3_600_000);
+  t.mock.timers.enable({ apis: ['Date'], now: later });
+  try {
+    const text = connectorRows(plugin).find(({ name }) => name === 'photos')
+      ?.status.text;
+
+    assert.equal(
+      text,
+      `Importing since ${day(started)}, ${time(started)} (3 days ago).`,
+    );
+    assert.notEqual(
+      `${day(started)} ${time(started)}`,
+      `${day(later)} ${time(later)}`,
+    );
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('the next import replaces a pass a killed process left, so syncing a connector that reads importing is never stuck', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const home = join(scratch.path, 'home');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(
+    join(home, 'Pictures/photos.json'),
+    JSON.stringify([{ id: 'p1', title: 'Beach' }]),
+  );
+  const plugin = await photosPlugin(join(scratch.path, 'store'));
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  await plugin.configure({ connectors: [photos] });
+  const statusOf = () =>
+    connectorRows(plugin).find(({ name }) => name === 'photos')?.status;
+  // A pass begun and never finished, as a process killed mid-pass leaves it:
+  // its flight died with that process, and here no flight was ever held.
+  await (
+    await passes(plugin, photos)
+  )();
+  const left = statusOf();
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    // As the row's Sync calls it: the selection read back from status.
+    await plugin.import(
+      plugin
+        .status()
+        .connectors.filter(({ connector }) => connector === 'photos'),
+    );
+
+    assert.equal(left?.state, 'running');
+    assert.equal(statusOf()?.state, 'succeeded');
+    assert.match(String(statusOf()?.text), /^Synced just now/);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
 test('two servers importing one selection at once load it in one pass, the second waiting for the first', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),

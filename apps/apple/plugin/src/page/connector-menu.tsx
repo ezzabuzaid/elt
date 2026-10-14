@@ -6,9 +6,10 @@ import { usePage } from './page-context.tsx';
 
 // A connected connector's menu, opened as ChatGPT opens its own rows' menus:
 // right-click opens it at the pointer, and the menu key or Shift+F10 at the
-// focused row. Its Sync imports that connector alone. A connector that is off
-// has no menu. ChatGPT keeps Escape from its apps' pages, so there the menu
-// closes on a click outside it or on its Sync.
+// focused row. Its Sync imports that connector alone, also while the row reads
+// importing: a pass that still runs is joined, and one a killed process left is
+// replaced. A connector that is off has no menu. ChatGPT keeps Escape from its
+// apps' pages, so there the menu closes on a click outside it or on its Sync.
 export function ConnectorMenu({
   row,
   children,
@@ -17,11 +18,7 @@ export function ConnectorMenu({
   children: ReactElement;
 }) {
   const { sync, syncing, syncingConnectors } = usePage();
-  const busy =
-    syncing ||
-    syncingConnectors.has(row.name) ||
-    row.status.state === 'waiting' ||
-    row.status.state === 'running';
+  const busy = syncing || syncingConnectors.has(row.name);
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger
