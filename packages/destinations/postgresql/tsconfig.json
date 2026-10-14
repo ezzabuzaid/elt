@@ -9,6 +9,9 @@
   "references": [
     {
       "path": "../../elt"
+    },
+    {
+      "path": "../../snapshot-differential"
     }
   ]
 }

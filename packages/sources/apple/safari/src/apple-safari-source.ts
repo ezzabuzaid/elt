@@ -4,12 +4,11 @@ import type {
   CopyConfiguration,
   ExtractionCoverage,
   FailureType,
-  SnapshotDiffOptions,
   SourceMessage,
   SourceWatchOptions,
   Stream,
 } from '@workspace/elt';
-import { Catalog, Source, diffSnapshot, expiredAfter } from '@workspace/elt';
+import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import {
   Safari,
   type SafariLocation,
@@ -19,6 +18,11 @@ import {
   safariContainer,
   safariDirectory,
 } from '@workspace/sdk-apple-safari';
+import {
+  ClosedWorld,
+  type DeletionPolicy,
+  Retention,
+} from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -202,7 +206,9 @@ export class AppleSafariSource extends Source<SafariScan> {
     const records = await reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state, coveredBy(reader.horizon(scan)))
+        ? diffSnapshot(stream, records, state, {
+            policy: policyFor(reader.horizon(scan)),
+          })
         : records.map((data) => ({ stream: stream.name, data }));
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
@@ -212,8 +218,8 @@ export class AppleSafariSource extends Source<SafariScan> {
   }
 }
 
-// A stream that expires covers what vanished after its horizon; any other
-// stream covers every record.
-function coveredBy(horizon: string | undefined): SnapshotDiffOptions {
-  return horizon === undefined ? {} : { covers: expiredAfter(horizon) };
+// A stream that expires keeps records from its horizon on; any other lists
+// every record.
+function policyFor(horizon: string | undefined): DeletionPolicy {
+  return horizon === undefined ? new ClosedWorld() : new Retention(horizon);
 }

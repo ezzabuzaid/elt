@@ -7,10 +7,10 @@ import {
   Stream,
   type SyncMode,
   diffGroupedSnapshot,
-  expiredAfter,
   validateRecords,
 } from '@workspace/elt';
 import type { BiomeSegment, BiomeStream } from '@workspace/sdk-apple-biome';
+import { Retention } from '@workspace/snapshot-differential';
 
 import type { ActivityScan } from './activity-scan.ts';
 import { retainedSince } from './activity-values.ts';
@@ -120,7 +120,7 @@ export abstract class BiomeActivityStream<P extends Properties, E> {
       })),
     );
     yield* diffGroupedSnapshot(configuration.stream, groups, state, {
-      covers: expiredAfter(retainedSince(scan.startedAt, this.retentionDays)),
+      policy: new Retention(retainedSince(scan.startedAt, this.retentionDays)),
     });
   }
 

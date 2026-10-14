@@ -14,6 +14,7 @@ import {
   AccountsUnavailableError,
   accountsStorePath,
 } from '@workspace/sdk-apple-accounts';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import { AccountsScan } from './accounts-scan.ts';
@@ -117,7 +118,7 @@ export class AppleAccountsSource extends Source<AccountsScan> {
       throw new Error(`Apple Accounts has no stream ${stream.name}`);
     const records = reader.read(scan);
     yield* configuration.syncMode === 'incremental'
-      ? diffSnapshot(stream, records, state)
+      ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
       : records.map((data) => ({ stream: stream.name, data }));
   }
 }

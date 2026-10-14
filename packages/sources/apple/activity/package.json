@@ -13,7 +13,8 @@
     "@workspace/codec-plist": "0.0.1",
     "@workspace/elt": "0.0.1",
     "@workspace/sdk-apple-biome": "0.0.1",
-    "@workspace/sdk-apple-knowledge": "0.0.1"
+    "@workspace/sdk-apple-knowledge": "0.0.1",
+    "@workspace/snapshot-differential": "0.0.1"
   },
   "devDependencies": {
     "@workspace/elt-sqlite": "0.0.1"

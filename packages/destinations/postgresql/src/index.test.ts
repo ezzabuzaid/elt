@@ -32,6 +32,7 @@ import {
   type StreamSchema,
   diffSnapshot,
 } from '@workspace/elt';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import {
   PostgresCheckpointStore,
@@ -2981,7 +2982,9 @@ test('a checkpoint lost between commit and save replays to the same rows', async
       configuration: CopyConfiguration,
       state: unknown,
     ) {
-      yield* diffSnapshot(configuration.stream, this.rows, state);
+      yield* diffSnapshot(configuration.stream, this.rows, state, {
+        policy: new ClosedWorld(),
+      });
     }
   }
   const source = new Snapshots([items], {});
@@ -3068,7 +3071,9 @@ test('array fields load as native arrays of their item type, in order, and an un
       configuration: CopyConfiguration,
       state: unknown,
     ) {
-      yield* diffSnapshot(configuration.stream, this.rows, state);
+      yield* diffSnapshot(configuration.stream, this.rows, state, {
+        policy: new ClosedWorld(),
+      });
     }
   }
   const source = new Snapshots([lists], {});

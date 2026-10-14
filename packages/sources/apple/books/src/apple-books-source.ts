@@ -21,6 +21,7 @@ import {
   booksContainer,
   booksGroupContainer,
 } from '@workspace/sdk-apple-books';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import { BooksScan } from './books-scan.ts';
@@ -170,7 +171,7 @@ export class AppleBooksSource extends Source<BooksScan> {
     const records = await reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state)
+        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
         : records.map((data) => ({ stream: stream.name, data }));
     if (configuration.fileReads.length === 0) {
       yield* messages;

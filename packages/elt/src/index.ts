@@ -52,12 +52,7 @@ export {
 export {
   diffGroupedSnapshot,
   diffSnapshot,
-  expiredAfter,
-  type GroupedSnapshotState,
   type SnapshotDiffOptions,
-  type SnapshotGroup,
-  type SnapshotState,
-  type VanishedRecord,
 } from './core/snapshot.ts';
 export {
   type DeleteMessage,

@@ -17,6 +17,7 @@ import {
   ContactsUnavailableError,
   addressBookDirectory,
 } from '@workspace/sdk-apple-contacts';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -173,7 +174,7 @@ export class AppleContactsSource extends Source<ContactsScan> {
     const records = await reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state)
+        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
         : records.map((data) => ({ stream: stream.name, data }));
     if (configuration.fileReads.length === 0 || reader !== readers.images) {
       yield* messages;

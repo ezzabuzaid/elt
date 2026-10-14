@@ -16,6 +16,7 @@ import {
   CalendarUnavailableError,
   IcsExportUnavailableError,
 } from '@workspace/sdk-apple-eventkit';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { CalendarScan } from './calendar-scan.ts';
@@ -208,7 +209,7 @@ export class AppleCalendarSource extends Source<CalendarScan> {
     const records = await reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state)
+        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
         : records.map((data) => ({ stream: stream.name, data }));
     if (configuration.fileReads.length === 0) {
       yield* messages;

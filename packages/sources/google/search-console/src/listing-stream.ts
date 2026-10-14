@@ -5,6 +5,7 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import type { SearchConsoleScan } from './search-console-scan.ts';
 import {
@@ -32,6 +33,7 @@ export abstract class ListingStream extends SearchConsoleStream {
         this.stream,
         validateRecords(this.stream, rows, 'Search Console'),
         state,
+        { policy: new ClosedWorld() },
       );
     else yield* this.records(rows);
   }

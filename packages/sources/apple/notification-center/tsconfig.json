@@ -11,13 +11,16 @@
       "path": "../macos"
     },
     {
+      "path": "../../../snapshot-differential"
+    },
+    {
       "path": "../../../sdks/apple/notification-center"
     },
     {
-      "path": "../../../codecs/plist"
+      "path": "../../../elt"
     },
     {
-      "path": "../../../elt"
+      "path": "../../../codecs/plist"
     },
     {
       "path": "../../../destinations/sqlite"

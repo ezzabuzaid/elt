@@ -11,6 +11,9 @@
       "path": "../../apple/macos"
     },
     {
+      "path": "../../../snapshot-differential"
+    },
+    {
       "path": "../../../sdks/slack/desktop"
     },
     {

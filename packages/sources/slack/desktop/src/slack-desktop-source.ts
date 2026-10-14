@@ -16,6 +16,7 @@ import {
   SlackDesktopUnavailableError,
   slackDesktopDirectory,
 } from '@workspace/sdk-slack-desktop';
+import { Coverage } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { SlackDesktopScan } from './slack-desktop-scan.ts';
@@ -177,7 +178,7 @@ export class SlackDesktopSource extends Source<SlackDesktopScan> {
             records,
             state,
             stream.emitsDeletes
-              ? { covers: ({ key }) => reader.covers(scan, key) }
+              ? { policy: new Coverage(({ key }) => reader.covers(scan, key)) }
               : {},
           );
     for await (const message of messages)

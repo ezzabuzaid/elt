@@ -8,16 +8,19 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../../../google-auth"
+      "path": "../../../snapshot-differential"
     },
     {
-      "path": "../../../destinations/postgresql"
+      "path": "../../../sdks/google/search-console"
+    },
+    {
+      "path": "../../../google-auth"
     },
     {
       "path": "../../../elt"
     },
     {
-      "path": "../../../sdks/google/search-console"
+      "path": "../../../destinations/postgresql"
     }
   ]
 }

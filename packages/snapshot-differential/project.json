@@ -1,0 +1,13 @@
+{
+  "name": "snapshot-differential",
+  "sourceRoot": "packages/snapshot-differential/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/snapshot-differential/dist/*.test.js\""
+    }
+  }
+}

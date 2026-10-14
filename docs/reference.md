@@ -216,33 +216,40 @@ State belongs to the orchestration, not the destination, as in Airbyte, so any s
 
 ### Snapshot streams
 
-A source without a change feed can still load incrementally with `diffSnapshot(stream, records, state)`. The stream declares `sourceDefinedCursor`, and `emitsDeletes` when a key missing from a scan was deleted upstream ([forgetting upstreams](#forgetting-upstreams) leave it out); the source passes one complete scan and the previous state:
+A source without a change feed can still load incrementally with `diffSnapshot(stream, records, state, { policy })`, a [snapshot differential](../packages/snapshot-differential/README.md) (Labio and Garcia-Molina, VLDB 1996). The stream declares `sourceDefinedCursor`, and `emitsDeletes` when its upstream deletes records ([forgetting upstreams](#forgetting-upstreams) leave it out). The source passes one complete scan, the previous state, and a deletion policy:
 
 ```ts
+import { ClosedWorld } from '@workspace/snapshot-differential';
+
 protected override async *extract(configuration, state) {
-  yield* diffSnapshot(configuration.stream, this.scan(configuration.stream), state);
+  // The scan lists every record, so a key it does not list was deleted.
+  yield* diffSnapshot(configuration.stream, this.scan(configuration.stream), state, {
+    policy: new ClosedWorld(),
+  });
 }
 ```
 
-The state is `{ snapshot: { <primary key JSON>: <SHA-256 of the record> } }`. Each run emits new or changed records, a `DELETE` for every key the scan no longer contains, and the new snapshot as the only `STATE`. Unchanged records produce no writes. The first run (`null` state) loads everything and deletes nothing.
+The state is `{ snapshot: { <primary key JSON>: <SHA-256 of the record> } }`. Each run emits new or changed records, a `DELETE` for each vanished key that the policy judges deleted, and the new snapshot as the only `STATE`. Unchanged records produce no writes. The first run (`null` state) loads everything and deletes nothing.
+
+The policy is a `DeletionPolicy`, a Strategy that gives each vanished key a verdict: `deleted` (the closed-world assumption: the diff emits a `DELETE`), `unknown` (the open-world assumption: the key stays in the snapshot, and the next run judges it again), or `expired` (a time to live: the key leaves the snapshot with no `DELETE`). `ClosedWorld` judges every vanished key deleted, `Retention(horizon)` serves [expiring upstreams](#expiring-upstreams), and `Coverage(covers)` serves [partly held upstreams](#partly-held-upstreams). A source with a different rule writes its own subclass. A stream that declares `emitsDeletes` must pass a policy, and a stream that does not takes none.
 
 - **Replay:** if the checkpoint save fails after the data committed, the next run diffs against the older snapshot, re-applies the same upserts and deletions, and reaches the same rows.
 - **Failures:** an empty scan deletes every row. The source must throw on a failed read and never yield an empty collection instead. A key repeated within one scan is rejected, so a source that reads overlapping windows deduplicates first.
 - **Cost:** the source still reads everything each run; only destination writes shrink. The state holds one key and a 43-character fingerprint per row, so it grows with the stream.
 - **Reset:** resetting the checkpoint makes the next run reload everything but forgets which rows exist, so rows deleted upstream meanwhile stay behind. Reset together with clearing the target, or run a full-refresh overwrite.
 
-When the records come from inputs the source can fingerprint without reading them, such as files whose stat identifies their content, `diffGroupedSnapshot(stream, groups, state)` skips the reading too. Each group is `{ key, fingerprint, records() }`: one input, a fingerprint of it, and a function that reads its records. A group whose fingerprint equals the one saved for its key keeps its saved rows and `records()` is never called; every other group, and any group whose fingerprint is `null`, is read and diffed record by record. The state is `{ groups: { <group key>: { fingerprint, snapshot } } }`, with `snapshot` as above.
+When the records come from inputs the source can fingerprint without reading them, such as files whose stat identifies their content, `diffGroupedSnapshot(stream, groups, state)` skips the reading too. Each group is `{ key, fingerprint, records() }`: one input, a fingerprint of it, and a function that reads its records. A group whose fingerprint equals the one saved for its key keeps its saved rows and `records()` is never called; every other group, and any group whose fingerprint is `null`, is read and diffed record by record. The state is `{ groups: { <group key>: { fingerprint, snapshot } } }`, with `snapshot` as above, and `unknown`, the keys that the policy judged unknown, only when there is one.
 
-- **Deletions:** a key that no group produced this run, carried or read, is deleted, so a vanished input deletes its rows and a changed one deletes rows it no longer produces. The groups must still come from a complete listing: the source enumerates every input on every run and skips only the reading.
+- **Deletions:** the policy judges each key that no group produced this run, carried or read. Under `ClosedWorld`, a vanished input deletes its rows, and a changed one deletes the rows it no longer produces. The groups must still come from a complete listing: the source enumerates every input on every run and skips only the reading.
 - **Fingerprints:** a fingerprint must change whenever the group's records could, including when the source's own parsing changes. A version constant in the fingerprint does that. A fingerprint that misses a change keeps stale rows without any error.
 - **Moves:** a row that moves to another group is compared with its previous fingerprint wherever it was, so it loads only if it changed. A key produced twice in one run, including by a carried group, and a group key repeated in one run are rejected.
 - **Airbyte:** the [file-based cursor](https://github.com/airbytehq/airbyte-python-cdk/blob/d5536bc78c261a5f7d89595cb811c8bad676e251/airbyte_cdk/sources/file_based/stream/cursor/default_file_based_cursor.py#L82-L111) also skips unchanged files, but by modification time alone, keeps at most 10,000 files before falling back to a time window, and never emits deletions. Groups keep every fingerprint, compare it for equality rather than recency, and delete from the complete listing.
 
 #### Expiring upstreams
 
-Some upstreams keep records only for a while and then drop them without any deletion, as macOS keeps activity for 28 days and Safari keeps history for its configured age. Without help, a snapshot diff would delete those rows too. A stream that declares `expiresBy`, the name of a non-null millisecond `date-time` property, keeps them: its source tells each diff that the read [covers](#partly-held-upstreams) only what vanished after the horizon the upstream keeps records from, `diffSnapshot(stream, records, state, { covers: expiredAfter(horizon) })`, and the same for `diffGroupedSnapshot`. A diff of such a stream without `covers` fails.
+Some upstreams keep records only for a while and then drop them without any deletion, as macOS keeps activity for 28 days and Safari keeps history for its configured age. Without help, a snapshot diff would delete those rows too. A stream that declares `expiresBy`, the name of a non-null millisecond `date-time` property, keeps them: its source gives each diff a retention from the horizon that the upstream keeps records from, `diffSnapshot(stream, records, state, { policy: new Retention(horizon) })`, and the same for `diffGroupedSnapshot`. A diff of such a stream without a policy fails.
 
-- **Expiry:** each snapshot entry also saves the record's `expiresBy` value (`[fingerprint, expiresBy]`), which `covers` receives as `{ key, expiresBy }`. A key that vanished with a value before the horizon expired: it leaves the snapshot with no `DELETE`, and its row stays loaded. A key that vanished at or after the horizon is deleted as usual, so a deletion the upstream makes within its retention still reaches the destination.
+- **Expiry:** each snapshot entry also saves the record's `expiresBy` value (`[fingerprint, expiresBy]`), which the policy receives as `{ key, expiresBy }`. A key that vanished with a value before the horizon expired: it leaves the snapshot with no `DELETE`, and its row stays loaded. A key that vanished at or after the horizon is deleted as usual, so a deletion the upstream makes within its retention still reaches the destination.
 - **The horizon:** the source sets it on every read from the upstream's own retention rule, never from the oldest record it finds: a "clear all" leaves no old record, which would turn every deletion into an expiry. Erring toward an earlier horizon misses deletions of the oldest records; erring later deletes rows the upstream merely expired, so sources set it a margin inside the retention.
 - **Returns:** a key that turns up again after it expired, such as an event another device synced late, loads as new.
 - **Bounded state:** expired keys leave the state, so it grows with what the upstream keeps, not with everything ever loaded.
@@ -251,19 +258,22 @@ Some upstreams keep records only for a while and then drop them without any dele
 
 #### Partly held upstreams
 
-Some upstreams hold only part of their records and say which part, as the Slack app caches the stretches of each conversation it loaded and records their ranges. A message that vanished inside a range the cache still holds was deleted; one outside every range was only dropped from the cache. The source tells the diff which vanished records the read vouches for:
+Some upstreams hold only part of their records and say which part, as the Slack app caches the stretches of each conversation it loaded and records their ranges. A message that vanished inside a range the cache still holds was deleted; one outside every range was only dropped from the cache. The source gives the diff a `Coverage` with the vanished records that the read vouches for:
 
 ```ts
+import { Coverage } from '@workspace/snapshot-differential';
+
 protected override async *extract(configuration, state, partition, scan) {
   // A vanished message is deleted only where the app still holds the history.
   yield* diffSnapshot(configuration.stream, this.scan(configuration.stream), state, {
-    covers: ({ key }) => scan.holds(key.workspaceId, key.channelId, key.ts),
+    policy: new Coverage(({ key }) => scan.holds(key.workspaceId, key.channelId, key.ts)),
   });
 }
 ```
 
-- **What `covers` receives:** each key the last committed scan saw and this one did not, as the primary key's fields, with the saved `expiresBy` for an [expiring](#expiring-upstreams) stream. It returns whether that record was deleted.
-- **Uncovered keys:** a key the read does not cover leaves the snapshot with no `DELETE`, and its row stays loaded; a key that turns up again loads as new. Without `covers`, a read covers every key.
+- **What the predicate receives:** each key that the snapshot has and the read does not list, as the primary key's fields, with the saved `expiresBy` for an [expiring](#expiring-upstreams) stream. It returns whether the read covers that record, so that it was deleted.
+- **Uncovered keys:** a key that the read does not cover is unknown. It stays in the snapshot with no `DELETE`, and its row stays loaded. A later read that covers it and does not list it deletes it, as when the app loads a conversation again without a message that was deleted meanwhile. A later read that lists it unchanged writes nothing.
+- **State:** the snapshot keeps each unknown key, so it grows with the rows that the upstream holds no more and that no read can judge.
 - **Who decides:** only the source knows what its upstream still holds, so the rule is a per-read argument, never a stream declaration: what a cache holds changes with every read.
 - **Rows outlive the upstream**, as for expired rows: clearing the copy or a full-refresh overwrite loses every uncovered row for good.
 - **Precedent:** Airbyte deletes only on change-data-capture markers, and its Slack source never deletes; Fivetran's Slack connector re-reads all history to capture deletes, which a read that covers everything amounts to.
@@ -276,13 +286,14 @@ Some reads ask for a window, and the next read asks for part of it again, as Sea
 // The next read starts at the last settled day.
 yield *
   diffSnapshot(stream, rows, state, {
-    keeps: (record) => String(record.date) >= nextStart,
+    policy: new ClosedWorld(),
+    rereads: (record) => String(record.date) >= nextStart,
   });
 ```
 
-- **What stays:** only the records `keeps` accepts stay in the saved snapshot, so the state holds no more than the next read compares. A record left out cannot vanish from that read, so its row stays loaded and is never deleted.
+- **What stays:** only the records `rereads` accepts, the lookback window, stay in the saved snapshot, so the state holds no more than the next read compares. A record left out cannot vanish from that read, so its row stays loaded and is never deleted.
 - **What is deleted:** a kept record the next read no longer returns, such as a query Google stopped reporting for a re-read day, or every row of a day that comes back empty.
-- **Who decides:** the source sets where its next read starts, from its own checkpoint, so `keeps` and that start come from the same value. Keeping fewer records than the next read covers leaves rows it stopped returning; keeping more deletes rows it never asked for.
+- **Who decides:** the source sets where its next read starts, from its own checkpoint, so `rereads` and that start come from the same value. Keeping fewer records than the next read covers leaves rows it stopped returning; keeping more deletes rows it never asked for.
 - **Precedent:** Airbyte's Search Console source reads only final data and states that its ["syncs do not delete rows"](https://github.com/airbytehq/airbyte/blob/4bc984c55bafae1fdf1f09d9dcc62fbea0a98241/docs/integrations/sources/google-search-console.md#L246-L247); Fivetran re-syncs a seven-day rollback window without capturing deletes. [dlt's `delete-insert`](https://github.com/dlt-hub/dlt/blob/5084786a456038fab4b4e05f50492a718430d0a6/docs/website/docs/general-usage/merge-loading.md#L22-L29) with a merge key replaces each day a load brings at the destination, but a day that comes back empty brings no merge key and keeps its rows.
 
 #### Forgetting upstreams
@@ -300,7 +311,7 @@ const notifications = new Stream({
 
 - **What changes:** only deletions. New and changed records load as in any snapshot stream, and an unchanged one writes nothing.
 - **Bounded state:** a vanished key leaves the state, so it holds what the upstream keeps now; a key that turns up again loads as new.
-- **No covers:** such a stream takes no `covers`, and `expiresBy` requires `emitsDeletes`: an expiring upstream deletes within its retention, a partly held one within what it holds, a forgetting one never.
+- **No policy:** such a stream takes no policy, and `expiresBy` requires `emitsDeletes`: an expiring upstream deletes within its retention, a partly held one within what it holds, a forgetting one never.
 - **Rows outlive the upstream**, as for expired rows: clearing the copy or a full-refresh overwrite loses them for good, while a reset or a change of the stream's fields keeps them. Nothing marks a loaded row as gone from the upstream.
 - **Airbyte:** destination rows are deleted only "if your source supports emitting deleting records (e.g. an CDC database source)" ([incremental append + deduped](https://docs.airbyte.com/platform/using-airbyte/core-concepts/sync-modes/incremental-append-deduped)); an incremental stream without deletion support keeps every row it loaded. Here that is a declaration on the stream rather than a property of the source.
 
@@ -2063,7 +2074,7 @@ Every key carries `workspaceId`. A message's `ts` is Slack's own ID, seconds and
 
 The app keeps every conversation, member and app it knows, but only the messages it has loaded: on 2026-10-08 January held 31 messages in 3 of 13 conversations, and Delivery Associates 28 in 1 of 24. Older history reaches the import only if the app loads it while the import runs, and a free workspace hides messages past 90 days (`isBeyondPlanLimit`).
 
-The client records which ranges of each conversation it holds, `channelHistory[channel].slices[{ start, end, timestamps }]`, and the reads [cover](#partly-held-upstreams) exactly those: a message gone from inside a held range, ends included, or marked `isNonExistent`, was deleted and is deleted here; one outside every range was dropped from the cache and stays. Reactions and attachments follow their message. A workspace whose record the store no longer holds, such as one signed out of, keeps all its rows; every other stream deletes what the app stops listing for a workspace it still holds. The client loads a thread's replies when the thread is opened, marks them `_hidden_reply`, and records no range of them, so `threadReplies` is a [forgetting](#forgetting-upstreams) stream: a reply stays after the app drops it, whether it was deleted or only left the cache. Replies' own reactions and attachments are not loaded. The client keeps `pins.pinsByChannel[channel]`, the pinned messages, and `pins.loadingStateByChannel[channel]`, `loaded` once it has loaded that conversation's whole pin list: a pin gone from a loaded list is deleted, the list staying as `[]` after the last unpin, and the pins of a conversation whose list is `loading` or was never loaded stay. User group memberships are the client's checks of whether the signed-in user is in a group, not a list of groups, so `userGroupMemberships` deletes none. Downloads stay after the user clears Slack's list of downloads: `downloads` deletes none. The app also caches the files, and the rows of the Lists, it loaded: `files`, `fileShares` and `listRecords` keep what they saw, a deletion showing as `isDeleted`, `isTombstoned` or `isArchived` while the app still holds it; `messageFiles` follows its message. The app keeps no file's bytes: its HTTP cache held no `files.slack.com` response, and `urlPrivate` needs Slack's sign-in, so files load as metadata.
+The client records which ranges of each conversation it holds, `channelHistory[channel].slices[{ start, end, timestamps }]`, and the reads [cover](#partly-held-upstreams) exactly those: a message gone from inside a held range, ends included, or marked `isNonExistent`, was deleted and is deleted here; one outside every range was dropped from the cache and stays until a read covers its range again, which then deletes it if the app no longer holds it. Reactions and attachments follow their message. A workspace whose record the store no longer holds, such as one signed out of, keeps all its rows; every other stream deletes what the app stops listing for a workspace it still holds. The client loads a thread's replies when the thread is opened, marks them `_hidden_reply`, and records no range of them, so `threadReplies` is a [forgetting](#forgetting-upstreams) stream: a reply stays after the app drops it, whether it was deleted or only left the cache. Replies' own reactions and attachments are not loaded. The client keeps `pins.pinsByChannel[channel]`, the pinned messages, and `pins.loadingStateByChannel[channel]`, `loaded` once it has loaded that conversation's whole pin list: a pin gone from a loaded list is deleted, the list staying as `[]` after the last unpin, and the pins of a conversation whose list is `loading` or was never loaded stay. User group memberships are the client's checks of whether the signed-in user is in a group, not a list of groups, so `userGroupMemberships` deletes none. Downloads stay after the user clears Slack's list of downloads: `downloads` deletes none. The app also caches the files, and the rows of the Lists, it loaded: `files`, `fileShares` and `listRecords` keep what they saw, a deletion showing as `isDeleted`, `isTombstoned` or `isArchived` while the app still holds it; `messageFiles` follows its message. The app keeps no file's bytes: its HTTP cache held no `files.slack.com` response, and `urlPrivate` needs Slack's sign-in, so files load as metadata.
 
 ### Import scope
 
@@ -2184,11 +2195,11 @@ Every key carries `accountId`, the user's Entra object ID. Teams names a message
 
 The app keeps every conversation (the chat list is synced from the start of time), but only the messages it has loaded: on 2026-10-12 one account's cache held 5,960 messages in 54 of 487 conversations, from 2021 to that day, and the newest message of 433 conversations. Older history reaches the import only if the app loads it while the import runs.
 
-The client records, in `syncstates`, the span of each conversation it holds (`chatServiceStartOfSyncWindow` to `chatServiceEndOfSyncWindow`, or from the start of time), and when it prunes its cache it moves the span's start. A channel loads only a thread's latest replies with its posts, and the client records a span of its own for each channel thread it opens, keyed `<channel>;messageid=<thread>`. The reads [cover](#partly-held-upstreams) exactly those spans: a chat message, or a channel post, gone from inside its conversation's span, ends included, was deleted and is deleted here; a channel reply is covered only by its thread's span; a message outside every span was dropped from the cache and stays. A span with a gap in it covers nothing. Reactions, mentions, files, links and quotes follow their message. Call logs, activities and saved messages are messages of the client's own feeds and follow those feeds' spans the same way.
+The client records, in `syncstates`, the span of each conversation it holds (`chatServiceStartOfSyncWindow` to `chatServiceEndOfSyncWindow`, or from the start of time), and when it prunes its cache it moves the span's start. A channel loads only a thread's latest replies with its posts, and the client records a span of its own for each channel thread it opens, keyed `<channel>;messageid=<thread>`. The reads [cover](#partly-held-upstreams) exactly those spans: a chat message, or a channel post, gone from inside its conversation's span, ends included, was deleted and is deleted here; a channel reply is covered only by its thread's span; a message outside every span was dropped from the cache and stays until a read covers it again. A span with a gap in it covers nothing. Reactions, mentions, files, links and quotes follow their message. Call logs, activities and saved messages are messages of the client's own feeds and follow those feeds' spans the same way.
 
 A conversation the app stops listing is deleted, with its pins; a folder too, and a conversation taken out of a folder. Members are deleted only from a conversation whose member list the app still keeps, and apps only from a user, chat or team whose apps it still lists. An account whose databases are gone, such as one signed out of, keeps all its rows. The app keeps only the people it has looked up lately, the meetings of a span around today it does not record, and its latest searches, so `people`, `meetings` and `searches` are [forgetting](#forgetting-upstreams) streams; a cancelled meeting says so in `isCancelled`.
 
-A record that leaves the snapshot uncovered is not deleted later when a read covers its place again (backlog #2600): a reply deleted while the app did not hold its thread stays after the app loads the thread again. Slack's cache has the same gap.
+A record that vanishes outside every span is unknown: it stays in the snapshot, so a later read that covers its place judges it again. A reply deleted while the app did not hold its thread is deleted once the app loads the thread again. Slack's ranges work the same way.
 
 ### Import scope
 

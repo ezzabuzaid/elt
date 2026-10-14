@@ -42,8 +42,12 @@ import {
   WatchError,
   diffGroupedSnapshot,
   diffSnapshot,
-  expiredAfter,
 } from '@workspace/elt';
+import {
+  ClosedWorld,
+  Coverage,
+  Retention,
+} from '@workspace/snapshot-differential';
 
 import {
   SQLiteCheckpointStore,
@@ -1247,7 +1251,9 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
       configuration: CopyConfiguration,
       state: unknown,
     ) {
-      yield* diffSnapshot(configuration.stream, rows, state);
+      yield* diffSnapshot(configuration.stream, rows, state, {
+        policy: new ClosedWorld(),
+      });
     }
   }
 
@@ -1578,6 +1584,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
           },
         })),
         state,
+        { policy: new ClosedWorld() },
       );
     }
   }
@@ -1759,7 +1766,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
           events,
           scan.groups.flatMap(({ rows }) => rows),
           state,
-          { covers: expiredAfter(scan.horizon) },
+          { policy: new Retention(scan.horizon) },
         );
       else
         yield* diffGroupedSnapshot(
@@ -1770,7 +1777,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
             records: () => rows,
           })),
           state,
-          { covers: expiredAfter(scan.horizon) },
+          { policy: new Retention(scan.horizon) },
         );
     }
   }
@@ -1862,17 +1869,17 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
   ]);
   assert.deepEqual(loaded('events'), ['a', 'c']);
 
-  // A diff of an expiring stream needs to know what its scan covers, and
-  // timestamps to expire by; the horizon it expires after is a timestamp.
+  // A diff of an expiring stream needs a policy, and timestamps to expire
+  // by; the horizon a retention keeps records from is a timestamp.
   const failing: [() => AsyncIterable<unknown>, RegExp][] = [
     [
       () => diffSnapshot(events, [], null),
-      /expires by seenAt, so its snapshot diff needs covers/,
+      /expires by seenAt, so its snapshot diff needs a policy/,
     ],
     [
       () =>
         diffSnapshot(events, [{ id: 'x', seenAt: 'yesterday' }], null, {
-          covers: expiredAfter(scan.horizon),
+          policy: new Retention(scan.horizon),
         }),
       /must carry seenAt as a timestamp to expire/,
     ],
@@ -1880,8 +1887,8 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
   for (const [diff, message] of failing)
     await assert.rejects(Array.fromAsync(diff()), message);
   assert.throws(
-    () => expiredAfter('yesterday'),
-    /Expiry horizon yesterday is not a timestamp/,
+    () => new Retention('yesterday'),
+    /Retention horizon yesterday is not a timestamp/,
   );
   for (const invalid of [
     { ...declaration, expiresBy: 'id' },
@@ -1904,7 +1911,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
     );
 });
 
-test('a read that covers part of a stream deletes the vanished rows it covers and keeps the rest', async () => {
+test('a read that covers part of a stream deletes the vanished rows it covers, keeps the rest, and deletes those once a read covers them again', async () => {
   type Row = { channel: string; ts: string };
   // The ranges of each channel the upstream holds, as a cache holds the part
   // of a history it loaded: a row it no longer lists inside them was deleted.
@@ -1912,14 +1919,14 @@ test('a read that covers part of a stream deletes the vanished rows it covers an
     held: new Map(),
     rows: [],
   };
-  const covers = ({ key }: { key: Readonly<Record<string, unknown>> }) => {
+  const coverage = new Coverage(({ key }) => {
     const range = scan.held.get(String(key.channel));
     return (
       range !== undefined &&
       String(key.ts) >= range[0] &&
       String(key.ts) <= range[1]
     );
-  };
+  });
   const declaration = {
     jsonSchema: {
       type: 'object',
@@ -1951,7 +1958,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers an
       state: unknown,
     ) {
       if (configuration.stream === messages)
-        yield* diffSnapshot(messages, scan.rows, state, { covers });
+        yield* diffSnapshot(messages, scan.rows, state, { policy: coverage });
       else
         yield* diffGroupedSnapshot(
           grouped,
@@ -1963,7 +1970,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers an
             }),
           ),
           state,
-          { covers },
+          { policy: coverage },
         );
     }
   }
@@ -2031,32 +2038,40 @@ test('a read that covers part of a stream deletes the vanished rows it covers an
   assert.deepEqual(loaded('messages'), ['A1', 'A3', 'B1']);
   assert.deepEqual(loaded('grouped'), ['A1', 'A3', 'B1']);
 
+  // The upstream holds A1 and B again. A1 is back as it was, so nothing is
+  // written; B1 was deleted while B was not held, so it is deleted now.
+  assert.deepEqual(
+    await run(
+      [
+        ['A', ['1', '3']],
+        ['B', ['1', '1']],
+      ],
+      [row('A', '1'), row('A', '3')],
+    ),
+    [
+      { count: 0, deleted: 1 },
+      { count: 0, deleted: 1 },
+    ],
+  );
+  assert.deepEqual(loaded('messages'), ['A1', 'A3']);
+  assert.deepEqual(loaded('grouped'), ['A1', 'A3']);
+
   // A stream whose upstream forgets records rather than deleting them takes
-  // no covers: none of its vanished rows is ever deleted.
+  // no policy: none of its vanished rows is ever deleted.
   await assert.rejects(
     Array.fromAsync(
       diffSnapshot(
         new Stream({ ...messages, emitsDeletes: undefined }),
         [],
         null,
-        { covers },
+        { policy: coverage },
       ),
     ),
-    /emits no deletions, so its snapshot diff takes no covers/,
-  );
-  // An expiring upstream's read covers what vanished at or after its horizon.
-  const covered = expiredAfter('2026-09-08T00:00:00.000Z');
-  assert.equal(
-    covered({ key: {}, expiresBy: '2026-09-08T00:00:00.000Z' }),
-    true,
-  );
-  assert.equal(
-    covered({ key: {}, expiresBy: '2026-09-07T23:59:59.999Z' }),
-    false,
+    /emits no deletions, so its snapshot diff takes no policy/,
   );
 });
 
-test('a diff that keeps only what the next read covers deletes none of the rows it did not keep', async () => {
+test('a diff whose next read repeats only a lookback window deletes none of the rows outside it', async () => {
   type Row = { day: string; item: string };
   // Each read asks for the days from its start; the next starts at next.
   let read: { rows: Row[]; next: string } = { rows: [], next: '' };
@@ -2091,7 +2106,8 @@ test('a diff that keeps only what the next read covers deletes none of the rows 
     ) {
       const { next } = read;
       yield* diffSnapshot(days, read.rows, state, {
-        keeps: ({ day }) => day >= next,
+        policy: new ClosedWorld(),
+        rereads: ({ day }) => day >= next,
       });
     }
   }
@@ -2599,7 +2615,9 @@ class Sites extends Source {
     this.received.push([site, state]);
     const pages = this.pagesOf[site];
     if (pages === undefined) throw new Error(`site ${site} is down`);
-    yield* diffSnapshot(configuration.stream, pages, state);
+    yield* diffSnapshot(configuration.stream, pages, state, {
+      policy: new ClosedWorld(),
+    });
   }
 }
 
@@ -2998,7 +3016,9 @@ class FileSource extends Source {
     }));
     const messages =
       this.snapshot && configuration.syncMode === 'incremental'
-        ? diffSnapshot(configuration.stream, scan, state)
+        ? diffSnapshot(configuration.stream, scan, state, {
+            policy: new ClosedWorld(),
+          })
         : scan.map((data) => ({ stream: 'files', data }));
     for await (const message of messages) {
       if ('type' in message || !this.withFiles) {
@@ -5453,7 +5473,11 @@ function shapeChanges(
           configuration.stream,
           rows,
           state,
-          horizon === undefined ? {} : { covers: expiredAfter(horizon) },
+          horizon !== undefined
+            ? { policy: new Retention(horizon) }
+            : stream.emitsDeletes
+              ? { policy: new ClosedWorld() }
+              : {},
         );
       }
     }
@@ -6181,6 +6205,7 @@ test('a copy that declares its columns from the stream and stores its files keep
           configuration.stream,
           rows,
           state,
+          { policy: new ClosedWorld() },
         )) {
           if ('type' in message) {
             yield message;

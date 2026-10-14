@@ -16,6 +16,7 @@ import {
   TeamsUnavailableError,
   teamsDirectory,
 } from '@workspace/sdk-microsoft-teams';
+import { Coverage } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { AccountsStream } from './streams/accounts-stream.ts';
@@ -174,7 +175,7 @@ export class TeamsSource extends Source<TeamsScan> {
       records,
       state,
       stream.emitsDeletes
-        ? { covers: ({ key }) => reader.covers(scan, key) }
+        ? { policy: new Coverage(({ key }) => reader.covers(scan, key)) }
         : {},
     );
   }

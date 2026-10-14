@@ -12,5 +12,8 @@
   "dependencies": {
     "@workspace/elt": "0.0.1",
     "@zukhruf/mutex": "^0.3.19"
+  },
+  "devDependencies": {
+    "@workspace/snapshot-differential": "0.0.1"
   }
 }

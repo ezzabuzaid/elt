@@ -5,13 +5,11 @@ import {
   type CopyConfiguration,
   type ExtractionCoverage,
   type FailureType,
-  type SnapshotDiffOptions,
   Source,
   type SourceMessage,
   type SourceWatchOptions,
   type Stream,
   diffSnapshot,
-  expiredAfter,
 } from '@workspace/elt';
 import {
   WhatsApp,
@@ -20,6 +18,11 @@ import {
   type WhatsAppVersion,
   whatsappContainer,
 } from '@workspace/sdk-whatsapp-desktop';
+import {
+  ClosedWorld,
+  type DeletionPolicy,
+  Retention,
+} from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 import { BlockedContactsStream } from './streams/blocked-contacts-stream.ts';
@@ -226,7 +229,9 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
     const records = reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state, coveredBy(reader.horizon(scan)))
+        ? diffSnapshot(stream, records, state, {
+            policy: policyFor(reader.horizon(scan)),
+          })
         : records.map((data) => ({ stream: stream.name, data }));
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
@@ -236,8 +241,8 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
   }
 }
 
-// A stream WhatsApp expires covers what vanished after its horizon; any other
-// stream covers every record.
-function coveredBy(horizon: string | undefined): SnapshotDiffOptions {
-  return horizon === undefined ? {} : { covers: expiredAfter(horizon) };
+// A stream WhatsApp expires keeps records from its horizon on; any other
+// lists every record.
+function policyFor(horizon: string | undefined): DeletionPolicy {
+  return horizon === undefined ? new ClosedWorld() : new Retention(horizon);
 }

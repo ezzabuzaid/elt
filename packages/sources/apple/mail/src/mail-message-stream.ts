@@ -1,15 +1,14 @@
-import type {
-  RecordDraft,
-  SnapshotGroup,
-  SourceMessage,
-  Stream,
-} from '@workspace/elt';
+import type { RecordDraft, SourceMessage, Stream } from '@workspace/elt';
 import { diffGroupedSnapshot } from '@workspace/elt';
 import type {
   IndexedAttachment,
   MailFile,
   MimePart,
 } from '@workspace/sdk-apple-mail';
+import {
+  ClosedWorld,
+  type SnapshotGroup,
+} from '@workspace/snapshot-differential';
 
 import {
   AppleMailStream,
@@ -52,7 +51,9 @@ export abstract class MailMessageStream extends AppleMailStream {
     records: MailRecords,
     state: unknown,
   ): AsyncIterable<SourceMessage> {
-    return diffGroupedSnapshot(stream, this.#accepted(scan, records), state);
+    return diffGroupedSnapshot(stream, this.#accepted(scan, records), state, {
+      policy: new ClosedWorld(),
+    });
   }
 
   protected async *entries(

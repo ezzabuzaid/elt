@@ -19,6 +19,7 @@ import {
   type ClockVersion,
   clockLocation,
 } from '@workspace/sdk-apple-clock/clock-store';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import { AlarmsStream } from './streams/alarms-stream.ts';
@@ -102,7 +103,9 @@ export class AppleClockSource extends Source<ClockSnapshot> {
       configuration.stream,
     ).read(snapshot);
     yield* configuration.syncMode === 'incremental'
-      ? diffSnapshot(configuration.stream, records, state)
+      ? diffSnapshot(configuration.stream, records, state, {
+          policy: new ClosedWorld(),
+        })
       : records.map((data) => ({ stream: configuration.stream.name, data }));
   }
   protected override async *observe({

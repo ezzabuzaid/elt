@@ -14,6 +14,7 @@ import {
   CallHistoryUnavailableError,
   callHistoryStorePath,
 } from '@workspace/sdk-apple-call-history';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -111,7 +112,7 @@ export class AppleCallHistorySource extends Source<CallHistoryScan> {
       throw new Error(`Apple Call History has no stream ${stream.name}`);
     const records = reader.read(scan);
     yield* configuration.syncMode === 'incremental'
-      ? diffSnapshot(stream, records, state)
+      ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
       : records.map((data) => ({ stream: stream.name, data }));
   }
 }

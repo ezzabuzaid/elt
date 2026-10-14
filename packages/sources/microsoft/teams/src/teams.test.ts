@@ -1875,7 +1875,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
   assert.deepEqual(counts(await run.run()), await unchanged(source));
 });
 
-test('a message or reaction gone from the history the app holds is deleted, and one the app pruned from its cache stays with its parts', async () => {
+test('a message or reaction gone from the history the app holds is deleted, and one the app pruned from its cache stays with its parts until the app holds that history again', async () => {
   const { dir, app, out } = await scratch();
   await using _ = dir;
   const followUp = message({
@@ -1983,12 +1983,23 @@ test('a message or reaction gone from the history the app holds is deleted, and 
   assert.deepEqual(counts(await run.run()).messages, nothing);
   assert.deepEqual(messageIds(channel), [ids.post, followUp.id]);
 
+  // The app loads the thread again, and the follow-up is not in it: it was
+  // deleted while the app did not hold the thread, so it goes now.
+  const rethreaded = holding(
+    unthreaded,
+    `${channel};messageid=${ids.post}`,
+    '2026-09-10T12:00:00Z',
+  );
+  await app.save(rethreaded);
+  assert.deepEqual(counts(await run.run()).messages, { count: 0, deleted: 1 });
+  assert.deepEqual(messageIds(channel), [ids.post]);
+
   // The chat's newest message, later than the span the app loaded and in no
   // cached chain, gives way to a newer one: it left the chat's newest place,
   // not the chat, so it stays beside the new one.
   const newer = id('2026-09-26T08:00:00.000Z');
   await app.save(
-    changing(unthreaded, chat, (conversation) => ({
+    changing(rethreaded, chat, (conversation) => ({
       ...conversation,
       lastMessage: {
         id: newer,

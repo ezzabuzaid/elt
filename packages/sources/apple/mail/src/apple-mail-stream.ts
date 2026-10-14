@@ -7,6 +7,7 @@ import {
   diffSnapshot,
   validateRecords,
 } from '@workspace/elt';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import type { MailScan } from './mail-scan.ts';
 import type { MailSelection } from './mail-selection.ts';
@@ -102,7 +103,9 @@ export abstract class AppleMailStream {
     records: MailRecords,
     state: unknown,
   ): AsyncIterable<SourceMessage> {
-    return diffSnapshot(stream, records(this.entries(scan)), state);
+    return diffSnapshot(stream, records(this.entries(scan)), state, {
+      policy: new ClosedWorld(),
+    });
   }
 
   protected abstract entries(

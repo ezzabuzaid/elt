@@ -15,6 +15,7 @@ import {
   launchNotesHidden,
   noteStorePath,
 } from '@workspace/sdk-apple-notes';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -129,7 +130,7 @@ export class AppleNotesSource extends Source<NotesScan> {
     const records = await reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state)
+        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
         : records.map((data) => ({ stream: stream.name, data }));
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)

@@ -1,13 +1,14 @@
 import { rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 
-import type { RecordDraft, SnapshotGroup } from '@workspace/elt';
+import type { RecordDraft } from '@workspace/elt';
 import {
   type IndexedAttachment,
   type MailFile,
   type MimePart,
   readMailMime,
 } from '@workspace/sdk-apple-mail';
+import type { SnapshotGroup } from '@workspace/snapshot-differential';
 
 import { type MailEntry, mailSchema } from '../apple-mail-stream.ts';
 import {

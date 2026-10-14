@@ -14,6 +14,7 @@ import {
   MessagesUnavailableError,
   chatDatabasePath,
 } from '@workspace/sdk-apple-messages';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -134,7 +135,7 @@ export class AppleMessagesSource extends Source<MessagesScan> {
     const records = reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state)
+        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
         : (async function* () {
             for await (const data of records)
               yield { stream: stream.name, data };

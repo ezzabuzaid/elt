@@ -16,6 +16,7 @@ import {
   NotificationCenterUnavailableError,
   notificationCenterStorePath,
 } from '@workspace/sdk-apple-notification-center';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -115,7 +116,12 @@ export class AppleNotificationCenterSource extends Source<NotificationCenterScan
       throw new Error(`Apple Notification Center has no stream ${stream.name}`);
     const records = reader.read(scan);
     yield* configuration.syncMode === 'incremental'
-      ? diffSnapshot(stream, records, state)
+      ? diffSnapshot(
+          stream,
+          records,
+          state,
+          stream.emitsDeletes ? { policy: new ClosedWorld() } : {},
+        )
       : records.map((data) => ({ stream: stream.name, data }));
   }
 }

@@ -7,13 +7,13 @@ import {
   Stream,
   type SyncMode,
   diffSnapshot,
-  expiredAfter,
   validateRecords,
 } from '@workspace/elt';
 import type {
   KnowledgeEvent,
   KnowledgeStream,
 } from '@workspace/sdk-apple-knowledge';
+import { Retention } from '@workspace/snapshot-differential';
 
 import type { ActivityScan } from './activity-scan.ts';
 import { activityFields, isoTime, retainedSince } from './activity-values.ts';
@@ -93,7 +93,9 @@ export abstract class KnowledgeActivityStream<P extends Properties, E> {
       yield* records.map((data) => ({ stream: this.name, data }));
     else
       yield* diffSnapshot(configuration.stream, records, state, {
-        covers: expiredAfter(retainedSince(scan.startedAt, this.retentionDays)),
+        policy: new Retention(
+          retainedSince(scan.startedAt, this.retentionDays),
+        ),
       });
   }
 

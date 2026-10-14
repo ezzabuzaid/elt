@@ -9,6 +9,7 @@ import type {
 import { Catalog, Source, diffSnapshot } from '@workspace/elt';
 import type { RemindersStore } from '@workspace/sdk-apple-eventkit';
 import { RemindersUnavailableError } from '@workspace/sdk-apple-eventkit';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
@@ -117,7 +118,10 @@ export class AppleRemindersSource extends Source<RemindersScan> {
     scan: RemindersScan,
   ): AsyncGenerator<SourceMessage> {
     const records = readerOf(stream).read(scan);
-    if (syncMode === 'incremental') yield* diffSnapshot(stream, records, state);
+    if (syncMode === 'incremental')
+      yield* diffSnapshot(stream, records, state, {
+        policy: new ClosedWorld(),
+      });
     else for (const data of records) yield { stream: stream.name, data };
   }
 }

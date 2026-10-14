@@ -10,6 +10,7 @@ import {
   readSearchAnalytics,
   today,
 } from '@workspace/sdk-google-search-console';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 
 import { addDays, earlier, subMonths } from './calendar-dates.ts';
 import { RETENTION_MONTHS, analyticsRecords } from './search-analytics.ts';
@@ -92,7 +93,10 @@ export abstract class DatedAnalyticsStream extends SearchConsoleStream {
       this.stream,
       validateRecords(this.stream, rows, 'Search Console'),
       saved === null ? null : saved.diff,
-      { keeps: (record) => String(record.date) >= settled },
+      {
+        policy: new ClosedWorld(),
+        rereads: (record) => String(record.date) >= settled,
+      },
     ))
       yield 'type' in message && message.type === 'STATE'
         ? { ...message, state: { date: settled, diff: message.state } }

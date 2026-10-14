@@ -11,16 +11,19 @@
       "path": "../macos"
     },
     {
+      "path": "../../../snapshot-differential"
+    },
+    {
       "path": "../../../sdks/apple/clock"
     },
     {
       "path": "../../../elt"
     },
     {
-      "path": "../../../destinations/sqlite"
+      "path": "../../../codecs/plist"
     },
     {
-      "path": "../../../codecs/plist"
+      "path": "../../../destinations/sqlite"
     }
   ]
 }

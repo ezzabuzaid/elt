@@ -12,5 +12,8 @@
   "dependencies": {
     "@workspace/elt": "0.0.1",
     "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@workspace/snapshot-differential": "0.0.1"
   }
 }

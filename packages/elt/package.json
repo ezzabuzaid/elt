@@ -3,6 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@workspace/snapshot-differential": "0.0.1"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

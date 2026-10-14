@@ -16,6 +16,7 @@ import {
   WalletUnavailableError,
   walletStorePath,
 } from '@workspace/sdk-apple-wallet';
+import { ClosedWorld } from '@workspace/snapshot-differential';
 import { localAppleStoreCoverage } from '@workspace/source-apple-macos/local-apple-store-coverage';
 
 import type { WalletReader } from './apple-wallet-stream.ts';
@@ -122,7 +123,7 @@ export class AppleWalletSource extends Source<WalletScan> {
     const records = reader.read(scan);
     const messages =
       configuration.syncMode === 'incremental'
-        ? diffSnapshot(stream, records, state)
+        ? diffSnapshot(stream, records, state, { policy: new ClosedWorld() })
         : records.map((data) => ({ stream: stream.name, data }));
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
