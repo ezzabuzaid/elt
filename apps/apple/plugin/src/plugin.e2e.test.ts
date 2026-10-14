@@ -727,6 +727,23 @@ test(
         await context(client, 'SessionStart'),
         /^- Messages: last sync failed .* codex:\/\/plugins\/apple\/app\/apple_page\?path=%2Fconnectors%2Fmessages$/m,
       );
+      // Sync from one connector's menu imports that connector alone: Notes
+      // takes the edit, and Messages keeps the attempt it had.
+      retitle('Groceries (Notes only)');
+      await invoke(client, 'apple_sync', { connector: 'notes' });
+      const [notesAlone, messagesUntouched] = selected();
+      assert.deepEqual(
+        read(
+          String(notesAlone?.database),
+          'SELECT id FROM notes WHERE title = @title',
+          `.parameter set @title "'Groceries (Notes only)'"`,
+        ).rows,
+        [{ id: 'NOTE-RICH' }],
+      );
+      assert.equal(
+        messagesUntouched?.sync?.latest_attempt_id,
+        messages.sync.latest_attempt_id,
+      );
 
       // An unknown connector fails in the tool, which names it, not in the
       // schema.

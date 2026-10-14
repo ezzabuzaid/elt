@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import { ConnectorMenu } from './connector-menu.tsx';
 import { ConnectorSwitch } from './connector-switch.tsx';
 import type { ConnectorRow } from './contract.ts';
 import { usePage } from './page-context.tsx';
@@ -15,6 +16,7 @@ export function Sidebar() {
     <nav className="sidebar" aria-label="Apple">
       <header className="sidebar-title">
         <h2>Apple</h2>
+        {/* Its icon is copied in connector-menu.tsx: change both. */}
         <button
           type="button"
           className="icon-button"
@@ -61,8 +63,9 @@ function Section({ title, children }: { title: string; children?: ReactNode }) {
   );
 }
 
-// A connector with its status on hover and its switch at the end. One that
-// is not loaded has no page of its own to open, only its switch to turn off.
+// A connector with its status on hover, its menu on right-click and its
+// switch at the end. One that is not loaded has no page of its own to open,
+// only its switch to turn off.
 function ConnectorLink({ row }: { row: ConnectorRow }) {
   const { opened, open } = usePage();
   const label = (
@@ -74,15 +77,17 @@ function ConnectorLink({ row }: { row: ConnectorRow }) {
   return (
     <li>
       {row.loaded ? (
-        <button
-          type="button"
-          className="item"
-          title={row.status.text}
-          aria-current={opened === row.name ? 'page' : undefined}
-          onClick={() => open(row.name)}
-        >
-          {label}
-        </button>
+        <ConnectorMenu row={row}>
+          <button
+            type="button"
+            className="item"
+            title={row.status.text}
+            aria-current={opened === row.name ? 'page' : undefined}
+            onClick={() => open(row.name)}
+          >
+            {label}
+          </button>
+        </ConnectorMenu>
       ) : (
         <span className="item" title={row.status.text}>
           {label}

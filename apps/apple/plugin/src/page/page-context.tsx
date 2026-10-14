@@ -29,10 +29,12 @@ type Page = {
     connector: string,
     selection: Partial<ConnectorSelection> | null,
   ) => Promise<void>;
-  // Imports every connected connector again, and settles once all have
-  // ended; a failure becomes the page's failure.
-  readonly sync: () => Promise<void>;
+  // Imports every connected connector again, or only the one named, and
+  // settles once its passes have ended; a failure becomes the page's failure.
+  readonly sync: (connector?: string) => Promise<void>;
+  // Whether the page syncs every connector, and which it syncs alone.
   readonly syncing: boolean;
+  readonly syncingConnectors: ReadonlySet<string>;
   readonly opened: string | null;
   readonly open: (connector: string | null) => void;
 };
@@ -66,6 +68,9 @@ export function PageProvider({
   const [reads, setReads] = useState(0);
   const [opened, setOpened] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncingConnectors, setSyncingConnectors] = useState<
+    ReadonlySet<string>
+  >(new Set());
 
   const read = useCallback(async () => {
     if (app === null) return;
@@ -89,6 +94,7 @@ export function PageProvider({
     if (app === null) return;
     const busy =
       syncing ||
+      syncingConnectors.size > 0 ||
       rows?.some(
         ({ status }) =>
           status.state === 'waiting' || status.state === 'running',
@@ -100,7 +106,7 @@ export function PageProvider({
       if (!document.hidden) void read();
     }, delay);
     return () => clearTimeout(timer);
-  }, [app, reads, rows, read, syncing]);
+  }, [app, reads, rows, read, syncing, syncingConnectors]);
 
   useEffect(() => {
     const shown = () => {
@@ -134,25 +140,37 @@ export function PageProvider({
     [app],
   );
 
-  const sync = useCallback(async () => {
-    if (app === null) return;
-    setSyncing(true);
-    try {
-      const { connectors } = await callTool(
-        app,
-        'apple_sync',
-        {},
-        connectorsResult,
-        { timeout: syncTimeout },
-      );
-      setRows(connectors);
-      setFailure(null);
-    } catch (error) {
-      setFailure(messageOf(error));
-    } finally {
-      setSyncing(false);
-    }
-  }, [app]);
+  const sync = useCallback(
+    async (connector?: string) => {
+      if (app === null) return;
+      const mark = (running: boolean) => {
+        if (connector === undefined) setSyncing(running);
+        else
+          setSyncingConnectors((names) =>
+            running
+              ? names.union(new Set([connector]))
+              : names.difference(new Set([connector])),
+          );
+      };
+      mark(true);
+      try {
+        const { connectors } = await callTool(
+          app,
+          'apple_sync',
+          connector === undefined ? {} : { connector },
+          connectorsResult,
+          { timeout: syncTimeout },
+        );
+        setRows(connectors);
+        setFailure(null);
+      } catch (error) {
+        setFailure(messageOf(error));
+      } finally {
+        mark(false);
+      }
+    },
+    [app],
+  );
 
   return (
     <PageContext
@@ -163,6 +181,7 @@ export function PageProvider({
         update,
         sync,
         syncing,
+        syncingConnectors,
         opened,
         open: setOpened,
       }}

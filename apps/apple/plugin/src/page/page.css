@@ -2,9 +2,10 @@
 
 /* The sidebar follows ChatGPT's Space sidebar (ChatGPT 26.1007): 275px wide,
    30px rows, 14px text, a 14px chevron that shows on hover or while folded.
-   The page gets no hover colour from ChatGPT, so it mixes Space's own. */
+   The page gets no hover colour from ChatGPT, so it mixes Space's own. A
+   row's menu renders outside the shell, so the colours sit on the root. */
 
-.shell {
+:root {
   --row-hover: light-dark(
     color-mix(
       in srgb,
@@ -18,7 +19,9 @@
     )
   );
   --text-tertiary: var(--color-text-tertiary, var(--muted-foreground));
+}
 
+.shell {
   display: grid;
   grid-template-columns: 275px minmax(0, 1fr);
   align-items: start;
@@ -233,6 +236,56 @@ button.item:hover,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A row's menu follows ChatGPT's own row menus (code-review 26.1007): an
+   elevated surface with a hairline border, 4px around items shaped like the
+   sidebar's rows. */
+.menu {
+  z-index: 50;
+  min-width: 180px;
+  padding: 4px;
+  border-radius: calc(var(--radius) + 4px);
+  color: var(--foreground);
+  background: var(--secondary);
+  box-shadow:
+    0 0 0 0.5px var(--border),
+    var(--shadow-lg, 0 4px 8px -2px rgb(0 0 0 / 10%));
+  /* Opened from the keyboard, the menu takes focus; its highlighted item
+     shows where focus is. */
+  outline: none;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  outline: none;
+  cursor: var(--cursor-interaction, pointer);
+  user-select: none;
+}
+
+.menu-item[data-highlighted] {
+  background: var(--row-hover);
+}
+
+.menu-item[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.menu-item svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .glyph {
