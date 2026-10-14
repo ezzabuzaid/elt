@@ -253,8 +253,8 @@ export abstract class AppleConnector {
 
   // One pass of this connector's import, as every host runs it inside the
   // import's flight: stopped once the user removes the connector, its
-  // connection failure kept in the settings and its outcome in the import's
-  // sync history.
+  // outcome in the import's sync history, and in the settings any failure
+  // that history could not record, a failure to connect among them.
   async import(
     settings: Settings,
     selection: Selection,
@@ -309,9 +309,9 @@ export abstract class AppleConnector {
     }
     settings.clearConnectionFailure(selection);
     const { connection, destination } = built;
-    await history.install([destination]);
-    installSQLiteCatalog(destination);
     try {
+      await history.install([destination]);
+      installSQLiteCatalog(destination);
       await load(
         new Pipeline({ connections: [connection], history }),
         removal.signal,
@@ -319,9 +319,17 @@ export abstract class AppleConnector {
     } catch (error) {
       if (error instanceof ConnectorRemovedError) return { status: 'removed' };
       // The history recorded each failure these hold: what each copy did not
-      // load, or why the watch stopped. It recorded no other error.
-      if (!(error instanceof PipelineError || error instanceof WatchError))
-        throw error;
+      // load, or why the watch stopped.
+      if (error instanceof PipelineError || error instanceof WatchError)
+        return { status: 'imported' };
+      // No history recorded this one, such as the history's own failure to
+      // install, so the settings keep it where status reads it.
+      settings.saveConnectionFailure(
+        selection,
+        error instanceof Error ? error.message : String(error),
+        this.failureType(error),
+      );
+      throw error;
     }
     return { status: 'imported' };
   }

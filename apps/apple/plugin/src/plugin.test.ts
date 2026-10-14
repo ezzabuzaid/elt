@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { mkdtempDisposable, writeFile } from 'node:fs/promises';
+import { chmod, mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -37,6 +37,22 @@ const host = {
 async function applePlugin(install: string, directory: string) {
   const plugin = new ApplePlugin(
     new Connectors([builtInConnectors]),
+    host,
+    install,
+    directory,
+  );
+  await plugin.refresh();
+  return plugin;
+}
+
+// The plugin over the built-in connectors and the fixture Photos connector,
+// whose pass reads $HOME/Pictures/photos.json.
+async function photosPlugin(directory: string) {
+  const plugin = new ApplePlugin(
+    new Connectors([
+      builtInConnectors,
+      resolve('packages/connectors/apple/manifest/dist/fixtures'),
+    ]),
     host,
     install,
     directory,
@@ -250,6 +266,116 @@ test('importing settles when the settings cannot be read, so the server keeps se
   );
 });
 
+test('an import that fails before its pass begins shows the failure on the page and in chat, not that it waits to import', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = await photosPlugin(join(scratch.path, 'store'));
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  // A database the import cannot write stands in for one a reader keeps
+  // busy past the timeout, or a full disk: the import's sync history cannot
+  // install itself, so no pass begins to record why.
+  const directory = importDirectory(plugin.directory, photos);
+  mkdirSync(directory, { recursive: true });
+  await writeFile(join(directory, 'data.sqlite'), '');
+  await chmod(join(directory, 'data.sqlite'), 0o444);
+
+  await plugin.import(imports);
+
+  const row = connectorRows(plugin).find(({ name }) => name === 'photos');
+  assert.equal(row?.status.state, 'failed');
+  assert.equal(
+    row?.status.text,
+    'Last sync failed: attempt to write a readonly database',
+  );
+  assert.match(
+    chatStatus(plugin).text,
+    /^- Photos: last sync failed at .*: attempt to write a readonly database/m,
+  );
+});
+
+test('an import that synced before and now fails before its pass begins shows the failure, not its last sync', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const home = join(scratch.path, 'home');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(
+    join(home, 'Pictures/photos.json'),
+    JSON.stringify([{ id: 'p1', title: 'Beach' }]),
+  );
+  const plugin = await photosPlugin(join(scratch.path, 'store'));
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const statusOf = () =>
+    connectorRows(plugin).find(({ name }) => name === 'photos')?.status;
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    const synced = statusOf();
+    // The import can no longer write its database, as when a reader keeps it
+    // busy past the timeout or the disk is full.
+    await chmod(
+      join(importDirectory(plugin.directory, photos), 'data.sqlite'),
+      0o444,
+    );
+
+    await plugin.import(imports);
+
+    assert.equal(synced?.state, 'succeeded');
+    assert.equal(statusOf()?.state, 'failed');
+    assert.equal(
+      statusOf()?.text,
+      'Last sync failed: attempt to write a readonly database',
+    );
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('once an import that failed before its pass can write again, its next pass syncs and the failure is gone', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const home = join(scratch.path, 'home');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(
+    join(home, 'Pictures/photos.json'),
+    JSON.stringify([{ id: 'p1', title: 'Beach' }]),
+  );
+  const plugin = await photosPlugin(join(scratch.path, 'store'));
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const directory = importDirectory(plugin.directory, photos);
+  const database = join(directory, 'data.sqlite');
+  mkdirSync(directory, { recursive: true });
+  await writeFile(database, '');
+  await chmod(database, 0o444);
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    const failed = connectorRows(plugin).find(
+      ({ name }) => name === 'photos',
+    )?.status;
+    await chmod(database, 0o644);
+
+    await plugin.import(imports);
+
+    const row = connectorRows(plugin).find(({ name }) => name === 'photos');
+    assert.equal(failed?.state, 'failed');
+    assert.equal(row?.status.state, 'succeeded');
+    assert.match(String(row?.status.text), /^Synced just now/);
+    assert.doesNotMatch(chatStatus(plugin).text, /last sync failed/);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
 test('two servers importing one selection at once load it in one pass, the second waiting for the first', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
@@ -259,16 +385,7 @@ test('two servers importing one selection at once load it in one pass, the secon
   const home = join(scratch.path, 'home');
   mkdirSync(join(home, 'Pictures'), { recursive: true });
   spawnSync('/usr/bin/mkfifo', [join(home, 'Pictures/photos.json')]);
-  const plugin = new ApplePlugin(
-    new Connectors([
-      builtInConnectors,
-      resolve('packages/connectors/apple/manifest/dist/fixtures'),
-    ]),
-    host,
-    install,
-    join(scratch.path, 'store'),
-  );
-  await plugin.refresh();
+  const plugin = await photosPlugin(join(scratch.path, 'store'));
   const photos = { connector: 'photos', scope: {}, includeAttachments: true };
   const imports = await plugin.configure({ connectors: [photos] });
   const previous = process.env.HOME;
@@ -314,16 +431,7 @@ test('a connector switched off while its pass runs loses its import once the pas
   const home = join(scratch.path, 'home');
   mkdirSync(join(home, 'Pictures'), { recursive: true });
   spawnSync('/usr/bin/mkfifo', [join(home, 'Pictures/photos.json')]);
-  const plugin = new ApplePlugin(
-    new Connectors([
-      builtInConnectors,
-      resolve('packages/connectors/apple/manifest/dist/fixtures'),
-    ]),
-    host,
-    install,
-    join(scratch.path, 'store'),
-  );
-  await plugin.refresh();
+  const plugin = await photosPlugin(join(scratch.path, 'store'));
   const photos = { connector: 'photos', scope: {}, includeAttachments: true };
   const imports = await plugin.configure({ connectors: [photos] });
   const directory = importDirectory(plugin.directory, photos);
@@ -413,16 +521,7 @@ test('a selected connector that is no longer loaded is reported, keeps its impor
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
-  const withPhotos = new ApplePlugin(
-    new Connectors([
-      builtInConnectors,
-      resolve('packages/connectors/apple/manifest/dist/fixtures'),
-    ]),
-    host,
-    install,
-    scratch.path,
-  );
-  await withPhotos.refresh();
+  const withPhotos = await photosPlugin(scratch.path);
   const photos = { connector: 'photos', scope: {}, includeAttachments: true };
   await withPhotos.configure({ connectors: [photos] });
   const plugin = await applePlugin(install, scratch.path);

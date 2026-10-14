@@ -26,8 +26,9 @@ const writerWaitMs = 30_000;
 // as Airbyte's worker sends a heartbeat to learn its sync was cancelled.
 const heartbeatMs = 1_000;
 
-// Why a connector's import could not start, and whose that is to fix: its
-// pipeline never existed, so its sync history in data.sqlite cannot say.
+// Why a connector's import failed in a way its sync history in data.sqlite
+// cannot record, and whose that is to fix: the import never connected, or the
+// history itself could not install or record.
 type ConnectionFailure = {
   error: string;
   failedAt: string;
@@ -44,7 +45,7 @@ export class ConnectorRemovedError extends Error {
 }
 
 // What readers of the settings file see: one row per selected connector, with
-// where its import lives and why it could not start, if it could not.
+// where its import lives and why it last failed in a way its history cannot record.
 const selectedConnectors = {
   name: 'selected_connectors',
   description:
@@ -58,11 +59,11 @@ const selectedConnectors = {
     database:
       'Path of the SQLite file the import loads. It may not exist yet while the first import starts.',
     connection_error:
-      'Why the import could not start, such as missing macOS access; NULL when it started. A connector with an error is inaccessible, not empty.',
+      'Why the import last failed in a way sync_status cannot record, such as missing macOS access or a database it could not write; NULL when sync_status has the outcome. A connector with an error is inaccessible, not empty.',
     connection_failure_type:
-      'config when the user can fix connection_error by giving access or changing what they set up, and permissions says how; system for any other reason; NULL when the import started.',
+      'config when the user can fix connection_error by giving access or changing what they set up, and permissions says how; system for any other reason; NULL when sync_status has the outcome.',
     connection_failed_at:
-      'When the import last failed to start, as an ISO 8601 UTC timestamp; NULL when it started.',
+      'When the import last failed in a way sync_status cannot record, as an ISO 8601 UTC timestamp; NULL when sync_status has the outcome.',
     permissions: 'What the user can do in macOS to give access to this app.',
   },
   query: `SELECT s."connector", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",

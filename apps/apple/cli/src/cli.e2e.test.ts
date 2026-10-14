@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import {
+  chmod,
   mkdir,
   mkdtempDisposable,
   open,
@@ -2413,9 +2414,36 @@ test('a pass that fails with an error its sync history never recorded makes sync
   cli(mac.path, 'setup', '--connector', 'photos');
 
   const synced = cli(mac.path, 'sync');
+  const status = cli(mac.path, 'status', '--json');
 
   assert.equal(synced.status, 1, synced.stdout);
   assert.match(synced.stderr, /Photos cannot say what it reads/);
+  assert.equal(status.status, 0, status.stderr);
+  const [row] = JSON.parse(status.stdout);
+  assert.equal(row.state, 'failed');
+  assert.match(row.error, /^Photos cannot say what it reads/);
+});
+
+test('after a sync whose import can no longer write its database, status shows that connector failed, not its last pass, and sync exits 1 naming it', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withConnectors(mac.path);
+  cli(mac.path, 'setup', '--connector', 'photos');
+  cli(mac.path, 'sync');
+  const [{ database }] = JSON.parse(cli(mac.path, 'status', '--json').stdout);
+  // As when a reader keeps the database busy past the timeout or the disk is
+  // full: the import's sync history cannot install itself, so no pass begins
+  // to record why.
+  await chmod(database, 0o444);
+
+  const synced = cli(mac.path, 'sync');
+  const status = cli(mac.path, 'status', '--json');
+
+  assert.equal(synced.status, 1, synced.stdout);
+  assert.match(synced.stderr, /attempt to write a readonly database/);
+  assert.equal(status.status, 0, status.stderr);
+  const [photos] = JSON.parse(status.stdout);
+  assert.equal(photos.state, 'failed');
+  assert.match(photos.error, /^attempt to write a readonly database/);
 });
 
 test('sync watch exits 1 and names the error when an import’s sync history cannot record a pass, though another connector keeps watching', async () => {
@@ -2468,6 +2496,15 @@ test('sync watch exits 1 and names the error when an import’s sync history can
     if (ended === null) assert.fail('the watch went on without the history');
     assert.equal(ended.status, 1, ended.stdout);
     assert.match(ended.stderr, /no such table: _elt_extraction_coverage/);
+    // The history could not record it, so status still has it once the
+    // watch is gone.
+    const status = cli(mac.path, 'status', '--json');
+    assert.equal(status.status, 0, status.stderr);
+    const safari = JSON.parse(status.stdout).find(
+      ({ connector }: { connector: string }) => connector === 'safari',
+    );
+    assert.equal(safari.state, 'failed');
+    assert.match(safari.error, /no such table: _elt_extraction_coverage/);
   } finally {
     watch.child.kill('SIGKILL');
     await watch.exited;
