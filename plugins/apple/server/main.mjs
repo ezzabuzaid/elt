@@ -38820,8 +38820,8 @@ mcpServer.registerTool(
   "apple_sync",
   {
     title: "Sync Apple connectors",
-    description: "Import every connected connector again from the Apple page, so each brings in what changed since its last sync, and return once every pass has ended. A connector another chat is importing finishes that pass instead.",
-    inputSchema: {},
+    description: "Import every connected connector again from the Apple page, or only the one named, so each brings in what changed since its last sync, and return once every pass has ended. A connector another chat is importing finishes that pass instead.",
+    inputSchema: { connector: connectorSchema.optional() },
     outputSchema: connectorsResult,
     annotations: {
       readOnlyHint: false,
@@ -38831,9 +38831,13 @@ mcpServer.registerTool(
     },
     _meta: appOnly
   },
-  async () => {
+  async ({ connector }) => {
     await plugin.refresh();
-    await plugin.import(plugin.status().connectors);
+    await plugin.import(
+      plugin.status().connectors.filter(
+        (selection2) => connector === void 0 || selection2.connector === connector
+      )
+    );
     return structured({ connectors: connectorRows(plugin) });
   }
 );
