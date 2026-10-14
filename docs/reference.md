@@ -493,7 +493,7 @@ await new Pipeline({
 }).run();
 ```
 
-This stores the selected source metadata, parsed `content` and an `attachmentRef` as TEXT. The original attachment ID and containing note ID remain available for joins. `LocalFiles` stores the original bytes and returns their absolute local path. SQLite and Postgres receive only that ordinary text value: they do not construct paths or write attachment files. The Apple hosts store only the `attachmentRef` for every stream with files, in each import's `files` folder; they do not parse file text.
+This stores the selected source metadata, parsed `content` and an `attachmentRef` as TEXT. The original attachment ID and containing note ID remain available for joins. `LocalFiles` stores the original bytes and returns their absolute local path. SQLite and Postgres receive only that ordinary text value: they do not construct paths or write attachment files. The Apple hosts store an `attachmentRef` for every stream with files, in each import's `files` folder, and read the text of every stored copy into `attachment_text` (see [Attachment text](#attachment-text)); they parse no file text inside the import.
 
 Storage is selected on each file reference with `.store(files)`, independently of the connection and destination. Two fields can use different stores, and copies can share one store without sharing file ownership. Constructing a store or declaring a field performs no I/O. A stored reference and parsed text must be separate fields; applying `.parse()` to a stored-file field is refused.
 
@@ -506,6 +506,20 @@ Files and database rows do not share a transaction. A failed save prevents its r
 For another storage backend, implement the exported `FileStorage` contract: a stable `identity`, a `reference` sentence telling readers what a saved reference is (Postgres writes it as the reference column's comment), `save(scope, FileContent)` returning a durable, immutable, repeatable text reference, and `retain(scope, references)` removing only that scope's unreferenced objects. Identity participates in the copy's checkpoint binding. The transfer treats references as opaque strings, so a future S3 store can return its own reference format without changing database destinations. Only `LocalFiles` is supplied today. Reconciliation scans retained references and the scoped directory at each commit; it does not maintain a separate object index.
 
 The columns declare what to extract. `Copy` collects those declarations; `Source.read()` performs parsing and exposes original files as a `FileContent`, valid until its record is consumed. The shared transfer resolves stored-file declarations before sending records to the destination. Omitting a stored reference avoids retaining the original file; omitting all file-derived columns avoids exporting files altogether.
+
+### Attachment text
+
+The Apple hosts load the text of every file an import stored into the import's own `data.sqlite`, so readers can search attachments with SQL. The `attachment_text` view holds one row per stored copy, keyed by `ref`, the absolute path each row's `attachmentRef` holds: `sha256` (the bytes' hash, which names the copy), `parser` (the parser's identity, `macos-document-v4`), `status` (`parsed`, `no_text` or `failed`), `content` (the text when parsed) and `error` (why the read failed). Readers join `attachmentRef` to `ref`:
+
+```sql
+SELECT a.id, t.content
+FROM attachments a JOIN attachment_text t ON t.ref = a.attachmentRef
+WHERE t.content LIKE '%invoice%';
+```
+
+Reading the text is auxiliary to the import, not part of it: no source reads it and the import never waits on it. `AttachmentText` in `connector-apple-connector` reads after each pass the import commits, from the caller's side, since elt has no hook for work after a commit yet (backlog #2618). The rows the import committed are its work queue: each update takes the `attachmentRef` values of the import's views whose streams store files, deletes the text of every copy no row references any longer, and reads the copies this parser has not read or failed to read, four at once (Vision text recognition read about three times as many files a second with four as with one, and little more with eight). Each read commits on its own, so readers see text as it lands and an update stopped partway keeps what it read. A stored copy is content-addressed within its field, so one file attached in three chats is read once; the same bytes stored by two streams are two copies and are read twice. A file the parser cannot read loads as `failed` with its error and fails nothing; the next update reads it again, since Vision under a sandbox, a full disk or an `osascript` timeout fail only for a while. A copy that a commit removed after the update listed it loads no row. A parser with a new identity reads every copy again.
+
+A one-shot import (the CLI's `sync`, the plugin's Sync) reads the text after the import's pass, also when some copies failed, so a sync ends with the text of the files it stored. `sync watch` reads after each pass in the background, coalesced: while an update runs, further passes ask for one more, so the import's next pass never waits on parsing. No host shows the update as a pass. A stored copy not read yet has no row, so search results are complete only once the text caught up with the sync.
 
 ### Explicit database byte storage
 

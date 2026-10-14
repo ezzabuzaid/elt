@@ -5,6 +5,7 @@ import {
   constants,
   existsSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   writeFileSync,
@@ -1568,6 +1569,30 @@ test('setup, sync, status and query read the Notes this Mac holds through docume
   );
 });
 
+test('a sync ends with the text of the attachments it stored, which a query finds by that text', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withNotes(mac.path);
+  const setup = cli(mac.path, 'setup', '--connector', 'notes', '--json');
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const synced = cli(mac.path, 'sync');
+
+  assert.equal(synced.status, 0, synced.stderr);
+  const found = cli(
+    mac.path,
+    'query',
+    'notes',
+    `SELECT t.status, t.content FROM attachments a
+     JOIN attachment_text t ON t.ref = a.attachmentRef
+     WHERE t.content LIKE '%attached words%'`,
+    '--json',
+  );
+  assert.equal(found.status, 0, found.stderr);
+  assert.deepEqual(JSON.parse(found.stdout), [
+    { status: 'parsed', content: 'attached words' },
+  ]);
+});
+
 test('changing what a connector imports, down to its attachments, loads the new selection completely on the next sync', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withNotes(mac.path);
@@ -2788,6 +2813,67 @@ function withWallet(mac: string) {
     INSERT INTO pass_annotations VALUES (1, 0, NULL);
   `);
 }
+
+test('sync watch reads the files an import stores, with no command of its own', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  withWallet(mac.path);
+  // The pass's icon, a 1x1 PNG its signed manifest lists, as passd keeps it.
+  const bundle = join(
+    mac.path,
+    'Library/Passes/Cards/Rj5JgNLqUsLcgX514jcGtHwF+aI=.pkpass',
+  );
+  const icon = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  writeFileSync(join(bundle, 'icon.png'), icon);
+  const manifest = JSON.parse(
+    readFileSync(join(bundle, 'manifest.json'), 'utf8'),
+  );
+  writeFileSync(
+    join(bundle, 'manifest.json'),
+    JSON.stringify({
+      ...manifest,
+      'icon.png': createHash('sha1').update(icon).digest('hex'),
+    }),
+  );
+  const setup = cli(mac.path, 'setup', '--connector', 'wallet');
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const watch = started(mac.path, 'sync', 'watch', '--json');
+  try {
+    await watch.prints(({ connector }) => connector === 'wallet');
+    // Reading the text is a step no host prints, so a reader asks for it.
+    const read = () =>
+      cli(
+        mac.path,
+        'query',
+        'wallet',
+        `SELECT i.name, t.status FROM pass_images i
+         JOIN attachment_text t ON t.ref = i.attachmentRef`,
+        '--json',
+      );
+
+    let found = read();
+    for (
+      let tries = 0;
+      found.status !== 0 || found.stdout.trim() === '[]';
+      tries++
+    ) {
+      if (tries > 100)
+        assert.fail(`no text was read:\n${found.stdout}${found.stderr}`);
+      await sleep(100);
+      found = read();
+    }
+
+    assert.deepEqual(JSON.parse(found.stdout), [
+      { name: 'icon', status: 'no_text' },
+    ]);
+  } finally {
+    watch.child.kill('SIGKILL');
+    await watch.exited;
+  }
+});
 
 test('wallet syncs the passes where passd keeps them, with their fields', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));

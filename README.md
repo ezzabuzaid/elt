@@ -357,6 +357,8 @@ Each file field chooses its own store. SQLite and Postgres receive an ordinary t
 
 Parsing is explicit. Omitting file-derived columns loads metadata only. The macOS parser reads PDFs with a text layer, TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, WordML, vCards, and text in images through Vision. It does not transcribe audio; audio, video and unknown formats load `null`. Files it cannot read fail the copy. Attachments whose file is not on this Mac (not yet downloaded from iCloud) or that belong to a locked note keep their metadata with `null` content and reference. Tables have no file; their cells are in the note's `markdown`.
 
+The Apple hosts parse nothing inside an import. After each pass commits, they read the text of every copy it stored, four at once, into `attachment_text`, which SQL searches by joining `attachmentRef` to `ref`; a file the parser cannot read loads as `failed` and is read again after the next sync instead of failing the import. See [attachment text](docs/reference.md#attachment-text).
+
 See [file declarations, parsing, and attachment limitations](docs/reference.md#attachment-files-and-document-parsing).
 
 ## Sync modes

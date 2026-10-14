@@ -29,7 +29,9 @@ import {
   type Settings,
 } from '@workspace/settings';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-document-parser';
 
+import { AttachmentText } from './attachment-text.ts';
 import type { Choice, Row, Rows } from './choice.ts';
 
 // What the host running a connector offers it.
@@ -255,18 +257,38 @@ export abstract class AppleConnector {
   // import's flight: stopped once the user removes the connector, its
   // outcome in the import's sync history, and in the settings any failure
   // that history could not record, a failure to connect among them.
+  // The attachment text is read once the import has committed the files it
+  // stored, so a sync ends with the text of its own files; it is read even
+  // when some copies failed, from the files that did commit.
   async import(
     settings: Settings,
     selection: Selection,
     history: SQLiteSyncHistory,
   ): Promise<ImportOutcome> {
-    return this.#load(settings, selection, history, (pipeline, removal) =>
-      pipeline.run({ signal: removal }),
+    return this.#load(
+      settings,
+      selection,
+      history,
+      async (connection, text, removal) => {
+        let failed: unknown = null;
+        try {
+          await new Pipeline({ connections: [connection], history }).run({
+            signal: removal,
+          });
+        } catch (error) {
+          if (!(error instanceof PipelineError)) throw error;
+          failed = error;
+        }
+        await text?.update(removal);
+        if (failed !== null) throw failed;
+      },
     );
   }
 
   // Keeps this connector's import current: a pass at once, then one for each
   // change its source reports, each recorded in the import's sync history.
+  // The attachment text is read after each pass, coalesced: while it reads,
+  // passes only ask for one more read, so the import never waits on it.
   // Ends once the user removes the connector, or once the source stops
   // reporting changes; otherwise it lasts as long as the process.
   async watch(
@@ -278,8 +300,44 @@ export abstract class AppleConnector {
       settings,
       selection,
       history,
-      async (pipeline, removal) => {
-        for await (const _pass of pipeline.watch({ signal: removal }));
+      async (connection, text, removal) => {
+        const stopping = new AbortController();
+        const signal = AbortSignal.any([removal, stopping.signal]);
+        // A read that fails stops the watch, as an error no sync history
+        // recorded does.
+        const failures: unknown[] = [];
+        let running: Promise<void> | null = null;
+        let again = false;
+        const read = (attachments: AttachmentText) => {
+          if (running !== null) {
+            again = true;
+            return;
+          }
+          running = (async () => {
+            do {
+              again = false;
+              await attachments.update(signal);
+            } while (again && !signal.aborted);
+          })()
+            .catch((error: unknown) => {
+              failures.push(error);
+              stopping.abort();
+            })
+            .finally(() => {
+              running = null;
+            });
+        };
+        try {
+          for await (const _pass of new Pipeline({
+            connections: [connection],
+            history,
+          }).watch({ signal }))
+            if (text !== null) read(text);
+        } finally {
+          stopping.abort();
+          await running;
+        }
+        if (failures.length > 0) throw failures[0];
         // A watch ends quietly on abort, where a run throws its reason.
         removal.throwIfAborted();
       },
@@ -291,7 +349,8 @@ export abstract class AppleConnector {
     selection: Selection,
     history: SQLiteSyncHistory,
     load: (
-      pipeline: Pipeline<SQLiteTable>,
+      connection: Connection<SQLiteTable>,
+      text: AttachmentText | null,
       removal: AbortSignal,
     ) => Promise<unknown>,
   ): Promise<ImportOutcome> {
@@ -308,14 +367,11 @@ export abstract class AppleConnector {
       return { status: 'unconnected', error };
     }
     settings.clearConnectionFailure(selection);
-    const { connection, destination } = built;
+    const { connection, text, destination } = built;
     try {
       await history.install([destination]);
       installSQLiteCatalog(destination);
-      await load(
-        new Pipeline({ connections: [connection], history }),
-        removal.signal,
-      );
+      await load(connection, text, removal.signal);
     } catch (error) {
       if (error instanceof ConnectorRemovedError) return { status: 'removed' };
       // The history recorded each failure these hold: what each copy did not
@@ -336,12 +392,14 @@ export abstract class AppleConnector {
 
   // The connector's streams, loaded incrementally into raw_<stream> tables of
   // the import directory's data.sqlite and read through documented views, with
-  // checkpoints.sqlite and attachment copies in files/ beside it.
+  // checkpoints.sqlite and attachment copies in files/ beside it. When the
+  // import stores files, text reads their text into attachment_text.
   async connection(
     directory: string,
     selection: Selection,
   ): Promise<{
     connection: Connection<SQLiteTable>;
+    text: AttachmentText | null;
     destination: SQLiteDestination;
   }> {
     const { scope, includeAttachments } = selection;
@@ -357,6 +415,9 @@ export abstract class AppleConnector {
       path: join(directory, 'data.sqlite'),
     });
     const files = new LocalFiles({ directory: join(directory, 'files') });
+    const copied = streams.filter(
+      ({ name }) => !(narrowed && this.unscoped.includes(name)),
+    );
     const connection = new Connection({
       name: this.name,
       source,
@@ -364,34 +425,41 @@ export abstract class AppleConnector {
       checkpoints: new SQLiteCheckpointStore({
         path: join(directory, 'checkpoints.sqlite'),
       }),
-      steps: streams
-        .filter(({ name }) => !(narrowed && this.unscoped.includes(name)))
-        .map(
-          (stream) =>
-            new Copy(
-              stream,
-              destination
-                .table(
-                  `raw_${stream.name}`,
-                  withFiles(stream)
-                    ? (columns) => [
-                        ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                        columns
-                          .text('attachmentRef')
-                          .from(stream.file.store(files)),
-                      ]
-                    : undefined,
-                )
-                .withReaderView(this.view(stream.name)),
-              {
-                id: `${this.name}:${stream.name}`,
-                syncMode: 'incremental',
-                destinationSyncMode: 'append_dedup',
-              },
-            ),
-        ),
+      steps: copied.map(
+        (stream) =>
+          new Copy(
+            stream,
+            destination
+              .table(
+                `raw_${stream.name}`,
+                withFiles(stream)
+                  ? (columns) => [
+                      ...SQLiteColumns.fromSchema(stream.jsonSchema),
+                      columns
+                        .text('attachmentRef')
+                        .from(stream.file.store(files)),
+                    ]
+                  : undefined,
+              )
+              .withReaderView(this.view(stream.name)),
+            {
+              id: `${this.name}:${stream.name}`,
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            },
+          ),
+      ),
     });
-    return { connection, destination };
+    const stored = copied.filter(withFiles);
+    const text =
+      stored.length === 0
+        ? null
+        : new AttachmentText(
+            destination.path,
+            stored.map(({ name }) => this.view(name)),
+            new MacOSDocumentParser(),
+          );
+    return { connection, text, destination };
   }
 }
 
