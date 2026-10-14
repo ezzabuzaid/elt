@@ -490,7 +490,7 @@ function validOperation(
     Object.hasOwn(message, 'data')
   ) {
     if (Object.hasOwn(message, 'file'))
-      throw new TypeError('Destinations cannot receive source staging paths');
+      throw new TypeError('Destinations cannot receive source file paths');
     wellFormed(message.data, 'Record');
     return { type: 'RECORD', data: message.data };
   }

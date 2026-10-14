@@ -1,6 +1,6 @@
 import { open } from 'node:fs/promises';
 
-// A staged file's bytes, read in bounded chunks so no file is ever held in
+// A source file's bytes, read in bounded chunks so no file is ever held in
 // memory whole. Valid until the consumer advances past the record carrying it.
 export class FileContent {
   readonly path: string;

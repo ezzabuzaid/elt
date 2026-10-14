@@ -22,7 +22,8 @@ export type SourceWatchOptions = {
 export type RecordMessage = {
   readonly stream: string;
   readonly data: unknown;
-  // Source-owned staging path, valid until the consumer advances the iterator.
+  // A path the source keeps readable until the consumer advances the iterator:
+  // a file it staged and removes afterwards, or the original in the app's store.
   // null means this record has no exportable file (for example a URL attachment).
   readonly file?: string | null;
 };
@@ -254,7 +255,7 @@ export abstract class Source<
   }
 
   // Keeps each message to the stream whose extract emitted it, and replaces
-  // each record's staging path with the file reads it asked for.
+  // each record's file path with the file reads it asked for.
   private async *resolved(
     configuration: CopyConfiguration,
     messages: AsyncIterable<SourceMessage>,
@@ -280,7 +281,7 @@ export abstract class Source<
       }
       if (message.file !== null && typeof message.file !== 'string')
         throw new TypeError(
-          'File extraction must supply a staging path or explicit null',
+          'File extraction must supply a file path or explicit null',
         );
       const data = message.data;
       if (data === null || typeof data !== 'object' || Array.isArray(data))
