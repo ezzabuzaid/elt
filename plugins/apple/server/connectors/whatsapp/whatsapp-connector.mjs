@@ -17,15 +17,16 @@ import {
 } from "../../chunks/chunk-DV4S52G7.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-4RXDIBY4.mjs";
+} from "../../chunks/chunk-4RDXSJJA.mjs";
 import {
   Catalog,
+  ClosedWorld,
+  Retention,
   Source,
   Stream,
   diffSnapshot,
-  expiredAfter,
   validateRecords
-} from "../../chunks/chunk-NZNT7H7R.mjs";
+} from "../../chunks/chunk-DK364VUN.mjs";
 import {
   __callDispose,
   __using
@@ -3961,7 +3962,9 @@ var WhatsAppDesktopSource = class extends Source {
     const { stream } = configuration;
     const reader = readerOf(stream);
     const records = reader.read(scan);
-    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state, coveredBy(reader.horizon(scan))) : records.map((data) => ({ stream: stream.name, data }));
+    const messages = configuration.syncMode === "incremental" ? diffSnapshot(stream, records, state, {
+      policy: policyFor(reader.horizon(scan))
+    }) : records.map((data) => ({ stream: stream.name, data }));
     for await (const message of messages) {
       if ("type" in message || configuration.fileReads.length === 0)
         yield message;
@@ -3970,8 +3973,8 @@ var WhatsAppDesktopSource = class extends Source {
     }
   }
 };
-function coveredBy(horizon) {
-  return horizon === void 0 ? {} : { covers: expiredAfter(horizon) };
+function policyFor(horizon) {
+  return horizon === void 0 ? new ClosedWorld() : new Retention(horizon);
 }
 
 // packages/connectors/apple/whatsapp/dist/whatsapp-connector.js

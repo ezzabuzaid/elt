@@ -29,15 +29,16 @@ import {
 } from "../../chunks/chunk-DV4S52G7.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-4RXDIBY4.mjs";
+} from "../../chunks/chunk-4RDXSJJA.mjs";
 import {
   Catalog,
+  ClosedWorld,
   Source,
   Stream,
   diffGroupedSnapshot,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-NZNT7H7R.mjs";
+} from "../../chunks/chunk-DK364VUN.mjs";
 import {
   __callDispose,
   __commonJS,
@@ -26884,7 +26885,9 @@ var AppleMailStream = class {
   }
   // An incremental read: the scan compared with the saved snapshot.
   snapshot(stream, scan, records, state) {
-    return diffSnapshot(stream, records(this.entries(scan)), state);
+    return diffSnapshot(stream, records(this.entries(scan)), state, {
+      policy: new ClosedWorld()
+    });
   }
 };
 
@@ -27099,7 +27102,9 @@ var MailMessageStream = class extends AppleMailStream {
     yield* this.unlisted(scan, listed);
   }
   snapshot(stream, scan, records, state) {
-    return diffGroupedSnapshot(stream, this.#accepted(scan, records), state);
+    return diffGroupedSnapshot(stream, this.#accepted(scan, records), state, {
+      policy: new ClosedWorld()
+    });
   }
   async *entries(scan) {
     for await (const group of this.#groups(scan))

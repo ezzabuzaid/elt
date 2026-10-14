@@ -13,8 +13,8 @@ import {
   assertLocalDirectory,
   readPassStatus,
   untilAborted
-} from "./chunks/chunk-4RXDIBY4.mjs";
-import "./chunks/chunk-NZNT7H7R.mjs";
+} from "./chunks/chunk-4RDXSJJA.mjs";
+import "./chunks/chunk-DK364VUN.mjs";
 import {
   __callDispose,
   __commonJS,
@@ -38380,8 +38380,10 @@ function ago(instant, now) {
 }
 function describe3(sync, covers, permissions, now) {
   switch (sync.state) {
+    // A pass a killed process left reads running until the next pass, so its
+    // date and age show it is not today's.
     case "running":
-      return `Importing since ${new Date(sync.startedAt).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" })}.`;
+      return `Importing since ${new Date(sync.startedAt).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} (${ago(sync.startedAt, now)}).`;
     case "cancelled":
       return "Stopped before it finished.";
     case "succeeded":

@@ -16,14 +16,15 @@ import {
 } from "../../chunks/chunk-DV4S52G7.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-4RXDIBY4.mjs";
+} from "../../chunks/chunk-4RDXSJJA.mjs";
 import {
   Catalog,
+  ClosedWorld,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-NZNT7H7R.mjs";
+} from "../../chunks/chunk-DK364VUN.mjs";
 import {
   __callDispose,
   __using
@@ -1027,7 +1028,9 @@ var AppleClockSource = class extends Source {
   }
   async *extract(configuration, state, _partition, snapshot) {
     const records = readerOf(configuration.stream).read(snapshot);
-    yield* configuration.syncMode === "incremental" ? diffSnapshot(configuration.stream, records, state) : records.map((data) => ({ stream: configuration.stream.name, data }));
+    yield* configuration.syncMode === "incremental" ? diffSnapshot(configuration.stream, records, state, {
+      policy: new ClosedWorld()
+    }) : records.map((data) => ({ stream: configuration.stream.name, data }));
   }
   async *observe({ streams, signal }) {
     var _stack = [];

@@ -12,16 +12,17 @@ import {
 } from "../../chunks/chunk-DV4S52G7.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-4RXDIBY4.mjs";
+} from "../../chunks/chunk-4RDXSJJA.mjs";
 import {
   Catalog,
+  ClosedWorld,
+  Retention,
   Source,
   Stream,
   diffGroupedSnapshot,
   diffSnapshot,
-  expiredAfter,
   validateRecords
-} from "../../chunks/chunk-NZNT7H7R.mjs";
+} from "../../chunks/chunk-DK364VUN.mjs";
 import {
   __callDispose,
   __using
@@ -846,7 +847,7 @@ var BiomeActivityStream = class {
       records: () => this.#read(segment)
     })));
     yield* diffGroupedSnapshot(configuration.stream, groups, state, {
-      covers: expiredAfter(retainedSince(scan.startedAt, this.retentionDays))
+      policy: new Retention(retainedSince(scan.startedAt, this.retentionDays))
     });
   }
   async *#read(segment) {
@@ -1155,7 +1156,9 @@ var DevicesStream = class {
     if (configuration.syncMode === "full_refresh")
       yield* records.map((data) => ({ stream: this.name, data }));
     else
-      yield* diffSnapshot(configuration.stream, records, state);
+      yield* diffSnapshot(configuration.stream, records, state, {
+        policy: new ClosedWorld()
+      });
   }
   #read(scan) {
     return validateRecords(this, scan.devices.devices().map((device) => this.#record(device)), "Activity");
@@ -1227,7 +1230,7 @@ var KnowledgeActivityStream = class {
       yield* records.map((data) => ({ stream: this.name, data }));
     else
       yield* diffSnapshot(configuration.stream, records, state, {
-        covers: expiredAfter(retainedSince(scan.startedAt, this.retentionDays))
+        policy: new Retention(retainedSince(scan.startedAt, this.retentionDays))
       });
   }
   #read(scan) {

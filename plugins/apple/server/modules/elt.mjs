@@ -29,7 +29,6 @@ import {
   describeTarget,
   diffGroupedSnapshot,
   diffSnapshot,
-  expiredAfter,
   isCalendarDate,
   isTimestamp,
   passError,
@@ -39,7 +38,7 @@ import {
   reloadMode,
   syncHistoryRelations,
   validateRecords
-} from "../chunks/chunk-NZNT7H7R.mjs";
+} from "../chunks/chunk-DK364VUN.mjs";
 import "../chunks/chunk-ZGXE7NZW.mjs";
 export {
   Catalog,
@@ -71,7 +70,6 @@ export {
   describeTarget,
   diffGroupedSnapshot,
   diffSnapshot,
-  expiredAfter,
   isCalendarDate,
   isTimestamp,
   passError,

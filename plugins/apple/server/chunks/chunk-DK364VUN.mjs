@@ -1779,153 +1779,55 @@ function assertRecord(record, fields, stream, source) {
   }
 }
 
-// packages/elt/dist/core/snapshot.js
+// packages/snapshot-differential/dist/deletion-policy.js
+var DeletionPolicy = class {
+};
+
+// packages/snapshot-differential/dist/closed-world.js
+var ClosedWorld = class extends DeletionPolicy {
+  vanished() {
+    return "deleted";
+  }
+};
+
+// packages/snapshot-differential/dist/coverage.js
+var Coverage = class extends DeletionPolicy {
+  #covers;
+  constructor(covers) {
+    super();
+    this.#covers = covers;
+  }
+  vanished(record) {
+    return this.#covers(record) ? "deleted" : "unknown";
+  }
+};
+
+// packages/snapshot-differential/dist/timestamp.js
+function isTimestamp2(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && new Date(value).toISOString() === value;
+}
+
+// packages/snapshot-differential/dist/retention.js
+var Retention = class extends DeletionPolicy {
+  horizon;
+  constructor(horizon) {
+    super();
+    if (!isTimestamp2(horizon))
+      throw new TypeError(`Retention horizon ${horizon} is not a timestamp`);
+    this.horizon = horizon;
+  }
+  vanished({ expiresBy }) {
+    return expiresBy === void 0 || expiresBy >= this.horizon ? "deleted" : "expired";
+  }
+};
+
+// packages/snapshot-differential/dist/fingerprint.js
 import { createHash as createHash2 } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
-function expiredAfter(horizon) {
-  if (!isTimestamp(horizon))
-    throw new TypeError(`Expiry horizon ${horizon} is not a timestamp`);
-  return ({ expiresBy }) => expiresBy === void 0 || expiresBy >= horizon;
-}
-async function* diffSnapshot(stream, records, state, options = {}) {
-  assertSnapshotStream(stream);
-  const deleted = deletion(stream, options);
-  const deduplication = new Deduplication(stream, stream.primaryKey);
-  const previous = readSnapshot(state);
-  const seen = /* @__PURE__ */ new Set();
-  const current = /* @__PURE__ */ new Map();
-  for await (const data of records) {
-    const key = deduplication.key(data);
-    if (seen.has(key))
-      throw new TypeError(`Stream ${stream.name} returned ${keyText(stream, key)} twice in one scan`);
-    seen.add(key);
-    const fingerprint = fingerprintOf(stream, data);
-    if (options.keeps?.(data) ?? true)
-      current.set(key, entryOf(stream, data, fingerprint));
-    if (fingerprintIn(previous.get(key)) !== fingerprint)
-      yield { stream: stream.name, data };
-  }
-  for (const [key, entry] of previous)
-    if (!seen.has(key)) {
-      const message2 = deleted(key, entry);
-      if (message2 !== null)
-        yield message2;
-    }
-  const snapshot = sortedObject(current);
-  yield { type: "STATE", stream: stream.name, state: { snapshot } };
-}
-async function* diffGroupedSnapshot(stream, groups, state, options = {}) {
-  assertSnapshotStream(stream);
-  const deleted = deletion(stream, options);
-  const deduplication = new Deduplication(stream, stream.primaryKey);
-  const saved = state;
-  const previous = new Map(Object.entries(saved?.groups ?? {}));
-  let everyPrevious = null;
-  const previousFingerprint = (group, key) => {
-    const same = group?.snapshot[key];
-    if (same !== void 0)
-      return fingerprintIn(same);
-    everyPrevious ??= new Map([...previous.values()].flatMap(({ snapshot }) => Object.entries(snapshot)));
-    return fingerprintIn(everyPrevious.get(key));
-  };
-  const seen = /* @__PURE__ */ new Set();
-  const claim = (key) => {
-    if (seen.has(key))
-      throw new TypeError(`Stream ${stream.name} returned ${keyText(stream, key)} twice in one scan`);
-    seen.add(key);
-  };
-  const current = /* @__PURE__ */ new Map();
-  for await (const group of groups) {
-    if (current.has(group.key))
-      throw new TypeError(`Stream ${stream.name} returned group ${group.key} twice in one scan`);
-    const before = previous.get(group.key);
-    if (group.fingerprint !== null && before?.fingerprint === group.fingerprint) {
-      for (const key of Object.keys(before.snapshot))
-        claim(key);
-      current.set(group.key, before);
-      continue;
-    }
-    const snapshot = /* @__PURE__ */ new Map();
-    for await (const data of group.records()) {
-      const key = deduplication.key(data);
-      claim(key);
-      const fingerprint = fingerprintOf(stream, data);
-      snapshot.set(key, entryOf(stream, data, fingerprint));
-      if (previousFingerprint(before, key) !== fingerprint)
-        yield { stream: stream.name, data };
-    }
-    current.set(group.key, {
-      fingerprint: group.fingerprint,
-      snapshot: sortedObject(snapshot)
-    });
-  }
-  for (const { snapshot } of previous.values())
-    for (const [key, entry] of Object.entries(snapshot))
-      if (!seen.has(key)) {
-        const message2 = deleted(key, entry);
-        if (message2 !== null)
-          yield message2;
-      }
-  yield {
-    type: "STATE",
-    stream: stream.name,
-    state: { groups: sortedObject(current) }
-  };
-}
-function assertSnapshotStream(stream) {
-  if (!stream.sourceDefinedCursor)
-    throw new TypeError(`Stream ${stream.name} must declare sourceDefinedCursor to diff snapshots`);
-}
-function sortedObject(entries) {
-  return Object.fromEntries([...entries].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
-}
-function deletion(stream, { covers }) {
-  if (!stream.emitsDeletes) {
-    if (covers !== void 0)
-      throw new TypeError(`Stream ${stream.name} emits no deletions, so its snapshot diff takes no covers`);
-    return () => null;
-  }
-  if (stream.expiresBy !== void 0 && covers === void 0)
-    throw new TypeError(`Stream ${stream.name} expires by ${stream.expiresBy}, so its snapshot diff needs covers, such as expiredAfter(horizon)`);
-  return (key, entry) => {
-    const recordKey = keyObject(stream, key);
-    const vanished = typeof entry === "string" ? { key: recordKey } : { key: recordKey, expiresBy: entry[1] };
-    if (covers !== void 0 && !covers(vanished))
-      return null;
-    return { type: "DELETE", stream: stream.name, key: recordKey };
-  };
-}
-function entryOf(stream, record, fingerprint) {
-  if (stream.expiresBy === void 0)
-    return fingerprint;
-  const expiresBy = record[stream.expiresBy];
-  if (!isTimestamp(expiresBy))
-    throw new TypeError(`Stream ${stream.name} records must carry ${stream.expiresBy} as a timestamp to expire`);
-  return [fingerprint, expiresBy];
-}
-function fingerprintIn(entry) {
-  return typeof entry === "string" ? entry : entry?.[0];
-}
-function readSnapshot(state) {
-  const saved = state;
-  return new Map(Object.entries(saved?.snapshot ?? {}));
-}
-function keyText(stream, key) {
-  return Object.entries(keyObject(stream, key)).map(([field, value]) => `${field} ${typeof value === "string" ? value : JSON.stringify(value)}`).join(", ");
-}
-function keyObject(stream, key) {
-  const values = JSON.parse(key);
-  return Object.fromEntries(stream.primaryKey.map((field, index) => {
-    const value = values[index];
-    if (value === void 0)
-      throw new TypeError(`Snapshot key ${key} does not match ${stream.name}'s primary key`);
-    return [field, value];
-  }));
-}
-function fingerprintOf(stream, record) {
+function fingerprintOf(name, record) {
   const serialized = JSON.parse(JSON.stringify(record));
   if (!isDeepStrictEqual4(serialized, record))
-    throw new TypeError(`Stream ${stream.name} records must be losslessly JSON serializable to diff snapshots`);
+    throw new TypeError(`Snapshot ${name} records must be losslessly JSON serializable to diff snapshots`);
   return createHash2("sha256").update(canonical(serialized)).digest("base64url");
 }
 function canonical(value) {
@@ -1937,6 +1839,232 @@ function canonical(value) {
 }
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+// packages/snapshot-differential/dist/snapshot-state.js
+function readSnapshot(name, state) {
+  if (state === null)
+    return /* @__PURE__ */ new Map();
+  if (!isPlainObject(state))
+    throw invalid(name);
+  return entries(name, state.snapshot);
+}
+function readGroups(name, state) {
+  if (state === null)
+    return { groups: /* @__PURE__ */ new Map(), unknown: /* @__PURE__ */ new Map() };
+  if (!isPlainObject(state) || !isPlainObject(state.groups))
+    throw invalid(name);
+  const groups = /* @__PURE__ */ new Map();
+  for (const [key, group] of Object.entries(state.groups)) {
+    if (!isPlainObject(group) || group.fingerprint !== null && typeof group.fingerprint !== "string")
+      throw invalid(name);
+    groups.set(key, {
+      fingerprint: group.fingerprint,
+      snapshot: Object.fromEntries(entries(name, group.snapshot))
+    });
+  }
+  return {
+    groups,
+    unknown: state.unknown === void 0 ? /* @__PURE__ */ new Map() : entries(name, state.unknown)
+  };
+}
+function sorted(values) {
+  return Object.fromEntries([...values].sort(([a], [b]) => compareKeys(a, b)));
+}
+function compareKeys(a, b) {
+  if (a < b)
+    return -1;
+  if (a > b)
+    return 1;
+  return 0;
+}
+function fingerprintIn(entry) {
+  return typeof entry === "string" ? entry : entry?.[0];
+}
+function entries(name, snapshot) {
+  if (!isPlainObject(snapshot))
+    throw invalid(name);
+  const saved = /* @__PURE__ */ new Map();
+  for (const [key, entry] of Object.entries(snapshot)) {
+    if (!isSavedEntry(entry))
+      throw invalid(name);
+    saved.set(key, entry);
+  }
+  return saved;
+}
+function isSavedEntry(value) {
+  return typeof value === "string" || Array.isArray(value) && value.length === 2 && typeof value[0] === "string" && typeof value[1] === "string";
+}
+function invalid(name) {
+  return new TypeError(`Snapshot ${name} state is not a saved snapshot`);
+}
+
+// packages/snapshot-differential/dist/snapshot-differential.js
+var SnapshotDifferential = class {
+  name;
+  primaryKey;
+  expiresBy;
+  policy;
+  #key;
+  constructor({ name, primaryKey, key, expiresBy, policy }) {
+    this.name = name;
+    this.primaryKey = primaryKey;
+    this.#key = key;
+    this.expiresBy = expiresBy;
+    this.policy = policy;
+  }
+  // rereads names the lookback window: a scan the next one repeats only in
+  // part, such as days an upstream may still restate. Only records the next
+  // scan reads again stay in the snapshot; one left out is never deleted.
+  async *diff(records, state, { rereads } = {}) {
+    const previous = readSnapshot(this.name, state);
+    const seen = /* @__PURE__ */ new Set();
+    const current = /* @__PURE__ */ new Map();
+    for await (const record of records) {
+      const key = this.#claim(seen, record);
+      const fingerprint = fingerprintOf(this.name, record);
+      if (rereads?.(record) ?? true)
+        current.set(key, this.#entry(record, fingerprint));
+      if (fingerprintIn(previous.get(key)) !== fingerprint)
+        yield { type: "upsert", record };
+    }
+    yield* this.#judge(previous, seen, current);
+    yield { type: "state", state: { snapshot: sorted(current) } };
+  }
+  // diff for a scan whose records come from inputs the source fingerprints
+  // cheaply. A group whose fingerprint matches the last committed scan keeps
+  // its records without reading them; every other group is read and diffed
+  // record by record. Vanished keys are judged over the complete scan.
+  async *diffGroups(groups, state) {
+    const previous = readGroups(this.name, state);
+    const saved = new Map([
+      ...[...previous.groups.values()].flatMap(({ snapshot }) => Object.entries(snapshot)),
+      ...previous.unknown
+    ]);
+    const seen = /* @__PURE__ */ new Set();
+    const current = /* @__PURE__ */ new Map();
+    for await (const group of groups) {
+      if (current.has(group.key))
+        throw new TypeError(`Snapshot ${this.name} returned group ${group.key} twice in one scan`);
+      const before = previous.groups.get(group.key);
+      if (group.fingerprint !== null && before?.fingerprint === group.fingerprint) {
+        for (const key of Object.keys(before.snapshot))
+          this.#claimKey(seen, key);
+        current.set(group.key, before);
+        continue;
+      }
+      const snapshot = /* @__PURE__ */ new Map();
+      for await (const record of group.records()) {
+        const key = this.#claim(seen, record);
+        const fingerprint = fingerprintOf(this.name, record);
+        snapshot.set(key, this.#entry(record, fingerprint));
+        if (fingerprintIn(saved.get(key)) !== fingerprint)
+          yield { type: "upsert", record };
+      }
+      current.set(group.key, {
+        fingerprint: group.fingerprint,
+        snapshot: sorted(snapshot)
+      });
+    }
+    const unknown = /* @__PURE__ */ new Map();
+    yield* this.#judge(saved, seen, unknown);
+    yield {
+      type: "state",
+      state: unknown.size === 0 ? { groups: sorted(current) } : { groups: sorted(current), unknown: sorted(unknown) }
+    };
+  }
+  // Asks the policy about every saved key the scan did not list. A deleted
+  // one yields a delete, an unknown one stays in kept, an expired one leaves.
+  *#judge(saved, seen, kept) {
+    for (const [key, entry] of saved) {
+      if (seen.has(key))
+        continue;
+      const record = typeof entry === "string" ? { key: this.#keyObject(key) } : { key: this.#keyObject(key), expiresBy: entry[1] };
+      const verdict = this.policy.vanished(record);
+      if (verdict === "deleted")
+        yield { type: "delete", key: record.key };
+      else if (verdict === "unknown")
+        kept.set(key, entry);
+    }
+  }
+  #claim(seen, record) {
+    const key = this.#key(record);
+    this.#claimKey(seen, key);
+    return key;
+  }
+  #claimKey(seen, key) {
+    if (seen.has(key))
+      throw new TypeError(`Snapshot ${this.name} returned ${this.#keyText(key)} twice in one scan`);
+    seen.add(key);
+  }
+  #entry(record, fingerprint) {
+    if (this.expiresBy === void 0)
+      return fingerprint;
+    const expiresBy = record[this.expiresBy];
+    if (!isTimestamp2(expiresBy))
+      throw new TypeError(`Snapshot ${this.name} records must carry ${this.expiresBy} as a timestamp to expire`);
+    return [fingerprint, expiresBy];
+  }
+  // A key as its primary key fields, from the JSON of its values.
+  #keyObject(key) {
+    const values = JSON.parse(key);
+    return Object.fromEntries(this.primaryKey.map((field, index) => {
+      const value = values[index];
+      if (value === void 0)
+        throw new TypeError(`Snapshot key ${key} does not match ${this.name}'s primary key`);
+      return [field, value];
+    }));
+  }
+  // A key as people read it: each field with its value, a string as it is.
+  #keyText(key) {
+    return Object.entries(this.#keyObject(key)).map(([field, value]) => `${field} ${typeof value === "string" ? value : JSON.stringify(value)}`).join(", ");
+  }
+};
+
+// packages/elt/dist/core/snapshot.js
+async function* diffSnapshot(stream, records, state, options = {}) {
+  const differential = differentialOf(stream, options);
+  for await (const change of differential.diff(records, state, options))
+    yield messageOf(stream, change);
+}
+async function* diffGroupedSnapshot(stream, groups, state, options = {}) {
+  const differential = differentialOf(stream, options);
+  for await (const change of differential.diffGroups(groups, state))
+    yield messageOf(stream, change);
+}
+var Forgetting = class extends DeletionPolicy {
+  vanished() {
+    return "expired";
+  }
+};
+function differentialOf(stream, { policy }) {
+  if (!stream.sourceDefinedCursor)
+    throw new TypeError(`Stream ${stream.name} must declare sourceDefinedCursor to diff snapshots`);
+  const deduplication = new Deduplication(stream, stream.primaryKey);
+  return new SnapshotDifferential({
+    name: stream.name,
+    primaryKey: stream.primaryKey,
+    key: (record) => deduplication.key(record),
+    expiresBy: stream.expiresBy,
+    policy: policyOf(stream, policy)
+  });
+}
+function policyOf(stream, policy) {
+  if (!stream.emitsDeletes) {
+    if (policy !== void 0)
+      throw new TypeError(`Stream ${stream.name} emits no deletions, so its snapshot diff takes no policy`);
+    return new Forgetting();
+  }
+  if (policy === void 0)
+    throw new TypeError(stream.expiresBy === void 0 ? `Stream ${stream.name} emits deletions, so its snapshot diff needs a policy, such as ClosedWorld` : `Stream ${stream.name} expires by ${stream.expiresBy}, so its snapshot diff needs a policy, such as Retention(horizon)`);
+  return policy;
+}
+function messageOf(stream, change) {
+  if (change.type === "upsert")
+    return { stream: stream.name, data: change.record };
+  if (change.type === "delete")
+    return { type: "DELETE", stream: stream.name, key: change.key };
+  return { type: "STATE", stream: stream.name, state: change.state };
 }
 
 // packages/elt/dist/core/target-description.js
@@ -2329,7 +2457,9 @@ export {
   reloadMode,
   StreamChangeError,
   validateRecords,
-  expiredAfter,
+  ClosedWorld,
+  Coverage,
+  Retention,
   diffSnapshot,
   diffGroupedSnapshot,
   describeTarget,

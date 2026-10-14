@@ -13,14 +13,15 @@ import {
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-4RXDIBY4.mjs";
+} from "../../chunks/chunk-4RDXSJJA.mjs";
 import {
   Catalog,
+  Coverage,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-NZNT7H7R.mjs";
+} from "../../chunks/chunk-DK364VUN.mjs";
 import "../../chunks/chunk-ZGXE7NZW.mjs";
 
 // packages/sources/microsoft/teams/dist/teams-source.js
@@ -2116,7 +2117,7 @@ var TeamsSource = class extends Source {
         yield { stream: stream.name, data };
       return;
     }
-    yield* diffSnapshot(stream, records, state, stream.emitsDeletes ? { covers: ({ key: key2 }) => reader.covers(scan, key2) } : {});
+    yield* diffSnapshot(stream, records, state, stream.emitsDeletes ? { policy: new Coverage(({ key: key2 }) => reader.covers(scan, key2)) } : {});
   }
 };
 

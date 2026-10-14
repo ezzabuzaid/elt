@@ -28,7 +28,7 @@ import {
   readerCatalog,
   reloadMode,
   syncHistoryRelations
-} from "./chunk-NZNT7H7R.mjs";
+} from "./chunk-DK364VUN.mjs";
 import {
   __callDispose,
   __using
@@ -2919,9 +2919,9 @@ var selectedConnectors = {
     scope: "JSON of the chosen accounts (accountIds), collections (collectionIds) and dates (startAt inclusive, endAt exclusive); an absent key means all.",
     include_attachments: "1 when attachment bytes are copied beside the records, 0 for metadata only.",
     database: "Path of the SQLite file the import loads. It may not exist yet while the first import starts.",
-    connection_error: "Why the import could not start, such as missing macOS access; NULL when it started. A connector with an error is inaccessible, not empty.",
-    connection_failure_type: "config when the user can fix connection_error by giving access or changing what they set up, and permissions says how; system for any other reason; NULL when the import started.",
-    connection_failed_at: "When the import last failed to start, as an ISO 8601 UTC timestamp; NULL when it started.",
+    connection_error: "Why the import last failed in a way sync_status cannot record, such as missing macOS access or a database it could not write; NULL when sync_status has the outcome. A connector with an error is inaccessible, not empty.",
+    connection_failure_type: "config when the user can fix connection_error by giving access or changing what they set up, and permissions says how; system for any other reason; NULL when sync_status has the outcome.",
+    connection_failed_at: "When the import last failed in a way sync_status cannot record, as an ISO 8601 UTC timestamp; NULL when sync_status has the outcome.",
     permissions: "What the user can do in macOS to give access to this app."
   },
   query: `SELECT s."connector", s."scope", s."include_attachments", s."directory" || '/data.sqlite' AS "database",
@@ -3202,8 +3202,8 @@ var AppleConnector = class {
   }
   // One pass of this connector's import, as every host runs it inside the
   // import's flight: stopped once the user removes the connector, its
-  // connection failure kept in the settings and its outcome in the import's
-  // sync history.
+  // outcome in the import's sync history, and in the settings any failure
+  // that history could not record, a failure to connect among them.
   async import(settings, selection, history) {
     return this.#load(settings, selection, history, (pipeline, removal) => pipeline.run({ signal: removal }));
   }
@@ -3231,15 +3231,17 @@ var AppleConnector = class {
       }
       settings.clearConnectionFailure(selection);
       const { connection, destination } = built;
-      await history.install([destination]);
-      installSQLiteCatalog(destination);
       try {
+        await history.install([destination]);
+        installSQLiteCatalog(destination);
         await load(new Pipeline({ connections: [connection], history }), removal.signal);
       } catch (error) {
         if (error instanceof ConnectorRemovedError)
           return { status: "removed" };
-        if (!(error instanceof PipelineError || error instanceof WatchError))
-          throw error;
+        if (error instanceof PipelineError || error instanceof WatchError)
+          return { status: "imported" };
+        settings.saveConnectionFailure(selection, error instanceof Error ? error.message : String(error), this.failureType(error));
+        throw error;
       }
       return { status: "imported" };
     } catch (_) {

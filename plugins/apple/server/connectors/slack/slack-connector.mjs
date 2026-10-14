@@ -13,14 +13,15 @@ import {
 } from "../../chunks/chunk-YM7ADF2O.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-4RXDIBY4.mjs";
+} from "../../chunks/chunk-4RDXSJJA.mjs";
 import {
   Catalog,
+  Coverage,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-NZNT7H7R.mjs";
+} from "../../chunks/chunk-DK364VUN.mjs";
 import "../../chunks/chunk-ZGXE7NZW.mjs";
 
 // packages/sources/slack/desktop/dist/slack-desktop-source.js
@@ -2077,7 +2078,7 @@ var SlackDesktopSource = class extends Source {
     if (reader === void 0)
       throw new Error(`Slack has no stream ${stream.name}`);
     const records = reader.read(scan);
-    const messages = configuration.syncMode === "full_refresh" ? records.map((data) => ({ stream: stream.name, data })) : diffSnapshot(stream, records, state, stream.emitsDeletes ? { covers: ({ key }) => reader.covers(scan, key) } : {});
+    const messages = configuration.syncMode === "full_refresh" ? records.map((data) => ({ stream: stream.name, data })) : diffSnapshot(stream, records, state, stream.emitsDeletes ? { policy: new Coverage(({ key }) => reader.covers(scan, key)) } : {});
     for await (const message2 of messages)
       if ("type" in message2 || configuration.fileReads.length === 0)
         yield message2;

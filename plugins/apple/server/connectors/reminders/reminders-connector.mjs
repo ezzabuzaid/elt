@@ -16,14 +16,15 @@ import {
 } from "../../chunks/chunk-BRJ4TKR5.mjs";
 import {
   AppleConnector
-} from "../../chunks/chunk-4RXDIBY4.mjs";
+} from "../../chunks/chunk-4RDXSJJA.mjs";
 import {
   Catalog,
+  ClosedWorld,
   Source,
   Stream,
   diffSnapshot,
   validateRecords
-} from "../../chunks/chunk-NZNT7H7R.mjs";
+} from "../../chunks/chunk-DK364VUN.mjs";
 import "../../chunks/chunk-ZGXE7NZW.mjs";
 
 // packages/sources/apple/reminders/dist/reminders-scan.js
@@ -753,7 +754,9 @@ var AppleRemindersSource = class extends Source {
   async *extract({ stream, syncMode }, state, _partition, scan) {
     const records = readerOf(stream).read(scan);
     if (syncMode === "incremental")
-      yield* diffSnapshot(stream, records, state);
+      yield* diffSnapshot(stream, records, state, {
+        policy: new ClosedWorld()
+      });
     else
       for (const data of records)
         yield { stream: stream.name, data };
