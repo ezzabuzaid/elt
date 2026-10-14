@@ -514,9 +514,21 @@ test('the document parser reads every attachment kind and throws only on unreada
       shortFile: null,
     },
   );
+  // The message also carries the script, so each pattern matches osascript's
+  // report of the thrown error.
   for (const [name, content, message] of [
-    ['corrupt.pdf', 'not a pdf', /Cannot read PDF/],
-    ['corrupt.heic', Uint8Array.of(0, 1, 2), /Cannot read image/],
+    ['corrupt.pdf', 'not a pdf', /Error: Cannot read PDF/],
+    ['corrupt.heic', Uint8Array.of(0, 1, 2), /Error: Cannot read image/],
+    // A PNG cut off after its header: ImageIO reads a 64×64 image, and Vision
+    // has no pixels to decode.
+    [
+      'truncated.png',
+      Buffer.from(
+        '89504e470d0a1a0a0000000d4948445200000040000000400802000000250be689',
+        'hex',
+      ),
+      /Error: Cannot read image: Vision failed/,
+    ],
   ] as const) {
     attach(name, await file(name, content));
     await assert.rejects(

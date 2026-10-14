@@ -64,9 +64,10 @@ export class ImageFormat extends DocumentFormat {
         const request = $.VNRecognizeTextRequest.alloc.init;
         request.recognitionLevel = $.VNRequestTextRecognitionLevelAccurate;
         request.automaticallyDetectsLanguage = true;
-        const error = Ref();
-        if (!handler.performRequestsError($([request]), error))
-          throw new Error('Cannot read image: ' + ObjC.unwrap(error[0].localizedDescription));
+        // Reading Vision's NSError through a JXA Ref crashes osascript (macOS
+        // 27.0), so the failure carries no reason.
+        if (!handler.performRequestsError($([request]), null))
+          throw new Error('Cannot read image: Vision failed');
         const lines = [];
         const results = request.results;
         for (let index = 0; index < results.count; index++)

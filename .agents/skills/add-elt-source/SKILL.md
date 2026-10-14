@@ -119,7 +119,7 @@ Write the tests with the `write-test` skill (in the `coding` plugin). It owns th
 - **Tests pass on hand-built objects** → only the projection code is proven. Upstream behavior is verified only by a live check.
 - **You re-check that a stream belongs to the catalog** → duplicate logic; the base `Source` already rejects foreign streams in `validate()` and `watch()`.
 - **A private or version-gated API is called without detection** → an opaque crash on other OS versions. Detect first and throw a typed error when it is missing.
-- **`MacOSDocumentParser` image tests exit with SIGSEGV** → Vision failed, and reading its error through the JXA `Ref` (`error[0]`) crashes `osascript`, so the real cause never reaches stderr. Two causes seen on macOS 27: the agent's command sandbox (`sysctlbyname for kern.hv_vmm_present failed`) and a full disk. Run `source-apple-messages:test` and `source-apple-mail:test` outside the sandbox with free disk space before you treat an OCR crash as a defect.
+- **`MacOSDocumentParser` image tests fail with `Cannot read image: Vision failed`** → Vision returned an error the parser does not read, because reading it through a JXA `Ref` crashes `osascript`. Two causes seen on macOS 27: the agent's command sandbox (`sysctlbyname for kern.hv_vmm_present failed`) and a full disk. Run `source-apple-messages:test` and `source-apple-mail:test` outside the sandbox with free disk space before you treat an OCR failure as a defect.
 - **A partition value ends up in the source `identity`** → the identity is part of the checkpoint binding and the target's writer (`packages/elt/src/core/copy.ts`), so adding one property rebinds every partition. Partition values belong in records and primary keys, not the identity.
 
 ## Done when
