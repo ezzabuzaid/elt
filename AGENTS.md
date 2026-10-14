@@ -40,6 +40,14 @@ When the user says a mechanism should not exist, remove it before you build any 
 
 When the user names a capability, take its simplest literal reading and restate it as "when X, then Y" with the user's own example before you propose a mechanism. eca actions went this way: a design of rungs, typed proposals and host allowlists answered a question nobody asked. The user meant that an action is an instruction to an agent: when "I ordered food", run `codex "log my calorie intake from the food I ordered"`.
 
+## Name the standard term
+
+When you tell the user about a problem or a design, name the standard software-engineering term for it, define it once in one line with a well-known example, and then use it. Do this in every message, status notes included, not only in proposals: the user reads to learn as well as to decide. The parse-concurrency research went this way: "one slow parse holds up the rows behind it" is head-of-line blocking, "the file is valid until the next pull" is a lending iterator, "read ahead" is prefetching, and "a file handle elt closes" is ownership transfer of a disposable resource.
+
+## A source reads an upstream
+
+Before you make anything a `Source`, name its upstream: an app's store, an API, a database. Work whose input is something the pipeline wrote, such as parsing or copying the files a load stored, is auxiliary logic, not a source; name its pattern (interceptor, hook, sidecar, derived dataset) and find the seam the engine already has, such as the file column declarations elt executes. The attachment text worker went this way: it was built as a source over the import's own `LocalFiles` copies, which made the pipeline its own upstream.
+
 ## Fix the overlap, not the order
 
 When a first-match lookup gives the right answer in only one order, two of its matchers overlap. Make the loose matcher exact; do not pin the order with a test or a comment. `MacOSDocumentParser` went this way: `ImageFormat` took any file that starts with `BM` for a bitmap, so `TextFormat` had to come first, and a text file with no extension that starts with `BMW` failed the copy in any order. A check of the bitmap's full header removed the overlap, and the order rule went with it.
