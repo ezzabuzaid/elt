@@ -68,7 +68,10 @@ const properties = {
   },
   phoneNumber: {
     ...nullableText,
-    description: column('The phone number, digits only', 'ZPHONENUMBER'),
+    description: column(
+      'The phone number in international form, + and digits only (+962791234567)',
+      'ZPHONENUMBER',
+    ),
   },
   localizedPhoneNumber: {
     ...nullableText,

@@ -26,7 +26,8 @@ const properties = {
   },
   contactIdentifier: {
     ...nullableText,
-    description: 'The member’s macOS Contacts identifier (ZCONTACTIDENTIFIER).',
+    description:
+      'The member’s other WhatsApp JID when WhatsApp records it, as for a chat (ZCONTACTIDENTIFIER); NULL in every row on 2026-10-15.',
   },
   contactAbId: {
     ...nullableInteger,

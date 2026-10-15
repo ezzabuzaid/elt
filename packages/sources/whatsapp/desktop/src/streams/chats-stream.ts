@@ -34,7 +34,7 @@ const properties = {
   contactIdentifier: {
     ...nullableText,
     description:
-      'The macOS Contacts identifier of the person (ZCONTACTIDENTIFIER); NULL when not linked.',
+      'The person’s other WhatsApp JID (ZCONTACTIDENTIFIER): a chat keyed by phone number holds the person’s LID (<id>@lid), and a chat keyed by LID holds their phone JID (<phoneNumber>@s.whatsapp.net). NULL when WhatsApp has not linked the two.',
   },
   contactAbId: {
     ...nullableInteger,
