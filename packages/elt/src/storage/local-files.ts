@@ -115,27 +115,16 @@ export class LocalFiles extends FileStorage {
     // index if attachment counts make reconciliation expensive.
     const missing = new Set(references);
     const obsolete: string[] = [];
+    // Only this scope's saves write here, so every file no row references is
+    // obsolete, a crashed save's .pending- file included.
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
-      if (references.has(path)) {
-        if (!entry.isFile())
-          throw new TypeError(
-            `Attachment reference is not a regular file: ${path}`,
-          );
-        missing.delete(path);
-        continue;
-      }
-      if (
-        /^(?:[a-f0-9]{64}(?:\.[a-zA-Z0-9]{1,16})?|\.pending-[a-f0-9-]+)$/.test(
-          entry.name,
-        )
-      ) {
-        if (!entry.isFile())
-          throw new TypeError(
-            `Managed attachment is not a regular file: ${path}`,
-          );
-        obsolete.push(path);
-      }
+      if (!entry.isFile())
+        throw new TypeError(
+          `Managed attachment is not a regular file: ${path}`,
+        );
+      if (references.has(path)) missing.delete(path);
+      else obsolete.push(path);
     }
     if (missing.size > 0)
       throw new Error(
