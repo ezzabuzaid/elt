@@ -64,6 +64,14 @@ _Avoid_: Scope (elt uses scope for what an import selects)
 The part of a scan that the next scan reads again, such as the days that an upstream can still restate. Only the records in it stay in the snapshot.
 _Avoid_: Keeps, re-read range
 
+**Part**:
+One call of a diff that lists only part of a scan, because the upstream cannot list all its records in one call. The scan continues in the next call. Only the last part judges the vanished keys.
+_Avoid_: Page (the upstream's unit), batch, pass (elt uses pass for its runs)
+
+**Listed key**:
+A key that an earlier part of the open scan listed. At the last part, a listed key is not a vanished key.
+_Avoid_: Seen key, marked key
+
 **Group**:
 The records that one input produced, such as one file, with a fingerprint of the input. A group with the same fingerprint as before keeps its records, and the diff does not read them.
 _Avoid_: Batch, partition (elt uses partition for its own concept)

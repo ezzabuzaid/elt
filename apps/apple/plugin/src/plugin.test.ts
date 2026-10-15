@@ -833,6 +833,7 @@ test('the sidebar page describes each connector’s import and switches one conn
       notes: true,
       messages: false,
       contacts: false,
+      instagram: false,
       calendar: false,
       reminders: false,
       safari: false,

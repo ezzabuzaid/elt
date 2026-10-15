@@ -218,6 +218,142 @@ test('a record outside the lookback window leaves the snapshot and is never dele
   assert.deepEqual(second.deleted, []);
 });
 
+test('a part that continues a scan judges no vanished key, so a record the scan has not reached yet keeps its key', async () => {
+  const policy = new ClosedWorld();
+  const loaded = await changes(
+    items(policy).diff(
+      [
+        { id: 'a', value: '1' },
+        { id: 'b', value: '1' },
+        { id: 'c', value: '1' },
+      ],
+      null,
+    ),
+  );
+
+  const part = await changes(
+    items(policy).diff([{ id: 'a', value: '1' }], loaded.state, {
+      continues: true,
+    }),
+  );
+
+  assert.deepEqual(part.deleted, []);
+  assert.deepEqual(Object.keys(part.state.snapshot), [
+    '["a"]',
+    '["b"]',
+    '["c"]',
+  ]);
+});
+
+test('the part that ends a scan deletes only the keys that no part listed', async () => {
+  const policy = new ClosedWorld();
+  const loaded = await changes(
+    items(policy).diff(
+      [
+        { id: 'a', value: '1' },
+        { id: 'b', value: '1' },
+        { id: 'c', value: '1' },
+      ],
+      null,
+    ),
+  );
+  const first = await changes(
+    items(policy).diff([{ id: 'a', value: '1' }], loaded.state, {
+      continues: true,
+    }),
+  );
+
+  const last = await changes(
+    items(policy).diff([{ id: 'b', value: '1' }], first.state),
+  );
+
+  assert.deepEqual(last.deleted, ['c']);
+  assert.deepEqual(last.state, {
+    snapshot: {
+      '["a"]': loaded.state.snapshot['["a"]'],
+      '["b"]': loaded.state.snapshot['["b"]'],
+    },
+  });
+});
+
+test('a changed record upserts in the part that lists it, before its scan ends', async () => {
+  const policy = new ClosedWorld();
+  const loaded = await changes(
+    items(policy).diff(
+      [
+        { id: 'a', value: '1' },
+        { id: 'b', value: '1' },
+      ],
+      null,
+    ),
+  );
+
+  const part = await changes(
+    items(policy).diff([{ id: 'a', value: '2' }], loaded.state, {
+      continues: true,
+    }),
+  );
+  const last = await changes(
+    items(policy).diff([{ id: 'b', value: '1' }], part.state),
+  );
+
+  assert.deepEqual(part.upserted, ['a']);
+  assert.deepEqual(last.upserted, []);
+  assert.deepEqual(last.deleted, []);
+});
+
+test('two parts of one scan may list the same key, and one part may not list it twice', async () => {
+  const policy = new ClosedWorld();
+  const first = await changes(
+    items(policy).diff([{ id: 'a', value: '1' }], null, { continues: true }),
+  );
+
+  const overlap = await changes(
+    items(policy).diff([{ id: 'a', value: '1' }], first.state),
+  );
+
+  assert.deepEqual(overlap.upserted, []);
+  assert.deepEqual(Object.keys(overlap.state.snapshot), ['["a"]']);
+  await assert.rejects(
+    Array.fromAsync(
+      items(policy).diff(
+        [
+          { id: 'a', value: '1' },
+          { id: 'a', value: '1' },
+        ],
+        first.state,
+        { continues: true },
+      ),
+    ),
+    /Snapshot items returned id a twice in one scan/,
+  );
+});
+
+test('a new scan judges again a key the previous scan listed', async () => {
+  const policy = new ClosedWorld();
+  const first = await changes(
+    items(policy).diff(
+      [
+        { id: 'a', value: '1' },
+        { id: 'b', value: '1' },
+      ],
+      null,
+      { continues: true },
+    ),
+  );
+  const ended = await changes(items(policy).diff([], first.state));
+
+  const next = await changes(
+    items(policy).diff([{ id: 'b', value: '1' }], ended.state, {
+      continues: true,
+    }),
+  );
+  const nextEnded = await changes(items(policy).diff([], next.state));
+
+  assert.deepEqual(ended.deleted, []);
+  assert.deepEqual(nextEnded.deleted, ['a']);
+});
+
 test('a grouped scan keeps an unchanged group unread, follows a record that moves between groups, and keeps unknown keys after their group vanishes', async () => {
   const everything = new Coverage(() => true);
   const unread: SnapshotGroup<Item> = {
@@ -271,6 +407,148 @@ test('a grouped scan keeps an unchanged group unread, follows a record that move
   assert.equal(covered.state.unknown, undefined);
 });
 
+test('a grouped scan in parts keeps the groups it has not reached and, at its last part, deletes the records of the groups no part listed', async () => {
+  const policy = new ClosedWorld();
+  const loaded = await changes(
+    items(policy).diffGroups(
+      [
+        group('one', 'v1', [{ id: 'a', value: '1' }]),
+        group('two', 'v1', [{ id: 'b', value: '1' }]),
+        group('three', 'v1', [{ id: 'c', value: '1' }]),
+      ],
+      null,
+    ),
+  );
+
+  const first = await changes(
+    items(policy).diffGroups(
+      [group('one', 'v2', [{ id: 'a', value: '2' }])],
+      loaded.state,
+      { continues: true },
+    ),
+  );
+  const last = await changes(
+    items(policy).diffGroups(
+      [group('two', 'v1', [{ id: 'b', value: '1' }])],
+      first.state,
+    ),
+  );
+
+  assert.deepEqual(first.upserted, ['a']);
+  assert.deepEqual(first.deleted, []);
+  assert.deepEqual(last.deleted, ['c']);
+  assert.deepEqual(Object.keys(last.state.groups), ['one', 'two']);
+});
+
+test('a record that vanishes from a group a continuing part reads again is deleted when the scan ends', async () => {
+  const policy = new ClosedWorld();
+  const loaded = await changes(
+    items(policy).diffGroups(
+      [
+        group('one', 'v1', [
+          { id: 'a', value: '1' },
+          { id: 'b', value: '1' },
+        ]),
+        group('two', 'v1', [{ id: 'c', value: '1' }]),
+      ],
+      null,
+    ),
+  );
+
+  const first = await changes(
+    items(policy).diffGroups(
+      [group('one', 'v2', [{ id: 'a', value: '1' }])],
+      loaded.state,
+      { continues: true },
+    ),
+  );
+  const last = await changes(
+    items(policy).diffGroups([group('two', 'v1', [])], first.state),
+  );
+
+  assert.deepEqual(first.deleted, []);
+  assert.deepEqual(last.deleted, ['b']);
+});
+
+test('a key judged unknown stays through a continuing part, and the part that ends the scan judges it again', async () => {
+  const loaded = await changes(
+    items(new Coverage(() => false)).diffGroups(
+      [
+        group('one', 'v1', [{ id: 'a', value: '1' }]),
+        group('two', 'v1', [{ id: 'b', value: '1' }]),
+      ],
+      null,
+    ),
+  );
+  // b vanishes where the scan cannot tell: unknown.
+  const uncovered = await changes(
+    items(new Coverage(() => false)).diffGroups(
+      [group('one', 'v1', [])],
+      loaded.state,
+    ),
+  );
+
+  const part = await changes(
+    items(new Coverage(() => true)).diffGroups(
+      [group('one', 'v1', [])],
+      uncovered.state,
+      { continues: true },
+    ),
+  );
+  const last = await changes(
+    items(new Coverage(() => true)).diffGroups(
+      [group('one', 'v1', [])],
+      part.state,
+    ),
+  );
+
+  assert.deepEqual(Object.keys(uncovered.state.unknown ?? {}), ['["b"]']);
+  assert.deepEqual(part.deleted, []);
+  assert.deepEqual(last.deleted, ['b']);
+});
+
+test('a record that moves into a group a later part lists is judged with that group, not with the group an earlier part listed', async () => {
+  const policy = new ClosedWorld();
+  const loaded = await changes(
+    items(policy).diffGroups(
+      [
+        group('one', 'v1', [{ id: 'a', value: '1' }]),
+        group('two', 'v1', [{ id: 'b', value: '1' }]),
+      ],
+      null,
+    ),
+  );
+  const first = await changes(
+    items(policy).diffGroups([group('two', 'v1', [])], loaded.state, {
+      continues: true,
+    }),
+  );
+  // b moved from two into one.
+  const moved = await changes(
+    items(policy).diffGroups(
+      [
+        group('one', 'v2', [
+          { id: 'a', value: '1' },
+          { id: 'b', value: '1' },
+        ]),
+      ],
+      first.state,
+    ),
+  );
+
+  // b leaves one; two, unchanged and unread, must not still vouch for it.
+  const removed = await changes(
+    items(policy).diffGroups(
+      [group('one', 'v3', [{ id: 'a', value: '1' }]), group('two', 'v1', [])],
+      moved.state,
+    ),
+  );
+
+  assert.deepEqual(moved.upserted, []);
+  assert.deepEqual(moved.deleted, []);
+  assert.deepEqual(removed.deleted, ['b']);
+});
+
 test('a scan that lists a key or a group twice, holds a record JSON cannot hold, or reads foreign state fails', async () => {
   const policy = new ClosedWorld();
   const loose = new SnapshotDifferential<Record<string, unknown>>({
@@ -304,6 +582,10 @@ test('a scan that lists a key or a group twice, holds a record JSON cannot hold,
     ],
     [
       items(policy).diff([], { snapshot: { '["a"]': 1 } }),
+      /Snapshot items state is not a saved snapshot/,
+    ],
+    [
+      items(policy).diff([], { snapshot: {}, listed: [1] }),
       /Snapshot items state is not a saved snapshot/,
     ],
   ];

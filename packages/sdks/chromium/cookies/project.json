@@ -1,0 +1,13 @@
+{
+  "name": "sdk-chromium-cookies",
+  "sourceRoot": "packages/sdks/chromium/cookies/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/chromium/cookies/dist/*.test.js\""
+    }
+  }
+}

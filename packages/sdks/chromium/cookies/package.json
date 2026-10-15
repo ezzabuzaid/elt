@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/sdk-chromium-cookies",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./test": {
+      "types": "./dist/test/scratch-mac.d.ts",
+      "default": "./dist/test/scratch-mac.js"
+    }
+  }
+}

@@ -298,6 +298,25 @@ yield *
 - **Who decides:** the source sets where its next read starts, from its own checkpoint, so `rereads` and that start come from the same value. Keeping fewer records than the next read covers leaves rows it stopped returning; keeping more deletes rows it never asked for.
 - **Precedent:** Airbyte's Search Console source reads only final data and states that its ["syncs do not delete rows"](https://github.com/airbytehq/airbyte/blob/4bc984c55bafae1fdf1f09d9dcc62fbea0a98241/docs/integrations/sources/google-search-console.md#L246-L247); Fivetran re-syncs a seven-day rollback window without capturing deletes. [dlt's `delete-insert`](https://github.com/dlt-hub/dlt/blob/5084786a456038fab4b4e05f50492a718430d0a6/docs/website/docs/general-usage/merge-loading.md#L22-L29) with a merge key replaces each day a load brings at the destination, but a day that comes back empty brings no merge key and keeps its rows.
 
+#### Scans in parts
+
+Some upstreams cannot list everything in one run: an API that pages slowly and answers a client that reads too much with "Please wait a few minutes", as Instagram does. A profile of 3,479 posts is 106 pages, and a run reads 10. The source lists each page as one part of a scan that later runs go on with, and the diff deletes only when the scan ends:
+
+```ts
+for await (const page of profile.pages(after)) {
+  yield *
+    diffSnapshot(stream, page.posts, state.diff, {
+      policy: new ClosedWorld(),
+      continues: page.hasNext, // more parts follow: delete nothing yet
+    });
+}
+```
+
+- **What a reader sees:** a new or changed record loads with the part that lists it. A record no part of the scan listed is deleted when the part that ends the scan commits. Until then, every row stays.
+- **State:** while a scan is open, the snapshot also keeps the keys its parts listed (`listed`). A part is a commit: a run that fails keeps the parts before it, and the next run goes on after them.
+- **Lag:** a record deleted after a part listed it is deleted when the next scan ends. Two parts may list one key; one part may not list it twice.
+- **Precedent:** Airbyte's resumable full refresh keeps its page token only between the attempts of one job, and its truncate refresh keeps every row hidden until the sync ends; neither lets one scan go on through syncs that succeed. See [ADR 0002](../packages/snapshot-differential/docs/adr/0002-a-scan-can-be-listed-in-parts.md).
+
 #### Forgetting upstreams
 
 Some upstreams drop records for reasons they do not record, so nothing tells a deletion apart from the rest. Notification Center deletes a notification when its app withdraws it, the user clears it, a newer one replaces it or it expires, all with the same `DELETE`. A stream over such an upstream leaves out `emitsDeletes`: the diff then never emits a `DELETE`, and every row it loaded stays.
@@ -2357,6 +2376,92 @@ Checked on 2026-10-12 against WhatsApp for Mac 26.38.74 (model `WhatsAppChat_2.1
 - `disappearing-mode` holds each account's default timer, not a chat's: 3,832 LIDs against 908 chats, durations 0, 86,400, 604,800 and 7,776,000 only.
 
 Not read, with what they held here: `Labels.sqlite` (business labels and lists, empty), `Location.sqlite` (live location, empty), `ZWAZ1PAYMENTTRANSACTION` (payments, which WhatsApp offers in few countries, empty), `ZWACHATPROPERTIES` and `ZWAVCARDMENTION` (empty), joinable and upcoming calls (empty), the app-state sync log (`AppState`), the message queues (`MessagingInfraDB_v2`), the search indexes (`fts`, `channels-fts`), per-sender status counts (`status_info`), and the preferences in `Library/Preferences/group.net.whatsapp.WhatsApp.shared.plist`, such as whether read receipts are off. Per-chat disappearing timers were not found in any store.
+
+## Instagram
+
+```ts
+import { Connection, Copy, Pipeline } from '@workspace/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+} from '@workspace/elt-sqlite';
+import { InstagramWebSource } from '@workspace/source-instagram-web/instagram-web-source';
+
+// No profile ids: every account the browser's Instagram account follows.
+const source = await InstagramWebSource.connect({
+  profileIds: ['44555906095'],
+});
+const destination = new SQLiteDestination({
+  path: './outputs/instagram.sqlite',
+});
+
+await history.install([destination]);
+await new Pipeline({
+  history,
+  connections: [
+    new Connection({
+      name: 'instagram',
+      source,
+      destination,
+      checkpoints: new SQLiteCheckpointStore({
+        path: './outputs/instagram-state.sqlite',
+      }),
+      steps: [source.profiles, source.posts, source.comments].map(
+        (stream) =>
+          new Copy(stream, destination.table(stream.name), {
+            id: stream.name,
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+          }),
+      ),
+    }),
+  ],
+}).run();
+```
+
+Instagram has no Mac app: Meta keeps its iPhone and iPad app off Apple silicon Macs (`isIOSBinaryMacOSCompatible: false`), and no browser keeps its posts on disk. The source reads instagram.com through the web client's own API, signed in with the session of the browser profile that signed in to Instagram last. `@workspace/sdk-chromium-cookies` finds that profile among Dia, Google Chrome, Arc, Microsoft Edge and Brave, opens its `Cookies` database read-only through SQLite's locks, and decrypts the instagram.com cookies with the key from the browser's "Safe Storage" item in the login keychain, through `/usr/bin/security`. macOS asks once; Always Allow keeps later runs silent, and lets any process that runs `security` read that key. `@workspace/sdk-instagram-web` reads the page's `fb_dtsg` and `lsd` tokens, then sends the persisted GraphQL queries and REST calls the web client sends, with its headers. `npx nx run apple-cli:start -- sync --connector instagram` loads every stream into the import's `data.sqlite`.
+
+| Stream            | Primary key                         | Each record                                                                                                                                      |
+| ----------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `following`       | `id`                                | An account the signed-in account follows: the profiles setup offers. Not partitioned.                                                            |
+| `profiles`        | `profileId`                         | A profile as its page shows it now, with its counts and business address.                                                                        |
+| `posts`           | `profileId`, `id`                   | A post on the grid, a reel shared to the grid among them, with its caption, date, counts, pinned flag, coauthors and tags.                       |
+| `reels`           | `profileId`, `id`                   | A reel on the reels tab, with its plays. The tab names no date and no caption: join `id` to `posts`.                                             |
+| `reposts`         | `profileId`, `id`                   | Another account's post the profile reposted. No date.                                                                                            |
+| `tagged_posts`    | `profileId`, `id`                   | Another account's post that tags the profile. No date.                                                                                           |
+| `media`           | `profileId`, `list`, `postId`, `id` | One image or video of a post of the four lists, a carousel's slides one each, with its file: a photo's largest rendition, a video's cover frame. |
+| `comments`        | `profileId`, `postId`, `id`         | A comment or reply on a grid post, with `parentId` for a reply.                                                                                  |
+| `stories`         | `profileId`, `id`                   | A story with its image; `expiresAt` is a day after it was posted.                                                                                |
+| `highlights`      | `profileId`, `id`                   | A highlight on the profile's page.                                                                                                               |
+| `highlight_items` | `profileId`, `highlightId`, `id`    | A story in a highlight, with its image.                                                                                                          |
+
+Every stream but `following` is partitioned by `profileId`. `AttachmentText` reads the text of every stored file into `attachment_text`, so a timetable posted as images is found with `SELECT p.url, t.content FROM media m JOIN posts p ON p.id = m."postId" JOIN attachment_text t ON t.ref = m."attachmentRef" WHERE t.content LIKE '%BodyPump%'`.
+
+### How a run reads Instagram
+
+- **A list is scanned in parts.** A run asks for at most 10 pages of one list of one profile, 33 posts or 12 reels, reposts or tagged posts a page; streams that read the same list share the pages a run has. A run first reads the list from the top down to the newest item the last run found, behind any pinned items, so a new post loads at the next run, then goes on with the scan. Each page is a [part](#scans-in-parts): the part that reaches the list's end deletes what no part listed. The media stream's scan walks all four lists and ends when each has.
+- **Snapshots:** `following`, `profiles`, `stories`, `highlights` and `highlight_items` are read whole each run. A story Instagram stopped showing keeps its row (`expiresBy`); one the profile deleted earlier is deleted.
+- **Comments** are read with the grid's pages. A post's comments are read again when its comment count changes, and once in every scan, so likes stay current; a post with no comments costs no request.
+- **Files:** only new and changed records are downloaded, from Instagram's CDN, whose signed URLs expire within days; no record keeps a URL.
+- **When:** Instagram tells no client that a profile posted, so a watch reads again every hour. A long profile is complete after several runs: @propertyplus.jo, 3,479 posts, takes 11.
+- **Date range:** a selection's range narrows posts, their media and comments, stories and highlight items; the grid's walk stops at the first unpinned post older than the range. Reels, reposts and tagged posts name no date and are not narrowed.
+- **Failures:** a redirect to Instagram's login page, or a web page where JSON was asked for, is a lost login (`InstagramLoginError`, `config`). A 429, or a 401 that says "Please wait a few minutes", is a rate limit (`InstagramRateLimitError`, `system`): the run stops at once, and the next one goes on after the last committed page. A refused query or an answer without a field the SDK reads names the query (`InstagramQueryError`). No browser session, or a Safe Storage item the keychain does not give, is the user's to fix (`BrowserSessionNotFoundError`, `SafeStorageUnavailableError`). A page cursor Instagram gives twice fails the profile's read instead of looping.
+
+### Instagram's web API
+
+Each GraphQL query is persisted: the client sends its name, a `doc_id`, and Relay provider variables the server requires. Instagram rotates the ids: on 2026-10-14 the grid's query was `28142289515441884`, then `39229011733413759`, and the server answered both. An unknown id answers "Exception was thrown during the execution of a query", which the SDK reports as an `InstagramQueryError` naming the query. The REST feed (`/api/v1/feed/user/<id>/`) and `web_profile_info` no longer serve a web session, and `/web/search/topsearch/` answers 404. Comments, replies and the following list are still REST calls of the web client.
+
+### Instagram limitations
+
+- Videos are not downloaded: `media` keeps the cover frame (backlog #2632).
+- `location` and Instagram's own image descriptions were null on all 66 posts probed, so the source keeps no location; `description` is kept for when Instagram writes one.
+- Comments are read for grid posts only, not for reels kept off the grid, reposts or tagged posts.
+- A deletion shows only when a scan ends: within 11 runs for 3,479 posts.
+- The Keychain item's Always Allow is per browser and lets any `security` caller read the key.
+
+### Instagram live checks
+
+Probed on 2026-10-14 and 2026-10-15 with Dia's session on @hivefitnationgym (552 posts, 15 highlights, 9 live stories) and @propertyplus.jo (3,479 posts): the queries, variables and answers the SDK sends and parses; a 33-post page for `first: 50`; highlights of 100, 81 and 52 stories (100 is Instagram's limit); comments 15 to a page; logged-out answers (a web page, a login redirect, `Incorrect Query`, `SecFetch Policy violation`); and the 401 throttle. The grid query also answered without a session, until this network was throttled. Not yet run: a sync through the CLI with the real session.
 
 ## Google Search Console
 

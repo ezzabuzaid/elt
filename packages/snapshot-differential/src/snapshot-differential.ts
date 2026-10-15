@@ -74,12 +74,22 @@ export class SnapshotDifferential<Data extends Record<string, unknown>> {
   // rereads names the lookback window: a scan the next one repeats only in
   // part, such as days an upstream may still restate. Only records the next
   // scan reads again stay in the snapshot; one left out is never deleted.
+  // continues makes this call one part of a scan that later calls go on
+  // with, for an upstream that cannot list everything at once: the part
+  // judges no vanished key and saves the keys it listed, and the part that
+  // ends the scan judges every saved key that no part listed.
   async *diff(
     records: AsyncIterable<Data> | Iterable<Data>,
     state: unknown,
-    { rereads }: { readonly rereads?: (record: Data) => boolean } = {},
+    {
+      rereads,
+      continues = false,
+    }: {
+      readonly rereads?: (record: Data) => boolean;
+      readonly continues?: boolean;
+    } = {},
   ): AsyncGenerator<SnapshotChange<Data, SnapshotState>> {
-    const previous = readSnapshot(this.name, state);
+    const { snapshot: previous, listed } = readSnapshot(this.name, state);
     const seen = new Set<string>();
     const current = new Map<string, SavedEntry>();
     for await (const record of records) {
@@ -90,7 +100,21 @@ export class SnapshotDifferential<Data extends Record<string, unknown>> {
       if (fingerprintIn(previous.get(key)) !== fingerprint)
         yield { type: 'upsert', record };
     }
-    yield* this.#judge(previous, seen, current);
+    const listedSoFar = new Set([...listed, ...seen]);
+    for (const [key, entry] of previous)
+      if (!seen.has(key) && (continues || listed.has(key)))
+        current.set(key, entry);
+    if (continues) {
+      yield {
+        type: 'state',
+        state: {
+          snapshot: sorted(current),
+          listed: [...listedSoFar].sort(),
+        },
+      };
+      return;
+    }
+    yield* this.#judge(previous, listedSoFar, current);
     yield { type: 'state', state: { snapshot: sorted(current) } };
   }
 
@@ -98,9 +122,11 @@ export class SnapshotDifferential<Data extends Record<string, unknown>> {
   // cheaply. A group whose fingerprint matches the last committed scan keeps
   // its records without reading them; every other group is read and diffed
   // record by record. Vanished keys are judged over the complete scan.
+  // continues makes this call one part of a scan in parts, as for diff.
   async *diffGroups(
     groups: AsyncIterable<SnapshotGroup<Data>> | Iterable<SnapshotGroup<Data>>,
     state: unknown,
+    { continues = false }: { readonly continues?: boolean } = {},
   ): AsyncGenerator<SnapshotChange<Data, GroupedSnapshotState>> {
     const previous = readGroups(this.name, state);
     // Every saved entry by key, so a record that moves between groups or
@@ -141,14 +167,41 @@ export class SnapshotDifferential<Data extends Record<string, unknown>> {
         snapshot: sorted(snapshot),
       });
     }
+    const listedSoFar = new Set([...previous.listed, ...current.keys()]);
+    // A group this call did not list keeps what the scan saw of it while the
+    // scan goes on, or when an earlier part listed it; a record that moved
+    // into a group this call listed leaves it.
+    for (const [key, before] of previous.groups) {
+      if (current.has(key) || !(continues || previous.listed.has(key)))
+        continue;
+      const snapshot = Object.entries(before.snapshot).filter(
+        ([recordKey]) => !seen.has(recordKey),
+      );
+      for (const [recordKey] of snapshot) seen.add(recordKey);
+      current.set(key, {
+        fingerprint: before.fingerprint,
+        snapshot: Object.fromEntries(snapshot),
+      });
+    }
     const unknown = new Map<string, SavedEntry>();
-    yield* this.#judge(saved, seen, unknown);
+    if (continues) {
+      // A key no group holds any more, such as one that vanished from a
+      // group this part read again, waits for the last part's judgment.
+      const grouped = new Set(
+        [...current.values()].flatMap(({ snapshot }) => Object.keys(snapshot)),
+      );
+      for (const [key, entry] of saved)
+        if (!seen.has(key) && !grouped.has(key)) unknown.set(key, entry);
+    } else {
+      yield* this.#judge(saved, seen, unknown);
+    }
     yield {
       type: 'state',
-      state:
-        unknown.size === 0
-          ? { groups: sorted(current) }
-          : { groups: sorted(current), unknown: sorted(unknown) },
+      state: {
+        groups: sorted(current),
+        ...(unknown.size === 0 ? {} : { unknown: sorted(unknown) }),
+        ...(continues ? { listed: [...listedSoFar].sort() } : {}),
+      },
     };
   }
 

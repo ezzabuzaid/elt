@@ -1,0 +1,22 @@
+{
+  "name": "@workspace/connector-apple-instagram",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/instagram-connector.js",
+  "contextCompiler": {
+    "name": "instagram",
+    "title": "Instagram"
+  },
+  "dependencies": {
+    "@workspace/connector-apple-connector": "0.0.1",
+    "@workspace/source-apple-macos": "0.0.1",
+    "@workspace/source-instagram-web": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/elt-sqlite": "0.0.1",
+    "@workspace/sdk-chromium-cookies": "0.0.1",
+    "msw": "^2.15.0"
+  }
+}

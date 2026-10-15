@@ -7,9 +7,11 @@ export type SavedEntry =
   string | readonly [fingerprint: string, expiresBy: string];
 
 // Each key (the JSON of its primary key values) mapped to what the last
-// committed scan saw of it. Keys judged unknown stay here too.
+// committed scan saw of it. Keys judged unknown stay here too. While a scan
+// in parts is open, listed holds the keys its earlier parts listed.
 export type SnapshotState = {
   readonly snapshot: Readonly<Record<string, SavedEntry>>;
+  readonly listed?: readonly string[];
 };
 
 export type SavedGroup = {
@@ -18,31 +20,41 @@ export type SavedGroup = {
 };
 
 // Each group's input fingerprint and the snapshot of the records it produced,
-// and the keys judged unknown, which belong to no group any more.
+// and the keys that belong to no group any more: those judged unknown and,
+// while a scan in parts is open, those waiting for its last part's
+// judgment. listed holds the groups the open scan's earlier parts listed.
 export type GroupedSnapshotState = {
   readonly groups: Readonly<Record<string, SavedGroup>>;
   readonly unknown?: Readonly<Record<string, SavedEntry>>;
+  readonly listed?: readonly string[];
 };
 
-// The previous snapshot, as diff wrote it. null when there is none.
+// The previous snapshot and the keys the open scan's earlier parts listed,
+// as diff wrote them. null when there is none.
 export function readSnapshot(
   name: string,
   state: unknown,
-): Map<string, SavedEntry> {
-  if (state === null) return new Map();
+): { snapshot: Map<string, SavedEntry>; listed: Set<string> } {
+  if (state === null) return { snapshot: new Map(), listed: new Set() };
   if (!isPlainObject(state)) throw invalid(name);
-  return entries(name, state.snapshot);
+  return {
+    snapshot: entries(name, state.snapshot),
+    listed: listedKeys(name, state.listed),
+  };
 }
 
-// The previous groups and unknown keys, as diffGroups wrote them.
+// The previous groups, unknown keys and the groups the open scan's earlier
+// parts listed, as diffGroups wrote them.
 export function readGroups(
   name: string,
   state: unknown,
 ): {
   groups: Map<string, SavedGroup>;
   unknown: Map<string, SavedEntry>;
+  listed: Set<string>;
 } {
-  if (state === null) return { groups: new Map(), unknown: new Map() };
+  if (state === null)
+    return { groups: new Map(), unknown: new Map(), listed: new Set() };
   if (!isPlainObject(state) || !isPlainObject(state.groups))
     throw invalid(name);
   const groups = new Map<string, SavedGroup>();
@@ -61,6 +73,7 @@ export function readGroups(
     groups,
     unknown:
       state.unknown === undefined ? new Map() : entries(name, state.unknown),
+    listed: listedKeys(name, state.listed),
   };
 }
 
@@ -92,6 +105,13 @@ function entries(name: string, snapshot: unknown): Map<string, SavedEntry> {
     saved.set(key, entry);
   }
   return saved;
+}
+
+function listedKeys(name: string, listed: unknown): Set<string> {
+  if (listed === undefined) return new Set();
+  if (!Array.isArray(listed) || !listed.every((key) => typeof key === 'string'))
+    throw invalid(name);
+  return new Set(listed);
 }
 
 function isSavedEntry(value: unknown): value is SavedEntry {

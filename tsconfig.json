@@ -238,6 +238,18 @@
     },
     {
       "path": "./packages/snapshot-differential"
+    },
+    {
+      "path": "./packages/sdks/chromium/cookies"
+    },
+    {
+      "path": "./packages/sdks/instagram/web"
+    },
+    {
+      "path": "./packages/sources/instagram/web"
+    },
+    {
+      "path": "./packages/connectors/apple/instagram"
     }
   ]
 }

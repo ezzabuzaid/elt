@@ -118,11 +118,33 @@ differential.diff(days, saved, {
 });
 ```
 
+## A scan in parts deletes only at its last part
+
+Some upstreams cannot list all their records in one call: an API that pages slowly and stops a client that reads too much. Give `diff` or `diffGroups` the option `continues: true` for each call that lists one part of the scan, and leave it out for the call that lists the last part:
+
+```ts
+for await (const page of profile.pages(after)) {
+  for await (const change of differential.diff(page.posts, saved, {
+    continues: page.hasNext,
+  })) {
+    // …
+  }
+}
+```
+
+- A part yields an upsert for each new or changed record that it lists. It does not wait for the last part.
+- A part that continues the scan judges no vanished key. Its snapshot keeps every key, and the keys that the open scan listed so far.
+- The last part judges each saved key that no part of the scan listed.
+- In `diffGroups`, a record that leaves a group that a part reads again waits in the snapshot for the last part's judgment.
+- Two parts can list the same key. One part cannot list a key twice.
+- The parts can be in different runs. Save the snapshot after each part, and give it to the next part.
+- The next scan starts with no listed keys.
+
 ## When something fails
 
 Each failure is a `TypeError`, and the diff yields no snapshot:
 
-- The scan lists one key twice: `Snapshot <name> returned <key> twice in one scan`.
+- One call lists one key twice: `Snapshot <name> returned <key> twice in one scan`. In a scan in parts, this applies to each part.
 - `diffGroups` gets one group key twice: `Snapshot <name> returned group <key> twice in one scan`.
 - A record has a value that JSON cannot hold without a change, such as `undefined` or a `Date`.
 - A record has no timestamp in its `expiresBy` field, in the format of `Date#toISOString`.
@@ -139,6 +161,7 @@ Each failure is a `TypeError`, and the diff yields no snapshot:
 | `unknown`, `Coverage`    | The open-world assumption                                                                                                        |
 | `expired`, `Retention`   | Cassandra's TTL; Kafka's `retention.ms`                                                                                          |
 | `rereads`                | The lookback of dbt incremental models; the re-sync window of Fivetran                                                           |
+| `continues`              | The incremental marking of a mark-and-sweep garbage collector: each part marks, and the last part sweeps                         |
 | Groups and fingerprints  | The up-to-date checks of Make and Bazel                                                                                          |
 
 Airbyte has no equivalent. Outside change data capture, it deletes only when it replaces a complete stream, and its state decides what to read again, never what to delete.
@@ -146,6 +169,7 @@ Airbyte has no equivalent. Outside change data capture, it deletes only when it 
 ## Documentation
 
 - [ADR 0001: A vanished key is judged by a deletion policy](./docs/adr/0001-a-vanished-key-is-judged-by-a-deletion-policy.md)
+- [ADR 0002: A scan can be listed in parts](./docs/adr/0002-a-scan-can-be-listed-in-parts.md)
 
 ## Development
 

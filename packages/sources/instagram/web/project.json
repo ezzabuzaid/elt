@@ -1,0 +1,13 @@
+{
+  "name": "source-instagram-web",
+  "sourceRoot": "packages/sources/instagram/web/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/instagram/web/dist/*.test.js\""
+    }
+  }
+}

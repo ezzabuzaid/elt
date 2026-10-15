@@ -35,6 +35,9 @@
       "path": "../../../packages/connectors/apple/teams"
     },
     {
+      "path": "../../../packages/connectors/apple/instagram"
+    },
+    {
       "path": "../../../packages/connectors/apple/slack"
     },
     {

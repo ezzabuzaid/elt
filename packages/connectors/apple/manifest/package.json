@@ -21,6 +21,7 @@
     "@workspace/connector-apple-calendar": "0.0.1",
     "@workspace/connector-apple-call-history": "0.0.1",
     "@workspace/connector-apple-contacts": "0.0.1",
+    "@workspace/connector-apple-instagram": "0.0.1",
     "@workspace/connector-apple-mail": "0.0.1",
     "@workspace/connector-apple-messages": "0.0.1",
     "@workspace/connector-apple-notes": "0.0.1",

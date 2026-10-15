@@ -30,6 +30,7 @@ test('every connector folder loads as its connector for the host, and one that c
     'call-history',
     'clock',
     'contacts',
+    'instagram',
     'mail',
     'messages',
     'notes',
@@ -66,6 +67,12 @@ test('every connector folder loads as its connector for the host, and one that c
   assert.equal(
     teams?.guidance(),
     'Turn on Terminal in System Settings › Privacy & Security › Full Disk Access, then quit and reopen Terminal. macOS does not ask for this access. Open Microsoft Teams, sign in and let it run: it saves what it loads as you use it, and only what it has loaded on this Mac is imported.',
+  );
+  const instagram = connectors.find(({ name }) => name === 'instagram');
+  assert.equal(instagram?.title, 'Instagram');
+  assert.equal(
+    instagram?.guidance(),
+    'Sign in to Instagram in Dia, Google Chrome, Arc, Microsoft Edge or Brave. When macOS asks whether security may use the browser’s Safe Storage key, click Always Allow.',
   );
   const wallet = connectors.find(({ name }) => name === 'wallet');
   assert.equal(wallet?.title, 'Wallet');

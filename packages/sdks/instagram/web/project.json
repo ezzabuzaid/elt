@@ -1,0 +1,13 @@
+{
+  "name": "sdk-instagram-web",
+  "sourceRoot": "packages/sdks/instagram/web/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/instagram/web/dist/*.test.js\""
+    }
+  }
+}

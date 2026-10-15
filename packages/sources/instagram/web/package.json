@@ -1,0 +1,22 @@
+{
+  "name": "@workspace/source-instagram-web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./instagram-web-source": {
+      "types": "./dist/instagram-web-source.d.ts",
+      "default": "./dist/instagram-web-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/sdk-chromium-cookies": "0.0.1",
+    "@workspace/sdk-instagram-web": "0.0.1",
+    "@workspace/snapshot-differential": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-sqlite": "0.0.1",
+    "msw": "^2.15.0"
+  }
+}

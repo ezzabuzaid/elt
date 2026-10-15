@@ -16,6 +16,10 @@ export type SnapshotDiffOptions = {
   // upstream that drops records past an age, or Coverage for a cache. A
   // stream that does not takes none.
   readonly policy?: DeletionPolicy;
+  // This call lists one part of a scan that later calls go on with: it
+  // deletes nothing, and the part that ends the scan deletes every key that
+  // no part listed, for an upstream too large to list in one run.
+  readonly continues?: boolean;
 };
 
 type SnapshotMessage<Data> =
@@ -27,7 +31,7 @@ type SnapshotMessage<Data> =
 // scan with the previous snapshot, emit new or changed records, a DELETE for
 // every vanished key the policy judges deleted, then the new snapshot as the
 // only STATE. rereads names the lookback window of a scan the next one
-// repeats only in part.
+// repeats only in part; continues makes the call one part of a scan.
 export async function* diffSnapshot<Data extends Record<string, unknown>>(
   stream: Stream,
   records: AsyncIterable<Data> | Iterable<Data>,
@@ -53,7 +57,7 @@ export async function* diffGroupedSnapshot<
   options: SnapshotDiffOptions = {},
 ): AsyncGenerator<SnapshotMessage<Data>> {
   const differential = differentialOf<Data>(stream, options);
-  for await (const change of differential.diffGroups(groups, state))
+  for await (const change of differential.diffGroups(groups, state, options))
     yield messageOf(stream, change);
 }
 

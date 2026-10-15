@@ -12,6 +12,7 @@
     "@workspace/connector-apple-clock": "0.0.1",
     "@workspace/connector-apple-connector": "0.0.1",
     "@workspace/connector-apple-contacts": "0.0.1",
+    "@workspace/connector-apple-instagram": "0.0.1",
     "@workspace/connector-apple-mail": "0.0.1",
     "@workspace/connector-apple-manifest": "0.0.1",
     "@workspace/connector-apple-messages": "0.0.1",
