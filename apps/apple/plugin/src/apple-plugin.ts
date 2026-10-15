@@ -241,22 +241,11 @@ export class ApplePlugin {
     using settings = this.#open();
     const stored = settings.selections();
     const imported = new Set(stored.map((item) => settings.directory(item)));
-    settings.select(
-      requested.connectors.map((item) => {
-        const connector = this.#loaded(item.connector);
-        return connector === undefined
-          ? item
-          : {
-              ...item,
-              scope: { ...connector.defaultScope(), ...item.scope },
-            };
-      }),
-      {
-        facts: (name) =>
-          this.#loaded(name) ?? unchanged(name, stored, requested.connectors),
-        permissions: ({ connector }) => this.#permissions(connector),
-      },
-    );
+    settings.select(requested.connectors, {
+      facts: (name) =>
+        this.#loaded(name) ?? unchanged(name, stored, requested.connectors),
+      permissions: ({ connector }) => this.#permissions(connector),
+    });
     await using flights = this.flights();
     await this.#removeStale(settings, flights);
     return settings
@@ -293,14 +282,11 @@ export class ApplePlugin {
 
   async options(name: string) {
     const connector = this.connector(name);
-    const defaultScope = connector.defaultScope();
     return {
       connector: name,
       choices: Object.fromEntries(await connector.choiceRows()),
       permissions: connector.guidance(),
       datedBy: connector.datedBy,
-      defaultScope:
-        Object.keys(defaultScope).length > 0 ? defaultScope : undefined,
       note: connector.note,
     };
   }

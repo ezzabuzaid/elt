@@ -17,7 +17,8 @@ import {
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 export default class CalendarConnector extends AppleConnector {
-  readonly datedBy = 'event dates (events that overlap the range)';
+  readonly datedBy =
+    'event dates (events that overlap the range; with none, every event from 2000 until a year after each import)';
   readonly fullDiskAccess = false;
   protected readonly choices: readonly Choice[] = [
     accounts(name),

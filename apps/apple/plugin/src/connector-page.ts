@@ -180,10 +180,7 @@ export async function connectorChoices(
       ({ scope, title, options }) => ({ scope, title, options }),
     ),
     datedBy: connector.datedBy,
-    defaultSelection: {
-      ...connectorSelectionSchema.parse({}),
-      scope: connector.defaultScope(),
-    },
+    defaultSelection: connectorSelectionSchema.parse({}),
     note: connector.note,
   };
 }

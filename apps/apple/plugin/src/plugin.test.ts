@@ -16,7 +16,11 @@ import { type Selection, importDirectory } from '@workspace/settings';
 
 import { ApplePlugin } from './apple-plugin.ts';
 import { chatStatus } from './chat-status.ts';
-import { connectorRows, updateConnector } from './connector-page.ts';
+import {
+  connectorChoices,
+  connectorRows,
+  updateConnector,
+} from './connector-page.ts';
 
 // The committed plugin, as Codex installs it.
 const install = resolve('plugins/apple');
@@ -101,7 +105,7 @@ async function passes(plugin: ApplePlugin, item: Selection) {
   };
 }
 
-test('Apple setup rejects invalid choices and fills the Calendar default range', async () => {
+test('Apple setup rejects invalid choices and keeps a Calendar scope as given, so each import reads the default window when it runs', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
   );
@@ -151,14 +155,39 @@ test('Apple setup rejects invalid choices and fills the Calendar default range',
       message,
     );
   assert.deepEqual(plugin.status().connectors, []);
+  const since = { startAt: '2025-01-01T00:00:00.000Z' };
   const [calendar] = await plugin.configure({
     connectors: [
       { connector: 'calendar', scope: {}, includeAttachments: true },
     ],
   });
-  assert.ok(calendar?.scope.startAt);
-  assert.ok(calendar.scope.endAt);
-  assert.ok(calendar.scope.startAt < calendar.scope.endAt);
+  assert.deepEqual(calendar?.scope, {});
+  const [started] = await plugin.configure({
+    connectors: [
+      { connector: 'calendar', scope: since, includeAttachments: true },
+    ],
+  });
+  assert.deepEqual(started?.scope, since);
+
+  // An import reads its window when it runs: two built a moment apart end a
+  // moment apart, each a year after it runs.
+  const windows = async () => {
+    const { connection } = await plugin
+      .connector('calendar')
+      .connection(importDirectory(plugin.directory, calendar), calendar);
+    return connection.steps
+      .map((copy) => connection.source.coverage(copy.from).selection)
+      .filter((selection) => 'endAt' in selection);
+  };
+  const yearAhead = new Date();
+  yearAhead.setUTCFullYear(yearAhead.getUTCFullYear() + 1);
+  const [first] = await windows();
+  await sleep(5);
+  const [later] = await windows();
+  assert.ok(first && later);
+  assert.equal(first.startAt, '2000-01-01T00:00:00.000Z');
+  assert.ok(Date.parse(String(first.endAt)) >= yearAhead.getTime());
+  assert.ok(Date.parse(String(later.endAt)) > Date.parse(String(first.endAt)));
 });
 
 test('agents read the selected connectors, where each import lives and what macOS access it needs from the settings file with the sqlite3 shell', async () => {
@@ -249,6 +278,69 @@ test('Apple setup imports only what a change adds or changes, keeps an unchanged
   imported(scratch.path, changed);
   assert.deepEqual(await plugin.configure({ connectors: [] }), []);
   assert.deepEqual(readdirSync(join(scratch.path, 'notes')), []);
+});
+
+test('saving Calendar again without dates keeps its import', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = await applePlugin(install, scratch.path);
+  const calendar = {
+    connector: 'calendar' as const,
+    scope: {},
+    includeAttachments: true,
+  };
+  const [first] = await plugin.configure({ connectors: [calendar] });
+  assert.ok(first);
+  const database = imported(scratch.path, first);
+  // Saves happen at different moments.
+  await sleep(5);
+
+  assert.deepEqual(await plugin.configure({ connectors: [calendar] }), []);
+  assert.equal(existsSync(database), true);
+});
+
+test('Calendar options give an agent no dates to copy, and name the default window', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = await applePlugin(install, scratch.path);
+
+  const { choices: _choices, ...options } = await plugin.options('calendar');
+
+  // Choices are this Mac's calendars, whose names may hold any text.
+  assert.doesNotMatch(JSON.stringify(options), /\d{4}-\d\d-\d\dT\d\d:\d\d/);
+  assert.match(String(options.datedBy), /2000/);
+});
+
+test('connecting Calendar on the page saves a scope without dates, so saving it again keeps its import', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'apple-plugin-'),
+  );
+  const plugin = await applePlugin(install, scratch.path);
+  const choices = await connectorChoices(plugin, 'calendar');
+
+  const connected = await updateConnector(
+    plugin,
+    'calendar',
+    choices.defaultSelection,
+  );
+  // Saves happen at different moments.
+  await sleep(5);
+  const again = await updateConnector(
+    plugin,
+    'calendar',
+    choices.defaultSelection,
+  );
+
+  assert.equal(connected.newImports.length, 1);
+  assert.deepEqual(
+    connected.connectors.find(({ name }) => name === 'calendar')?.selection
+      ?.scope,
+    {},
+  );
+  assert.deepEqual(again.newImports, []);
+  assert.match(String(choices.datedBy), /2000/);
 });
 
 test('importing settles when the settings cannot be read, so the server keeps serving its tools', async () => {

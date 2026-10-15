@@ -21,7 +21,7 @@ Say only what the user needs now. Write every reply as the `wait-what` skill tea
 
 ## Set up with forms
 
-1. Call `apple_setup`. It shows the user one form to choose connectors, and a second one only when chosen connectors need Full Disk Access that ChatGPT lacks. Each chosen connector imports all its accounts, folders and dates with attachments (Calendar: from 2000 through next year); a connector narrowed earlier keeps that selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat, and do not ask about accounts, folders or dates unless the user brings them up.
+1. Call `apple_setup`. It shows the user one form to choose connectors, and a second one only when chosen connectors need Full Disk Access that ChatGPT lacks. Each chosen connector imports all its accounts, folders and dates with attachments (Calendar: from 2000 until a year after each import); a connector narrowed earlier keeps that selection. It saves the answers and returns; the import runs in the background. The answers come from the user; do not ask the same questions in chat, and do not ask about accounts, folders or dates unless the user brings them up.
 2. Read its result:
    - `changed: false`: the user cancelled; nothing changed.
    - `unavailable`: connectors that could not be read, each named by its `connector` with its `error`. When one has `permissions`, macOS access is what is missing: give that guidance as steps. Treat these connectors as inaccessible, never as empty.
@@ -39,7 +39,7 @@ If `apple_setup` fails because the host does not support forms, set up in chat i
    - Notes: accounts, containing folders, last modified date. Select child folders separately. Smart folders are saved searches, not containing folders.
    - Messages: chats and message date.
    - Contacts: containers shown by the tool.
-   - Calendar: accounts, calendars and event dates. Default to 2000 through a year from today, as `apple_options` returns in `defaultScope`; show the dates and let the user change them. Only calendars already available on this Mac are included. Remote attachments retain links; Google sign-in is not needed.
+   - Calendar: accounts, calendars and event dates. Without dates, each import reads every event from 2000 until a year after it runs, as `apple_options` says in `datedBy`. Tell the user that default, and pass `startAt` and `endAt` only for a range the user chooses. Only calendars already available on this Mac are included. Remote attachments retain links; Google sign-in is not needed.
    - Reminders: accounts and lists, including completed and undated reminders.
    - Safari: profiles and visit dates. A narrowed Safari import leaves out bookmarks, the Reading List and iCloud Tabs, which belong to no profile. History and tabs from the user's other devices arrive only while Safari is open.
    - Books: everything; it has no accounts, collections or dates to choose. Books kept only in iCloud are listed without their files until the user opens them in Books.
