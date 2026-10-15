@@ -18,9 +18,7 @@ const APP = new GoogleOAuthApp({
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 
 const CREDENTIAL: GoogleOAuthCredential = {
-  accessToken: 'access-token',
   clientId: 'client-id',
-  expiresAt: 1,
   kind: 'GOOGLE_BIGQUERY_OAUTH',
   refreshToken: 'refresh-token',
   scope: 'openid email',
@@ -30,12 +28,11 @@ test('the client over a grant satisfies the requester contract', () => {
   // The annotation is the assertion: this file stops compiling the day
   // `OAuth2Client.request` stops fitting, which is the only way a product
   // module could silently diverge from every stub it is tested with.
-  const client = APP.client(new GoogleGrant(CREDENTIAL));
+  const client = APP.client(new GoogleGrant(CREDENTIAL), ['openid']);
   const requester: GoogleRequester = client;
 
   assert.ok(client instanceof OAuth2Client);
   assert.equal(typeof requester.request, 'function');
-  assert.equal(client.credentials.access_token, 'access-token');
 });
 
 test('accepts the canonical Google email scope', async (t) => {
@@ -78,9 +75,7 @@ test('accepts the canonical Google email scope', async (t) => {
   );
 
   assert.deepEqual(grant.credential, {
-    accessToken: 'access-token',
     clientId: 'client-id',
-    expiresAt: 2_000_000_000_000,
     googleAccountEmail: 'person@example.test',
     googleAccountId: 'google-account-id',
     kind: 'GOOGLE_BIGQUERY_OAUTH',
@@ -135,7 +130,7 @@ test('a grant without a refresh token is refused', async (t) => {
   );
 });
 
-test('revoke hands the refresh token to Google and skips an imported grant', async () => {
+test('revoke hands the refresh token to Google', async () => {
   const revoked: (string | null)[] = [];
   const server = setupServer(
     http.post(REVOKE_URL, ({ request }) => {
@@ -146,15 +141,6 @@ test('revoke hands the refresh token to Google and skips an imported grant', asy
   server.listen({ onUnhandledRequest: 'error' });
   try {
     await APP.revoke(new GoogleGrant(CREDENTIAL));
-    // No request may leave for the imported grant: `onUnhandledRequest` is
-    // not the proof here, the recorded list is.
-    await APP.revoke(
-      new GoogleGrant({
-        ...CREDENTIAL,
-        clientSecret: 'gcloud-secret',
-        externallyManaged: true,
-      }),
-    );
 
     assert.deepEqual(revoked, ['refresh-token']);
   } finally {

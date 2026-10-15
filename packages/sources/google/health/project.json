@@ -1,0 +1,13 @@
+{
+  "name": "source-google-health",
+  "sourceRoot": "packages/sources/google/health/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sources/google/health/dist/*.test.js\""
+    }
+  }
+}

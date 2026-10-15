@@ -3,11 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
 
 import type { GoogleOAuthCredential } from './credential.ts';
-import {
-  GoogleAccountGrant,
-  type GoogleGrant,
-  type GoogleOpenableGrant,
-} from './grant.ts';
+import { GoogleAccountGrant, type GoogleGrant } from './grant.ts';
 import { GOOGLE_IDENTITY_SCOPES } from './scopes.ts';
 
 /**
@@ -106,19 +102,10 @@ export class GoogleOAuthApp {
       codeVerifier: flow.codeVerifier,
       redirect_uri: flow.redirectUri,
     });
-    const accessToken = tokens.access_token;
     const refreshToken = tokens.refresh_token;
-    const expiresAt = tokens.expiry_date;
     const idToken = tokens.id_token;
     const scope = tokens.scope;
-    if (
-      !accessToken ||
-      !refreshToken ||
-      !expiresAt ||
-      !Number.isFinite(expiresAt) ||
-      !idToken ||
-      !scope
-    ) {
+    if (!refreshToken || !idToken || !scope) {
       throw new Error('Google did not return durable authorization.');
     }
     const identity = (
@@ -132,9 +119,7 @@ export class GoogleOAuthApp {
       idToken,
       grant: new GoogleAccountGrant({
         clientId: this.#clientId,
-        accessToken,
         refreshToken,
-        expiresAt,
         googleAccountEmail: identity.email,
         googleAccountId: identity.sub,
         kind: 'GOOGLE_BIGQUERY_OAUTH',
@@ -144,36 +129,57 @@ export class GoogleOAuthApp {
   }
 
   /**
-   * An authenticated client over a grant of any shape; the grant supplies its
-   * own starting credentials and secret. The library refreshes the access
-   * token on its own whenever a request finds it missing or expiring, and
-   * announces every new token through its `tokens` event; `onRefreshed`
-   * receives the updated credential each time so the caller can persist it.
-   * Reading the client's credentials once after an eager refresh would miss
-   * every refresh that happens later in a long-running pull.
+   * An authenticated client over a grant whose access tokens carry only
+   * `scopes`, never the grant's other scopes: an API such as Google Health
+   * refuses a token that also carries Drive, Gmail or Search Console
+   * (`DISALLOWED_OAUTH_SCOPES`). A refresh may name a subset of the granted
+   * scopes (RFC 6749 §6), and the library's refresh request cannot, so the
+   * client holds no refresh token of its own and every refresh, the first
+   * included, runs through `refreshHandler` (google-auth-library
+   * oauth2client.js `getAccessTokenAsync`, `getRequestMetadataAsync`). The
+   * grant keeps every scope it was granted; `onRotated` receives it when
+   * Google issues a new refresh token, so the caller can persist it.
    */
   client(
-    grant: GoogleOpenableGrant,
-    onRefreshed?: (refreshed: GoogleOAuthCredential) => void,
+    grant: GoogleGrant,
+    scopes: readonly string[],
+    onRotated?: (rotated: GoogleOAuthCredential) => void,
   ): OAuth2Client {
-    const { credential } = grant;
+    let { credential } = grant;
     const oauth = new OAuth2Client({
       clientId: credential.clientId,
-      clientSecret: grant.secretOr(this.#clientSecret),
+      clientSecret: this.#clientSecret,
     });
-    oauth.setCredentials(grant.seed());
-    if (onRefreshed) {
-      oauth.on('tokens', (tokens) => {
-        if (!tokens.access_token || !tokens.expiry_date) return;
-        onRefreshed({
-          ...credential,
-          accessToken: tokens.access_token,
-          expiresAt: tokens.expiry_date,
-          refreshToken: tokens.refresh_token ?? credential.refreshToken,
-          scope: tokens.scope ?? credential.scope,
-        });
+    oauth.refreshHandler = async () => {
+      const { data } = await oauth.transporter.request<{
+        readonly access_token: string;
+        readonly expires_in: number;
+        readonly refresh_token?: string;
+      }>({
+        data: new URLSearchParams({
+          client_id: credential.clientId,
+          client_secret: this.#clientSecret,
+          grant_type: 'refresh_token',
+          refresh_token: credential.refreshToken,
+          scope: scopes.join(' '),
+        }),
+        method: 'POST',
+        retry: true,
+        retryConfig: { httpMethodsToRetry: ['POST'] },
+        url: oauth.endpoints.oauth2TokenUrl.toString(),
       });
-    }
+      if (
+        data.refresh_token &&
+        data.refresh_token !== credential.refreshToken
+      ) {
+        credential = { ...credential, refreshToken: data.refresh_token };
+        onRotated?.(credential);
+      }
+      return {
+        access_token: data.access_token,
+        expiry_date: Date.now() + data.expires_in * 1000,
+      };
+    };
     return oauth;
   }
 
@@ -184,10 +190,9 @@ export class GoogleOAuthApp {
   }
 
   async revoke(grant: GoogleGrant): Promise<void> {
-    if (!grant.revocable) return;
     await new OAuth2Client({
       clientId: grant.credential.clientId,
-      clientSecret: grant.secretOr(this.#clientSecret),
+      clientSecret: this.#clientSecret,
     }).revokeToken(grant.credential.refreshToken);
   }
 

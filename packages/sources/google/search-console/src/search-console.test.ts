@@ -68,8 +68,8 @@ async function searchConsoleDatabase() {
 
 type Warehouse = Awaited<ReturnType<typeof searchConsoleDatabase>>;
 
-// A real OAuth client over a grant whose access token is fresh, so it calls
-// the API at once and never the token endpoint.
+// A real OAuth client over a stored grant: its first call mints an access
+// token at the token endpoint the test's server answers.
 function signedIn() {
   return new GoogleOAuthApp({
     clientId: 'client-id',
@@ -78,11 +78,10 @@ function signedIn() {
     new GoogleGrant({
       kind: 'GOOGLE_BIGQUERY_OAUTH',
       clientId: 'client-id',
-      accessToken: 'access-token',
       refreshToken: 'refresh-token',
-      expiresAt: Date.now() + 60 * 60 * 1000,
       scope: 'https://www.googleapis.com/auth/webmasters.readonly',
     }),
+    ['https://www.googleapis.com/auth/webmasters.readonly'],
   );
 }
 
@@ -114,6 +113,9 @@ function google({
     resolve: () => void;
   }>();
   const server = setupServer(
+    http.post('https://oauth2.googleapis.com/token', () =>
+      Response.json({ access_token: 'access-token', expires_in: 3600 }),
+    ),
     http.all<PathParams, Record<string, unknown>>(
       'https://searchconsole.googleapis.com/*',
       async ({ request }) => {
@@ -1816,20 +1818,8 @@ test('a grant Google no longer refreshes is a config failure, asked once', async
     await using warehouse = await searchConsoleDatabase();
     const { destination, checkpoints } = warehouse;
     const source = new SearchConsoleSource({
-      // The access token expired, so the first call refreshes it.
-      requester: new GoogleOAuthApp({
-        clientId: 'client-id',
-        clientSecret: 'client-secret',
-      }).client(
-        new GoogleGrant({
-          kind: 'GOOGLE_BIGQUERY_OAUTH',
-          clientId: 'client-id',
-          accessToken: 'access-token',
-          refreshToken: 'refresh-token',
-          expiresAt: 1,
-          scope: 'https://www.googleapis.com/auth/webmasters.readonly',
-        }),
-      ),
+      // The first call mints an access token, and Google refuses.
+      requester: signedIn(),
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });

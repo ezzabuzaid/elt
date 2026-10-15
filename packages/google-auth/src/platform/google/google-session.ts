@@ -61,13 +61,13 @@ export async function googleSession({
   const current = await consent.current(USER, scopes, {
     differentAccount: false,
   });
-  if (!current) return (await opener.open(await authorize())).client;
+  if (!current) return (await opener.open(await authorize(), scopes)).client;
   try {
-    return (await opener.open(current.ref)).client;
+    return (await opener.open(current.ref, scopes)).client;
   } catch (error) {
     // Revoked consent, an expired refresh token, or a Workspace
     // re-authentication demand: the only remedy is to connect again.
     if (!(error instanceof GoogleGrantRevokedError)) throw error;
-    return (await opener.open(await authorize())).client;
+    return (await opener.open(await authorize(), scopes)).client;
   }
 }

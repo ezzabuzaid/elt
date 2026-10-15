@@ -12,8 +12,8 @@ import {
 
 import { SearchConsoleApi, SearchConsoleQuotaError } from './index.ts';
 
-// A real OAuth client over a grant whose access token is fresh, so it calls
-// the API at once and never the token endpoint.
+// A real OAuth client over a stored grant: its first call mints an access
+// token at the token endpoint the test's server answers.
 function signedIn() {
   return new GoogleOAuthApp({
     clientId: 'client-id',
@@ -22,11 +22,10 @@ function signedIn() {
     new GoogleGrant({
       kind: 'GOOGLE_BIGQUERY_OAUTH',
       clientId: 'client-id',
-      accessToken: 'access-token',
       refreshToken: 'refresh-token',
-      expiresAt: Date.now() + 60 * 60 * 1000,
       scope: 'https://www.googleapis.com/auth/webmasters.readonly',
     }),
+    ['https://www.googleapis.com/auth/webmasters.readonly'],
   );
 }
 
@@ -38,6 +37,9 @@ function signedIn() {
 function google({ reply }: { reply: () => unknown }) {
   const calls: string[] = [];
   const server = setupServer(
+    http.post('https://oauth2.googleapis.com/token', () =>
+      Response.json({ access_token: 'access-token', expires_in: 3600 }),
+    ),
     http.all('https://searchconsole.googleapis.com/*', ({ request }) => {
       calls.push(new URL(request.url).pathname);
       const answer = reply();

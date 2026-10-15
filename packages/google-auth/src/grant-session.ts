@@ -3,10 +3,10 @@ import type { OAuth2Client } from 'google-auth-library';
 import type { GoogleGrant } from './grant.ts';
 
 /**
- * A live client over one grant. `client` satisfies `GoogleRequester` and is
- * what the BigQuery adapter takes; when the session was opened from a store,
- * every token refresh the client performs is written back before the response
- * that triggered it is returned (see `GoogleGrantOpener`).
+ * A live client over one grant, whose tokens carry only the scopes the
+ * session was opened for. `client` satisfies `GoogleRequester`; a refresh
+ * token Google rotates is written back before the response that triggered the
+ * refresh is returned (see `GoogleGrantOpener`).
  */
 export class GoogleGrantSession {
   readonly client: OAuth2Client;

@@ -27,3 +27,23 @@ export const MERCHANT_CENTER_SCOPE = 'https://www.googleapis.com/auth/content';
  * it belongs to. Callers pass data scopes only.
  */
 export const GOOGLE_IDENTITY_SCOPES = ['openid', 'email', 'profile'] as const;
+
+/**
+ * Every Google Health scope that reads data a user can read back. Google
+ * Health refuses a token that also carries another API's restricted scope
+ * (DISALLOWED_OAUTH_SCOPES), so a session asks for these alone. Location is
+ * the GPS route in an exercise's TCX export.
+ */
+export const GOOGLE_HEALTH_SCOPES = [
+  'activity_and_fitness',
+  'ecg',
+  'health_metrics_and_measurements',
+  'irn',
+  'location',
+  'nutrition',
+  'profile',
+  'settings',
+  'sleep',
+].map(
+  (name) => `https://www.googleapis.com/auth/googlehealth.${name}.readonly`,
+);

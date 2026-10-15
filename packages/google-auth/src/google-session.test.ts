@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtempDisposable, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type TestContext, test } from 'node:test';
+import { test } from 'node:test';
 
-import { LoginTicket, OAuth2Client } from 'google-auth-library';
+import { HttpResponse, http, passthrough } from 'msw';
+import { setupServer } from 'msw/node';
 
 import {
+  GMAIL_READONLY_SCOPE,
+  GOOGLE_DRIVE_READONLY_SCOPE,
   GOOGLE_SEARCH_CONSOLE_SCOPE,
   GrantFiles,
   OAuthCallbackTimeoutError,
@@ -74,40 +78,162 @@ test('a listener nobody answers times out and closes', async () => {
   await assert.rejects(fetch(listener.redirectUri));
 });
 
-function answerGoogle(t: TestContext, scope: string | (() => string)): void {
-  t.mock.method(OAuth2Client.prototype, 'getToken', async () => ({
-    res: null,
-    tokens: {
-      access_token: 'fresh',
-      expiry_date: 2_000_000_000_000,
-      id_token: 'id-token',
-      refresh_token: 'refresh',
-      scope: typeof scope === 'string' ? scope : scope(),
-    },
-  }));
-  t.mock.method(
-    OAuth2Client.prototype,
-    'verifyIdToken',
-    async () =>
-      new LoginTicket('id-token', {
-        aud: 'client-id',
+const client = { clientId: 'client-id', clientSecret: 'client-secret' };
+
+const HEALTH_SCOPE =
+  'https://www.googleapis.com/auth/googlehealth.sleep.readonly';
+const HEALTH_URL = 'https://health.googleapis.com/v4/users/me/identity';
+const SITES_URL = 'https://searchconsole.googleapis.com/webmasters/v3/sites';
+const IDENTITY_SCOPES = new Set([
+  'openid',
+  'email',
+  'profile',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
+]);
+
+/**
+ * Google as a session meets it, on the wire: the consent page grants what it
+ * was asked for, the token endpoint mints tokens that name their scopes and
+ * refuses a refresh token it no longer honors, the certs endpoint serves the
+ * key the id token is signed with, and two APIs judge a token by its scopes
+ * the way the real ones do (Health refuses any scope outside its own, captured
+ * live on 2026-10-15).
+ */
+function googleAccount() {
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+  });
+  const google: {
+    granted: string[];
+    honored: string;
+    opened: string[];
+    refusals: number;
+    rotateTo: string | undefined;
+  } = {
+    granted: [],
+    honored: 'refresh-1',
+    opened: [],
+    refusals: 0,
+    rotateTo: undefined,
+  };
+  const encode = (value: object) =>
+    Buffer.from(JSON.stringify(value)).toString('base64url');
+  const idToken = () => {
+    const now = Math.floor(Date.now() / 1000);
+    const signed = `${encode({ alg: 'RS256', kid: 'key-1', typ: 'JWT' })}.${encode(
+      {
+        aud: client.clientId,
         email: 'owner@example.com',
-        exp: 2_000_000_000,
-        iat: 1_900_000_000,
+        exp: now + 3600,
+        iat: now,
         iss: 'https://accounts.google.com',
         sub: 'google-1',
+      },
+    )}`;
+    return `${signed}.${sign('RSA-SHA256', Buffer.from(signed), privateKey).toString('base64url')}`;
+  };
+  const token = (scopes: readonly string[]) =>
+    `scoped.${Buffer.from(scopes.join(' ')).toString('base64url')}`;
+  const scopesOf = (request: Request) =>
+    Buffer.from(
+      String(request.headers.get('authorization')).replace(
+        'Bearer scoped.',
+        '',
+      ),
+      'base64url',
+    )
+      .toString()
+      .split(' ');
+  const server = setupServer(
+    // The redirect reaches the session's real loopback listener.
+    http.get(/^http:\/\/127\.0\.0\.1:\d+\/callback/, () => passthrough()),
+    http.get('https://www.googleapis.com/oauth2/v1/certs', () =>
+      HttpResponse.json({
+        'key-1': publicKey.export({ format: 'pem', type: 'spki' }),
       }),
+    ),
+    http.post('https://oauth2.googleapis.com/token', async ({ request }) => {
+      const body = new URLSearchParams(await request.text());
+      if (body.get('grant_type') === 'authorization_code')
+        return HttpResponse.json({
+          access_token: token(google.granted),
+          expires_in: 3599,
+          id_token: idToken(),
+          refresh_token: google.honored,
+          scope: google.granted.join(' '),
+          token_type: 'Bearer',
+        });
+      if (body.get('refresh_token') !== google.honored || google.refusals-- > 0)
+        return HttpResponse.json(
+          {
+            error: 'invalid_grant',
+            error_description: 'Token has been expired or revoked.',
+          },
+          { status: 400 },
+        );
+      const scopes = body.get('scope')?.split(' ') ?? google.granted;
+      if (!scopes.every((scope) => google.granted.includes(scope)))
+        return HttpResponse.json({ error: 'invalid_scope' }, { status: 400 });
+      const rotated = google.rotateTo;
+      if (rotated) {
+        google.honored = rotated;
+        google.rotateTo = undefined;
+      }
+      return HttpResponse.json({
+        access_token: token(scopes),
+        expires_in: 3599,
+        ...(rotated && { refresh_token: rotated }),
+        scope: scopes.join(' '),
+        token_type: 'Bearer',
+      });
+    }),
+    http.get(HEALTH_URL, ({ request }) => {
+      const disallowed = scopesOf(request).filter(
+        (scope) =>
+          !scope.includes('googlehealth') && !IDENTITY_SCOPES.has(scope),
+      );
+      if (disallowed.length > 0)
+        return HttpResponse.json(
+          {
+            error: {
+              code: 403,
+              details: [
+                {
+                  '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                  domain: 'health.googleapis.com',
+                  metadata: {
+                    disallowed_scopes: disallowed.join(','),
+                    unrecognized_scopes_present: 'false',
+                  },
+                  reason: 'DISALLOWED_OAUTH_SCOPES',
+                },
+              ],
+              message: 'Request contains disallowed OAuth scope(s).',
+              status: 'PERMISSION_DENIED',
+            },
+          },
+          { status: 403 },
+        );
+      return HttpResponse.json({ healthUserId: 'health-1' });
+    }),
+    http.get(SITES_URL, ({ request }) =>
+      scopesOf(request).includes(GOOGLE_SEARCH_CONSOLE_SCOPE)
+        ? HttpResponse.json({ siteEntry: [] })
+        : HttpResponse.json(
+            { error: { code: 403, status: 'PERMISSION_DENIED' } },
+            { status: 403 },
+          ),
+    ),
   );
-}
-
-// Plays the browser: reads where Google would redirect and with which state.
-function browser() {
-  const opened: string[] = [];
+  server.listen({ onUnhandledRequest: 'error' });
   return {
-    opened,
-    async open(url: string) {
-      opened.push(url);
+    google,
+    // Plays the browser: Google grants exactly what the consent page asks.
+    async openBrowser(url: string) {
+      google.opened.push(url);
       const consent = new URL(url);
+      google.granted = String(consent.searchParams.get('scope')).split(' ');
       const redirect = new URL(
         String(consent.searchParams.get('redirect_uri')),
       );
@@ -118,10 +244,31 @@ function browser() {
       );
       await fetch(redirect);
     },
+    [Symbol.dispose]() {
+      server.close();
+    },
   };
 }
 
-const client = { clientId: 'client-id', clientSecret: 'client-secret' };
+test('a session asks Google for a token with only its own scopes, so Health answers on a grant that also holds Drive, Gmail and Search Console', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-narrow-'));
+  using account = googleAccount();
+  const options = {
+    ...client,
+    directory: scratch.path,
+    openBrowser: account.openBrowser,
+  };
+  await googleSession({
+    ...options,
+    scopes: [GOOGLE_DRIVE_READONLY_SCOPE, GMAIL_READONLY_SCOPE],
+  });
+  await googleSession({ ...options, scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE] });
+
+  const health = await googleSession({ ...options, scopes: [HEALTH_SCOPE] });
+  const { data } = await health.request({ url: HEALTH_URL });
+
+  assert.deepEqual(data, { healthUserId: 'health-1' });
+});
 
 test('a failed browser opener rejects consent and closes the callback listener', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-browser-'));
@@ -143,21 +290,20 @@ test('a failed browser opener rejects consent and closes the callback listener',
   await assert.rejects(fetch(redirectUri));
 });
 
-test('the first session runs consent and stores the grant; the next reuses it', async (t) => {
-  answerGoogle(t, `openid email ${GOOGLE_SEARCH_CONSOLE_SCOPE}`);
+test('the first session runs consent and stores the grant; the next reuses it', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-session-'));
-  const chrome = browser();
+  using account = googleAccount();
   const options = {
     ...client,
     directory: scratch.path,
-    openBrowser: chrome.open,
+    openBrowser: account.openBrowser,
     scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
   };
 
   const requester = await googleSession(options);
   assert.equal(typeof requester.request, 'function');
-  assert.equal(chrome.opened.length, 1);
-  const consent = new URL(String(chrome.opened[0]));
+  assert.equal(account.google.opened.length, 1);
+  const consent = new URL(String(account.google.opened[0]));
   assert.match(
     String(consent.searchParams.get('redirect_uri')),
     /^http:\/\/127\.0\.0\.1:\d+\/callback$/,
@@ -169,64 +315,96 @@ test('the first session runs consent and stores the grant; the next reuses it', 
 
   const [user] = await readdir(join(scratch.path, 'google'));
   const accounts = join(scratch.path, 'google', String(user), 'accounts');
-  const [account] = await readdir(accounts);
-  assert.equal(
-    (await stat(join(accounts, String(account)))).mode & 0o777,
-    0o600,
-  );
+  const [file] = await readdir(accounts);
+  assert.equal((await stat(join(accounts, String(file)))).mode & 0o777, 0o600);
 
   await googleSession(options);
-  assert.equal(chrome.opened.length, 1, 'the stored grant is reused');
+  assert.equal(account.google.opened.length, 1, 'the stored grant is reused');
 });
 
-test('a grant that lacks a newly needed scope asks for consent again', async (t) => {
+test('a grant that lacks a newly needed scope asks for consent again', async () => {
   const analytics = 'https://www.googleapis.com/auth/analytics.readonly';
-  // Google grants what the consent asked for, so the first grant lacks it.
-  let granted = `openid email ${GOOGLE_SEARCH_CONSOLE_SCOPE}`;
-  answerGoogle(t, () => granted);
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-upgrade-'));
-  const chrome = browser();
+  using account = googleAccount();
   const options = {
     ...client,
     directory: scratch.path,
-    openBrowser: chrome.open,
+    openBrowser: account.openBrowser,
   };
 
   await googleSession({ ...options, scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE] });
-  granted = `${granted} ${analytics}`;
   await googleSession({
     ...options,
     scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE, analytics],
   });
 
-  assert.equal(chrome.opened.length, 2);
+  assert.equal(account.google.opened.length, 2);
   // Re-consent asks for the union, so the scope already granted is kept.
   const second = String(
-    new URL(String(chrome.opened[1])).searchParams.get('scope'),
+    new URL(String(account.google.opened[1])).searchParams.get('scope'),
   );
   assert.match(second, /webmasters\.readonly/);
   assert.match(second, /analytics\.readonly/);
 });
 
-test('a grant Google no longer honors is replaced through consent', async (t) => {
-  answerGoogle(t, `openid email ${GOOGLE_SEARCH_CONSOLE_SCOPE}`);
+test('a grant Google no longer honors is replaced through consent', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-revoked-'));
-  const chrome = browser();
+  using account = googleAccount();
   const options = {
     ...client,
     directory: scratch.path,
-    openBrowser: chrome.open,
+    openBrowser: account.openBrowser,
     scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
   };
   await googleSession(options);
 
   // Google refuses the stored refresh token once, as it does after revocation.
-  let refusals = 1;
-  t.mock.method(OAuth2Client.prototype, 'getAccessToken', async () => {
-    if (refusals-- > 0) throw new Error('invalid_grant');
-    return { res: null, token: 'fresh' };
-  });
+  account.google.refusals = 1;
   await googleSession(options);
 
-  assert.equal(chrome.opened.length, 2);
+  assert.equal(account.google.opened.length, 2);
+});
+
+test('sessions with different scopes reuse one grant without consent, and each calls its API with its own token', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-shared-'));
+  using account = googleAccount();
+  const options = {
+    ...client,
+    directory: scratch.path,
+    openBrowser: account.openBrowser,
+  };
+  await googleSession({ ...options, scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE] });
+  await googleSession({ ...options, scopes: [HEALTH_SCOPE] });
+  const consents = account.google.opened.length;
+
+  const health = await googleSession({ ...options, scopes: [HEALTH_SCOPE] });
+  const searchConsole = await googleSession({
+    ...options,
+    scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
+  });
+  const sites = await searchConsole.request({ url: SITES_URL });
+  const identity = await health.request({ url: HEALTH_URL });
+
+  assert.equal(account.google.opened.length, consents);
+  assert.deepEqual(sites.data, { siteEntry: [] });
+  assert.deepEqual(identity.data, { healthUserId: 'health-1' });
+});
+
+test('a refresh token Google rotates is kept, so the next session refreshes without consent', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'gsc-rotate-'));
+  using account = googleAccount();
+  const options = {
+    ...client,
+    directory: scratch.path,
+    openBrowser: account.openBrowser,
+    scopes: [GOOGLE_SEARCH_CONSOLE_SCOPE],
+  };
+  account.google.rotateTo = 'refresh-2';
+  await googleSession(options);
+
+  const searchConsole = await googleSession(options);
+  const { data } = await searchConsole.request({ url: SITES_URL });
+
+  assert.equal(account.google.opened.length, 1);
+  assert.deepEqual(data, { siteEntry: [] });
 });

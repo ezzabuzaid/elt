@@ -19,9 +19,7 @@ const REDIRECT_URI = 'http://127.0.0.1:49152/oauth/callback';
 const USER = 'user-1';
 
 const STORED: GoogleDataGrantCredential = {
-  accessToken: 'token',
   clientId: 'client-id',
-  expiresAt: 1,
   googleAccountEmail: 'owner@acme.example',
   googleAccountId: 'google-1',
   kind: 'GOOGLE_BIGQUERY_OAUTH',
@@ -182,7 +180,7 @@ test('finish saves the grant, makes it active, and the ticket survives JSON', as
   );
 
   assert.equal(finished.grant.account.email, 'owner@acme.example');
-  assert.equal(finished.grant.credential.accessToken, 'fresh');
+  assert.equal(finished.grant.credential.refreshToken, 'refresh-2');
   assert.equal(rows.get(finished.ref), finished.grant.credential);
   const current = await c.current(USER, [GOOGLE_ANALYTICS_SCOPE], {
     differentAccount: false,

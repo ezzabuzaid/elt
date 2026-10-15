@@ -1,7 +1,4 @@
-import type {
-  GoogleImportedCredential,
-  GoogleOAuthCredential,
-} from './credential.ts';
+import type { GoogleOAuthCredential } from './credential.ts';
 
 /**
  * Google refused to refresh the grant. `invalid_grant` covers revoked
@@ -13,19 +10,17 @@ import type {
  */
 export class GoogleGrantRevokedError extends Error {
   override readonly name = 'GoogleGrantRevokedError';
-  readonly credential: GoogleOAuthCredential | GoogleImportedCredential;
+  readonly credential: GoogleOAuthCredential;
 
   /**
-   * True for this error and for the library error it wraps. Google reports
-   * the OAuth error code as the error message on the plain refusal, and as
-   * `response.data.error` on every refusal including the re-authentication
-   * variant, whose message the library rewrites to a JSON body
-   * (google-auth-library `refreshTokenNoCache`).
+   * True for this error and for the token endpoint's refusal it wraps, which
+   * names its OAuth error code in the response body (`{ error:
+   * "invalid_grant" }`) for the plain refusal and the re-authentication one
+   * alike.
    */
   static matches(error: unknown): boolean {
     if (error instanceof GoogleGrantRevokedError) return true;
     if (!(error instanceof Error)) return false;
-    if (error.message === 'invalid_grant') return true;
     return (
       'response' in error &&
       typeof error.response === 'object' &&
@@ -38,7 +33,7 @@ export class GoogleGrantRevokedError extends Error {
     );
   }
 
-  constructor(credential: GoogleOAuthCredential | GoogleImportedCredential) {
+  constructor(credential: GoogleOAuthCredential) {
     super('Google will no longer refresh this grant.');
     this.credential = credential;
   }

@@ -2,16 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { GoogleOAuthCredential } from './credential.ts';
-import {
-  GoogleAccountGrant,
-  GoogleGrant,
-  GoogleImportedGrant,
-} from './grant.ts';
+import { GoogleAccountGrant, GoogleGrant } from './grant.ts';
 
 const CREDENTIAL: GoogleOAuthCredential = {
-  accessToken: 'token',
   clientId: 'client-id',
-  expiresAt: 1,
   kind: 'GOOGLE_BIGQUERY_OAUTH',
   refreshToken: 'refresh-token',
   scope: 'openid  email https://www.googleapis.com/auth/webmasters.readonly',
@@ -81,57 +75,4 @@ test('the account is known only when the grant names both id and email', () => {
     }).account,
     { email: 'owner@acme.example', id: 'google-1' },
   );
-});
-
-test('an imported grant is parsed from an authorized_user file with the account it names', () => {
-  const file = {
-    type: 'authorized_user',
-    client_id: ' gcloud-client ',
-    client_secret: 'gcloud-secret',
-    refresh_token: 'gcloud-refresh',
-    account: 'owner@example.test',
-  };
-
-  const grant = GoogleImportedGrant.parse(file, {
-    account: 'folder@example.test',
-    scope: 'https://www.googleapis.com/auth/bigquery',
-  });
-
-  assert.equal(grant?.account, 'owner@example.test');
-  assert.deepEqual(grant?.credential, {
-    clientId: 'gcloud-client',
-    clientSecret: 'gcloud-secret',
-    externallyManaged: true,
-    kind: 'GOOGLE_BIGQUERY_OAUTH',
-    refreshToken: 'gcloud-refresh',
-    scope: 'https://www.googleapis.com/auth/bigquery',
-  });
-});
-
-test('an imported grant falls back to the folder account and rejects other files', () => {
-  const options = { account: 'folder@example.test', scope: 'scope' };
-  const file = {
-    type: 'authorized_user',
-    client_id: 'c',
-    client_secret: 's',
-    refresh_token: 'r',
-  };
-
-  assert.equal(
-    GoogleImportedGrant.parse(file, options)?.account,
-    'folder@example.test',
-  );
-  assert.equal(
-    GoogleImportedGrant.parse({ ...file, account: '  ' }, options)?.account,
-    'folder@example.test',
-  );
-  assert.equal(
-    GoogleImportedGrant.parse({ ...file, type: 'service_account' }, options),
-    undefined,
-  );
-  assert.equal(
-    GoogleImportedGrant.parse({ ...file, refresh_token: '' }, options),
-    undefined,
-  );
-  assert.equal(GoogleImportedGrant.parse(undefined, options), undefined);
 });

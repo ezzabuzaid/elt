@@ -1,0 +1,13 @@
+{
+  "name": "sdk-google-health",
+  "sourceRoot": "packages/sdks/google/health/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test \"packages/sdks/google/health/dist/*.test.js\""
+    }
+  }
+}

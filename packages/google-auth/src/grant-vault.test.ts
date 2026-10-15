@@ -11,9 +11,7 @@ const DIRECTORY = 'google-data-grants';
 
 function credential(accountId: string): GoogleDataGrantCredential {
   return {
-    accessToken: `token-${accountId}`,
     clientId: 'client-id',
-    expiresAt: 1,
     googleAccountEmail: `${accountId}@acme.example`,
     googleAccountId: accountId,
     kind: 'GOOGLE_BIGQUERY_OAUTH',
@@ -101,13 +99,13 @@ test('saving the same account again overwrites its one file', async () => {
   );
   const second = await vault.save(
     'user-1',
-    new GoogleAccountGrant({ ...credential('acc-1'), accessToken: 'newer' }),
+    new GoogleAccountGrant({ ...credential('acc-1'), refreshToken: 'newer' }),
   );
 
   assert.equal(first, second);
   assert.equal(rows.size, 2);
   assert.equal(
-    (await vault.active('user-1'))?.grant.credential.accessToken,
+    (await vault.active('user-1'))?.grant.credential.refreshToken,
     'newer',
   );
 });

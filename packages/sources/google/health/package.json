@@ -1,0 +1,22 @@
+{
+  "name": "@workspace/source-google-health",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./google-health-source": {
+      "types": "./dist/google-health-source.d.ts",
+      "default": "./dist/google-health-source.js"
+    }
+  },
+  "dependencies": {
+    "@workspace/elt": "0.0.1",
+    "@workspace/google-auth": "0.0.1",
+    "@workspace/sdk-google-health": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/elt-postgresql": "0.0.1",
+    "msw": "^2.15.0",
+    "postgres": "^3.4.9"
+  }
+}
