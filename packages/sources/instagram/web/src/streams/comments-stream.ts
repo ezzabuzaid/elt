@@ -130,11 +130,9 @@ export class CommentsStream extends InstagramStream<typeof properties> {
     let next: string | null = null;
     do {
       const page = await web.comments(post.pk, next, signal);
-      for (const comment of page.items)
-        if (!comments.has(comment.pk)) comments.set(comment.pk, comment);
+      for (const comment of page.items) comments.set(comment.pk, comment);
       next = page.next;
     } while (next !== null);
-    const replies = new Set<string>();
     for (const comment of comments.values()) {
       yield* this.validated([
         this.#record(owner, post, comment, null, comment.child_comment_count),
@@ -143,12 +141,8 @@ export class CommentsStream extends InstagramStream<typeof properties> {
       let cursor: string | null = null;
       do {
         const page = await web.replies(post.pk, comment.pk, cursor, signal);
-        const fresh = page.items.filter(
-          ({ pk }) => !comments.has(pk) && !replies.has(pk),
-        );
-        for (const { pk } of fresh) replies.add(pk);
         yield* this.validated(
-          fresh.map((reply) =>
+          page.items.map((reply) =>
             this.#record(owner, post, reply, comment.pk, null),
           ),
         );

@@ -24,7 +24,9 @@ export class ReelsLane extends Lane<ReelMedia> {
     return item.pk;
   }
 
+  // A reel without a pin list counts as unpinned: at worst the next run's
+  // read from the top goes down to it.
   override pinned(item: ReelMedia, profile: Profile): boolean {
-    return item.clips_tab_pinned_user_ids.includes(profile.pk);
+    return item.clips_tab_pinned_user_ids?.includes(profile.pk) ?? false;
   }
 }

@@ -4,7 +4,7 @@ import { fields, reelUrl } from '../fields.ts';
 import type { InstagramRun, LaneReader } from '../instagram-run.ts';
 import { ListStream } from '../list-stream.ts';
 
-const { profileId, id, text, count, flag } = fields;
+const { profileId, id, text, count } = fields;
 
 const properties = {
   profileId,
@@ -34,8 +34,9 @@ const properties = {
     description: 'How many comments the reel has, when its page was last read.',
   },
   pinned: {
-    ...flag,
-    description: 'The profile pinned the reel to the top of its reels tab.',
+    type: ['boolean', 'null'],
+    description:
+      'The profile pinned the reel to the top of its reels tab; NULL when Instagram does not say.',
   },
 } as const;
 
@@ -65,7 +66,7 @@ export class ReelsStream extends ListStream<typeof properties, ReelMedia> {
       plays: item.play_count,
       likes: item.like_count,
       comments: item.comment_count,
-      pinned: item.clips_tab_pinned_user_ids.includes(profile),
+      pinned: item.clips_tab_pinned_user_ids?.includes(profile) ?? null,
     };
   }
 }

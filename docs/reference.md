@@ -2441,8 +2441,8 @@ Every stream but `following` is partitioned by `profileId`. `AttachmentText` rea
 
 - **A list is scanned in parts.** A run asks for at most 10 pages of one list of one profile, 33 posts or 12 reels, reposts or tagged posts a page; streams that read the same list share the pages a run has. A run first reads the list from the top down to the newest item the last run found, behind any pinned items, so a new post loads at the next run, then goes on with the scan. Each page is a [part](#scans-in-parts): the part that reaches the list's end deletes what no part listed. The media stream's scan walks all four lists and ends when each has.
 - **Snapshots:** `following`, `profiles`, `stories`, `highlights` and `highlight_items` are read whole each run. A story Instagram stopped showing keeps its row (`expiresBy`); one the profile deleted earlier is deleted.
-- **Comments** are read with the grid's pages. A post's comments are read again when its comment count changes, and once in every scan, so likes stay current; a post with no comments costs no request.
-- **Files:** only new and changed records are downloaded, from Instagram's CDN, whose signed URLs expire within days; no record keeps a URL.
+- **Comments** are read with the grid's pages. A post's comments are read again when its comment count changes, and once in every scan, so likes stay current; a post with no comments costs no request. Instagram can list one comment several times in one answer (15 entries, 8 comments); it loads once.
+- **Files:** only new and changed records are downloaded, from Instagram's CDN, whose signed URLs expire within days; no record keeps a URL. A file the CDN answers 410 Gone for, though the answer that listed it is fresh, loads its record without the file (`attachmentRef` NULL), as three of Hive's highlight videos from July 2025 did.
 - **When:** Instagram tells no client that a profile posted, so a watch reads again every hour. A long profile is complete after several runs: @propertyplus.jo, 3,479 posts, takes 11.
 - **Date range:** a selection's range narrows posts, their media and comments, stories and highlight items; the grid's walk stops at the first unpinned post older than the range. Reels, reposts and tagged posts name no date and are not narrowed.
 - **Failures:** a redirect to Instagram's login page, or a web page where JSON was asked for, is a lost login (`InstagramLoginError`, `config`). A 429, or a 401 that says "Please wait a few minutes", is a rate limit (`InstagramRateLimitError`, `system`): the run stops at once, and the next one goes on after the last committed page. A refused query or an answer without a field the SDK reads names the query (`InstagramQueryError`). No browser session, or a Safe Storage item the keychain does not give, is the user's to fix (`BrowserSessionNotFoundError`, `SafeStorageUnavailableError`). A page cursor Instagram gives twice fails the profile's read instead of looping.
@@ -2456,12 +2456,21 @@ Each GraphQL query is persisted: the client sends its name, a `doc_id`, and Rela
 - Videos are not downloaded: `media` keeps the cover frame (backlog #2632).
 - `location` and Instagram's own image descriptions were null on all 66 posts probed, so the source keeps no location; `description` is kept for when Instagram writes one.
 - Comments are read for grid posts only, not for reels kept off the grid, reposts or tagged posts.
+- The reposts and tagged tabs name a carousel's slides only by `<pk>_<owner id>`, and the reposts tab sends no media type for them: their `media.kind` is NULL. `reels.pinned` is NULL for a reel Instagram sends no pin list for.
 - A deletion shows only when a scan ends: within 11 runs for 3,479 posts.
 - The Keychain item's Always Allow is per browser and lets any `security` caller read the key.
 
 ### Instagram live checks
 
-Probed on 2026-10-14 and 2026-10-15 with Dia's session on @hivefitnationgym (552 posts, 15 highlights, 9 live stories) and @propertyplus.jo (3,479 posts): the queries, variables and answers the SDK sends and parses; a 33-post page for `first: 50`; highlights of 100, 81 and 52 stories (100 is Instagram's limit); comments 15 to a page; logged-out answers (a web page, a login redirect, `Incorrect Query`, `SecFetch Policy violation`); and the 401 throttle. The grid query also answered without a session, until this network was throttled. Not yet run: a sync through the CLI with the real session.
+Probed on 2026-10-14 and 2026-10-15 with Dia's session on @hivefitnationgym (552 posts, 15 highlights, 9 live stories) and @propertyplus.jo (3,479 posts): the queries, variables and answers the SDK sends and parses; a 33-post page for `first: 50`; highlights of 100, 81 and 52 stories (100 is Instagram's limit); comments 15 to a page; logged-out answers (a web page, a login redirect, `Incorrect Query`, `SecFetch Policy violation`); and the 401 throttle. The grid query also answered without a session, until this network was throttled.
+
+Three CLI syncs with Dia's session on 2026-10-15, both profiles selected:
+
+1. Failed after 4 seconds: GraphQL answers a signed-in session as `text/javascript`.
+2. Partial: 462 posts, 2,181 media rows and 497 comments, and Hive's October timetable in `attachment_text`. A null `play_count`, captions without a date, video renditions without a size and a repeated comment each failed a stream.
+3. Partial after 204 seconds: 303 posts, 582 comments, 124 reels, 3 reposts and 7 stories more. A null pin list, carousel slides without a pk, and a 410 on 3 of Hive's 802 highlight stories each failed a stream; one download failed on the network, with no cause in the sync history (backlog #2652).
+
+Every failure of the second and third syncs but one is fixed and tested with the shape Instagram sent. Open: Hive's grid page 5 answers a Node request `A server error field_exception occured`, while the signed-in browser's answers to the same query succeed for pages 1 to 6 (backlog #2643).
 
 ## Google Search Console
 

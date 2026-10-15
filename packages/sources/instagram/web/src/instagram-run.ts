@@ -111,14 +111,14 @@ export class InstagramRun implements AsyncDisposable {
   }
 
   // Saves an image under the run's staging folder; the caller removes it
-  // once the record that carries it is loaded.
+  // once the record that carries it is loaded. Null when Instagram no longer
+  // has the file: the record loads without it.
   async download(
     url: string,
     signal: AbortSignal | undefined,
-  ): Promise<string> {
+  ): Promise<string | null> {
     const path = join(this.#staging, `${++this.#downloads}${extension(url)}`);
-    await this.web.download(url, path, signal);
-    return path;
+    return (await this.web.download(url, path, signal)) ? path : null;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {

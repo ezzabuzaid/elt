@@ -79,7 +79,8 @@ type Post = {
   readonly code?: string;
   readonly takenAt: number;
   readonly caption?: string | null;
-  readonly pinned?: boolean;
+  // null: a reel whose pin list Instagram sends as null.
+  readonly pinned?: boolean | null;
   readonly slides?: number;
   readonly video?: boolean;
   readonly comments?: readonly Comment[];
@@ -116,6 +117,10 @@ type World = {
   signedOut?: boolean;
   // Instagram answers 429 once this many GraphQL queries were answered.
   queriesUntilLimit?: number;
+  // Images Instagram's CDN answers 410 Gone for, though the answer that
+  // listed them is fresh, as it did on 2026-10-15 for three of Hive's
+  // highlight stories from July 2025.
+  gone?: readonly string[];
 };
 
 type Call = {
@@ -192,7 +197,9 @@ function timelineNode(post: Post, profile: Profile) {
   };
 }
 
-function listNode(post: Post) {
+// The tabs name a carousel slide by `<pk>_<owner id>` and send no pk; the
+// reposts tab also leaves out its media type, as both did on 2026-10-15.
+function listNode(post: Post, list: 'reposts' | 'tagged') {
   return {
     pk: post.pk,
     code: post.code ?? `C${post.pk}`,
@@ -207,9 +214,9 @@ function listNode(post: Post) {
     media_type: mediaType(post),
     image_versions2: images(post.pk),
     carousel_media:
-      (slidesOf(post) ?? null)?.map(({ pk, media_type, image_versions2 }) => ({
-        pk,
-        media_type,
+      slidesOf(post)?.map(({ pk, media_type, image_versions2 }) => ({
+        id: `${pk}_777`,
+        ...(list === 'tagged' ? { media_type } : {}),
         image_versions2,
       })) ?? null,
   };
@@ -224,7 +231,8 @@ function reelNode(post: Post, profile: Profile) {
     play_count: post.plays === undefined ? 120 : post.plays,
     like_count: 9,
     comment_count: 0,
-    clips_tab_pinned_user_ids: post.pinned ? [profile.pk] : [],
+    clips_tab_pinned_user_ids:
+      post.pinned === null ? null : post.pinned ? [profile.pk] : [],
     user: { pk: profile.pk, username: profile.username },
     image_versions2: images(post.pk),
   };
@@ -394,7 +402,7 @@ function instagram(world: World) {
           fetch__XDTUserDict: {
             user_reposts_timeline: {
               repost_grid_items: items.map((post) => ({
-                media: listNode(post),
+                media: listNode(post, 'reposts'),
               })),
               repost_more_available: next !== null,
               repost_next_max_id: next,
@@ -413,7 +421,7 @@ function instagram(world: World) {
       return Response.json({
         data: {
           xdt_api__v1__usertags__user_id__feed_connection: {
-            edges: items.map((post) => ({ node: listNode(post) })),
+            edges: items.map((post) => ({ node: listNode(post, 'tagged') })),
             page_info,
           },
         },
@@ -610,6 +618,8 @@ function instagram(world: World) {
     http.get(`${cdn}/*`, ({ request }) => {
       const id = /\/([^/]+)_n\.jpg$/.exec(new URL(request.url).pathname)?.[1];
       if (id === undefined) return new HttpResponse(null, { status: 404 });
+      if (world.gone?.includes(id))
+        return new HttpResponse(null, { status: 410 });
       downloads.push(id);
       return new HttpResponse(bytesOf(id), {
         headers: { 'content-type': 'image/jpeg' },
@@ -1153,6 +1163,19 @@ test('every slide of a carousel, of a repost and of a tagged post is a media row
       ]),
     ),
   );
+  assert.deepEqual(
+    rows(
+      dir.path,
+      `SELECT list, id, kind FROM media WHERE list IN ('reposts', 'tagged') ORDER BY list, position`,
+    ),
+    [
+      { list: 'reposts', id: '5100', kind: null },
+      { list: 'reposts', id: '5101', kind: null },
+      { list: 'reposts', id: '5102', kind: null },
+      { list: 'tagged', id: '6100', kind: 'photo' },
+      { list: 'tagged', id: '6101', kind: 'photo' },
+    ],
+  );
   assert.deepEqual(rows(dir.path, `SELECT owner, slides FROM reposts`), [
     { owner: 'hivekids', slides: 3 },
   ]);
@@ -1295,6 +1318,47 @@ test('highlights load with every story in them and its image, and a highlight th
   );
 });
 
+test('a highlight story whose image Instagram’s CDN no longer has loads without its file, and the other stories load with theirs', async () => {
+  await using _mac = await signedInMac();
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
+  const story = (pk: string) => ({
+    pk,
+    takenAt: day - 90 * 86_400,
+    expiresAt: day - 89 * 86_400,
+  });
+  using _wire = instagram({
+    profiles: [
+      {
+        ...hive([]),
+        highlights: [
+          {
+            id: '81',
+            title: 'Summer',
+            items: [story('811'), story('812'), story('813')],
+          },
+        ],
+      },
+    ],
+    following: [],
+    gone: ['812'],
+  });
+
+  await (
+    await pipeline(
+      await InstagramWebSource.connect({ profileIds: ['44555906095'] }),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(
+    await storedFiles(
+      dir.path,
+      `SELECT id AS key, "attachmentRef" FROM highlight_items ORDER BY id`,
+    ),
+    { 811: bytesOf('811'), 812: null, 813: bytesOf('813') },
+  );
+});
+
 test('comments load with their replies, are read again within a scan only when a post’s comment count changes, and a removed comment is deleted', async () => {
   await using _mac = await signedInMac();
   await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
@@ -1373,7 +1437,8 @@ test('the reels tab, reposts and tagged posts load for the profile, page after p
       {
         ...hive(posts(2)),
         reels: [
-          ...list(29, 200),
+          ...list(28, 201),
+          { pk: '201', takenAt: day - 28 * 3600, pinned: null },
           { pk: '200', takenAt: day - 29 * 3600, plays: null },
         ],
         reposts: list(25, 300),
@@ -1402,11 +1467,27 @@ test('the reels tab, reposts and tagged posts load for the profile, page after p
   assert.deepEqual(
     rows(
       dir.path,
-      `SELECT id, url, plays FROM reels WHERE id IN ('229', '200') ORDER BY id`,
+      `SELECT id, url, plays, pinned FROM reels WHERE id IN ('229', '201', '200') ORDER BY id`,
     ),
     [
-      { id: '200', url: 'https://www.instagram.com/reel/R200/', plays: null },
-      { id: '229', url: 'https://www.instagram.com/reel/R229/', plays: 120 },
+      {
+        id: '200',
+        url: 'https://www.instagram.com/reel/R200/',
+        plays: null,
+        pinned: 0,
+      },
+      {
+        id: '201',
+        url: 'https://www.instagram.com/reel/R201/',
+        plays: 120,
+        pinned: null,
+      },
+      {
+        id: '229',
+        url: 'https://www.instagram.com/reel/R229/',
+        plays: 120,
+        pinned: 0,
+      },
     ],
   );
 });

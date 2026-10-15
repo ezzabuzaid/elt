@@ -351,16 +351,18 @@ export class InstagramWeb {
   }
 
   // Saves an image or video from Instagram's CDN, whose URLs are signed and
-  // need no session.
+  // need no session. False when the CDN answers 410 Gone: it no longer has
+  // the file, though the answer that listed it is fresh.
   async download(
     url: string,
     path: string,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const response = await fetch(url, {
       headers: { 'user-agent': userAgent },
       signal,
     });
+    if (response.status === 410) return false;
     if (response.status === 429)
       throw new InstagramRateLimitError('a download');
     if (!response.ok || response.body === null)
@@ -369,6 +371,7 @@ export class InstagramWeb {
         `answered ${response.status}`,
       );
     await pipeline(response.body, createWriteStream(path), { signal });
+    return true;
   }
 
   async #rest<Schema extends z.ZodType>(

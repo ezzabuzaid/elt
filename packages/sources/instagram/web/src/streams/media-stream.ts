@@ -40,9 +40,10 @@ const properties = {
   position: { ...count, description: 'The slide’s place in the post, from 0.' },
   id: { ...id, description: 'Instagram’s id of the image or video.' },
   kind: {
-    type: 'string',
+    type: ['string', 'null'],
     enum: ['photo', 'video'],
-    description: 'photo, or video, whose file is its cover frame.',
+    description:
+      'photo, or video, whose file is its cover frame; NULL for a slide of a reposted carousel, which the reposts tab does not say.',
   },
   width: { ...count, description: 'The width in pixels of the stored file.' },
   height: { ...count, description: 'The height in pixels of the stored file.' },
@@ -55,7 +56,7 @@ const properties = {
 
 type Slide = {
   readonly id: string;
-  readonly kind: string;
+  readonly kind: string | null;
   readonly image: Image;
   readonly description: string | null;
 };
@@ -213,7 +214,7 @@ function reelSlides(item: ReelMedia): Slide[] {
 function listSlides(item: ListMedia): Slide[] {
   return (item.carousel_media ?? [item]).map((slide) => ({
     id: slide.pk,
-    kind: kindOf(slide.media_type),
+    kind: slide.media_type === null ? null : kindOf(slide.media_type),
     image: largest(slide.image_versions2.candidates),
     description: null,
   }));

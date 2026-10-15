@@ -46,15 +46,25 @@ const timelineMedia = timelineSlide.extend({
   carousel_media: z.array(timelineSlide).nullable(),
 });
 
-// A slide as the tagged and reposts tabs list it: no video and no
-// description.
-const listSlide = z.object({
+// A carousel slide as the tagged and reposts tabs list it: no video and no
+// description, and no pk, only an id of `<pk>_<owner id>`. The reposts tab
+// also leaves out its media type.
+const listSlide = z
+  .object({
+    id: z.string().regex(/^\d+_\d+$/),
+    media_type: z.number().optional(),
+    image_versions2: images,
+  })
+  .transform(({ id, media_type, image_versions2 }) => ({
+    pk: id.slice(0, id.indexOf('_')),
+    media_type: media_type ?? null,
+    image_versions2,
+  }));
+
+const listMedia = z.object({
   pk: z.string(),
   media_type: z.number(),
   image_versions2: images,
-});
-
-const listMedia = listSlide.extend({
   code: z.string(),
   product_type: z.string(),
   // These tabs send a caption's text without its date.
@@ -76,7 +86,8 @@ const reelMedia = z.object({
   play_count: z.number().nullable(),
   like_count: z.number(),
   comment_count: z.number(),
-  clips_tab_pinned_user_ids: z.array(z.string()),
+  // Instagram sends null in place of the list for some reels.
+  clips_tab_pinned_user_ids: z.array(z.string()).nullable(),
   user: owner,
   image_versions2: images,
 });
