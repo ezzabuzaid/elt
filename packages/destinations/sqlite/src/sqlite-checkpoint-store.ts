@@ -5,6 +5,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { Modes, Mutex, SqliteStore } from '@zukhruf/mutex';
 
 import { type CheckpointSession, CheckpointStore } from '@workspace/elt';
+import { Declaration } from '@workspace/sqlite-drift';
+
+const checkpoints = new Declaration([
+  'CREATE TABLE checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL) STRICT',
+]);
 
 export class SQLiteCheckpointStore extends CheckpointStore {
   readonly path: string;
@@ -44,9 +49,9 @@ export class SQLiteCheckpointStore extends CheckpointStore {
     // Runs of other replications write the same file.
     using database = new DatabaseSync(this.path, { timeout: 30_000 });
     chmodSync(this.path, 0o600);
-    database.exec(
-      'CREATE TABLE IF NOT EXISTS checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, state TEXT NOT NULL) STRICT',
-    );
+    // A table another version declared otherwise is replaced with its
+    // checkpoints, so every replication starts over.
+    checkpoints.apply(database);
     return await work({
       read: async (id) => {
         const saved = database

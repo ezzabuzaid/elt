@@ -16,7 +16,6 @@ import { userConnectors } from '@workspace/connector-apple-manifest/user-connect
 import { type PassStatus, readPassStatus } from '@workspace/elt-sqlite';
 import {
   type ConnectorFacts,
-  NewerLayoutError,
   type Selection,
   Settings,
 } from '@workspace/settings';
@@ -80,10 +79,9 @@ export const configurationSchema = z.strictObject({
 // Thrown by a server whose plugin version was replaced. Codex keeps an old
 // chat's server running after an upgrade, so that chat must move on.
 export class PluginUpdatedError extends Error {
-  constructor(options?: ErrorOptions) {
+  constructor() {
     super(
       'Apple was updated after this chat started. This chat runs the old version, so its Apple tools and status are out of date: open a new chat to use Apple.',
-      options,
     );
   }
 }
@@ -150,19 +148,12 @@ export class ApplePlugin {
     );
   }
 
-  // The store, refused once another plugin version replaced this one: Codex
-  // deleted this version's folder, or that version rewrote the settings in a
-  // layout this code predates.
+  // The store, refused once another plugin version replaced this one, which
+  // deletes this version's folder.
   #open(): Settings {
     if (!existsSync(join(this.install, '.codex-plugin/plugin.json')))
       throw new PluginUpdatedError();
-    try {
-      return new Settings(this.directory);
-    } catch (error) {
-      if (error instanceof NewerLayoutError)
-        throw new PluginUpdatedError({ cause: error });
-      throw error;
-    }
+    return new Settings(this.directory);
   }
 
   updated(): boolean {

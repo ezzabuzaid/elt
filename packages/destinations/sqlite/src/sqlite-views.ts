@@ -8,6 +8,10 @@ export type SQLiteView = ReaderRelation & { readonly query: string };
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
+export function viewDefinition(view: SQLiteView): string {
+  return `CREATE VIEW ${quote(view.name)} AS ${view.query}`;
+}
+
 function text(value: string, what: string): void {
   if (
     typeof value !== 'string' ||
@@ -52,9 +56,7 @@ export function publishSQLiteViews(
       database.exec(`DROP VIEW IF EXISTS ${quote(view.name)}`);
     for (const view of views) {
       // A prepared statement runs one statement, so a query cannot append DDL.
-      database
-        .prepare(`CREATE VIEW ${quote(view.name)} AS ${view.query}`)
-        .run();
+      database.prepare(viewDefinition(view)).run();
       const columns = database
         .prepare('SELECT "name" FROM pragma_table_info(?)')
         .all(view.name)

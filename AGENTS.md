@@ -14,6 +14,7 @@ Every destination table and checkpoint can be rebuilt by rerunning the pipeline 
 
 - Never design around data that is already stored: no backward-compatible schemas, no keeping checkpoint bindings stable, no migration paths, no compatibility shims or defaults left `undefined` for old state.
 - Change schemas, identities, bindings, and defaults whenever the design improves; the fix for old output is a fresh run.
+- A value that code derives and stores, such as an import folder path in `settings.sqlite`, is old output too when the derivation changes. Do not rewrite stored values into the new form, not even as a consistency check that runs on every open: that is a migration. `Settings.#follow` went this way.
 - Do not document migrations between connector versions. Document the current behavior only.
 
 ## Separate the concept from the mechanism
@@ -35,6 +36,10 @@ While the user is at the machine, act without taking it over. Accessibility acti
 ## Remove before you add
 
 When the user says a mechanism should not exist, remove it before you build any feature that touches it. Do not extend it to carry the new feature, not even by one parameter. Before you add anything, ask whether it should exist at all: name the requirement it serves and who already serves it. The Apple page's Sync button went this way: it was first built as a second caller of `importPending`, after the user had said that function should not exist.
+
+## Remove a mechanism through its problem class
+
+When the user asks how to get rid of a mechanism, name the problem class it answers and how software engineering solves that class, with a precedent you read in a textbook or a vendor's source. Then show where the codebase already does it. Do not move the mechanism or compute it in a new way: a derived copy of the same mechanism is not a removal. `storeLayout` went this way: a hash of the DDL in place of the hand-bumped number kept a version stamp, but data that a rerun rebuilds needs no version. The fix compares the stored shape with the declared shape, as the SQLite writer's `#fit` already does for stream tables.
 
 ## Restate the user's example before designing
 

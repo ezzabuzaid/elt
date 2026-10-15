@@ -4,10 +4,17 @@ import { DatabaseSync } from 'node:sqlite';
 
 import type { DocumentParser } from '@workspace/elt';
 import { publishSQLiteViews } from '@workspace/elt-sqlite';
+import { Declaration } from '@workspace/sqlite-drift';
 
 // Vision text recognition, the slowest format, read about three times as
 // many files a second with four at once and little more with eight.
 const concurrency = 4;
+
+// A table another version declared otherwise is replaced, and every stored
+// file is read again.
+const rawAttachmentText = new Declaration([
+  `CREATE TABLE raw_attachment_text (ref TEXT PRIMARY KEY, sha256 TEXT NOT NULL, parser TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('parsed', 'no_text', 'failed')), content TEXT, error TEXT)`,
+]);
 
 const columns = {
   ref: 'Absolute path of the stored copy: the attachmentRef value of every row whose file it is. Join attachmentRef to it.',
@@ -65,9 +72,7 @@ export class AttachmentText {
   #reconcile(database: DatabaseSync): string[] {
     database.exec('BEGIN IMMEDIATE');
     try {
-      database.exec(
-        `CREATE TABLE IF NOT EXISTS raw_attachment_text (ref TEXT PRIMARY KEY, sha256 TEXT NOT NULL, parser TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('parsed', 'no_text', 'failed')), content TEXT, error TEXT)`,
-      );
+      rawAttachmentText.apply(database);
       publishSQLiteViews(database, {
         views: [
           {

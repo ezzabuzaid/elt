@@ -1,6 +1,7 @@
 import { syncHistoryRelations } from '@workspace/elt';
+import { Declaration } from '@workspace/sqlite-drift';
 
-import type { SQLiteView } from './sqlite-views.ts';
+import { type SQLiteView, viewDefinition } from './sqlite-views.ts';
 
 export const attempts = '"_elt_sync_attempts"';
 export const coverage = '"_elt_extraction_coverage"';
@@ -9,8 +10,8 @@ export const now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 const status = `"status" TEXT NOT NULL DEFAULT 'running' CHECK ("status" IN ('running', 'succeeded', 'partial', 'failed', 'cancelled'))`;
 
-export const syncHistoryTables = [
-  `CREATE TABLE IF NOT EXISTS ${attempts} (
+const tables = [
+  `CREATE TABLE ${attempts} (
     "id" INTEGER PRIMARY KEY,
     "connector" TEXT NOT NULL CHECK (trim("connector") <> ''), "source" TEXT NOT NULL,
     "started_at" TEXT NOT NULL, "completed_at" TEXT, ${status}, "error" TEXT,
@@ -18,8 +19,8 @@ export const syncHistoryTables = [
     CHECK (("status" = 'running') = ("completed_at" IS NULL)),
     CHECK (("status" IN ('partial', 'failed')) = ("failure_type" IS NOT NULL))
   ) STRICT`,
-  `CREATE INDEX IF NOT EXISTS "_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
-  `CREATE TABLE IF NOT EXISTS ${coverage} (
+  `CREATE INDEX "_elt_sync_attempts_connector" ON ${attempts} ("connector", "id" DESC)`,
+  `CREATE TABLE ${coverage} (
     "attempt_id" INTEGER NOT NULL REFERENCES ${attempts}("id"),
     "stream" TEXT NOT NULL, "target_schema" TEXT NOT NULL, "target_table" TEXT NOT NULL,
     "sync_mode" TEXT NOT NULL, "destination_sync_mode" TEXT NOT NULL,
@@ -31,11 +32,14 @@ export const syncHistoryTables = [
     PRIMARY KEY ("attempt_id", "stream")
   ) STRICT`,
   // Each stream's latest check by a watch that found it unchanged.
-  `CREATE TABLE IF NOT EXISTS ${checks} (
+  `CREATE TABLE ${checks} (
     "connector" TEXT NOT NULL, "stream" TEXT NOT NULL, "checked_at" TEXT NOT NULL,
     PRIMARY KEY ("connector", "stream")
   ) STRICT`,
-] as const;
+];
+
+// The history's tables, which install() brings to this declaration.
+export const syncHistoryTables = new Declaration(tables);
 
 // When each declared stream last matched its upstream: the start of its last
 // successful pass, or a later check that found it unchanged.
@@ -93,3 +97,11 @@ const queries: Readonly<Record<keyof typeof syncHistoryRelations, string>> = {
 export const syncHistoryViews: readonly SQLiteView[] = Object.values(
   syncHistoryRelations,
 ).map((relation) => ({ ...relation, query: queries[relation.name] }));
+
+// The whole history as this version reads it: a file whose tables or views
+// another version installed has no history this version can read until its
+// next pass installs it again.
+export const syncHistory = new Declaration([
+  ...tables,
+  ...syncHistoryViews.map(viewDefinition),
+]);

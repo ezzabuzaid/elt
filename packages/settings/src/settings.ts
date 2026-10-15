@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -7,17 +8,13 @@ import {
   installSQLiteCatalog,
   publishSQLiteViews,
 } from '@workspace/elt-sqlite';
+import { Declaration } from '@workspace/sqlite-drift';
 
 import {
   type ConnectorFacts,
   type Selection,
   selectionProblems,
 } from './selection.ts';
-import {
-  NewerLayoutError,
-  importDirectory,
-  storeLayout,
-} from './store-layout.ts';
 
 // How long a connection waits out another process writing the settings.
 const writerWaitMs = 30_000;
@@ -25,6 +22,23 @@ const writerWaitMs = 30_000;
 // How often an import that is running checks that the user still selects it,
 // as Airbyte's worker sends a heartbeat to learn its sync was cancelled.
 const heartbeatMs = 1_000;
+
+// Tables another version declared otherwise are replaced, and the selection
+// they held is lost: stored settings are disposable, so the user sets up again.
+const settingsTables = new Declaration([
+  'CREATE TABLE selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL)',
+  "CREATE TABLE connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failure_type TEXT NOT NULL CHECK (failure_type IN ('config', 'system')), failed_at TEXT NOT NULL)",
+]);
+
+// Where a connector's import lives: one directory per selection, so a pass
+// still writing an earlier selection never touches the current one.
+export function importDirectory(root: string, selection: Selection): string {
+  const key = createHash('sha256')
+    .update(JSON.stringify([selection.scope, selection.includeAttachments]))
+    .digest('hex')
+    .slice(0, 16);
+  return join(root, selection.connector, key);
+}
 
 // Why a connector's import failed in a way its sync history in data.sqlite
 // cannot record, and whose that is to fix: the import never connected, or the
@@ -73,9 +87,8 @@ const selectedConnectors = {
 };
 
 // One host's settings under root: settings.sqlite holds the selection and each
-// import's connection failure, stamped with the store layout, and readers find
-// the imports through its selected_connectors view; each import lives in its
-// own directory beside it.
+// import's connection failure, and readers find the imports through its
+// selected_connectors view; each import lives in its own directory beside it.
 export class Settings implements Disposable {
   readonly root: string;
   private readonly settings: DatabaseSync;
@@ -88,12 +101,8 @@ export class Settings implements Disposable {
     this.settings = new DatabaseSync(path, { timeout: writerWaitMs });
     try {
       chmodSync(path, 0o600);
-      // A new file starts at layout 0, so it is built like an older one.
-      const built = this.layout() !== storeLayout;
-      if (built) this.rebuild();
-      this.settings.exec(
-        `CREATE TABLE IF NOT EXISTS selections (position INTEGER PRIMARY KEY, connector TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, include_attachments INTEGER NOT NULL, directory TEXT NOT NULL, permissions TEXT NOT NULL); CREATE TABLE IF NOT EXISTS connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL, failure_type TEXT NOT NULL CHECK (failure_type IN ('config', 'system')), failed_at TEXT NOT NULL);`,
-      );
+      const built = settingsTables.drift(this.settings) !== 'fits';
+      settingsTables.apply(this.settings);
       // Readers find selected_connectors before anything is selected.
       if (built) this.#publish();
     } catch (error) {
@@ -104,37 +113,6 @@ export class Settings implements Disposable {
 
   get #path(): string {
     return join(this.root, 'settings.sqlite');
-  }
-
-  private layout(): number {
-    return Number(
-      this.settings.prepare('PRAGMA user_version').get()?.user_version,
-    );
-  }
-
-  // Refuses a file a newer layout wrote, and empties one an older layout
-  // wrote: stored settings are disposable, so the user sets up again.
-  private rebuild() {
-    this.settings.exec('BEGIN IMMEDIATE');
-    try {
-      const layout = this.layout();
-      if (layout > storeLayout) throw new NewerLayoutError();
-      if (layout < storeLayout) {
-        for (const { type, name } of this.settings
-          .prepare(
-            "SELECT type, name FROM sqlite_schema WHERE type IN ('view', 'table') AND name NOT LIKE 'sqlite_%' ORDER BY type = 'table'",
-          )
-          .all())
-          this.settings.exec(
-            `DROP ${type === 'view' ? 'VIEW' : 'TABLE'} IF EXISTS "${String(name).replaceAll('"', '""')}"`,
-          );
-        this.settings.exec(`PRAGMA user_version = ${storeLayout}`);
-      }
-      this.settings.exec('COMMIT');
-    } catch (error) {
-      this.settings.exec('ROLLBACK');
-      throw error;
-    }
   }
 
   selections(): Selection[] {

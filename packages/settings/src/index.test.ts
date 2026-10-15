@@ -10,7 +10,6 @@ import { test } from 'node:test';
 import {
   type ConnectorFacts,
   ConnectorRemovedError,
-  NewerLayoutError,
   type Selection,
   Settings,
   selectionProblems,
@@ -152,7 +151,7 @@ test('readers find each selected import, where it lives and what access it needs
   );
 });
 
-test('readers find selected_connectors empty in a new store and in one an older layout wrote, before anything is selected', async () => {
+test('readers find selected_connectors empty in a new store and in one whose tables another version declared otherwise, before anything is selected', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
   const settings = join(scratch.path, 'settings.sqlite');
   const selected = () =>
@@ -169,7 +168,8 @@ test('readers find selected_connectors empty in a new store and in one an older 
   }
   {
     using database = new DatabaseSync(settings);
-    database.exec('PRAGMA user_version = 1');
+    database.exec(`DROP TABLE connection_failures;
+      CREATE TABLE connection_failures (directory TEXT PRIMARY KEY, error TEXT NOT NULL)`);
   }
   new Settings(scratch.path)[Symbol.dispose]();
   const rebuilt = selected();
@@ -216,29 +216,6 @@ test('a changed selection leaves its previous import stale, and a selection with
     store.staleImports().sort(),
     [store.directory(everything), store.directory(metadata)].sort(),
   );
-});
-
-test('a store refuses a settings file a newer layout wrote, and empties one an older layout wrote', async () => {
-  await using scratch = await mkdtempDisposable(join(tmpdir(), 'store-'));
-  const notes = { connector: 'notes', scope: {}, includeAttachments: true };
-  {
-    using store = new Settings(scratch.path);
-    store.select([notes], options);
-  }
-  const stamp = (change: (layout: number) => number) => {
-    using database = new DatabaseSync(join(scratch.path, 'settings.sqlite'));
-    const layout = Number(
-      database.prepare('PRAGMA user_version').get()?.user_version,
-    );
-    database.exec(`PRAGMA user_version = ${change(layout)}`);
-  };
-
-  stamp((layout) => layout + 1);
-  assert.throws(() => new Settings(scratch.path), NewerLayoutError);
-
-  stamp((layout) => layout - 2);
-  using store = new Settings(scratch.path);
-  assert.deepEqual(store.selections(), []);
 });
 
 test('removing a connector stops its running import', async () => {

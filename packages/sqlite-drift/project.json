@@ -1,0 +1,13 @@
+{
+  "name": "sqlite-drift",
+  "sourceRoot": "packages/sqlite-drift/src",
+  "projectType": "library",
+  "tags": ["layer:island"],
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "command": "node --test packages/sqlite-drift/dist/*.test.js"
+    }
+  }
+}

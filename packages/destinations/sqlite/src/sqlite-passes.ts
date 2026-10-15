@@ -3,6 +3,8 @@ import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 
 import type { FailureType, SyncStatus } from '@workspace/elt';
 
+import { syncHistory } from './sqlite-sync-history-schema.ts';
+
 // How long a reader waits out a pass committing to the file.
 const busyTimeout = 30_000;
 
@@ -67,19 +69,15 @@ export type StreamPassStatus = {
 
 // The latest pass of a SQLite destination file and each stream's latest
 // outcome, as its sync history records them; null and empty until the history
-// recorded a pass.
+// recorded a pass, and while the history in the file is one another version
+// installed.
 export function readPassStatus(path: string): {
   readonly pass: PassStatus | null;
   readonly streams: readonly StreamPassStatus[];
 } {
   if (!existsSync(path)) return { pass: null, streams: [] };
   using data = readSQLite(path);
-  const installed = data
-    .prepare(
-      "SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'sync_status'",
-    )
-    .get();
-  if (installed === undefined) return { pass: null, streams: [] };
+  if (syncHistory.drift(data) !== 'fits') return { pass: null, streams: [] };
   const latest = data
     .prepare(
       'SELECT status, started_at, completed_at, error, failure_type, last_successful_sync_at, current_as_of FROM sync_status',

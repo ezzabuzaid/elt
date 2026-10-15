@@ -18,6 +18,7 @@ import {
   describeTarget,
   reloadMode,
 } from '@workspace/elt';
+import { Declaration } from '@workspace/sqlite-drift';
 
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { describe } from './sqlite-descriptions.ts';
@@ -26,6 +27,11 @@ import { identifiers } from './sqlite-identifiers.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
+
+const writersTable = new Declaration([
+  'CREATE TABLE "_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT',
+]);
+
 export const seq = '"_elt_seq"';
 export const op = '"_elt_op"';
 
@@ -139,11 +145,10 @@ export abstract class SQLiteWriter extends Writer {
   }
 
   // The owner lives beside the table it guards. A dropped table releases it,
-  // since nothing it held remains.
+  // since nothing it held remains, and so does a table of owners another
+  // version declared otherwise, which is replaced empty.
   private writers(database: DatabaseSync): void {
-    database.exec(
-      'CREATE TABLE IF NOT EXISTS "_elt_writers" ("target" TEXT PRIMARY KEY, "writer" TEXT NOT NULL) STRICT',
-    );
+    writersTable.apply(database);
   }
 
   // Refuses, before anything is read, a target another writer owns.
@@ -359,15 +364,9 @@ export abstract class SQLiteWriter extends Writer {
   // Whether a stored table is the one the stream needs, by the text SQLite
   // keeps of its CREATE TABLE, which a CHECK alone can change.
   #fit(database: DatabaseSync, name: string): StoredFit {
-    const stored = database
-      .prepare(
-        `SELECT "sql" FROM sqlite_schema WHERE "type" = 'table' AND lower("name") = lower(?)`,
-      )
-      .get(name)?.sql;
-    if (stored === undefined) return 'missing';
-    return stored === `CREATE TABLE ${this.table.definition(quote(name))}`
-      ? 'fits'
-      : 'stale';
+    return new Declaration([
+      `CREATE TABLE ${this.table.definition(quote(name))}`,
+    ]).drift(database);
   }
 
   // Drops the chunks of every stored column that is no longer one of the

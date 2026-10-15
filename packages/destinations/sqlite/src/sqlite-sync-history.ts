@@ -112,12 +112,13 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
     };
   }
 
-  // Creates the history's tables and publishes its views in each file; safe
-  // to repeat.
+  // Brings the history's tables to their declaration and publishes its views
+  // in each file; safe to repeat. Tables another version declared otherwise
+  // are replaced, and their history with them.
   async install(destinations: Iterable<SQLiteDestination>): Promise<void> {
     for (const destination of destinations)
       write(persistent(destination), (database) => {
-        for (const statement of syncHistoryTables) database.exec(statement);
+        syncHistoryTables.apply(database);
         publishSQLiteViews(database, { views: syncHistoryViews });
       });
   }

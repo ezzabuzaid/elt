@@ -1,20 +1,26 @@
 import type { DatabaseSync } from 'node:sqlite';
 
+import { Declaration } from '@workspace/sqlite-drift';
+
 import { identifiers } from './sqlite-identifiers.ts';
 
 // SQLite has no COMMENT ON. Relation and column meanings live here instead,
 // beside what they describe, and the catalog view shows them to readers.
 export const descriptions = '"_elt_descriptions"';
 
+const descriptionsTable = new Declaration([
+  `CREATE TABLE ${descriptions} ("relation" TEXT NOT NULL COLLATE NOCASE, "column" TEXT NOT NULL COLLATE NOCASE, "data_type" TEXT, "description" TEXT NOT NULL, PRIMARY KEY ("relation", "column")) STRICT`,
+]);
+
 export type ColumnDescription = {
   readonly description: string | null;
   readonly dataType?: string;
 };
 
+// A table another version declared otherwise is replaced; the next commit or
+// publication of each relation describes it again.
 export function createDescriptions(database: DatabaseSync): void {
-  database.exec(
-    `CREATE TABLE IF NOT EXISTS ${descriptions} ("relation" TEXT NOT NULL COLLATE NOCASE, "column" TEXT NOT NULL COLLATE NOCASE, "data_type" TEXT, "description" TEXT NOT NULL, PRIMARY KEY ("relation", "column")) STRICT`,
-  );
+  descriptionsTable.apply(database);
 }
 
 // Replaces what a relation says about itself and its columns; a column
