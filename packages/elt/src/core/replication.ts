@@ -500,7 +500,7 @@ function validOperation(
 }
 
 // Every store keeps text as Unicode: a lone surrogate would load as U+FFFD
-// (SQLite, Markdown) or be refused mid-load (Postgres), so no text reaches one.
+// (SQLite) or be refused mid-load (Postgres), so no text reaches one.
 function wellFormed(value: unknown, path: string): void {
   if (typeof value === 'string') {
     if (!value.isWellFormed())

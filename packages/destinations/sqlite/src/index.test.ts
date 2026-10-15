@@ -5406,6 +5406,72 @@ test('a reset replaces only its partition at the next commit, and one a failure 
   assert.deepEqual(await loaded(), ['a2', 'b1', 'b2']);
 });
 
+test('a full refresh ignores resets, so an appending copy keeps its history', async () => {
+  let messages: SourceMessage[] = [];
+  const items = new Stream({
+    name: 'items',
+    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    primaryKey: ['id'],
+    supportedSyncModes: ['full_refresh', 'incremental'],
+    sourceDefinedCursor: true,
+    emitsDeletes: true,
+  });
+  class Resetting extends Source {
+    override coverage() {
+      return { description: 'test', selection: {} };
+    }
+
+    protected override async open() {
+      return new AsyncDisposableStack();
+    }
+
+    readonly identity = 'resetting';
+    protected readonly catalog = new Catalog([items]);
+    protected override async *observe({ streams }: SourceWatchOptions) {
+      yield streams;
+    }
+    protected override async *extract() {
+      yield* messages;
+    }
+  }
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-reset-'));
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'items.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    connections: [
+      new Connection({
+        name: 'test',
+        source: new Resetting(),
+        destination,
+        steps: [
+          new Copy(items, destination.table('items'), {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'append',
+          }),
+        ],
+      }),
+    ],
+  });
+  const ids = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT id FROM items ORDER BY rowid')
+      .all()
+      .map(({ id }) => id);
+  };
+
+  messages = [{ stream: 'items', data: { id: '1' } }];
+  await pipeline.run();
+  messages = [
+    { type: 'RESET', stream: 'items' },
+    { stream: 'items', data: { id: '2' } },
+  ];
+  await pipeline.run();
+
+  assert.deepEqual(ids(), ['1', '2']);
+});
+
 // A stream discovered anew each run, as a database source rediscovers its
 // tables, diffed as a snapshot into SQLite under a reader view.
 function shapeChanges(

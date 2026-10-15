@@ -1,10 +1,10 @@
 # elt
 
-**Extract data from native apps. Load it into SQLite, Postgres or Markdown. Keep it up to date.**
+**Extract data from native apps. Load it into SQLite or Postgres. Keep it up to date.**
 
 `elt` is a TypeScript library for declaring and running ELT pipelines. Connect a source stream to a destination with `Copy`, group one source's copies into one destination as a `Connection`, then execute the connections with `Pipeline`. It supports full refresh, incremental loading with persistent checkpoints, native change watching, and attachment extraction.
 
-The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and has no runtime dependencies. Each destination is its own package, together with its checkpoint store: `elt-sqlite`, `elt-markdown`, and `elt-postgresql`, which adds the `postgres` driver. The included Apple connectors use macOS scripting and EventKit; the Google connectors call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
+The core `elt` package holds the contracts and pipeline, uses Node.js APIs, and has no runtime dependencies. Each destination is its own package, together with its checkpoint store: `elt-sqlite` and `elt-postgresql`, which adds the `postgres` driver. The included Apple connectors use macOS scripting and EventKit; the Google connectors call REST APIs through `google-auth`. Transformations, queries, and search indexes belong in the application consuming the exported data.
 
 [Quick start](#quick-start) · [Incremental sync](#incremental-sync) · [Watch for changes](#watch-for-changes) · [Reference](docs/reference.md)
 
@@ -36,7 +36,6 @@ Every destination supports overwrite, append, and deduplication:
 
 - **SQLite** (`elt-sqlite`): strict tables with inferred or explicitly selected columns, including text and attachment bytes.
 - **Postgres** (`elt-postgresql`): typed tables in one schema per connector, loaded without blocking readers, and [documented SQL views](docs/reference.md#documented-postgres-views) defined by the consuming application.
-- **Markdown** (`elt-markdown`): one document per stream or one document per record, with managed append and deduplication.
 
 See the reference for [Mail streams](docs/reference.md#apple-mail), [Contacts streams](docs/reference.md#apple-contacts), [Calendar streams](docs/reference.md#apple-calendar), [Reminders streams](docs/reference.md#apple-reminders), [Safari streams](docs/reference.md#apple-safari), [Books streams](docs/reference.md#apple-books), [Activity streams](docs/reference.md#apple-activity), [Accounts streams](docs/reference.md#apple-accounts), [Call History streams](docs/reference.md#apple-call-history), [Clock streams](docs/reference.md#apple-clock), [Notification Center streams](docs/reference.md#apple-notification-center), [Wallet streams](docs/reference.md#apple-wallet), [Slack streams](docs/reference.md#slack), [Teams streams](docs/reference.md#microsoft-teams), [WhatsApp streams](docs/reference.md#whatsapp), [Search Console streams](docs/reference.md#google-search-console), [SQL Server streams](docs/reference.md#sql-server), and [destination behavior](docs/reference.md#identity-cursors-and-schemas).
 
@@ -289,33 +288,6 @@ Calling `controller.abort()` stops observation and lets each in-flight pass fini
 
 Live verification confirmed that Calendar/Reminders writes through EventKit in a separate process reach SQLite through `Pipeline.watch()`: creation, updates, and removal were checked. A Notes edit made on an iPhone reached SQLite through a Notes watch once the watch had Notes running, and the watch relaunched Notes after it was closed. Native observer delivery and temporary-filesystem notifications are also tested. See [watching behavior and verification limits](docs/reference.md#watching-for-changes).
 
-## Markdown exports
-
-Using the `source` from the quick start, create a separate connection with a Markdown destination:
-
-```ts
-import { MarkdownDestination } from '@workspace/elt-markdown';
-
-const markdown = new MarkdownDestination({ path: './outputs/markdown' });
-
-await new Pipeline({
-  connections: [
-    new Connection({
-      name: 'notes-markdown',
-      source,
-      destination: markdown,
-      steps: [
-        new Copy(source.notes, markdown.folder('notes', { title: 'title' })),
-      ],
-    }),
-  ],
-}).run();
-```
-
-`folder()` creates one document per record. Use `markdown.file('notes.md', { title: 'title' })` for one combined document. Both support incremental deduplication with the same copy options and a separate checkpoint store.
-
-Generated Markdown retains canonical record data for subsequent appends and reconciliation. Treat these files as managed output: manual edits are replaced. See [Markdown storage and recovery](docs/reference.md#markdown-destination).
-
 ## Attachment text and local files
 
 Using the `source` and `destination` from the quick start, store attachment metadata and parsed text in the database, and save original files in a directory you choose:
@@ -421,7 +393,6 @@ Manage permissions in **System Settings → Privacy & Security**. Calendar and R
 ```text
 packages/elt/                     Core contracts, pipelines, and the checkpoint protocol
 packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-sqlite)
-packages/destinations/markdown/   Markdown destination (elt-markdown)
 packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
 packages/sdks/apple/      SDKs, one per Apple store (sdk-apple-<name>): accounts, biome,

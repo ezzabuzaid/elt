@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdtempDisposable, readFile } from 'node:fs/promises';
+import { mkdtempDisposable } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -23,7 +23,6 @@ import {
   readerCatalog,
   syncHistoryRelations,
 } from '@workspace/elt';
-import { MarkdownDestination } from '@workspace/elt-markdown';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
@@ -523,7 +522,7 @@ function failureTypes(error: {
 }
 
 test(
-  'Reminders extracts every stream of a list on this Mac into SQLite and Markdown',
+  'Reminders extracts every stream of a list on this Mac into SQLite',
   { timeout: 120_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
@@ -731,9 +730,6 @@ test(
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'reminders.sqlite'),
     });
-    const markdown = new MarkdownDestination({
-      path: join(scratch.path, 'markdown'),
-    });
     await new Pipeline({
       connections: [
         new Connection({
@@ -742,22 +738,6 @@ test(
           destination: sqlite,
           steps: streams.map(
             (stream) => new Copy(stream, sqlite.table(stream.name)),
-          ),
-        }),
-      ],
-    }).run();
-    await new Pipeline({
-      connections: [
-        new Connection({
-          name: 'test',
-          source,
-          destination: markdown,
-          steps: streams.map(
-            (stream) =>
-              new Copy(
-                stream,
-                markdown.file(`${stream.name.toLowerCase()}.md`),
-              ),
           ),
         }),
       ],
@@ -772,16 +752,6 @@ test(
           ?.count,
         rows.length,
       );
-      const document = await readFile(
-        join(markdown.path, `${stream.name.toLowerCase()}.md`),
-        'utf8',
-      );
-      for (const row of rows)
-        assert.ok(
-          document.includes(
-            Buffer.from(JSON.stringify(row)).toString('base64'),
-          ),
-        );
     }
     assert.equal(
       database
@@ -1052,10 +1022,10 @@ test('Reminders rejects unsupported selections without the EventKit helper', asy
     store: new RemindersStore(join(missing.path, 'eventkit-helper')),
   });
   const streams = (await source.discover()).streams;
-  const destination = new MarkdownDestination({
-    path: join(missing.path, 'markdown'),
+  const destination = new SQLiteDestination({
+    path: join(missing.path, 'reminders.sqlite'),
   });
-  const target = destination.file('reminders.md');
+  const target = destination.table('reminders');
 
   assert.equal(source.identity, 'apple-reminders:eventkit');
   assert.ok(
@@ -1096,8 +1066,8 @@ test('Reminders rejects malformed records and preserves its target on access or 
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-reminders-errors-'),
   );
-  const destination = new MarkdownDestination({
-    path: join(scratch.path, 'markdown'),
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'reminders.sqlite'),
   });
   const run = () =>
     new Pipeline({
@@ -1106,14 +1076,21 @@ test('Reminders rejects malformed records and preserves its target on access or 
           name: 'test',
           source,
           destination,
-          steps: [new Copy(source.reminders, destination.file('reminders.md'))],
+          steps: [new Copy(source.reminders, destination.table('reminders'))],
         }),
       ],
     }).run();
+  const loaded = () => {
+    using database = new DatabaseSync(destination.path, { readOnly: true });
+    return database
+      .prepare('SELECT * FROM reminders')
+      .all()
+      .map((row) => ({ ...row }));
+  };
   answer({ documents: [reminder()] });
   await run();
-  const path = join(destination.path, 'reminders.md');
-  const previous = await readFile(path, 'utf8');
+  const previous = loaded();
+  assert.equal(previous.length, 1);
 
   // Malformed documents on purpose: each must fail the read.
   const { name: _name, ...unnamed } = reminder();
@@ -1126,7 +1103,7 @@ test('Reminders rejects malformed records and preserves its target on access or 
     // @ts-expect-error -- each document is malformed on purpose
     answer({ documents: [invalid] });
     await assert.rejects(run(), /invalid reminders/);
-    assert.equal(await readFile(path, 'utf8'), previous);
+    assert.deepEqual(loaded(), previous);
   }
   // Access failures as the helper reports them on stderr; revoked access fails
   // the helper after it wrote documents.
@@ -1147,7 +1124,7 @@ test('Reminders rejects malformed records and preserves its target on access or 
         Reflect.get(Object(error.cause.cause), 'stderr') === stderr &&
         failureTypes(error).join() === 'config',
     );
-    assert.equal(await readFile(path, 'utf8'), previous);
+    assert.deepEqual(loaded(), previous);
   }
   // A helper failure without a marker keeps its own error.
   answer({ stderr: 'EventKit reminder query failed\n' });
@@ -1160,11 +1137,11 @@ test('Reminders rejects malformed records and preserves its target on access or 
       /EventKit reminder query failed/.test(error.cause.message) &&
       failureTypes(error).join() === 'system',
   );
-  assert.equal(await readFile(path, 'utf8'), previous);
+  assert.deepEqual(loaded(), previous);
 
   answer({ documents: [] });
   await run();
-  assert.notEqual(await readFile(path, 'utf8'), previous);
+  assert.deepEqual(loaded(), []);
 });
 
 test(

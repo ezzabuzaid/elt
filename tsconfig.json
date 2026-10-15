@@ -9,9 +9,6 @@
       "path": "./packages/destinations/postgresql"
     },
     {
-      "path": "./packages/destinations/markdown"
-    },
-    {
       "path": "./packages/destinations/sqlite"
     },
     {

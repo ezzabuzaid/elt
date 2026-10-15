@@ -27,9 +27,6 @@
     },
     {
       "path": "../../../destinations/sqlite"
-    },
-    {
-      "path": "../../../destinations/markdown"
     }
   ]
 }

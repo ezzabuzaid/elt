@@ -18,7 +18,6 @@
     "@workspace/source-apple-macos": "0.0.1"
   },
   "devDependencies": {
-    "@workspace/elt-markdown": "0.0.1",
     "@workspace/elt-sqlite": "0.0.1"
   }
 }

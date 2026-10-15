@@ -138,7 +138,7 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
   // replace keeps the newest extraction, so a restated fact overwrites the
   // loaded one; cursor_newer keeps the greatest cursor (the first on ties) and
   // the guard that rejects out-of-order replay. Text cursors compare by bytes,
-  // as SQLite's BINARY and Markdown do.
+  // as SQLite's BINARY does.
   protected override async merge(
     sql: Transaction,
     stage: string,

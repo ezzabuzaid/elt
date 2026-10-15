@@ -7,7 +7,6 @@ import {
   mkdir,
   mkdtempDisposable,
   readFile,
-  readdir,
   rename,
   rm,
   writeFile,
@@ -22,7 +21,6 @@ import { crc32, deflateSync } from 'node:zlib';
 import {
   Connection,
   Copy,
-  FileRead,
   LocalFiles,
   Pipeline,
   PipelineError,
@@ -31,7 +29,6 @@ import {
   type Stream,
   StreamStatus,
 } from '@workspace/elt';
-import { MarkdownDestination } from '@workspace/elt-markdown';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
@@ -2247,7 +2244,7 @@ test('Mail’s watch refreshes only accounts and smtpServers when only the Accou
   assert.equal((await watch.next()).done, true);
 });
 
-test('Mail watches index commits and file-only downloads, cancels, and exports readable Markdown', async () => {
+test('Mail watches index commits and file-only downloads, and cancels', async () => {
   await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-watch-'));
   const store = await fixture(join(dir.path, 'Mail'));
   // Outside the Mail directory, as ~/Library/Accounts is.
@@ -2287,69 +2284,6 @@ test('Mail watches index commits and file-only downloads, cancels, and exports r
   ]);
   abort.abort();
   assert.equal((await watch.next()).done, true);
-  const destination = new MarkdownDestination({
-    path: join(dir.path, 'markdown'),
-  });
-  const attachments = new LocalFiles({ directory: join(dir.path, 'files') });
-  const exportMail = new Pipeline({
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        steps: [
-          new Copy(source.messageParts, destination.file('parts.md'), {
-            syncMode: 'full_refresh',
-            destinationSyncMode: 'overwrite',
-          }),
-          new Copy(
-            source.attachments,
-            destination.file('attachments.md', {
-              fields: [
-                new FileRead(
-                  'attachmentRef',
-                  source.attachments.file.store(attachments),
-                ),
-              ],
-            }),
-          ),
-        ],
-      }),
-    ],
-  });
-  await exportMail.run();
-  const files = await readdir(join(dir.path, 'markdown'), { recursive: true });
-  const contents = await Promise.all(
-    files
-      .filter((name) => name.endsWith('.md'))
-      .map((name) => readFile(join(dir.path, 'markdown', name), 'utf8')),
-  );
-  assert.ok(contents.some((text) => text.includes('Hello 🌍')));
-  const stored = (
-    await readdir(attachments.directory, {
-      recursive: true,
-      withFileTypes: true,
-    })
-  )
-    .filter((entry) => entry.isFile())
-    .map((entry) => join(entry.parentPath, entry.name));
-  assert.ok(stored.length > 0);
-  const references = contents
-    .flatMap((text) =>
-      Array.from(
-        text.matchAll(/^<!-- elt-record:([A-Za-z0-9+/=]+) -->$/gm),
-        ([, encoded]) =>
-          JSON.parse(Buffer.from(String(encoded), 'base64').toString('utf8'))
-            .attachmentRef,
-      ),
-    )
-    .filter((reference) => typeof reference === 'string');
-  assert.deepEqual(new Set(references), new Set(stored));
-  await exportMail.run();
-  for (const path of stored) await readFile(path);
-  await exportMail.clear();
-  for (const path of stored)
-    await assert.rejects(readFile(path), { code: 'ENOENT' });
 });
 
 test('Mail tracking pixels keep exact local files and database bytes with null OCR text', async () => {

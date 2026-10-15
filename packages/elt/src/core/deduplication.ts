@@ -127,16 +127,4 @@ export class Deduplication {
       throw new TypeError('Cursor cannot be boolean');
     return value;
   }
-
-  newer(record: unknown, previous: unknown): boolean {
-    const value = this.cursor(record);
-    const saved = this.cursor(previous);
-    if (typeof value !== 'string' || typeof saved !== 'string')
-      return value > saved;
-    const format =
-      this.cursorField === undefined ? null : this.format(this.cursorField);
-    if (format === null)
-      return Buffer.compare(Buffer.from(value), Buffer.from(saved)) > 0;
-    return format.compare(value, saved) > 0;
-  }
 }

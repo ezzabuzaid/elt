@@ -49,7 +49,7 @@ A `Connection` is Airbyte's connection: one source's copies into one destination
 
 ## Sync modes
 
-`syncMode` selects extraction. `destinationSyncMode` selects loading. Both SQLite and Markdown files/folders implement these five combinations:
+`syncMode` selects extraction. `destinationSyncMode` selects loading. SQLite and Postgres implement these five combinations:
 
 | Extraction     | Loading           | Result                                                                                |
 | -------------- | ----------------- | ------------------------------------------------------------------------------------- |
@@ -72,7 +72,7 @@ These combinations follow Airbyte's [documented sync modes](https://docs.airbyte
 | `cursor_newer` (default) | `WHERE excluded.<cursor> > target.<cursor>` | The cursor advances independently of identity, so a lower cursor means a stale replay.       |
 | `replace`                | none                                        | The upstream restates facts it already published, so the newest extraction is authoritative. |
 
-A deduplicating copy that leaves `dedupPolicy` unset uses `cursor_newer`, or `replace` for a stream with `sourceDefinedCursor`. Both destinations apply the policy: SQLite as the upsert guard above, Markdown when it merges each record with the previously published one or with an earlier record from the same run.
+A deduplicating copy that leaves `dedupPolicy` unset uses `cursor_newer`, or `replace` for a stream with `sourceDefinedCursor`. Both destinations apply the policy: SQLite as the upsert guard above, Postgres when it merges each staged unit into its table.
 
 Selecting `cursor_newer` with a cursor that is a member of the primary key is rejected. A conflict on that key implies an equal cursor, so the guard could never fire and a restated record would load as a no-op that reports a count without changing the row. The rejection names the field and points at `replace`.
 
@@ -99,10 +99,9 @@ sqlite.supportedDestinationSyncModes;
 
 A stream that declares `emitsDeletes` can send `DELETE` messages during incremental reads, each carrying exactly the stream's `primaryKey` fields. Such a stream always declares its key, and its incremental copies must use `append_dedup`, which deduplicates on that key, so the destination can find the row:
 
-| Destination                            | Effect of `DELETE`                                           |
-| -------------------------------------- | ------------------------------------------------------------ |
-| SQLite `append_dedup`                  | Deletes the row with that key inside the copy's transaction. |
-| Markdown `append_dedup` file or folder | Drops the record before the target is republished.           |
+| Destination           | Effect of `DELETE`                                           |
+| --------------------- | ------------------------------------------------------------ |
+| SQLite `append_dedup` | Deletes the row with that key inside the copy's transaction. |
 
 Records and deletions apply in the order the source emits them, and deleting an absent key is a no-op, so replaying a run is safe. A deletion is rejected when the stream does not declare `emitsDeletes`, when its key is malformed, or when the load does not deduplicate. Results report accepted deletions as `deleted`, separately from `count`.
 
@@ -123,9 +122,9 @@ A stream's shape is its fields and their types (its schema, without descriptions
 
 A target has one writer, as in Airbyte, where one stream owns one table and ["more than one Airbyte connection to sync to the same destination stream… isn't permitted"](https://github.com/airbytehq/airbyte/blob/65c1b23b53ca4929ff18adbc3a3ef92666a3fffe/docs/platform/using-airbyte/configuring-schema.md#L42-L54). An overwrite empties the whole target and a snapshot copy deletes keys it once saw, so a second writer's rows would be lost.
 
-A writer is the copy's `id`, or the source identity and stream name for a copy without one. Every destination records the writer of each target, stored with the target and committed with its first load. Before a copy extracts or changes anything, the target refuses any other writer with `TargetOwnedError`, which names both. A pipeline refuses two writers of one target among the copies of all its connections before running any. It compares each destination's `location(target)`, which is globally unique: `//host:port/database/"schema"."table"` for Postgres, `<path>#<table>` for SQLite, and `<directory>/<name>` for Markdown. The owning writer may change its own mode or key.
+A writer is the copy's `id`, or the source identity and stream name for a copy without one. Every destination records the writer of each target, stored with the target and committed with its first load. Before a copy extracts or changes anything, the target refuses any other writer with `TargetOwnedError`, which names both. A pipeline refuses two writers of one target among the copies of all its connections before running any. It compares each destination's `location(target)`, which is globally unique: `//host:port/database/"schema"."table"` for Postgres and `<path>#<table>` for SQLite. The owning writer may change its own mode or key.
 
-To reset or reassign a target, clear it with its owning copy, as with Airbyte's Clear: `pipeline.clear()` (or `pipeline.clear([copy])`, which routes each copy to its connection, or `connection.clear()`) empties each target, releases its writer and removes the copy's checkpoint, so the next run reloads from scratch. A SQL table is emptied rather than dropped, so views built on it, such as the warehouse marts, keep working; a Markdown file or folder is removed. Clearing refuses a target another writer owns. A target dropped by hand also releases its writer, and its copy reloads it from no checkpoint, since resuming would load only what changed since the checkpoint. SQLite and Postgres keep writers in the reserved `_elt_writers` table; Markdown keeps it in the file's header comment or the folder's marker file.
+To reset or reassign a target, clear it with its owning copy, as with Airbyte's Clear: `pipeline.clear()` (or `pipeline.clear([copy])`, which routes each copy to its connection, or `connection.clear()`) empties each target, releases its writer and removes the copy's checkpoint, so the next run reloads from scratch. A table is emptied rather than dropped, so views built on it, such as the warehouse marts, keep working. Clearing refuses a target another writer owns. A target dropped by hand also releases its writer, and its copy reloads it from no checkpoint, since resuming would load only what changed since the checkpoint. SQLite and Postgres keep writers in the reserved `_elt_writers` table.
 
 Several properties or accounts share tables through one [partitioned source](#partitioned-streams), which is one writer.
 
@@ -190,7 +189,7 @@ Schema names and the names of published views do not change, because the caller'
 
 Incremental copies require an explicit stable `id` and a [checkpoint store](#checkpoint-stores). IDs must be unique across every connection of a pipeline, and each ID's progress is its own. A connection copies each stream once, so loading one stream into two targets takes two connections with two IDs (see [Read context](#read-context)).
 
-`Source.read(catalog, states)` hands each incremental stream its saved state, `null` on its first run, and `extract` receives it as `state`. `extract` emits `{ stream, data }` records, `{ type: 'DELETE', stream, key }` deletions, `{ type: 'RESET', stream }` [resets](#resets) and `{ type: 'STATE', stream, state }` checkpoints. Their text must be well-formed Unicode: a string or field name with a lone surrogate fails its stream, because SQLite and Markdown would store it as U+FFFD and Postgres refuses it. State is losslessly JSON serializable and source-owned; destinations do not interpret it.
+`Source.read(catalog, states)` hands each incremental stream its saved state, `null` on its first run, and `extract` receives it as `state`. `extract` emits `{ stream, data }` records, `{ type: 'DELETE', stream, key }` deletions, `{ type: 'RESET', stream }` [resets](#resets) and `{ type: 'STATE', stream, state }` checkpoints. Their text must be well-formed Unicode: a string or field name with a lone surrogate fails its stream, because SQLite would store it as U+FFFD and Postgres refuses it. State is losslessly JSON serializable and source-owned; destinations do not interpret it.
 
 Each checkpoint is a commit point, as in Airbyte: the writer commits everything before it, then acknowledges it, and the store saves it before the load continues. A run that fails later keeps every checkpoint it acknowledged and resumes from the last one. No acknowledgement means no advancement, even if the source mutates its input state. When `extract` throws, `Source.read` reports a `FAILED` stream status (Airbyte's error trace) for that partition or stream instead of throwing; the stream's stage discards what it staged since its last checkpoint and commits nothing more until the next one. A connector signals a failed read by throwing, never by yielding nothing. A full refresh carries no checkpoints, so it commits once at the end and any failure keeps the previous target.
 
@@ -201,7 +200,7 @@ await checkpoints.reset('notes-to-sqlite'); // Next read starts from null; desti
 await pipeline.run();
 ```
 
-`reset` keeps the loaded rows, as Airbyte's refresh that keeps records: resetting append progress may duplicate data, and resetting deduplicated progress reconciles replayed records. To drop the rows too, [clear the copy](#target-ownership). Do not share a state file between independent machines or put it inside a managed Markdown folder. Its parent directory must exist.
+`reset` keeps the loaded rows, as Airbyte's refresh that keeps records: resetting append progress may duplicate data, and resetting deduplicated progress reconciles replayed records. To drop the rows too, [clear the copy](#target-ownership). Do not share a state file between independent machines. Its parent directory must exist.
 
 A checkpoint is saved after its rows commit, in a separate store. If the rows commit but the save fails, the copy reports that failure with the committed counts, and the next run replays from the last saved checkpoint: delivery is **at least once**. Append keeps replayed observations; deduplication reconciles them. Resumable full refresh is not implemented.
 
@@ -209,10 +208,10 @@ A checkpoint is saved after its rows commit, in a separate store. If the rows co
 
 State belongs to the orchestration, not the destination, as in Airbyte, so any store works with any destination, including one that cannot hold state itself: the replication saves each checkpoint only after its stream's rows before it committed. `CheckpointStore.run(bindings, work)` owns that protocol for every incremental copy of a pass at once (the binding check per copy, the cloned input state, advancing only on a commit, `reset` and `clear`). A store supplies a session that holds every copy's lock for the whole pass and whose `save` is durable when it resolves.
 
-| Store                                                            | Keeps state in                                                                                                                                                                                                                                    | Concurrency                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SQLiteCheckpointStore({ path })` from `elt-sqlite`              | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite and Markdown destinations. The file must differ from a SQLite destination file and must not sit inside a managed Markdown folder. Its parent directory must exist. | A lock per copy `id`, held through `@zukhruf/mutex`'s `SqliteStore` in a `<path>.locks` folder beside the file: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". The kernel releases a lock when its process exits. Each save commits on its own, so no checkpoint transaction stays open while the load runs.                                         |
-| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both.                                                                | A session advisory lock per copy `id` on its own connection, taken in sorted order: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the schema's lock, so two runs that create it at once take turns. |
+| Store                                                            | Keeps state in                                                                                                                                                                     | Concurrency                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SQLiteCheckpointStore({ path })` from `elt-sqlite`              | A `checkpoints` table in its own file, owner-only (`0600`). Use it with SQLite destinations. The file must differ from a SQLite destination file. Its parent directory must exist. | A lock per copy `id`, held through `@zukhruf/mutex`'s `SqliteStore` in a `<path>.locks` folder beside the file: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". The kernel releases a lock when its process exits. Each save commits on its own, so no checkpoint transaction stays open while the load runs.                                         |
+| `PostgresCheckpointStore({ url, schema })` from `elt-postgresql` | `<schema>._elt_checkpoints` (`id`, `binding` and `state` as `JSON`, which keeps state that `JSONB` would refuse). It sits beside the data, so `DROP SCHEMA … CASCADE` resets both. | A session advisory lock per copy `id` on its own connection, taken in sorted order: different ids run in parallel, and a run that finds one id in use releases the ones it took and fails with "in use by another run". Each save autocommits, so no checkpoint transaction stays open while the load runs. The table is created in its own committed transaction under the schema's lock, so two runs that create it at once take turns. |
 
 ### Snapshot streams
 
@@ -433,7 +432,7 @@ Live verification on **2026-09-22**, using **macOS 26.6.2 and Node.js 26.8.1**, 
 | Calendar `events`     | A uniquely labeled event appeared, its changed title and start time reached SQLite, and deleting it removed the exported row. The fixed occurrence window was `2026-09-22T00:00:00.000Z` to `2026-09-23T00:00:00.000Z`. |
 | Reminders `reminders` | A uniquely labeled reminder appeared, its changed title and completed status reached SQLite, and deleting it removed the exported row.                                                                                  |
 
-Watchers were closed after verification. The Calendar test event, temporary Reminders list, and temporary databases were removed. EventKit cleanup was checked through fresh native reads. Existing user records were not modified. This live pass covered the primary streams and SQLite; Calendar/Reminders GUI edits, other streams, and Markdown were not exercised live.
+Watchers were closed after verification. The Calendar test event, temporary Reminders list, and temporary databases were removed. EventKit cleanup was checked through fresh native reads. Existing user records were not modified. This live pass covered the primary streams and SQLite; Calendar/Reminders GUI edits and other streams were not exercised live.
 
 **Notes live verification** on **2026-09-25**, macOS 26.6.2 and Node.js 26.8.1, against the real store with Notes closed, the process holding Full Disk Access:
 
@@ -564,27 +563,6 @@ A bare table still infers the discovered metadata schema. To include all metadat
 
 `notes.attachments.file` is an immutable source reference, not a path. Other Notes streams reject file access. All declarations remain immutable and perform no I/O; the discovered source schema is never rewritten to describe destination fields. A file can supply multiple named representations in one copy. Each record is exported once; requests using the same parser instance share one parse, and original-byte requests share one read. Separate copies retain separate extraction and checkpoint progress.
 
-Markdown targets use the same destination-independent `FileRead` declaration, alongside their existing metadata rendering:
-
-```ts
-import { FileRead } from '@workspace/elt';
-
-new Copy(
-  notes.attachments,
-  markdown.folder('attachments', {
-    fields: [
-      new FileRead(
-        'content',
-        notes.attachments.file,
-        new MacOSDocumentParser(),
-      ),
-    ],
-  }),
-);
-```
-
-Markdown accepts parsed text and stored-reference fields, such as `new FileRead('attachmentRef', notes.attachments.file.store(files))`, and rejects binary requests before I/O. Its `file()` target supports the same options as `folder()`.
-
 This follows Airbyte's source-side parser and staged-file concepts: its [file parser Strategy](https://github.com/airbytehq/airbyte-python-cdk/blob/f77450f74def59598cda8e1e9a4e975031710c18/airbyte_cdk/sources/file_based/file_types/file_type_parser.py) interprets files, while [file transfer](https://docs.airbyte.com/platform/using-airbyte/sync-files-and-records) moves original content with metadata. Our parser emits plain text, not Airbyte's Markdown conversion, and we do not claim its complete format/OCR support or wire compatibility.
 
 `MacOSDocumentParser` uses native PDFKit for PDFs with a text layer and native `textutil` for TXT, Markdown, RTF, HTML, DOC, DOCX, ODT, and WordML. It selects the format from the filename extension, preserves text/Markdown content, and strips rich formatting when converting other formats to plain text. HTML conversion does not load external resources. Images (JPEG, PNG, GIF, HEIC/HEIF, TIFF, BMP, ICO, WebP) go through Vision's accurate text recognition, one line per observation. ImageIO checks native dimensions first; images narrower or shorter than three pixels return null because Vision crashes or rejects these inputs. Voice recordings are not transcribed: macOS grants Speech Recognition only to an app bundle that declares why it asks, which neither `node` nor `osascript` is. vCards, including Messages' `.loc.vcf` locations, load as their text. A format claims a file by its extension or by its magic number, the leading bytes that name the format, so a file without a usable extension, such as Messages' `GroupPhotoImage`, is still read; text that merely begins like a magic number, such as `BMW` or `%PDF notes`, is not taken for an image or a PDF. Files that match no format, locked PDFs, PDFs without a text layer and images without recognizable text parse to `null`, so the field loads as null and the copy continues. A file that cannot be read (a PDF that cannot be opened, an image Vision cannot decode, a `textutil` error) fails the copy. The parser's identity is `macos-document-v4`. PDF parsing uses the existing OSA command's 64 MiB output buffer and 120-second timeout. Text conversion uses Node's native `execFile` defaults (1 MiB output limit and no timeout).
@@ -693,50 +671,6 @@ Every failure says whose it is to fix, as Airbyte's `failure_type` does (`Airbyt
 Coverage is the source's own statement, `coverage(stream): ExtractionCoverage` with `ExtractionCoverage = { description, selection }`: what a pass over that stream asks the upstream for, from the source's configuration (Calendar's `startAt`/`endAt`, Search Console's `siteUrls`), never inferred from the records it finds. `selection` holds the JSON configuration values the description refers to. Every custom source implements it.
 
 `PostgresSyncHistory({ url })` from `elt-postgresql` records into the [warehouse](#warehouse-marts) tables `_warehouse.sync_attempts`, `_warehouse.extraction_coverage` and `_warehouse.stream_checks`, the last holding each stream's latest check by a watch that found it unchanged. Its `install()` creates those tables and publishes the `marts` views `sync_attempts`, `extraction_coverage`, `sync_status` and `stream_status`; it is safe to repeat. Run it before the pipeline records its first pass. It grants nothing. It records Postgres destinations only and refuses any other connection during preflight.
-
-## Markdown destination
-
-```ts
-import { MarkdownDestination } from '@workspace/elt-markdown';
-
-const markdown = new MarkdownDestination({ path: './exports' });
-const exportPipeline = new Pipeline({
-  connections: [
-    new Connection({
-      name: 'apple-notes-markdown',
-      source: notes,
-      destination: markdown,
-      checkpoints,
-      steps: [
-        new Copy(
-          notes.accounts,
-          markdown.file('accounts.md', { title: 'name' }),
-        ),
-        new Copy(notes.notes, markdown.folder('notes', { title: 'title' }), {
-          id: 'notes-to-markdown',
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-        }),
-      ],
-    }),
-  ],
-});
-await exportPipeline.run();
-```
-
-`file()` stores the stream in one document; `folder()` stores one record per document. Both retain every record field, including nested JSON. The optional title field supplies headings; otherwise headings use record positions. Values are escaped Markdown text; HTML stays text. Non-JSON values fail instead of being silently discarded or coerced.
-
-Managed v3 documents include a writer comment and base64-encoded JSON record comments alongside their visible sections. Append and deduplication read these canonical records, without parsing rendered Markdown or using a SQL sidecar. These comments are not encryption. Generated files are owned by the export; manual edits are replaced. Earlier layouts have no compatibility reader or migration.
-
-Ordinary overwrite/append requires no key. Folder filenames represent record occurrences, so repeated source IDs remain separate. Deduplicated folders hash the selected key values instead; title changes do not change identity. The old `folder({ key })` option is removed: selected deduplication keys belong to the copy. Reconciliation currently holds the target in memory and republishes its complete contents.
-
-Target names use lowercase letters, digits, hyphens and underscores, beginning with a letter; files additionally end in `.md`. Nested paths and traversal are rejected. Only regular managed files, or managed folders containing only generated record files, can be replaced. Unmanaged files, subdirectories and symlinks are protected; siblings stay untouched.
-
-An incremental copy publishes the whole target at each checkpoint, so a later failure keeps what earlier checkpoints published; a full refresh publishes once. A file publishes with a rename after staging and closing. A folder moves the old directory to a backup before publishing the staged directory. If publication fails, it restores the backup; if restoration also fails, it preserves the sole backup and reports its location. Folder switching has a brief path gap between renames. Publication is not a filesystem-wide or power-loss transaction.
-
-A reload ([resets](#resets)) publishes into a hidden `.markdown-<target>.next` file or folder instead, which takes the target's place by the same rename when the stream ends without a failure. Markdown stores no shape, so a [shape change](#shape-changes) keeps every record as it was written and the copy resumes from its checkpoint. Names starting with `.markdown-` are reserved.
-
-Markdown takes no lock; a checkpoint store keeps two runs of one copy apart. Normal completion/failure removes staging unless a recovery backup must remain. Abrupt termination can leave staging and a backup; inspect and restore the backup before retrying.
 
 ## Postgres destination
 
@@ -955,7 +889,7 @@ The access-method review selected the read-only index, EMLX and plist files for 
 Checks on 2026-09-26 used Node.js 26.8.1 and macOS 26.6.2:
 
 - `npx nx run apple:typecheck` and `npx nx run elt-sqlite:typecheck` pass. `apple:test` passes all 60 tests; `elt-sqlite:test` passes all 31. The initial Apple baseline passed 56 tests.
-- Four Mail integration tests import `AppleMailSource` directly and load through real Pipeline/SQLite/Markdown destinations. They cover all 42 streams, exact file bytes, nested MIME, repeated/empty/encoded headers, 64-bit IDs, missing and later-downloaded content, changed flags/memberships, deletion, unchanged reruns, schema/read failures, checkpoint preservation, filesystem/index watch notifications and cancellation. Fixtures contain only synthetic data and Apple's schema, never personal records.
+- Four Mail integration tests import `AppleMailSource` directly and load through real Pipeline/SQLite destinations. They cover all 42 streams, exact file bytes, nested MIME, repeated/empty/encoded headers, 64-bit IDs, missing and later-downloaded content, changed flags/memberships, deletion, unchanged reruns, schema/read failures, checkpoint preservation, filesystem/index watch notifications and cancellation. Fixtures contain only synthetic data and Apple's schema, never personal records.
 - Native ImageIO/Vision checks cover 1-, 2- and 3-pixel images through the Mail attachment pipeline. Smaller tracking pixels return null text while retaining their original bytes. Existing PDF, text, image and extensionless HEIC checks pass. Backlog defect #2038 is closed.
 - A full live attachment copy without a text parser loaded 1,152 records: 576 locally available files totaling 122,303,823 bytes in 583 SQLite chunks, and 576 unavailable records. Its unchanged second run wrote zero records and zero deletions.
 - Mail verification through the Apple exporter completed 40 of 42 streams, loading 25,689 messages, 819,179 headers and 69,324 MIME parts, including 46,251 text parts (1,133,028,667 UTF-8 bytes). All 25,689 stored original EMLX files (1,379,197,940 bytes) were reassembled and verified against their source SHA-256 and size on 2026-09-27. Forty checkpoints committed. The full body snapshot succeeded after changing SQLite to sort only row identifiers; earlier whole-payload sorting exhausted temporary disk on this nearly full Mac. The subsequent entry-point run completed 39 streams: 38 wrote nothing (including messages, EMLX files and headers), and two mailbox-property rows updated. Mail changed EMLX files during the later body and attachment scans, so those streams failed without advancing their saved checkpoints. Repeated native reads of all 33 mailbox plists had stable values/key order and matched the saved export; the mailbox updates were not generated serialization differences.
@@ -1089,7 +1023,7 @@ await new Pipeline({
 
 Reminders uses **EventKit exclusively**, through the `eventkit` helper (see [Calendar](#apple-calendar)). It does not use Reminders.app's scripting API, and the app need not be open. macOS 27 and full Reminders permission are required for the process running the export. Enable access in **System Settings > Privacy & Security > Reminders**. Calendar permission and Automation permission do not substitute for it. A sandbox can block access even when permission is granted.
 
-All eight streams support full refresh and [snapshot incremental](#snapshot-streams) and work with inferred SQLite tables or Markdown targets. Discovery and validation perform no native reads or permission requests. The first extraction requests permission if undecided, waiting up to 30 seconds. Denied, restricted, pending, and revoked access throw `RemindersUnavailableError`, retaining the process error as its cause. Asynchronous fetches time out after 60 seconds and cancel the request. A nil fetch result is an error; only a successful empty array can clear a target. Failed reads preserve the previous contents of the affected target. Only macOS 27 is supported, because the helper is built for it.
+All eight streams support full refresh and [snapshot incremental](#snapshot-streams) and work with inferred SQLite tables. Discovery and validation perform no native reads or permission requests. The first extraction requests permission if undecided, waiting up to 30 seconds. Denied, restricted, pending, and revoked access throw `RemindersUnavailableError`, retaining the process error as its cause. Asynchronous fetches time out after 60 seconds and cancel the request. A nil fetch result is an error; only a successful empty array can clear a target. Failed reads preserve the previous contents of the affected target. Only macOS 27 is supported, because the helper is built for it.
 
 | Stream                 | Contents and relationships                                                                                                                                                                                                       |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1152,7 +1086,7 @@ The `icsComponents`, `icsProperties`, and `icsParameters` streams read each item
 
 ### Streams
 
-All eleven streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables or Markdown targets. Related collections, whose members carry fields of their own, are separate streams of rows.
+All eleven streams support full refresh and snapshot incremental (`append_dedup` keyed by `id`, no `cursorField`; see [snapshot streams](#snapshot-streams)) and work with inferred SQLite tables. Related collections, whose members carry fields of their own, are separate streams of rows.
 
 | Stream                 | Contents and relationships                                                                                                                                                                                                                                                                                                                           |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1183,8 +1117,6 @@ The event `id` (also exposed as `eventId`) combines the calendar identifier, the
 Per-item recurrence metadata comes from the ICS streams: each native item's `UID`, `SEQUENCE`, raw `RRULE` and `EXDATE` are `icsProperties` rows (an `EXDATE`'s `TZID` is an `icsParameters` row), and a detached item's `VEVENT` carries its series `UID` with a `RECURRENCE-ID`. The structured rules are also in `recurrenceRules` and `recurrenceRuleValues` through public EventKit. Each native item's iCalendar data is exported once per read, without paging.
 
 Calendar's scripting interface is not read. A live comparison on **2026-09-25** (macOS 26.6.2) over 2,786 native items from 2000-01-01 to 2027-09-25 found that its event properties added nothing the ICS export lacks: its UID is EventKit's `calendarItemIdentifier` (the series' for the 140 detached items), its recurrence string re-serializes the same rule (adding `INTERVAL=1`, changing `WKST`), its sequence matched `SEQUENCE`, and its excluded dates covered 67 series where `EXDATE` covered 127. It cost about 55 ms per event for each property, batched or not: 17 minutes for six properties of 3,337 events, against about 35 seconds for the ICS export.
-
-Markdown uses the same source; for example, `new Copy(calendar.events, markdown.folder('events', { title: 'name' }))`. Use lowercase target names such as `recurrence-rules` for camel-cased streams.
 
 ### Completeness and limits
 
@@ -2614,7 +2546,7 @@ Live verification on **2026-09-25** of failure isolation and clear, against `sc-
 
 Live verification on **2026-10-12** of the host-built copies against `sc-domain:ezz.sh`: two runs of `apps/google/dist/main.js` exited 0. The first loaded ten `raw_<stream>` tables and created the ten `marts.search_console_<snake_stream>` views. The second wrote and deleted nothing. Read as `agent_reader`, each view showed as many rows as its raw table: 2400 daily, 3746 query, 1577 page and 267 country rows, 27 inspected URLs and 25 referrer rows.
 
-Not exercised live: `watch()` over a real polling interval, Markdown destinations, a property large enough to page past 25000 rows, and the quota ceiling on URL inspection.
+Not exercised live: `watch()` over a real polling interval, a property large enough to page past 25000 rows, and the quota ceiling on URL inspection.
 
 ### Row ceiling
 

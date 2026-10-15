@@ -2,12 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import {
-  mkdtempDisposable,
-  readFile,
-  readdir,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -28,7 +23,6 @@ import {
   readerCatalog,
   syncHistoryRelations,
 } from '@workspace/elt';
-import { MarkdownDestination } from '@workspace/elt-markdown';
 import {
   SQLiteCheckpointStore,
   SQLiteColumns,
@@ -629,7 +623,7 @@ function failureTypes(error: {
 }
 
 test(
-  'Calendar extracts every scalar stream of a calendar on this Mac into SQLite and Markdown',
+  'Calendar extracts every scalar stream of a calendar on this Mac into SQLite',
   { timeout: 120_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
@@ -787,31 +781,6 @@ test(
         weekNumber: null,
       },
     ]);
-
-    const markdown = new MarkdownDestination({
-      path: join(scratch.path, 'markdown'),
-    });
-    await new Pipeline({
-      connections: [
-        new Connection({
-          name: 'test',
-          source,
-          destination: markdown,
-          steps: [
-            new Copy(
-              source.events,
-              markdown.file('events.md', { title: 'name' }),
-            ),
-          ],
-        }),
-      ],
-    }).run();
-    const [read] = (await readRows(source, [source.events]))(source.events);
-    const document = await readFile(join(markdown.path, 'events.md'), 'utf8');
-    assert.match(document, /^## Live standup$/m);
-    assert.ok(
-      document.includes(Buffer.from(JSON.stringify(read)).toString('base64')),
-    );
   },
 );
 
@@ -1048,7 +1017,7 @@ test(
   },
 );
 
-test('Calendar rejects malformed records and preserves prior Markdown on native failures', async () => {
+test('Calendar rejects malformed records and preserves prior rows on native failures', async () => {
   await using stub = await StubEventKitHelper.create();
   const source = new AppleCalendarSource({
     store: new CalendarStore(stub.path),
@@ -1059,8 +1028,8 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'elt-calendar-'),
   );
-  const markdown = new MarkdownDestination({
-    path: join(scratch.path, 'markdown'),
+  const sqlite = new SQLiteDestination({
+    path: join(scratch.path, 'calendar.sqlite'),
   });
   const run = () =>
     new Pipeline({
@@ -1068,15 +1037,22 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
         new Connection({
           name: 'test',
           source,
-          destination: markdown,
-          steps: [new Copy(source.events, markdown.file('events.md'))],
+          destination: sqlite,
+          steps: [new Copy(source.events, sqlite.table('events'))],
         }),
       ],
     }).run();
+  const loaded = () => {
+    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    return database
+      .prepare('SELECT id, name FROM events')
+      .all()
+      .map((row) => ({ ...row }));
+  };
 
   await run();
-  const path = join(markdown.path, 'events.md');
-  const previous = await readFile(path, 'utf8');
+  const previous = [{ id: eventId('item-1'), name: 'Synthetic standup' }];
+  assert.deepEqual(loaded(), previous);
   // Malformed documents on purpose: each must fail the read.
   const { name: _name, ...unnamed } = occurrence();
   for (const [document, message] of [
@@ -1095,36 +1071,8 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
     // @ts-expect-error -- each document is malformed on purpose
     answer({ documents: [document] });
     await assert.rejects(run(), message);
-    assert.equal(await readFile(path, 'utf8'), previous);
+    assert.deepEqual(loaded(), previous);
   }
-
-  const sqlite = new SQLiteDestination({
-    path: join(scratch.path, 'calendar.sqlite'),
-  });
-  const sqliteRun = () =>
-    new Pipeline({
-      connections: [
-        new Connection({
-          name: 'test',
-          source,
-          destination: sqlite,
-          steps: [new Copy(source.events, sqlite.table('events'))],
-        }),
-      ],
-    }).run();
-  answer({ documents: [occurrence()] });
-  await sqliteRun();
-  const malformed = { ...occurrence(), body: { nested: true } };
-  // @ts-expect-error -- body is an object on purpose
-  answer({ documents: [malformed] });
-  await assert.rejects(sqliteRun(), /invalid events\.body/);
-  using database = new DatabaseSync(sqlite.path, { readOnly: true });
-  assert.deepEqual(
-    {
-      ...database.prepare('SELECT id, name FROM events').get(),
-    },
-    { id: eventId('item-1'), name: 'Synthetic standup' },
-  );
 
   // Access failures as the helper reports them on stderr; it checks access
   // again after writing every document.
@@ -1148,7 +1096,7 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
         Reflect.get(Object(error.cause.cause), 'stderr') === failure.stderr &&
         failureTypes(error).join() === 'config',
     );
-    assert.equal(await readFile(path, 'utf8'), previous);
+    assert.deepEqual(loaded(), previous);
   }
 
   // A helper failure without a marker keeps its own error.
@@ -1162,7 +1110,7 @@ test('Calendar rejects malformed records and preserves prior Markdown on native 
       /native EventKit failure/.test(error.cause.message) &&
       failureTypes(error).join() === 'system',
   );
-  assert.equal(await readFile(path, 'utf8'), previous);
+  assert.deepEqual(loaded(), previous);
 });
 
 test(
@@ -1190,78 +1138,36 @@ test(
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'calendar.sqlite'),
     });
-    const markdown = new MarkdownDestination({
-      path: join(scratch.path, 'markdown'),
-    });
-    const checkpoints = new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    });
-    const snapshot = (id: string) =>
-      ({
-        id,
-        syncMode: 'incremental',
-        destinationSyncMode: 'append_dedup',
-      }) as const;
-    const toSQLite = new Pipeline({
+    const pipeline = new Pipeline({
       connections: [
         new Connection({
           name: 'test',
           source,
           destination: sqlite,
-          checkpoints,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
+          }),
           steps: [
-            new Copy(source.events, sqlite.table('events'), snapshot('events')),
-          ],
-        }),
-      ],
-    });
-    const toMarkdown = new Pipeline({
-      connections: [
-        new Connection({
-          name: 'test',
-          source,
-          destination: markdown,
-          checkpoints,
-          steps: [
-            new Copy(
-              source.events,
-              markdown.folder('events', { title: 'name' }),
-              snapshot('events-md'),
-            ),
+            new Copy(source.events, sqlite.table('events'), {
+              id: 'events',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+            }),
           ],
         }),
       ],
     });
     const run = async () =>
-      [...(await toSQLite.run()), ...(await toMarkdown.run())].map(
-        ({ count, deleted }) => ({ count, deleted }),
-      );
-    const loaded = async () => {
+      (await pipeline.run()).map(({ count, deleted }) => ({ count, deleted }));
+    const loaded = () => {
       using database = new DatabaseSync(sqlite.path, { readOnly: true });
-      const folder = join(markdown.path, 'events');
-      const titles = await Promise.all(
-        (await readdir(folder))
-          .filter((file) => file.endsWith('.md'))
-          .map(
-            async (file) =>
-              /^## (.+)$/m.exec(
-                await readFile(join(folder, file), 'utf8'),
-              )?.[1],
-          ),
-      );
-      return {
-        events: database
-          .prepare('SELECT id, name FROM events ORDER BY name')
-          .all()
-          .map((row) => ({ ...row })),
-        markdown: titles.sort(),
-      };
+      return database
+        .prepare('SELECT id, name FROM events ORDER BY name')
+        .all()
+        .map((row) => ({ ...row }));
     };
 
-    assert.deepEqual(await run(), [
-      { count: 2, deleted: 0 },
-      { count: 2, deleted: 0 },
-    ]);
+    assert.deepEqual(await run(), [{ count: 2, deleted: 0 }]);
     // Standup is renamed, Review moves out of the window, Planning is new.
     await calendar.edit(standup, { title: 'Daily' });
     await calendar.edit(review, {
@@ -1274,21 +1180,12 @@ test(
       end: '2025-01-08T07:00:00.000Z',
     });
     assert.ok(planning);
-    assert.deepEqual(await run(), [
-      { count: 2, deleted: 1 },
-      { count: 2, deleted: 1 },
+    assert.deepEqual(await run(), [{ count: 2, deleted: 1 }]);
+    assert.deepEqual(loaded(), [
+      { id: liveEventId(calendar, standup), name: 'Daily' },
+      { id: liveEventId(calendar, planning), name: 'Planning' },
     ]);
-    assert.deepEqual(await loaded(), {
-      events: [
-        { id: liveEventId(calendar, standup), name: 'Daily' },
-        { id: liveEventId(calendar, planning), name: 'Planning' },
-      ],
-      markdown: ['Daily', 'Planning'],
-    });
-    assert.deepEqual(await run(), [
-      { count: 0, deleted: 0 },
-      { count: 0, deleted: 0 },
-    ]);
+    assert.deepEqual(await run(), [{ count: 0, deleted: 0 }]);
   },
 );
 
@@ -2055,9 +1952,6 @@ test('Calendar ICS streams keep attachments and vendor properties, which a test 
   const sqlite = new SQLiteDestination({
     path: join(scratch.path, 'ics.sqlite'),
   });
-  const markdown = new MarkdownDestination({
-    path: join(scratch.path, 'md'),
-  });
   const streams = [
     source.icsComponents,
     source.icsProperties,
@@ -2073,18 +1967,6 @@ test('Calendar ICS streams keep attachments and vendor properties, which a test 
         steps: streams.map(
           (stream) => new Copy(stream, sqlite.table(stream.name)),
         ),
-      }),
-    ],
-  }).run();
-  await new Pipeline({
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination: markdown,
-        steps: [
-          new Copy(source.icsProperties, markdown.file('ics-properties.md')),
-        ],
       }),
     ],
   }).run();
@@ -2129,10 +2011,6 @@ test('Calendar ICS streams keep attachments and vendor properties, which a test 
       { property: 'ATTACH', name: 'FMTTYPE', value: 'application/pdf' },
       { property: 'ATTACH', name: 'FILENAME', value: 'agenda.pdf' },
     ],
-  );
-  assert.match(
-    await readFile(join(markdown.path, 'ics-properties.md'), 'utf8'),
-    /X\\-GOOGLE\\-CONFERENCE/,
   );
 });
 

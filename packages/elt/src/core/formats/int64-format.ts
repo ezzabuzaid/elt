@@ -15,12 +15,4 @@ export class Int64Format extends FieldFormat {
     const integer = BigInt(value);
     return integer >= min && integer <= max;
   }
-
-  override compare(left: string, right: string): number {
-    const a = BigInt(left);
-    const b = BigInt(right);
-    if (a < b) return -1;
-    if (a > b) return 1;
-    return 0;
-  }
 }

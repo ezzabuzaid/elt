@@ -10,9 +10,4 @@ export abstract class FieldFormat {
   readonly ordering: string = 'by byte order';
 
   abstract accepts(value: string): boolean;
-
-  // Canonical values of one field share a width, so their bytes sort as they do.
-  compare(left: string, right: string): number {
-    return Buffer.compare(Buffer.from(left), Buffer.from(right));
-  }
 }
