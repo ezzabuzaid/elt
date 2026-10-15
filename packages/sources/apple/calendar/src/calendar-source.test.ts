@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -2236,6 +2236,87 @@ test(
           inline: 1,
           bytes: 'inline bytes',
         },
+      ],
+    );
+  },
+);
+
+test(
+  'A Calendar attachment whose extension alone passes the 255-byte file name limit is stored under its hash alone, and a short extension is kept',
+  {
+    concurrency: false,
+  },
+  async () => {
+    await using stub = await StubEventKitHelper.create();
+    const source = new AppleCalendarSource({
+      store: new CalendarStore(stub.path),
+      ...january,
+    });
+    const long = `notes.${'x'.repeat(255)}`;
+    const body = Buffer.from('inline bytes');
+    const pdf = Buffer.from('%PDF-agenda');
+    stub.answer(eventsRead(january, true), {
+      documents: [
+        icsItem(
+          'files',
+          [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'UID:files@example.com',
+            `ATTACH;ENCODING=BASE64;VALUE=BINARY;FILENAME=${long}:${body.toString('base64')}`,
+            `ATTACH;ENCODING=BASE64;VALUE=BINARY;FILENAME=agenda.pdf:${pdf.toString('base64')}`,
+            'END:VEVENT',
+            'END:VCALENDAR',
+            '',
+          ].join('\r\n'),
+        ),
+      ],
+    });
+    await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-att-'));
+    const sqlite = new SQLiteDestination({
+      path: join(scratch.path, 'a.sqlite'),
+    });
+    const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+
+    await new Pipeline({
+      history: await installedHistory(sqlite),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: sqlite,
+          steps: [
+            new Copy(
+              source.icsAttachments,
+              sqlite.table('attachments', (c) => [
+                c.text('filename'),
+                c
+                  .text('attachmentRef')
+                  .from(source.icsAttachments.file.store(files)),
+              ]),
+            ),
+          ],
+        }),
+      ],
+    }).run();
+
+    using database = new DatabaseSync(sqlite.path, { readOnly: true });
+    const stored = database
+      .prepare('SELECT filename, attachmentRef FROM attachments ORDER BY rowid')
+      .all();
+    const sha = (bytes: Buffer) =>
+      createHash('sha256').update(bytes).digest('hex');
+    assert.deepEqual(
+      await Promise.all(
+        stored.map(async ({ filename, attachmentRef }) => ({
+          filename,
+          name: basename(String(attachmentRef)),
+          body: await readFile(String(attachmentRef)),
+        })),
+      ),
+      [
+        { filename: long, name: sha(body), body },
+        { filename: 'agenda.pdf', name: `${sha(pdf)}.pdf`, body: pdf },
       ],
     );
   },

@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, open, readdir, rm } from 'node:fs/promises';
-import { dirname, extname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import type { FileContent } from '../core/file-content.ts';
+import { fileExtension } from '../core/file-extension.ts';
 import { FileStorage } from '../core/file-storage.ts';
 
 async function syncDirectory(path: string): Promise<void> {
@@ -79,11 +80,9 @@ export class LocalFiles extends FileStorage {
         }
         await file.sync();
       }
-      const extension = extname(content.path);
       const path = join(
         directory,
-        hash.digest('hex') +
-          (/^\.[a-zA-Z0-9]{1,16}$/.test(extension) ? extension : ''),
+        hash.digest('hex') + fileExtension(content.path),
       );
       await link(temporary, path).catch(
         async (error: NodeJS.ErrnoException) => {

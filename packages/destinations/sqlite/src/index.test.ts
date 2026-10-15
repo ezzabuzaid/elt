@@ -12,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -3714,6 +3714,53 @@ test('stored file references follow committed SQLite rows, including rejected up
   } finally {
     await scratch[Symbol.asyncDispose]();
   }
+});
+
+test('a file whose own name ends in an extension too long to keep is stored under its hash alone', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-local-'));
+  // A source can hand over its upstream's own file, named as the upstream
+  // named it: 246 bytes, which the hash in front would push past 255.
+  const path = join(scratch.path, `notes.${'x'.repeat(240)}`);
+  await writeFile(path, 'original');
+  const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+  const stream = new Stream({
+    ...scripted('docs', { snapshot: false }),
+    supportsFileTransfer: true,
+  });
+  const source = new ScriptedSource([stream], {
+    docs: [{ ...record('docs', 'a', 1), file: path }],
+  });
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'out.sqlite'),
+  });
+
+  await new Pipeline({
+    history: await installedHistory(destination),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            stream,
+            destination.table('docs', (c) => [
+              c.text('id'),
+              c.text('ref').from(stream.file.store(files)),
+            ]),
+          ),
+        ],
+      }),
+    ],
+  }).run();
+
+  using db = new DatabaseSync(destination.path, { readOnly: true });
+  const reference = String(db.prepare('SELECT ref FROM docs').get()?.ref);
+  assert.equal(
+    basename(reference),
+    createHash('sha256').update('original').digest('hex'),
+  );
+  assert.equal(await readFile(reference, 'utf8'), 'original');
 });
 
 test('stored files recover cleanup failures before checkpointing and isolate copies sharing a directory', async () => {

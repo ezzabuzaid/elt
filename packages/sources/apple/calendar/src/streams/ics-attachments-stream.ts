@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, writeFile } from 'node:fs/promises';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
 
-import type { RecordDraft, SchemaRecord } from '@workspace/elt';
+import {
+  type RecordDraft,
+  type SchemaRecord,
+  fileExtension,
+} from '@workspace/elt';
 
 import type { CalendarScan, IcsPropertyNode } from '../calendar-scan.ts';
 import { CalendarStream, calendarFields } from '../calendar-stream.ts';
@@ -100,7 +104,7 @@ export class IcsAttachmentsStream extends CalendarStream<
     staging: string,
   ): Promise<string | null> {
     const extension =
-      attachment.filename === null ? '' : extname(attachment.filename);
+      attachment.filename === null ? '' : fileExtension(attachment.filename);
     const path = join(staging, `${randomUUID()}${extension}`);
     if (attachment.inline) {
       await writeFile(path, Buffer.from(attachment.uri, 'base64'));

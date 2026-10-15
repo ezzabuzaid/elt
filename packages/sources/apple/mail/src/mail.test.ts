@@ -12,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -2395,6 +2395,152 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
     assert.deepEqual(bytes(destination.path, 'images', row.bytes), images[i]);
     assert.deepEqual(await readFile(String(row.attachmentRef)), images[i]);
   }
+});
+
+test('A MIME attachment whose extension alone passes the 255-byte file name limit is stored under its hash alone, and a short extension is kept', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-ext-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  const long = `notes.${'x'.repeat(255)}`;
+  const notes = Buffer.from('long extension');
+  const agenda = Buffer.from('%PDF-agenda');
+  const attachments = [
+    { filename: long, body: notes },
+    { filename: 'agenda.pdf', body: agenda },
+  ];
+  const raw = [
+    'Content-Type: multipart/mixed; boundary="parts"',
+    '',
+    ...attachments.flatMap(({ filename, body }) => [
+      '--parts',
+      'Content-Type: application/octet-stream',
+      `Content-Disposition: attachment; filename="${filename}"`,
+      'Content-Transfer-Encoding: base64',
+      '',
+      body.toString('base64'),
+    ]),
+    '--parts--',
+    '',
+  ].join('\r\n');
+  await writeFile(join(store.data, 'Messages/1.partial.emlx'), emlxOf(raw));
+  using upstream = new DatabaseSync(store.index);
+  upstream.exec('DELETE FROM attachments');
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+  const destination = new SQLiteDestination({
+    path: join(dir.path, 'out.sqlite'),
+  });
+  const files = new LocalFiles({ directory: join(dir.path, 'files') });
+
+  await new Pipeline({
+    history: await installedHistory(destination),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            source.attachments,
+            destination.table('attachments', (columns) => [
+              ...SQLiteColumns.fromSchema(source.attachments.jsonSchema),
+              columns
+                .text('attachmentRef')
+                .from(source.attachments.file.store(files)),
+            ]),
+          ),
+        ],
+      }),
+    ],
+  }).run();
+
+  const stored = rows(
+    destination.path,
+    'SELECT filename, attachmentRef FROM attachments ORDER BY partId',
+  );
+  const sha = (body: Buffer) => createHash('sha256').update(body).digest('hex');
+  assert.deepEqual(
+    await Promise.all(
+      stored.map(async ({ filename, attachmentRef }) => ({
+        filename,
+        name: basename(String(attachmentRef)),
+        body: await readFile(String(attachmentRef)),
+      })),
+    ),
+    [
+      { filename: long, name: sha(notes), body: notes },
+      { filename: 'agenda.pdf', name: `${sha(agenda)}.pdf`, body: agenda },
+    ],
+  );
+});
+
+test('An attachment Mail indexed before its message arrived, kept on disk under a 252-letter extension, is stored under its hash alone, and a short extension is kept', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'elt-mail-ext-'));
+  const store = await fixture(join(dir.path, 'Mail'));
+  // Message 2 has no message file; the index names its attachment 1, which
+  // Mail downloaded under a name the file system takes (254 bytes), and its
+  // attachment 2, downloaded as b.pdf.
+  const body = Buffer.from('indexed bytes');
+  const pdf = Buffer.from('%PDF-indexed');
+  exec(store.index, "INSERT INTO attachments VALUES(4,2,'2','b.pdf')");
+  await mkdir(join(store.data, 'Attachments/2/1'), { recursive: true });
+  await mkdir(join(store.data, 'Attachments/2/2'), { recursive: true });
+  await writeFile(
+    join(store.data, 'Attachments/2/1', `a.${'x'.repeat(252)}`),
+    body,
+  );
+  await writeFile(join(store.data, 'Attachments/2/2/b.pdf'), pdf);
+  const source = new AppleMailSource({
+    path: store.root,
+    accounts: store.accounts,
+  });
+  const destination = new SQLiteDestination({
+    path: join(dir.path, 'out.sqlite'),
+  });
+  const files = new LocalFiles({ directory: join(dir.path, 'files') });
+
+  await new Pipeline({
+    history: await installedHistory(destination),
+    connections: [
+      new Connection({
+        name: 'test',
+        source,
+        destination,
+        steps: [
+          new Copy(
+            source.attachments,
+            destination.table('attachments', (columns) => [
+              ...SQLiteColumns.fromSchema(source.attachments.jsonSchema),
+              columns
+                .text('attachmentRef')
+                .from(source.attachments.file.store(files)),
+            ]),
+          ),
+        ],
+      }),
+    ],
+  }).run();
+
+  const stored = rows(
+    destination.path,
+    'SELECT filename, attachmentRef FROM attachments WHERE messageId = 2 ORDER BY partId',
+  );
+  const sha = (bytes: Buffer) =>
+    createHash('sha256').update(bytes).digest('hex');
+  assert.deepEqual(
+    await Promise.all(
+      stored.map(async ({ filename, attachmentRef }) => ({
+        filename,
+        name: basename(String(attachmentRef)),
+        body: await readFile(String(attachmentRef)),
+      })),
+    ),
+    [
+      { filename: 'not-downloaded.txt', name: sha(body), body },
+      { filename: 'b.pdf', name: `${sha(pdf)}.pdf`, body: pdf },
+    ],
+  );
 });
 
 test('Mail reads as documented views whose MIME, rule and subject joins hold, with raw dates and missing files explicit', async () => {

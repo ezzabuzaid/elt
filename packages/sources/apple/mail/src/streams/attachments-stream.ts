@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
 
-import type { RecordDraft } from '@workspace/elt';
+import { type RecordDraft, fileExtension } from '@workspace/elt';
 import {
   type IndexedAttachment,
   type MailFile,
@@ -28,7 +28,7 @@ import type { MailScan } from '../mail-scan.ts';
 // A staged part's extension, which names the file a destination stores: the
 // filename's, else one for its text type.
 function extension(part: MimePart): string {
-  if (part.filename !== null) return extname(part.filename);
+  if (part.filename !== null) return fileExtension(part.filename);
   if (part.contentType === 'text/html') return '.html';
   return part.contentType !== null && part.contentType.startsWith('text/')
     ? '.txt'
@@ -63,7 +63,7 @@ async function* indexedEntries(
     if (file !== undefined) {
       path = join(
         scan.scratch,
-        `indexed-${row.message}-${String(row.attachmentId)}${extname(file.path)}`,
+        `indexed-${row.message}-${String(row.attachmentId)}${fileExtension(file.path)}`,
       );
       await file.copyTo(path);
     }

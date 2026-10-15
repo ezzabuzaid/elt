@@ -19,6 +19,7 @@ export {
 export { DocumentParser } from './core/document-parser.ts';
 export type { ObservedPass, PassObserver } from './core/pass-observer.ts';
 export { FileContent } from './core/file-content.ts';
+export { fileExtension } from './core/file-extension.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
 export { FileStorage } from './core/file-storage.ts';
 export { isCalendarDate } from './core/formats/calendar-date-format.ts';

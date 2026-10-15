@@ -85,6 +85,7 @@ Pick the first that fits:
 ### Files
 
 - A yielded path stays readable until the consumer advances: a cleaned-up staged copy, or the original when copying would be costly.
+- Name a staged copy with `fileExtension(name)` from `@workspace/elt`, never `extname()` of an upstream's file name: that name is untrusted, and an extension past the 255-byte file name limit fails the stream with `ENAMETOOLONG`. A parser still picks the format by the short extension it keeps.
 - Let `Source.read()` resolve parsed text or a streamed `FileContent`; never read whole files into memory. A `DocumentParser` returns `null` for files without text and throws only on read failures.
 
 ### Loading
