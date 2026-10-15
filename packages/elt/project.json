@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test packages/elt/dist/index.test.js"
+      "command": "node --test {args} packages/elt/dist/index.test.js"
     }
   }
 }

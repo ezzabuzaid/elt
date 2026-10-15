@@ -21,7 +21,7 @@
     },
     "test": {
       "dependsOn": ["build", "bundle"],
-      "command": "node --test \"apps/apple/plugin/dist/*.test.js\""
+      "command": "node --test {args} \"apps/apple/plugin/dist/*.test.js\""
     }
   }
 }

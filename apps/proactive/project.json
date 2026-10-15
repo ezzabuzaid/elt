@@ -6,7 +6,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test apps/proactive/dist/*.test.js"
+      "command": "node --test {args} apps/proactive/dist/*.test.js"
     },
     "start": {
       "dependsOn": ["build"],

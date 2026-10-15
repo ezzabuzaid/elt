@@ -16,7 +16,7 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test \"packages/sdks/apple/eventkit/dist/*.test.js\""
+      "command": "node --test {args} \"packages/sdks/apple/eventkit/dist/*.test.js\""
     }
   }
 }

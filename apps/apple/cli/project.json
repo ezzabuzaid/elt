@@ -10,7 +10,7 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test \"apps/apple/cli/dist/*.test.js\""
+      "command": "node --test {args} \"apps/apple/cli/dist/*.test.js\""
     }
   }
 }

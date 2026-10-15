@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test \"packages/sources/google/search-console/dist/*.test.js\""
+      "command": "node --test {args} \"packages/sources/google/search-console/dist/*.test.js\""
     }
   }
 }

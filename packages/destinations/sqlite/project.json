@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test packages/destinations/sqlite/dist/*.test.js"
+      "command": "node --test {args} packages/destinations/sqlite/dist/*.test.js"
     }
   }
 }

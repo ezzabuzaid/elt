@@ -12,7 +12,7 @@
         "{workspaceRoot}/packages/connectors/apple/messages/presets/*.sql",
         "{workspaceRoot}/packages/connectors/apple/notes/presets/*.sql"
       ],
-      "command": "node --test \"packages/connectors/apple/mail/dist/*.test.js\""
+      "command": "node --test {args} \"packages/connectors/apple/mail/dist/*.test.js\""
     }
   }
 }

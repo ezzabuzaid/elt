@@ -10,7 +10,7 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test \"apps/google/dist/*.test.js\""
+      "command": "node --test {args} \"apps/google/dist/*.test.js\""
     }
   }
 }
