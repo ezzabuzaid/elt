@@ -4,6 +4,7 @@ import {
   mkdtempDisposable,
   readFile,
   rename,
+  rm,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -489,6 +490,76 @@ test('a Clock watch follows selected database and preference changes and cancels
     signal: AbortSignal.abort(),
   });
   assert.equal((await stopped.next()).done, true);
+});
+
+test('a Clock watch goes on when a preference file is removed, and loads it again when it returns', async () => {
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'clock-watch-'));
+  const location = await fixture(dir.path);
+  const source = new AppleClockSource(location);
+  const run = await pipeline(source, dir.path, [
+    source.alarms,
+    source.worldClocks,
+    source.stopwatchLaps,
+  ]);
+  using upstream = new DatabaseSync(location.database);
+  const controller = new AbortController();
+  const errors: unknown[] = [];
+  const batches: {
+    streams: string[];
+    count: number;
+    failures: string[];
+    cities: unknown[];
+  }[] = [];
+  try {
+    for await (const { outcomes } of run.watch({
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+    })) {
+      const failures = outcomes.flatMap(({ failures }) => failures);
+      errors.push(...failures.map(({ error }) => error));
+      batches.push({
+        streams: outcomes.map(({ copy }) => copy.from.name).sort(),
+        count: outcomes.reduce((sum, { count }) => sum + count, 0),
+        failures: failures.map(({ failureType }) => failureType),
+        cities: rows(dir.path, 'select name from worldClocks').map(
+          ({ name }) => name,
+        ),
+      });
+      if (batches.length === 1) await rm(location.cities);
+      else if (batches.length === 2)
+        await writeFile(
+          location.cities,
+          binary({
+            cities: [{ ...city, city: { ...city.city, name: 'Osaka' } }],
+          }),
+        );
+      else if (batches.length === 3)
+        upstream.exec("UPDATE ZMTCDALARM SET ZTITLE='After the return'");
+      else controller.abort();
+    }
+  } finally {
+    controller.abort();
+  }
+  assert.deepEqual(batches, [
+    {
+      streams: ['alarms', 'stopwatchLaps', 'worldClocks'],
+      count: 3,
+      failures: [],
+      cities: ['Tokyo'],
+    },
+    {
+      streams: ['worldClocks'],
+      count: 0,
+      failures: ['config'],
+      cities: ['Tokyo'],
+    },
+    { streams: ['worldClocks'], count: 1, failures: [], cities: ['Osaka'] },
+    { streams: ['alarms'], count: 1, failures: [], cities: ['Osaka'] },
+  ]);
+  assert.ok(errors.every((error) => error instanceof ClockUnavailableError));
+  assert.equal(
+    rows(dir.path, 'select title from alarms')[0]?.title,
+    'After the return',
+  );
 });
 
 test('this Mac Clock stores load read-only through the real pipeline', async (t) => {

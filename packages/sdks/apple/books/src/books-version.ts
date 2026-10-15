@@ -13,14 +13,9 @@ import { BooksUnavailableError } from './errors.ts';
 // A preference file's identity on disk; a rewrite changes it. A missing file
 // reads as its own state, so its return is a change too.
 async function fingerprint(path: string): Promise<string> {
-  try {
-    const { ino, size, mtimeMs } = await stat(path);
-    return `${ino}:${size}:${mtimeMs}`;
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
-      return 'missing';
-    throw error;
-  }
+  const stats = await stat(path, { throwIfNoEntry: false });
+  if (stats === undefined) return 'missing';
+  return `${stats.ino}:${stats.size}:${stats.mtimeMs}`;
 }
 
 // What changes when one Books store does. Books and bookdatastored commit

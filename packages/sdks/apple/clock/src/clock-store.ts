@@ -112,11 +112,13 @@ export class ClockVersion implements Disposable {
   async current(): Promise<string> {
     if (this.#database) return String(this.#database.current);
     try {
-      const { ino, size, mtimeNs } = await stat(this.#path, { bigint: true });
-      return `${ino}:${size}:${mtimeNs}`;
+      const stats = await stat(this.#path, {
+        bigint: true,
+        throwIfNoEntry: false,
+      });
+      if (stats === undefined) return 'missing';
+      return `${stats.ino}:${stats.size}:${stats.mtimeNs}`;
     } catch (cause) {
-      if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT')
-        return 'missing';
       throw new ClockUnavailableError(this.#path, cause);
     }
   }
