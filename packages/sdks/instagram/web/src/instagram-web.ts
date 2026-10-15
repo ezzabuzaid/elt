@@ -468,7 +468,8 @@ async function send(
 // The JSON of an API answer: GraphQL answers a signed-in session as
 // text/javascript, and REST as application/json. Instagram answers a session
 // it does not accept with a web page, and a query it refuses with a list of
-// errors.
+// errors and no data. Errors beside data are field errors, which the schema
+// refuses only when the SDK reads the null field.
 async function json(what: string, response: Response): Promise<unknown> {
   const type = response.headers.get('content-type') ?? '';
   if (type.startsWith('text/html')) throw new InstagramLoginError(what);
@@ -491,10 +492,12 @@ async function json(what: string, response: Response): Promise<unknown> {
       throw new InstagramRateLimitError(what);
     if ('require_login' in body && body.require_login === true)
       throw new InstagramLoginError(what);
+    const hasData = 'data' in body && body.data !== null;
     if (
       'errors' in body &&
       Array.isArray(body.errors) &&
-      body.errors.length > 0
+      body.errors.length > 0 &&
+      !hasData
     )
       throw new InstagramQueryError(what, describe(body.errors[0]));
   }
