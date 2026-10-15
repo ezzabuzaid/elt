@@ -12,6 +12,7 @@ import { Connection, Copy, Pipeline, PipelineError } from '@workspace/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
+  PostgresSyncHistory,
 } from '@workspace/elt-postgresql';
 import { GoogleGrant, GoogleOAuthApp } from '@workspace/google-auth';
 
@@ -53,9 +54,12 @@ async function searchConsoleDatabase() {
     connection: { search_path: RAW },
   });
   stack.defer(() => sql.end());
+  const history = new PostgresSyncHistory({ url: url.href });
+  await history.install();
   const resources = stack.move();
   return {
     sql,
+    history,
     destination: new PostgresDestination({ url: url.href, schema: RAW }),
     checkpoints: new PostgresCheckpointStore({ url: url.href, schema: RAW }),
     [Symbol.asyncDispose]: () => resources.disposeAsync(),
@@ -308,10 +312,11 @@ const inspected = ({ calls }: Google) =>
 
 async function inspectionRun(
   source: SearchConsoleSource,
-  { destination, checkpoints }: Warehouse,
+  { history, destination, checkpoints }: Warehouse,
   streams: readonly (typeof ALL_INSPECTIONS)[number][] = ['urlInspection'],
 ) {
   return new Pipeline({
+    history,
     connections: [
       new Connection({
         name: 'test',
@@ -366,6 +371,7 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
 
   assert.deepEqual(
     await new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({ name: 'test', source, destination, steps: [copy] }),
       ],
@@ -442,6 +448,7 @@ test('a restated day replaces the loaded row, and the next read starts at the la
     },
   );
   const pipeline = new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -518,6 +525,7 @@ test('a re-read deletes the query rows and days Google stopped reporting, and ke
     siteUrls: [SITE],
   });
   const pipeline = new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -601,6 +609,7 @@ test('a re-read day keeps its unchanged query and page rows beside the ones that
       destinationSyncMode: 'append_dedup',
     });
   const pipeline = new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -667,6 +676,7 @@ test('a search type whose re-read day reports nothing loses that day’s total, 
     siteUrls: [SITE],
   });
   const pipeline = new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -717,6 +727,7 @@ test('a fractional click count is refused rather than stored', async () => {
 
   await assert.rejects(
     new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -765,6 +776,7 @@ test('analytics pagination follows startRow until a short page', async () => {
   assert.equal(searchConsole.calls.length, 0);
 
   await new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({ name: 'test', source, destination, steps: [copy] }),
     ],
@@ -805,6 +817,7 @@ test('sitemaps convert int64 text and second-precision times', async () => {
   });
 
   await new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -975,6 +988,7 @@ test(
     );
     const controller = new AbortController();
     const watching = new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({ name: 'test', source, destination, steps: [copy] }),
       ],
@@ -1034,6 +1048,7 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
   });
 
   await new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -1095,6 +1110,7 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
     },
   );
   const pipeline = new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -1212,6 +1228,7 @@ test('two properties share tables through one source without deleting each other
         destinationSyncMode: 'append_dedup',
       });
     return new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -1279,6 +1296,7 @@ test('an unverified property is not offered as a readable site', async () => {
   });
 
   await new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -1342,6 +1360,7 @@ test(
     );
     const controller = new AbortController();
     const watching = new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({ name: 'test', source, destination, steps: [copy] }),
       ],
@@ -1484,6 +1503,7 @@ test('an incremental sites copy deletes a property that is no longer listed', as
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -1552,6 +1572,7 @@ test('one source loads every property; a newly listed one backfills while the ot
       siteUrls,
     });
     return new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -1636,6 +1657,7 @@ test('a property without permission is reported by name while the others load an
     siteUrls: [A, B],
   });
   const pipeline = new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -1718,6 +1740,7 @@ test('a property Google refuses to the user is a config failure, and a quota ref
     siteUrls: Object.keys(refusals),
   });
   const pipeline = new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -1812,6 +1835,7 @@ test('a grant Google no longer refreshes is a config failure, asked once', async
     });
 
     const error = await new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -1882,6 +1906,7 @@ test(
     );
     const controller = new AbortController();
     const watching = new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({ name: 'test', source, destination, steps: [copy] }),
       ],
@@ -1974,6 +1999,7 @@ test(
     );
     const controller = new AbortController();
     const watching = new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -2151,6 +2177,7 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
     });
 
     await new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -2215,6 +2242,7 @@ test(
     process.on('warning', onWarning);
     const controller = new AbortController();
     const watching = new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -2255,6 +2283,7 @@ test('an RSS item without a link lists no page', async () => {
   });
 
   await new Pipeline({
+    history: warehouse.history,
     connections: [
       new Connection({
         name: 'test',
@@ -2699,6 +2728,7 @@ test(
         destinationSyncMode: 'append_dedup',
       });
     const pipeline = new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -2790,6 +2820,7 @@ test(
     });
     const controller = new AbortController();
     const watching = new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -2876,6 +2907,7 @@ test(
     const { destination, checkpoints } = warehouse;
     const controller = new AbortController();
     const watching = new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',
@@ -2948,6 +2980,7 @@ test(
     const { destination, checkpoints } = warehouse;
     const controller = new AbortController();
     const watching = new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'test',

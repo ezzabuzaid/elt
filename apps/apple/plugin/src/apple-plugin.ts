@@ -13,11 +13,7 @@ import type {
   Connectors,
 } from '@workspace/connector-apple-manifest/connectors';
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
-import {
-  type PassStatus,
-  SQLiteSyncHistory,
-  readPassStatus,
-} from '@workspace/elt-sqlite';
+import { type PassStatus, readPassStatus } from '@workspace/elt-sqlite';
 import {
   type ConnectorFacts,
   NewerLayoutError,
@@ -294,7 +290,6 @@ export class ApplePlugin {
             await this.connector(selection.connector).import(
               settings,
               selection,
-              new SQLiteSyncHistory(),
             );
           } finally {
             if (settings.staleImports().includes(directory))

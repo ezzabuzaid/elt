@@ -40,7 +40,7 @@ export class SQLiteSyncHistory extends SyncHistory<SQLiteTable> {
     this.#path(connection);
   }
 
-  override async checked(
+  protected override async recordChecks(
     connection: Connection<SQLiteTable>,
     streams: readonly string[],
     at: Date,

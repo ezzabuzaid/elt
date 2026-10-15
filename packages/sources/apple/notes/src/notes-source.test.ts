@@ -28,6 +28,14 @@ import {
 
 import { AppleNotesSource } from './apple-notes-source.ts';
 
+// A sync history installed in each destination's file, as a host installs it
+// before the first pass.
+async function installedHistory(...destinations: SQLiteDestination[]) {
+  const history = new SQLiteSyncHistory();
+  await history.install(destinations);
+  return history;
+}
+
 // The configured stream a full-refresh copy of stream reads.
 const configured = (stream: Stream) =>
   new Copy(
@@ -301,13 +309,15 @@ const noteRows = (path: string, sql: string) => {
     .map((row) => ({ ...row }));
 };
 
-const notesPipeline = (source: AppleNotesSource, directory: string) => {
+const notesPipeline = async (source: AppleNotesSource, directory: string) => {
   const destination = new SQLiteDestination({
     path: join(directory, 'notes.sqlite'),
   });
+  const history = await installedHistory(destination);
   return {
     destination,
     pipeline: new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -356,7 +366,7 @@ test('Notes scope excludes other folders from records, attachments and checkpoin
       endAt: '2025-03-01T00:00:00.000Z',
     },
   });
-  const { pipeline, destination } = notesPipeline(source, scratch.path);
+  const { pipeline, destination } = await notesPipeline(source, scratch.path);
   await pipeline.run();
   assert.deepEqual(noteRows(destination.path, 'SELECT id FROM accounts'), [
     { id: 'ACCOUNT-1' },
@@ -384,7 +394,7 @@ test('a Notes folder scope keeps only the accounts that own a selected folder', 
     path: await noteStoreFixture(scratch.path),
     scope: { collectionIds: ['FOLDER-LOCAL'] },
   });
-  const { pipeline, destination } = notesPipeline(source, scratch.path);
+  const { pipeline, destination } = await notesPipeline(source, scratch.path);
 
   await pipeline.run();
 
@@ -401,7 +411,7 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
   const source = new AppleNotesSource({
     path: await noteStoreFixture(scratch.path),
   });
-  const { destination, pipeline } = notesPipeline(source, scratch.path);
+  const { destination, pipeline } = await notesPipeline(source, scratch.path);
 
   for (const stream of (await source.discover()).streams) {
     assert.ok(
@@ -654,7 +664,7 @@ test('Notes loads edits and deletions incrementally and a repeat run writes noth
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-notes-'));
   const path = await noteStoreFixture(scratch.path);
   const source = new AppleNotesSource({ path });
-  const { pipeline } = notesPipeline(source, scratch.path);
+  const { pipeline } = await notesPipeline(source, scratch.path);
   const counts = async () =>
     Object.fromEntries(
       (await pipeline.run()).map(({ copy, count, deleted }) => [
@@ -759,6 +769,7 @@ test('a Notes watch keeps Notes running and loads each commit while Notes keeps 
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',

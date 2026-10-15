@@ -1,10 +1,5 @@
 import type { Connection } from '../core/connection.ts';
-import {
-  type Copy,
-  type CopyOutcome,
-  type CopyProgress,
-  describeFailures,
-} from '../core/copy.ts';
+import { type Copy, type CopyOutcome, describeFailures } from '../core/copy.ts';
 import type { ExtractionCoverage, FailureType } from '../core/source.ts';
 import type { Target as DestinationTarget } from '../core/target.ts';
 
@@ -17,19 +12,23 @@ export type DeclaredCopy<Target extends DestinationTarget> = {
 
 // One pass as recorded: declared before its read, closed with what it loaded.
 export type RecordedPass<Target extends DestinationTarget> = {
-  // A live view of each copy, counted as Airbyte's SyncStatsTracker counts a
-  // stream; nothing here persists it. Advisory: what it throws is ignored and
-  // never changes what loads.
-  progress?(progress: CopyProgress<Target>): void;
   finish(outcomes: readonly CopyOutcome<Target>[]): Promise<void>;
   // The pass produced no outcomes, so what it committed is unknown.
   fail(error: unknown, failureType: FailureType): Promise<void>;
 };
 
+// How often a history records the checks that found a connection's streams
+// unchanged. A source checks about every second; a reader needs
+// current_as_of only to about a minute, and every record is a write.
+const checkRecordMs = 60_000;
+
 // As Airbyte's platform keeps each connection's jobs and attempts apart from
 // any connector, the orchestrator records every pass here. A pass is one
 // connection's read over the copies it selected.
 export abstract class SyncHistory<Target extends DestinationTarget> {
+  // When each connection's checks were last recorded.
+  readonly #checkedAt = new Map<string, number>();
+
   // Refuses, without I/O, a connection this history cannot record.
   validate(_connection: Connection<Target>): void {}
 
@@ -40,11 +39,24 @@ export abstract class SyncHistory<Target extends DestinationTarget> {
     copies: readonly DeclaredCopy<Target>[],
   ): Promise<RecordedPass<Target>>;
 
-  // Durable when it resolves: at that moment a watch's source checked these
-  // streams and found them unchanged since their last copy loaded, so readers
-  // see them current as of then though no pass read them, as a Debezium
-  // heartbeat moves a connector's position with no change to carry.
-  abstract checked(
+  // At that moment a watch's source checked these streams and found them
+  // unchanged since their last copy loaded, so readers see them current as of
+  // then though no pass read them, as a Debezium heartbeat moves a connector's
+  // position with no change to carry. A connection's first check is recorded
+  // at once, and the next at most once a minute.
+  async checked(
+    connection: Connection<Target>,
+    streams: readonly string[],
+    at: Date,
+  ): Promise<void> {
+    const last = this.#checkedAt.get(connection.name);
+    if (last !== undefined && at.getTime() - last < checkRecordMs) return;
+    this.#checkedAt.set(connection.name, at.getTime());
+    await this.recordChecks(connection, streams, at);
+  }
+
+  // Durable when it resolves.
+  protected abstract recordChecks(
     connection: Connection<Target>,
     streams: readonly string[],
     at: Date,

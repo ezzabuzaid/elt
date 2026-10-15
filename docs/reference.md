@@ -6,19 +6,22 @@ Detailed sync, storage, connector, and failure contracts for `elt`.
 
 ## Working example
 
-The examples below import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and each Apple source from its own package, `@workspace/source-apple-<name>` under `packages/sources/apple`. Later snippets reuse `notes`, `sqlite`, and `checkpoints` from this example.
+The examples below import pipeline types from `elt`, the SQLite destination and checkpoint store from `elt-sqlite`, and each Apple source from its own package, `@workspace/source-apple-<name>` under `packages/sources/apple`. Later snippets reuse `notes`, `sqlite`, `checkpoints` and `history` from this example.
 
 ```ts
 import { Connection, Copy, Pipeline } from '@workspace/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
 
 const notes = new AppleNotesSource();
 const sqlite = new SQLiteDestination({ path: './notes.sqlite' });
 const checkpoints = new SQLiteCheckpointStore({ path: './checkpoints.sqlite' });
+const history = new SQLiteSyncHistory();
+await history.install([sqlite]);
 
 const connection = new Connection({
   name: 'apple-notes',
@@ -40,7 +43,7 @@ const connection = new Connection({
     }),
   ],
 });
-const pipeline = new Pipeline({ connections: [connection] });
+const pipeline = new Pipeline({ history, connections: [connection] });
 
 const results = await pipeline.run(); // [{ copy, count, deleted }, ...] in declaration order
 ```
@@ -413,7 +416,7 @@ The source owns change detection:
 - **Calendar and Reminders:** a persistent `eventkit watch` helper process subscribes to native `EKEventStoreChangedNotification` notifications. These invalidate all selected streams because EventKit does not identify individual changes. The notification covers the whole event store, so a Calendar edit also re-extracts a Reminders watch, and a Reminders edit also re-extracts a Calendar watch. The existing EventKit permission requirements apply. Full-refresh overwrite reconciles deletions on the next successful pass.
 - **Notes:** the watcher opens its own read-only connection to `NoteStore.sqlite` and checks `PRAGMA data_version` every second; it changes with every commit another connection makes, so each save Notes commits invalidates every selected stream. Filesystem notifications are not used: Notes keeps the store and its WAL open, and FSEvents reports a write only when the file closes, which verification showed arrives when Notes quits. Because only Notes syncs iCloud notes, the watch keeps Notes running: it launches Notes hidden and in the background (`open -g -j`) when it starts and, every 30 seconds, again if Notes has stopped. It cannot tell your quit from macOS closing a hidden Notes, which happens when the system frees disk space (seen twice on a 99% full disk, within minutes of a hidden launch), so it relaunches in both cases. A running Notes is left as it is. Watching needs the same Full Disk Access as reading.
 
-A connection's passes are serial; passes of different connections run side by side, and each waits only on the consumer, so a slow source never holds back another. Notifications received during extraction or while the caller handles a result are coalesced into that connection's pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. A connection's first invalidation must cover every stream it selected. Each yield is one check of the upstream; a check that names no stream says the upstream held still. On each check, every stream with no pending change, no pass reading it and a last copy that loaded completely is current as of that check. The pipeline records those checks through its sync history's `checked()`, the first at once and then at most once a minute, so `current_as_of` keeps moving while nothing changes. A stream whose change failed to load stays current only as of the time before that change, so a failed refresh shows as an aging `current_as_of`, as a Debezium heartbeat or a Beam watermark on an idle partition shows a source caught up. Each pass yields a `Pass`, `{ connection, outcomes }`, once its loading and checkpoint persistence finished; each outcome carries the committed `count` and `deleted` (accepted observations, including deduplication no-ops and absent keys) and its `failures`, empty when it loaded completely. As Airbyte keeps a connection's schedule after a failed sync, a pass that did not load completely does not end the watch: the caller sees its failures, and the failed partitions keep their checkpoints.
+A connection's passes are serial; passes of different connections run side by side, and each waits only on the consumer, so a slow source never holds back another. Notifications received during extraction or while the caller handles a result are coalesced into that connection's pending set of streams, so they cause a subsequent pass without an unbounded queue of sync jobs. A connection's first invalidation must cover every stream it selected. Each yield is one check of the upstream; a check that names no stream says the upstream held still. On each check, every stream with no pending change, no pass reading it and a last copy that loaded completely is current as of that check. The pipeline gives each check to its sync history's `checked()`, which records a connection's first check at once and the next at most once a minute, so `current_as_of` keeps moving while nothing changes. A stream whose change failed to load stays current only as of the time before that change, so a failed refresh shows as an aging `current_as_of`, as a Debezium heartbeat or a Beam watermark on an idle partition shows a source caught up. Each pass yields a `Pass`, `{ connection, outcomes }`, once its loading and checkpoint persistence finished; each outcome carries the committed `count` and `deleted` (accepted observations, including deduplication no-ops and absent keys) and its `failures`, empty when it loaded completely. As Airbyte keeps a connection's schedule after a failed sync, a pass that did not load completely does not end the watch: the caller sees its failures, and the failed partitions keep their checkpoints.
 
 A stream whose copy failed for a `system` reason, by any of its failures, loads again with no change, as Airbyte's platform retries a failed sync attempt with its defaults for an attempt that made no progress: 10 seconds after the failure, then 30, 90 and 270 seconds after each further failure in a row. After the fifth failure in a row, the stream waits for its source's next change, and that change starts the count again. A pass that loads the stream completely stops the count. Records that a failed pass committed do not change the wait. A stream whose copy failed only for `config` reasons is not loaded again until its source reports a change, because only the user can fix it. A change the source reports loads its stream at once, also while the stream waits for a retry; a change to another stream does not bring a retry forward. Retries stop when the watcher ends. While a stream waits, its `current_as_of` does not move.
 
@@ -481,6 +484,7 @@ const attachmentCopy = new Copy(
 );
 
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-notes-attachments',
@@ -598,7 +602,7 @@ Each application records every pass and its declared extraction coverage beside 
 
 ## Execution and failures
 
-`Pipeline({ connections, history? })` is the orchestrator. `run()` and `watch()` validate every declaration of every connection before any read: distinct connection names, copy IDs distinct across the pipeline, each connection's copies (unknown streams, a stream copied twice, unsupported combinations, invalid schema declarations, missing keys/cursors/IDs/state store), and [target ownership](#target-ownership) across connections. An invalid connection stops the whole pipeline without extraction or storage creation and, when a history is given, is recorded as a failed attempt for that connection. Preflight uses metadata; storage permissions, existing constraints and record values are checked during execution.
+`Pipeline({ connections, history })` is the orchestrator. `run()` and `watch()` validate every declaration of every connection before any read: distinct connection names, copy IDs distinct across the pipeline, each connection's copies (unknown streams, a stream copied twice, unsupported combinations, invalid schema declarations, missing keys/cursors/IDs/state store), and [target ownership](#target-ownership) across connections. An invalid connection stops the whole pipeline without extraction or storage creation and is recorded as a failed attempt for that connection in its [sync history](#sync-history). Preflight uses metadata; storage permissions, existing constraints and record values are checked during execution.
 
 `run()` then makes one pass per connection, all side by side, so a slow source never holds back another. Each pass locks every incremental copy's checkpoint, opens one load on the destination, and prepares every target before reading anything: a copy whose target is refused (another writer's, or a reader view the load did not make) fails and reads nothing. Preparing publishes nothing; a target appears no later than its stream's first commit. One read then covers the remaining copies. As in Airbyte, every copy runs even when another fails, and every connection's pass runs even when another's fails. Each stream stages its operations apart from the others and commits them at its own checkpoints, so an incremental copy that fails keeps what it committed and publishes nothing it staged since; a full refresh commits once, when its stream ends, so a failure keeps the previous target. Empty overwrite clears it; empty append preserves existing records. There is no pipeline-wide rollback.
 
@@ -664,7 +668,9 @@ const recorded = new Pipeline({
 });
 ```
 
-A pass is one connection's read over the copies it selected. `validate(connection)` refuses, without I/O, a connection the history cannot record; the pipeline calls it during preflight. `begin(connection, copies)` receives each selected copy with its `coverage` and is durable when it resolves, before the read starts, so a pass that never finishes stays visible as unfinished rather than missing. It returns a `RecordedPass`: `finish(outcomes)` closes it with what each copy loaded, and `fail(error, failureType)` closes a pass that produced no outcomes, such as an invalid connection or a watcher that stopped. A pass ends `succeeded`, `partial`, `failed` or, when its run's signal stopped it, `cancelled`. An optional `progress(progress)` sees each copy while the pass runs, as a `CopyProgress`: its `status` (`running`, then once `complete` or `incomplete`) and the records and deletions the source `emitted` and the destination `committed` so far. It is a live view, such as for a terminal to render; the history need not persist it, and what it throws is ignored and never changes what loads. The helpers `copyStatus`, `passStatus`, `passError` and `passFailureType` derive `succeeded`, `partial` or `failed` (`SyncStatus`), the pass's error text and its failure type from outcomes. `DeclaredCopy`, `RecordedPass` and `CopyProgress` type the contract.
+A pass is one connection's read over the copies it selected. `validate(connection)` refuses, without I/O, a connection the history cannot record; the pipeline calls it during preflight. `begin(connection, copies)` receives each selected copy with its `coverage` and is durable when it resolves, before the read starts, so a pass that never finishes stays visible as unfinished rather than missing. It returns a `RecordedPass`: `finish(outcomes)` closes it with what each copy loaded, and `fail(error, failureType)` closes a pass that produced no outcomes, such as an invalid connection or a watcher that stopped. A pass ends `succeeded`, `partial`, `failed` or, when its run's signal stopped it, `cancelled`. A subclass implements `recordChecks(connection, streams, at)`, durable when it resolves; `checked()` calls it for a connection's first check at once and then at most once a minute, since every record is a write. The helpers `copyStatus`, `passStatus`, `passError` and `passFailureType` derive `succeeded`, `partial` or `failed` (`SyncStatus`), the pass's error text and its failure type from outcomes. `DeclaredCopy` and `RecordedPass` type the contract.
+
+To show passes while they run, such as in a terminal, pass a `PassObserver` as `Pipeline({ connections, history, observer })`. Its `begin(connection)` returns an `ObservedPass`. `progress(progress)` sees each copy as a `CopyProgress`: its `status` (`running`, then once `complete` or `incomplete`) and the records and deletions the source `emitted` and the destination `committed` so far. `finish(outcomes)` and `fail(error, failureType)` see how the pass ended, each after the history recorded it. The observer is advisory: the pipeline does not wait for it, and what it throws is ignored and never changes what loads or what the history records. Nothing persists what it sees.
 
 Every failure says whose it is to fix, as Airbyte's `failure_type` does (`AirbyteTracedException`, `airbyte-python-cdk` `utils/traced_exception.py`). Each `LoadFailure` carries a `failureType` that the source decides with `failureType(error): FailureType`: `config` when the upstream refused what the user set up or granted, so only they can fix it, and `system` for everything else, a destination's errors included. A source that says nothing calls every failure `system`. The Apple sources map their SDKs' `*UnavailableError` (macOS access the app's store needs) to `config`, SQL Server maps its permission and connection errors, and Search Console maps a `401` or `403` from Google. `sync_attempts` and `sync_status` carry the pass's `failure_type`: `config` when any of its failures is, `system` for a pass that failed otherwise, and NULL after success, while running, or when cancelled. Each entry of `extraction_coverage.failures` carries its own. Hosts add access guidance only to a `config` failure, and a [watch](#watching-for-changes) loads again only a stream that failed for a `system` reason. Airbyte's `transient_error` has no reader here yet, so elt has no such type.
 
@@ -771,7 +777,9 @@ const destination = new SQLiteDestination({
   path: './outputs/messages.sqlite',
 });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-messages',
@@ -927,7 +935,9 @@ const destination = new SQLiteDestination({
   path: './outputs/contacts.sqlite',
 });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-contacts',
@@ -1008,6 +1018,7 @@ const reminders = new AppleRemindersSource();
 const sqlite = new SQLiteDestination({ path: './reminders-eventkit.sqlite' });
 
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-reminders',
@@ -1063,6 +1074,7 @@ const sqlite = new SQLiteDestination({
 });
 
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-calendar',
@@ -1203,7 +1215,9 @@ import { AppleSafariSource } from '@workspace/source-apple-safari/apple-safari-s
 const source = new AppleSafariSource(); // ~/Library/Safari and Safari's container
 const destination = new SQLiteDestination({ path: './outputs/safari.sqlite' });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-safari',
@@ -1306,7 +1320,9 @@ const source = new AppleBooksSource(); // Books' container and its group contain
 const destination = new SQLiteDestination({ path: './outputs/books.sqlite' });
 const files = new LocalFiles({ directory: './outputs/books-files' });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-books',
@@ -1418,7 +1434,9 @@ const destination = new SQLiteDestination({
   path: './outputs/activity.sqlite',
 });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-activity',
@@ -1537,7 +1555,9 @@ const destination = new SQLiteDestination({
   path: './outputs/accounts.sqlite',
 });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-accounts',
@@ -1626,7 +1646,9 @@ const destination = new SQLiteDestination({
   path: './outputs/calls.sqlite',
 });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-call-history',
@@ -1777,7 +1799,9 @@ const destination = new SQLiteDestination({
   path: './outputs/notifications.sqlite',
 });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-notification-center',
@@ -1862,7 +1886,9 @@ import { AppleWalletSource } from '@workspace/source-apple-wallet/apple-wallet-s
 const source = new AppleWalletSource();
 const destination = new SQLiteDestination({ path: './outputs/wallet.sqlite' });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'apple-wallet',
@@ -1949,7 +1975,9 @@ import { SlackDesktopSource } from '@workspace/source-slack-desktop/slack-deskto
 const source = new SlackDesktopSource();
 const destination = new SQLiteDestination({ path: './outputs/slack.sqlite' });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'slack',
@@ -2063,7 +2091,9 @@ import { TeamsSource } from '@workspace/source-microsoft-teams/teams-source';
 const source = new TeamsSource();
 const destination = new SQLiteDestination({ path: './outputs/teams.sqlite' });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'teams',
@@ -2190,7 +2220,9 @@ const destination = new SQLiteDestination({
   path: './outputs/whatsapp.sqlite',
 });
 
+await history.install([destination]);
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'whatsapp',

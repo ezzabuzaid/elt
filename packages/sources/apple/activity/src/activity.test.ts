@@ -43,7 +43,10 @@ async function appleImport(source: Source, directory: string) {
   const path = join(directory, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
   const { streams } = await source.discover();
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
   const pipeline = new Pipeline({
+    history,
     connections: [
       new Connection({
         name: 'apple',

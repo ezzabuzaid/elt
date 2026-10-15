@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 import { Pipeline, PipelineError } from '@workspace/elt';
+import { SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
 // This package's folder, which holds its manifest.
@@ -95,13 +96,15 @@ async function importWhatsApp(
   directory: string,
   scope: ImportScope,
 ) {
-  const { connection } = await connector.connection(directory, {
+  const { connection, destination } = await connector.connection(directory, {
     connector: connector.name,
     scope,
     includeAttachments: false,
   });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
   try {
-    await new Pipeline({ connections: [connection] }).run();
+    await new Pipeline({ history, connections: [connection] }).run();
   } catch (error) {
     // The stores this container lacks fail their streams; the rest load.
     if (!(error instanceof PipelineError)) throw error;

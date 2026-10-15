@@ -96,7 +96,7 @@ A pipeline declares connections of copies; the smallest one copies Notes into SQ
 import { mkdir } from 'node:fs/promises';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
-import { SQLiteDestination } from '@workspace/elt-sqlite';
+import { SQLiteDestination, SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { AppleNotesSource } from '@workspace/source-apple-notes/apple-notes-source';
 
 await mkdir('./outputs', { recursive: true });
@@ -105,8 +105,11 @@ const source = new AppleNotesSource();
 const destination = new SQLiteDestination({
   path: './outputs/notes.sqlite',
 });
+const history = new SQLiteSyncHistory();
+await history.install([destination]);
 
 const pipeline = new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'notes',
@@ -147,7 +150,7 @@ Reminders reads through EventKit, so Reminders.app need not be open. Grant the p
 import { mkdir } from 'node:fs/promises';
 
 import { Connection, Copy, Pipeline } from '@workspace/elt';
-import { SQLiteDestination } from '@workspace/elt-sqlite';
+import { SQLiteDestination, SQLiteSyncHistory } from '@workspace/elt-sqlite';
 import { AppleRemindersSource } from '@workspace/source-apple-reminders/apple-reminders-source';
 
 await mkdir('./outputs', { recursive: true });
@@ -156,8 +159,11 @@ const source = new AppleRemindersSource();
 const destination = new SQLiteDestination({
   path: './outputs/reminders.sqlite',
 });
+const history = new SQLiteSyncHistory();
+await history.install([destination]);
 
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'reminders',
@@ -176,7 +182,7 @@ A full-refresh overwrite also removes deleted reminders; an incremental copy (`a
 
 ## Incremental sync
 
-To retain the latest version of each note across runs, keep the quick-start imports and source/destination setup, then replace the pipeline declaration and execution with:
+To retain the latest version of each note across runs, keep the quick-start imports and its source, destination and history setup, then replace the pipeline declaration and execution with:
 
 ```ts
 import { SQLiteCheckpointStore } from '@workspace/elt-sqlite';
@@ -186,6 +192,7 @@ const checkpoints = new SQLiteCheckpointStore({
 });
 
 const pipeline = new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'notes',
@@ -227,6 +234,7 @@ const mail = new AppleMailSource({
   accounts: new AccountsStore(accountsStorePath),
 });
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'mail',
@@ -314,6 +322,7 @@ const attachments = new Copy(
 );
 
 await new Pipeline({
+  history,
   connections: [
     new Connection({
       name: 'notes',

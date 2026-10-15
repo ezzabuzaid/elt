@@ -22,6 +22,7 @@ import {
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import {
   TeamsFormatError,
@@ -1019,7 +1020,10 @@ async function pipeline(source: TeamsSource, directory: string) {
     path: join(directory, 'out.sqlite'),
   });
   const { streams } = await source.discover();
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
   return new Pipeline({
+    history,
     connections: [
       new Connection({
         name: 'test',

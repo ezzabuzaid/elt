@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { chmod, mkdtempDisposable, readFile, readdir } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtempDisposable,
+  readFile,
+  readdir,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -373,12 +379,16 @@ function rows(path: string, sql: string) {
 // Every Wallet stream loaded incrementally as the Apple hosts load it, image
 // files exported beside the database into attachmentRef.
 async function pipeline(source: AppleWalletSource, directory: string) {
+  await mkdir(directory, { recursive: true });
   const destination = new SQLiteDestination({
     path: join(directory, 'out.sqlite'),
   });
   const files = new LocalFiles({ directory: join(directory, 'files') });
   const { streams } = await source.discover();
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
   return new Pipeline({
+    history,
     connections: [
       new Connection({
         name: 'test',

@@ -100,16 +100,12 @@ class Replicated<Target extends DestinationTarget> {
   }
 
   #notify(status: CopyProgress<Target>['status']): void {
-    try {
-      this.observe?.({
-        copy: this.copy,
-        status,
-        emitted: { ...this.emitted },
-        committed: { ...this.committed },
-      });
-    } catch {
-      // Progress is advisory; see RecordedPass.progress.
-    }
+    this.observe?.({
+      copy: this.copy,
+      status,
+      emitted: { ...this.emitted },
+      committed: { ...this.committed },
+    });
   }
 }
 

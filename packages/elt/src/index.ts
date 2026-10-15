@@ -17,6 +17,7 @@ export {
   type Load,
 } from './core/destination.ts';
 export { DocumentParser } from './core/document-parser.ts';
+export type { ObservedPass, PassObserver } from './core/pass-observer.ts';
 export { FileContent } from './core/file-content.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
 export { FileStorage } from './core/file-storage.ts';

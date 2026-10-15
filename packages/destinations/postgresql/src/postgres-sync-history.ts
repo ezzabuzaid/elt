@@ -36,7 +36,7 @@ export class PostgresSyncHistory extends SyncHistory<PostgresTable> {
     this.#schema(connection);
   }
 
-  override async checked(
+  protected override async recordChecks(
     connection: Connection<PostgresTable>,
     streams: readonly string[],
     at: Date,

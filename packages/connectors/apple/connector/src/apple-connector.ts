@@ -7,6 +7,7 @@ import {
   CopyConfiguration,
   type FailureType,
   LocalFiles,
+  type PassObserver,
   Pipeline,
   PipelineError,
   type Source,
@@ -18,7 +19,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
-  type SQLiteSyncHistory,
+  SQLiteSyncHistory,
   type SQLiteTable,
   installSQLiteCatalog,
 } from '@workspace/elt-sqlite';
@@ -263,18 +264,16 @@ export abstract class AppleConnector {
   async import(
     settings: Settings,
     selection: Selection,
-    history: SQLiteSyncHistory,
+    observer?: PassObserver<SQLiteTable>,
   ): Promise<ImportOutcome> {
     return this.#load(
       settings,
       selection,
-      history,
-      async (connection, text, removal) => {
+      observer,
+      async (pipeline, text, removal) => {
         let failed: unknown = null;
         try {
-          await new Pipeline({ connections: [connection], history }).run({
-            signal: removal,
-          });
+          await pipeline.run({ signal: removal });
         } catch (error) {
           if (!(error instanceof PipelineError)) throw error;
           failed = error;
@@ -294,13 +293,13 @@ export abstract class AppleConnector {
   async watch(
     settings: Settings,
     selection: Selection,
-    history: SQLiteSyncHistory,
+    observer?: PassObserver<SQLiteTable>,
   ): Promise<ImportOutcome> {
     return this.#load(
       settings,
       selection,
-      history,
-      async (connection, text, removal) => {
+      observer,
+      async (pipeline, text, removal) => {
         const stopping = new AbortController();
         const signal = AbortSignal.any([removal, stopping.signal]);
         // A read that fails stops the watch, as an error no sync history
@@ -328,10 +327,7 @@ export abstract class AppleConnector {
             });
         };
         try {
-          for await (const _pass of new Pipeline({
-            connections: [connection],
-            history,
-          }).watch({ signal }))
+          for await (const _pass of pipeline.watch({ signal }))
             if (text !== null) read(text);
         } finally {
           stopping.abort();
@@ -347,9 +343,9 @@ export abstract class AppleConnector {
   async #load(
     settings: Settings,
     selection: Selection,
-    history: SQLiteSyncHistory,
+    observer: PassObserver<SQLiteTable> | undefined,
     load: (
-      connection: Connection<SQLiteTable>,
+      pipeline: Pipeline<SQLiteTable>,
       text: AttachmentText | null,
       removal: AbortSignal,
     ) => Promise<unknown>,
@@ -368,10 +364,15 @@ export abstract class AppleConnector {
     }
     settings.clearConnectionFailure(selection);
     const { connection, text, destination } = built;
+    const history = new SQLiteSyncHistory();
     try {
       await history.install([destination]);
       installSQLiteCatalog(destination);
-      await load(connection, text, removal.signal);
+      await load(
+        new Pipeline({ connections: [connection], history, observer }),
+        text,
+        removal.signal,
+      );
     } catch (error) {
       if (error instanceof ConnectorRemovedError) return { status: 'removed' };
       // The history recorded each failure these hold: what each copy did not

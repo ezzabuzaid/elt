@@ -21,6 +21,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteColumns,
   SQLiteDestination,
+  SQLiteSyncHistory,
 } from '@workspace/elt-sqlite';
 import {
   WhatsAppSchemaError,
@@ -1018,7 +1019,10 @@ async function pipeline(
   });
   const files = new LocalFiles({ directory: join(directory, 'files') });
   const { streams } = await source.discover();
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
   return new Pipeline({
+    history,
     connections: [
       new Connection({
         name: 'test',

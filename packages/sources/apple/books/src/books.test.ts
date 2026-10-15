@@ -2397,7 +2397,10 @@ test('Books reads this Mac’s stores into SQLite without opening iCloud placeho
   });
   const files = new LocalFiles({ directory: join(scratch.path, 'files') });
   const { streams } = await source.discover();
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
   const pipeline = new Pipeline({
+    history,
     connections: [
       new Connection({
         name: 'live',

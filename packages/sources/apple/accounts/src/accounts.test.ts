@@ -373,7 +373,10 @@ async function pipeline(source: AppleAccountsSource, directory: string) {
     path: join(directory, 'out.sqlite'),
   });
   const { streams } = await source.discover();
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
   return new Pipeline({
+    history,
     connections: [
       new Connection({
         name: 'test',

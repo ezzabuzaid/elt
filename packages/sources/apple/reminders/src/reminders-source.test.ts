@@ -47,6 +47,14 @@ import {
 
 import { AppleRemindersSource } from './apple-reminders-source.ts';
 
+// A sync history installed in each destination's file, as a host installs it
+// before the first pass.
+async function installedHistory(...destinations: SQLiteDestination[]) {
+  const history = new SQLiteSyncHistory();
+  await history.install(destinations);
+  return history;
+}
+
 const execFile = promisify(execFileCallback);
 
 // The helper @workspace/sdk-apple-eventkit compiles, which the live tests read
@@ -731,6 +739,7 @@ test(
       path: join(scratch.path, 'reminders.sqlite'),
     });
     await new Pipeline({
+      history: await installedHistory(sqlite),
       connections: [
         new Connection({
           name: 'test',
@@ -1069,8 +1078,10 @@ test('Reminders rejects malformed records and preserves its target on access or 
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'reminders.sqlite'),
   });
+  const history = await installedHistory(destination);
   const run = () =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -1167,6 +1178,7 @@ test(
       destinationSyncMode: 'append_dedup',
     });
     const pipeline = new Pipeline({
+      history: await installedHistory(sqlite),
       connections: [
         new Connection({
           name: 'test',
@@ -1358,6 +1370,7 @@ test(
     const streams = (await source.discover()).streams;
 
     const outcomes = await new Pipeline({
+      history: await installedHistory(sqlite),
       connections: [
         new Connection({
           name: 'live',

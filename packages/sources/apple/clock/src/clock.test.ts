@@ -111,7 +111,10 @@ async function pipeline(
   });
   installSQLiteCatalog(destination);
   const streams = selected ?? (await source.discover()).streams;
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
   return new Pipeline({
+    history,
     connections: [
       new Connection({
         name: 'clock',

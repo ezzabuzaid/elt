@@ -19,7 +19,11 @@ import {
   Stream,
 } from '@workspace/elt';
 
-import { SQLiteCheckpointStore, SQLiteDestination } from './index.ts';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+  SQLiteSyncHistory,
+} from './index.ts';
 
 test(
   'a replacement pipeline waits for a cancelled run to release its checkpoint and resumes saved progress',
@@ -105,16 +109,19 @@ test(
     await using scratch = await mkdtempDisposable(
       join(tmpdir(), 'elt-handoff-'),
     );
-    const createPipeline = (source: PausingSource) => {
+    const createPipeline = async (source: PausingSource) => {
       const destination = new SQLiteDestination({
         path: join(scratch.path, 'records.sqlite'),
       });
+      const history = new SQLiteSyncHistory();
+      await history.install([destination]);
       const copy = new Copy(source.records, destination.table('records'), {
         id: 'records',
         syncMode: 'incremental',
         destinationSyncMode: 'append_dedup',
       });
       return new Pipeline({
+        history,
         connections: [
           new Connection({
             name: 'handoff',
@@ -128,8 +135,8 @@ test(
         ],
       });
     };
-    const first = createPipeline(new PausingSource(true));
-    const replacement = createPipeline(new PausingSource(false));
+    const first = await createPipeline(new PausingSource(true));
+    const replacement = await createPipeline(new PausingSource(false));
     const cancelled = new AbortController();
     const reason = new Error('The previous import lost ownership');
     const firstRun = first.run({

@@ -22,8 +22,8 @@ import {
 import { type Selection, Settings } from '@workspace/settings';
 
 import {
-  ObservedHistory,
-  type PassObserver,
+  ObservedPasses,
+  type PassReport,
   type PassSummary,
   type SyncLine,
   failed,
@@ -34,7 +34,7 @@ import {
 // and each import it did not finish: removed, another setup removed its
 // connector while it ran; interrupted, the sync it waited for stopped first;
 // watched, a sync watch keeps it current.
-export type SyncObserver = PassObserver & {
+export type SyncObserver = PassReport & {
   start(): void;
   joined(connector: AppleConnector): void;
   skipped(
@@ -196,7 +196,7 @@ export class Imports {
             const outcome = await connector.import(
               settings,
               selection,
-              new ObservedHistory(connector, {
+              new ObservedPasses(connector, {
                 progress: (...args) => observer.progress(...args),
                 passed: (_, summary) => own(summary),
               }),
@@ -245,7 +245,7 @@ export class Imports {
       const outcome = await connector.watch(
         settings,
         selection,
-        new ObservedHistory(connector, {
+        new ObservedPasses(connector, {
           progress: (...args) => observer.progress(...args),
           passed: (_, summary) => show(summary),
         }),

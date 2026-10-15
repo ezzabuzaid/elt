@@ -43,6 +43,14 @@ import {
 } from './index.ts';
 import { PostgresFileStore } from './postgres-file-store.ts';
 
+// A sync history installed in the database at url, as a host installs it
+// before the first pass.
+async function installedHistory(url: string) {
+  const history = new PostgresSyncHistory({ url });
+  await history.install();
+  return history;
+}
+
 /**
  * A database of its own on `server` for one test, dropped when the test ends.
  * `sql` is an administrator session there; `as` names the same database for
@@ -338,6 +346,7 @@ test('Postgres stores per-field attachment references and reconciles only the fi
       },
     );
     const pipeline = new Pipeline({
+      history: await installedHistory(database.url),
       connections: [
         new Connection({
           name: 'test',
@@ -460,6 +469,7 @@ test('renamed file columns keep their original bytes and stored files through la
       schema: 'raw',
     });
     const pipeline = new Pipeline({
+      history: await installedHistory(database.url),
       connections: [
         new Connection({
           name: 'test',
@@ -555,6 +565,7 @@ test('schema annotations follow each copy, including projections, append history
     c.text('title'),
   ]);
   const full = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -565,6 +576,7 @@ test('schema annotations follow each copy, including projections, append history
     ],
   });
   const history = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -635,6 +647,7 @@ test('schema annotations follow each copy, including projections, append history
   const revisedSource = new Messages(revised);
   revisedSource.messages = rows(revised, [record]);
   await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -658,6 +671,7 @@ test('schema annotations follow each copy, including projections, append history
   const plainSource = new Messages(unschematized);
   plainSource.messages = rows(unschematized, [record]);
   await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -679,6 +693,8 @@ test('schema annotations follow each copy, including projections, append history
 });
 
 test('invalid schema annotations fail before extraction or storage access', async () => {
+  await using database = await scratchDatabase(server);
+  const history = await installedHistory(database.url);
   const destination = new PostgresDestination({
     url: 'postgres://unused/unused',
     schema: 'raw',
@@ -703,6 +719,7 @@ test('invalid schema annotations fail before extraction or storage access', asyn
       const source = new Messages(stream);
       await assert.rejects(
         new Pipeline({
+          history,
           connections: [
             new Connection({
               name: 'test',
@@ -764,6 +781,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
   assert.ok(fileColumn);
   const store = new PostgresFileStore(destination.schema, table, fileColumn);
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -941,6 +959,7 @@ test('a copy creates its schema and a table typed from the stream schema', async
   });
 
   const [result] = await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -1026,8 +1045,10 @@ test('overwrite replaces rows while readers keep seeing the previous load', asyn
     url: database.url,
     schema: 'raw',
   });
+  const history = await installedHistory(database.url);
   const load = (source: Source) =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -1085,6 +1106,7 @@ test('append keeps every load', async () => {
   const source = new Messages(stream);
   source.messages = rows(stream, [{ id: 'a' }]);
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -1133,6 +1155,7 @@ test('cursor_newer keeps the greatest cursor by byte order; replace keeps the ne
     url: database.url,
     schema: 'raw',
   });
+  const history = await installedHistory(database.url);
   const load = (
     table: string,
     dedupPolicy: 'cursor_newer' | 'replace',
@@ -1141,6 +1164,7 @@ test('cursor_newer keeps the greatest cursor by byte order; replace keeps the ne
     const source = new Messages(stream);
     source.messages = rows(stream, data);
     return new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -1238,6 +1262,7 @@ test('deletions remove keyed rows in source order', async () => {
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -1309,6 +1334,7 @@ test('a source failure commits nothing: no table, rows or owner', async () => {
 
   await assert.rejects(
     new Pipeline({
+      history: await installedHistory(database.url),
       connections: [
         new Connection({
           name: 'test',
@@ -1363,8 +1389,10 @@ test('a table has one writer, even when another loads only its own partitions', 
     url: database.url,
     schema: 'raw',
   });
+  const history = await installedHistory(database.url);
   const upsert = (id: string, source: Owned) =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -1393,6 +1421,7 @@ test('a table has one writer, even when another loads only its own partitions', 
   );
   await assert.rejects(
     new Pipeline({
+      history: await installedHistory(database.url),
       connections: [
         new Connection({
           name: 'test',
@@ -1414,6 +1443,7 @@ test('a table has one writer, even when another loads only its own partitions', 
   );
   await database.sql`DROP TABLE raw.records`;
   await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -1450,8 +1480,10 @@ test('an overwrite rebuilds a table whose key column is stored as another type r
     url: database.url,
     schema: 'raw',
   });
+  const history = await installedHistory(database.url);
   const dedup = (primaryKey: string[]) =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -1528,6 +1560,7 @@ test('a stored column that is NOT NULL where the stream allows null is relaxed i
   const stored = await oid();
 
   await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -1581,9 +1614,11 @@ test('an explicit primary key a target gains or drops after a reset is added to 
     url: database.url,
     schema: 'raw',
   });
+  const history = await installedHistory(database.url);
   const run = (keyed: boolean, data: readonly object[]) => {
     source.messages = rows(stream, data);
     return new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -1673,6 +1708,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
       url: database.url,
       schema: 'raw',
     });
+    const history = await installedHistory(database.url);
     const run = (withBytes: boolean) => {
       // A target that stores no file is sent none.
       source.messages = [
@@ -1683,6 +1719,7 @@ test('a file column the target drops takes its stored chunks with it, whether it
         },
       ];
       return new Pipeline({
+        history,
         connections: [
           new Connection({
             name: 'test',
@@ -1773,6 +1810,7 @@ test('declarations are checked before any connection', () => {
 });
 
 test('an explicit column naming a field the stream does not declare fails before any connection', async () => {
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'items',
     jsonSchema: {
@@ -1789,6 +1827,7 @@ test('an explicit column naming a field the stream does not declare fails before
 
   await assert.rejects(
     new Pipeline({
+      history: await installedHistory(database.url),
       connections: [
         new Connection({
           name: 'test',
@@ -1818,6 +1857,7 @@ test('an explicit column naming a field the stream does not declare fails before
 });
 
 test('a reader view over an undescribed field it renamed names the field, before any connection', async () => {
+  await using database = await scratchDatabase(server);
   const stream = new Stream({
     name: 'odd',
     jsonSchema: {
@@ -1839,6 +1879,7 @@ test('a reader view over an undescribed field it renamed names the field, before
 
   await assert.rejects(
     new Pipeline({
+      history: await installedHistory(database.url),
       connections: [
         new Connection({
           name: 'test',
@@ -1942,6 +1983,7 @@ test('a checkpoint that cannot be saved after its rows commit is reported with t
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -2021,6 +2063,7 @@ test('a copy commits at each checkpoint, its rows share one loaded_at, and no ch
     schema: 'raw',
   });
   const running = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -2164,6 +2207,7 @@ test('clear empties a table and keeps views on it, releasing its owner and check
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -2341,6 +2385,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
     snapshot: [record('snapshot', 'old', 1)],
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -2444,6 +2489,7 @@ test("a failing partition's flushed rows are discarded while the next partition 
   });
 
   const error = await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -2514,6 +2560,7 @@ test('a staged unit merges like its operations applied one at a time, under repl
   });
 
   await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -2624,6 +2671,7 @@ test('every field name is sanitized as Airbyte does, around the names Postgres k
   });
 
   await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -2720,6 +2768,7 @@ test('a key named last merges like its operations applied one at a time', async 
   });
 
   await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -2788,8 +2837,10 @@ test('renamed columns keep their table across runs, and a field added upstream i
     url: database.url,
     schema: 'raw',
   });
+  const history = await installedHistory(database.url);
   const run = (stream: Stream, script: readonly Scripted[]) =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -2898,6 +2949,7 @@ test('a key and cursor past 63 bytes merge under their renamed columns, which th
   });
 
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -2993,6 +3045,7 @@ test('a checkpoint lost between commit and save replays to the same rows', async
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -3082,6 +3135,7 @@ test('array fields load as native arrays of their item type, in order, and an un
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -3234,6 +3288,7 @@ test("a statement that fails in one stream's merge does not erase a sibling's st
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -3350,6 +3405,7 @@ test('year 0000, which ISO counts astronomically, loads as 1 BC, and year 0001 s
   });
 
   await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -3860,7 +3916,8 @@ test('stream_status keeps each stream own latest outcome when a watch pass reads
 });
 
 // A described stream loaded with a stored file field and a reader view.
-function readerNotes(database: { url: string }, files: LocalFiles) {
+async function readerNotes(database: { url: string }, files: LocalFiles) {
+  const history = await installedHistory(database.url);
   const stream = new Stream({
     name: 'notes',
     jsonSchema: {
@@ -3898,6 +3955,7 @@ function readerNotes(database: { url: string }, files: LocalFiles) {
     },
   );
   const pipeline = new Pipeline({
+    history,
     connections: [
       new Connection({
         name: 'test',
@@ -3923,7 +3981,7 @@ test('a reader view shows exactly the loaded columns and their descriptions, fol
     const path = join(scratch.path, 'note.txt');
     await writeFile(path, 'body');
     const files = new LocalFiles({ directory: join(scratch.path, 'files') });
-    const { source, destination, copy, pipeline } = readerNotes(
+    const { source, destination, copy, pipeline } = await readerNotes(
       database,
       files,
     );
@@ -4036,7 +4094,7 @@ test('a reader view needs every column described and refuses a view it did not c
     const definition = async () =>
       (await sql`SELECT pg_get_viewdef('marts.notes'::regclass) AS d`)[0]?.d;
     const before = await definition();
-    const { source, pipeline } = readerNotes(database, files);
+    const { source, pipeline } = await readerNotes(database, files);
     source.messages = [{ stream: 'notes', data: { id: 1, title: 'A' } }];
     await assert.rejects(pipeline.run(), (error: unknown) => {
       assert.ok(error instanceof PipelineError);
@@ -4097,6 +4155,7 @@ test('string formats load exactly: microsecond times typed, finer ones as text t
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -4219,6 +4278,7 @@ test('tables and reader views whose names sanitize alike, or pass 63 bytes, stay
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -4315,6 +4375,7 @@ test('a reset of a partition named by a renamed field replaces only that partiti
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -4428,6 +4489,7 @@ test('a reset replaces its partition, or the whole table, at the next commit; a 
     destinationSyncMode: 'append_dedup',
   } as const;
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -4514,6 +4576,7 @@ test('a stream whose shape changes is evolved in place under its reader view, ke
   });
   const received: unknown[] = [];
   // Each run discovers its stream anew, as a database source does.
+  const history = await installedHistory(database.url);
   const pipeline = (
     properties: Properties,
     data: readonly object[],
@@ -4544,6 +4607,7 @@ test('a stream whose shape changes is evolved in place under its reader view, ke
     const source = new Discovered(stream);
     source.messages = rows(stream, data);
     return new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -4707,6 +4771,7 @@ test('a load holds no transaction while the source reads, so a run over many tab
   });
 
   await new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -4795,6 +4860,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',
@@ -4895,6 +4961,7 @@ test('rows past one JSON string stage in batches by size, and a record too large
     schema: 'raw',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(database.url),
     connections: [
       new Connection({
         name: 'test',

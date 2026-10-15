@@ -34,6 +34,14 @@ import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-documen
 
 import { AppleMessagesSource } from './apple-messages-source.ts';
 
+// A sync history installed in each destination's file, as a host installs it
+// before the first pass.
+async function installedHistory(...destinations: SQLiteDestination[]) {
+  const history = new SQLiteSyncHistory();
+  await history.install(destinations);
+  return history;
+}
+
 // A file column's chunk table, by the documented rule: _elt_files_ and the
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
 // ASCII lower case.
@@ -464,6 +472,7 @@ test('the document parser reads every attachment kind and throws only on unreada
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -561,6 +570,7 @@ test('Messages scope filters chat and native dates before decoding attachments a
     path: join(scratch.path, 'out.sqlite'),
   });
   await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'scope',
@@ -622,6 +632,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   );
 
   const results = await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -833,6 +844,7 @@ test('Messages loads edits and unsends incrementally and deletes removed message
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -1041,6 +1053,7 @@ test('a Messages watch loads each commit Messages makes while it keeps chat.db o
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -1214,12 +1227,15 @@ test('a Messages pass over a large chat.db holds one message at a time, so it lo
   // themselves; the pass itself needs about 20 MB.
   const pass = `
     const { Connection, Copy, Pipeline } = await import('@workspace/elt');
-    const { SQLiteCheckpointStore, SQLiteDestination } = await import('@workspace/elt-sqlite');
+    const { SQLiteCheckpointStore, SQLiteDestination, SQLiteSyncHistory } = await import('@workspace/elt-sqlite');
     const { AppleMessagesSource } = await import(process.env.SOURCE);
     const source = new AppleMessagesSource(process.env.CHAT, { startAt: process.env.SINCE });
     const destination = new SQLiteDestination({ path: process.env.OUT + '/data.sqlite' });
     const { streams } = await source.discover();
+    const history = new SQLiteSyncHistory();
+    await history.install([destination]);
     await new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'messages',

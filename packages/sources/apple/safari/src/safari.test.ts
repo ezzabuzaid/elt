@@ -2675,7 +2675,10 @@ test('Safari reads this Mac’s stores into SQLite', async (t) => {
     path: join(scratch.path, 'safari.sqlite'),
   });
   const { streams } = await source.discover();
+  const syncHistory = new SQLiteSyncHistory();
+  await syncHistory.install([destination]);
   const pipeline = new Pipeline({
+    history: syncHistory,
     connections: [
       new Connection({
         name: 'live',

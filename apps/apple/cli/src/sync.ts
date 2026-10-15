@@ -1,17 +1,16 @@
 import type { AppleConnector } from '@workspace/connector-apple-connector/apple-connector';
 import {
-  type Connection,
   type CopyOutcome,
   type CopyProgress,
-  type DeclaredCopy,
   type FailureType,
-  type RecordedPass,
+  type ObservedPass,
+  type PassObserver,
   type SyncStatus,
   passError,
   passFailureType,
   passStatus,
 } from '@workspace/elt';
-import { SQLiteSyncHistory, type SQLiteTable } from '@workspace/elt-sqlite';
+import type { SQLiteTable } from '@workspace/elt-sqlite';
 
 // How one pass of one connector ended, as sync reports it.
 export type PassSummary = {
@@ -37,8 +36,8 @@ export type SyncLine =
   | { readonly connector: string; readonly status: 'interrupted' }
   | { readonly connector: string; readonly status: 'watched' };
 
-// Sees each pass of a sync while it runs and once it ends.
-export type PassObserver = {
+// What a sync shows of each pass while it runs and once it ends.
+export type PassReport = {
   progress(
     connector: AppleConnector,
     progress: CopyProgress<SQLiteTable>,
@@ -46,42 +45,33 @@ export type PassObserver = {
   passed(connector: AppleConnector, summary: PassSummary): void;
 };
 
-// Records each pass of one connector in its data.sqlite, as any SQLite load
-// does, and shows the observer each pass while it runs and once it ends.
-export class ObservedHistory extends SQLiteSyncHistory {
+// Shows the report each pass of one connector: each copy's progress while it
+// runs, and how the pass ended once the import's sync history recorded it.
+export class ObservedPasses implements PassObserver<SQLiteTable> {
   readonly #connector: AppleConnector;
-  readonly #observer: PassObserver;
+  readonly #report: PassReport;
 
-  constructor(connector: AppleConnector, observer: PassObserver) {
-    super();
+  constructor(connector: AppleConnector, report: PassReport) {
     this.#connector = connector;
-    this.#observer = observer;
+    this.#report = report;
   }
 
-  override async begin(
-    connection: Connection<SQLiteTable>,
-    copies: readonly DeclaredCopy<SQLiteTable>[],
-  ): Promise<RecordedPass<SQLiteTable>> {
+  begin(): ObservedPass<SQLiteTable> {
     const connector = this.#connector;
     const started = performance.now();
     const seconds = () => Math.round((performance.now() - started) / 1000);
-    const pass = await super.begin(connection, copies);
     return {
-      progress: (progress) => this.#observer.progress(connector, progress),
-      finish: async (outcomes) => {
-        await pass.finish(outcomes);
-        this.#observer.passed(
+      progress: (progress) => this.#report.progress(connector, progress),
+      finish: (outcomes) =>
+        this.#report.passed(
           connector,
           summarize(connector, outcomes, seconds()),
-        );
-      },
-      fail: async (error, failureType) => {
-        await pass.fail(error, failureType);
-        this.#observer.passed(
+        ),
+      fail: (error, failureType) =>
+        this.#report.passed(
           connector,
           failed(connector, error, seconds(), failureType),
-        );
-      },
+        ),
     };
   }
 }

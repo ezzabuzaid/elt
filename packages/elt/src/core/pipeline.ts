@@ -9,6 +9,7 @@ import {
   describeFailures,
 } from './copy.ts';
 import { interleave } from './interleave.ts';
+import type { PassObserver } from './pass-observer.ts';
 import { replicate } from './replication.ts';
 import type { Target as DestinationTarget } from './target.ts';
 import { TargetOwnedError } from './writer.ts';
@@ -18,11 +19,6 @@ import { TargetOwnedError } from './writer.ts';
 // ignores its signal must not hang its host's shutdown, as a grace period
 // bounds a process's SIGTERM before SIGKILL.
 const stopGraceMs = 1000;
-
-// How often a watch records the checks that found its streams unchanged. A
-// source checks about every second; a reader needs current_as_of only to
-// about a minute, and every record is a write.
-const checkRecordMs = 60_000;
 
 // When a watch loads a stream again, with no change, after its copy failed
 // for a system reason, as Airbyte's platform retries a failed sync attempt:
@@ -80,14 +76,17 @@ export class WatchError extends AggregateError {
 // connections run side by side, so a slow source never holds back another.
 export class Pipeline<Target extends DestinationTarget> {
   readonly connections: readonly Connection<Target>[];
-  readonly history?: SyncHistory<Target>;
+  readonly history: SyncHistory<Target>;
+  readonly observer?: PassObserver<Target>;
 
   constructor({
     connections,
     history,
+    observer,
   }: {
     connections: readonly Connection<Target>[];
-    history?: SyncHistory<NoInfer<Target>>;
+    history: SyncHistory<NoInfer<Target>>;
+    observer?: PassObserver<NoInfer<Target>>;
   }) {
     if (!connections.every((connection) => connection instanceof Connection))
       throw new TypeError(
@@ -95,6 +94,7 @@ export class Pipeline<Target extends DestinationTarget> {
       );
     this.connections = Object.freeze([...connections]);
     this.history = history;
+    this.observer = observer;
     Object.freeze(this);
   }
 
@@ -213,7 +213,6 @@ export class Pipeline<Target extends DestinationTarget> {
       string,
       { readonly failures: number; readonly at: number }
     >();
-    let recordedAt = Number.NEGATIVE_INFINITY;
     let wake = Promise.withResolvers<void>();
     // An abort wakes the loop below, whether or not the source heeds it.
     watching.addEventListener('abort', () => wake.resolve(), { once: true });
@@ -242,19 +241,16 @@ export class Pipeline<Target extends DestinationTarget> {
             );
           initial = false;
           if (pending.size > 0) wake.resolve();
-          const now = Date.now();
           const current = [...loaded].filter(
             (name) => !pending.has(name) && !loading.has(name),
           );
-          if (current.length > 0 && now - recordedAt >= checkRecordMs) {
-            recordedAt = now;
+          if (current.length > 0)
             try {
-              await this.history?.checked(connection, current, new Date(now));
+              await this.history.checked(connection, current, new Date());
             } catch (error) {
               unrecorded = { error };
               return;
             }
-          }
         }
         if (initial && !watching.aborted)
           throw new TypeError('Watcher ended before its initial invalidation');
@@ -352,22 +348,24 @@ export class Pipeline<Target extends DestinationTarget> {
     steps: readonly Copy<Target>[],
     signal: AbortSignal | undefined,
   ): Promise<Pass<Target>> {
-    const record = await this.history?.begin(
+    const record = await this.history.begin(
       connection,
       steps.map((copy) => ({
         copy,
         coverage: connection.source.coverage(copy.from),
       })),
     );
+    const observed = advise(() => this.observer?.begin(connection));
     const outcomes = await replicate(
       connection.source,
       connection.destination,
       connection.checkpoints,
       steps,
-      record?.progress?.bind(record),
+      observed && ((progress) => advise(() => observed.progress(progress))),
       signal,
     );
-    await record?.finish(outcomes);
+    await record.finish(outcomes);
+    advise(() => observed?.finish(outcomes));
     return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
   }
 
@@ -377,7 +375,7 @@ export class Pipeline<Target extends DestinationTarget> {
     connection: Connection<Target>,
     failure: unknown,
   ): Promise<void> {
-    if (this.history === undefined) return;
+    const failureType = connection.source.failureType(failure);
     try {
       const record = await this.history.begin(
         connection,
@@ -386,7 +384,7 @@ export class Pipeline<Target extends DestinationTarget> {
           coverage: connection.source.coverage(copy.from),
         })),
       );
-      await record.fail(failure, connection.source.failureType(failure));
+      await record.fail(failure, failureType);
     } catch (error) {
       throw new SuppressedError(
         error,
@@ -394,6 +392,7 @@ export class Pipeline<Target extends DestinationTarget> {
         `Connection ${connection.name} stopped (${message(failure)}), and its sync history could not record why: ${message(error)}`,
       );
     }
+    advise(() => this.observer?.begin(connection).fail(failure, failureType));
   }
 
   // Every declaration is checked before any connection reads, so a wiring
@@ -401,7 +400,7 @@ export class Pipeline<Target extends DestinationTarget> {
   async #declare(): Promise<void> {
     this.#assertDistinct();
     for (const connection of this.connections)
-      this.history?.validate(connection);
+      this.history.validate(connection);
     for (const connection of this.connections)
       try {
         connection.validate();
@@ -450,4 +449,13 @@ function connectionError(
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// A pass observer is advisory: what it throws never reaches the pass.
+function advise<T>(call: () => T): T | undefined {
+  try {
+    return call();
+  } catch {
+    return undefined;
+  }
 }

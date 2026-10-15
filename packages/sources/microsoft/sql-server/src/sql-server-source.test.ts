@@ -9,6 +9,7 @@ import { Connection, Pipeline, PipelineError } from '@workspace/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
+  PostgresSyncHistory,
 } from '@workspace/elt-postgresql';
 import {
   SqlServerDatabase,
@@ -111,9 +112,12 @@ async function scratchWarehouse() {
   const url = new URL(postgresServer);
   url.pathname = `/${name}`;
   const warehouse = postgres(url.href, { max: 2, onnotice: () => {} });
+  const history = new PostgresSyncHistory({ url: url.href });
+  await history.install();
   return {
     url: url.href,
     sql: warehouse,
+    history,
     async [Symbol.asyncDispose]() {
       await warehouse.end();
       await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);
@@ -127,19 +131,23 @@ async function scratchWarehouse() {
  * does: the source is discovered again on every run, each stream lands in a
  * table named after it, and checkpoints stay beside the data.
  */
-function syncer(connectionString: string, warehouse: string) {
+function syncer(
+  connectionString: string,
+  { url, history }: { url: string; history: PostgresSyncHistory },
+) {
   const database = new SqlServerDatabase(connectionString);
   const destination = new PostgresDestination({
-    url: warehouse,
+    url,
     schema: 'raw',
   });
   const checkpoints = new PostgresCheckpointStore({
-    url: warehouse,
+    url,
     schema: 'raw',
   });
   return async () => {
     const source = await SqlServerSource.discover(database);
     const pipeline = new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'sql-server',
@@ -195,7 +203,7 @@ for (const snapshot of [false, true])
     const reader = await server.login(
       'GRANT VIEW CHANGE TRACKING ON dbo.orders TO {user};',
     );
-    const sync = syncer(reader.connectionString, warehouse.url);
+    const sync = syncer(reader.connectionString, warehouse);
     const loaded = async () =>
       (
         await warehouse.sql`SELECT id::int AS id, total::text FROM raw.dbo_orders ORDER BY id`
@@ -259,7 +267,7 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
   const reader = await server.login(
     'GRANT VIEW CHANGE TRACKING ON dbo.[Line Items] TO {user};',
   );
-  const sync = syncer(reader.connectionString, warehouse.url);
+  const sync = syncer(reader.connectionString, warehouse);
   // The syncer names each raw table <schema>_<table>; the destination then
   // keeps a hash of a name sanitizing changed, and fits a long one.
   const items = `dbo_Line_Items_${sha8('dbo_Line Items')}`;
@@ -322,7 +330,7 @@ test('a truncated Change Tracking table, whose history no longer reaches the las
   const reader = await server.login(
     'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user};',
   );
-  const sync = syncer(reader.connectionString, warehouse.url);
+  const sync = syncer(reader.connectionString, warehouse);
   await sync();
 
   await server.run(
@@ -349,7 +357,7 @@ test('a column added to a Change Tracking table reaches every row: the table loa
   const reader = await server.login(
     'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user};',
   );
-  const sync = syncer(reader.connectionString, warehouse.url);
+  const sync = syncer(reader.connectionString, warehouse);
   await sync();
 
   await server.run(
@@ -376,7 +384,7 @@ test('a column added to a rowversion table reaches every stored row, and a row d
     CREATE TABLE dbo.events (id int PRIMARY KEY, kind varchar(10) NOT NULL, stamp rowversion);
     INSERT dbo.events (id, kind) VALUES (1, 'open'), (2, 'open');`);
   const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse.url);
+  const sync = syncer(reader.connectionString, warehouse);
   await sync();
   // A default fills the existing row without bumping its rowversion, so only
   // a read from the first row brings it.
@@ -405,7 +413,7 @@ test('a rowversion table loads inserts and updates, a row still being written ar
     CREATE TABLE dbo.events (id int PRIMARY KEY, kind varchar(10) NOT NULL, stamp rowversion);
     INSERT dbo.events (id, kind) VALUES (1, 'open'), (2, 'open');`);
   const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse.url);
+  const sync = syncer(reader.connectionString, warehouse);
   const loaded = async () =>
     (await warehouse.sql`SELECT id, kind FROM raw.dbo_events ORDER BY id`).map(
       ({ id, kind }) => `${id}:${kind}`,
@@ -450,7 +458,7 @@ test('a table with no change signal is read in full each sync, so a deleted row 
     INSERT dbo.log VALUES (N'started'), (N'stopped');
     INSERT dbo.codes VALUES ('EU', N'Europe'), ('AS', N'Asia');`);
   const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse.url);
+  const sync = syncer(reader.connectionString, warehouse);
   const loaded = async () => ({
     log: (
       await warehouse.sql`SELECT message FROM raw.dbo_log ORDER BY message`
@@ -488,7 +496,7 @@ test(
     const reader = await server.login(
       'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user};',
     );
-    const sync = syncer(reader.connectionString, warehouse.url);
+    const sync = syncer(reader.connectionString, warehouse);
 
     const error = await failing(sync);
 
@@ -521,7 +529,7 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
     INSERT dbo.plain VALUES (1, N'a');
     INSERT dbo.stamped (id, name) VALUES (1, N'b');`);
   const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse.url);
+  const sync = syncer(reader.connectionString, warehouse);
 
   const { source } = await sync();
 
@@ -565,6 +573,7 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
   });
   const error = await failing(() =>
     new Pipeline({
+      history: warehouse.history,
       connections: [
         new Connection({
           name: 'sql-server',
@@ -622,7 +631,7 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
        N'hello', 'someone@example.com'),
       (1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);`);
   const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse.url);
+  const sync = syncer(reader.connectionString, warehouse);
 
   await sync();
 
@@ -744,7 +753,7 @@ test('a column already named as a datetimeoffset or sql_variant sibling would be
   const reader = await server.login(
     'GRANT VIEW CHANGE TRACKING ON dbo.clashing TO {user};',
   );
-  const sync = syncer(reader.connectionString, warehouse.url);
+  const sync = syncer(reader.connectionString, warehouse);
   const loaded = async () =>
     (
       await warehouse.sql`SELECT anything, anything_type::int, anything_type_1,

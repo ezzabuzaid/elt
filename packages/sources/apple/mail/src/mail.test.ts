@@ -50,6 +50,14 @@ import { MacOSDocumentParser } from '@workspace/source-apple-macos/macos-documen
 
 import { AppleMailSource } from './apple-mail-source.ts';
 
+// A sync history installed in each destination's file, as a host installs it
+// before the first pass.
+async function installedHistory(...destinations: SQLiteDestination[]) {
+  const history = new SQLiteSyncHistory();
+  await history.install(destinations);
+  return history;
+}
+
 // A file column's chunk table, by the documented rule: _elt_files_ and the
 // first 40 hex digits of SHA-256 over the JSON of [table, column], both in
 // ASCII lower case.
@@ -747,6 +755,7 @@ async function pipeline(source: AppleMailSource, directory: string) {
   });
   const { streams } = await source.discover();
   return new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2351,6 +2360,7 @@ test('Mail tracking pixels keep exact local files and database bytes with null O
   });
   const files = new LocalFiles({ directory: join(dir.path, 'files') });
   await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2516,6 +2526,7 @@ test('this Mac’s Mail accounts and SMTP servers read from the Accounts store w
 
   try {
     await new Pipeline({
+      history: await installedHistory(destination),
       connections: [
         new Connection({
           name: 'live',

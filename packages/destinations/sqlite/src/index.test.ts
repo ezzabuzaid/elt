@@ -37,6 +37,7 @@ import {
   Stream,
   StreamChangeError,
   StreamStatus,
+  type SyncHistory,
   type Target,
   TargetOwnedError,
   WatchError,
@@ -57,6 +58,14 @@ import {
   type SQLiteTable,
   installSQLiteCatalog,
 } from './index.ts';
+
+// A sync history installed in each destination's file, as a host installs it
+// before the first pass.
+async function installedHistory(...destinations: SQLiteDestination[]) {
+  const history = new SQLiteSyncHistory();
+  await history.install(destinations);
+  return history;
+}
 
 test('the public ELT API copies source records into SQLite', async () => {
   class TestSource extends Source {
@@ -101,6 +110,7 @@ test('the public ELT API copies source records into SQLite', async () => {
   });
   const copy = new Copy(source.records, destination.table('records'));
   const results = await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({ name: 'test', source, destination, steps: [copy] }),
     ],
@@ -455,6 +465,7 @@ test('array fields load as JSON arrays that SQLite checks and reads element by e
   const copy = new Copy(source.lists, destination.table('lists'));
 
   const results = await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({ name: 'test', source, destination, steps: [copy] }),
     ],
@@ -621,6 +632,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   });
   const other = new Copy(source.other, destination.table('other'));
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -758,6 +770,7 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
     { value: undefined, done: true },
   );
   const invalid = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -830,11 +843,13 @@ test('a cursor inside the primary key is rejected unless the policy replaces', a
   // A Copy is a declaration; the pipeline validates it before extracting.
   // Each accepted selection needs its own id, because a checkpoint binding
   // covers the whole configuration.
+  const history = await installedHistory(destination);
   const validating = (
     name: string,
     modes: ConstructorParameters<typeof CopyConfiguration>[1] & { id?: string },
   ) =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -958,6 +973,7 @@ test('replace loads a restated fact that cursor_newer discards', async () => {
     for (const copy of [replacing, guarding])
       results.push(
         await new Pipeline({
+          history: await installedHistory(destination),
           connections: [
             new Connection({
               name: 'test',
@@ -1045,6 +1061,7 @@ test('deletions remove keyed rows from a deduplicating SQLite table', async () =
     path: join(scratch.path, 'd.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(sqlite),
     connections: [
       new Connection({
         name: 'test',
@@ -1169,8 +1186,10 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
   });
   assert.equal(copy.configuration.dedupPolicy, 'replace');
 
+  const history = await installedHistory(sqlite);
   const run = (to = copy) =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -1207,6 +1226,7 @@ test('deletion streams require keyed deduplicating copies and well-formed keys',
   }
   await assert.rejects(
     new Pipeline({
+      history: await installedHistory(sqlite),
       connections: [
         new Connection({
           name: 'test',
@@ -1269,6 +1289,7 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -1400,6 +1421,7 @@ test('a snapshot stream that emits no deletions keeps the rows of keys its upstr
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -1499,6 +1521,7 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -1600,6 +1623,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -1796,6 +1820,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
       }),
   );
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -1980,6 +2005,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
     path: join(scratch.path, 'd.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2117,6 +2143,7 @@ test('a diff whose next read repeats only a lookback window deletes none of the 
     path: join(scratch.path, 'd.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2213,12 +2240,14 @@ test('a target has one writer, even when another loads only its own partitions',
   }
   const scenario = async <T extends Target>(
     destination: Destination<T>,
+    history: SyncHistory<T>,
     target: () => T,
     checkpoints: SQLiteCheckpointStore,
     loaded: () => Promise<number>,
   ) => {
     const upsert = (id: string, source: Records) =>
       new Pipeline({
+        history,
         connections: [
           new Connection({
             name: 'test',
@@ -2247,6 +2276,7 @@ test('a target has one writer, even when another loads only its own partitions',
     );
     await assert.rejects(
       new Pipeline({
+        history,
         connections: [
           new Connection({
             name: 'test',
@@ -2270,6 +2300,7 @@ test('a target has one writer, even when another loads only its own partitions',
     });
     await scenario(
       destination,
+      await installedHistory(destination),
       () => destination.table('records'),
       new SQLiteCheckpointStore({ path: join(scratch.path, 'state.sqlite') }),
       async () => {
@@ -2322,8 +2353,10 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
   });
   const first = new Records('first');
   const second = new Records('second');
+  const history = await installedHistory(destination);
   const overwrite = (source: Records) =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -2336,6 +2369,7 @@ test('a writer may change its own mode, and dropping a target releases it', asyn
 
   await overwrite(first);
   await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2395,6 +2429,7 @@ test('an explicit column naming a field the stream does not declare fails before
 
   await assert.rejects(
     new Pipeline({
+      history: await installedHistory(destination),
       connections: [
         new Connection({
           name: 'test',
@@ -2484,6 +2519,7 @@ test('a pipeline refuses two writers of one target before running any', async ()
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2518,6 +2554,7 @@ test('a pipeline refuses two writers of one target before running any', async ()
     });
   // Two copies with the same key are still two writers.
   const twins = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2531,8 +2568,10 @@ test('a pipeline refuses two writers of one target before running any', async ()
     ],
   });
   // One read routes by stream, so a stream is copied once per pipeline.
+  const history = await installedHistory(destination);
   const doubled = () =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -2645,6 +2684,7 @@ test('a partitioned stream resumes each partition from its own state', async () 
     path: join(scratch.path, 'state.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2716,6 +2756,7 @@ test('a failing partition loads nothing and keeps its checkpoint, while the othe
     destinationSyncMode: 'append_dedup',
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2810,6 +2851,7 @@ test('clear drops a target with its checkpoint, and a target dropped by hand rel
       destinationSyncMode: 'append_dedup',
     });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2835,6 +2877,7 @@ test('clear drops a target with its checkpoint, and a target dropped by hand rel
   await pipeline.run();
   assert.deepEqual(source.received, [['a', null]]);
   const other = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -2868,6 +2911,7 @@ test('a full refresh whose partition fails keeps the previous table', async () =
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -3093,6 +3137,7 @@ test('file bytes load as bounded chunks that leave with their row', async () => 
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -3148,6 +3193,7 @@ test("an overwrite removes the previous load's files", async () => {
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -3179,6 +3225,7 @@ test('a record the cursor guard rejects leaves no stored file behind', async () 
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -3585,6 +3632,7 @@ test('stored file references follow committed SQLite rows, including rejected up
       },
     );
     const pipeline = new Pipeline({
+      history: await installedHistory(destination),
       connections: [
         new Connection({
           name: 'test',
@@ -3713,6 +3761,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
       cursorField: 'version',
     });
     const pipeline = new Pipeline({
+      history: await installedHistory(destination),
       connections: [
         new Connection({
           name: 'test',
@@ -3763,6 +3812,7 @@ test('stored files recover cleanup failures before checkpointing and isolate cop
     rejectSave = false;
 
     const snapshot = new Pipeline({
+      history: await installedHistory(destination),
       connections: [
         new Connection({
           name: 'test',
@@ -3824,6 +3874,7 @@ test('a stream that fails publishes none of its staged rows while its sibling co
       destinationSyncMode: 'append_dedup',
     }) as const;
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -3916,6 +3967,7 @@ test('a staged unit merges like its operations applied one at a time, under repl
   });
 
   await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -4002,6 +4054,7 @@ test('a key named last merges like its operations applied one at a time', async 
   });
 
   await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -4085,6 +4138,7 @@ test('a key and cursor that sanitizing renames merge under their renamed columns
   const guarded = keyed('guarded', false);
 
   await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -4278,6 +4332,7 @@ test('a load holds no write transaction while the source reads, and a stream tha
   }
 
   const error = await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -4346,8 +4401,10 @@ test('deduplicating a table whose history repeats a key is refused before the so
   });
   // One copy that first keeps a history, then deduplicates it from a reset
   // checkpoint, which a changed copy needs.
+  const history = await installedHistory(destination);
   const run = (destinationSyncMode: 'append' | 'append_dedup') =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -4545,6 +4602,7 @@ test('a reset of a partition named by a renamed field replaces only that partiti
     path: join(scratch.path, 'out.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -4601,6 +4659,7 @@ test('a native transaction rollback retains the original merge error and committ
     items: [record('items', 'old', 1)],
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -4649,8 +4708,10 @@ test('an overwrite_dedup whose key narrows builds its index after the old rows a
   const source = new ScriptedSource([stream], {
     items: [record('items', 'a', 1), record('items', 'a', 2)],
   });
+  const history = await installedHistory(destination);
   const run = (primaryKey: string[]) =>
     new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -4751,6 +4812,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
   });
   const statePath = join(scratch.path, 'state.sqlite');
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -4925,6 +4987,7 @@ for (const { outcome, next, expected } of leftBehind)
       path: join(scratch.path, 'out.sqlite'),
     });
     const pipeline = new Pipeline({
+      history: await installedHistory(destination),
       connections: [
         new Connection({
           name: 'test',
@@ -5015,6 +5078,7 @@ test('clearing a table whose file column was declared after its first load empti
     docs: [record('docs', 'd1', 1)],
   });
   await new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -5027,6 +5091,7 @@ test('clearing a table whose file column was declared after its first load empti
   const docs = new Stream({ ...scripted('docs'), supportsFileTransfer: true });
   const source = new ScriptedSource([docs], {});
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -5071,6 +5136,7 @@ test('text with a lone surrogate fails its stream instead of loading as a replac
     good: [record('good', 'g1', 1)],
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -5200,6 +5266,7 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
   });
   installSQLiteCatalog(destination);
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'ledger',
@@ -5370,6 +5437,7 @@ test('a reset replaces only its partition at the next commit, and one a failure 
       .map(({ account, id }) => `${account}${id}`);
   };
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -5439,6 +5507,7 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
     path: join(scratch.path, 'items.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -5474,7 +5543,7 @@ test('a full refresh ignores resets, so an appending copy keeps its history', as
 
 // A stream discovered anew each run, as a database source rediscovers its
 // tables, diffed as a snapshot into SQLite under a reader view.
-function shapeChanges(
+async function shapeChanges(
   directory: string,
   declaration: Partial<
     Pick<
@@ -5489,6 +5558,7 @@ function shapeChanges(
   const checkpoints = new SQLiteCheckpointStore({
     path: join(directory, 'state.sqlite'),
   });
+  const history = await installedHistory(destination);
   const received: unknown[] = [];
   const pipeline = (
     properties: Properties,
@@ -5548,6 +5618,7 @@ function shapeChanges(
       }
     }
     return new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -5633,7 +5704,7 @@ const shape = {
 
 test('a stream whose upstream forgets records keeps every row when a field is added, removed or made nullable, and its source resumes from its state', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
-  const { run, loaded, received, tables, columns, saved } = shapeChanges(
+  const { run, loaded, received, tables, columns, saved } = await shapeChanges(
     scratch.path,
     {},
   );
@@ -5668,7 +5739,9 @@ test('a stream whose upstream forgets records keeps every row when a field is ad
 
 test('a mirror stream whose shape changes still deletes the rows its upstream deleted meanwhile', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
-  const { run, loaded } = shapeChanges(scratch.path, { emitsDeletes: true });
+  const { run, loaded } = await shapeChanges(scratch.path, {
+    emitsDeletes: true,
+  });
   await run({ id: shape.id, title: shape.title }, [
     { id: 'a', title: 'A' },
     { id: 'b', title: 'B' },
@@ -5685,7 +5758,7 @@ test('a mirror stream whose shape changes still deletes the rows its upstream de
 
 test('an expiring stream whose shape changes keeps a row older than the horizon and deletes one its upstream still kept', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
-  const { run, loaded } = shapeChanges(scratch.path, {
+  const { run, loaded } = await shapeChanges(scratch.path, {
     emitsDeletes: true,
     expiresBy: 'seenAt',
   });
@@ -5714,7 +5787,7 @@ test('an expiring stream whose shape changes keeps a row older than the horizon 
 
 test('a required field added to a stored stream reads null on rows written before it, and a new record still has to carry it', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
-  const { run, loaded } = shapeChanges(scratch.path, {});
+  const { run, loaded } = await shapeChanges(scratch.path, {});
   await run({ id: shape.id }, [{ id: 'a' }, { id: 'b' }]);
   const fields = { id: shape.id, added: shape.requiredAdded };
   const required = ['id', 'added'];
@@ -5735,7 +5808,7 @@ test('a required field added to a stored stream reads null on rows written befor
 
 test('stored rows the new shape cannot hold fail the copy by column, leave the table and checkpoint as they were, and a clear reloads', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
-  const { run, pipeline, loaded, received, saved } = shapeChanges(
+  const { run, pipeline, loaded, received, saved } = await shapeChanges(
     scratch.path,
     { emitsDeletes: true },
   );
@@ -5772,7 +5845,7 @@ test('stored rows the new shape cannot hold fail the copy by column, leave the t
 
 test('a stale table whose reader view was replaced by another is refused before it evolves, and is left as it was', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
-  const { run, columns } = shapeChanges(scratch.path, {});
+  const { run, columns } = await shapeChanges(scratch.path, {});
   await run({ id: shape.id }, [{ id: 'a' }]);
   // Someone else's view takes the reader view's name.
   {
@@ -5823,10 +5896,11 @@ test('a changed declaration stops the copy with StreamChangeError naming it, and
     await using scratch = await mkdtempDisposable(
       join(tmpdir(), 'elt-evolve-'),
     );
-    await shapeChanges(scratch.path, before).run(fields, [
+    const original = await shapeChanges(scratch.path, before);
+    await original.run(fields, [
       { id: 'a', seenAt: '2026-01-01T00:00:00.000Z' },
     ]);
-    const changed = shapeChanges(scratch.path, after);
+    const changed = await shapeChanges(scratch.path, after);
 
     await assert.rejects(
       changed.run(fields, [{ id: 'b', seenAt: '2026-06-01T00:00:00.000Z' }], {
@@ -5847,7 +5921,7 @@ test('a changed declaration stops the copy with StreamChangeError naming it, and
 
 test('a changed primary key fails the copy until it is reset, which keeps and re-keys the rows', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
-  const { run, loaded, checkpoints } = shapeChanges(scratch.path, {
+  const { run, loaded, checkpoints } = await shapeChanges(scratch.path, {
     emitsDeletes: true,
   });
   const fields = { id: shape.id, title: shape.title };
@@ -5876,9 +5950,12 @@ test('a changed primary key fails the copy until it is reset, which keeps and re
 
 test('rows that repeat a new primary key fail its reset loudly, and a clear reloads', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-evolve-'));
-  const { run, pipeline, loaded, checkpoints } = shapeChanges(scratch.path, {
-    emitsDeletes: true,
-  });
+  const { run, pipeline, loaded, checkpoints } = await shapeChanges(
+    scratch.path,
+    {
+      emitsDeletes: true,
+    },
+  );
   const fields = { id: shape.id, title: shape.title };
   await run(fields, [
     { id: 'a', title: 'A' },
@@ -5911,6 +5988,7 @@ test('an overwrite whose stored table no longer fits reloads it rather than evol
     path: join(scratch.path, 'state.sqlite'),
   });
   // Each run discovers its stream anew and replaces every row.
+  const history = await installedHistory(destination);
   const run = (properties: Properties, rows: readonly object[]) => {
     const items = new Stream({
       name: 'items',
@@ -5936,6 +6014,7 @@ test('an overwrite whose stored table no longer fits reloads it rather than evol
       }
     }
     return new Pipeline({
+      history,
       connections: [
         new Connection({
           name: 'test',
@@ -6026,6 +6105,7 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
     path: join(scratch.path, 'items.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -6098,6 +6178,7 @@ test('a stored table that no longer fits evolves without a reload, keeping every
     path: join(scratch.path, 'files.sqlite'),
   });
   const pipeline = new Pipeline({
+    history: await installedHistory(destination),
     connections: [
       new Connection({
         name: 'test',
@@ -6164,8 +6245,10 @@ test('a file column the target drops takes its stored chunks with it, whether it
     const checkpoints = new SQLiteCheckpointStore({
       path: join(scratch.path, 'state.sqlite'),
     });
+    const history = await installedHistory(destination);
     const run = (withBytes: boolean) =>
       new Pipeline({
+        history,
         connections: [
           new Connection({
             name: 'test',
@@ -6298,6 +6381,7 @@ test('a copy that declares its columns from the stream and stores its files keep
       },
     );
     const results = await new Pipeline({
+      history: await installedHistory(destination),
       connections: [
         new Connection({
           name: 'test',
@@ -6518,6 +6602,85 @@ test('under a watch, a check that finds nothing changed makes each stream curren
         loaded[stream]?.last_successful_sync_at,
       );
     }
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+});
+
+test('one sync history records each connection’s first unchanged check at once, even right after another connection’s, and no second check within a minute', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'elt-checks-'));
+  const path = join(scratch.path, 'data.sqlite');
+  const destination = new SQLiteDestination({ path });
+  const history = new SQLiteSyncHistory();
+  await history.install([destination]);
+  const first = new CheckedSource();
+  const second = new CheckedSource();
+  const pipeline = new Pipeline({
+    history,
+    connections: [
+      new Connection({
+        name: 'first',
+        source: first,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'first.sqlite'),
+        }),
+        steps: [
+          new Copy(first.a, destination.table('first_a')),
+          new Copy(first.b, destination.table('first_b')),
+        ],
+      }),
+      new Connection({
+        name: 'second',
+        source: second,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'second.sqlite'),
+        }),
+        steps: [new Copy(second.a, destination.table('second_a'))],
+      }),
+    ],
+  });
+  const current = () => {
+    using database = new DatabaseSync(path, { readOnly: true });
+    return Object.fromEntries(
+      database
+        .prepare('SELECT connector, stream, current_as_of FROM stream_status')
+        .all()
+        .map(({ connector, stream, current_as_of }) => [
+          `${String(connector)}.${String(stream)}`,
+          String(current_as_of),
+        ]),
+    );
+  };
+  const controller = new AbortController();
+  const watching = pipeline.watch({ signal: controller.signal });
+  try {
+    await watching.next();
+    await watching.next();
+    const checked = new Date().toISOString();
+    first.checks.emit('check', []);
+    second.checks.emit('check', []);
+    for (
+      let tries = 0;
+      !Object.values(current()).every((at) => at >= checked);
+      tries++
+    ) {
+      if (tries > 100)
+        assert.fail(`never recorded: ${JSON.stringify(current())}`);
+      await sleep(50);
+    }
+    const recorded = current();
+    // So a second record would carry a later time than the first.
+    await sleep(5);
+
+    first.checks.emit('check', []);
+    // The change ends this check's wait: its pass yields after it.
+    first.checks.emit('check', [first.b]);
+    await watching.next();
+
+    assert.equal(current()['first.a'], recorded['first.a']);
   } finally {
     controller.abort();
     await watching.return(undefined);

@@ -12,6 +12,7 @@ import {
   type DeclaredCopy,
   Destination,
   DocumentParser,
+  type FailureType,
   FileRead,
   FileStorage,
   type Load,
@@ -536,6 +537,7 @@ const contextPipeline = (
   destination = new DrainingDestination(),
 ) =>
   new Pipeline({
+    history: new MemoryHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -729,6 +731,7 @@ test('each checkpoint commits its partition, and a failing partition keeps its l
   const destination = new DrainingDestination();
   const checkpoints = new MemoryCheckpoints(destination.log);
   const pipeline = new Pipeline({
+    history: new MemoryHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -800,6 +803,7 @@ test('a full refresh commits once, and a failing partition commits nothing', asy
   const source = new Sites();
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    history: new MemoryHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -853,6 +857,7 @@ test('an empty full refresh still commits, so an overwrite clears its target', a
   const source = new ContextSource({ left: [] });
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    history: new MemoryHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -882,6 +887,7 @@ test('a read context that does not open fails every copy with its error, and not
   const source = new LockedSource(refusal);
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    history: new MemoryHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -925,6 +931,7 @@ test('a connection that copies one stream twice is refused before anything is pr
   const source = new ContextSource();
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    history: new MemoryHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -953,6 +960,7 @@ const incrementalPipeline = (
   checkpoints: MemoryCheckpoints,
 ) =>
   new Pipeline({
+    history: new MemoryHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1112,6 +1120,7 @@ test("an extract that emits another stream's message fails only its own stream, 
   });
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    history: new MemoryHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1174,6 +1183,7 @@ test('a read that breaks fails every stream it had not ended, while a stream tha
   const source = new BreakingSource();
   const destination = new DrainingDestination();
   const pipeline = new Pipeline({
+    history: new MemoryHistory(),
     connections: [
       new Connection({
         name: 'test',
@@ -1261,7 +1271,7 @@ class MemoryHistory extends SyncHistory<NamedTarget> {
 
   // The tests that use it read passes; checks are the SQLite and Postgres
   // histories' tests.
-  override async checked(): Promise<void> {}
+  protected override async recordChecks(): Promise<void> {}
 
   finished(connection: string): Promise<void> {
     return this.#pass(connection).promise;
@@ -1304,6 +1314,14 @@ const leftOnly = (name: string, source: ContextSource) =>
     destination: new DrainingDestination(),
     steps: [new Copy(source.left, new NamedTarget(`${name}-left`))],
   });
+
+// A watcher that fails once its first pass began.
+class Lost extends ContextSource {
+  protected override async *observe({ streams }: SourceWatchOptions) {
+    yield streams;
+    throw new Error('watcher lost');
+  }
+}
 
 test('one connection failing leaves the others loaded, and every pass is recorded', async () => {
   const history = new MemoryHistory();
@@ -1457,27 +1475,24 @@ test("connections read side by side, so one connection's pass never waits for an
   ]);
 });
 
-test("a recorded pass sees each copy's progress: what the source emitted, what committed, and how it ended", async () => {
+test("an observed pass sees each copy's progress: what the source emitted, what committed, and how it ended", async () => {
   const progress: string[] = [];
-  const history = new (class extends SyncHistory<NamedTarget> {
-    override async checked(): Promise<void> {}
-    override async begin(): Promise<RecordedPass<NamedTarget>> {
-      return {
-        progress: ({ copy, status, emitted, committed }) =>
-          progress.push(
-            `${copy.from.name} ${status} emitted ${emitted.count} committed ${committed.count}`,
-          ),
-        finish: async () => {},
-        fail: async () => {},
-      };
-    }
-  })();
   const source = new ContextSource({
     left: [record('left', 'a'), record('left', 'b')],
     right: [record('right', 'x'), new Error('right lost')],
   });
   const pipeline = new Pipeline({
-    history,
+    history: new MemoryHistory(),
+    observer: {
+      begin: () => ({
+        progress: ({ copy, status, emitted, committed }) =>
+          progress.push(
+            `${copy.from.name} ${status} emitted ${emitted.count} committed ${committed.count}`,
+          ),
+        finish: () => {},
+        fail: () => {},
+      }),
+    },
     connections: [
       new Connection({
         name: 'test',
@@ -1516,20 +1531,17 @@ test("a recorded pass sees each copy's progress: what the source emitted, what c
 
 test('a copy that fails before reading still reports how it ended', async () => {
   const progress: string[] = [];
-  const history = new (class extends SyncHistory<NamedTarget> {
-    override async checked(): Promise<void> {}
-    override async begin(): Promise<RecordedPass<NamedTarget>> {
-      return {
-        progress: ({ copy, status }) =>
-          progress.push(`${copy.from.name} ${status}`),
-        finish: async () => {},
-        fail: async () => {},
-      };
-    }
-  })();
   const source = new LockedSource(new Error('store locked'));
   const pipeline = new Pipeline({
-    history,
+    history: new MemoryHistory(),
+    observer: {
+      begin: () => ({
+        progress: ({ copy, status }) =>
+          progress.push(`${copy.from.name} ${status}`),
+        finish: () => {},
+        fail: () => {},
+      }),
+    },
     connections: [leftOnly('locked', source)],
   });
 
@@ -1538,24 +1550,25 @@ test('a copy that fails before reading still reports how it ended', async () => 
   assert.deepEqual(progress, ['left incomplete']);
 });
 
-test('a progress observer that throws never changes what loads', async () => {
-  const history = new (class extends SyncHistory<NamedTarget> {
-    override async checked(): Promise<void> {}
-    override async begin(): Promise<RecordedPass<NamedTarget>> {
-      return {
-        progress: () => {
-          throw new Error('renderer broke');
-        },
-        finish: async () => {},
-        fail: async () => {},
-      };
-    }
-  })();
+test('an observer whose pass throws never changes what a run loads or what its history records', async () => {
+  const history = new MemoryHistory();
+  const thrown = new Set<string>();
+  const broken = (hook: string) => () => {
+    thrown.add(hook);
+    throw new Error('renderer broke');
+  };
   const source = new ContextSource({
     left: [record('left', 'a'), record('left', 'b')],
   });
   const pipeline = new Pipeline({
     history,
+    observer: {
+      begin: () => ({
+        progress: broken('progress'),
+        finish: broken('finish'),
+        fail: broken('fail'),
+      }),
+    },
     connections: [leftOnly('steady', source)],
   });
 
@@ -1565,16 +1578,131 @@ test('a progress observer that throws never changes what loads', async () => {
     results.map(({ copy, count }) => [copy.to.name, count]),
     [['steady-left', 2]],
   );
+  assert.deepEqual(history.log, [
+    'begin steady left:test',
+    'finish steady succeeded',
+  ]);
+  assert.deepEqual([...thrown], ['progress', 'finish']);
+});
+
+test('an observer that throws, from begin or from a pass, never changes what a watch loads, how a stopped watcher is reported, or what its history records', async () => {
+  const thrown = new Set<string>();
+  const broken = (hook: string) => () => {
+    thrown.add(hook);
+    throw new Error('renderer broke');
+  };
+  for (const { observer, hooks } of [
+    { observer: { begin: broken('begin') }, hooks: ['begin'] },
+    {
+      observer: {
+        begin: () => ({
+          progress: broken('progress'),
+          finish: broken('finish'),
+          fail: broken('fail'),
+        }),
+      },
+      hooks: ['fail', 'finish', 'progress'],
+    },
+  ]) {
+    thrown.clear();
+    const history = new MemoryHistory();
+    const steady = new ContextSource();
+    const pipeline = new Pipeline({
+      history,
+      observer,
+      connections: [
+        new Connection({
+          name: 'steady',
+          source: steady,
+          destination: new DrainingDestination(),
+          steps: [
+            new Copy(steady.left, new NamedTarget('steady-left')),
+            new Copy(steady.right, new NamedTarget('steady-right')),
+          ],
+        }),
+        leftOnly('lost', new Lost()),
+      ],
+    });
+    const passes: string[] = [];
+
+    const error = await (async () => {
+      for await (const { connection, outcomes } of pipeline.watch({
+        signal: AbortSignal.timeout(5000),
+      }))
+        passes.push(
+          `${connection.name}:${outcomes.map(({ copy }) => copy.from.name).join(',')}`,
+        );
+    })().then(
+      () => assert.fail('the lost watcher must be reported'),
+      (error: unknown) => error,
+    );
+
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.message, 'Connection lost: watcher lost');
+    assert.deepEqual(passes.toSorted(), [
+      'lost:left',
+      'steady:left,right',
+      'steady:right',
+    ]);
+    // Passes of the two connections interleave, so the log is compared sorted.
+    assert.deepEqual(history.log.toSorted(), [
+      'begin lost left:test',
+      'begin lost left:test',
+      'begin steady left:test,right:test',
+      'begin steady right:test',
+      'fail lost watcher lost',
+      'finish lost succeeded',
+      'finish steady succeeded',
+      'finish steady succeeded',
+    ]);
+    assert.deepEqual([...thrown].toSorted(), hooks);
+  }
+});
+
+test('an observer sees each pass end once its history recorded it, and a stopped watcher as a failed pass with whose failure it is', async () => {
+  // Not the default, so the observer sees what the source decided.
+  class Denied extends Lost {
+    override failureType(): FailureType {
+      return 'config';
+    }
+  }
+  const history = new MemoryHistory();
+  const pipeline = new Pipeline({
+    history,
+    observer: {
+      begin: (connection) => ({
+        progress: () => {},
+        finish: (outcomes) =>
+          history.log.push(
+            `observed finish ${connection.name} ${passStatus(outcomes)}`,
+          ),
+        fail: (error, failureType) =>
+          history.log.push(
+            `observed fail ${connection.name} ${error instanceof Error ? error.message : String(error)} ${failureType}`,
+          ),
+      }),
+    },
+    connections: [leftOnly('lost', new Denied())],
+  });
+
+  await assert.rejects(async () => {
+    for await (const _ of pipeline.watch({
+      signal: AbortSignal.timeout(5000),
+    }));
+  }, /Connection lost: watcher lost/);
+
+  assert.deepEqual(history.log, [
+    'begin lost left:test',
+    'finish lost succeeded',
+    'observed finish lost succeeded',
+    'begin lost left:test',
+    'fail lost watcher lost',
+    'observed fail lost watcher lost config',
+  ]);
 });
 
 test('a connection whose watcher fails stops alone and is recorded; the others keep watching', async () => {
   const history = new MemoryHistory();
-  class Lost extends ContextSource {
-    protected override async *observe({ streams }: SourceWatchOptions) {
-      yield streams;
-      throw new Error('watcher lost');
-    }
-  }
   const steady = new ContextSource();
   const pipeline = new Pipeline({
     history,
@@ -1633,6 +1761,7 @@ test(
       }
     }
     const pipeline = new Pipeline({
+      history: new MemoryHistory(),
       connections: [leftOnly('deaf', new Deaf())],
     });
     const controller = new AbortController();
@@ -1666,6 +1795,7 @@ test('a stopping watch waits for a source that heeds the abort to finish stoppin
     }
   }
   const pipeline = new Pipeline({
+    history: new MemoryHistory(),
     connections: [leftOnly('slow', new Slow())],
   });
   const controller = new AbortController();
