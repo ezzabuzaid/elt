@@ -13,11 +13,11 @@ The schema name that a statement uses for a database, for example `mail` in `mai
 _Avoid_: Alias, key, id
 
 **Locate**:
-The required port of the host. It gives the path of an additional database for a name, or `undefined` when the host has no database with that name.
+The required port of the host. It gives the path of a database for a name, or `undefined` when the host has no database with that name. It is called once for a named main, and for each statement's additional databases.
 _Avoid_: Resolve, look up, map
 
 **Main**:
-The primary database, opened read-only for the lifetime of the handle. Its path is required; `':memory:'` gives an empty primary database. Main does not count toward the attachment limit.
+The primary database, opened read-only for the lifetime of the handle. Give its path or `{ name }` to find it through `locate`; `':memory:'` gives an empty primary database. An unknown name fails construction. Main does not count toward the attachment limit.
 
 **Handle**:
 `sql` for tagged statements, and `query(sql)` for one SQL string. Both discover additional databases from the statement through `locate`.

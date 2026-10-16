@@ -147,25 +147,23 @@ export class Imports {
     });
   }
 
-  // Leaves unknown schemas to SQLite; known imports validate and recover.
-  readonly locate: Locate = (name) =>
-    this.#loaded(name) === undefined ? undefined : this.database(name);
-
-  // Locates an import and recovers interrupted writes before a reader opens it.
-  database(name: string): string {
-    const { title } = this.connector(name);
+  // Locates known imports and recovers interrupted writes before a reader opens
+  // them; unknown names have no path.
+  readonly locate: Locate = (name) => {
+    const connector = this.#loaded(name);
+    if (connector === undefined) return undefined;
     using settings = new Settings(this.root);
     const selection = settings
       .selections()
       .find(({ connector }) => connector === name);
     if (selection === undefined)
-      throw new Error(`${title} is not set up; run: setup`);
+      throw new Error(`${connector.title} is not set up; run: setup`);
     const path = settings.database(selection);
     if (!existsSync(path))
-      throw new Error(`${title} has not synced yet; run: sync`);
+      throw new Error(`${connector.title} has not synced yet; run: sync`);
     readSQLite(path).close();
     return path;
-  }
+  };
 
   // One pass of each selected connector, or only of those named, shown through
   // the observer, once the imports no longer selected are removed. A sync that

@@ -81,7 +81,7 @@ export class QueryCommand extends Command {
     const sql: string | undefined = declaration.processedArgs[1];
     if (declaration.opts().tables === true) {
       using database = new Federation({
-        main: this.imports.database(name),
+        main: { name },
         locate: this.imports.locate,
         timeout: 30_000,
       });
@@ -106,7 +106,7 @@ export class QueryCommand extends Command {
     if (sql === undefined)
       throw new Error('Give one SQL statement, or --tables');
     using database = new Federation({
-      main: this.imports.database(name),
+      main: { name },
       locate: this.imports.locate,
       timeout: 30_000,
     });

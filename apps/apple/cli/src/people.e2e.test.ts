@@ -254,6 +254,35 @@ test('query preserves main, schema PRAGMAs, positional output and statement reje
   assert.match(write.stderr, /readonly/);
 });
 
+test('query preserves missing primary import errors for SQL and table listings', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'query-cli-'));
+  const paths = await importsAt(scratch.path);
+  const calendar = paths.get('calendar');
+  assert.ok(calendar);
+  rmSync(calendar);
+  for (const [name, error] of [
+    ['books', /Books is not set up; run: setup/],
+    ['calendar', /Calendar has not synced yet; run: sync/],
+    ['unknown', /value 'unknown' is invalid for argument 'connector'/],
+  ] as const) {
+    for (const argument of ['SELECT 1', '--tables']) {
+      const result = spawnSync(
+        process.execPath,
+        [entry, 'query', name, argument],
+        {
+          cwd: scratch.path,
+          env: { ...process.env, HOME: scratch.path },
+          encoding: 'utf8',
+        },
+      );
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, error);
+      assert.equal(result.stdout, '');
+    }
+  }
+  assert.equal(existsSync(calendar), false);
+});
+
 test('query joins main and its preset with another import, locating only the imports it reads', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'query-cli-'));
   const paths = await importsAt(scratch.path);

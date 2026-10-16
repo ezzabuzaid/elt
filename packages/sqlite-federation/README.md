@@ -52,9 +52,9 @@ Output:
 ```
 
 - `sql` has `all` and `get` of the `SQLTagStore` of `node:sqlite`. A value in `${}` is a bound parameter.
-- `main` is the primary database path, opened read-only for the lifetime of the handle. Use `':memory:'` when there is no primary file. `main` does not count toward the attachment limit.
+- `main` is a primary database path or `{ name }` to find that path through `locate`. It is opened read-only for the lifetime of the handle. Use `':memory:'` when there is no primary file. `main` does not count toward the attachment limit.
 - A statement names each additional database as a schema: `messages.messages`. Use unqualified names for the primary database and temporary views; qualify cross-database tables. There is no pre-attached search path for unqualified source tables.
-- `locate(name)` is required. It returns the path of an additional database, or `undefined` when the host has no database by that name. The handle calls it for each statement, so it reads an additional database from its new path after the host moves it.
+- `locate(name)` is required. It returns the path of a database, or `undefined` when the host has no database by that name. The constructor calls it once for a named `main`; each statement calls it for additional databases, so it reads them from their new paths after the host moves them.
 - Return `undefined` for a database that the host has not written yet. The handle cannot make a database, so an attach of a path with no file fails.
 - Imported databases are read-only. A statement that writes to one fails with `attempt to write a readonly database`. Connection-local temporary objects remain writable.
 - `using` closes the connection of the handle at the end of its scope.
@@ -76,17 +76,17 @@ const result = federation.query('SELECT * FROM conversations');
 
 Qualified tables and PRAGMAs discover additional databases through `locate`. Both `PRAGMA contacts.table_info(contacts)` and `SELECT * FROM pragma_table_info('contacts', 'contacts')` locate Contacts, including when the schema is a bound parameter in a tagged query. Quoted schema names such as `"call-history"` work too. Every attachment made for the statement is detached afterwards, including on failure; `main` and temporary views remain on the connection. The additional databases count toward the attachment limit.
 
-The constructor accepts Node's `timeout` option for waiting on a writer's lock, in milliseconds. Omit it to use Node's native behavior. Hosts that need crash recovery perform it before supplying the paths; Federation opens those files read-only.
+The constructor accepts Node's `timeout` option for waiting on a writer's lock, in milliseconds. Omit it to use Node's native behavior. Hosts that need crash recovery perform it before supplying the paths, including inside `locate` for a named primary or additional database; Federation opens those files read-only.
 
 ## Read a primary database
 
-Supply the primary database's path as `main` and resolve other databases through `locate`. Tables can be qualified with `main`, and unqualified schema queries and PRAGMAs describe that database. Presets loaded with `exec` live on the same connection and can be joined with attached databases. Federation closes the connection on disposal.
+Supply `main: { name }` to find the primary database through `locate`, or supply its path directly. Tables can be qualified with `main`, and unqualified schema queries and PRAGMAs describe that database. A named primary is opened as `main`, not attached under its name. Presets loaded with `exec` live on the same connection and can be joined with attached databases. Federation closes the connection on disposal.
 
 ```ts
 import { Federation } from '@workspace/sqlite-federation';
 
 using database = new Federation({
-  main: messagesPath,
+  main: { name: 'messages' },
   locate: (name) => paths.get(name),
   timeout: 30_000,
 });
@@ -107,10 +107,11 @@ const result = database.query(
 | Error                                  | When                                                                                                                                              |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `TooManyDatabasesError`                | A statement names more databases than the limit. `names` has at least one name more than the limit. The message tells you to split the statement. |
+| `Unknown main database <name>`         | The constructor cannot locate the named primary database.                                                                                         |
 | `no such table: <name>.<table>`        | The error of SQLite, when `locate` returns `undefined` for the name, or when the database does not have the table.                                |
 | `unable to open database file`         | The error of SQLite, when `locate` returns a path with no file.                                                                                   |
 | `attempt to write a readonly database` | The error of SQLite, when a statement writes.                                                                                                     |
-| The error of `locate`                  | When `locate` throws, the statement fails with that error. The databases that the statement attached before are detached.                         |
+| The error of `locate`                  | The constructor or statement fails with that error. The databases that the statement attached before are detached.                                |
 | `unknown database <name>`              | The error of SQLite, when a PRAGMA names a database that `locate` cannot find. Quoting follows the statement or the table-valued PRAGMA argument. |
 | `Run one SQL statement at a time`      | A raw query contains a second statement.                                                                                                          |
 

@@ -22,7 +22,7 @@ export type QueryResult = {
 export type Locate = (name: string) => string | undefined;
 
 export type FederationOptions = Pick<DatabaseSyncOptions, 'timeout'> & {
-  readonly main: string;
+  readonly main: string | { readonly name: string };
   readonly locate: Locate;
 };
 
@@ -36,6 +36,12 @@ export class Federation implements Disposable {
 
   constructor({ main, locate, ...options }: FederationOptions) {
     this.#locate = locate;
+    if (typeof main !== 'string') {
+      const path = locate(main.name);
+      if (path === undefined)
+        throw new Error(`Unknown main database ${main.name}`);
+      main = path;
+    }
     this.#connection = new DatabaseSync(main, {
       ...options,
       readOnly: true,

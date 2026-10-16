@@ -76,6 +76,59 @@ test('a main database preserves its schema, presets and read-only behavior when 
   assert.equal(existsSync(absent), false);
 });
 
+test('a named main stays open while its name locates a new path for later statements', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
+  const first = join(scratch.path, 'first.sqlite');
+  const second = join(scratch.path, 'second.sqlite');
+  writeDatabase(first, [1]);
+  writeDatabase(second, [2]);
+  const paths = new Map([['d', first]]);
+  using federation = new Federation({
+    main: { name: 'd' },
+    locate: (name) => paths.get(name),
+  });
+  assert.deepEqual(attachedNames(federation), ['main']);
+  assert.equal(federation.sql.get`SELECT x FROM t`?.x, 1);
+  federation.exec('CREATE TEMP VIEW preset AS SELECT x FROM main.t');
+  paths.set('d', second);
+  assert.deepEqual(federation.query('SELECT p.x, d.x FROM preset p, d.t d'), {
+    columns: ['x', 'x'],
+    rows: [[1, 2]],
+  });
+  assert.deepEqual(federation.query('PRAGMA main.table_info(t)').rows, [
+    [0, 'x', 'INTEGER', 0, null, 0],
+  ]);
+  assert.throws(() => federation.query('DELETE FROM main.t'), /readonly/);
+  assert.deepEqual(attachedNames(federation), ['main', 'temp']);
+  assert.deepEqual(federation.query('SELECT x FROM main.t').rows, [[1]]);
+});
+
+test('a named main must resolve to an existing database and preserves locate errors', async () => {
+  assert.throws(
+    () =>
+      new Federation({ main: { name: 'unknown' }, locate: () => undefined }),
+    { message: 'Unknown main database unknown' },
+  );
+  const unreadable = new Error('the host cannot read its settings');
+  assert.throws(
+    () =>
+      new Federation({
+        main: { name: 'd' },
+        locate: () => {
+          throw unreadable;
+        },
+      }),
+    (error) => error === unreadable,
+  );
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
+  const absent = join(scratch.path, 'absent.sqlite');
+  assert.throws(
+    () => new Federation({ main: { name: 'absent' }, locate: () => absent }),
+    /unable to open database/,
+  );
+  assert.equal(existsSync(absent), false);
+});
+
 test('main stays open while up to ten additional databases attach for one statement', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
   const main = join(scratch.path, 'main.sqlite');
