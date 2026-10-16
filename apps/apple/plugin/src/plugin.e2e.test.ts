@@ -14,7 +14,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { mkdtempDisposable, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, open, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -1331,5 +1331,334 @@ export default {
     } finally {
       await client.close();
     }
+  },
+);
+
+// Freezing a server and resuming it needs POSIX signals.
+const onUnix = {
+  skip:
+    process.platform === 'win32'
+      ? 'Freezing a server needs POSIX signals'
+      : false,
+};
+
+// Opens a pipe for writing once a process opens it to read. The open handle
+// is the fact that a pass reads the pipe, so the pass runs and holds its
+// checkpoints; what is written to the handle, once closed, ends the read. An
+// open with no reader fails at once, where a plain write would wait in a
+// thread of Node's pool that no test can stop.
+async function readerOf(pipe: string) {
+  for (let tries = 0; ; tries++) {
+    try {
+      return await open(pipe, constants.O_WRONLY | constants.O_NONBLOCK);
+    } catch (error) {
+      if (!(
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENXIO'
+      ))
+        throw error;
+      if (tries > 300) assert.fail(`nothing read ${pipe} within 30 s`);
+      await sleep(100);
+    }
+  }
+}
+
+// A chat's Apple server on the installed plugin, started as Codex starts it.
+// closed settles once its process ended; send signals it only until then,
+// so no other process that takes its ID gets the signal.
+async function chat(signal: AbortSignal, plugin: string, home: string) {
+  const {
+    mcpServers: { apple },
+  } = JSON.parse(readFileSync(join(plugin, '.mcp.json'), 'utf8'));
+  const transport = new StdioClientTransport({
+    command: join(plugin, apple.command),
+    args: apple.args,
+    cwd: join(plugin, apple.cwd),
+    env: {
+      HOME: home,
+      CODEX_MCP_NODE_PATH:
+        process.env.CODEX_MCP_NODE_PATH ??
+        join(
+          homedir(),
+          '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
+        ),
+      PATH: '',
+    },
+    stderr: 'pipe',
+  });
+  let diagnostics = '';
+  transport.stderr?.on('data', (data) => {
+    diagnostics += String(data);
+  });
+  const client = new Client({ name: 'apple-e2e', version: '1.0.0' });
+  let ended = false;
+  const closed = new Promise<void>((resolve) => {
+    client.onclose = () => {
+      ended = true;
+      resolve();
+    };
+  });
+  await client.connect(transport, { signal, timeout: 10_000 });
+  const { pid } = transport;
+  assert.ok(pid !== null, 'the server has no process');
+  const send = (name: NodeJS.Signals) => {
+    if (!ended) process.kill(pid, name);
+  };
+  return {
+    closed,
+    send,
+    get diagnostics() {
+      return diagnostics;
+    },
+    // The Apple page's Sync of one connector: it returns once that
+    // connector's pass ended, with the page's rows.
+    sync: (connector: string) =>
+      client.callTool(
+        { name: 'apple_sync', arguments: { connector } },
+        undefined,
+        { signal, timeout: 120_000 },
+      ),
+    configure: (connectors: string[]) =>
+      client.callTool(
+        {
+          name: 'apple_configure',
+          arguments: {
+            connectors: connectors.map((connector) => ({ connector })),
+          },
+        },
+        undefined,
+        { signal },
+      ),
+    async [Symbol.asyncDispose]() {
+      send('SIGKILL');
+      await client.close();
+    },
+  };
+}
+
+// Where the import of a selected connector is, once it exists.
+function importOf(home: string, connector: string): string | undefined {
+  const [selected] = read(
+    join(
+      home,
+      'Library/Application Support/Context Compiler/Apple/settings.sqlite',
+    ),
+    `SELECT database FROM selected_connectors WHERE connector = '${connector}'`,
+  ).rows;
+  return selected !== undefined && existsSync(selected.database)
+    ? selected.database
+    : undefined;
+}
+
+// How each pass of a connector's import ended, oldest first.
+function passes(home: string, connector: string): string[] {
+  const database = importOf(home, connector);
+  return database === undefined
+    ? []
+    : read(
+        database,
+        'SELECT status FROM sync_attempts ORDER BY attempt_id',
+      ).rows.map(({ status }: { status: string }) => status);
+}
+
+// The Photos row of the Apple page that a sync returned.
+const photosRow = (result: unknown) =>
+  z
+    .object({
+      structuredContent: z.object({
+        connectors: z.array(
+          z.object({
+            name: z.string(),
+            status: z.object({ state: z.string(), text: z.string() }),
+          }),
+        ),
+      }),
+    })
+    .parse(result)
+    .structuredContent.connectors.find(({ name }) => name === 'photos')?.status;
+
+// Three chats' servers on one Apple store, as when a customer's import
+// failed with "Checkpoint … is in use by another run". The first server
+// syncs Albums, so it coordinates the store's flights; the second syncs
+// Photos and is frozen while its pass reads; then the first dies. Each read
+// waits on a pipe until the test writes it. start opens the next chat.
+async function frozenLeader(signal: AbortSignal, home: string) {
+  const owned = new AsyncDisposableStack();
+  try {
+    const plugin = join(home, 'plugin');
+    cpSync(join(root, 'plugins/apple'), plugin, { recursive: true });
+    await withConnectors(home);
+    // Albums, another connector an agent wrote: Photos, read from albums.json.
+    const albums = join(
+      home,
+      'Library/Application Support/Context Compiler/Connectors/albums',
+    );
+    mkdirSync(albums);
+    writeFileSync(
+      join(albums, 'package.json'),
+      JSON.stringify({
+        type: 'module',
+        exports: './albums-connector.ts',
+        contextCompiler: { name: 'albums', title: 'Albums' },
+      }),
+    );
+    writeFileSync(
+      join(albums, 'albums-connector.ts'),
+      readFileSync(
+        join(
+          root,
+          'packages/connectors/apple/manifest/src/fixtures/photos/photos-connector.ts',
+        ),
+        'utf8',
+      ).replace("'Pictures/photos.json'", "'Pictures/albums.json'"),
+    );
+    writeFileSync(
+      join(home, 'Pictures/albums.json'),
+      JSON.stringify([{ id: 'a1', title: 'Summer' }]),
+    );
+    const start = async () => owned.use(await chat(signal, plugin, home));
+    const coordinator = await start();
+    await coordinator.configure(['photos', 'albums']);
+    for (let attempt = 0; ; attempt++) {
+      if (
+        passes(home, 'photos').join() === 'succeeded' &&
+        passes(home, 'albums').join() === 'succeeded'
+      )
+        break;
+      if (attempt > 120)
+        assert.fail(
+          `the first imports never loaded:\n${coordinator.diagnostics}`,
+        );
+      await sleep(500);
+    }
+    const pictures = {
+      photos: join(home, 'Pictures/photos.json'),
+      albums: join(home, 'Pictures/albums.json'),
+    };
+    for (const pipe of Object.values(pictures)) {
+      rmSync(pipe);
+      spawnSync('/usr/bin/mkfifo', [pipe]);
+    }
+    // Its Albums pass waits for good: the server dies first.
+    coordinator.sync('albums').catch(() => undefined);
+    owned.use(await readerOf(pictures.albums));
+    const leader = await start();
+    const led = leader.sync('photos');
+    led.catch(() => undefined);
+    const photos = owned.use(await readerOf(pictures.photos));
+    leader.send('SIGSTOP');
+    owned.defer(() => leader.send('SIGCONT'));
+    coordinator.send('SIGKILL');
+    await coordinator.closed;
+    return {
+      start,
+      leader,
+      led,
+      photos,
+      pipe: pictures.photos,
+      [Symbol.asyncDispose]: () => owned.disposeAsync(),
+    };
+  } catch (error) {
+    await owned.disposeAsync();
+    throw error;
+  }
+}
+
+// How long a replacement's sync must keep waiting on the frozen pass: well
+// past the moment a new coordinator would let it run a pass of its own,
+// which then fails on the checkpoint the frozen pass holds.
+const frozenFor = 5_000;
+
+test(
+  'a sync of an import a frozen server is importing, after the server that coordinated the imports died, waits for that pass and returns its outcome without a pass of its own',
+  { ...onUnix, timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    await using scene = await frozenLeader(t.signal, scratch.path);
+    const replacement = await scene.start();
+
+    const replaced = replacement.sync('photos');
+    const early = await Promise.race([
+      replaced,
+      sleep(frozenFor).then(() => 'waiting'),
+    ]);
+    scene.leader.send('SIGCONT');
+    await scene.photos.writeFile(
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+        { id: 'p3', title: 'Dunes' },
+      ]),
+    );
+    await scene.photos.close();
+    const [led, joined] = await Promise.all([scene.led, replaced]);
+
+    if (early !== 'waiting')
+      assert.fail(
+        `the replacement's sync returned while the pass it waits on was frozen: ${JSON.stringify(photosRow(early))}\n${replacement.diagnostics}`,
+      );
+    assert.equal(photosRow(led)?.state, 'succeeded', JSON.stringify(led));
+    assert.deepEqual(photosRow(joined), photosRow(led));
+    // The setup's pass, then the frozen server's: the replacement ran none.
+    assert.deepEqual(passes(scratch.path, 'photos'), [
+      'succeeded',
+      'succeeded',
+    ]);
+    const database = importOf(scratch.path, 'photos');
+    assert.ok(database !== undefined);
+    assert.deepEqual(read(database, 'SELECT id FROM photos ORDER BY id').rows, [
+      { id: 'p1' },
+      { id: 'p2' },
+      { id: 'p3' },
+    ]);
+  },
+);
+
+test(
+  'a sync of an import a frozen server is importing, after the server that coordinated the imports died, runs its own pass once the frozen server is killed',
+  { ...onUnix, timeout: 180_000 },
+  async (t) => {
+    await using scratch = await mkdtempDisposable(join(homes, 'apple-e2e-'));
+    await using scene = await frozenLeader(t.signal, scratch.path);
+    const replacement = await scene.start();
+    const replaced = replacement.sync('photos');
+    // The first test shows the replacement waits behind the frozen pass;
+    // here that wait is what the kill ends.
+    const early = await Promise.race([
+      replaced,
+      sleep(frozenFor).then(() => 'waiting'),
+    ]);
+    if (early !== 'waiting')
+      assert.fail(
+        `the replacement's sync returned while the pass it waits on was frozen: ${JSON.stringify(photosRow(early))}\n${replacement.diagnostics}`,
+      );
+
+    scene.leader.send('SIGKILL');
+    await scene.leader.closed;
+    await scene.photos.close();
+    const fed = await readerOf(scene.pipe);
+    try {
+      await fed.writeFile(JSON.stringify([{ id: 'p3', title: 'Dunes' }]));
+    } finally {
+      await fed.close();
+    }
+    const synced = await replaced;
+
+    assert.equal(photosRow(synced)?.state, 'succeeded', JSON.stringify(synced));
+    // The setup's pass, the killed server's, which never ended, and the
+    // replacement's own.
+    assert.deepEqual(passes(scratch.path, 'photos'), [
+      'succeeded',
+      'running',
+      'succeeded',
+    ]);
+    const database = importOf(scratch.path, 'photos');
+    assert.ok(database !== undefined);
+    assert.deepEqual(read(database, 'SELECT id FROM photos ORDER BY id').rows, [
+      { id: 'p1' },
+      { id: 'p2' },
+      { id: 'p3' },
+    ]);
   },
 );

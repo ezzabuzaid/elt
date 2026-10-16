@@ -264,31 +264,36 @@ export abstract class AppleConnector {
   }
 
   // One pass of this connector's import, as every host runs it inside the
-  // import's flight: stopped once the user removes the connector, its
-  // outcome in the import's sync history, and in the settings any failure
-  // that history could not record, a failure to connect among them.
-  // The attachment text is read once the import has committed the files it
-  // stored, so a sync ends with the text of its own files; it is read even
-  // when some copies failed, from the files that did commit.
+  // import's flight: stopped once the user removes the connector or signal
+  // aborts, as a flight's lease does once the flight is no longer its
+  // leader's, its outcome in the import's sync history, and in the settings
+  // any failure that history could not record, a failure to connect among
+  // them. The attachment text is read once the import has committed the
+  // files it stored, so a sync ends with the text of its own files; it is
+  // read even when some copies failed, from the files that did commit.
   async import(
     settings: Settings,
     selection: Selection,
     observer?: PassObserver<SQLiteTable>,
+    signal?: AbortSignal,
   ): Promise<ImportOutcome> {
     return this.#load(
       settings,
       selection,
       observer,
+      signal,
       async (pipeline, text, removal, publish) => {
+        const stopped =
+          signal === undefined ? removal : AbortSignal.any([removal, signal]);
         let failed: unknown = null;
         try {
-          await pipeline.run({ signal: removal });
+          await pipeline.run({ signal: stopped });
         } catch (error) {
           if (!(error instanceof PipelineError)) throw error;
           failed = error;
         }
         publish();
-        await text?.update(removal);
+        await text?.update(stopped);
         if (failed !== null) throw failed;
       },
     );
@@ -309,6 +314,7 @@ export abstract class AppleConnector {
       settings,
       selection,
       observer,
+      undefined,
       async (pipeline, text, removal, publish) => {
         const stopping = new AbortController();
         const signal = AbortSignal.any([removal, stopping.signal]);
@@ -356,6 +362,8 @@ export abstract class AppleConnector {
     settings: Settings,
     selection: Selection,
     observer: PassObserver<SQLiteTable> | undefined,
+    // The caller's own stop, which the load combines with the removal.
+    signal: AbortSignal | undefined,
     load: (
       pipeline: Pipeline<SQLiteTable>,
       text: AttachmentText | null,
@@ -398,6 +406,10 @@ export abstract class AppleConnector {
       );
     } catch (error) {
       if (error instanceof ConnectorRemovedError) return { status: 'removed' };
+      // A caller that stopped the import, as a flight's lost lease does, made
+      // no failure: the history recorded the pass cancelled, and the run that
+      // goes on records its own outcome.
+      if (signal?.aborted && error === signal.reason) throw error;
       // The history recorded each failure these hold: what each copy did not
       // load, or why the watch stopped.
       if (error instanceof PipelineError || error instanceof WatchError)

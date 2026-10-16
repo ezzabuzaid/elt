@@ -215,7 +215,7 @@ export class Imports {
       try {
         const { value, joined } = await flights.run(
           directory,
-          async () => {
+          async ({ signal }) => {
             await using owner = await owners(settings, directory).campaign();
             if (owner === undefined) {
               own({ connector: connector.name, status: 'watched' });
@@ -228,6 +228,7 @@ export class Imports {
                 progress: (...args) => observer.progress(...args),
                 passed: (_, summary) => own(summary),
               }),
+              signal,
             );
             if (outcome.status === 'unconnected')
               own(failed(connector, outcome.error, 0));

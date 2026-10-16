@@ -264,19 +264,23 @@ export class ApplePlugin {
   // flight, so a server that finds another loading an import waits for that
   // pass instead of loading it again. A pass whose selection the user removed
   // meanwhile removes its import when it ends, since the removal could not
-  // while the pass ran. Settles whatever the passes do: each pass records how
-  // it ended in its import's sync history.
+  // while the pass ran. A pass whose flight lost its lease stops, since its
+  // outcome reaches no other server; its checkpoints resume the next pass.
+  // Settles whatever the passes do: each pass records how it ended in its
+  // import's sync history.
   async import(selections: readonly Selection[]): Promise<void> {
     await Promise.allSettled(
       selections.map(async (selection) => {
         using settings = this.#open();
         await using flights = this.flights();
         const directory = settings.directory(selection);
-        await flights.run(directory, async () => {
+        await flights.run(directory, async ({ signal }) => {
           try {
             await this.connector(selection.connector).import(
               settings,
               selection,
+              undefined,
+              signal,
             );
           } finally {
             if (settings.staleImports().includes(directory))

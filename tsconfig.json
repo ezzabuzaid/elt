@@ -253,6 +253,12 @@
     },
     {
       "path": "./packages/connectors/apple/instagram"
+    },
+    {
+      "path": "./packages/sources/google/health"
+    },
+    {
+      "path": "./packages/sdks/google/health"
     }
   ]
 }
