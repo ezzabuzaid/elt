@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -453,6 +454,9 @@ test(
         'apple_connector_update',
         'apple_connectors',
         'apple_context',
+        'apple_monitor_add',
+        'apple_monitor_remove',
+        'apple_monitors',
         'apple_open_full_disk_access',
         'apple_options',
         'apple_page',
@@ -470,8 +474,12 @@ test(
         'apple_connector_update',
         'apple_sync',
         'apple_open_full_disk_access',
+        'apple_monitors',
+        'apple_monitor_remove',
       ])
         assert.deepEqual(metaOf(name), { ui: { visibility: ['app'] } }, name);
+      // A chat's agent adds the monitor it wrote, so the model sees this one.
+      assert.equal(metaOf('apple_monitor_add'), undefined);
       // ChatGPT lists the Apple page in its sidebar, finds it in Settings
       // search by its connectors' names, and opens it from the page's own
       // resource.
@@ -518,6 +526,8 @@ test(
         'apple_connector_update',
         'apple_sync',
         'apple_open_full_disk_access',
+        'apple_monitors',
+        'apple_monitor_remove',
       ])
         assert.ok(
           pageResource &&

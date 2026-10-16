@@ -13,16 +13,20 @@ import { callTool, messageOf } from './call-tool.ts';
 import {
   type ConnectorRow,
   type ConnectorSelection,
+  type MonitorRow,
   connectorIn,
   connectorsResult,
+  monitorsResult,
 } from './contract.ts';
 
 // What every part of the Apple page shares: its connection to ChatGPT, the
-// connector rows it keeps current, the changes it makes, and which
-// connector's page is open.
+// connector and monitor rows it keeps current, the changes it makes, and
+// which connector's or monitor's page is open.
 type Page = {
   readonly app: App | null;
   readonly rows: readonly ConnectorRow[] | null;
+  readonly monitors: readonly MonitorRow[] | null;
+  readonly removeMonitor: (name: string) => Promise<void>;
   readonly failure: string | null;
   // What a selection leaves out takes the defaults setup uses.
   readonly update: (
@@ -37,6 +41,8 @@ type Page = {
   readonly syncingConnectors: ReadonlySet<string>;
   readonly opened: string | null;
   readonly open: (connector: string | null) => void;
+  readonly openedMonitor: string | null;
+  readonly openMonitor: (name: string) => void;
 };
 
 const PageContext = createContext<Page | null>(null);
@@ -64,6 +70,8 @@ export function PageProvider({
   children: ReactNode;
 }) {
   const [rows, setRows] = useState<readonly ConnectorRow[] | null>(null);
+  const [monitors, setMonitors] = useState<readonly MonitorRow[] | null>(null);
+  const [openedMonitor, setOpenedMonitor] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [reads, setReads] = useState(0);
   const [opened, setOpened] = useState<string | null>(null);
@@ -75,13 +83,12 @@ export function PageProvider({
   const read = useCallback(async () => {
     if (app === null) return;
     try {
-      const { connectors } = await callTool(
-        app,
-        'apple_connectors',
-        {},
-        connectorsResult,
-      );
+      const [{ connectors }, listed] = await Promise.all([
+        callTool(app, 'apple_connectors', {}, connectorsResult),
+        callTool(app, 'apple_monitors', {}, monitorsResult),
+      ]);
       setRows(connectors);
+      setMonitors(listed.monitors);
       setFailure(null);
     } catch (error) {
       setFailure(messageOf(error));
@@ -163,27 +170,58 @@ export function PageProvider({
         );
         setRows(connectors);
         setFailure(null);
+        // A sync checks the monitors too, so their last runs moved on.
+        void read();
       } catch (error) {
         setFailure(messageOf(error));
       } finally {
         mark(false);
       }
     },
+    [app, read],
+  );
+
+  const removeMonitor = useCallback(
+    async (name: string) => {
+      if (app === null) return;
+      const listed = await callTool(
+        app,
+        'apple_monitor_remove',
+        { name },
+        monitorsResult,
+      );
+      setMonitors(listed.monitors);
+      setOpenedMonitor((opened) => (opened === name ? null : opened));
+    },
     [app],
   );
+
+  const open = useCallback((connector: string | null) => {
+    setOpened(connector);
+    setOpenedMonitor(null);
+  }, []);
+
+  const openMonitor = useCallback((name: string) => {
+    setOpenedMonitor(name);
+    setOpened(null);
+  }, []);
 
   return (
     <PageContext
       value={{
         app,
         rows,
+        monitors,
+        removeMonitor,
         failure,
         update,
         sync,
         syncing,
         syncingConnectors,
         opened,
-        open: setOpened,
+        open,
+        openedMonitor,
+        openMonitor,
       }}
     >
       {children}

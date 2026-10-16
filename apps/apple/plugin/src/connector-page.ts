@@ -31,6 +31,12 @@ function ago(instant: string, now: Date): string {
   return 'just now';
 }
 
+// An instant with its date and its age, so one days old does not read like
+// today's: "Oct 12, 09:41 AM (2 days ago)".
+export function when(instant: string, now: Date): string {
+  return `${new Date(instant).toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} (${ago(instant, now)})`;
+}
+
 function describe(
   sync: PassStatus,
   covers: string,
@@ -41,7 +47,7 @@ function describe(
     // A pass a killed process left reads running until the next pass, so its
     // date and age show it is not today's.
     case 'running':
-      return `Importing since ${new Date(sync.startedAt).toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} (${ago(sync.startedAt, now)}).`;
+      return `Importing since ${when(sync.startedAt, now)}.`;
     case 'cancelled':
       return 'Stopped before it finished.';
     case 'succeeded':

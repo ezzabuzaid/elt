@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { chmod, mkdtempDisposable, writeFile } from 'node:fs/promises';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from 'node:fs';
+import { chmod, mkdir, mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+
+import { z } from 'zod';
 
 import { builtInConnectors } from '@workspace/connector-apple-manifest/built-in-connectors';
 import { Connectors } from '@workspace/connector-apple-manifest/connectors';
@@ -21,6 +30,8 @@ import {
   connectorRows,
   updateConnector,
 } from './connector-page.ts';
+import { monitorRows } from './monitor-page.ts';
+import { Monitors } from './monitors.ts';
 
 // The committed plugin, as Codex installs it.
 const install = resolve('plugins/apple');
@@ -37,6 +48,15 @@ const host = {
   ),
 };
 
+// Monitors from a folder that does not exist, for a plugin whose test has
+// none: its store sits beside the settings, and its codex is never run.
+const noMonitors = (directory: string) =>
+  new Monitors({
+    root: join(directory, 'Monitors'),
+    store: join(directory, 'monitors.sqlite'),
+    codex: 'codex',
+  });
+
 // The plugin as its server creates it, over the built-in connectors.
 async function applePlugin(install: string, directory: string) {
   const plugin = new ApplePlugin(
@@ -44,6 +64,7 @@ async function applePlugin(install: string, directory: string) {
     host,
     install,
     directory,
+    noMonitors(directory),
   );
   await plugin.refresh();
   return plugin;
@@ -51,7 +72,10 @@ async function applePlugin(install: string, directory: string) {
 
 // The plugin over the built-in connectors and the fixture Photos connector,
 // whose pass reads $HOME/Pictures/photos.json.
-async function photosPlugin(directory: string) {
+async function photosPlugin(
+  directory: string,
+  monitors = noMonitors(directory),
+) {
   const plugin = new ApplePlugin(
     new Connectors([
       builtInConnectors,
@@ -60,10 +84,80 @@ async function photosPlugin(directory: string) {
     host,
     install,
     directory,
+    monitors,
   );
   await plugin.refresh();
   return plugin;
 }
+
+// A monitor as an agent writes one into the Monitors folder: a package.json
+// that says what it watches and what to do, and an entry whose default
+// export evaluates its condition over the imports.
+async function writeMonitor(root: string, name: string, entry: string) {
+  await mkdir(join(root, name), { recursive: true });
+  await writeFile(
+    join(root, name, 'package.json'),
+    JSON.stringify({
+      type: 'module',
+      exports: `./${name}-monitor.ts`,
+      contextCompiler: {
+        name,
+        title: 'New photos',
+        description: 'A photo is added to Photos',
+        instruction: 'Describe the new photo.',
+      },
+    }),
+  );
+  await writeFile(join(root, name, `${name}-monitor.ts`), entry);
+}
+
+// Each photo the Photos import holds, keyed by its id, written in the shape
+// $add-apple-monitor gives agents: a type-only import and a typed handle.
+const newPhotos = `import type { Query } from '@workspace/sqlite-federation';
+
+export default {
+  async evaluate(sql: Query) {
+    return sql.all\`SELECT id FROM photos.photos\`.map((row) => ({ key: String(row.id), data: null }));
+  },
+};`;
+
+// The desktop's codex cannot run in a test: a real \`codex queue\` writes into
+// the user's own ~/.codex. This executable records each call instead, and
+// while a flag file exists fails as codex 0.162 fails for a chat it lacks.
+async function stubCodex(directory: string) {
+  const calls = join(directory, 'codex-calls.jsonl');
+  const failing = join(directory, 'codex-fails');
+  const path = join(directory, 'codex');
+  await writeFile(
+    path,
+    [
+      `#!${process.execPath}`,
+      "const { appendFileSync, existsSync } = require('node:fs');",
+      `appendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
+      `if (existsSync(${JSON.stringify(failing)})) { process.stderr.write('Error: failed to queue session message: thread/queue/add failed: failed to read thread: invalid thread-store request: no rollout found for thread id ' + process.argv[4] + ' (code -32603)'); process.exit(1); }`,
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  return {
+    path,
+    failing,
+    calls: () =>
+      existsSync(calls)
+        ? readFileSync(calls, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line) => z.array(z.string()).parse(JSON.parse(line)))
+        : [],
+  };
+}
+
+const queued = (thread: string) => [
+  'queue',
+  '--thread',
+  thread,
+  '--message',
+  'Monitor "New photos" triggered: Describe the new photo.',
+];
 
 // Stands in for a server's import of one connector selection.
 function imported(directory: string, item: Selection) {
@@ -541,6 +635,663 @@ test('the next import replaces a pass a killed process left, so syncing a connec
     assert.equal(left?.state, 'running');
     assert.equal(statusOf()?.state, 'succeeded');
     assert.match(String(statusOf()?.text), /^Synced just now/);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a monitor added from a chat stays quiet about what already matched, and once a sync brings a new match, queues its instruction into that chat once', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const home = join(scratch.path, 'home');
+  const photosJson = join(home, 'Pictures/photos.json');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(photosJson, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+  const codex = await stubCodex(scratch.path);
+  const root = join(scratch.path, 'Monitors');
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const store = join(scratch.path, 'store');
+  const plugin = await photosPlugin(
+    store,
+    new Monitors({
+      root,
+      store: join(store, 'monitors.sqlite'),
+      codex: codex.path,
+    }),
+  );
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('new-photos', 'chat-1');
+    await plugin.import(imports);
+    const quiet = codex.calls();
+    await writeFile(
+      photosJson,
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+      ]),
+    );
+
+    await plugin.import(imports);
+
+    assert.deepEqual(quiet, []);
+    assert.deepEqual(codex.calls(), [queued('chat-1')]);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a monitor keeps what it sent across a restart: a match that arrived while the server was down is queued at the next sync, and nothing sent before is queued again', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const home = join(scratch.path, 'home');
+  const photosJson = join(home, 'Pictures/photos.json');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(photosJson, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+  const codex = await stubCodex(scratch.path);
+  const root = join(scratch.path, 'Monitors');
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const store = join(scratch.path, 'store');
+  // Each server builds its plugin afresh, over the same folders.
+  const server = () =>
+    photosPlugin(
+      store,
+      new Monitors({
+        root,
+        store: join(store, 'monitors.sqlite'),
+        codex: codex.path,
+      }),
+    );
+  const before = await server();
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await before.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await before.import(imports);
+    await before.addMonitor('new-photos', 'chat-1');
+    await writeFile(
+      photosJson,
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+      ]),
+    );
+    await before.import(imports);
+    // p3 arrives while no server runs, and p2 is gone, so the one send after
+    // the restart can only be p3.
+    await writeFile(
+      photosJson,
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p3', title: 'Dunes' },
+      ]),
+    );
+    const after = await server();
+
+    await after.import(imports);
+
+    assert.deepEqual(codex.calls(), [queued('chat-1'), queued('chat-1')]);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a match whose instruction could not be sent is sent again at the next sync, and until then the monitor says why', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const home = join(scratch.path, 'home');
+  const photosJson = join(home, 'Pictures/photos.json');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(photosJson, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+  const codex = await stubCodex(scratch.path);
+  const root = join(scratch.path, 'Monitors');
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const store = join(scratch.path, 'store');
+  const plugin = await photosPlugin(
+    store,
+    new Monitors({
+      root,
+      store: join(store, 'monitors.sqlite'),
+      codex: codex.path,
+    }),
+  );
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('new-photos', 'chat-1');
+    await writeFile(
+      photosJson,
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+      ]),
+    );
+    await writeFile(codex.failing, '');
+    await plugin.import(imports);
+    const [failed] = await plugin.monitors.status();
+    const [failedRow] = await monitorRows(plugin);
+    rmSync(codex.failing);
+
+    await plugin.import(imports);
+
+    assert.equal(failed?.state, 'watching');
+    assert.match(
+      String(failed?.state === 'watching' && failed.failure),
+      /^Could not send to its chat: Error: failed to queue session message: .*no rollout found for thread id chat-1/,
+    );
+    assert.equal(failedRow?.status.state, 'failed');
+    assert.equal(
+      failedRow?.status.text,
+      failed?.state === 'watching' ? failed.failure : undefined,
+    );
+    assert.deepEqual(codex.calls(), [queued('chat-1'), queued('chat-1')]);
+    const [sent] = await plugin.monitors.status();
+    assert.equal(sent?.state === 'watching' && sent.failure, null);
+    assert.equal((await monitorRows(plugin))[0]?.status.state, 'watching');
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a monitor whose condition throws says why, and the other monitors still send', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const home = join(scratch.path, 'home');
+  const photosJson = join(home, 'Pictures/photos.json');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(photosJson, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+  const codex = await stubCodex(scratch.path);
+  const root = join(scratch.path, 'Monitors');
+  // Sorted first, so its failure comes before the monitor that still sends.
+  await writeMonitor(
+    root,
+    'a-broken-condition',
+    `let evaluations = 0;
+export default {
+  async evaluate(sql) {
+    evaluations += 1;
+    if (evaluations > 1) throw new Error('no such column: albums');
+    return [];
+  },
+};`,
+  );
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const store = join(scratch.path, 'store');
+  const plugin = await photosPlugin(
+    store,
+    new Monitors({
+      root,
+      store: join(store, 'monitors.sqlite'),
+      codex: codex.path,
+    }),
+  );
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('a-broken-condition', 'chat-1');
+    await plugin.addMonitor('new-photos', 'chat-2');
+    await writeFile(
+      photosJson,
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+      ]),
+    );
+
+    await plugin.import(imports);
+
+    const [broken] = await plugin.monitors.status();
+    assert.equal(
+      broken?.state === 'watching' && broken.failure,
+      'Last check failed: no such column: albums',
+    );
+    assert.deepEqual((await monitorRows(plugin))[0]?.status, {
+      state: 'failed',
+      text: 'Last check failed: no such column: albums',
+    });
+    assert.deepEqual(codex.calls(), [queued('chat-2')]);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a monitor no chat added is listed as not active and sends nothing, and one that does not load says why', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const home = join(scratch.path, 'home');
+  const photosJson = join(home, 'Pictures/photos.json');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(photosJson, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+  const codex = await stubCodex(scratch.path);
+  const root = join(scratch.path, 'Monitors');
+  await writeMonitor(root, 'new-photos', newPhotos);
+  await writeMonitor(root, 'no-evaluate', 'export default {};');
+  const store = join(scratch.path, 'store');
+  const plugin = await photosPlugin(
+    store,
+    new Monitors({
+      root,
+      store: join(store, 'monitors.sqlite'),
+      codex: codex.path,
+    }),
+  );
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await writeFile(
+      photosJson,
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+      ]),
+    );
+
+    await plugin.import(imports);
+
+    assert.deepEqual(
+      (await plugin.monitors.status()).map(({ name, state }) => ({
+        name,
+        state,
+      })),
+      [
+        { name: 'new-photos', state: 'inactive' },
+        { name: 'no-evaluate', state: 'broken' },
+      ],
+    );
+    const [, broken] = await plugin.monitors.status();
+    assert.equal(
+      broken?.state === 'broken' && broken.error,
+      'Could not be loaded: Its entry does not export an object with evaluate(sql) by default.',
+    );
+    assert.deepEqual(
+      (await monitorRows(plugin)).map(({ status }) => status),
+      [
+        { state: 'inactive', text: 'Not active: set it up from a chat.' },
+        {
+          state: 'failed',
+          text: 'Could not be loaded: Its entry does not export an object with evaluate(sql) by default.',
+        },
+      ],
+    );
+    assert.deepEqual(codex.calls(), []);
+    await assert.rejects(plugin.addMonitor('no-evaluate', 'chat-1'), {
+      message:
+        'Could not be loaded: Its entry does not export an object with evaluate(sql) by default.',
+    });
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('two servers that import at once send a new match once', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const home = join(scratch.path, 'home');
+  const photosJson = join(home, 'Pictures/photos.json');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(photosJson, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+  const codex = await stubCodex(scratch.path);
+  const root = join(scratch.path, 'Monitors');
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const store = join(scratch.path, 'store');
+  const server = () =>
+    photosPlugin(
+      store,
+      new Monitors({
+        root,
+        store: join(store, 'monitors.sqlite'),
+        codex: codex.path,
+      }),
+    );
+  const first = await server();
+  const second = await server();
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await first.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await first.import(imports);
+    await first.addMonitor('new-photos', 'chat-1');
+    await writeFile(
+      photosJson,
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+      ]),
+    );
+
+    await Promise.all([first.import(imports), second.import(imports)]);
+
+    assert.deepEqual(codex.calls(), [queued('chat-1')]);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('the page lists each monitor with its status line: not active until a chat adds it, then watching, then when it last sent, with a link to its chat', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const home = join(scratch.path, 'home');
+  const photosJson = join(home, 'Pictures/photos.json');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(photosJson, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+  const codex = await stubCodex(scratch.path);
+  const root = join(scratch.path, 'Monitors');
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const store = join(scratch.path, 'store');
+  const plugin = await photosPlugin(
+    store,
+    new Monitors({
+      root,
+      store: join(store, 'monitors.sqlite'),
+      codex: codex.path,
+    }),
+  );
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    const [inactive] = await monitorRows(plugin);
+    await plugin.addMonitor('new-photos', 'chat 1');
+    const [watching] = await monitorRows(plugin);
+    await writeFile(
+      photosJson,
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+      ]),
+    );
+
+    await plugin.import(imports);
+
+    const [ran] = await monitorRows(plugin);
+    assert.deepEqual(inactive, {
+      name: 'new-photos',
+      title: 'New photos',
+      description: 'A photo is added to Photos',
+      instruction: 'Describe the new photo.',
+      chat: null,
+      status: { state: 'inactive', text: 'Not active: set it up from a chat.' },
+    });
+    assert.deepEqual(watching?.status, {
+      state: 'watching',
+      text: 'Watching · has not run yet.',
+    });
+    assert.equal(watching?.chat, 'codex://threads/chat%201');
+    assert.equal(ran?.status.state, 'watching');
+    assert.match(
+      String(ran?.status.text),
+      /^Watching · ran [A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2} [AP]M \(just now\)\.$/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+// A plugin over a Monitors folder and a stub codex, with Photos selected and
+// $HOME pointing at a Mac whose Photos holds p1, for the monitor tests below.
+async function monitoredPhotos(scratch: string) {
+  const home = join(scratch, 'home');
+  const photosJson = join(home, 'Pictures/photos.json');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(photosJson, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+  const codex = await stubCodex(scratch);
+  const root = join(scratch, 'Monitors');
+  const store = join(scratch, 'store');
+  const plugin = await photosPlugin(
+    store,
+    new Monitors({
+      root,
+      store: join(store, 'monitors.sqlite'),
+      codex: codex.path,
+    }),
+  );
+  const imports = await plugin.configure({
+    connectors: [{ connector: 'photos', scope: {}, includeAttachments: true }],
+  });
+  const photos = (...ids: string[]) =>
+    writeFile(photosJson, JSON.stringify(ids.map((id) => ({ id, title: id }))));
+  return { home, codex, root, store, plugin, imports, photos };
+}
+
+test('adding a monitor again from another chat moves where it sends', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const { home, codex, root, plugin, imports, photos } = await monitoredPhotos(
+    scratch.path,
+  );
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('new-photos', 'chat-1');
+
+    await plugin.addMonitor('new-photos', 'chat-2');
+    await photos('p1', 'p2');
+    await plugin.import(imports);
+
+    assert.deepEqual(codex.calls(), [queued('chat-2')]);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a monitor whose entry is edited checks with the new code at the next sync, without being added again', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const { home, codex, root, plugin, imports, photos } = await monitoredPhotos(
+    scratch.path,
+  );
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const entry = join(root, 'new-photos', 'new-photos-monitor.ts');
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('new-photos', 'chat-1');
+    await writeFile(
+      entry,
+      `export default { async evaluate() { throw new Error('edited'); } };`,
+    );
+    await plugin.import(imports);
+    const [edited] = await monitorRows(plugin);
+    await writeFile(entry, newPhotos);
+
+    await photos('p1', 'p2');
+    await plugin.import(imports);
+
+    assert.equal(edited?.status.text, 'Last check failed: edited');
+    assert.deepEqual(codex.calls(), [queued('chat-1')]);
+    assert.equal((await monitorRows(plugin))[0]?.status.state, 'watching');
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a monitor whose package.json cannot be read is listed with why, and cannot be added', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const { root, plugin } = await monitoredPhotos(scratch.path);
+  await mkdir(join(root, 'no-instruction'), { recursive: true });
+  await writeFile(
+    join(root, 'no-instruction', 'package.json'),
+    JSON.stringify({
+      type: 'module',
+      exports: './no-instruction-monitor.ts',
+      contextCompiler: {
+        name: 'no-instruction',
+        title: 'No instruction',
+        description: 'Anything',
+      },
+    }),
+  );
+
+  const [row] = await monitorRows(plugin);
+
+  assert.equal(row?.name, 'no-instruction');
+  assert.equal(row?.status.state, 'failed');
+  assert.match(
+    String(row?.status.text),
+    /^Could not be loaded: .*instruction/s,
+  );
+  await assert.rejects(plugin.addMonitor('no-instruction', 'chat-1'), {
+    message: /^Could not be loaded: /,
+  });
+});
+
+test('a monitor whose folder was deleted after a chat added it says its folder is gone', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const { home, root, plugin, imports } = await monitoredPhotos(scratch.path);
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('new-photos', 'chat-1');
+
+    rmSync(join(root, 'new-photos'), { recursive: true });
+
+    assert.deepEqual((await monitorRows(plugin))[0]?.status, {
+      state: 'failed',
+      text: 'Its folder is gone.',
+    });
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('removing a monitor while a check runs leaves the other monitors to save what they sent, so nothing is sent twice', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const { home, codex, root, plugin, imports, photos } = await monitoredPhotos(
+    scratch.path,
+  );
+  const started = join(scratch.path, 'slow-started');
+  const release = join(scratch.path, 'slow-release');
+  // Sorted first, it matches one key, and at the check it waits until the
+  // test removed it.
+  await writeMonitor(
+    root,
+    'a-slow',
+    `import { existsSync, writeFileSync } from 'node:fs';
+let evaluations = 0;
+export default {
+  async evaluate() {
+    evaluations += 1;
+    if (evaluations > 1) {
+      writeFileSync(${JSON.stringify(started)}, '');
+      while (!existsSync(${JSON.stringify(release)}))
+        await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return [{ key: 'always', data: null }];
+  },
+};`,
+  );
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('a-slow', 'chat-1');
+    await plugin.addMonitor('new-photos', 'chat-2');
+    await photos('p1', 'p2');
+    const importing = plugin.import(imports);
+    while (!existsSync(started)) await sleep(20);
+
+    await plugin.monitors.remove('a-slow');
+    await writeFile(release, '');
+    await importing;
+    await plugin.import(imports);
+
+    assert.deepEqual(codex.calls(), [queued('chat-2')]);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('a check that cannot find the imports, as with settings it cannot read, says so on each monitor', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const { home, store, root, plugin, imports } = await monitoredPhotos(
+    scratch.path,
+  );
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('new-photos', 'chat-1');
+    // A directory where the settings file belongs fails every read of them.
+    rmSync(join(store, 'settings.sqlite'));
+    mkdirSync(join(store, 'settings.sqlite'));
+
+    await plugin.import(imports);
+
+    const [row] = await monitorRows(plugin);
+    assert.equal(row?.status.state, 'failed');
+    assert.match(String(row?.status.text), /^Last check failed: /);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+});
+
+test('removing a monitor forgets it and deletes its folder, so it sends nothing more', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'monitor-'));
+  const home = join(scratch.path, 'home');
+  const photosJson = join(home, 'Pictures/photos.json');
+  mkdirSync(join(home, 'Pictures'), { recursive: true });
+  await writeFile(photosJson, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
+  const codex = await stubCodex(scratch.path);
+  const root = join(scratch.path, 'Monitors');
+  await writeMonitor(root, 'new-photos', newPhotos);
+  const store = join(scratch.path, 'store');
+  const plugin = await photosPlugin(
+    store,
+    new Monitors({
+      root,
+      store: join(store, 'monitors.sqlite'),
+      codex: codex.path,
+    }),
+  );
+  const photos = { connector: 'photos', scope: {}, includeAttachments: true };
+  const imports = await plugin.configure({ connectors: [photos] });
+  const previous = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    await plugin.import(imports);
+    await plugin.addMonitor('new-photos', 'chat-1');
+
+    await plugin.monitors.remove('new-photos');
+    await writeFile(
+      photosJson,
+      JSON.stringify([
+        { id: 'p1', title: 'Beach' },
+        { id: 'p2', title: 'Snow' },
+      ]),
+    );
+    await plugin.import(imports);
+
+    assert.deepEqual(await plugin.monitors.status(), []);
+    assert.equal(existsSync(join(root, 'new-photos')), false);
+    assert.deepEqual(codex.calls(), []);
   } finally {
     if (previous === undefined) delete process.env.HOME;
     else process.env.HOME = previous;

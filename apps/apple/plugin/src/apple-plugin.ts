@@ -20,6 +20,9 @@ import {
   Settings,
 } from '@workspace/settings';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
+import type { Locate } from '@workspace/sqlite-federation';
+
+import type { Monitors } from './monitors.ts';
 
 const ids = z.array(z.string().min(1).max(1024)).max(1000);
 
@@ -94,6 +97,8 @@ export class ApplePlugin {
   readonly directory: string;
   readonly #discovery: Connectors;
   readonly #host: AppleHost;
+  // The monitors each import is checked against.
+  readonly monitors: Monitors;
   #connectors: readonly AppleConnector[] = [];
   #broken: readonly BrokenConnector[] = [];
 
@@ -102,11 +107,13 @@ export class ApplePlugin {
     host: AppleHost,
     install: string,
     directory: string,
+    monitors: Monitors,
   ) {
     this.#discovery = discovery;
     this.#host = host;
     this.install = install;
     this.directory = directory;
+    this.monitors = monitors;
   }
 
   get connectors(): readonly AppleConnector[] {
@@ -278,6 +285,46 @@ export class ApplePlugin {
         });
       }),
     );
+    // Like each pass, the check settles: a monitor's failure, settings it
+    // cannot read included, is recorded on the monitor. Only a check that
+    // cannot open monitors.sqlite has nowhere to say so; it runs again at the
+    // next import.
+    await this.#check().catch(() => undefined);
+  }
+
+  // One check at a time across the servers: one that imports while another
+  // checks joins that check, so both read the keys it saved and a match is
+  // sent once. What its own import brought is checked at the next import.
+  async #check(): Promise<void> {
+    await using flights = this.flights();
+    await flights.run('monitors', () =>
+      this.monitors.check(() => this.#locate()),
+    );
+  }
+
+  // Registers a monitor for the chat that asked; see Monitors.add.
+  async addMonitor(name: string, thread: string): Promise<void> {
+    await this.monitors.add(name, thread, this.#locate());
+  }
+
+  // Where each selected connector's import is, for monitors that name it as a
+  // schema; one not imported yet is not found.
+  #locate(): Locate {
+    using settings = this.#open();
+    const imports = new Map(
+      settings
+        .selections()
+        .map((selection) => [
+          selection.connector,
+          settings.database(selection),
+        ]),
+    );
+    return (name) => {
+      const database = imports.get(name);
+      return database !== undefined && existsSync(database)
+        ? database
+        : undefined;
+    };
   }
 
   async options(name: string) {

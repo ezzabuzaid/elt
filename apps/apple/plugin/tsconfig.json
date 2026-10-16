@@ -9,6 +9,12 @@
   "exclude": ["src/page"],
   "references": [
     {
+      "path": "../../../packages/sqlite-federation"
+    },
+    {
+      "path": "../../../packages/sqlite-drift"
+    },
+    {
       "path": "../../../packages/sources/apple/macos"
     },
     {
@@ -19,6 +25,9 @@
     },
     {
       "path": "../../../packages/elt"
+    },
+    {
+      "path": "../../../packages/eca"
     },
     {
       "path": "../../../packages/connectors/apple/whatsapp"

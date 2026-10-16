@@ -25,7 +25,13 @@ import {
   updateConnector,
 } from './connector-page.ts';
 import { openFullDiskAccessSettings } from './full-disk-access.ts';
-import { choicesResult, connectorsResult } from './page/contract.ts';
+import { monitorRows } from './monitor-page.ts';
+import { Monitors } from './monitors.ts';
+import {
+  choicesResult,
+  connectorsResult,
+  monitorsResult,
+} from './page/contract.ts';
 import { setUpWithForms } from './setup-forms.ts';
 
 if (process.platform !== 'darwin')
@@ -41,6 +47,12 @@ const install = fileURLToPath(new URL('..', import.meta.url));
 provideHostModules(
   ({ file }) => new URL(`modules/${file}.mjs`, import.meta.url).href,
 );
+// Where the plugin keeps settings.sqlite, monitors.sqlite and every import;
+// the query-apple skill tells readers the same path.
+const store = join(
+  homedir(),
+  'Library/Application Support/Context Compiler/Apple',
+);
 const plugin = new ApplePlugin(
   new Connectors([
     fileURLToPath(new URL('connectors', import.meta.url)),
@@ -51,9 +63,17 @@ const plugin = new ApplePlugin(
     eventKitHelper: fileURLToPath(new URL('eventkit-helper', import.meta.url)),
   },
   install,
-  // Where the plugin keeps settings.sqlite and every import; the query-apple
-  // skill tells readers the same path.
-  join(homedir(), 'Library/Application Support/Context Compiler/Apple'),
+  store,
+  new Monitors({
+    root: join(
+      homedir(),
+      'Library/Application Support/Context Compiler/Monitors',
+    ),
+    store: join(store, 'monitors.sqlite'),
+    // The desktop's own codex, which .mcp.json forwards: a monitor's match is
+    // queued into its chat through it, so the running app does the work.
+    codex: process.env.CODEX_CLI_PATH ?? 'codex',
+  }),
 );
 // Each tool call and import pass rediscovers the connectors first, so one the
 // user adds or edits is used without restarting this server; a chat's tool
@@ -152,6 +172,38 @@ mcpServer.registerTool(
     return structured(plugin.status());
   },
 );
+mcpServer.registerTool(
+  'apple_monitor_add',
+  {
+    title: 'Add an Apple monitor',
+    description:
+      'Start a monitor written in the Monitors folder ($add-apple-monitor) for this chat: after each sync, each new match of its condition is sent to this chat as the monitor’s instruction. What it matches now is its baseline and is not sent. Adding it again from another chat moves it there.',
+    inputSchema: {
+      name: z
+        .string()
+        .min(1)
+        .describe(
+          'The monitor’s name: contextCompiler.name in its package.json.',
+        ),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async ({ name }, { _meta }) => {
+    // Codex names the calling chat on every tool call.
+    const thread = z.string().min(1).safeParse(_meta?.threadId);
+    if (!thread.success)
+      throw new Error(
+        'This host did not say which chat called, so the monitor has no chat to send to.',
+      );
+    await plugin.addMonitor(name, thread.data);
+    return structured({ monitors: await monitorRows(plugin) });
+  },
+);
 // Tools only the hooks and the Apple page call; Codex keeps them from the
 // model.
 const appOnly = { ui: { visibility: ['app' as const] } };
@@ -216,6 +268,40 @@ mcpServer.registerTool(
   async () => {
     await plugin.refresh();
     return structured({ connectors: connectorRows(plugin) });
+  },
+);
+mcpServer.registerTool(
+  'apple_monitors',
+  {
+    title: 'List Apple monitors',
+    description:
+      'Every monitor for the Apple page: what it watches and does, the chat it sends to, and its status.',
+    inputSchema: {},
+    outputSchema: monitorsResult,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: appOnly,
+  },
+  async () => structured({ monitors: await monitorRows(plugin) }),
+);
+mcpServer.registerTool(
+  'apple_monitor_remove',
+  {
+    title: 'Remove an Apple monitor',
+    description:
+      'Forget a monitor and delete its folder from the Apple page; it sends nothing more.',
+    inputSchema: { name: z.string().min(1) },
+    outputSchema: monitorsResult,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    _meta: appOnly,
+  },
+  async ({ name }) => {
+    await plugin.monitors.remove(name);
+    return structured({ monitors: await monitorRows(plugin) });
   },
 );
 mcpServer.registerTool(

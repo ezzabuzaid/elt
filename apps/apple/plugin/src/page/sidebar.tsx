@@ -2,7 +2,8 @@ import type { ReactNode } from 'react';
 
 import { ConnectorMenu } from './connector-menu.tsx';
 import { ConnectorSwitch } from './connector-switch.tsx';
-import type { ConnectorRow } from './contract.ts';
+import type { ConnectorRow, MonitorRow } from './contract.ts';
+import { MonitorMenu } from './monitor-menu.tsx';
 import { usePage } from './page-context.tsx';
 
 // The Apple page's sidebar, drawn like the sidebar of ChatGPT's Space: its
@@ -10,7 +11,7 @@ import { usePage } from './page-context.tsx';
 // until the last pass ends, the page's failure to read or sync, then its
 // monitors and its connectors, each a section that folds away.
 export function Sidebar() {
-  const { rows, failure, sync, syncing } = usePage();
+  const { rows, monitors, failure, sync, syncing } = usePage();
   const label = syncing ? 'Syncing connectors' : 'Sync connectors';
   return (
     <nav className="sidebar" aria-label="Apple">
@@ -39,7 +40,16 @@ export function Sidebar() {
           {failure}
         </p>
       )}
-      <Section title="Monitors" />
+      <Section title="Monitors">
+        {monitors?.length === 0 && (
+          <li className="empty text-small text-muted">
+            None yet. In a chat, ask: When …, then …
+          </li>
+        )}
+        {monitors?.map((monitor) => (
+          <MonitorLink key={monitor.name} monitor={monitor} />
+        ))}
+      </Section>
       <Section title="Connectors">
         {rows?.map((row) => (
           <ConnectorLink key={row.name} row={row} />
@@ -98,22 +108,58 @@ function ConnectorLink({ row }: { row: ConnectorRow }) {
   );
 }
 
+// A monitor with its status on hover and its menu on right-click; it has no
+// switch, since a sync checks every monitor.
+function MonitorLink({ monitor }: { monitor: MonitorRow }) {
+  const { openedMonitor, openMonitor } = usePage();
+  const glyphs = {
+    watching: 'synced',
+    failed: 'troubled',
+    inactive: 'off',
+  } as const;
+  return (
+    <li>
+      <MonitorMenu monitor={monitor}>
+        <button
+          type="button"
+          className="item"
+          title={monitor.status.text}
+          aria-current={openedMonitor === monitor.name ? 'page' : undefined}
+          onClick={() => openMonitor(monitor.name)}
+        >
+          <Glyph
+            glyph={glyphs[monitor.status.state]}
+            label={monitor.status.text}
+          />
+          <span className="item-title">{monitor.title}</span>
+        </button>
+      </MonitorMenu>
+    </li>
+  );
+}
+
 // ● synced, a turning arc while it waits or imports, ✕ when it needs the
 // user, ○ when it is off. It reads as the status line the connector's page
 // shows.
 function StatusGlyph({ row }: { row: ConnectorRow }) {
   const { state, text } = row.status;
-  let glyph: 'synced' | 'busy' | 'troubled' | 'off' = 'synced';
+  let glyph: Glyph = 'synced';
   if (!row.loaded || state === 'failed' || state === 'partial')
     glyph = 'troubled';
   else if (state === 'waiting' || state === 'running') glyph = 'busy';
   else if (state === 'off' || state === 'cancelled') glyph = 'off';
+  return <Glyph glyph={glyph} label={text} />;
+}
+
+type Glyph = 'synced' | 'busy' | 'troubled' | 'off';
+
+function Glyph({ glyph, label }: { glyph: Glyph; label: string }) {
   return (
     <svg
       className={`glyph ${glyph}`}
       viewBox="0 0 16 16"
       role="img"
-      aria-label={text}
+      aria-label={label}
     >
       {
         {

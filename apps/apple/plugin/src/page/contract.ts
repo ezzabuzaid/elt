@@ -44,6 +44,22 @@ const row = z.strictObject({
 
 export const connectorsResult = { connectors: z.array(row).readonly() };
 
+// A monitor as its row and its page show it: what it watches and does, the
+// chat its instruction goes to, and its status line.
+const monitorRow = z.strictObject({
+  name: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+  instruction: z.string().nullable(),
+  chat: z.string().nullable(),
+  status: z.strictObject({
+    state: z.enum(['watching', 'failed', 'inactive']),
+    text: z.string(),
+  }),
+});
+
+export const monitorsResult = { monitors: z.array(monitorRow).readonly() };
+
 export const choicesResult = {
   choices: z
     .array(
@@ -80,4 +96,5 @@ export function connectorIn(path: string): string | undefined {
 
 export type ConnectorSelection = z.infer<typeof selection>;
 export type ConnectorRow = z.infer<typeof row>;
+export type MonitorRow = z.infer<typeof monitorRow>;
 export type ConnectorChoices = z.infer<z.ZodObject<typeof choicesResult>>;

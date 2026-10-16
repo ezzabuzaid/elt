@@ -238,6 +238,11 @@ button.item:hover,
   white-space: nowrap;
 }
 
+/* A section with no rows says how to add one, aligned with a row's title. */
+.section li.empty {
+  padding: 5px 8px;
+}
+
 /* A row's menu follows ChatGPT's own row menus (code-review 26.1007): an
    elevated surface with a hairline border, 4px around items shaped like the
    sidebar's rows. */
