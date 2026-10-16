@@ -19,6 +19,7 @@ import {
   readSQLite,
 } from '@workspace/elt-sqlite';
 import { type Selection, Settings } from '@workspace/settings';
+import type { Locate } from '@workspace/sqlite-federation';
 
 import {
   ObservedPasses,
@@ -145,6 +146,10 @@ export class Imports {
       codec: { encode: JSON.stringify, decode: JSON.parse },
     });
   }
+
+  // Leaves unknown schemas to SQLite; known imports validate and recover.
+  readonly locate: Locate = (name) =>
+    this.#loaded(name) === undefined ? undefined : this.database(name);
 
   // Locates an import and recovers interrupted writes before a reader opens it.
   database(name: string): string {

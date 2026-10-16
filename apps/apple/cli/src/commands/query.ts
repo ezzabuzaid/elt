@@ -79,14 +79,10 @@ export class QueryCommand extends Command {
   protected async run(declaration: Declaration): Promise<Output> {
     const name: string = declaration.processedArgs[0];
     const sql: string | undefined = declaration.processedArgs[1];
-    const locate = (name: string) =>
-      this.imports.names.includes(name)
-        ? this.imports.database(name)
-        : undefined;
     if (declaration.opts().tables === true) {
       using database = new Federation({
         main: this.imports.database(name),
-        locate,
+        locate: this.imports.locate,
         timeout: 30_000,
       });
       const connector = this.imports.connector(name);
@@ -111,7 +107,7 @@ export class QueryCommand extends Command {
       throw new Error('Give one SQL statement, or --tables');
     using database = new Federation({
       main: this.imports.database(name),
-      locate,
+      locate: this.imports.locate,
       timeout: 30_000,
     });
     loadPresets(database, this.imports.connector(name));

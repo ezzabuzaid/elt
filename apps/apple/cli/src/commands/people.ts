@@ -31,10 +31,7 @@ export class PeopleCommand extends Command {
     const sql: string = declaration.processedArgs[0] ?? everyone;
     using database = new Federation({
       main: ':memory:',
-      locate: (name) =>
-        this.imports.names.includes(name)
-          ? this.imports.database(name)
-          : undefined,
+      locate: this.imports.locate,
       timeout: 30_000,
     });
     try {
