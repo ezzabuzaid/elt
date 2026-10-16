@@ -2101,20 +2101,38 @@ test('a sync of a connector a sync watch keeps current says so and exits 0, runn
   }
 });
 
-test('a setup that removes a watched connector stops its watch within seconds, keeps its import while the watch owns it, and the next sync removes it', async () => {
+test('a setup that removes a watched connector keeps its import while the watch owns it, the watch then stops within seconds, and the next sync removes it', async () => {
   await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
   await withSafari(mac.path);
   await withConnectors(mac.path);
-  cli(mac.path, 'setup', '--connector', 'safari');
+  // A pipe the test writes only after the removal: the Photos read waits on
+  // it, so the watch is in its pass, and owns the import, when the setup
+  // runs. Without it the watch could hear of the removal and let the import
+  // go first, as it did under load (#2641).
+  const pictures = join(mac.path, 'Pictures/photos.json');
+  await rm(pictures);
+  spawnSync('/usr/bin/mkfifo', [pictures]);
+  cli(mac.path, 'setup', '--connector', 'photos');
   const watch = started(mac.path, 'sync', 'watch', '--json');
   try {
-    await watch.prints(({ connector }) => connector === 'safari');
-    const imported = dirname(
-      JSON.parse(cli(mac.path, 'status', '--json').stdout)[0].database,
-    );
+    let imported: string | undefined;
+    const deadline = Date.now() + 60_000;
+    while (imported === undefined) {
+      const photos = JSON.parse(cli(mac.path, 'status', '--json').stdout).find(
+        ({ connector }: { connector: string }) => connector === 'photos',
+      );
+      if (photos?.state === 'running') imported = dirname(photos.database);
+      else if (Date.now() > deadline)
+        assert.fail('the Photos pass did not start within a minute');
+      else await sleep(100);
+    }
 
-    const removed = cli(mac.path, 'setup', '--connector', 'photos');
+    const removed = cli(mac.path, 'setup', '--connector', 'safari');
     const kept = existsSync(imported);
+    // Longer than the watch takes to hear of the removal, a second; then the
+    // Photos read gets its next message and the pass ends.
+    await sleep(3_000);
+    await writeFile(pictures, JSON.stringify([{ id: 'p1', title: 'Beach' }]));
     const stopped = await Promise.race([
       watch.exited,
       sleep(5_000).then(() => null),
@@ -2123,10 +2141,10 @@ test('a setup that removes a watched connector stops its watch within seconds, k
     assert.equal(removed.status, 0, removed.stderr);
     assert.equal(kept, true, 'the setup removed an import a watch owned');
     if (stopped === null)
-      assert.fail('the watch still ran 5 s after the removal');
+      assert.fail('the watch still ran 5 s after its pass ended');
     assert.equal(stopped.status, 0, stopped.stderr);
     assert.deepEqual(lines(stopped.stdout).at(-1), {
-      connector: 'safari',
+      connector: 'photos',
       status: 'removed',
     });
     assert.equal(existsSync(imported), true);
