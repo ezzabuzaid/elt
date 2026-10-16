@@ -1,0 +1,13 @@
+{
+  "name": "apple-people",
+  "sourceRoot": "packages/connectors/apple/people/src",
+  "projectType": "library",
+  "targets": {
+    "format": {},
+    "test": {
+      "dependsOn": ["build"],
+      "inputs": ["default", "{projectRoot}/people.sql"],
+      "command": "node --test {args} \"packages/connectors/apple/people/dist/*.test.js\""
+    }
+  }
+}

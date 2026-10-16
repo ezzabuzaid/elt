@@ -39,9 +39,6 @@
       "path": "../../../packages/connectors/apple/teams"
     },
     {
-      "path": "../../../packages/connectors/apple/instagram"
-    },
-    {
       "path": "../../../packages/connectors/apple/slack"
     },
     {
@@ -61,6 +58,9 @@
     },
     {
       "path": "../../../packages/connectors/apple/mail"
+    },
+    {
+      "path": "../../../packages/connectors/apple/instagram"
     },
     {
       "path": "../../../packages/connectors/apple/contacts"
@@ -91,6 +91,9 @@
     },
     {
       "path": "../../../packages/connectors/apple/manifest"
+    },
+    {
+      "path": "../../../packages/connectors/apple/people"
     },
     {
       "path": "./src/page"

@@ -100,7 +100,7 @@ const mcpServer = new McpServer(
     ],
   },
   {
-    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.connectors.map(({ title }) => title))} content the user chose into private SQLite files on this Mac when the user connects a connector or changes what it imports, and again when the user presses Sync on the Apple page; nothing refreshes an import on its own. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3.`,
+    instructions: `Apple imports the ${new Intl.ListFormat('en', { type: 'conjunction' }).format(plugin.connectors.map(({ title }) => title))} content the user chose into private SQLite files on this Mac when the user connects a connector or changes what it imports, and again when the user presses Sync on the Apple page; nothing refreshes an import on its own. These tools only choose what is imported: set up with $setup-apple, and answer questions about the content with $query-apple, which reads those files with sqlite3, and who the user has been in contact with across them with $apple-people.`,
   },
 );
 // McpServer turns a thrown error into an isError result the model can act on.

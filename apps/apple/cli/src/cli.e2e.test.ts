@@ -3163,3 +3163,15 @@ test('teams options name the account by its organization’s domain, a team with
     ],
   );
 });
+
+test('people names a connector it reads that is not set up, and lists no one', async () => {
+  await using mac = await mkdtempDisposable(join(tmpdir(), 'cli-e2e-'));
+  await withNotes(mac.path);
+  cli(mac.path, 'setup', '--connector', 'notes');
+
+  const run = cli(mac.path, 'people', '--json');
+
+  assert.equal(run.status, 1, run.stderr);
+  assert.equal(run.stdout, '');
+  assert.match(run.stderr, /Contacts is not set up; run: setup/);
+});

@@ -306,6 +306,7 @@ test(
       manifest.interface.logo,
       manifest.interface.composerIcon,
       './skills/query-apple/SKILL.md',
+      './skills/apple-people/SKILL.md',
     ])
       assert.ok(existsSync(join(plugin, path)), path);
     const {
@@ -537,6 +538,7 @@ test(
         );
       // Codex shows these instructions with the tools.
       assert.match(String(client.getInstructions()), /\$query-apple/);
+      assert.match(String(client.getInstructions()), /\$apple-people/);
       // The server names the installed version.
       assert.equal(client.getServerVersion()?.version, manifest.version);
       // ChatGPT drops a page's Settings search terms while the server also
@@ -1178,6 +1180,17 @@ test(
           join(plugin, 'server/connectors/mail/presets/mail_messages.sql'),
         ),
         'the plugin ships the built-in Mail presets',
+      );
+      assert.ok(
+        existsSync(join(plugin, 'server/people.sql')),
+        'the plugin ships the people model',
+      );
+      assert.ok(
+        // The server names its own path, with /tmp resolved.
+        withPreset.includes(
+          `read "${join(realpathSync(plugin), 'server/people.sql')}"`,
+        ),
+        withPreset,
       );
     } finally {
       await client.close();

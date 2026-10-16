@@ -1,6 +1,6 @@
 import { existsSync, rmSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 
 import { SqliteElection } from '@zukhruf/election';
 import {
@@ -150,6 +150,34 @@ export class Imports {
   // Opens a connector's import for reading only; nothing a reader runs can
   // write to it, and what a sync stopped mid-commit left is rolled back first.
   read(name: string): DatabaseSync {
+    return readSQLite(this.#database(name));
+  }
+
+  // Opens the imports of the named connectors for reading only, each attached
+  // under its connector's name, for a reader that spans imports.
+  attach(names: readonly string[]): DatabaseSync {
+    const paths = names.map((name) => [name, this.#database(name)] as const);
+    // Attached files wait on this connection's timeout, as readSQLite's do,
+    // so a reader waits out a sync committing rather than failing.
+    const database = new DatabaseSync(':memory:', {
+      readOnly: true,
+      timeout: 30_000,
+    });
+    try {
+      for (const [name, path] of paths) {
+        // Rolls back the hot journal a killed sync left, which would fail the
+        // read-only attach.
+        readSQLite(path).close();
+        database.prepare(`ATTACH DATABASE ? AS "${name}"`).run(path);
+      }
+      return database;
+    } catch (error) {
+      database.close();
+      throw error;
+    }
+  }
+
+  #database(name: string): string {
     const { title } = this.connector(name);
     using settings = new Settings(this.root);
     const selection = settings
@@ -159,7 +187,7 @@ export class Imports {
       throw new Error(`${title} is not set up; run: setup`);
     if (!existsSync(settings.database(selection)))
       throw new Error(`${title} has not synced yet; run: sync`);
-    return readSQLite(settings.database(selection));
+    return settings.database(selection);
   }
 
   // One pass of each selected connector, or only of those named, shown through

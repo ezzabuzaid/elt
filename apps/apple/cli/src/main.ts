@@ -6,6 +6,7 @@ import { provideHostModules } from '@workspace/connector-apple-manifest/host-mod
 import { userConnectors } from '@workspace/connector-apple-manifest/user-connectors';
 
 import { OptionsCommand } from './commands/options.ts';
+import { PeopleCommand } from './commands/people.ts';
 import { QueryCommand } from './commands/query.ts';
 import { SetupCommand } from './commands/setup.ts';
 import { StatusCommand } from './commands/status.ts';
@@ -44,6 +45,7 @@ for (const command of [
   new SyncCommand(imports),
   new StatusCommand(imports),
   new QueryCommand(imports),
+  new PeopleCommand(imports),
 ])
   command.attach(program);
 await program.parseAsync();

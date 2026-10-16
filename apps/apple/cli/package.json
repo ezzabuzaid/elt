@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@clack/prompts": "1.8.1",
+    "@workspace/apple-people": "0.0.1",
     "@workspace/connector-apple-accounts": "0.0.1",
     "@workspace/connector-apple-activity": "0.0.1",
     "@workspace/connector-apple-books": "0.0.1",
