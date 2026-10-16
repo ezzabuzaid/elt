@@ -132,6 +132,9 @@ type World = {
   // How many times the CDN drops the connection for an image before it
   // serves it, as "fetch failed" showed on 2026-10-15; Infinity for always.
   dropped?: Record<string, number>;
+  // How many times the CDN answers 503 Service Unavailable for an image
+  // before it serves it, as it did on 2026-10-16.
+  busy?: Record<string, number>;
 };
 
 type Call = {
@@ -635,6 +638,11 @@ function instagram(world: World) {
       if (id === undefined) return new HttpResponse(null, { status: 404 });
       if (world.gone?.includes(id))
         return new HttpResponse(null, { status: 410 });
+      const busy = world.busy?.[id] ?? 0;
+      if (busy > 0) {
+        world.busy = { ...world.busy, [id]: busy - 1 };
+        return new HttpResponse(null, { status: 503 });
+      }
       const drops = world.dropped?.[id] ?? 0;
       if (drops > 0) {
         world.dropped = { ...world.dropped, [id]: drops - 1 };
@@ -1451,6 +1459,43 @@ test('an image whose connection the CDN drops once is asked for again and stored
     ],
     following: [],
     dropped: { 812: 1 },
+  });
+
+  await (
+    await pipeline(
+      await InstagramWebSource.connect({ profileIds: ['44555906095'] }),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(
+    await storedFiles(
+      dir.path,
+      `SELECT id AS key, "attachmentRef" FROM highlight_items ORDER BY id`,
+    ),
+    { 811: bytesOf('811'), 812: bytesOf('812') },
+  );
+});
+
+test('an image the CDN answers 503 once is asked for again and stored', async () => {
+  await using _mac = await signedInMac();
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
+  const story = (pk: string) => ({
+    pk,
+    takenAt: day - 90 * 86_400,
+    expiresAt: day - 89 * 86_400,
+  });
+  using _wire = instagram({
+    profiles: [
+      {
+        ...hive([]),
+        highlights: [
+          { id: '81', title: 'Summer', items: [story('811'), story('812')] },
+        ],
+      },
+    ],
+    following: [],
+    busy: { 812: 1 },
   });
 
   await (

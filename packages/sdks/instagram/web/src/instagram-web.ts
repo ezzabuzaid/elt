@@ -353,8 +353,8 @@ export class InstagramWeb {
   // Saves an image or video from Instagram's CDN, whose URLs are signed and
   // need no session. False when the CDN answers 410 Gone: it no longer has
   // the file, though the answer that listed it is fresh. A connection that
-  // fails, which fetch reports as a TypeError, is tried once more: the GET
-  // is safe to repeat.
+  // fails, which fetch reports as a TypeError, or a 5xx the CDN answers is
+  // tried once more: the GET is safe to repeat.
   async download(
     url: string,
     path: string,
@@ -363,7 +363,8 @@ export class InstagramWeb {
     try {
       return await save(url, path, signal);
     } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
+      if (!(error instanceof TypeError || error instanceof CdnUnavailableError))
+        throw error;
       return save(url, path, signal);
     }
   }
@@ -436,6 +437,10 @@ function nextOf(page: { end_cursor: string | null; has_next_page: boolean }) {
   return page.has_next_page ? page.end_cursor : null;
 }
 
+// A 5xx the CDN answered, such as the 503 of 2026-10-16: the server could not
+// serve the file this time.
+class CdnUnavailableError extends InstagramQueryError {}
+
 // One download from the CDN into path; false when the CDN answers 410 Gone.
 async function save(
   url: string,
@@ -448,6 +453,8 @@ async function save(
   });
   if (response.status === 410) return false;
   if (response.status === 429) throw new InstagramRateLimitError('a download');
+  if (response.status >= 500)
+    throw new CdnUnavailableError('a download', `answered ${response.status}`);
   if (!response.ok || response.body === null)
     throw new InstagramQueryError('a download', `answered ${response.status}`);
   await pipeline(response.body, createWriteStream(path), { signal });
