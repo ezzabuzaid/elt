@@ -124,7 +124,25 @@ The host pulls each new match. eca evaluates the next commit only when the host 
 
 A rule yields only keys that start to match after it was added. `add` keeps the keys of its first evaluation and yields nothing. A rule added on 15 October, after October passed 200 JOD, never yields October. See [ADR 0002](./docs/adr/0002-a-new-rule-starts-from-a-baseline.md).
 
-The keys are in memory. When the host starts again and adds its rules again, each rule takes a new baseline, and a key that started to match while the host was down is not yielded. Restarts are the concern of the host. See [ADR 0006](./docs/adr/0006-eca-keeps-no-state-across-restarts.md).
+The keys are in memory. eca keeps no store: restarts are the concern of the host. See [ADR 0006](./docs/adr/0006-eca-keeps-no-state-across-restarts.md).
+
+## Keep the keys across a restart
+
+A host that stops and starts again must not miss a key that started to match while it was down. Save the keys of each rule, and give them back when you add the rule again:
+
+```ts
+const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+await eca.add(spend, { keys: saved.get('spend') });
+
+for await (const match of eca.watch({ signal })) await notify(match);
+
+saved.set('spend', eca.keys(spend));
+```
+
+- `add` with `keys` takes no baseline. The rule starts from the keys you give, so a key that started to match while the host was down is a new match.
+- `keys(rule)` holds a new match only after the host moved past it. Act on a new match before you save the keys: a host that stops after it acted and before it saved hears of the match again, and it never loses one.
+
+See [ADR 0009](./docs/adr/0009-a-host-gives-a-rule-back-its-keys.md).
 
 ## When something fails
 
@@ -138,7 +156,7 @@ The keys are in memory. When the host starts again and adds its rules again, eac
 - No time events. A window that closes with no new data ends at the next commit. A rule about data that did not come ("I did not spend 200 JOD by day 10") cannot be written.
 - A rule whose window is fixed in time and already over is added, and it never yields.
 - No news of a match whose data changed, or of a match that stopped. See [ADR 0007](./docs/adr/0007-eca-yields-only-new-matches.md).
-- No state across restarts.
+- No store. The host saves the keys of each rule, and it gives them back after a restart.
 - No routing. Each commit evaluates every rule. See [ADR 0001](./docs/adr/0001-each-commit-evaluates-every-rule.md).
 
 ## The same concepts in other systems
@@ -151,6 +169,7 @@ The keys are in memory. When the host starts again and adds its rules again, eac
 | New match                             | A Prometheus alert goes from inactive to firing                                                     |
 | Baseline                              | A SQL trigger does not fire for older rows; a Kafka consumer group with `auto.offset.reset=latest`  |
 | Move past a new match                 | A Kafka consumer commits its offset after it processed a message                                    |
+| Keys given back to `add`              | A Kafka consumer group resumes from its committed offset after a restart                            |
 | `watch`, pulled with `for await`      | `Pipeline.watch` of elt; `events.on` of Node                                                        |
 | Warehouse port and the host's adapter | Ports and adapters; the `Dialect` of Kysely                                                         |
 | A threshold over a period             | AWS Budgets: one alert for each threshold in each budget period                                     |
@@ -165,6 +184,7 @@ The keys are in memory. When the host starts again and adds its rules again, eac
 - [ADR 0006: eca keeps no state across restarts](./docs/adr/0006-eca-keeps-no-state-across-restarts.md)
 - [ADR 0007: eca yields only new matches](./docs/adr/0007-eca-yields-only-new-matches.md)
 - [ADR 0008: A failing condition is yielded beside the new matches](./docs/adr/0008-a-failing-condition-is-yielded-beside-the-new-matches.md)
+- [ADR 0009: A host gives a rule back its keys](./docs/adr/0009-a-host-gives-a-rule-back-its-keys.md)
 
 ## Development
 
@@ -180,7 +200,7 @@ The tests have their own warehouse over a SQLite import that they write as elt w
 
 ```
 src/
-  eca.ts         Eca: add, watch, and the comparison of keys
+  eca.ts         Eca: add, watch, keys, and the comparison of keys
   rule.ts        Rule, Condition, Match, NewMatch
   warehouse.ts   the Warehouse port
   index.ts       the public exports

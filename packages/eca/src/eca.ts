@@ -16,12 +16,27 @@ export class Eca<Sql, Data> {
   }
 
   // A rule starts from what its condition matches now, so it yields only keys
-  // that start to match after it was added.
-  async add(rule: Rule<Sql, Data>): Promise<void> {
+  // that start to match after it was added. A host that saved the rule's keys
+  // before a restart gives them back instead, so the rule yields a key that
+  // started to match while the host was down.
+  async add(
+    rule: Rule<Sql, Data>,
+    options?: { readonly keys?: Iterable<string> },
+  ): Promise<void> {
     this.#rules.push({
       rule,
-      keys: new Set((await this.#evaluate(rule)).keys()),
+      keys: new Set(options?.keys ?? (await this.#evaluate(rule)).keys()),
     });
+  }
+
+  // The keys a host saves to give the rule back after a restart. They hold a
+  // new match only once the host moved past it, so a host that stops while it
+  // acts on a match hears of it again.
+  keys(rule: Rule<Sql, Data>): ReadonlySet<string> {
+    const watched = this.#rules.find((candidate) => candidate.rule === rule);
+    if (watched === undefined)
+      throw new TypeError('This rule was not added to this eca.');
+    return watched.keys;
   }
 
   // Each commit to the warehouse evaluates every rule. A rule moves on to its

@@ -45,7 +45,7 @@ A rule whose condition threw in an evaluation, with what it threw. eca yields it
 _Avoid_: Error event, crash, alert
 
 **Baseline**:
-The first evaluation of a rule, when the host adds it. eca keeps its keys and yields no new match. Thus a rule yields only keys that start to match after it was added. The baseline is in memory, so a rule that the host adds again starts from a new baseline.
+The first evaluation of a rule, when the host adds it. eca keeps its keys and yields no new match. Thus a rule yields only keys that start to match after it was added. The keys are in memory. A host that saved the keys of a rule gives them back when it adds the rule again, and the rule then takes no baseline.
 _Avoid_: Seed, snapshot (elt uses snapshot for a full read), initial run
 
 **Watch**:

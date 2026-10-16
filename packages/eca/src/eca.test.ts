@@ -403,6 +403,133 @@ test('a failing rule keeps the matches it already reported, so after the failure
   );
 });
 
+test('a rule added again with the keys its host saved yields a key that started to match while the host was down', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-restart-'));
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, []);
+  using warehouse = new ImportWarehouse(path);
+  const spend = { condition: new EarlyMonthSpend() };
+  const before = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  await before.add(spend);
+  const saved = before.keys(spend);
+  // October crosses 200 while the host is down.
+  load(path, october);
+  const after = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  await after.add(spend, { keys: saved });
+  await using matches = after.watch({ signal: AbortSignal.timeout(10_000) });
+
+  const first = matches.next();
+  warehouse.commit();
+
+  assert.deepEqual((await first).value, {
+    rule: spend,
+    key: '2026-10',
+    data: { spent: 220.807 },
+  });
+});
+
+test('a rule added again with the keys its host saved stays quiet about those keys, and still yields a later one', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'eca-restart-quiet-'),
+  );
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, october);
+  using warehouse = new ImportWarehouse(path);
+  const spend = { condition: new EarlyMonthSpend() };
+  const before = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  await before.add(spend);
+  const saved = before.keys(spend);
+  const after = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  await after.add(spend, { keys: saved });
+  await using matches = after.watch({ signal: AbortSignal.timeout(10_000) });
+
+  const first = matches.next();
+  warehouse.commit();
+  await evaluated();
+  load(path, november);
+  warehouse.commit();
+
+  assert.deepEqual([...saved], ['2026-10']);
+  assert.deepEqual((await first).value, {
+    rule: spend,
+    key: '2026-11',
+    data: { spent: 205 },
+  });
+});
+
+test('the keys a host reads to save hold a new match only once the host moved past it', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-keys-'));
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, []);
+  using warehouse = new ImportWarehouse(path);
+  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  const spend = { condition: new EarlyMonthSpend() };
+  await eca.add(spend);
+  const watching = new AbortController();
+  await using matches = eca.watch({ signal: watching.signal });
+  const first = matches.next();
+  load(path, october);
+  warehouse.commit();
+  await first;
+
+  const handling = eca.keys(spend);
+  const pulled = matches.next();
+  await evaluated();
+  const movedPast = eca.keys(spend);
+  watching.abort();
+
+  await assert.rejects(pulled, { name: 'AbortError' });
+  assert.deepEqual([...handling], []);
+  assert.deepEqual([...movedPast], ['2026-10']);
+});
+
+test('a host that saves the keys before it moved past a new match hears of the match again after a restart', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'eca-keys-again-'),
+  );
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, []);
+  using warehouse = new ImportWarehouse(path);
+  const spend = { condition: new EarlyMonthSpend() };
+  const before = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  await before.add(spend);
+  const watching = new AbortController();
+  const matches = before.watch({ signal: watching.signal });
+  const first = matches.next();
+  load(path, october);
+  warehouse.commit();
+  await first;
+  // The host saves while it still acts on October, then stops.
+  const saved = before.keys(spend);
+  watching.abort();
+  await assert.rejects(matches.next(), { name: 'AbortError' });
+  const after = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+  await after.add(spend, { keys: saved });
+  await using again = after.watch({ signal: AbortSignal.timeout(10_000) });
+
+  const next = again.next();
+  warehouse.commit();
+
+  assert.deepEqual((await next).value, {
+    rule: spend,
+    key: '2026-10',
+    data: { spent: 220.807 },
+  });
+});
+
+test('the keys of a rule that was never added are refused, so a host never saves an empty list in their place', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-unknown-'));
+  const path = join(scratch.path, 'messages.sqlite');
+  writeImport(path, []);
+  using warehouse = new ImportWarehouse(path);
+  const eca = new Eca<SQLTagStore, { spent: number }>({ warehouse });
+
+  assert.throws(
+    () => eca.keys({ condition: new EarlyMonthSpend() }),
+    TypeError,
+  );
+});
+
 // A watch that never ends would hang the run, so this test has its own deadline.
 test('aborting the signal ends the watch', { timeout: 5_000 }, async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'eca-abort-'));

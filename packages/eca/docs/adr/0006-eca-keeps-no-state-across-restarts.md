@@ -15,3 +15,5 @@ Thus eca keeps the keys of each rule in memory only. When the host starts again 
 - eca has no store and no dependency on a database.
 - A key that started to match while the host was down is in the baseline of the next start, and eca does not yield it.
 - A host that must keep the keys across restarts cannot give them to eca yet. eca gets a way to accept them when the first such host needs it.
+
+Update: [ADR 0009](./0009-a-host-gives-a-rule-back-its-keys.md) gives the host that way. eca still keeps no store.
