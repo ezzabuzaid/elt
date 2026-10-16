@@ -16,6 +16,8 @@ import {
   restrictedMailStreams,
 } from '@workspace/source-apple-mail/apple-mail-source';
 
+import { mailCounterparts } from './mail-counterparts.ts';
+
 const accountName = (row: Row) =>
   String(JSON.parse(String(row.properties)).name);
 
@@ -45,6 +47,12 @@ export default class MailConnector extends AppleConnector {
   protected readonly unscoped = restrictedMailStreams;
   // Each message's raw .emlx; messageParts already holds its decoded text.
   protected readonly storeCopies = ['messageFiles'];
+
+  // accounts, messages, addresses and recipients, which the view reads, are
+  // in every import, narrowed or not.
+  protected override views() {
+    return [mailCounterparts];
+  }
 
   protected access(): string {
     return 'Mail does not need to be open: messages come from its store, and accounts and their servers from the macOS Accounts store.';

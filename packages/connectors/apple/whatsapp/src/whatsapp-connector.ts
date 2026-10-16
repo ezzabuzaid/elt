@@ -3,6 +3,8 @@ import type { Choice } from '@workspace/connector-apple-connector/choice';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { WhatsAppDesktopSource } from '@workspace/source-whatsapp-desktop/whatsapp-desktop-source';
 
+import { whatsappCounterparts } from './whatsapp-counterparts.ts';
+
 export default class WhatsAppConnector extends AppleConnector {
   readonly datedBy = 'date sent';
   readonly fullDiskAccess = true;
@@ -44,6 +46,10 @@ export default class WhatsAppConnector extends AppleConnector {
     'changedNumbers',
   ];
   protected readonly storeCopies = [];
+
+  protected override views(copied: ReadonlySet<string>) {
+    return [whatsappCounterparts(copied)];
+  }
 
   protected access(): string {
     return 'Open WhatsApp and let it run: it keeps what it has synced from your phone, and saves new messages to this Mac while it runs.';

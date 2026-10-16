@@ -7,6 +7,8 @@ import {
 import { AppleContactsSource } from '@workspace/source-apple-contacts/apple-contacts-source';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 
+import { contactsCounterparts } from './contacts-counterparts.ts';
+
 export default class ContactsConnector extends AppleConnector {
   readonly datedBy = null;
   readonly fullDiskAccess = false;
@@ -21,6 +23,10 @@ export default class ContactsConnector extends AppleConnector {
   ];
   protected readonly unscoped = [];
   protected readonly storeCopies = [];
+
+  protected override views() {
+    return [contactsCounterparts];
+  }
 
   protected access(grantee: string): string {
     return `Allow ${grantee} when macOS asks for Contacts access, or turn it on in System Settings › Privacy & Security › Contacts. Full Disk Access for ${grantee} also works.`;

@@ -15,6 +15,12 @@
     },
     {
       "path": "../connector"
+    },
+    {
+      "path": "../../../codecs/chromium-indexeddb"
+    },
+    {
+      "path": "../../../settings"
     }
   ]
 }

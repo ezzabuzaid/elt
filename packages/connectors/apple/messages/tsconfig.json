@@ -15,6 +15,9 @@
     },
     {
       "path": "../connector"
+    },
+    {
+      "path": "../../../settings"
     }
   ]
 }

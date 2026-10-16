@@ -7,6 +7,8 @@ import {
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
 import { TeamsSource } from '@workspace/source-microsoft-teams/teams-source';
 
+import { teamsCounterparts } from './teams-counterparts.ts';
+
 // An account by its organization's first domain.
 const account: Choice['label'] = (row) => {
   const domains = Array.isArray(row.tenantDomains) ? row.tenantDomains : [];
@@ -46,6 +48,10 @@ export default class TeamsConnector extends AppleConnector {
   ];
   protected readonly unscoped = [];
   protected readonly storeCopies = [];
+
+  protected override views() {
+    return [teamsCounterparts];
+  }
 
   protected access(): string {
     return 'Open Microsoft Teams, sign in and let it run: it saves what it loads as you use it, and only what it has loaded on this Mac is imported.';

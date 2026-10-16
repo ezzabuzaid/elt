@@ -20,13 +20,16 @@
       "path": "../../../sources/apple/macos"
     },
     {
-      "path": "../../../sdks/apple/accounts"
-    },
-    {
       "path": "../../../sdks/apple/mail"
     },
     {
+      "path": "../../../sdks/apple/accounts"
+    },
+    {
       "path": "../connector"
+    },
+    {
+      "path": "../../../settings"
     }
   ]
 }

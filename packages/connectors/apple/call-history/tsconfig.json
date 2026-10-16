@@ -8,13 +8,16 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
-      "path": "../../../sources/apple/call-history"
-    },
-    {
       "path": "../../../sources/apple/macos"
     },
     {
+      "path": "../../../sources/apple/call-history"
+    },
+    {
       "path": "../connector"
+    },
+    {
+      "path": "../../../settings"
     }
   ]
 }

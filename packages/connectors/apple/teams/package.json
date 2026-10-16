@@ -12,5 +12,9 @@
     "@workspace/connector-apple-connector": "0.0.1",
     "@workspace/source-apple-macos": "0.0.1",
     "@workspace/source-microsoft-teams": "0.0.1"
+  },
+  "devDependencies": {
+    "@workspace/settings": "0.0.1",
+    "@workspace/codec-chromium-indexeddb": "0.0.1"
   }
 }
