@@ -5,7 +5,7 @@
 -- date_kind: received; describes occurred_at.
 -- correspondent: Sender email address; NULL when absent.
 -- title: Message subject, including its reply or forward prefix; NULL when absent.
--- text: mail_messages.body, preferring plain text and otherwise retaining raw HTML; NULL when unavailable. Does not include attachment bytes.
+-- text: mail_messages.body with body_html appended when it holds another representation, so HTML-only details remain available with their matches; NULL when neither format is available. Does not include attachment bytes.
 -- attachments: JSON attachment metadata from mail_messages, including part_id and available_locally. For copied bytes, read attachments.attachmentRef by messageId and partId; imports without copies do not have that column.
 -- matched_terms: JSON array of literal terms found case-insensitively for ASCII in the subject, text or attachment metadata. This explains retrieval, not status or confidence.
 -- context: JSON object with mailbox_url, conversation_id, Message-ID, recipients and the stored deleted marker. Retains account, duplicate and direction clues without inferring ownership.
@@ -26,7 +26,7 @@ WITH
       m.*,
       (
         WITH document(content) AS MATERIALIZED (
-          SELECT lower(coalesce(m.subject, '') || char(10) || coalesce(m.body, '') || char(10) || m.attachments)
+          SELECT lower(coalesce(m.subject, '') || char(10) || coalesce(m.body, '') || char(10) || coalesce(m.body_html, '') || char(10) || m.attachments)
         )
         SELECT json_group_array(term)
         FROM document CROSS JOIN terms
@@ -41,7 +41,8 @@ SELECT
   'received' AS date_kind,
   sender AS correspondent,
   subject AS title,
-  body AS text,
+  CASE WHEN body_html IS NOT NULL AND body_html <> body
+    THEN body || char(10) || body_html ELSE body END AS text,
   attachments,
   matched_terms,
   json_object(

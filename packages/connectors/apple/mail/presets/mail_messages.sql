@@ -13,8 +13,10 @@
 -- recipients: JSON array of the To and Cc recipients in Mail's order: address, name (NULL when none is given), and kind 'to' or 'cc' (Mail's codes 0 and 1, matched against the To and Cc headers on 2026-10-05), or Mail's code as text for any other recipient.
 -- subject: The subject as Mail shows it, with its reply or forward prefix such as 'Re: '; NULL when the message has none.
 -- message_id_header: The Message-ID header, such as <id@example.com>; it identifies the message across mailboxes, accounts and other copies.
--- body: The text of the message: its text/plain parts joined in partId order, or, when it has none, its text/html parts as raw HTML; NULL when this Mac has no local copy of the message or it has no text part. A forwarded message stays one attachment, so its text is not in body.
+-- body_text: Nonattachment text/plain parts joined in partId order; NULL when none is available. This can omit information present in body_html, so search and inspect both formats.
+-- body_html: Nonattachment text/html parts joined in partId order, retaining raw HTML; NULL when none is available. Tables and item details can exist here even when body_text is present.
 -- attachments: JSON array of the message's attachments in partId order: part_id, filename, content_type, declared_bytes and available_locally (false when its file is missing on this Mac). For a copied file, join attachments on messageId and partId and read attachmentRef, which exists only when the import copies attachments.
+-- body: A convenience representation: body_text when present, otherwise body_html. It does not combine the formats; inspect both for complete content. NULL when neither is available. Forwarded messages remain attachments.
 CREATE TEMP VIEW mail_messages AS
 -- body and attachments are read per message through the (messageId, partId)
 -- key, so a query computes them only for the rows it keeps. Recipients have no
@@ -34,51 +36,52 @@ WITH
     FROM recipients r
     LEFT JOIN addresses a ON a.id = r.address
     GROUP BY r.message
+  ),
+  content AS (
+    SELECT
+      m.id,
+      m.dateReceived AS received_at,
+      m.dateSent AS sent_at,
+      m.mailbox,
+      x.url AS mailbox_url,
+      m.conversationId AS conversation_id,
+      m.read,
+      m.flagged,
+      m.deleted,
+      a.address AS sender,
+      nullif(a.comment, '') AS sender_name,
+      coalesce(r.recipients, json('[]')) AS recipients,
+      nullif(coalesce(m.subjectPrefix, '') || coalesce(s.subject, ''), '') AS subject,
+      g.messageIdHeader AS message_id_header,
+      (
+          SELECT group_concat(p.text, char(10) ORDER BY p.partId)
+          FROM message_parts p
+          WHERE p.messageId = m.id AND p.contentType = 'text/plain' AND NOT coalesce(p.isAttachment, 0)
+      ) AS body_text,
+      (
+          SELECT group_concat(p.text, char(10) ORDER BY p.partId)
+          FROM message_parts p
+          WHERE p.messageId = m.id AND p.contentType = 'text/html' AND NOT coalesce(p.isAttachment, 0)
+      ) AS body_html,
+      (
+        SELECT json_group_array(
+          json_object(
+            'part_id', f.partId,
+            'filename', f.filename,
+            'content_type', f.contentType,
+            'declared_bytes', f.declaredBytes,
+            'available_locally', json(iif(f.availableLocally, 'true', 'false'))
+          )
+          ORDER BY f.partId
+        )
+        FROM attachments f
+        WHERE f.messageId = m.id
+      ) AS attachments
+    FROM messages m
+    LEFT JOIN mailboxes x ON x.id = m.mailbox
+    LEFT JOIN addresses a ON a.id = m.sender
+    LEFT JOIN subjects s ON s.id = m.subject
+    LEFT JOIN message_global_data g ON g.id = m.globalMessageId
+    LEFT JOIN recipient_lists r ON r.message = m.id
   )
-SELECT
-  m.id,
-  m.dateReceived AS received_at,
-  m.dateSent AS sent_at,
-  m.mailbox,
-  x.url AS mailbox_url,
-  m.conversationId AS conversation_id,
-  m.read,
-  m.flagged,
-  m.deleted,
-  a.address AS sender,
-  nullif(a.comment, '') AS sender_name,
-  coalesce(r.recipients, json('[]')) AS recipients,
-  nullif(coalesce(m.subjectPrefix, '') || coalesce(s.subject, ''), '') AS subject,
-  g.messageIdHeader AS message_id_header,
-  coalesce(
-    (
-      SELECT group_concat(p.text, char(10) ORDER BY p.partId)
-      FROM message_parts p
-      WHERE p.messageId = m.id AND p.contentType = 'text/plain' AND NOT coalesce(p.isAttachment, 0)
-    ),
-    (
-      SELECT group_concat(p.text, char(10) ORDER BY p.partId)
-      FROM message_parts p
-      WHERE p.messageId = m.id AND p.contentType = 'text/html' AND NOT coalesce(p.isAttachment, 0)
-    )
-  ) AS body,
-  (
-    SELECT json_group_array(
-      json_object(
-        'part_id', f.partId,
-        'filename', f.filename,
-        'content_type', f.contentType,
-        'declared_bytes', f.declaredBytes,
-        'available_locally', json(iif(f.availableLocally, 'true', 'false'))
-      )
-      ORDER BY f.partId
-    )
-    FROM attachments f
-    WHERE f.messageId = m.id
-  ) AS attachments
-FROM messages m
-LEFT JOIN mailboxes x ON x.id = m.mailbox
-LEFT JOIN addresses a ON a.id = m.sender
-LEFT JOIN subjects s ON s.id = m.subject
-LEFT JOIN message_global_data g ON g.id = m.globalMessageId
-LEFT JOIN recipient_lists r ON r.message = m.id;
+SELECT content.*, coalesce(body_text, body_html) AS body FROM content;

@@ -14,6 +14,7 @@ import type {
 } from '@workspace/connector-apple-connector/apple-connector';
 import { Pipeline } from '@workspace/elt';
 import { SQLiteSyncHistory, installSQLiteCatalog } from '@workspace/elt-sqlite';
+import { Settings } from '@workspace/settings';
 
 // This package's folder, which holds its manifest and presets.
 const folder = fileURLToPath(new URL('..', import.meta.url));
@@ -282,7 +283,7 @@ const emlx = (lines: readonly string[]) => {
 
 const january = Date.UTC(2026, 0, 1) / 1000;
 
-test('mail_messages reads each message with its body, recipients, subject, Message-ID and attachments', async () => {
+test('mail_messages reads each message with both body formats, recipients, subject, Message-ID and attachments', async (t) => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'mail-presets-'),
   );
@@ -321,7 +322,8 @@ test('mail_messages reads each message with its body, recipients, subject, Messa
       join(mailbox, 'UUID/Data/Messages', `${id}.emlx`),
       emlx(lines),
     );
-  // Plain text and HTML of one message: a reader gets the plain text.
+  // The HTML has item details missing from the plain alternative, as in
+  // Talabat's confirmations: a plain part must not hide the HTML.
   message(1, [
     'From: Ann <ann@example.com>',
     'Subject: Re: Budget',
@@ -334,7 +336,7 @@ test('mail_messages reads each message with its body, recipients, subject, Messa
     '--b',
     'Content-Type: text/html; charset=UTF-8',
     '',
-    '<p>Numbers attached.</p>',
+    '<p>Numbers attached.</p><table><tr><td>2 × Eggs And Cheese Kaak</td></tr></table>',
     '--b--',
     '',
   ]);
@@ -477,6 +479,9 @@ test('mail_messages reads each message with its body, recipients, subject, Messa
         subject: 'Re: Budget',
         message_id_header: '<m1@example.com>',
         body: 'Numbers attached.',
+        body_text: 'Numbers attached.',
+        body_html:
+          '<p>Numbers attached.</p><table><tr><td>2 × Eggs And Cheese Kaak</td></tr></table>',
         attachments: [],
       },
       {
@@ -495,6 +500,8 @@ test('mail_messages reads each message with its body, recipients, subject, Messa
         subject: 'Newsletter',
         message_id_header: '<m2@example.com>',
         body: '<h1>News</h1>',
+        body_text: null,
+        body_html: '<h1>News</h1>',
         attachments: [],
       },
       {
@@ -513,6 +520,8 @@ test('mail_messages reads each message with its body, recipients, subject, Messa
         subject: 'Invoice',
         message_id_header: '<m3@example.com>',
         body: 'Part one\nPart two',
+        body_text: 'Part one\nPart two',
+        body_html: null,
         attachments: [
           {
             part_id: '2',
@@ -553,8 +562,111 @@ test('mail_messages reads each message with its body, recipients, subject, Messa
         subject: 'Offline',
         message_id_header: '<m4@example.com>',
         body: null,
+        body_text: null,
+        body_html: null,
         attachments: [],
       },
     ],
   );
+
+  for (const [name, changes, malformed, expected] of [
+    ['a file changes once', 1, false, ['partial', 'succeeded']],
+    ['a file keeps changing', 3, false, ['partial', 'partial', 'partial']],
+    ['a malformed file', 0, true, ['partial']],
+    [
+      'a changing file alongside a malformed message',
+      1,
+      true,
+      ['partial', 'partial'],
+    ],
+  ] as const) {
+    await t.test(
+      `Mail import handles ${name} within its retry bound`,
+      async () => {
+        using settings = new Settings(join(scratch.path, name));
+        const selection = {
+          connector: 'mail',
+          scope: {},
+          includeAttachments: false,
+        };
+        settings.select([selection], {
+          facts: () => connector,
+          permissions: () => connector.guidance(),
+        });
+        const file = join(mailbox, 'UUID/Data/Messages/1.emlx');
+        const original = readFileSync(file);
+        const malformedFile = join(mailbox, 'UUID/Data/Messages/2.emlx');
+        const originalOther = readFileSync(malformedFile);
+        let attempts = 0;
+        if (malformed) writeFileSync(malformedFile, 'not an emlx');
+        try {
+          await connector.import(settings, selection, {
+            begin: () => {
+              attempts++;
+              return {
+                progress: ({ copy, status }) => {
+                  if (
+                    copy.from.name === 'messages' &&
+                    status === 'complete' &&
+                    attempts <= changes
+                  )
+                    writeFileSync(file, original);
+                },
+                finish: () => {},
+                fail: () => {},
+              };
+            },
+          });
+          assert.equal(attempts, expected.length);
+          assert.deepEqual(
+            read(
+              settings.database(selection),
+              [],
+              'SELECT status FROM sync_attempts ORDER BY attempt_id',
+            ).map(({ status }) => status),
+            expected,
+          );
+          if (changes === 1 && !malformed) {
+            assert.equal(
+              read(
+                settings.database(selection),
+                [],
+                'SELECT count(*) AS total FROM messages',
+              )[0]?.total,
+              4,
+            );
+            assert.deepEqual(
+              read(
+                settings.database(selection),
+                [],
+                'SELECT * FROM mail_content_status',
+              ),
+              [
+                {
+                  message_count: 4,
+                  latest_received_at: timestamp(january + 240),
+                  missing_message_files: 1,
+                  missing_text_bodies: 1,
+                  attachment_count: 3,
+                  unavailable_attachments: 1,
+                },
+              ],
+            );
+            const status = connector
+              .contentStatus(settings.database(selection))
+              .join('\n');
+            assert.match(status, /Cloud inbox freshness is unknown/);
+            assert.match(
+              status,
+              /4 messages: 1 without a downloaded message file; 1 without readable body text/,
+            );
+            assert.match(status, /3 attachments: 1 unavailable/);
+          }
+        } finally {
+          writeFileSync(file, original);
+          writeFileSync(malformedFile, originalOther);
+        }
+      },
+    );
+  }
 });

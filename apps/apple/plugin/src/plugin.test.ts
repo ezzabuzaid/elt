@@ -32,6 +32,7 @@ import {
 } from './connector-page.ts';
 import { monitorRows } from './monitor-page.ts';
 import { Monitors } from './monitors.ts';
+import { connectorsResult } from './page/contract.ts';
 
 // The committed plugin, as Codex installs it.
 const install = resolve('plugins/apple');
@@ -1439,6 +1440,64 @@ test('a chat hears of a pass only when it changes what a reader can do with the 
   );
 });
 
+test('the Apple page and chat report Mail local freshness and content gaps, including a newly downloaded body', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'mail-status-'));
+  const plugin = await applePlugin(install, scratch.path);
+  const mail = { connector: 'mail', scope: {}, includeAttachments: false };
+  await plugin.configure({ connectors: [mail] });
+  const begin = await passes(plugin, mail);
+  await (await begin()).finish();
+  const beforeContent = chatStatus(plugin);
+  assert.match(beforeContent.text, /Content availability is not known/);
+  // The Mail connector's own import test checks this view against the real
+  // Mail source. Here the reader boundary lets the page see a newly arriving
+  // body without opening the user's real Mail store.
+  const path = plugin.status().connectors[0]?.database;
+  assert.ok(path);
+  using database = new DatabaseSync(path);
+  database.exec(`CREATE TABLE counts (
+    message_count INTEGER, latest_received_at TEXT,
+    missing_message_files INTEGER, missing_text_bodies INTEGER,
+    attachment_count INTEGER, unavailable_attachments INTEGER
+  );
+  INSERT INTO counts VALUES (4, '2026-10-12T10:50:34.000Z', 1, 2, 3, 1);
+  CREATE VIEW mail_content_status AS SELECT * FROM counts;`);
+  const rows = connectorRows(plugin);
+  z.object(connectorsResult).parse({ connectors: rows });
+  const details = rows
+    .find(({ name }) => name === 'mail')
+    ?.status.details.join('\n');
+  assert.match(String(details), /Imported source data as of /);
+  assert.match(
+    String(details),
+    /Newest locally received message: 2026-10-12T10:50:34.000Z/,
+  );
+  assert.match(
+    String(details),
+    /1 without a downloaded message file; 2 without readable body text/,
+  );
+  assert.match(String(details), /3 attachments: 1 unavailable/);
+  assert.match(String(details), /Cloud inbox freshness is unknown/);
+  const missing = chatStatus(plugin);
+  assert.notEqual(missing.state, beforeContent.state);
+  assert.match(missing.text, /Newest locally received message: 2026-10-12/);
+  assert.match(missing.text, /without readable body text/);
+  database.exec(
+    "UPDATE counts SET latest_received_at = '2026-10-13T14:50:33.000Z', missing_message_files = 0, missing_text_bodies = 1",
+  );
+  const downloaded = chatStatus(plugin);
+  assert.notEqual(downloaded.state, missing.state);
+  assert.match(downloaded.text, /Newest locally received message: 2026-10-13/);
+  assert.match(
+    downloaded.text,
+    /0 without a downloaded message file; 1 without readable body text/,
+  );
+  await (await begin()).fail(new Error('Mail kept changing.'), 'system');
+  const partial = chatStatus(plugin);
+  assert.match(partial.text, /Mail kept changing.*data as of/);
+  assert.match(partial.text, /Newest locally received message/);
+});
+
 test('a selected connector that is no longer loaded is reported, keeps its import through other changes, and can be disconnected', async () => {
   await using scratch = await mkdtempDisposable(
     join(tmpdir(), 'apple-plugin-'),
@@ -1531,14 +1590,14 @@ test('the sidebar page describes each connector’s import and switches one conn
   // The page adds the connector's permissions guidance to the error once,
   // and offers to open Full Disk Access, since granting it is the fix.
   await (await begin()).fail(new Error('Notes could not be opened.'), 'config');
-  assert.deepEqual(statusOf('notes'), {
+  assert.partialDeepStrictEqual(statusOf('notes'), {
     state: 'failed',
     text: `Last sync failed: Notes could not be opened. ${plugin.connector('notes').guidance()}`,
     fullDiskAccess: true,
   });
   // A failure granting access cannot fix shows only what went wrong.
   await (await begin()).fail(new Error('Notes crashed.'), 'system');
-  assert.deepEqual(statusOf('notes'), {
+  assert.partialDeepStrictEqual(statusOf('notes'), {
     state: 'failed',
     text: 'Last sync failed: Notes crashed.',
     fullDiskAccess: false,
@@ -1561,7 +1620,7 @@ test('the sidebar page describes each connector’s import and switches one conn
       await passes(plugin, contacts)
     )()
   ).fail(new Error('Contacts could not be opened.'), 'config');
-  assert.deepEqual(statusOf('contacts'), {
+  assert.partialDeepStrictEqual(statusOf('contacts'), {
     state: 'failed',
     text: `Last sync failed: Contacts could not be opened. ${plugin.connector('contacts').guidance()}`,
     fullDiskAccess: false,

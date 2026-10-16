@@ -69,11 +69,17 @@ function loadedStatus(
   now: Date,
 ): ConnectorRow['status'] {
   if (item === undefined)
-    return { state: 'off', text: 'Not connected.', fullDiskAccess: false };
+    return {
+      state: 'off',
+      text: 'Not connected.',
+      details: [],
+      fullDiskAccess: false,
+    };
   if (item.sync === null)
     return {
       state: 'waiting',
       text: 'Waiting to import.',
+      details: item.content,
       fullDiskAccess: false,
     };
   return {
@@ -86,6 +92,12 @@ function loadedStatus(
     ),
     fullDiskAccess:
       connector.fullDiskAccess && item.sync.failureType === 'config',
+    details: [
+      ...(item.sync.currentAsOf === null
+        ? []
+        : [`Imported source data as of ${when(item.sync.currentAsOf, now)}.`]),
+      ...item.content,
+    ],
   };
 }
 
@@ -132,6 +144,7 @@ export function connectorRows(plugin: ApplePlugin): ConnectorRow[] {
       status: {
         state: item.sync === null ? 'waiting' : item.sync.state,
         text: item.permissions,
+        details: item.content,
         fullDiskAccess: false,
       },
       narrowsBy: { accountIds: false, collectionIds: false },

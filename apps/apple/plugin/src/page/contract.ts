@@ -32,6 +32,7 @@ const row = z.strictObject({
       'cancelled',
     ]),
     text: z.string(),
+    details: z.array(z.string()).readonly(),
     // Granting ChatGPT Full Disk Access is the fix for this failure.
     fullDiskAccess: z.boolean(),
   }),

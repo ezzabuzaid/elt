@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+import pRetry from 'p-retry';
+
 import {
   Connection,
   Copy,
@@ -113,6 +115,17 @@ export abstract class AppleConnector {
   // names the streams the import holds; a narrowed one leaves out unscoped.
   protected views(_copied: ReadonlySet<string>): readonly SQLiteView[] {
     return [];
+  }
+
+  // Content availability the app can establish from its imported reader views.
+  // This does not turn a successful local copy into a claim about cloud data.
+  contentStatus(_database: string): readonly string[] {
+    return [];
+  }
+
+  // Only the connector knows which upstream errors a fresh pass can recover.
+  protected retryImport(_error: unknown): boolean {
+    return false;
   }
 
   protected readonly host: AppleHost;
@@ -285,16 +298,41 @@ export abstract class AppleConnector {
       async (pipeline, text, removal, publish) => {
         const stopped =
           signal === undefined ? removal : AbortSignal.any([removal, signal]);
-        let failed: unknown = null;
-        try {
-          await pipeline.run({ signal: stopped });
-        } catch (error) {
-          if (!(error instanceof PipelineError)) throw error;
-          failed = error;
-        }
-        publish();
-        await text?.update(stopped);
-        if (failed !== null) throw failed;
+        let completed = false;
+        await pRetry(
+          async () => {
+            let failed: unknown = null;
+            try {
+              await pipeline.run({ signal: stopped });
+            } catch (error) {
+              if (!(error instanceof PipelineError)) throw error;
+              failed = error;
+            }
+            publish();
+            await text?.update(stopped);
+            if (failed !== null) throw failed;
+            completed = true;
+          },
+          {
+            retries: 2,
+            minTimeout: 250,
+            factor: 2,
+            signal: stopped,
+            shouldRetry: ({ error }) =>
+              error instanceof PipelineError &&
+              error.errors.some((failure: unknown) =>
+                this.retryImport(failure),
+              ),
+          },
+        ).catch((error: unknown) => {
+          // A stop after the pass committed still leaves a successful import;
+          // it only stops attachment parsing, as it did before retrying.
+          if (completed && stopped.aborted) return;
+          // p-retry normalizes non-Error throws; cancellation must preserve
+          // the caller's exact reason, including a string or other value.
+          stopped.throwIfAborted();
+          throw error;
+        });
       },
     );
   }

@@ -20,6 +20,11 @@ export function ConnectorStatus({ row }: { row: ConnectorRow }) {
       >
         {row.status.text}
       </p>
+      {row.status.details.map((detail) => (
+        <p key={detail} className="text-small text-muted">
+          {detail}
+        </p>
+      ))}
       {row.status.fullDiskAccess && app !== null && (
         <button
           type="button"

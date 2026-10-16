@@ -36,6 +36,9 @@ test('subscription evidence combines read-only imports without confusing their m
         ('3', NULL, 'offers@example.com', 'Try Grok Bot', 'Free trial invitation', '[]', 'imap://B/INBOX', '8', NULL, '[]', 0),
         ('4', NULL, 'billing@example.com', 'Documents', NULL, '[{"part_id":"2","filename":"invoice.pdf","available_locally":false}]', 'imap://A/INBOX', '9', NULL, '[]', 1),
         ('5', NULL, 'friend@example.com', 'Dinner', 'See you tonight', '[]', 'imap://A/INBOX', '10', NULL, '[]', 0);
+      ALTER TABLE evidence_mail ADD COLUMN body_html TEXT;
+      INSERT INTO evidence_mail (id, sender, subject, body, body_html, attachments, recipients, deleted)
+        VALUES ('6', 'orders@example.com', 'Documents', 'Your document is attached.', '<table><tr><td>Annual membership</td></tr></table>', '[]', '[]', 0);
     `);
   }
   {
@@ -117,6 +120,7 @@ test('subscription evidence combines read-only imports without confusing their m
       ['mail', '2'],
       ['mail', '3'],
       ['mail', '4'],
+      ['mail', '6'],
       ['messages', '1'],
       ['messages', '2'],
       ['messages', '4'],
@@ -138,6 +142,14 @@ test('subscription evidence combines read-only imports without confusing their m
   assert.equal(row('mail', '1').text, '<p>Paid $20</p>');
   assert.equal(row('mail', '3').correspondent, 'offers@example.com');
   assert.equal(row('mail', '4').text, null);
+  assert.equal(
+    row('mail', '6').text,
+    'Your document is attached.\n<table><tr><td>Annual membership</td></tr></table>',
+  );
+  assert.deepEqual(JSON.parse(String(row('mail', '6').matched_terms)).sort(), [
+    'annual',
+    'membership',
+  ]);
   assert.equal(JSON.parse(String(row('mail', '4').context)).deleted, 1);
   assert.ok(
     JSON.parse(String(row('messages', '1').matched_terms)).includes('اشتراك'),

@@ -173,7 +173,7 @@ test(
       permissions: () => connector.guidance(),
     });
     const stop = new AbortController();
-    const lost = new Error('The flight is no longer this pass’s');
+    const lost = 'The flight is no longer this pass’s';
     const first = connector.import(settings, selection, undefined, stop.signal);
     const stopped = assert.rejects(first, (error) => error === lost);
     await paused.promise;

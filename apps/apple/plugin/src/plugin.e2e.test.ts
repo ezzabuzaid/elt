@@ -581,7 +581,7 @@ test(
       const status = await context(client, 'UserPromptSubmit');
       assert.match(
         status,
-        /^- Notes: synced at \d{4}-\d\d-\d\dT[\d:.]+Z\. Database: notes\/[0-9a-f]{16}\/data\.sqlite$/m,
+        /^- Notes: synced at \d{4}-\d\d-\d\dT[\d:.]+Z; data as of \d{4}-\d\d-\d\dT[\d:.]+Z\. Database: notes\/[0-9a-f]{16}\/data\.sqlite$/m,
       );
       assert.ok(
         status.includes(
@@ -637,6 +637,7 @@ test(
       assert.deepEqual((await rowOf(client, 'mail')).status, {
         state: 'off',
         text: 'Not connected.',
+        details: [],
         fullDiskAccess: false,
       });
       const notesChoices = await invoke(client, 'apple_connector_choices', {

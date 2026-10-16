@@ -20,13 +20,13 @@ const progress = (sync: PassStatus | null, guidance: string): string => {
       : `data as of ${sync.currentAsOf}`;
   switch (sync.state) {
     case 'succeeded':
-      return `synced at ${sync.completedAt}`;
+      return `synced at ${sync.completedAt}; ${since}`;
     case 'running':
       return `importing since ${sync.startedAt}; ${since}`;
     case 'cancelled':
       return `its last pass was stopped before it finished; ${since}`;
     case 'partial':
-      return `partly synced at ${sync.completedAt}: ${passFailure(sync, guidance)}`;
+      return `partly synced at ${sync.completedAt}: ${passFailure(sync, guidance)}; ${since}`;
     case 'failed':
       return `last sync failed at ${sync.completedAt}: ${passFailure(sync, guidance)}; ${since}`;
   }
@@ -75,10 +75,11 @@ export function chatStatus(plugin: ApplePlugin): {
   });
   return {
     state: state(
-      rows.map(({ connector, database, sync, presets }) => [
+      rows.map(({ connector, database, sync, presets, content }) => [
         connector,
         database,
         readiness(sync),
+        content,
         presets.map(({ file }) => file),
       ]),
     ),
@@ -94,6 +95,7 @@ export function chatStatus(plugin: ApplePlugin): {
           permissions,
           loaded,
           presets,
+          content,
         }) => {
           const page = `Its Apple page: ${connectorLink(connector)}`;
           // A selected connector that is not loaded does not import.
@@ -111,6 +113,7 @@ export function chatStatus(plugin: ApplePlugin): {
                 ];
           return [
             `- ${title}: ${progress(sync, permissions)}. ${where}${fix}`,
+            ...content.map((line) => `  ${line}`),
             ...presetsLine,
           ].join('\n');
         },

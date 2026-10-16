@@ -197,6 +197,9 @@ export class ApplePlugin {
           title: this.#loaded(item.connector)?.title ?? item.connector,
           database: existsSync(database) ? database : null,
           sync,
+          content: existsSync(database)
+            ? (this.#loaded(item.connector)?.contentStatus(database) ?? [])
+            : [],
           permissions: this.#permissions(item.connector),
         };
       }),
