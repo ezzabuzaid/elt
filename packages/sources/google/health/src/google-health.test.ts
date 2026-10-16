@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
+import { Docker, TestRun } from '@zukhruf/testing/docker';
+import { Postgres } from '@zukhruf/testing/postgres';
 import { http } from 'msw';
 import { setupServer } from 'msw/node';
 import postgres from 'postgres';
@@ -16,54 +17,18 @@ import { GoogleGrant, GoogleOAuthApp } from '@workspace/google-auth';
 
 import { GoogleHealthSource } from './google-health-source.ts';
 
-const testServer =
-  process.env.TEST_DATABASE_URL ??
-  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
+const databases = new Postgres({
+  docker: new Docker({ testRun: TestRun.fromEnvironment(process.env) }),
+});
 
 const RAW = 'google_health';
 
-/**
- * A database of its own for one test, dropped when the test ends: the
- * destination and checkpoints in the raw schema, and a session whose
- * unqualified names resolve there.
- */
-async function healthDatabase() {
-  await using stack = new AsyncDisposableStack();
-  const admin = postgres(testServer, { max: 1, onnotice: () => {} });
-  stack.defer(() => admin.end());
-  const name = `elt_test_${randomUUID().replaceAll('-', '')}`;
-  try {
-    await admin.unsafe(`CREATE DATABASE "${name}"`);
-  } catch (cause) {
-    throw new Error(
-      `Test Postgres at ${new URL(testServer).host} is unavailable. Start it with: npx nx run infra:up`,
-      { cause },
-    );
-  }
-  stack.defer(async () => {
-    await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);
-  });
-  const url = new URL(testServer);
-  url.pathname = `/${name}`;
-  const sql = postgres(url.href, {
-    max: 1,
-    onnotice: () => {},
-    connection: { search_path: RAW },
-  });
-  stack.defer(() => sql.end());
-  const history = new PostgresSyncHistory({ url: url.href });
-  await history.install();
-  const resources = stack.move();
-  return {
-    sql,
-    history,
-    destination: new PostgresDestination({ url: url.href, schema: RAW }),
-    checkpoints: new PostgresCheckpointStore({ url: url.href, schema: RAW }),
-    [Symbol.asyncDispose]: () => resources.disposeAsync(),
-  };
-}
-
-type Warehouse = Awaited<ReturnType<typeof healthDatabase>>;
+type Warehouse = {
+  sql: postgres.Sql;
+  history: PostgresSyncHistory;
+  destination: PostgresDestination;
+  checkpoints: PostgresCheckpointStore;
+};
 
 // A real OAuth client over a stored grant; its first call mints a token at
 // the token endpoint the test's server answers.
@@ -219,7 +184,7 @@ function google(account: Account) {
 
 // Loads every stream the source offers into its own table, overwriting it.
 async function load(
-  warehouse: Warehouse,
+  warehouse: Pick<Warehouse, 'history' | 'destination' | 'checkpoints'>,
   source = new GoogleHealthSource({ requester: signedIn() }),
 ) {
   const { streams } = await source.discover();
@@ -327,7 +292,28 @@ function sleepPoint(stageType: string) {
 }
 
 test('every stream loads into a table of its own, and a type the account has no data for loads an empty one', async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   using _google = google({ profile });
   const source = new GoogleHealthSource({ requester: signedIn() });
   const { streams } = await source.discover();
@@ -357,7 +343,28 @@ test('every stream loads into a table of its own, and a type the account has no 
 });
 
 test('a point deleted or changed upstream is gone or changed after the next run, with its child lists', async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const account: Account = {
     devices: [
       {
@@ -426,7 +433,28 @@ test('a point deleted or changed upstream is gone or changed after the next run,
 });
 
 test('an Apple Watch point relayed from Apple Health and a Fitbit point at the same instant both load, each with its origin', async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const sampleTime = {
     civilTime: {
       date: { day: 14, month: 10, year: 2026 },
@@ -471,7 +499,28 @@ test('an Apple Watch point relayed from Apple Health and a Fitbit point at the s
 });
 
 test('a daily type and the rollups start on the day the user joined, and the rollups reach today', async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   using _google = google({
     everyDay: {
       'daily-heart-rate-zones': (date) => ({
@@ -510,7 +559,19 @@ test('a daily type and the rollups start on the day the user joined, and the rol
 });
 
 test('an account with no Google Health profile fails the run as a config failure that tells the user how to fix it', async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  const warehouse = {
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   using _google = google({
     profile,
     answer: () =>
@@ -546,7 +607,28 @@ test('an account with no Google Health profile fails the run as a config failure
 });
 
 test('a measured instant to the microsecond, a session instant to the nanosecond, civil times, offsets and 64-bit counts load exactly', async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const workout = exercise('e1', 'Morning walk');
   // As live on 2026-10-15: an exercise an app wrote, to the nanosecond.
   workout.exercise.interval.startTime = '2026-07-01T15:55:06.688527107Z';
@@ -602,7 +684,28 @@ test('a measured instant to the microsecond, a session instant to the nanosecond
 });
 
 test('a stream whose read fails keeps the rows its last run loaded, while the other streams load', async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const account: Account = {
     points: {
       'heart-rate': [
@@ -689,7 +792,28 @@ test('a stream whose read fails keeps the rows its last run loaded, while the ot
 });
 
 test("each exercise's TCX export loads beside it, and an exercise Google keeps none for loads null", async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const tcx = '<?xml version="1.0"?><TrainingCenterDatabase/>';
   using _google = google({
     points: {
@@ -753,7 +877,28 @@ test(
 );
 
 test('a value Google could not compute, which it sends as the string NaN, loads as null beside the values it did compute', async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   // As live on 2026-10-15: a night before the baseline exists.
   using _google = google({
     points: {
@@ -786,7 +931,28 @@ test('a value Google could not compute, which it sends as the string NaN, loads 
 });
 
 test('a child list comes from the same read as its parent, though Google answers every read anew', async () => {
-  await using warehouse = await healthDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   // Each read of sleep gets a different night: a child stream that read on
   // its own would describe another night than its parent's row.
   const nights = [

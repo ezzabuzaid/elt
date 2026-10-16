@@ -1,55 +1,34 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { mkdtempDisposable, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { Docker, TestRun } from '@zukhruf/testing/docker';
+import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
 import { Automations } from './automations.ts';
 import { CareemCalories } from './careem-calories.ts';
 
-async function scratchDatabase() {
-  const server =
-    process.env.TEST_DATABASE_URL ??
-    'postgres://postgres:postgres@127.0.0.1:55432/postgres';
-  const admin = postgres(server, { max: 1, onnotice: () => {} });
-  const name = `proactive_test_${randomUUID().replaceAll('-', '')}`;
-  try {
-    await admin.unsafe(`CREATE DATABASE "${name}"`);
-    const url = new URL(server);
-    url.pathname = `/${name}`;
-    const sql = postgres(url.href, { max: 1, onnotice: () => {} });
-    // The marts views the Mail load publishes, with their column types as
-    // the live warehouse reports them: ids are text, deleted is a number.
-    await sql`CREATE SCHEMA marts`;
-    await sql`CREATE TABLE marts.mail_addresses (id text PRIMARY KEY, address text, comment text)`;
-    await sql`CREATE TABLE marts.mail_subjects (id text PRIMARY KEY, subject text)`;
-    await sql`CREATE TABLE marts.mail_messages (
-      id text PRIMARY KEY, sender text, subject text, "subjectPrefix" text,
-      "dateSent" timestamptz, "dateReceived" timestamptz,
-      deleted double precision DEFAULT 0
-    )`;
-    await sql`CREATE TABLE marts.mail_message_parts (
-      "messageId" text, "partId" text, "parentPartId" text, "contentType" text,
-      "isAttachment" boolean, text text, PRIMARY KEY ("messageId", "partId")
-    )`;
-    return {
-      sql,
-      async [Symbol.asyncDispose]() {
-        await sql.end();
-        try {
-          await admin.unsafe(`DROP DATABASE "${name}"`);
-        } finally {
-          await admin.end();
-        }
-      },
-    };
-  } catch (error) {
-    await admin.end();
-    throw error;
-  }
+const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
+const postgresql = new Postgres({ docker });
+
+async function createMailSchema(sql: postgres.Sql): Promise<void> {
+  // The marts views the Mail load publishes, with their column types as
+  // the live warehouse reports them: ids are text, deleted is a number.
+  await sql`CREATE SCHEMA marts`;
+  await sql`CREATE TABLE marts.mail_addresses (id text PRIMARY KEY, address text, comment text)`;
+  await sql`CREATE TABLE marts.mail_subjects (id text PRIMARY KEY, subject text)`;
+  await sql`CREATE TABLE marts.mail_messages (
+    id text PRIMARY KEY, sender text, subject text, "subjectPrefix" text,
+    "dateSent" timestamptz, "dateReceived" timestamptz,
+    deleted double precision DEFAULT 0
+  )`;
+  await sql`CREATE TABLE marts.mail_message_parts (
+    "messageId" text, "partId" text, "parentPartId" text, "contentType" text,
+    "isAttachment" boolean, text text, PRIMARY KEY ("messageId", "partId")
+  )`;
 }
 
 // A Careem receipt as Mail keeps it, with the numbers changed. Receipts before
@@ -91,8 +70,13 @@ const htmlReceipt = `<html><head><style>.bill { color: #222; }</style></head><bo
 <tr><td>&nbsp;</td></tr></table></body></html>`;
 
 test('each Careem delivery receipt in Mail matches once by its order ID, with the restaurant and the dishes for the agent', async () => {
-  await using database = await scratchDatabase();
-  const { sql } = database;
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await createMailSchema(sql);
   await sql`INSERT INTO marts.mail_addresses (id, address) VALUES
     ('1', 'email@transactional.careem.com'), ('2', 'orders@example-food.com')`;
   await sql`INSERT INTO marts.mail_subjects VALUES
@@ -143,11 +127,16 @@ test('each Careem delivery receipt in Mail matches once by its order ID, with th
 });
 
 test('a receipt whose body Mail downloads after the baseline makes the agent act once, when the body arrives', async () => {
-  await using database = await scratchDatabase();
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await createMailSchema(sql);
   await using directory = await mkdtempDisposable(
     join(tmpdir(), 'proactive-test-'),
   );
-  const { sql } = database;
   const shown = join(directory.path, 'shown.jsonl');
   const asked = join(directory.path, 'asked.jsonl');
   await writeFile(shown, '');

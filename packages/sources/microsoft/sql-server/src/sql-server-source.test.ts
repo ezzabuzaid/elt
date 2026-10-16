@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
+import { Docker, TestRun } from '@zukhruf/testing/docker';
+import { Postgres } from '@zukhruf/testing/postgres';
+import {
+  type Database,
+  SQL_SERVER_FULL_IMAGE,
+  SqlServer,
+} from '@zukhruf/testing/sqlserver';
 import sql from 'mssql';
 import postgres from 'postgres';
 
@@ -19,110 +26,38 @@ import {
 import { sqlServerCopies } from './sql-server-copies.ts';
 import { SqlServerSource } from './sql-server-source.ts';
 
-const sqlServer =
-  process.env.TEST_SQLSERVER_CONNECTION_STRING ??
-  'Server=localhost,51433;Database=master;User Id=sa;Password=Context-Compiler-1;Encrypt=true;TrustServerCertificate=true';
-const postgresServer =
-  process.env.TEST_DATABASE_URL ??
-  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
+const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
+const sqlServer = new SqlServer({ docker, image: SQL_SERVER_FULL_IMAGE });
+const postgresServer = new Postgres({ docker });
 
-/**
- * A SQL Server database of its own for one test, dropped with every login it
- * made when the test ends. `settings` are ALTER DATABASE options applied
- * before anyone else connects. `run` executes statements as the
- * administrator; `login` makes a db_datareader login, runs `setup` with its
- * user in place of {user}, and returns the user and its connection string.
- */
-async function scratchSqlServer(settings: readonly string[] = []) {
-  const config = sql.ConnectionPool.parseConnectionString(sqlServer);
-  const name = `source_test_${randomUUID().replaceAll('-', '')}`;
-  const master = new sql.ConnectionPool(config);
-  try {
-    await master.connect();
-  } catch (cause) {
-    throw new Error(
-      `Test SQL Server at ${config.server}:${config.port} is unavailable. Start it with: npx nx run infra:up-sqlserver`,
-      { cause },
+// A real db_datareader identity, with the additional grants this test needs.
+// The database belongs to Zukhruf; this scope owns only the server login.
+async function readOnlyLogin(
+  database: Database,
+  admin: sql.ConnectionPool,
+  setup: string,
+) {
+  await using resources = new AsyncDisposableStack();
+  const user = `reader_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const password = `Reader-${randomUUID()}`;
+  await admin
+    .request()
+    .batch(
+      `CREATE LOGIN [${user}] WITH PASSWORD = '${password}', CHECK_POLICY = OFF`,
     );
-  }
-  const logins: string[] = [];
-  const admin = new sql.ConnectionPool({ ...config, database: name });
-  const connectionString = (user: string, password: string) =>
-    `Server=${config.server},${config.port};Database=${name};User Id=${user};Password=${password};Encrypt=true;TrustServerCertificate=true`;
-  try {
-    await master
-      .request()
-      .batch(
-        `CREATE DATABASE [${name}]; ${settings.map((setting) => `ALTER DATABASE [${name}] SET ${setting};`).join(' ')}`,
-      );
-    await admin.connect();
-  } catch (error) {
-    await master.close();
-    throw error;
-  }
-  return {
-    administrator: connectionString(config.user ?? '', config.password ?? ''),
-    async run(statements: string) {
-      await admin.request().batch(statements);
-    },
-    async login(setup = '') {
-      const user = `reader_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
-      const password = `Reader-${randomUUID()}`;
-      logins.push(user);
-      await master
-        .request()
-        .batch(
-          `CREATE LOGIN [${user}] WITH PASSWORD = '${password}', CHECK_POLICY = OFF`,
-        );
-      await admin
-        .request()
-        .batch(
-          `CREATE USER [${user}] FOR LOGIN [${user}]; ALTER ROLE db_datareader ADD MEMBER [${user}]; ${setup.replaceAll('{user}', `[${user}]`)}`,
-        );
-      return {
-        user: `[${user}]`,
-        connectionString: connectionString(user, password),
-      };
-    },
-    async [Symbol.asyncDispose]() {
-      await admin.close();
-      await master
-        .request()
-        .batch(
-          `ALTER DATABASE [${name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [${name}]; ${logins.map((user) => `DROP LOGIN [${user}];`).join(' ')}`,
-        );
-      await master.close();
-    },
-  };
-}
-
-/** A Postgres database of its own for one test, dropped when the test ends. */
-async function scratchWarehouse() {
-  const admin = postgres(postgresServer, { max: 1, onnotice: () => {} });
-  const name = `source_test_${randomUUID().replaceAll('-', '')}`;
-  try {
-    await admin.unsafe(`CREATE DATABASE "${name}"`);
-  } catch (cause) {
-    await admin.end();
-    throw new Error(
-      `Test Postgres at ${new URL(postgresServer).host} is unavailable. Start it with: npx nx run infra:up`,
-      { cause },
+  resources.defer(async () => {
+    await admin.request().batch(`DROP LOGIN [${user}]`);
+  });
+  await admin
+    .request()
+    .batch(
+      `CREATE USER [${user}] FOR LOGIN [${user}]; ALTER ROLE db_datareader ADD MEMBER [${user}]; ${setup.replaceAll('{user}', `[${user}]`)}`,
     );
-  }
-  const url = new URL(postgresServer);
-  url.pathname = `/${name}`;
-  const warehouse = postgres(url.href, { max: 2, onnotice: () => {} });
-  const history = new PostgresSyncHistory({ url: url.href });
-  await history.install();
+  const owned = resources.move();
   return {
-    url: url.href,
-    sql: warehouse,
-    history,
-    async [Symbol.asyncDispose]() {
-      await warehouse.end();
-      await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);
-      await admin.end();
-    },
+    user: `[${user}]`,
+    connectionString: `Server=${database.host},${database.port};Database=${database.database};User Id=${user};Password=${password};Encrypt=true;TrustServerCertificate=true`,
+    [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
 }
 
@@ -133,7 +68,8 @@ async function scratchWarehouse() {
  */
 function syncer(
   connectionString: string,
-  { url, history }: { url: string; history: PostgresSyncHistory },
+  url: string,
+  history: PostgresSyncHistory,
 ) {
   const database = new SqlServerDatabase(connectionString);
   const destination = new PostgresDestination({
@@ -191,22 +127,56 @@ function failureTypes(error: {
 
 for (const snapshot of [false, true])
   test(`a Change Tracking table loads every row, then applies what changed, deletions included, and writes nothing when nothing changed${snapshot ? ', in a database that allows snapshot isolation' : ''}`, async () => {
-    await using server = await scratchSqlServer(
-      snapshot ? ['ALLOW_SNAPSHOT_ISOLATION ON'] : [],
+    await using server = await sqlServer.database();
+    if (snapshot) {
+      await using configuration = new AsyncDisposableStack();
+      const master = configuration.adopt(
+        new sql.ConnectionPool({
+          ...sql.ConnectionPool.parseConnectionString(server.connectionString),
+          database: 'master',
+        }),
+        (pool) => pool.close(),
+      );
+      await master.connect();
+      await master
+        .request()
+        .batch(
+          `ALTER DATABASE [${server.database}] SET ALLOW_SNAPSHOT_ISOLATION ON;`,
+        );
+    }
+    await using warehouse = await postgresServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
     );
-    await using warehouse = await scratchWarehouse();
-    await server.run(`
+    await admin.connect();
+    const warehouseSql = clients.adopt(
+      postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+      (client) => client.end(),
+    );
+    const history = new PostgresSyncHistory({
+      url: warehouse.connectionString,
+    });
+    await history.install();
+    await admin.request().batch(`
       ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
       CREATE TABLE dbo.orders (id int PRIMARY KEY, total decimal(9, 2) NOT NULL);
       ALTER TABLE dbo.orders ENABLE CHANGE_TRACKING;
       INSERT dbo.orders VALUES (1, 1.00), (2, 2.00), (3, 3.00);`);
-    const reader = await server.login(
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
       'GRANT VIEW CHANGE TRACKING ON dbo.orders TO {user};',
     );
-    const sync = syncer(reader.connectionString, warehouse);
+    const sync = syncer(
+      reader.connectionString,
+      warehouse.connectionString,
+      history,
+    );
     const loaded = async () =>
       (
-        await warehouse.sql`SELECT id::int AS id, total::text FROM raw.dbo_orders ORDER BY id`
+        await warehouseSql`SELECT id::int AS id, total::text FROM raw.dbo_orders ORDER BY id`
       ).map(({ id, total }) => [id, total]);
 
     const first = await sync();
@@ -216,9 +186,11 @@ for (const snapshot of [false, true])
       [3, '3.00'],
     ]);
     assert.equal(first.results[0]?.count, 3);
-    await server.run(
-      'UPDATE dbo.orders SET total = 20.00 WHERE id = 2; DELETE dbo.orders WHERE id = 3; INSERT dbo.orders VALUES (4, 4.00);',
-    );
+    await admin
+      .request()
+      .batch(
+        'UPDATE dbo.orders SET total = 20.00 WHERE id = 2; DELETE dbo.orders WHERE id = 3; INSERT dbo.orders VALUES (4, 4.00);',
+      );
 
     const second = await sync();
 
@@ -239,8 +211,20 @@ for (const snapshot of [false, true])
   });
 
 test('tables and columns named as Postgres cannot hold them load whole, under names Airbyte would give, and changes apply by their renamed key', async () => {
-  await using server = await scratchSqlServer();
-  await using warehouse = await scratchWarehouse();
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  await history.install();
   const sha8 = (name: string) =>
     createHash('sha256').update(name).digest('hex').slice(0, 8);
   // A name past 63 bytes keeps its first 54, `_` and a hash of the name.
@@ -248,7 +232,7 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
   const part = 'k'.repeat(100);
   const placed = 'd'.repeat(60);
   const longTable = 't'.repeat(100);
-  await server.run(`
+  await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.[Line Items] (
       [last] int NOT NULL,
@@ -264,16 +248,22 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
       (2, 1, N'two', 2.50, '2025-01-02T03:04:05-01:00', 1.5);
     CREATE TABLE dbo.[${longTable}] (id int PRIMARY KEY);
     INSERT dbo.[${longTable}] VALUES (7);`);
-  const reader = await server.login(
+  await using reader = await readOnlyLogin(
+    server,
+    admin,
     'GRANT VIEW CHANGE TRACKING ON dbo.[Line Items] TO {user};',
   );
-  const sync = syncer(reader.connectionString, warehouse);
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
   // The syncer names each raw table <schema>_<table>; the destination then
   // keeps a hash of a name sanitizing changed, and fits a long one.
   const items = `dbo_Line_Items_${sha8('dbo_Line Items')}`;
   const loaded = async () =>
     (
-      await warehouse.sql.unsafe(
+      await warehouseSql.unsafe(
         `SELECT "last"::int AS last, loaded_at_1, "Unit_Price"::text AS price,
           "${fitted(`${placed}_offset`)}"::int AS offset, xmin_1
           FROM raw."${items}" ORDER BY 1`,
@@ -288,14 +278,14 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
   ]);
   assert.deepEqual(
     [
-      ...(await warehouse.sql.unsafe(
+      ...(await warehouseSql.unsafe(
         `SELECT id::int AS id FROM raw."${fitted(`dbo_${longTable}`)}"`,
       )),
     ].map(({ id }) => id),
     [7],
   );
   const [comment] =
-    await warehouse.sql`SELECT col_description(${`raw."${items}"`}::regclass, attnum) AS text
+    await warehouseSql`SELECT col_description(${`raw."${items}"`}::regclass, attnum) AS text
     FROM pg_attribute WHERE attrelid = ${`raw."${items}"`}::regclass AND attname = 'loaded_at_1'`;
   assert.match(String(comment?.text), /Source field: "loaded_at"\.$/);
   assert.equal(
@@ -303,9 +293,11 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
     2,
   );
 
-  await server.run(
-    "UPDATE dbo.[Line Items] SET loaded_at = N'uno' WHERE [last] = 1; DELETE dbo.[Line Items] WHERE [last] = 2;",
-  );
+  await admin
+    .request()
+    .batch(
+      "UPDATE dbo.[Line Items] SET loaded_at = N'uno' WHERE [last] = 1; DELETE dbo.[Line Items] WHERE [last] = 2;",
+    );
   const second = await sync();
 
   assert.deepEqual(await loaded(), [
@@ -320,55 +312,93 @@ test('tables and columns named as Postgres cannot hold them load whole, under na
 });
 
 test('a truncated Change Tracking table, whose history no longer reaches the last sync, is loaded again in full', async () => {
-  await using server = await scratchSqlServer();
-  await using warehouse = await scratchWarehouse();
-  await server.run(`
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  await history.install();
+  await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.items (id int PRIMARY KEY, name nvarchar(10) NOT NULL);
     ALTER TABLE dbo.items ENABLE CHANGE_TRACKING;
     INSERT dbo.items VALUES (1, N'one'), (2, N'two');`);
-  const reader = await server.login(
+  await using reader = await readOnlyLogin(
+    server,
+    admin,
     'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user};',
   );
-  const sync = syncer(reader.connectionString, warehouse);
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
   await sync();
 
-  await server.run(
-    "TRUNCATE TABLE dbo.items; INSERT dbo.items VALUES (3, N'three');",
-  );
+  await admin
+    .request()
+    .batch("TRUNCATE TABLE dbo.items; INSERT dbo.items VALUES (3, N'three');");
   await sync();
 
   assert.deepEqual(
     [
-      ...(await warehouse.sql`SELECT id::int AS id, name FROM raw.dbo_items ORDER BY id`),
+      ...(await warehouseSql`SELECT id::int AS id, name FROM raw.dbo_items ORDER BY id`),
     ],
     [{ id: 3, name: 'three' }],
   );
 });
 
 test('a column added to a Change Tracking table reaches every row: the table loads again', async () => {
-  await using server = await scratchSqlServer();
-  await using warehouse = await scratchWarehouse();
-  await server.run(`
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  await history.install();
+  await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.items (id int PRIMARY KEY, name nvarchar(10) NOT NULL);
     ALTER TABLE dbo.items ENABLE CHANGE_TRACKING;
     INSERT dbo.items VALUES (1, N'one'), (2, N'two');`);
-  const reader = await server.login(
+  await using reader = await readOnlyLogin(
+    server,
+    admin,
     'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user};',
   );
-  const sync = syncer(reader.connectionString, warehouse);
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
   await sync();
 
-  await server.run(
-    "ALTER TABLE dbo.items ADD size char(1) NULL; EXEC('UPDATE dbo.items SET size = ''L'' WHERE id = 1');",
-  );
+  await admin
+    .request()
+    .batch(
+      "ALTER TABLE dbo.items ADD size char(1) NULL; EXEC('UPDATE dbo.items SET size = ''L'' WHERE id = 1');",
+    );
   const { results } = await sync();
 
   assert.equal(results[0]?.count, 2);
   assert.deepEqual(
     [
-      ...(await warehouse.sql`SELECT id::int AS id, name, size FROM raw.dbo_items ORDER BY id`),
+      ...(await warehouseSql`SELECT id::int AS id, name, size FROM raw.dbo_items ORDER BY id`),
     ],
     [
       { id: 1, name: 'one', size: 'L' },
@@ -378,26 +408,44 @@ test('a column added to a Change Tracking table reaches every row: the table loa
 });
 
 test('a column added to a rowversion table reaches every stored row, and a row deleted upstream stays loaded', async () => {
-  await using server = await scratchSqlServer();
-  await using warehouse = await scratchWarehouse();
-  await server.run(`
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  await history.install();
+  await admin.request().batch(`
     CREATE TABLE dbo.events (id int PRIMARY KEY, kind varchar(10) NOT NULL, stamp rowversion);
     INSERT dbo.events (id, kind) VALUES (1, 'open'), (2, 'open');`);
-  const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse);
+  await using reader = await readOnlyLogin(server, admin, '');
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
   await sync();
   // A default fills the existing row without bumping its rowversion, so only
   // a read from the first row brings it.
-  await server.run(
-    "DELETE dbo.events WHERE id = 2; ALTER TABLE dbo.events ADD size char(1) NOT NULL DEFAULT 'M';",
-  );
+  await admin
+    .request()
+    .batch(
+      "DELETE dbo.events WHERE id = 2; ALTER TABLE dbo.events ADD size char(1) NOT NULL DEFAULT 'M';",
+    );
 
   const { results } = await sync();
 
   assert.equal(results[0]?.count, 1);
   assert.deepEqual(
     [
-      ...(await warehouse.sql`SELECT id::int AS id, kind, size FROM raw.dbo_events ORDER BY id`),
+      ...(await warehouseSql`SELECT id::int AS id, kind, size FROM raw.dbo_events ORDER BY id`),
     ],
     [
       { id: 1, kind: 'open', size: 'M' },
@@ -407,20 +455,53 @@ test('a column added to a rowversion table reaches every stored row, and a row d
 });
 
 test('a rowversion table loads inserts and updates, a row still being written arrives on a later sync, and a deleted row stays loaded', async () => {
-  await using server = await scratchSqlServer(['READ_COMMITTED_SNAPSHOT ON']);
-  await using warehouse = await scratchWarehouse();
-  await server.run(`
+  await using server = await sqlServer.database();
+  {
+    await using configuration = new AsyncDisposableStack();
+    const master = configuration.adopt(
+      new sql.ConnectionPool({
+        ...sql.ConnectionPool.parseConnectionString(server.connectionString),
+        database: 'master',
+      }),
+      (pool) => pool.close(),
+    );
+    await master.connect();
+    await master
+      .request()
+      .batch(
+        `ALTER DATABASE [${server.database}] SET READ_COMMITTED_SNAPSHOT ON;`,
+      );
+  }
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  await history.install();
+  await admin.request().batch(`
     CREATE TABLE dbo.events (id int PRIMARY KEY, kind varchar(10) NOT NULL, stamp rowversion);
     INSERT dbo.events (id, kind) VALUES (1, 'open'), (2, 'open');`);
-  const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse);
+  await using reader = await readOnlyLogin(server, admin, '');
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
   const loaded = async () =>
-    (await warehouse.sql`SELECT id, kind FROM raw.dbo_events ORDER BY id`).map(
+    (await warehouseSql`SELECT id, kind FROM raw.dbo_events ORDER BY id`).map(
       ({ id, kind }) => `${id}:${kind}`,
     );
   await sync();
-  const writer = new sql.ConnectionPool(
-    sql.ConnectionPool.parseConnectionString(server.administrator),
+  const writer = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
   );
   await writer.connect();
   const open = new sql.Transaction(writer);
@@ -430,9 +511,11 @@ test('a rowversion table loads inserts and updates, a row still being written ar
     await new sql.Request(open).query(
       "INSERT dbo.events (id, kind) VALUES (3, 'open')",
     );
-    await server.run(
-      "UPDATE dbo.events SET kind = 'closed' WHERE id = 1; DELETE dbo.events WHERE id = 2;",
-    );
+    await admin
+      .request()
+      .batch(
+        "UPDATE dbo.events SET kind = 'closed' WHERE id = 1; DELETE dbo.events WHERE id = 2;",
+      );
 
     await sync();
 
@@ -445,33 +528,50 @@ test('a rowversion table loads inserts and updates, a row still being written ar
     assert.equal(results[0]?.count, 0);
   } finally {
     if (!committed) await open.rollback();
-    await writer.close();
   }
 });
 
 test('a table with no change signal is read in full each sync, so a deleted row disappears', async () => {
-  await using server = await scratchSqlServer();
-  await using warehouse = await scratchWarehouse();
-  await server.run(`
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  await history.install();
+  await admin.request().batch(`
     CREATE TABLE dbo.log (message nvarchar(20) NOT NULL);
     CREATE TABLE dbo.codes (code char(2) PRIMARY KEY, label nvarchar(20) NOT NULL);
     INSERT dbo.log VALUES (N'started'), (N'stopped');
     INSERT dbo.codes VALUES ('EU', N'Europe'), ('AS', N'Asia');`);
-  const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse);
+  await using reader = await readOnlyLogin(server, admin, '');
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
   const loaded = async () => ({
     log: (
-      await warehouse.sql`SELECT message FROM raw.dbo_log ORDER BY message`
+      await warehouseSql`SELECT message FROM raw.dbo_log ORDER BY message`
     ).map(({ message }) => message),
     codes: (
-      await warehouse.sql`SELECT code FROM raw.dbo_codes ORDER BY code`
+      await warehouseSql`SELECT code FROM raw.dbo_codes ORDER BY code`
     ).map(({ code }) => code),
   });
   await sync();
 
-  await server.run(
-    "DELETE dbo.log WHERE message = N'started'; DELETE dbo.codes WHERE code = 'AS';",
-  );
+  await admin
+    .request()
+    .batch(
+      "DELETE dbo.log WHERE message = N'started'; DELETE dbo.codes WHERE code = 'AS';",
+    );
   await sync();
 
   assert.deepEqual(await loaded(), { log: ['stopped'], codes: ['EU'] });
@@ -483,20 +583,40 @@ test(
   'a first load that fails after a committed page resumes after it, loading the rest exactly once',
   { timeout: 300_000 },
   async () => {
-    await using server = await scratchSqlServer();
-    await using warehouse = await scratchWarehouse();
+    await using server = await sqlServer.database();
+    await using warehouse = await postgresServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    const warehouseSql = clients.adopt(
+      postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+      (client) => client.end(),
+    );
+    const history = new PostgresSyncHistory({
+      url: warehouse.connectionString,
+    });
+    await history.install();
     // One page and five rows more; a lone surrogate on the second page fails
     // it. Pages follow id, so id 10003 is always on the second page.
-    await server.run(`
+    await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.items (id int PRIMARY KEY, name nvarchar(10) NOT NULL);
     ALTER TABLE dbo.items ENABLE CHANGE_TRACKING;
     INSERT dbo.items SELECT TOP (10005) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), N'item' FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
     UPDATE dbo.items SET name = NCHAR(55296) WHERE id = 10003;`);
-    const reader = await server.login(
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
       'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user};',
     );
-    const sync = syncer(reader.connectionString, warehouse);
+    const sync = syncer(
+      reader.connectionString,
+      warehouse.connectionString,
+      history,
+    );
 
     const error = await failing(sync);
 
@@ -507,10 +627,12 @@ test(
     assert.equal(error.results[0]?.copy.id, 'dbo.items');
     const count = async () =>
       (
-        await warehouse.sql`SELECT count(*)::int AS rows, count(DISTINCT id)::int AS ids FROM raw.dbo_items`
+        await warehouseSql`SELECT count(*)::int AS rows, count(DISTINCT id)::int AS ids FROM raw.dbo_items`
       )[0];
     assert.deepEqual({ ...(await count()) }, { rows: 10000, ids: 10000 });
-    await server.run("UPDATE dbo.items SET name = N'fixed' WHERE id = 10003;");
+    await admin
+      .request()
+      .batch("UPDATE dbo.items SET name = N'fixed' WHERE id = 10003;");
     const { results } = await sync();
     assert.equal(results[0]?.count, 5);
     assert.deepEqual({ ...(await count()) }, { rows: 10005, ids: 10005 });
@@ -518,9 +640,21 @@ test(
 );
 
 test('a tracked table the login cannot track falls back to its rowversion or to full reads, says which grant would help, and a read refused later fails only its own table', async () => {
-  await using server = await scratchSqlServer();
-  await using warehouse = await scratchWarehouse();
-  await server.run(`
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  await history.install();
+  await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.plain (id int PRIMARY KEY, name nvarchar(10) NOT NULL);
     CREATE TABLE dbo.stamped (id int PRIMARY KEY, name nvarchar(10) NOT NULL, stamp rowversion);
@@ -528,8 +662,12 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
     ALTER TABLE dbo.stamped ENABLE CHANGE_TRACKING;
     INSERT dbo.plain VALUES (1, N'a');
     INSERT dbo.stamped (id, name) VALUES (1, N'b');`);
-  const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse);
+  await using reader = await readOnlyLogin(server, admin, '');
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
 
   const { source } = await sync();
 
@@ -543,15 +681,17 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
   assert.equal(stamped?.sourceDefinedCursor, true);
   assert.equal(stamped?.emitsDeletes, undefined);
   const names = async () => ({
-    plain: (await warehouse.sql`SELECT name FROM raw.dbo_plain`).map(
+    plain: (await warehouseSql`SELECT name FROM raw.dbo_plain`).map(
       ({ name }) => name,
     ),
-    stamped: (await warehouse.sql`SELECT name FROM raw.dbo_stamped`).map(
+    stamped: (await warehouseSql`SELECT name FROM raw.dbo_stamped`).map(
       ({ name }) => name,
     ),
   });
   assert.deepEqual(await names(), { plain: ['a'], stamped: ['b'] });
-  await server.run("UPDATE dbo.stamped SET name = N'c' WHERE id = 1;");
+  await admin
+    .request()
+    .batch("UPDATE dbo.stamped SET name = N'c' WHERE id = 1;");
   const { results } = await sync();
   // The full read loads its row again; the rowversion read only the update.
   assert.deepEqual(
@@ -566,21 +706,21 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
   const discovered = await SqlServerSource.discover(
     new SqlServerDatabase(reader.connectionString),
   );
-  await server.run(`DENY SELECT ON dbo.plain TO ${reader.user};`);
+  await admin.request().batch(`DENY SELECT ON dbo.plain TO ${reader.user};`);
   const destination = new PostgresDestination({
-    url: warehouse.url,
+    url: warehouse.connectionString,
     schema: 'raw',
   });
   const error = await failing(() =>
     new Pipeline({
-      history: warehouse.history,
+      history,
       connections: [
         new Connection({
           name: 'sql-server',
           source: discovered,
           destination,
           checkpoints: new PostgresCheckpointStore({
-            url: warehouse.url,
+            url: warehouse.connectionString,
             schema: 'raw',
           }),
           steps: sqlServerCopies(discovered, (stream) =>
@@ -612,9 +752,21 @@ test('a tracked table the login cannot track falls back to its rowversion or to 
 });
 
 test('every type arrives in Postgres exactly, beside the offset and base type it needs, under the descriptions SQL Server keeps', async () => {
-  await using server = await scratchSqlServer();
-  await using warehouse = await scratchWarehouse();
-  await server.run(`
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  await history.install();
+  await admin.request().batch(`
     CREATE TABLE dbo.everything (
       id bigint PRIMARY KEY, amount decimal(38, 10), cash money, wide float,
       stamp7 datetime2(7), stamp3 datetime2(3), legacy datetime, coarse smalldatetime,
@@ -630,12 +782,16 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
        0x00FF, '/1/2/', geography::STGeomFromText('POINT(-122.349 47.651 10 3)', 4326), CAST(1.50 AS decimal(5, 2)),
        N'hello', 'someone@example.com'),
       (1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);`);
-  const reader = await server.login();
-  const sync = syncer(reader.connectionString, warehouse);
+  await using reader = await readOnlyLogin(server, admin, '');
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
 
   await sync();
 
-  const [row] = await warehouse.sql`
+  const [row] = await warehouseSql`
     SELECT id::text, amount::text, cash::text, wide, stamp7, stamp3::text, legacy::text, coarse::text,
       moment, moment_offset, moment3, moment3_offset, clock, clock0::text, day::text,
       encode(bytes, 'hex') AS bytes, node, place, anything, anything_type, version::text ~ '^[0-9]+$' AS version, note, email
@@ -669,7 +825,7 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
     },
   );
   // A null column leaves its sibling null too.
-  const [empty] = await warehouse.sql`
+  const [empty] = await warehouseSql`
     SELECT moment, moment_offset, anything, anything_type, node, place FROM raw.dbo_everything WHERE id = 1`;
   assert.deepEqual(
     { ...empty },
@@ -684,7 +840,7 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
   );
   const comments = Object.fromEntries(
     (
-      await warehouse.sql`
+      await warehouseSql`
         SELECT attname AS name, col_description(attrelid, attnum) AS comment
         FROM pg_attribute WHERE attrelid = 'raw.dbo_everything'::regclass AND attname IN ('note', 'email', 'moment_offset', 'anything_type', 'version')`
     ).map(({ name, comment }) => [name, comment]),
@@ -701,7 +857,7 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
   );
   assert.match(String(comments.version), /rowversion/);
   const [table] =
-    await warehouse.sql`SELECT obj_description('raw.dbo_everything'::regclass) AS comment`;
+    await warehouseSql`SELECT obj_description('raw.dbo_everything'::regclass) AS comment`;
   assert.match(
     String(table?.comment),
     /Source record meaning: Every type, once\. Read by its rowversion column version: inserts and updates apply; deletions are not seen\./,
@@ -709,15 +865,21 @@ test('every type arrives in Postgres exactly, beside the offset and base type it
 });
 
 test('discovery keeps only the schemas asked for, and refuses a schema asked for that holds no readable table', async () => {
-  await using server = await scratchSqlServer();
-  await server.run(`
+  await using server = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await admin.request().batch(`
     EXEC('CREATE SCHEMA sales');
     EXEC('CREATE SCHEMA audit');
     CREATE TABLE sales.orders (id int PRIMARY KEY);
     CREATE TABLE audit.events (id int PRIMARY KEY);
     -- Outside the schemas asked for, so a filter that keeps it is caught.
     CREATE TABLE dbo.other (id int PRIMARY KEY);`);
-  const reader = await server.login();
+  await using reader = await readOnlyLogin(server, admin, '');
   const database = new SqlServerDatabase(reader.connectionString);
 
   const sales = await SqlServerSource.discover(database, {
@@ -735,9 +897,21 @@ test('discovery keeps only the schemas asked for, and refuses a schema asked for
 });
 
 test('a column already named as a datetimeoffset or sql_variant sibling would be leaves the sibling the next free name, and changes still apply by key', async () => {
-  await using server = await scratchSqlServer();
-  await using warehouse = await scratchWarehouse();
-  await server.run(`
+  await using server = await sqlServer.database();
+  await using warehouse = await postgresServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(server.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const warehouseSql = clients.adopt(
+    postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+    (client) => client.end(),
+  );
+  const history = new PostgresSyncHistory({ url: warehouse.connectionString });
+  await history.install();
+  await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.clashing (
       anything sql_variant PRIMARY KEY,
@@ -750,13 +924,19 @@ test('a column already named as a datetimeoffset or sql_variant sibling would be
     -- One row each: a VALUES list gives a column one type across its rows.
     INSERT dbo.clashing VALUES (CAST(1 AS int), 7, '2025-01-02T03:04:05+02:00', 8, 9, 10);
     INSERT dbo.clashing VALUES (CAST(N'two' AS nvarchar(10)), 70, '2025-01-02T03:04:05-01:00', 80, 90, 100);`);
-  const reader = await server.login(
+  await using reader = await readOnlyLogin(
+    server,
+    admin,
     'GRANT VIEW CHANGE TRACKING ON dbo.clashing TO {user};',
   );
-  const sync = syncer(reader.connectionString, warehouse);
+  const sync = syncer(
+    reader.connectionString,
+    warehouse.connectionString,
+    history,
+  );
   const loaded = async () =>
     (
-      await warehouse.sql`SELECT anything, anything_type::int, anything_type_1,
+      await warehouseSql`SELECT anything, anything_type::int, anything_type_1,
         placed_offset::int, placed_offset_1::int, "PLACED_OFFSET_2"::int AS upper, placed_offset_3::int
         FROM raw.dbo_clashing ORDER BY anything`
     ).map((row) => ({ ...row }));
@@ -784,13 +964,15 @@ test('a column already named as a datetimeoffset or sql_variant sibling would be
     },
   ]);
   const [placed] =
-    await warehouse.sql`SELECT col_description('raw.dbo_clashing'::regclass, attnum) AS text
+    await warehouseSql`SELECT col_description('raw.dbo_clashing'::regclass, attnum) AS text
     FROM pg_attribute WHERE attrelid = 'raw.dbo_clashing'::regclass AND attname = 'placed'`;
   assert.match(String(placed?.text), /placed_offset_3 holds the offset/);
 
-  await server.run(
-    "DELETE dbo.clashing WHERE anything = CAST(N'two' AS nvarchar(10));",
-  );
+  await admin
+    .request()
+    .batch(
+      "DELETE dbo.clashing WHERE anything = CAST(N'two' AS nvarchar(10));",
+    );
   const { results } = await sync();
 
   // Applied by Change Tracking as one deletion, not by reading the table again.
@@ -808,14 +990,22 @@ test(
   'a watch wakes only the streams whose change counter moved',
   { timeout: 180_000 },
   async () => {
-    await using server = await scratchSqlServer();
-    await server.run(`
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.tracked (id int PRIMARY KEY);
     ALTER TABLE dbo.tracked ENABLE CHANGE_TRACKING;
     CREATE TABLE dbo.stamped (id int PRIMARY KEY, stamp rowversion);
     CREATE TABLE dbo.plain (id int PRIMARY KEY);`);
-    const reader = await server.login(
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
       'GRANT VIEW CHANGE TRACKING ON dbo.tracked TO {user};',
     );
     const source = await SqlServerSource.discover(
@@ -837,9 +1027,9 @@ test(
         'dbo.tracked',
       ]);
 
-      await server.run('INSERT dbo.tracked VALUES (1);');
+      await admin.request().batch('INSERT dbo.tracked VALUES (1);');
       assert.deepEqual(await woken(), ['dbo.tracked']);
-      await server.run('INSERT dbo.stamped (id) VALUES (1);');
+      await admin.request().batch('INSERT dbo.stamped (id) VALUES (1);');
       assert.deepEqual(await woken(), ['dbo.stamped']);
     } finally {
       controller.abort();

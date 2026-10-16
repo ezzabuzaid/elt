@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
+import { Docker, TestRun } from '@zukhruf/testing/docker';
+import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
 import { Eca } from '@workspace/eca';
@@ -9,37 +10,16 @@ import { Eca } from '@workspace/eca';
 import { ClayBdAgentMessages } from './clay-bd-agent-messages.ts';
 import { ClayDataHubMcpMessages } from './clay-data-hub-mcp-messages.ts';
 
-async function scratchDatabase() {
-  const server =
-    process.env.TEST_DATABASE_URL ??
-    'postgres://postgres:postgres@127.0.0.1:55432/postgres';
-  const admin = postgres(server, { max: 1, onnotice: () => {} });
-  const name = `proactive_test_${randomUUID().replaceAll('-', '')}`;
-  try {
-    await admin.unsafe(`CREATE DATABASE "${name}"`);
-    const url = new URL(server);
-    url.pathname = `/${name}`;
-    const sql = postgres(url.href, { max: 1, onnotice: () => {} });
-    return {
-      sql,
-      async [Symbol.asyncDispose]() {
-        await sql.end();
-        try {
-          await admin.unsafe(`DROP DATABASE "${name}"`);
-        } finally {
-          await admin.end();
-        }
-      },
-    };
-  } catch (error) {
-    await admin.end();
-    throw error;
-  }
-}
+const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
+const postgresql = new Postgres({ docker });
 
 test('only Clay messages about the BD agent or Data Hub MCP match, with conversation context', async () => {
-  await using database = await scratchDatabase();
-  const { sql } = database;
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
   await sql`CREATE SCHEMA marts`;
   await sql`CREATE TABLE marts.slack_messages (
     "workspaceId" text, "channelId" text, ts text, "userId" text,

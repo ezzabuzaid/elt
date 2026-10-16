@@ -101,9 +101,10 @@ Rules keep their keys only during one run. A restart takes a new baseline from
 the warehouse before refreshing. No schedule or persistent background process
 is installed.
 
-Run `npx nx run proactive:typecheck` and `npx nx run proactive:test`. Tests use
-the already-running local Postgres server (or `TEST_DATABASE_URL`), create one
-temporary database per database test and drop it when done. The generator and
+Run `npx nx run proactive:typecheck` and `npx nx run proactive:test`. Tests require
+Docker and use `@zukhruf/testing` to acquire an isolated PostgreSQL database
+per test. The Nx target runs through `zukhruf-docker-tests`; each test closes
+its clients and drops its database when done. The generator and
 agent tests use a local executable in place of the authenticated Codex
 service, and the automations test one in place of `osascript`; they make no AI
 request and show no notification.

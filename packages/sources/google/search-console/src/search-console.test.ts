@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { gzipSync } from 'node:zlib';
 
+import { Docker, TestRun } from '@zukhruf/testing/docker';
+import { Postgres } from '@zukhruf/testing/postgres';
 import { type PathParams, http } from 'msw';
 import { setupServer } from 'msw/node';
 import postgres from 'postgres';
@@ -18,55 +19,19 @@ import { GoogleGrant, GoogleOAuthApp } from '@workspace/google-auth';
 
 import { SearchConsoleSource } from './search-console-source.ts';
 
-const testServer =
-  process.env.TEST_DATABASE_URL ??
-  'postgres://postgres:postgres@127.0.0.1:55432/postgres';
+const databases = new Postgres({
+  docker: new Docker({ testRun: TestRun.fromEnvironment(process.env) }),
+});
 
 const SITE = 'sc-domain:example.com';
 const RAW = 'google_search_console';
 
-/**
- * A database of its own for one test, dropped when the test ends: the Search
- * Console destination and checkpoints in the raw schema, and a session whose
- * unqualified names resolve there.
- */
-async function searchConsoleDatabase() {
-  await using stack = new AsyncDisposableStack();
-  const admin = postgres(testServer, { max: 1, onnotice: () => {} });
-  stack.defer(() => admin.end());
-  const name = `elt_test_${randomUUID().replaceAll('-', '')}`;
-  try {
-    await admin.unsafe(`CREATE DATABASE "${name}"`);
-  } catch (cause) {
-    throw new Error(
-      `Test Postgres at ${new URL(testServer).host} is unavailable. Start it with: npx nx run infra:up`,
-      { cause },
-    );
-  }
-  stack.defer(async () => {
-    await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);
-  });
-  const url = new URL(testServer);
-  url.pathname = `/${name}`;
-  const sql = postgres(url.href, {
-    max: 1,
-    onnotice: () => {},
-    connection: { search_path: RAW },
-  });
-  stack.defer(() => sql.end());
-  const history = new PostgresSyncHistory({ url: url.href });
-  await history.install();
-  const resources = stack.move();
-  return {
-    sql,
-    history,
-    destination: new PostgresDestination({ url: url.href, schema: RAW }),
-    checkpoints: new PostgresCheckpointStore({ url: url.href, schema: RAW }),
-    [Symbol.asyncDispose]: () => resources.disposeAsync(),
-  };
-}
-
-type Warehouse = Awaited<ReturnType<typeof searchConsoleDatabase>>;
+type Warehouse = {
+  sql: postgres.Sql;
+  history: PostgresSyncHistory;
+  destination: PostgresDestination;
+  checkpoints: PostgresCheckpointStore;
+};
 
 // A real OAuth client over a stored grant: its first call mints an access
 // token at the token endpoint the test's server answers.
@@ -314,7 +279,11 @@ const inspected = ({ calls }: Google) =>
 
 async function inspectionRun(
   source: SearchConsoleSource,
-  { history, destination, checkpoints }: Warehouse,
+  {
+    history,
+    destination,
+    checkpoints,
+  }: Pick<Warehouse, 'history' | 'destination' | 'checkpoints'>,
   streams: readonly (typeof ALL_INSPECTIONS)[number][] = ['urlInspection'],
 ) {
   return new Pipeline({
@@ -359,7 +328,24 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
       ],
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -433,7 +419,28 @@ test('a restated day replaces the loaded row, and the next read starts at the la
       ],
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -519,7 +526,28 @@ test('a re-read deletes the query rows and days Google stopped reporting, and ke
         })),
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -597,7 +625,28 @@ test('a re-read day keeps its unchanged query and page rows beside the ones that
       ],
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -670,7 +719,28 @@ test('a search type whose re-read day reports nothing loses that day’s total, 
             ],
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -719,7 +789,15 @@ test('a fractional click count is refused rather than stored', async () => {
       ],
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  const warehouse = {
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -763,7 +841,24 @@ test('analytics pagination follows startRow until a short page', async () => {
       };
     },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -811,7 +906,24 @@ test('sitemaps convert int64 text and second-precision times', async () => {
         'https://example.com/a\nhttps://example.com/b\n',
     },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -913,7 +1025,28 @@ test('inspection covers every sitemap and search URL once, shared by all three s
         '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/a</loc></url><url><loc>https://example.com/c?x=1&amp;y=2</loc></url></urlset>',
     },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -976,7 +1109,24 @@ test(
         ],
       }),
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    await using clients = new AsyncDisposableStack();
+    const warehouse = {
+      sql: clients.adopt(
+        postgres(database.connectionString, {
+          max: 1,
+          onnotice: () => {},
+          connection: { search_path: RAW },
+        }),
+        (sql) => sql.end(),
+      ),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 1,
@@ -1041,7 +1191,24 @@ test('a feed report keeps an absent position as unknown, not as rank one', async
             ],
           },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1095,7 +1262,28 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
     { clicks: 9, ctr: 0.2, impressions: 90, keys: ['zzz'], position: 2 },
   ];
   using searchConsole = google({ reply: () => ({ rows }) });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     breakdownMonths: 3,
@@ -1215,7 +1403,28 @@ test('two properties share tables through one source without deleting each other
       'https://b.example/sitemap.xml': '',
     },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const pipeline = (siteUrls: string[], name: string) => {
     const source = new SearchConsoleSource({
@@ -1290,7 +1499,24 @@ test('an unverified property is not offered as a readable site', async () => {
       ],
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1348,7 +1574,15 @@ test(
               ],
             },
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 1,
@@ -1493,7 +1727,28 @@ test('an incremental sites copy deletes a property that is no longer listed', as
     { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:b.example' },
   ];
   using searchConsole = google({ reply: () => ({ siteEntry }) });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1565,7 +1820,28 @@ test('one source loads every property; a newly listed one backfills while the ot
       };
     },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const run = (siteUrls: string[]) => {
     const source = new SearchConsoleSource({
@@ -1651,7 +1927,28 @@ test('a property without permission is reported by name while the others load an
             ],
           },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1734,7 +2031,19 @@ test('a property Google refuses to the user is a config failure, and a quota ref
   using searchConsole = google({
     reply: ({ site }) => refusals[String(site)]?.(),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  const warehouse = {
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, checkpoints } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -1815,7 +2124,19 @@ test('a grant Google no longer refreshes is a config failure, asked once', async
   );
   server.listen({ onUnhandledRequest: 'error' });
   try {
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+      checkpoints: new PostgresCheckpointStore({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination, checkpoints } = warehouse;
     const source = new SearchConsoleSource({
       // The first call mints an access token, and Google refuses.
@@ -1882,7 +2203,24 @@ test(
         ],
       }),
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    await using clients = new AsyncDisposableStack();
+    const warehouse = {
+      sql: clients.adopt(
+        postgres(database.connectionString, {
+          max: 1,
+          onnotice: () => {},
+          connection: { search_path: RAW },
+        }),
+        (sql) => sql.end(),
+      ),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 1,
@@ -1970,7 +2308,28 @@ test(
               ],
             },
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    await using clients = new AsyncDisposableStack();
+    const warehouse = {
+      sql: clients.adopt(
+        postgres(database.connectionString, {
+          max: 1,
+          onnotice: () => {},
+          connection: { search_path: RAW },
+        }),
+        (sql) => sql.end(),
+      ),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+      checkpoints: new PostgresCheckpointStore({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination, checkpoints, sql } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 1,
@@ -2078,7 +2437,19 @@ test('sitemaps in every format feed the inspection universe', async () => {
         '<feed xmlns="http://www.w3.org/2005/Atom"><link rel="self" href="https://example.com/atom.xml"/><entry><link href="https://example.com/a"/></entry></feed>',
     },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  const warehouse = {
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
 
   await inspectionRun(
     new SearchConsoleSource({
@@ -2158,7 +2529,28 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
         'https://example.com/good.xml': 'https://example.com/g\n',
       },
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    await using clients = new AsyncDisposableStack();
+    const warehouse = {
+      sql: clients.adopt(
+        postgres(database.connectionString, {
+          max: 1,
+          onnotice: () => {},
+          connection: { search_path: RAW },
+        }),
+        (sql) => sql.end(),
+      ),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+      checkpoints: new PostgresCheckpointStore({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination, sql } = warehouse;
     const source = new SearchConsoleSource({
       requester: searchConsole.requester,
@@ -2216,7 +2608,15 @@ test(
         siteEntry: [{ permissionLevel: 'siteOwner', siteUrl: SITE }],
       }),
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 2 ** 31,
@@ -2264,7 +2664,24 @@ test('an RSS item without a link lists no page', async () => {
         '<rss version="2.0"><channel><item></item><item><title>No link</title></item><item><link>https://example.com/r</link></item></channel></rss>',
     },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const { destination, sql } = warehouse;
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
@@ -2294,7 +2711,28 @@ test('an RSS item without a link lists no page', async () => {
 
 test('a pass that cannot read a sitemap deletes no URL it may list, and the next complete pass deletes the ones gone', async () => {
   const SITEMAP = 'https://example.com/sitemap.xml';
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   // The host builds a source for every run.
   const pass = async (sitemap: string | number, pages: string[]) => {
     using searchConsole = google({
@@ -2342,7 +2780,19 @@ test(
   async () => {
     const pages = ['https://example.com/a', 'https://example.com/b'];
     using searchConsole = google({ reply: property({ pages }) });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+      checkpoints: new PostgresCheckpointStore({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const refreshMs = 2000;
     // The host builds a source for every run.
     const run = async () => {
@@ -2384,7 +2834,28 @@ test('the daily quota stops inspection cleanly, and no inspection stream makes a
       inspect: () => (allowed-- > 0 ? { verdict: 'PASS' } : quotaExceeded()),
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const source = new SearchConsoleSource({
     requester: searchConsole.requester,
     inspectionConcurrency: 1,
@@ -2419,7 +2890,28 @@ test('with inspections in flight the daily quota keeps what loaded, and a source
       inspect: () => (allowed-- > 0 ? { verdict: 'PASS' } : quotaExceeded()),
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   // The host builds a client and a source for every run.
   const run = async () => {
     const before = inspected(searchConsole).length;
@@ -2492,7 +2984,28 @@ test(
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    await using clients = new AsyncDisposableStack();
+    const warehouse = {
+      sql: clients.adopt(
+        postgres(database.connectionString, {
+          max: 1,
+          onnotice: () => {},
+          connection: { search_path: RAW },
+        }),
+        (sql) => sql.end(),
+      ),
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+      checkpoints: new PostgresCheckpointStore({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
 
     await inspectionRun(source, warehouse, ['urlInspection']);
     // The other two streams load in a later read: they share one new
@@ -2551,7 +3064,28 @@ test('the three inspection streams read together inspect each URL once', async (
     siteUrls: [SITE],
     streamConcurrency: 3,
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
 
   await inspectionRun(source, warehouse, ALL_INSPECTIONS);
 
@@ -2592,7 +3126,28 @@ test('inspections run concurrently, and a URL Google rejects becomes a row', asy
       return answer(call);
     },
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const warehouse = {
+    sql: clients.adopt(
+      postgres(database.connectionString, {
+        max: 1,
+        onnotice: () => {},
+        connection: { search_path: RAW },
+      }),
+      (sql) => sql.end(),
+    ),
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
 
   await inspectionRun(
     new SearchConsoleSource({
@@ -2629,7 +3184,19 @@ test('a server error during inspection fails the run and keeps none of its inspe
         failing && url.endsWith('/5') ? serverError() : { verdict: 'PASS' },
     }),
   });
-  await using warehouse = await searchConsoleDatabase();
+  await using database = await databases.database();
+  const warehouse = {
+    history: new PostgresSyncHistory({ url: database.connectionString }),
+    destination: new PostgresDestination({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+    checkpoints: new PostgresCheckpointStore({
+      url: database.connectionString,
+      schema: RAW,
+    }),
+  };
+  await warehouse.history.install();
   const run = () =>
     inspectionRun(
       new SearchConsoleSource({
@@ -2701,7 +3268,19 @@ test(
             }
           : answer(call),
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+      checkpoints: new PostgresCheckpointStore({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination, checkpoints } = warehouse;
     const refreshMs = 2000;
     const source = new SearchConsoleSource({
@@ -2800,7 +3379,15 @@ test(
         'https://example.com/b.xml': 'https://example.com/b\n',
       },
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination } = warehouse;
     const source = new SearchConsoleSource({
       pollIntervalMs: 5,
@@ -2893,7 +3480,19 @@ test(
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+      checkpoints: new PostgresCheckpointStore({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination, checkpoints } = warehouse;
     const controller = new AbortController();
     const watching = new Pipeline({
@@ -2966,7 +3565,19 @@ test(
       searchTypes: ['WEB'],
       siteUrls: [SITE],
     });
-    await using warehouse = await searchConsoleDatabase();
+    await using database = await databases.database();
+    const warehouse = {
+      history: new PostgresSyncHistory({ url: database.connectionString }),
+      destination: new PostgresDestination({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+      checkpoints: new PostgresCheckpointStore({
+        url: database.connectionString,
+        schema: RAW,
+      }),
+    };
+    await warehouse.history.install();
     const { destination, checkpoints } = warehouse;
     const controller = new AbortController();
     const watching = new Pipeline({

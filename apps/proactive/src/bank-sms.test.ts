@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
+import { Docker, TestRun } from '@zukhruf/testing/docker';
+import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
 import { Eca } from '@workspace/eca';
@@ -9,56 +11,32 @@ import { Eca } from '@workspace/eca';
 import { MissingMidMonthCredit } from './missing-mid-month-credit.ts';
 import { SpendSpike } from './spend-spike.ts';
 
-async function scratchDatabase() {
-  const server =
-    process.env.TEST_DATABASE_URL ??
-    'postgres://postgres:postgres@127.0.0.1:55432/postgres';
-  const admin = postgres(server, { max: 1, onnotice: () => {} });
-  const name = `proactive_test_${randomUUID().replaceAll('-', '')}`;
-  try {
-    await admin.unsafe(`CREATE DATABASE "${name}"`);
-    const url = new URL(server);
-    url.pathname = `/${name}`;
-    const sql = postgres(url.href, { max: 1, onnotice: () => {} });
-    await sql`CREATE SCHEMA marts`;
-    await sql`CREATE TABLE marts.messages_messages (
-      guid text PRIMARY KEY, handle text, text text, "isFromMe" boolean,
-      date timestamptz
-    )`;
-    return {
-      sql,
-      // Writes received SMS the way the Messages load does: one row each, and
-      // no date when chat.db holds none.
-      async receive(
-        ...messages: readonly [
-          handle: string,
-          text: string,
-          date: string | null,
-        ][]
-      ) {
-        await sql`INSERT INTO marts.messages_messages ${sql(
-          messages.map(([handle, text, date]) => ({
-            guid: randomUUID(),
-            handle,
-            text,
-            isFromMe: false,
-            date,
-          })),
-        )}`;
-      },
-      async [Symbol.asyncDispose]() {
-        await sql.end();
-        try {
-          await admin.unsafe(`DROP DATABASE "${name}"`);
-        } finally {
-          await admin.end();
-        }
-      },
-    };
-  } catch (error) {
-    await admin.end();
-    throw error;
-  }
+const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
+const postgresql = new Postgres({ docker });
+
+async function createMessagesSchema(sql: postgres.Sql): Promise<void> {
+  await sql`CREATE SCHEMA marts`;
+  await sql`CREATE TABLE marts.messages_messages (
+    guid text PRIMARY KEY, handle text, text text, "isFromMe" boolean,
+    date timestamptz
+  )`;
+}
+
+// Writes received SMS the way the Messages load does: one row each, and
+// no date when chat.db holds none.
+async function receive(
+  sql: postgres.Sql,
+  ...messages: readonly [handle: string, text: string, date: string | null][]
+): Promise<void> {
+  await sql`INSERT INTO marts.messages_messages ${sql(
+    messages.map(([handle, text, date]) => ({
+      guid: randomUUID(),
+      handle,
+      text,
+      isFromMe: false,
+      date,
+    })),
+  )}`;
 }
 
 // The Arab Bank templates, as the SMS in the Messages import read, with the
@@ -83,36 +61,46 @@ const weeks = (...amounts: readonly string[]) =>
 const eightUsualWeeks = weeks(...Array.from({ length: 8 }, () => '100.000'));
 
 test('a month without its credit matches only once the warehouse holds a message from day 18 on the Amman clock', async () => {
-  await using warehouse = await scratchDatabase();
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await createMessagesSchema(sql);
   const rule = new MissingMidMonthCredit();
 
-  assert.deepEqual(
-    await rule.evaluate(warehouse.sql),
-    [],
-    'an empty warehouse',
-  );
+  assert.deepEqual(await rule.evaluate(sql), [], 'an empty warehouse');
 
-  await warehouse.receive(
+  await receive(
+    sql,
     ['Arab Bank', credit('1500.000'), '2026-02-14T09:00:00Z'],
     ['Mom', other, '2026-03-17T20:00:00Z'],
   );
 
   assert.deepEqual(
-    await rule.evaluate(warehouse.sql),
+    await rule.evaluate(sql),
     [],
     'at 23:00 on 17 March in Amman, the credit is not late yet',
   );
 
-  await warehouse.receive(['Mom', other, '2026-03-17T21:30:00Z']);
+  await receive(sql, ['Mom', other, '2026-03-17T21:30:00Z']);
 
-  assert.deepEqual(await rule.evaluate(warehouse.sql), [
+  assert.deepEqual(await rule.evaluate(sql), [
     { key: '2026-03', data: { due: '2026-03-17' } },
   ]);
 });
 
 test('only an Arab Bank credit of 1000 JOD or more from day 13 is the mid-month credit', async () => {
-  await using warehouse = await scratchDatabase();
-  await warehouse.receive(
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await createMessagesSchema(sql);
+  await receive(
+    sql,
     ['Arab Bank', credit('1500.000'), '2026-02-14T09:00:00Z'],
     ['Arab Bank', credit('1500.000'), '2026-03-12T20:00:00Z'],
     ['Arab Bank', credit('999.999'), '2026-03-14T09:00:00Z'],
@@ -124,22 +112,29 @@ test('only an Arab Bank credit of 1000 JOD or more from day 13 is the mid-month 
   );
 
   assert.deepEqual(
-    await new MissingMidMonthCredit().evaluate(warehouse.sql),
+    await new MissingMidMonthCredit().evaluate(sql),
     [{ key: '2026-03', data: { due: '2026-03-17' } }],
     'March, between two credited months, has only a credit at 23:00 on day 12 in Amman, one under 1000 JOD, a transfer the user sent, another bank’s credit and one without a date',
   );
 });
 
 test('the commit that reaches day 18 without the credit tells its month once, and a credit just after midnight on day 13 tells nothing', async () => {
-  await using warehouse = await scratchDatabase();
-  await warehouse.receive(
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await createMessagesSchema(sql);
+  await receive(
+    sql,
     ['Arab Bank', credit('1500.000'), '2026-02-14T09:00:00Z'],
     ['Mom', other, '2026-03-17T20:00:00Z'],
   );
   const rule = { condition: new MissingMidMonthCredit() };
   const eca = new Eca<postgres.Sql, { due: string }>({
     warehouse: {
-      sql: warehouse.sql,
+      sql,
       async *commits() {
         yield;
       },
@@ -149,13 +144,14 @@ test('the commit that reaches day 18 without the credit tells its month once, an
   const watch = () =>
     Array.fromAsync(eca.watch({ signal: new AbortController().signal }));
 
-  await warehouse.receive(['Mom', other, '2026-03-18T09:00:00Z']);
+  await receive(sql, ['Mom', other, '2026-03-18T09:00:00Z']);
   assert.deepEqual(await watch(), [
     { rule, key: '2026-03', data: { due: '2026-03-17' } },
   ]);
   assert.deepEqual(await watch(), [], 'a missing credit is told once');
 
-  await warehouse.receive(
+  await receive(
+    sql,
     ['Arab Bank', credit('1500.000'), '2026-04-12T21:30:00Z'],
     ['Mom', other, '2026-04-18T09:00:00Z'],
   );
@@ -167,8 +163,15 @@ test('the commit that reaches day 18 without the credit tells its month once, an
 });
 
 test('a one-time code, a credit, a transfer the user sent, or a forwarded purchase is not spend', async () => {
-  await using warehouse = await scratchDatabase();
-  await warehouse.receive(
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await createMessagesSchema(sql);
+  await receive(
+    sql,
     ...eightUsualWeeks,
     ['Arab Bank', purchase('150.000'), '2026-03-04T09:00:00Z'],
     [
@@ -183,36 +186,46 @@ test('a one-time code, a credit, a transfer the user sent, or a forwarded purcha
   );
   const rule = new SpendSpike();
 
-  assert.deepEqual(await rule.evaluate(warehouse.sql), []);
+  assert.deepEqual(await rule.evaluate(sql), []);
 
-  await warehouse.receive([
-    'Arab Bank',
-    purchase('60.000'),
-    '2026-03-05T09:00:00Z',
-  ]);
+  await receive(sql, ['Arab Bank', purchase('60.000'), '2026-03-05T09:00:00Z']);
 
-  assert.deepEqual(await rule.evaluate(warehouse.sql), [
+  assert.deepEqual(await rule.evaluate(sql), [
     { key: '2026-W10', data: { spent: 210, usual: 100 } },
   ]);
 });
 
 test('a week without purchases counts as 0 in the usual spend', async () => {
-  await using warehouse = await scratchDatabase();
-  await warehouse.receive(
-    ...weeks('100.000', '100.000', '200.000', '200.000'),
-    ['Arab Bank', purchase('150.000'), '2026-03-04T09:00:00Z'],
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
   );
+  await createMessagesSchema(sql);
+  await receive(sql, ...weeks('100.000', '100.000', '200.000', '200.000'), [
+    'Arab Bank',
+    purchase('150.000'),
+    '2026-03-04T09:00:00Z',
+  ]);
 
   assert.deepEqual(
-    await new SpendSpike().evaluate(warehouse.sql),
+    await new SpendSpike().evaluate(sql),
     [{ key: '2026-W10', data: { spent: 150, usual: 50 } }],
     'weeks of 100, 100, 200 and 200 JOD and four of none make 50 JOD usual',
   );
 });
 
 test('the usual spend is the median of the 8 weeks before the week, without the week itself', async () => {
-  await using warehouse = await scratchDatabase();
-  await warehouse.receive(
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await createMessagesSchema(sql);
+  await receive(
+    sql,
     ...weeks(
       '100.000',
       '100.000',
@@ -227,19 +240,25 @@ test('the usual spend is the median of the 8 weeks before the week, without the 
   );
 
   assert.deepEqual(
-    await new SpendSpike().evaluate(warehouse.sql),
+    await new SpendSpike().evaluate(sql),
     [{ key: '2026-W10', data: { spent: 500, usual: 200 } }],
     'the mean, 287.5 JOD, or a median with the week itself, 300 JOD, would not tell',
   );
 });
 
 test('a commit that takes a week past twice its usual spend tells the week once, and exactly twice tells nothing', async () => {
-  await using warehouse = await scratchDatabase();
-  await warehouse.receive(...eightUsualWeeks);
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await createMessagesSchema(sql);
+  await receive(sql, ...eightUsualWeeks);
   const rule = { condition: new SpendSpike() };
   const eca = new Eca<postgres.Sql, { spent: number; usual: number }>({
     warehouse: {
-      sql: warehouse.sql,
+      sql,
       async *commits() {
         yield;
       },
@@ -249,33 +268,32 @@ test('a commit that takes a week past twice its usual spend tells the week once,
   const watch = () =>
     Array.fromAsync(eca.watch({ signal: new AbortController().signal }));
 
-  await warehouse.receive([
+  await receive(sql, [
     'Arab Bank',
     purchase('200.000'),
     '2026-03-04T09:00:00Z',
   ]);
   assert.deepEqual(await watch(), [], 'exactly twice is not past twice');
 
-  await warehouse.receive([
-    'Arab Bank',
-    purchase('0.001'),
-    '2026-03-04T10:00:00Z',
-  ]);
+  await receive(sql, ['Arab Bank', purchase('0.001'), '2026-03-04T10:00:00Z']);
   assert.deepEqual(await watch(), [
     { rule, key: '2026-W10', data: { spent: 200.001, usual: 100 } },
   ]);
 
-  await warehouse.receive([
-    'Arab Bank',
-    purchase('50.000'),
-    '2026-03-05T09:00:00Z',
-  ]);
+  await receive(sql, ['Arab Bank', purchase('50.000'), '2026-03-05T09:00:00Z']);
   assert.deepEqual(await watch(), [], 'a week is told once');
 });
 
 test('a purchase just after midnight on Monday in Amman counts in the new ISO week, across the new year', async () => {
-  await using warehouse = await scratchDatabase();
-  await warehouse.receive(
+  await using database = await postgresql.database();
+  await using clients = new AsyncDisposableStack();
+  const sql = clients.adopt(
+    postgres(database.connectionString, { max: 1, onnotice: () => {} }),
+    (sql) => sql.end(),
+  );
+  await createMessagesSchema(sql);
+  await receive(
+    sql,
     ...[
       '2024-11-06',
       '2024-11-13',
@@ -295,7 +313,7 @@ test('a purchase just after midnight on Monday in Amman counts in the new ISO we
   );
 
   assert.deepEqual(
-    await new SpendSpike().evaluate(warehouse.sql),
+    await new SpendSpike().evaluate(sql),
     [{ key: '2025-W01', data: { spent: 210, usual: 100 } }],
     'Monday 30 December 2024 starts 2025-W01',
   );

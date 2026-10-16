@@ -3,6 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
 
+import { Docker, TestRun } from '@zukhruf/testing/docker';
+import {
+  type Database,
+  SQL_SERVER_FULL_IMAGE,
+  SqlServer,
+} from '@zukhruf/testing/sqlserver';
 import sql from 'mssql';
 
 import {
@@ -18,78 +24,37 @@ import {
   VariantValue,
 } from './index.ts';
 
-const server =
-  process.env.TEST_SQLSERVER_CONNECTION_STRING ??
-  'Server=localhost,51433;Database=master;User Id=sa;Password=Context-Compiler-1;Encrypt=true;TrustServerCertificate=true';
+const docker = new Docker({ testRun: TestRun.fromEnvironment(process.env) });
+const sqlServer = new SqlServer({ docker, image: SQL_SERVER_FULL_IMAGE });
 
-/**
- * A database of its own on `server` for one test, dropped with every login
- * it made when the test ends. `settings` are ALTER DATABASE options applied
- * before anyone else connects, as some need the database to themselves. `run` executes statements there as the
- * administrator; `login` makes a db_datareader login, runs `setup` with its
- * user name in place of {user}, and returns the user and its connection
- * string.
- */
-async function scratchDatabase(settings: readonly string[] = []) {
-  const config = sql.ConnectionPool.parseConnectionString(server);
-  const name = `sdk_test_${randomUUID().replaceAll('-', '')}`;
-  const master = new sql.ConnectionPool(config);
-  try {
-    await master.connect();
-  } catch (cause) {
-    throw new Error(
-      `Test SQL Server at ${config.server}:${config.port} is unavailable. Start it with: npx nx run infra:up-sqlserver`,
-      { cause },
+// A real db_datareader identity, with the additional grants this test needs.
+// The database belongs to Zukhruf; this scope owns only the server login.
+async function readOnlyLogin(
+  database: Database,
+  admin: sql.ConnectionPool,
+  setup: string,
+) {
+  await using resources = new AsyncDisposableStack();
+  const user = `reader_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const password = `Reader-${randomUUID()}`;
+  await admin
+    .request()
+    .batch(
+      `CREATE LOGIN [${user}] WITH PASSWORD = '${password}', CHECK_POLICY = OFF`,
     );
-  }
-  const logins: string[] = [];
-  const admin = new sql.ConnectionPool({ ...config, database: name });
-  const connectionString = (user: string, password: string) =>
-    `Server=${config.server},${config.port};Database=${name};User Id=${user};Password=${password};Encrypt=true;TrustServerCertificate=true`;
-  try {
-    await master
-      .request()
-      .batch(
-        `CREATE DATABASE [${name}]; ${settings.map((setting) => `ALTER DATABASE [${name}] SET ${setting};`).join(' ')}`,
-      );
-    await admin.connect();
-  } catch (error) {
-    await master.close();
-    throw error;
-  }
+  resources.defer(async () => {
+    await admin.request().batch(`DROP LOGIN [${user}]`);
+  });
+  await admin
+    .request()
+    .batch(
+      `CREATE USER [${user}] FOR LOGIN [${user}]; ALTER ROLE db_datareader ADD MEMBER [${user}]; ${setup.replaceAll('{user}', `[${user}]`)}`,
+    );
+  const owned = resources.move();
   return {
-    administrator: connectionString(config.user ?? '', config.password ?? ''),
-    async run(statements: string) {
-      await admin.request().batch(statements);
-    },
-    async login(setup = '') {
-      const user = `reader_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
-      const password = `Reader-${randomUUID()}`;
-      logins.push(user);
-      await master
-        .request()
-        .batch(
-          `CREATE LOGIN [${user}] WITH PASSWORD = '${password}', CHECK_POLICY = OFF`,
-        );
-      await admin
-        .request()
-        .batch(
-          `CREATE USER [${user}] FOR LOGIN [${user}]; ALTER ROLE db_datareader ADD MEMBER [${user}]; ${setup.replaceAll('{user}', `[${user}]`)}`,
-        );
-      return {
-        user: `[${user}]`,
-        connectionString: connectionString(user, password),
-      };
-    },
-    async [Symbol.asyncDispose]() {
-      await admin.close();
-      await master
-        .request()
-        .batch(
-          `ALTER DATABASE [${name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [${name}]; ${logins.map((user) => `DROP LOGIN [${user}];`).join(' ')}`,
-        );
-      await master.close();
-    },
+    user: `[${user}]`,
+    connectionString: `Server=${database.host},${database.port};Database=${database.database};User Id=${user};Password=${password};Encrypt=true;TrustServerCertificate=true`,
+    [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
 }
 
@@ -150,15 +115,23 @@ test('a connection string must name its database, and one that cannot connect na
 });
 
 test('discovery shows only what the login may read, and a read refused later names the grant it needs', async () => {
-  await using scratch = await scratchDatabase();
-  await scratch.run(`
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.orders (id int PRIMARY KEY, total decimal(9, 2));
     ALTER TABLE dbo.orders ENABLE CHANGE_TRACKING;
     CREATE TABLE dbo.people (id int, region char(2), secret nvarchar(10), name nvarchar(10), CONSTRAINT people_key PRIMARY KEY (id, region));
     INSERT dbo.orders VALUES (1, 9.50);
     INSERT dbo.people VALUES (1, 'EU', N's', N'Ada');`);
-  const reader = await scratch.login(
+  await using reader = await readOnlyLogin(
+    scratch,
+    admin,
     'DENY SELECT ON dbo.people (region) TO {user};',
   );
   const database = new SqlServerDatabase(reader.connectionString);
@@ -185,9 +158,11 @@ test('discovery shows only what the login may read, and a read refused later nam
     assert.deepEqual(people.primaryKey, []);
 
     // Grants revoked after discovery.
-    await scratch.run(
-      `DENY SELECT ON dbo.people (secret) TO ${reader.user}; DENY SELECT ON dbo.orders TO ${reader.user};`,
-    );
+    await admin
+      .request()
+      .batch(
+        `DENY SELECT ON dbo.people (secret) TO ${reader.user}; DENY SELECT ON dbo.orders TO ${reader.user};`,
+      );
     await assert.rejects(
       keys(session.rows(people)),
       (error: unknown) =>
@@ -201,9 +176,11 @@ test('discovery shows only what the login may read, and a read refused later nam
         error.grant === 'SELECT ON [dbo].[orders]',
     );
   }
-  await scratch.run(
-    `REVOKE SELECT ON dbo.orders FROM ${reader.user}; GRANT VIEW CHANGE TRACKING ON dbo.orders TO ${reader.user};`,
-  );
+  await admin
+    .request()
+    .batch(
+      `REVOKE SELECT ON dbo.orders FROM ${reader.user}; GRANT VIEW CHANGE TRACKING ON dbo.orders TO ${reader.user};`,
+    );
   await using session = await database.open();
 
   assert.equal(
@@ -244,13 +221,21 @@ function described(change: SqlServerChange): string {
 }
 
 test('a Change Tracking version the history no longer covers, after a truncate or ahead of the database, is refused as expired', async () => {
-  await using scratch = await scratchDatabase();
-  await scratch.run(`
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.items (id int PRIMARY KEY, v int);
     ALTER TABLE dbo.items ENABLE CHANGE_TRACKING;
     INSERT dbo.items VALUES (1, 1);`);
-  const reader = await scratch.login(
+  await using reader = await readOnlyLogin(
+    scratch,
+    admin,
     'GRANT VIEW CHANGE TRACKING ON dbo.items TO {user};',
   );
   await using session = await new SqlServerDatabase(
@@ -258,12 +243,12 @@ test('a Change Tracking version the history no longer covers, after a truncate o
   ).open();
   const items = table(await session.tables(), 'dbo.items');
   const synced = await session.changeTrackingPosition(items);
-  await scratch.run('UPDATE dbo.items SET v = 2;');
+  await admin.request().batch('UPDATE dbo.items SET v = 2;');
   const { position } = await changes(session, items, synced);
 
   // Nothing changed in between, so the truncate leaves the minimum valid
   // version where the last read stopped: only the generation shows it.
-  await scratch.run('TRUNCATE TABLE dbo.items;');
+  await admin.request().batch('TRUNCATE TABLE dbo.items;');
 
   await assert.rejects(
     changes(session, items, position),
@@ -278,13 +263,17 @@ test('a Change Tracking version the history no longer covers, after a truncate o
     ChangeHistoryExpiredError,
   );
   // Rows changed while tracking was off leave no history at all.
-  await scratch.run(
-    'ALTER TABLE dbo.items DISABLE CHANGE_TRACKING; INSERT dbo.items VALUES (3, 3);',
-  );
+  await admin
+    .request()
+    .batch(
+      'ALTER TABLE dbo.items DISABLE CHANGE_TRACKING; INSERT dbo.items VALUES (3, 3);',
+    );
   await new Promise((resolve) => setTimeout(resolve, 10));
-  await scratch.run(
-    `ALTER TABLE dbo.items ENABLE CHANGE_TRACKING; GRANT VIEW CHANGE TRACKING ON dbo.items TO ${reader.user};`,
-  );
+  await admin
+    .request()
+    .batch(
+      `ALTER TABLE dbo.items ENABLE CHANGE_TRACKING; GRANT VIEW CHANGE TRACKING ON dbo.items TO ${reader.user};`,
+    );
   await assert.rejects(
     changes(session, items, truncated),
     ChangeHistoryExpiredError,
@@ -295,15 +284,37 @@ test(
   'stopping a read or a change set partway frees its connection for later reads and for closing',
   { timeout: 120_000 },
   async () => {
-    await using scratch = await scratchDatabase([
-      'ALLOW_SNAPSHOT_ISOLATION ON',
-    ]);
-    await scratch.run(`
+    await using scratch = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    {
+      await using configuration = new AsyncDisposableStack();
+      const master = configuration.adopt(
+        new sql.ConnectionPool({
+          ...sql.ConnectionPool.parseConnectionString(scratch.connectionString),
+          database: 'master',
+        }),
+        (pool) => pool.close(),
+      );
+      await master.connect();
+      await master
+        .request()
+        .batch(
+          `ALTER DATABASE [${scratch.database}] SET ALLOW_SNAPSHOT_ISOLATION ON;`,
+        );
+    }
+    const admin = clients.adopt(
+      new sql.ConnectionPool(scratch.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     CREATE TABLE dbo.numbers (id int PRIMARY KEY);
     ALTER TABLE dbo.numbers ENABLE CHANGE_TRACKING;
     INSERT dbo.numbers SELECT TOP (20000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;`);
-    const reader = await scratch.login(
+    await using reader = await readOnlyLogin(
+      scratch,
+      admin,
       'GRANT VIEW CHANGE TRACKING ON dbo.numbers TO {user};',
     );
     await using session = await new SqlServerDatabase(
@@ -334,15 +345,37 @@ test(
 
 for (const snapshot of [false, true])
   test(`changes report each changed key once, as its row now or as a deletion${snapshot ? ', from one snapshot' : ''}`, async () => {
-    await using scratch = await scratchDatabase(
-      snapshot ? ['ALLOW_SNAPSHOT_ISOLATION ON'] : [],
+    await using scratch = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    if (snapshot) {
+      await using configuration = new AsyncDisposableStack();
+      const master = configuration.adopt(
+        new sql.ConnectionPool({
+          ...sql.ConnectionPool.parseConnectionString(scratch.connectionString),
+          database: 'master',
+        }),
+        (pool) => pool.close(),
+      );
+      await master.connect();
+      await master
+        .request()
+        .batch(
+          `ALTER DATABASE [${scratch.database}] SET ALLOW_SNAPSHOT_ISOLATION ON;`,
+        );
+    }
+    const admin = clients.adopt(
+      new sql.ConnectionPool(scratch.connectionString),
+      (pool) => pool.close(),
     );
-    await scratch.run(`
+    await admin.connect();
+    await admin.request().batch(`
       ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
       CREATE TABLE dbo.lines (orderId int, line int, amount decimal(9, 2), placed datetimeoffset(7), CONSTRAINT lines_key PRIMARY KEY (orderId, line));
       ALTER TABLE dbo.lines ENABLE CHANGE_TRACKING;
       INSERT dbo.lines VALUES (1, 1, 1.00, '2025-01-02T03:04:05.1234567+05:30'), (1, 2, 2.00, NULL), (2, 1, 3.00, NULL);`);
-    const reader = await scratch.login(
+    await using reader = await readOnlyLogin(
+      scratch,
+      admin,
       'GRANT VIEW CHANGE TRACKING ON dbo.lines TO {user};',
     );
     await using session = await new SqlServerDatabase(
@@ -350,7 +383,7 @@ for (const snapshot of [false, true])
     ).open();
     const lines = table(await session.tables(), 'dbo.lines');
     const synced = await session.changeTrackingPosition(lines);
-    await scratch.run(`
+    await admin.request().batch(`
       UPDATE dbo.lines SET amount = 11.00 WHERE orderId = 1 AND line = 1;
       DELETE dbo.lines WHERE orderId = 1 AND line = 2;
       INSERT dbo.lines VALUES (3, 1, 4.00, NULL);
@@ -361,7 +394,7 @@ for (const snapshot of [false, true])
     await using set = await session.changes(lines, synced);
     // Written after the change set took its version but before it reads: a
     // snapshot does not see it; without one it is read now and again later.
-    await scratch.run('INSERT dbo.lines VALUES (4, 1, 7.00, NULL);');
+    await admin.request().batch('INSERT dbo.lines VALUES (4, 1, 7.00, NULL);');
     const read: SqlServerChange[] = [];
     for await (const change of set) read.push(change);
 
@@ -381,11 +414,33 @@ for (const snapshot of [false, true])
   });
 
 test('rowversion reads stop below the oldest open write, so a row still being written is read once it commits, and pages resume after the last version', async () => {
-  await using scratch = await scratchDatabase(['READ_COMMITTED_SNAPSHOT ON']);
-  await scratch.run(`
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  {
+    await using configuration = new AsyncDisposableStack();
+    const master = configuration.adopt(
+      new sql.ConnectionPool({
+        ...sql.ConnectionPool.parseConnectionString(scratch.connectionString),
+        database: 'master',
+      }),
+      (pool) => pool.close(),
+    );
+    await master.connect();
+    await master
+      .request()
+      .batch(
+        `ALTER DATABASE [${scratch.database}] SET READ_COMMITTED_SNAPSHOT ON;`,
+      );
+  }
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await admin.request().batch(`
     CREATE TABLE dbo.events (id int PRIMARY KEY, stamp rowversion);
     INSERT dbo.events (id) VALUES (1), (2), (3);`);
-  const reader = await scratch.login();
+  await using reader = await readOnlyLogin(scratch, admin, '');
   await using session = await new SqlServerDatabase(
     reader.connectionString,
   ).open();
@@ -411,8 +466,9 @@ test('rowversion reads stop below the oldest open write, so a row still being wr
       if (count === 0) return { ids, last };
     }
   };
-  const writer = new sql.ConnectionPool(
-    sql.ConnectionPool.parseConnectionString(scratch.administrator),
+  const writer = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
   );
   await writer.connect();
   const open = new sql.Transaction(writer);
@@ -421,7 +477,7 @@ test('rowversion reads stop below the oldest open write, so a row still being wr
     await open.begin();
     await new sql.Request(open).query('INSERT dbo.events (id) VALUES (4)');
     // Committed after 4 began, so its rowversion is above 4's.
-    await scratch.run('INSERT dbo.events (id) VALUES (5);');
+    await admin.request().batch('INSERT dbo.events (id) VALUES (5);');
 
     const first = await read('0', await session.minActiveRowversion());
 
@@ -434,32 +490,41 @@ test('rowversion reads stop below the oldest open write, so a row still being wr
     // A failed assertion leaves the write open, which would hold the
     // database until the test times out.
     if (!committed) await open.rollback();
-    await writer.close();
   }
 });
 
 test('the database version moves when a rowversion or a tracked table changes, and has no Change Tracking part while tracking is off', async () => {
-  await using scratch = await scratchDatabase();
-  await scratch.run(
-    'CREATE TABLE dbo.stamped (id int PRIMARY KEY, note int, stamp rowversion);',
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
   );
-  const reader = await scratch.login();
+  await admin.connect();
+  await admin
+    .request()
+    .batch(
+      'CREATE TABLE dbo.stamped (id int PRIMARY KEY, note int, stamp rowversion);',
+    );
+  await using reader = await readOnlyLogin(scratch, admin, '');
   await using session = await new SqlServerDatabase(
     reader.connectionString,
   ).open();
   const untracked = await session.version();
   assert.equal(untracked.changeTracking, null);
 
-  await scratch.run('INSERT dbo.stamped (id, note) VALUES (1, 1);');
+  await admin.request().batch('INSERT dbo.stamped (id, note) VALUES (1, 1);');
   const inserted = await session.version();
   assert.ok(BigInt(inserted.rowversion) > BigInt(untracked.rowversion));
-  await scratch.run(
-    'ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON; ALTER TABLE dbo.stamped ENABLE CHANGE_TRACKING;',
-  );
+  await admin
+    .request()
+    .batch(
+      'ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON; ALTER TABLE dbo.stamped ENABLE CHANGE_TRACKING;',
+    );
   const tracked = await session.version();
   assert.notEqual(tracked.changeTracking, null);
 
-  await scratch.run('UPDATE dbo.stamped SET note = 2;');
+  await admin.request().batch('UPDATE dbo.stamped SET note = 2;');
 
   const updated = await session.version();
   assert.notEqual(updated.changeTracking, null);
@@ -471,8 +536,14 @@ test('the database version moves when a rowversion or a tracked table changes, a
 });
 
 test('discovery lists user tables but not views, each with its key in key order, its rowversion, its Change Tracking and its descriptions', async () => {
-  await using scratch = await scratchDatabase();
-  await scratch.run(`
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await admin.request().batch(`
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
     EXEC('CREATE SCHEMA sales');
     CREATE TABLE dbo.orders (region char(2), id int, stamp rowversion, note nvarchar(10), CONSTRAINT orders_key PRIMARY KEY (id, region));
@@ -482,7 +553,9 @@ test('discovery lists user tables but not views, each with its key in key order,
     EXEC('CREATE VIEW dbo.recent AS SELECT id FROM dbo.orders');
     EXEC sp_addextendedproperty 'MS_Description', N'Orders as placed', 'SCHEMA', 'dbo', 'TABLE', 'orders';
     EXEC sp_addextendedproperty 'MS_Description', N'What the buyer wrote', 'SCHEMA', 'dbo', 'TABLE', 'orders', 'COLUMN', 'note';`);
-  const reader = await scratch.login(
+  await using reader = await readOnlyLogin(
+    scratch,
+    admin,
     'GRANT VIEW CHANGE TRACKING ON sales.items TO {user};',
   );
   await using session = await new SqlServerDatabase(
@@ -527,7 +600,13 @@ test('discovery lists user tables but not views, each with its key in key order,
 });
 
 test('paging by two over every kind of key reads each row once, in the order the key sorts', async () => {
-  await using scratch = await scratchDatabase();
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
   // Each kind: its key columns, and its rows.
   const kinds: Record<string, [string, string]> = {
     words: [
@@ -581,7 +660,7 @@ test('paging by two over every kind of key reads each row once, in the order the
       '(1, -1), (0, 5), (1, 0), (0, -32768)',
     ],
   };
-  await scratch.run(
+  await admin.request().batch(
     Object.entries(kinds)
       .map(
         ([name, [columns, rows]]) =>
@@ -589,7 +668,7 @@ test('paging by two over every kind of key reads each row once, in the order the
       )
       .join('\n'),
   );
-  const reader = await scratch.login();
+  await using reader = await readOnlyLogin(scratch, admin, '');
   await using session = await new SqlServerDatabase(
     reader.connectionString,
   ).open();
@@ -612,10 +691,16 @@ test('paging by two over every kind of key reads each row once, in the order the
 });
 
 test('every type reads back exactly, at its limits, as the text or number that keeps it whole', async () => {
-  await using scratch = await scratchDatabase();
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
   // A batch cannot use a type it creates.
-  await scratch.run('CREATE TYPE dbo.Phone FROM nvarchar(20) NULL;');
-  await scratch.run(`
+  await admin.request().batch('CREATE TYPE dbo.Phone FROM nvarchar(20) NULL;');
+  await admin.request().batch(`
     CREATE TABLE dbo.everything (
       id int PRIMARY KEY,
       tiny tinyint, small smallint, whole int, big bigint, flag bit,
@@ -654,7 +739,7 @@ test('every type reads back exactly, at its limits, as the text or number that k
        geography::Point(0, 0, 4326), geometry::STGeomFromText('POINT(1 2 3)', 3857),
        CAST(CAST('2025-01-02T03:04:05.1234567' AS datetime2(7)) AS sql_variant), N'', NULL),
       (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);`);
-  const reader = await scratch.login();
+  await using reader = await readOnlyLogin(scratch, admin, '');
   await using session = await new SqlServerDatabase(
     reader.connectionString,
   ).open();

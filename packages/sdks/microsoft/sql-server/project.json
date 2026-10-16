@@ -7,7 +7,7 @@
     "format": {},
     "test": {
       "dependsOn": ["build"],
-      "command": "node --test {args} \"packages/sdks/microsoft/sql-server/dist/*.test.js\""
+      "command": "zukhruf-docker-tests {args} \"packages/sdks/microsoft/sql-server/dist/*.test.js\""
     }
   }
 }

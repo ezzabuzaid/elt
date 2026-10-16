@@ -15,6 +15,7 @@
     "@zukhruf/mutex": "^0.3.19"
   },
   "devDependencies": {
-    "@workspace/snapshot-differential": "0.0.1"
+    "@workspace/snapshot-differential": "0.0.1",
+    "@zukhruf/testing": "0.3.21"
   }
 }

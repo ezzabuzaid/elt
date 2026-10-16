@@ -83,7 +83,7 @@ An agnostic package is designed as if it were published to npm: anyone could cop
 - **Also enforced:** no type assertions; no test lifecycle hooks; in every test, msw's `listen()` passes `onUnhandledRequest: 'error'`.
 - **Ports are typed by the package.** A capability or decision the host owns enters as a parameter whose type the package exports, and the consumer conforms: `GoogleRequester` (`packages/google-auth/src/requester.ts`), `onRefreshed` on `GoogleOAuthApp.client`, and `directory` on `googleSession`, where each host decides where its grants live.
 - **Stored shapes carry their own guards.** Anything the host persists and reads back is parsed by a static the package exports (`GoogleGrant.parse`).
-- **Tests reach no network.** Stub below the dependency's transport with msw (`packages/google-auth/src/grant-opener.test.ts`). A test that needs Postgres gets its server from the caller and creates its own database on it (`scratchDatabase` in `packages/destinations/postgresql/src/index.test.ts`).
+- **Tests reach no network.** Stub below the dependency's transport with msw (`packages/google-auth/src/grant-opener.test.ts`). Database tests acquire isolated databases directly from `@zukhruf/testing` and dispose their clients before the database. Their Nx test targets use `zukhruf-docker-tests`, with `TestRun.fromEnvironment(process.env)` passed to `Docker` for supervised cleanup.
 
 ## SDKs
 
