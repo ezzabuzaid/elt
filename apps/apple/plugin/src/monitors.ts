@@ -104,7 +104,7 @@ export class Monitors {
         broken.get(name) ??
           `No monitor is named ${name}. Write it in ${this.#root} first.`,
       );
-    using federation = new Federation({ locate });
+    using federation = new Federation({ main: ':memory:', locate });
     const eca = new Eca<Query, unknown>({ warehouse: once(federation.sql) });
     const rule = { condition: monitor.condition };
     await eca.add(rule);
@@ -153,7 +153,7 @@ export class Monitors {
         fail(store, registered, `Last check failed: ${messageOf(error)}`);
       return;
     }
-    using federation = new Federation({ locate: where });
+    using federation = new Federation({ main: ':memory:', locate: where });
     const eca = new Eca<Query, unknown>({ warehouse: once(federation.sql) });
     for (const [rule, { name }] of rules)
       await eca.add(rule, { keys: savedKeys(store, name) });

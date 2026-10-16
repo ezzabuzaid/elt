@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { Worker } from 'node:worker_threads';
 
 import { Federation, TooManyDatabasesError } from './index.ts';
 
@@ -23,6 +26,96 @@ function attachedNames(federation: Federation): unknown[] {
   );
 }
 
+test('a main database preserves its schema, presets and read-only behavior when also located by name', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
+  const path = join(scratch.path, 'main.sqlite');
+  writeDatabase(path, [1]);
+  const locate = (name: string) => (name === 'd' ? path : undefined);
+  const federation = new Federation({ main: path, locate });
+  {
+    using owned = federation;
+    owned.exec('CREATE TEMP VIEW preset AS SELECT x FROM main.t');
+    assert.deepEqual(owned.query('SELECT x FROM preset', []), {
+      columns: ['x'],
+      rows: [[1]],
+    });
+    assert.equal(owned.sql.get`SELECT x FROM t`?.x, 1);
+    assert.deepEqual(
+      owned.query('SELECT m.x FROM main.t m JOIN d.t d USING (x)', []).rows,
+      [[1]],
+    );
+    assert.deepEqual(owned.query('PRAGMA main.table_info(t)', []).rows, [
+      [0, 'x', 'INTEGER', 0, null, 0],
+    ]);
+    assert.deepEqual(owned.query('SELECT name FROM sqlite_schema', []).rows, [
+      ['t'],
+    ]);
+    assert.deepEqual(owned.query('SELECT x AS value FROM main.t WHERE 0', []), {
+      columns: ['value'],
+      rows: [],
+    });
+    assert.throws(() => owned.query('DELETE FROM main.t', []), /readonly/);
+    assert.throws(
+      () => owned.query('SELECT * FROM unknown.t', []),
+      /no such table: unknown.t/,
+    );
+    assert.throws(
+      () => owned.query('SELECT 1', ['unknown']),
+      /Unknown database unknown/,
+    );
+    assert.deepEqual(attachedNames(owned), ['main', 'temp']);
+    using writer = new DatabaseSync(path, { timeout: 0 });
+    writer.exec('INSERT INTO t VALUES (2)');
+    assert.deepEqual(owned.query('SELECT x FROM main.t ORDER BY x', []).rows, [
+      [1],
+      [2],
+    ]);
+  }
+  assert.throws(() => federation.query('SELECT 1', []), /not open/);
+  const absent = join(scratch.path, 'absent.sqlite');
+  assert.throws(
+    () => new Federation({ main: absent, locate }),
+    /unable to open database/,
+  );
+  assert.equal(existsSync(absent), false);
+});
+
+test('main stays open while up to ten additional databases attach for one statement', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
+  const main = join(scratch.path, 'main.sqlite');
+  writeDatabase(main, [100]);
+  const paths = new Map<string, string>();
+  for (let index = 0; index < 10; index++) {
+    const path = join(scratch.path, `d${index}.sqlite`);
+    writeDatabase(path, [index]);
+    paths.set(`d${index}`, path);
+  }
+  using federation = new Federation({
+    main,
+    locate: (name) => paths.get(name),
+  });
+  federation.exec(
+    'CREATE TEMP VIEW combined AS SELECT m.x + d.x AS x FROM main.t m, d1.t d',
+  );
+  assert.equal(federation.sql.get`SELECT x FROM combined`?.x, 101);
+  assert.deepEqual(attachedNames(federation), ['main', 'temp']);
+  assert.deepEqual(federation.query('SELECT x FROM t', ['d0']).rows, [[100]]);
+  assert.deepEqual(
+    federation.query(
+      `SELECT x FROM main.t UNION ALL ${[...paths.keys()].map((name) => `SELECT x FROM ${name}.t`).join(' UNION ALL ')}`,
+      [],
+    ).rows,
+    [[100], ...Array.from({ length: 10 }, (_, index) => [index])],
+  );
+  assert.throws(
+    () => federation.query('SELECT * FROM main.t, d0.missing', []),
+    /no such table: d0.missing/,
+  );
+  assert.throws(() => federation.query('DELETE FROM d0.t', []), /readonly/);
+  assert.deepEqual(attachedNames(federation), ['main', 'temp']);
+  assert.deepEqual(federation.query('SELECT x FROM main.t', []).rows, [[100]]);
+});
+
 test('a statement that names more than 10 databases fails with TooManyDatabasesError and leaves none attached', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
   const paths = new Map<string, string>();
@@ -31,7 +124,10 @@ test('a statement that names more than 10 databases fails with TooManyDatabasesE
     writeDatabase(path, [index]);
     paths.set(`d${index}`, path);
   }
-  using federation = new Federation({ locate: (name) => paths.get(name) });
+  using federation = new Federation({
+    main: ':memory:',
+    locate: (name) => paths.get(name),
+  });
 
   assert.throws(
     () =>
@@ -57,6 +153,7 @@ test('a name the host cannot locate fails with SQLite’s own error', async () =
   const path = join(scratch.path, 'd.sqlite');
   writeDatabase(path, [1]);
   using federation = new Federation({
+    main: ':memory:',
     locate: (name) => (name === 'd' ? path : undefined),
   });
 
@@ -74,6 +171,7 @@ test('a table its database lacks fails with SQLite’s own error and leaves none
   const path = join(scratch.path, 'd.sqlite');
   writeDatabase(path, [1]);
   using federation = new Federation({
+    main: ':memory:',
     locate: (name) => (name === 'd' ? path : undefined),
   });
 
@@ -91,7 +189,10 @@ test('a path to a file that does not exist fails with SQLite’s own error and l
     ['first', first],
     ['absent', join(scratch.path, 'absent.sqlite')],
   ]);
-  using federation = new Federation({ locate: (name) => paths.get(name) });
+  using federation = new Federation({
+    main: ':memory:',
+    locate: (name) => paths.get(name),
+  });
 
   // SQLite resolves a FROM list from left to right, so first is attached
   // before absent fails.
@@ -108,6 +209,7 @@ test('a locate that throws fails the statement with its error and leaves none at
   writeDatabase(first, [1]);
   const unreadable = new Error('the host cannot read its settings');
   using federation = new Federation({
+    main: ':memory:',
     locate: (name) => {
       if (name === 'first') return first;
       throw unreadable;
@@ -126,6 +228,7 @@ test('a statement cannot change a database it reads', async () => {
   const path = join(scratch.path, 'd.sqlite');
   writeDatabase(path, [1]);
   using federation = new Federation({
+    main: ':memory:',
     locate: (name) => (name === 'd' ? path : undefined),
   });
 
@@ -148,6 +251,7 @@ test('a writer commits between two statements', async () => {
   const path = join(scratch.path, 'd.sqlite');
   writeDatabase(path, [1]);
   using federation = new Federation({
+    main: ':memory:',
     locate: (name) => (name === 'd' ? path : undefined),
   });
   assert.deepEqual(
@@ -172,6 +276,7 @@ test('a database that moves between statements is read from its new path', async
   writeDatabase(after, [2]);
   let path = before;
   using federation = new Federation({
+    main: ':memory:',
     locate: (name) => (name === 'd' ? path : undefined),
   });
   // One cached statement runs again after its database was detached.
@@ -188,6 +293,7 @@ test('a statement reads a database that it names by schema', async () => {
   const path = join(scratch.path, 'd.sqlite');
   writeDatabase(path, [1, 2]);
   using federation = new Federation({
+    main: ':memory:',
     locate: (name) => (name === 'd' ? path : undefined),
   });
 
@@ -213,7 +319,10 @@ test('one statement joins two databases', async () => {
   ]);
   writeDatabase(join(scratch.path, 'left.sqlite'), [1, 2, 3]);
   writeDatabase(join(scratch.path, 'right.sqlite'), [2, 3, 4]);
-  using federation = new Federation({ locate: (name) => paths.get(name) });
+  using federation = new Federation({
+    main: ':memory:',
+    locate: (name) => paths.get(name),
+  });
 
   const rows = federation.sql.all`
     SELECT l.x FROM left.t l JOIN right.t r ON r.x = l.x ORDER BY l.x`;
@@ -232,7 +341,10 @@ test('one statement reads 10 databases', async () => {
     writeDatabase(path, [index]);
     paths.set(`d${index}`, path);
   }
-  using federation = new Federation({ locate: (name) => paths.get(name) });
+  using federation = new Federation({
+    main: ':memory:',
+    locate: (name) => paths.get(name),
+  });
 
   const rows = federation.sql.all`
     SELECT x FROM d0.t UNION ALL SELECT x FROM d1.t UNION ALL
@@ -246,4 +358,170 @@ test('one statement reads 10 databases', async () => {
     rows.map(({ x }) => x),
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
   );
+});
+
+test('a SQL file defines temporary views read by raw and tagged queries across databases', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
+  const left = join(scratch.path, 'left.sqlite');
+  const right = join(scratch.path, 'right.sqlite');
+  writeDatabase(left, [1, 2]);
+  writeDatabase(right, [2, 3]);
+  const paths = new Map([
+    ['left', left],
+    ['right', right],
+  ]);
+  using federation = new Federation({
+    main: ':memory:',
+    locate: (name) => paths.get(name),
+  });
+  federation.exec(`
+    CREATE TEMP VIEW matches AS SELECT l.x FROM left.t l JOIN right.t r USING (x);
+    CREATE TEMP VIEW doubled AS SELECT x * 2 AS x FROM matches;
+  `);
+
+  assert.deepEqual(
+    federation.query('SELECT x FROM doubled', ['left', 'right']),
+    {
+      columns: ['x'],
+      rows: [[4]],
+    },
+  );
+  assert.deepEqual(attachedNames(federation), ['main', 'temp']);
+  assert.equal(federation.sql.get`SELECT x FROM doubled`?.x, 4);
+  assert.deepEqual(attachedNames(federation), ['main', 'temp']);
+  using writer = new DatabaseSync(right);
+  writer.exec('INSERT INTO t VALUES (1)');
+  assert.deepEqual(
+    federation.query('SELECT x FROM doubled ORDER BY x', ['left', 'right']),
+    {
+      columns: ['x'],
+      rows: [[2], [4]],
+    },
+  );
+});
+
+test('raw SQL preserves column positions, empty headers, schema PRAGMAs and unqualified resolution', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
+  const first = join(scratch.path, 'first.sqlite');
+  const second = join(scratch.path, 'second.sqlite');
+  writeDatabase(first, [1]);
+  writeDatabase(second, [2]);
+  const paths = new Map([
+    ['first', first],
+    ['second', second],
+  ]);
+  using federation = new Federation({
+    main: ':memory:',
+    locate: (name) => paths.get(name),
+  });
+
+  assert.deepEqual(federation.query('SELECT x FROM t', ['first', 'second']), {
+    columns: ['x'],
+    rows: [[1]],
+  });
+  assert.deepEqual(federation.query('SELECT x FROM t', ['second', 'first']), {
+    columns: ['x'],
+    rows: [[2]],
+  });
+  assert.deepEqual(federation.query('SELECT 1 AS same, 2 AS same', []), {
+    columns: ['same', 'same'],
+    rows: [[1, 2]],
+  });
+  assert.deepEqual(
+    federation.query('SELECT x AS value FROM first.t WHERE 0', []),
+    {
+      columns: ['value'],
+      rows: [],
+    },
+  );
+  const pragma = federation.query('PRAGMA first.table_info(t)', ['first']);
+  assert.deepEqual(pragma.columns, [
+    'cid',
+    'name',
+    'type',
+    'notnull',
+    'dflt_value',
+    'pk',
+  ]);
+  assert.deepEqual(pragma.rows, [[0, 'x', 'INTEGER', 0, null, 0]]);
+  assert.deepEqual(attachedNames(federation), ['main']);
+});
+
+test('raw SQL rejects second statements before executing and detaches on failure', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
+  const path = join(scratch.path, 'd.sqlite');
+  writeDatabase(path, [1]);
+  const paths = new Map([['d', path]]);
+  using federation = new Federation({
+    main: ':memory:',
+    locate: (name) => paths.get(name),
+  });
+
+  assert.deepEqual(
+    federation.query("SELECT ';' AS value; -- tail\n; /* done */", []),
+    {
+      columns: ['value'],
+      rows: [[';']],
+    },
+  );
+  for (const tail of ['SELECT 2', 'malformed sql', 'SELECT * FROM absent.t']) {
+    assert.throws(
+      () => federation.query(`CREATE TEMP TABLE rejected (x); ${tail}`, ['d']),
+      {
+        message: 'Run one SQL statement at a time',
+      },
+    );
+    assert.equal(attachedNames(federation).includes('d'), false);
+    assert.equal(
+      federation.sql
+        .get`SELECT count(*) AS n FROM temp.sqlite_schema WHERE name = 'rejected'`
+        ?.n,
+      0,
+    );
+  }
+  assert.throws(
+    () => federation.query('SELECT * FROM d.missing', []),
+    /no such table: d.missing/,
+  );
+  assert.throws(
+    () => federation.query('SELECT 1', ['d', 'absent']),
+    /Unknown database absent/,
+  );
+  assert.throws(() => federation.query('DELETE FROM d.t', []), /readonly/);
+  assert.deepEqual(federation.query('SELECT x FROM d.t', []), {
+    columns: ['x'],
+    rows: [[1]],
+  });
+  assert.deepEqual(attachedNames(federation), ['main', 'temp']);
+});
+
+test('a configured busy timeout waits for a writer before reading an attached database', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
+  const path = join(scratch.path, 'd.sqlite');
+  writeDatabase(path, [1]);
+  using federation = new Federation({
+    main: ':memory:',
+    locate: () => path,
+    timeout: 2_000,
+  });
+  const writer = new Worker(
+    `
+    const { parentPort, workerData } = require('node:worker_threads');
+    const { DatabaseSync } = require('node:sqlite');
+    const database = new DatabaseSync(workerData);
+    database.exec('BEGIN EXCLUSIVE; INSERT INTO t VALUES (2)');
+    parentPort.postMessage('locked');
+    setTimeout(() => { database.exec('COMMIT'); database.close(); }, 500);
+  `,
+    { eval: true, workerData: path },
+  );
+  try {
+    await once(writer, 'message');
+    assert.deepEqual(federation.query('SELECT x FROM d.t ORDER BY x', []), {
+      columns: ['x'],
+      rows: [[1], [2]],
+    });
+  } finally {
+    await writer.terminate();
+  }
 });

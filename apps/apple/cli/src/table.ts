@@ -10,9 +10,11 @@ function cell(value: unknown): string {
 
 export function table(
   headers: readonly string[],
-  rows: readonly (readonly unknown[])[],
+  rows: readonly Readonly<Record<number, unknown>>[],
 ): string {
-  const cells = rows.map((row) => row.map(cell));
+  const cells = rows.map((row) =>
+    headers.map((_, column) => cell(row[column])),
+  );
   const widths = headers.map((header, column) =>
     Math.max(header.length, ...cells.map((row) => row[column]?.length ?? 0)),
   );

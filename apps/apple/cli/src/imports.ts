@@ -1,6 +1,5 @@
 import { existsSync, rmSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import { SqliteElection } from '@zukhruf/election';
 import {
@@ -147,34 +146,19 @@ export class Imports {
     });
   }
 
-  // Opens a connector's import for reading only; nothing a reader runs can
-  // write to it, and what a sync stopped mid-commit left is rolled back first.
-  read(name: string): DatabaseSync {
-    return readSQLite(this.#database(name));
+  // Locates an import and recovers interrupted writes before a reader opens it.
+  database(name: string): string {
+    const path = this.#database(name);
+    readSQLite(path).close();
+    return path;
   }
 
-  // Opens the imports of the named connectors for reading only, each attached
-  // under its connector's name, for a reader that spans imports.
-  attach(names: readonly string[]): DatabaseSync {
-    const paths = names.map((name) => [name, this.#database(name)] as const);
-    // Attached files wait on this connection's timeout, as readSQLite's do,
-    // so a reader waits out a sync committing rather than failing.
-    const database = new DatabaseSync(':memory:', {
-      readOnly: true,
-      timeout: 30_000,
-    });
-    try {
-      for (const [name, path] of paths) {
-        // Rolls back the hot journal a killed sync left, which would fail the
-        // read-only attach.
-        readSQLite(path).close();
-        database.prepare(`ATTACH DATABASE ? AS "${name}"`).run(path);
-      }
-      return database;
-    } catch (error) {
-      database.close();
-      throw error;
-    }
+  // Locates every required import before recovering any interrupted writes,
+  // so a federated reader can open the files read-only.
+  databases(names: readonly string[]): ReadonlyMap<string, string> {
+    const paths = new Map(names.map((name) => [name, this.#database(name)]));
+    for (const path of paths.values()) readSQLite(path).close();
+    return paths;
   }
 
   #database(name: string): string {
