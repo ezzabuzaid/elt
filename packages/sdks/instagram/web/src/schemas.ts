@@ -38,7 +38,6 @@ const timelineMedia = timelineSlide.extend({
   caption_is_edited: z.boolean(),
   like_count: z.number(),
   comment_count: z.number(),
-  like_and_view_counts_disabled: z.boolean(),
   timeline_pinned_user_ids: z.array(z.string()),
   user: owner,
   coauthor_producers: z.array(owner),

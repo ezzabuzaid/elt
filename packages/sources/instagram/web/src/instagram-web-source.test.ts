@@ -121,6 +121,9 @@ type World = {
   // listed them is fresh, as it did on 2026-10-15 for three of Hive's
   // highlight stories from July 2025.
   gone?: readonly string[];
+  // How many times the CDN drops the connection for an image before it
+  // serves it, as "fetch failed" showed on 2026-10-15; Infinity for always.
+  dropped?: Record<string, number>;
 };
 
 type Call = {
@@ -620,6 +623,11 @@ function instagram(world: World) {
       if (id === undefined) return new HttpResponse(null, { status: 404 });
       if (world.gone?.includes(id))
         return new HttpResponse(null, { status: 410 });
+      const drops = world.dropped?.[id] ?? 0;
+      if (drops > 0) {
+        world.dropped = { ...world.dropped, [id]: drops - 1 };
+        return HttpResponse.error();
+      }
       downloads.push(id);
       return new HttpResponse(bytesOf(id), {
         headers: { 'content-type': 'image/jpeg' },
@@ -1356,6 +1364,95 @@ test('a highlight story whose image Instagram’s CDN no longer has loads withou
       `SELECT id AS key, "attachmentRef" FROM highlight_items ORDER BY id`,
     ),
     { 811: bytesOf('811'), 812: null, 813: bytesOf('813') },
+  );
+});
+
+test('an image whose connection the CDN drops once is asked for again and stored', async () => {
+  await using _mac = await signedInMac();
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
+  const story = (pk: string) => ({
+    pk,
+    takenAt: day - 90 * 86_400,
+    expiresAt: day - 89 * 86_400,
+  });
+  using _wire = instagram({
+    profiles: [
+      {
+        ...hive([]),
+        highlights: [
+          { id: '81', title: 'Summer', items: [story('811'), story('812')] },
+        ],
+      },
+    ],
+    following: [],
+    dropped: { 812: 1 },
+  });
+
+  await (
+    await pipeline(
+      await InstagramWebSource.connect({ profileIds: ['44555906095'] }),
+      dir.path,
+    )
+  ).run();
+
+  assert.deepEqual(
+    await storedFiles(
+      dir.path,
+      `SELECT id AS key, "attachmentRef" FROM highlight_items ORDER BY id`,
+    ),
+    { 811: bytesOf('811'), 812: bytesOf('812') },
+  );
+});
+
+test('a highlight story whose image keeps failing fails the run, the highlights read before it stay loaded with their images, and the next run loads the rest without downloading them again', async () => {
+  await using _mac = await signedInMac();
+  await using dir = await mkdtempDisposable(join(tmpdir(), 'instagram-load-'));
+  const story = (pk: string) => ({
+    pk,
+    takenAt: day - 90 * 86_400,
+    expiresAt: day - 89 * 86_400,
+  });
+  // Instagram answers the items of five highlights a page.
+  const world: World = {
+    profiles: [
+      {
+        ...hive([]),
+        highlights: Array.from({ length: 7 }, (_, index) => ({
+          id: `8${index + 1}`,
+          title: `H${index}`,
+          items: [story(`8${index + 1}1`)],
+        })),
+      },
+    ],
+    following: [],
+    dropped: { 861: Number.POSITIVE_INFINITY },
+  };
+  using wire = instagram(world);
+  const run = await pipeline(
+    await InstagramWebSource.connect({ profileIds: ['44555906095'] }),
+    dir.path,
+  );
+
+  const failed = await failedRun(run.run());
+  const loaded = await storedFiles(
+    dir.path,
+    `SELECT id AS key, "attachmentRef" FROM highlight_items ORDER BY id`,
+  );
+  world.dropped = {};
+  wire.downloads.length = 0;
+  await run.run();
+
+  assert.equal(failed.highlight_items?.[0]?.failureType, 'system');
+  assert.deepEqual(
+    loaded,
+    Object.fromEntries(
+      ['811', '821', '831', '841', '851'].map((id) => [id, bytesOf(id)]),
+    ),
+  );
+  assert.deepEqual(wire.downloads, ['861', '871']);
+  assert.equal(
+    rows(dir.path, 'SELECT count(*) AS n FROM highlight_items')[0]?.n,
+    7,
   );
 });
 

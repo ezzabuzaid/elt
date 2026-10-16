@@ -352,26 +352,20 @@ export class InstagramWeb {
 
   // Saves an image or video from Instagram's CDN, whose URLs are signed and
   // need no session. False when the CDN answers 410 Gone: it no longer has
-  // the file, though the answer that listed it is fresh.
+  // the file, though the answer that listed it is fresh. A connection that
+  // fails, which fetch reports as a TypeError, is tried once more: the GET
+  // is safe to repeat.
   async download(
     url: string,
     path: string,
     signal?: AbortSignal,
   ): Promise<boolean> {
-    const response = await fetch(url, {
-      headers: { 'user-agent': userAgent },
-      signal,
-    });
-    if (response.status === 410) return false;
-    if (response.status === 429)
-      throw new InstagramRateLimitError('a download');
-    if (!response.ok || response.body === null)
-      throw new InstagramQueryError(
-        'a download',
-        `answered ${response.status}`,
-      );
-    await pipeline(response.body, createWriteStream(path), { signal });
-    return true;
+    try {
+      return await save(url, path, signal);
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return save(url, path, signal);
+    }
   }
 
   async #rest<Schema extends z.ZodType>(
@@ -440,6 +434,24 @@ export class InstagramWeb {
 
 function nextOf(page: { end_cursor: string | null; has_next_page: boolean }) {
   return page.has_next_page ? page.end_cursor : null;
+}
+
+// One download from the CDN into path; false when the CDN answers 410 Gone.
+async function save(
+  url: string,
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  const response = await fetch(url, {
+    headers: { 'user-agent': userAgent },
+    signal,
+  });
+  if (response.status === 410) return false;
+  if (response.status === 429) throw new InstagramRateLimitError('a download');
+  if (!response.ok || response.body === null)
+    throw new InstagramQueryError('a download', `answered ${response.status}`);
+  await pipeline(response.body, createWriteStream(path), { signal });
+  return true;
 }
 
 // One request, redirects not followed: Instagram redirects a session it does

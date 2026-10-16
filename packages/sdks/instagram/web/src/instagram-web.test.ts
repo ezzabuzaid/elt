@@ -442,35 +442,37 @@ test('an answer missing a field the SDK reads fails naming the query and the fie
   );
 });
 
+// A grid photo as Instagram sends it.
+const gridPhoto = (pk: string) => ({
+  pk,
+  id: `${pk}_44555906095`,
+  taken_at: 1791104426,
+  media_type: 1,
+  product_type: 'feed',
+  image_versions2: {
+    candidates: [
+      {
+        url: 'https://scontent.cdninstagram.com/v/photo.jpg',
+        width: 1080,
+        height: 1350,
+      },
+    ],
+  },
+  accessibility_caption: null,
+  code: `C${pk}`,
+  caption: null,
+  caption_is_edited: false,
+  like_count: 54,
+  comment_count: 0,
+  like_and_view_counts_disabled: false,
+  timeline_pinned_user_ids: [],
+  user: { pk: '44555906095', username: 'hivefitnationgym' },
+  coauthor_producers: [],
+  usertags: null,
+  carousel_media: null,
+});
+
 test('a grid page whose answer carries field errors on a field the SDK does not read is read whole', async () => {
-  const photo = (pk: string) => ({
-    pk,
-    id: `${pk}_44555906095`,
-    taken_at: 1791104426,
-    media_type: 1,
-    product_type: 'feed',
-    image_versions2: {
-      candidates: [
-        {
-          url: 'https://scontent.cdninstagram.com/v/photo.jpg',
-          width: 1080,
-          height: 1350,
-        },
-      ],
-    },
-    accessibility_caption: null,
-    code: `C${pk}`,
-    caption: null,
-    caption_is_edited: false,
-    like_count: 54,
-    comment_count: 0,
-    like_and_view_counts_disabled: false,
-    timeline_pinned_user_ids: [],
-    user: { pk: '44555906095', username: 'hivefitnationgym' },
-    coauthor_producers: [],
-    usertags: null,
-    carousel_media: null,
-  });
   // As Instagram answered page 5 of this grid on 2026-10-15, to the web
   // client and to Node alike: every post, and a field error for a location's
   // picture, which the answer leaves null.
@@ -479,10 +481,10 @@ test('a grid page whose answer carries field errors on a field the SDK does not 
       data: {
         xdt_api__v1__feed__user_timeline_graphql_connection: {
           edges: [
-            { node: photo('3678706059602901688') },
+            { node: gridPhoto('3678706059602901688') },
             {
               node: {
-                ...photo('3678706059602901687'),
+                ...gridPhoto('3678706059602901687'),
                 location: {
                   pk: '2192741',
                   name: 'Hive Fitness Nation',
@@ -522,5 +524,34 @@ test('a grid page whose answer carries field errors on a field the SDK does not 
   assert.deepEqual(
     page.items.map(({ pk }) => pk),
     ['3678706059602901688', '3678706059602901687'],
+  );
+});
+
+test('a grid post whose like and view count flag Instagram sends as null is read', async () => {
+  // Instagram sent null for one post of this grid on 2026-10-15.
+  using _ = instagram(() =>
+    Response.json({
+      data: {
+        xdt_api__v1__feed__user_timeline_graphql_connection: {
+          edges: [
+            {
+              node: {
+                ...gridPhoto('3601234567890123456'),
+                like_and_view_counts_disabled: null,
+              },
+            },
+          ],
+          page_info: { end_cursor: null, has_next_page: false },
+        },
+      },
+    }),
+  );
+  const web = await InstagramWeb.open(session);
+
+  const page = await web.posts('hivefitnationgym', null);
+
+  assert.deepEqual(
+    page.items.map(({ pk }) => pk),
+    ['3601234567890123456'],
   );
 });
