@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import type { Command as Declaration } from 'commander';
 
-import { peopleConnectors, peopleFile } from '@workspace/apple-people/people';
+import { peopleFile } from '@workspace/apple-people/people';
 import { Federation } from '@workspace/sqlite-federation';
 
 import { table } from '../table.ts';
@@ -29,10 +29,12 @@ export class PeopleCommand extends Command {
 
   protected async run(declaration: Declaration): Promise<Output> {
     const sql: string = declaration.processedArgs[0] ?? everyone;
-    const paths = this.imports.databases(peopleConnectors);
     using database = new Federation({
       main: ':memory:',
-      locate: (name) => paths.get(name),
+      locate: (name) =>
+        this.imports.names.includes(name)
+          ? this.imports.database(name)
+          : undefined,
       timeout: 30_000,
     });
     try {

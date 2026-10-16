@@ -150,18 +150,53 @@ test('people preserves the default list, custom SQL, duplicate columns and empty
   assert.match(write.stderr, /readonly/);
 });
 
-test('people validates every required import even when the query reads none', async () => {
+test('people validates only referenced imports, preserving setup, sync and SQLite errors', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'people-cli-'));
   const paths = await importsAt(scratch.path);
   const path = paths.get('calendar');
   assert.ok(path);
   rmSync(path);
 
-  const result = people(scratch.path, 'SELECT 1');
-
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Calendar has not synced yet; run: sync/);
-  assert.equal(result.stdout, '');
+  for (const [sql, expected] of [
+    ['SELECT 1 AS n', [{ n: 1 }]],
+    ['SELECT count(*) AS n FROM contacts.counterparts', [{ n: 3 }]],
+    [
+      "SELECT name FROM pragma_table_info('counterparts', 'contacts') WHERE name = 'relation'",
+      [{ name: 'relation' }],
+    ],
+  ] as const) {
+    const result = people(scratch.path, sql);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), expected);
+  }
+  for (const sql of [
+    'SELECT * FROM people',
+    'SELECT * FROM person_relations',
+    'SELECT * FROM person_identifiers',
+    'SELECT * FROM calendar.counterparts',
+    'PRAGMA calendar.table_info(counterparts)',
+    "SELECT * FROM pragma_table_info('counterparts', 'calendar')",
+  ]) {
+    const result = people(scratch.path, sql);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Calendar has not synced yet; run: sync/);
+    assert.equal(result.stdout, '');
+  }
+  for (const [sql, error] of [
+    ['SELECT * FROM books.counterparts', /Books is not set up; run: setup/],
+    ['SELECT * FROM contacts.missing', /no such table: contacts.missing/],
+    [
+      'SELECT * FROM unknown.counterparts',
+      /no such table: unknown.counterparts/,
+    ],
+    ['PRAGMA unknown.table_info(counterparts)', /unknown database unknown/],
+  ] as const) {
+    const result = people(scratch.path, sql);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, error);
+    assert.equal(result.stdout, '');
+  }
+  assert.equal(existsSync(path), false);
 });
 
 test('query preserves main, schema PRAGMAs, positional output and statement rejection through the shared executor', async () => {
@@ -287,6 +322,10 @@ test('query joins main and its preset with another import, locating only the imp
 
 for (const args of [
   ['people', 'SELECT count(*) AS n FROM contacts.counterparts'],
+  [
+    'people',
+    "SELECT count(*) AS n FROM pragma_table_info('counterparts', 'contacts') WHERE name IN ('relation', 'identifier_type', 'identifier')",
+  ],
   ['query', 'contacts', 'SELECT count(*) AS n FROM main.counterparts'],
   [
     'query',
@@ -331,6 +370,11 @@ for (const args of [
         /readonly/,
       );
     }
+
+    const unrelated = people(scratch.path, 'SELECT 1 AS n');
+    assert.equal(unrelated.status, 0, unrelated.stderr);
+    assert.deepEqual(JSON.parse(unrelated.stdout), [{ n: 1 }]);
+    assert.equal(existsSync(`${path}-journal`), true);
 
     const result = spawnSync(process.execPath, [entry, ...args], {
       cwd: scratch.path,

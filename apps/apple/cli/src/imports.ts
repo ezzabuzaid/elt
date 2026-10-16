@@ -148,20 +148,6 @@ export class Imports {
 
   // Locates an import and recovers interrupted writes before a reader opens it.
   database(name: string): string {
-    const path = this.#database(name);
-    readSQLite(path).close();
-    return path;
-  }
-
-  // Locates every required import before recovering any interrupted writes,
-  // so a federated reader can open the files read-only.
-  databases(names: readonly string[]): ReadonlyMap<string, string> {
-    const paths = new Map(names.map((name) => [name, this.#database(name)]));
-    for (const path of paths.values()) readSQLite(path).close();
-    return paths;
-  }
-
-  #database(name: string): string {
     const { title } = this.connector(name);
     using settings = new Settings(this.root);
     const selection = settings
@@ -169,9 +155,11 @@ export class Imports {
       .find(({ connector }) => connector === name);
     if (selection === undefined)
       throw new Error(`${title} is not set up; run: setup`);
-    if (!existsSync(settings.database(selection)))
+    const path = settings.database(selection);
+    if (!existsSync(path))
       throw new Error(`${title} has not synced yet; run: sync`);
-    return settings.database(selection);
+    readSQLite(path).close();
+    return path;
   }
 
   // One pass of each selected connector, or only of those named, shown through

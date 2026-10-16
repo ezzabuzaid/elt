@@ -3187,7 +3187,12 @@ test('people names a connector it reads that is not set up, and lists no one', a
   await withNotes(mac.path);
   cli(mac.path, 'setup', '--connector', 'notes');
 
-  const run = cli(mac.path, 'people', '--json');
+  const run = cli(
+    mac.path,
+    'people',
+    'SELECT * FROM contacts.counterparts',
+    '--json',
+  );
 
   assert.equal(run.status, 1, run.stderr);
   assert.equal(run.stdout, '');
