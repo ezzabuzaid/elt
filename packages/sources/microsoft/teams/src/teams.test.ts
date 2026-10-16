@@ -440,6 +440,9 @@ function account(): Account {
           description: 'Where designs are reviewed',
           createdat: null,
           isdeleted: 'false',
+          // Teams writes this flag as text in some records, as it did on
+          // 2026-10-15 for a meeting chat on this Mac.
+          hidden: 'true',
           threadSubType: 'PrivateChannel',
           threadType: 'topic',
           tenantid: tenant,
@@ -1319,7 +1322,7 @@ test('every stream loads what the Teams app keeps, as a consumer reads it, and a
         isRead: null,
         isFavorite: 1,
         isPinned: null,
-        isHidden: null,
+        isHidden: 1,
         isDeleted: 0,
         visibility: null,
         subType: 'PrivateChannel',

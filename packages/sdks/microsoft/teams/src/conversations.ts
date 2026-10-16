@@ -25,7 +25,7 @@ export function readConversation(conversation: Fields): TeamsConversation {
     isRead: thread?.boolean('isRead') ?? null,
     isFavorite: properties?.flag('favorite') ?? null,
     isPinned: properties?.flag('ispinned') ?? null,
-    isHidden: thread?.boolean('hidden') ?? null,
+    isHidden: thread?.flag('hidden') ?? null,
     isDeleted:
       properties?.boolean('isDeleted') ?? thread?.flag('isdeleted') ?? null,
     visibility: thread?.string('visibility') ?? null,
