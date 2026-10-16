@@ -53,7 +53,7 @@ Output:
 
 - `sql` has `all` and `get` of the `SQLTagStore` of `node:sqlite`. A value in `${}` is a bound parameter.
 - `main` is the primary database path, opened read-only for the lifetime of the handle. Use `':memory:'` when there is no primary file. `main` does not count toward the attachment limit.
-- A tagged statement names each additional database as a schema: `messages.messages`. Unqualified names follow SQLite's resolution, including temporary views and the primary database.
+- A statement names each additional database as a schema: `messages.messages`. Use unqualified names for the primary database and temporary views; qualify cross-database tables. There is no pre-attached search path for unqualified source tables.
 - `locate(name)` is required. It returns the path of an additional database, or `undefined` when the host has no database by that name. The handle calls it for each statement, so it reads an additional database from its new path after the host moves it.
 - Return `undefined` for a database that the host has not written yet. The handle cannot make a database, so an attach of a path with no file fails.
 - Imported databases are read-only. A statement that writes to one fails with `attempt to write a readonly database`. Connection-local temporary objects remain writable.
@@ -63,7 +63,7 @@ Output:
 
 `exec(sql)` executes connection-local setup SQL, including a file containing several `CREATE TEMP VIEW` statements. It uses SQLite's `exec` directly, without replaying the script. The databases a temporary view refers to are resolved when a query reads it.
 
-`query(sql, names)` runs exactly one SQL statement and returns `QueryResult`: `columns`, including headings when there are no rows, and `rows`, whose values are indexed by column position. Duplicate column names therefore keep both values. Trailing comments and empty statements are allowed; a second statement, even malformed, fails before the first executes.
+`query(sql)` runs exactly one SQL statement and returns `QueryResult`: `columns`, including headings when there are no rows, and `rows`, whose values are indexed by column position. Duplicate column names therefore keep both values. Trailing comments and empty statements are allowed; a second statement, even malformed, fails before the first executes.
 
 ```ts
 federation.exec(`
@@ -71,13 +71,10 @@ federation.exec(`
   SELECT c.name, m.text
   FROM messages.messages m JOIN contacts.contacts c ON c.phone = m.handle;
 `);
-const result = federation.query('SELECT * FROM conversations', [
-  'messages',
-  'contacts',
-]);
+const result = federation.query('SELECT * FROM conversations');
 ```
 
-The `names` argument makes those additional databases visible for the statement, in the given order. This preserves SQLite's resolution of unqualified tables and supports schema PRAGMAs such as `PRAGMA contacts.table_info(contacts)`. An empty list uses automatic discovery alone. Additional qualified tables are discovered as for tagged queries. Every attachment made for the statement is detached afterwards, including on failure; `main` and temporary views remain on the connection. The additional databases count toward the attachment limit.
+Qualified tables and PRAGMAs discover additional databases through `locate`. Both `PRAGMA contacts.table_info(contacts)` and `SELECT * FROM pragma_table_info('contacts', 'contacts')` locate Contacts, including when the schema is a bound parameter in a tagged query. Quoted schema names such as `"call-history"` work too. Every attachment made for the statement is detached afterwards, including on failure; `main` and temporary views remain on the connection. The additional databases count toward the attachment limit.
 
 The constructor accepts Node's `timeout` option for waiting on a writer's lock, in milliseconds. Omit it to use Node's native behavior. Hosts that need crash recovery perform it before supplying the paths; Federation opens those files read-only.
 
@@ -95,13 +92,12 @@ using database = new Federation({
 });
 const result = database.query(
   'SELECT c.name, m.text FROM main.messages m JOIN contacts.contacts c ON c.phone = m.handle',
-  [],
 );
 ```
 
 ## Each statement attaches what it names
 
-- SQLite fails with `no such table: <name>.<table>` when a statement names a database that is not attached. The handle attaches the database with that name and runs the statement again. It never parses the statement. [ADR 0002](./docs/adr/0002-the-error-of-sqlite-names-the-database.md) tells why.
+- SQLite fails with `no such table: <name>.<table>` for a qualified table or `unknown database <name>` for a PRAGMA when its database is not attached. The handle decodes the name, attaches that database and runs the statement again. It never parses the statement. [ADR 0002](./docs/adr/0002-the-error-of-sqlite-names-the-database.md) tells why.
 - When the statement ends, the handle detaches each database that it attached, also when the statement fails. An attach costs less than 1 ms. [ADR 0001](./docs/adr/0001-each-statement-attaches-what-it-names.md) tells why.
 - Between two statements, the handle holds no lock. A writer in another connection or process can commit.
 - One statement can attach at most 10 databases in addition to `main`. To read more, split the statement and join the rows in code. [ADR 0003](./docs/adr/0003-a-statement-over-the-limit-fails.md) tells why.
@@ -115,7 +111,7 @@ const result = database.query(
 | `unable to open database file`         | The error of SQLite, when `locate` returns a path with no file.                                                                                   |
 | `attempt to write a readonly database` | The error of SQLite, when a statement writes.                                                                                                     |
 | The error of `locate`                  | When `locate` throws, the statement fails with that error. The databases that the statement attached before are detached.                         |
-| `Unknown database <name>`              | A name explicitly supplied to `query` cannot be located.                                                                                          |
+| `unknown database <name>`              | The error of SQLite, when a PRAGMA names a database that `locate` cannot find. Quoting follows the statement or the table-valued PRAGMA argument. |
 | `Run one SQL statement at a time`      | A raw query contains a second statement.                                                                                                          |
 
 ## The same concepts in other systems

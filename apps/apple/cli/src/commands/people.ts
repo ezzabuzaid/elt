@@ -23,7 +23,7 @@ export class PeopleCommand extends Command {
   protected configure(declaration: Declaration): void {
     declaration.argument(
       '[sql]',
-      `one statement over the people, person_relations and person_identifiers views, which the comments of ${peopleFile} describe; without one, everyone but you, the most recent first`,
+      `one statement over the people, person_relations and person_identifiers views, which the comments of ${peopleFile} describe; qualify source tables as connector.view. Without a statement, everyone but you, the most recent first`,
     );
   }
 
@@ -42,7 +42,7 @@ export class PeopleCommand extends Command {
         cause: error,
       });
     }
-    const { columns, rows } = database.query(sql, peopleConnectors);
+    const { columns, rows } = database.query(sql);
     return {
       data: rows.map((row) =>
         Object.fromEntries(columns.map((name, at) => [name, row[at]])),

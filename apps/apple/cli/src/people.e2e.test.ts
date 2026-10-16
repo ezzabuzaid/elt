@@ -95,14 +95,23 @@ test('people preserves the default list, custom SQL, duplicate columns and empty
     scratch.path,
     'SELECT count(*) AS n FROM counterparts',
   );
-  assert.equal(unqualified.status, 0, unqualified.stderr);
-  assert.deepEqual(JSON.parse(unqualified.stdout), [{ n: 3 }]);
-  const columns = people(
+  assert.equal(unqualified.status, 1);
+  assert.match(unqualified.stderr, /no such table: counterparts/);
+  const qualified = people(
     scratch.path,
-    'PRAGMA contacts.table_info(counterparts)',
+    'SELECT count(*) AS n FROM contacts.counterparts',
   );
-  assert.equal(columns.status, 0, columns.stderr);
-  assert.equal(JSON.parse(columns.stdout)[0].name, 'relation');
+  assert.equal(qualified.status, 0, qualified.stderr);
+  assert.deepEqual(JSON.parse(qualified.stdout), [{ n: 3 }]);
+  for (const sql of [
+    'PRAGMA contacts.table_info(counterparts)',
+    'PRAGMA "call-history".table_info(counterparts)',
+    "SELECT name FROM pragma_table_info('counterparts', 'contacts')",
+  ]) {
+    const columns = people(scratch.path, sql);
+    assert.equal(columns.status, 0, columns.stderr);
+    assert.equal(JSON.parse(columns.stdout)[0].name, 'relation');
+  }
 
   for (const [sql, expected] of [
     ['SELECT name AS person FROM people WHERE 0', /person\s+0 rows/],
@@ -245,6 +254,14 @@ test('query joins main and its preset with another import, locating only the imp
   assert.deepEqual(JSON.parse(joined.stdout), [
     { name: 'Rana', text: 'Monthly subscription', record_id: 'm1' },
   ]);
+  for (const sql of [
+    'PRAGMA contacts.table_info(counterparts)',
+    "SELECT name FROM pragma_table_info('counterparts', 'contacts')",
+  ]) {
+    const columns = query(sql);
+    assert.equal(columns.status, 0, columns.stderr);
+    assert.equal(JSON.parse(columns.stdout)[0].name, 'relation');
+  }
 
   for (const [sql, error] of [
     ['SELECT * FROM main.missing', /no such table: main.missing/],
@@ -275,6 +292,11 @@ for (const args of [
     'query',
     'messages',
     'SELECT count(*) AS n FROM main.counterparts m CROSS JOIN contacts.counterparts c',
+  ],
+  [
+    'query',
+    'calendar',
+    "SELECT count(*) AS n FROM pragma_table_info('counterparts', 'contacts') WHERE name IN ('relation', 'identifier_type', 'identifier')",
   ],
 ])
   test(`${args.slice(0, -1).join(' ')} recovers a hot journal before reading its imports`, async () => {

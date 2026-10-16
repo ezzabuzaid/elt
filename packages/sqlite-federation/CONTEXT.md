@@ -20,7 +20,7 @@ _Avoid_: Resolve, look up, map
 The primary database, opened read-only for the lifetime of the handle. Its path is required; `':memory:'` gives an empty primary database. Main does not count toward the attachment limit.
 
 **Handle**:
-`sql` for tagged statements, and `query(sql, names)` for one SQL string with explicit database visibility.
+`sql` for tagged statements, and `query(sql)` for one SQL string. Both discover additional databases from the statement through `locate`.
 _Avoid_: Connection (the handle has one connection, but the connection is not the handle), client, session
 
 **Statement**:

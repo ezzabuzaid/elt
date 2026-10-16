@@ -42,7 +42,7 @@ function views(database: Federation, connector: AppleConnector): ViewSummary[] {
       view,
       coverage,
       rows: Number(
-        database.query(`SELECT count(*) FROM "${view}"`, []).rows[0]?.[0],
+        database.query(`SELECT count(*) FROM "${view}"`).rows[0]?.[0],
       ),
     }));
 }
@@ -115,7 +115,7 @@ export class QueryCommand extends Command {
       timeout: 30_000,
     });
     loadPresets(database, this.imports.connector(name));
-    const { columns, rows } = database.query(sql, []);
+    const { columns, rows } = database.query(sql);
     return {
       data: rows.map((row) =>
         Object.fromEntries(columns.map((name, at) => [name, row[at]])),

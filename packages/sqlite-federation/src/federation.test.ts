@@ -35,43 +35,39 @@ test('a main database preserves its schema, presets and read-only behavior when 
   {
     using owned = federation;
     owned.exec('CREATE TEMP VIEW preset AS SELECT x FROM main.t');
-    assert.deepEqual(owned.query('SELECT x FROM preset', []), {
+    assert.deepEqual(owned.query('SELECT x FROM preset'), {
       columns: ['x'],
       rows: [[1]],
     });
     assert.equal(owned.sql.get`SELECT x FROM t`?.x, 1);
     assert.deepEqual(
-      owned.query('SELECT m.x FROM main.t m JOIN d.t d USING (x)', []).rows,
+      owned.query('SELECT m.x FROM main.t m JOIN d.t d USING (x)').rows,
       [[1]],
     );
-    assert.deepEqual(owned.query('PRAGMA main.table_info(t)', []).rows, [
+    assert.deepEqual(owned.query('PRAGMA main.table_info(t)').rows, [
       [0, 'x', 'INTEGER', 0, null, 0],
     ]);
-    assert.deepEqual(owned.query('SELECT name FROM sqlite_schema', []).rows, [
+    assert.deepEqual(owned.query('SELECT name FROM sqlite_schema').rows, [
       ['t'],
     ]);
-    assert.deepEqual(owned.query('SELECT x AS value FROM main.t WHERE 0', []), {
+    assert.deepEqual(owned.query('SELECT x AS value FROM main.t WHERE 0'), {
       columns: ['value'],
       rows: [],
     });
-    assert.throws(() => owned.query('DELETE FROM main.t', []), /readonly/);
+    assert.throws(() => owned.query('DELETE FROM main.t'), /readonly/);
     assert.throws(
-      () => owned.query('SELECT * FROM unknown.t', []),
+      () => owned.query('SELECT * FROM unknown.t'),
       /no such table: unknown.t/,
-    );
-    assert.throws(
-      () => owned.query('SELECT 1', ['unknown']),
-      /Unknown database unknown/,
     );
     assert.deepEqual(attachedNames(owned), ['main', 'temp']);
     using writer = new DatabaseSync(path, { timeout: 0 });
     writer.exec('INSERT INTO t VALUES (2)');
-    assert.deepEqual(owned.query('SELECT x FROM main.t ORDER BY x', []).rows, [
+    assert.deepEqual(owned.query('SELECT x FROM main.t ORDER BY x').rows, [
       [1],
       [2],
     ]);
   }
-  assert.throws(() => federation.query('SELECT 1', []), /not open/);
+  assert.throws(() => federation.query('SELECT 1'), /not open/);
   const absent = join(scratch.path, 'absent.sqlite');
   assert.throws(
     () => new Federation({ main: absent, locate }),
@@ -99,21 +95,23 @@ test('main stays open while up to ten additional databases attach for one statem
   );
   assert.equal(federation.sql.get`SELECT x FROM combined`?.x, 101);
   assert.deepEqual(attachedNames(federation), ['main', 'temp']);
-  assert.deepEqual(federation.query('SELECT x FROM t', ['d0']).rows, [[100]]);
+  assert.deepEqual(
+    federation.query('SELECT t.x FROM t JOIN d0.t d ON d.x = 0').rows,
+    [[100]],
+  );
   assert.deepEqual(
     federation.query(
       `SELECT x FROM main.t UNION ALL ${[...paths.keys()].map((name) => `SELECT x FROM ${name}.t`).join(' UNION ALL ')}`,
-      [],
     ).rows,
     [[100], ...Array.from({ length: 10 }, (_, index) => [index])],
   );
   assert.throws(
-    () => federation.query('SELECT * FROM main.t, d0.missing', []),
+    () => federation.query('SELECT * FROM main.t, d0.missing'),
     /no such table: d0.missing/,
   );
-  assert.throws(() => federation.query('DELETE FROM d0.t', []), /readonly/);
+  assert.throws(() => federation.query('DELETE FROM d0.t'), /readonly/);
   assert.deepEqual(attachedNames(federation), ['main', 'temp']);
-  assert.deepEqual(federation.query('SELECT x FROM main.t', []).rows, [[100]]);
+  assert.deepEqual(federation.query('SELECT x FROM main.t').rows, [[100]]);
 });
 
 test('a statement that names more than 10 databases fails with TooManyDatabasesError and leaves none attached', async () => {
@@ -379,28 +377,22 @@ test('a SQL file defines temporary views read by raw and tagged queries across d
     CREATE TEMP VIEW doubled AS SELECT x * 2 AS x FROM matches;
   `);
 
-  assert.deepEqual(
-    federation.query('SELECT x FROM doubled', ['left', 'right']),
-    {
-      columns: ['x'],
-      rows: [[4]],
-    },
-  );
+  assert.deepEqual(federation.query('SELECT x FROM doubled'), {
+    columns: ['x'],
+    rows: [[4]],
+  });
   assert.deepEqual(attachedNames(federation), ['main', 'temp']);
   assert.equal(federation.sql.get`SELECT x FROM doubled`?.x, 4);
   assert.deepEqual(attachedNames(federation), ['main', 'temp']);
   using writer = new DatabaseSync(right);
   writer.exec('INSERT INTO t VALUES (1)');
-  assert.deepEqual(
-    federation.query('SELECT x FROM doubled ORDER BY x', ['left', 'right']),
-    {
-      columns: ['x'],
-      rows: [[2], [4]],
-    },
-  );
+  assert.deepEqual(federation.query('SELECT x FROM doubled ORDER BY x'), {
+    columns: ['x'],
+    rows: [[2], [4]],
+  });
 });
 
-test('raw SQL preserves column positions, empty headers, schema PRAGMAs and unqualified resolution', async () => {
+test('raw SQL preserves column positions, empty headers and qualified table resolution', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
   const first = join(scratch.path, 'first.sqlite');
   const second = join(scratch.path, 'second.sqlite');
@@ -415,26 +407,25 @@ test('raw SQL preserves column positions, empty headers, schema PRAGMAs and unqu
     locate: (name) => paths.get(name),
   });
 
-  assert.deepEqual(federation.query('SELECT x FROM t', ['first', 'second']), {
+  assert.deepEqual(federation.query('SELECT x FROM first.t'), {
     columns: ['x'],
     rows: [[1]],
   });
-  assert.deepEqual(federation.query('SELECT x FROM t', ['second', 'first']), {
+  assert.deepEqual(federation.query('SELECT x FROM second.t'), {
     columns: ['x'],
     rows: [[2]],
   });
-  assert.deepEqual(federation.query('SELECT 1 AS same, 2 AS same', []), {
+  assert.throws(() => federation.query('SELECT x FROM t'), /no such table: t/);
+  assert.deepEqual(federation.query('PRAGMA table_info(t)').rows, []);
+  assert.deepEqual(federation.query('SELECT 1 AS same, 2 AS same'), {
     columns: ['same', 'same'],
     rows: [[1, 2]],
   });
-  assert.deepEqual(
-    federation.query('SELECT x AS value FROM first.t WHERE 0', []),
-    {
-      columns: ['value'],
-      rows: [],
-    },
-  );
-  const pragma = federation.query('PRAGMA first.table_info(t)', ['first']);
+  assert.deepEqual(federation.query('SELECT x AS value FROM first.t WHERE 0'), {
+    columns: ['value'],
+    rows: [],
+  });
+  const pragma = federation.query('PRAGMA first.table_info(t)');
   assert.deepEqual(pragma.columns, [
     'cid',
     'name',
@@ -445,6 +436,66 @@ test('raw SQL preserves column positions, empty headers, schema PRAGMAs and unqu
   ]);
   assert.deepEqual(pragma.rows, [[0, 'x', 'INTEGER', 0, null, 0]]);
   assert.deepEqual(attachedNames(federation), ['main']);
+});
+
+test('PRAGMAs discover bare and quoted database names through raw SQL and bound parameters', async () => {
+  await using scratch = await mkdtempDisposable(join(tmpdir(), 'federation-'));
+  const path = join(scratch.path, 'd.sqlite');
+  writeDatabase(path, [1]);
+  const schemas = [
+    ['contacts', 'contacts'],
+    ['"call-history"', 'call-history'],
+    ['[call-history]', 'call-history'],
+    ['"a""b"', 'a"b'],
+    ["'o''brien'", "o'brien"],
+    ['`a``b`', 'a`b'],
+    ['"a.b"', 'a.b'],
+  ] as const;
+  const paths = new Map<string, string>(
+    schemas.map(([, name]) => [name, path]),
+  );
+  const located: string[] = [];
+  using federation = new Federation({
+    main: ':memory:',
+    locate: (name) => {
+      located.push(name);
+      return paths.get(name);
+    },
+  });
+
+  for (const [token, name] of schemas) {
+    located.length = 0;
+    assert.deepEqual(federation.query(`PRAGMA ${token}.table_info(t)`).rows, [
+      [0, 'x', 'INTEGER', 0, null, 0],
+    ]);
+    assert.deepEqual(located, [name]);
+    assert.deepEqual(attachedNames(federation), ['main']);
+    assert.deepEqual(
+      federation.query(
+        `SELECT name FROM pragma_table_info('t', '${name.replaceAll("'", "''")}')`,
+      ).rows,
+      [['x']],
+    );
+    assert.deepEqual(
+      federation.sql.all`SELECT name FROM pragma_table_info('t', ${name})`.map(
+        ({ name }) => name,
+      ),
+      ['x'],
+    );
+    assert.deepEqual(
+      federation.query(`PRAGMA ${token}.table_info(missing)`).rows,
+      [],
+    );
+    assert.deepEqual(attachedNames(federation), ['main']);
+  }
+  for (const sql of [
+    'PRAGMA missing.table_info(t)',
+    "SELECT * FROM contacts.t, pragma_table_info('t', 'missing')",
+  ]) {
+    assert.throws(() => federation.query(sql), /unknown database '?missing'?/);
+    assert.deepEqual(attachedNames(federation), ['main']);
+  }
+  assert.deepEqual(federation.query('PRAGMA main.table_info(t)').rows, []);
 });
 
 test('raw SQL rejects second statements before executing and detaches on failure', async () => {
@@ -458,7 +509,7 @@ test('raw SQL rejects second statements before executing and detaches on failure
   });
 
   assert.deepEqual(
-    federation.query("SELECT ';' AS value; -- tail\n; /* done */", []),
+    federation.query("SELECT ';' AS value; -- tail\n; /* done */"),
     {
       columns: ['value'],
       rows: [[';']],
@@ -466,7 +517,10 @@ test('raw SQL rejects second statements before executing and detaches on failure
   );
   for (const tail of ['SELECT 2', 'malformed sql', 'SELECT * FROM absent.t']) {
     assert.throws(
-      () => federation.query(`CREATE TEMP TABLE rejected (x); ${tail}`, ['d']),
+      () =>
+        federation.query(
+          `CREATE TEMP TABLE rejected AS SELECT x FROM d.t; ${tail}`,
+        ),
       {
         message: 'Run one SQL statement at a time',
       },
@@ -480,15 +534,15 @@ test('raw SQL rejects second statements before executing and detaches on failure
     );
   }
   assert.throws(
-    () => federation.query('SELECT * FROM d.missing', []),
+    () => federation.query('SELECT * FROM d.missing'),
     /no such table: d.missing/,
   );
   assert.throws(
-    () => federation.query('SELECT 1', ['d', 'absent']),
-    /Unknown database absent/,
+    () => federation.query('SELECT a.x FROM d.t a JOIN absent.t b USING (x)'),
+    /no such table: absent.t/,
   );
-  assert.throws(() => federation.query('DELETE FROM d.t', []), /readonly/);
-  assert.deepEqual(federation.query('SELECT x FROM d.t', []), {
+  assert.throws(() => federation.query('DELETE FROM d.t'), /readonly/);
+  assert.deepEqual(federation.query('SELECT x FROM d.t'), {
     columns: ['x'],
     rows: [[1]],
   });
@@ -517,7 +571,7 @@ test('a configured busy timeout waits for a writer before reading an attached da
   );
   try {
     await once(writer, 'message');
-    assert.deepEqual(federation.query('SELECT x FROM d.t ORDER BY x', []), {
+    assert.deepEqual(federation.query('SELECT x FROM d.t ORDER BY x'), {
       columns: ['x'],
       rows: [[1], [2]],
     });

@@ -26,9 +26,6 @@ export type FederationOptions = Pick<DatabaseSyncOptions, 'timeout'> & {
   readonly locate: Locate;
 };
 
-// SQLite's error for the first schema a statement reads that is not attached.
-const missingDatabase = /^no such table: ([^.]+)\./;
-
 // One read-only handle over main and every database the host can locate, past
 // the limit on how many one SQLite connection attaches at once. Main stays
 // open; each statement attaches and detaches the additional databases it names.
@@ -46,9 +43,9 @@ export class Federation implements Disposable {
     const store = this.#connection.createTagStore();
     this.sql = {
       all: (strings, ...values) =>
-        this.#statement([], () => store.all(strings, ...values)),
+        this.#statement(() => store.all(strings, ...values)),
       get: (strings, ...values) =>
-        this.#statement([], () => store.get(strings, ...values)),
+        this.#statement(() => store.get(strings, ...values)),
     };
   }
 
@@ -58,12 +55,11 @@ export class Federation implements Disposable {
     this.#connection.exec(sql);
   }
 
-  // Runs one SQL string with the named databases visible, in that order, for
-  // unqualified tables and schema PRAGMAs as well as qualified table names.
+  // Runs one SQL string, discovering additional databases from qualified names.
   // SQLite judges the tail: comments and empty statements are allowed, but a
   // second statement, even malformed, is rejected before the first executes.
-  query(sql: string, names: readonly string[]): QueryResult {
-    return this.#statement(names, () => {
+  query(sql: string): QueryResult {
+    return this.#statement(() => {
       const statement = this.#connection.prepare(sql);
       let another: boolean;
       try {
@@ -89,33 +85,24 @@ export class Federation implements Disposable {
   // here. A name the host cannot locate, or a table its database lacks, fails
   // as the statement would. No additional database stays attached, so the next
   // statement asks the host again where each additional database is.
-  #statement<Result>(names: readonly string[], run: () => Result): Result {
+  #statement<Result>(run: () => Result): Result {
     const attached: string[] = [];
-    const attach = (name: string): boolean => {
-      const path = this.#locate(name);
-      if (path === undefined) return false;
-      const { attach: limit } = this.#connection.limits;
-      if (attached.length === limit)
-        throw new TooManyDatabasesError(limit, [...attached, name]);
-      this.#connection
-        .prepare(`ATTACH DATABASE ? AS ${quoted(name)}`)
-        .run(path);
-      attached.push(name);
-      return true;
-    };
     try {
-      for (const name of names)
-        if (!attach(name)) throw new Error(`Unknown database ${name}`);
       for (;;) {
         try {
           return run();
         } catch (error) {
-          const name =
-            error instanceof Error
-              ? missingDatabase.exec(error.message)?.[1]
-              : undefined;
-          if (name === undefined || attached.includes(name) || !attach(name))
-            throw error;
+          const name = missingDatabase(error);
+          if (name === undefined || attached.includes(name)) throw error;
+          const path = this.#locate(name);
+          if (path === undefined) throw error;
+          const { attach: limit } = this.#connection.limits;
+          if (attached.length === limit)
+            throw new TooManyDatabasesError(limit, [...attached, name]);
+          this.#connection
+            .prepare(`ATTACH DATABASE ? AS ${quoted(name)}`)
+            .run(path);
+          attached.push(name);
         }
       }
     } finally {
@@ -127,6 +114,21 @@ export class Federation implements Disposable {
   [Symbol.dispose](): void {
     this.#connection.close();
   }
+}
+
+// Table errors name the schema directly. PRAGMA errors carry a SQL token:
+// SQLite preserves identifier quoting, and table-valued PRAGMAs quote it
+// as a string. Decode that token, without parsing the statement itself.
+function missingDatabase(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const token = /^unknown database (.+)$/s.exec(error.message)?.[1];
+  if (token === undefined)
+    return /^no such table: ([^.]+)\./.exec(error.message)?.[1];
+  const quote = token[0];
+  if (quote === '[') return token.slice(1, -1);
+  if (quote === '"' || quote === "'" || quote === '`')
+    return token.slice(1, -1).replaceAll(quote + quote, quote);
+  return token;
 }
 
 function quoted(name: string): string {
