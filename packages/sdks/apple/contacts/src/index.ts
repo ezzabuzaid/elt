@@ -52,3 +52,4 @@ export {
   type StoredData,
 } from './contacts-values.ts';
 export { ContactsSchemaError, ContactsUnavailableError } from './errors.ts';
+export { globalPreferences, macRegion } from './region.ts';

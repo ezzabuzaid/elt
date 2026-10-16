@@ -1644,3 +1644,78 @@ test('a Contacts watch keeps every stream current while contactsd changes nothin
     await watching.return(undefined);
   }
 });
+
+test('Contacts writes each phone number in E.164, reading one without a country code in its own country or else the Mac region', async () => {
+  await using scratch = await mkdtempDisposable(
+    join(tmpdir(), 'contacts-e164-'),
+  );
+  const directory = join(scratch.path, 'AddressBook');
+  createStore(directory, {
+    ZABCDRECORD: [
+      { Z_PK: 1, Z_ENT: container, ZUNIQUEID: 'ROOT:ABContainer' },
+      { Z_PK: 2, Z_ENT: contact, ZUNIQUEID: 'RANA:ABPerson', ZCONTAINER1: 1 },
+    ],
+    ZABCDPHONENUMBER: [
+      { Z_PK: 1, ZOWNER: 2, ZUNIQUEID: 'LOCAL', ZFULLNUMBER: '079 123 4567' },
+      {
+        Z_PK: 2,
+        ZOWNER: 2,
+        ZUNIQUEID: 'INTERNATIONAL-PREFIX',
+        ZFULLNUMBER: '00962 79 765 4321',
+      },
+      {
+        Z_PK: 3,
+        ZOWNER: 2,
+        ZUNIQUEID: 'PLUS',
+        ZFULLNUMBER: '+1 (202) 555-0143',
+      },
+      {
+        Z_PK: 4,
+        ZOWNER: 2,
+        ZUNIQUEID: 'OWN-COUNTRY',
+        ZFULLNUMBER: '(202) 555-0199',
+        ZCOUNTRYCODE: 'us',
+      },
+      { Z_PK: 5, ZOWNER: 2, ZUNIQUEID: 'SHORT-CODE', ZFULLNUMBER: '98877' },
+    ],
+  });
+  mkdirSync(join(directory, 'Sources'));
+  // The Mac region, as System Settings keeps it in the global preferences.
+  const e164s = async (locale: string) => {
+    const preferences = join(scratch.path, `${locale}.plist`);
+    writeFileSync(
+      preferences,
+      binaryPlist(
+        `<dict><key>AppleLocale</key><string>${locale}</string></dict>`,
+      ),
+    );
+    const contacts = await appleImport(
+      new AppleContactsSource(directory, {}, preferences),
+      join(scratch.path, locale),
+    );
+    await contacts.load();
+    return Object.fromEntries(
+      contacts
+        .read('SELECT id, e164 FROM phone_numbers')
+        .map(({ id, e164 }) => [id, e164]),
+    );
+  };
+
+  assert.deepEqual(await e164s('en_JO'), {
+    LOCAL: '+962791234567',
+    'INTERNATIONAL-PREFIX': '+962797654321',
+    PLUS: '+12025550143',
+    'OWN-COUNTRY': '+12025550199',
+    'SHORT-CODE': null,
+  });
+  // A region that is not the language's own is an rg keyword.
+  assert.equal((await e164s('en_GB@rg=jozzzz')).LOCAL, '+962791234567');
+  // Without a region, only numbers that carry their country have a form.
+  assert.deepEqual(await e164s('en'), {
+    LOCAL: null,
+    'INTERNATIONAL-PREFIX': null,
+    PLUS: '+12025550143',
+    'OWN-COUNTRY': '+12025550199',
+    'SHORT-CODE': null,
+  });
+});

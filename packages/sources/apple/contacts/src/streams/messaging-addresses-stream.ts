@@ -6,6 +6,7 @@ import {
 import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 
 import { explained, localStores } from '../contacts-fields.ts';
+import type { ContactsScan } from '../contacts-scan.ts';
 import {
   LabeledValueStream,
   labeledFields,
@@ -40,8 +41,10 @@ export class MessagingAddressesStream extends LabeledValueStream<MessagingAddres
 
   protected override records(
     row: MessagingAddressRow,
+    store: AddressBookStore,
+    scan: ContactsScan,
   ): Record<string, unknown>[] {
-    return super.records(row).map((record) => ({
+    return super.records(row, store, scan).map((record) => ({
       ...record,
       service: row.service,
     }));

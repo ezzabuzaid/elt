@@ -16,6 +16,8 @@ import {
   ContactsStore,
   ContactsUnavailableError,
   addressBookDirectory,
+  globalPreferences,
+  macRegion,
 } from '@workspace/sdk-apple-contacts';
 import { ClosedWorld } from '@workspace/snapshot-differential';
 import type { ImportScope } from '@workspace/source-apple-macos/import-scope';
@@ -116,19 +118,27 @@ export class AppleContactsSource extends Source<ContactsScan> {
 
   readonly directory: string;
   readonly scope: ImportScope;
+  readonly #preferences: string;
   readonly #store: ContactsStore;
 
-  constructor(directory = addressBookDirectory, scope: ImportScope = {}) {
+  // preferences: the global preferences that hold the Mac's region.
+  constructor(
+    directory = addressBookDirectory,
+    scope: ImportScope = {},
+    preferences = globalPreferences,
+  ) {
     super();
     this.directory = directory;
     this.scope = scope;
+    this.#preferences = preferences;
     this.#store = new ContactsStore(directory);
     this.identity = `apple-contacts:${directory}`;
     Object.freeze(this);
   }
 
   protected override async open(): Promise<ContactsScan> {
-    return new ContactsScan(await this.#store.open(), this.scope);
+    const region = await macRegion(this.#preferences);
+    return new ContactsScan(await this.#store.open(), this.scope, region);
   }
 
   override failureType(error: unknown): FailureType {

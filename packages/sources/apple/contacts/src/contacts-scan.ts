@@ -68,13 +68,16 @@ export const imageKey = (contactId: unknown, kind: unknown) =>
 // stored data here for the files the read hands over.
 export class ContactsScan implements AsyncDisposable {
   readonly images = new Map<string, StoredData>();
+  // The Mac's region, which a number without a country code is read in.
+  readonly region: string | null;
   readonly #book: AddressBook;
   readonly #scope: ImportScope;
   readonly #selections = new Map<AddressBookStore, ContactSelection>();
 
-  constructor(book: AddressBook, scope: ImportScope) {
+  constructor(book: AddressBook, scope: ImportScope, region: string | null) {
     this.#book = book;
     this.#scope = scope;
+    this.region = region;
   }
 
   get stores(): readonly AddressBookStore[] {

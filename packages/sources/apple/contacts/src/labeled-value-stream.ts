@@ -1,5 +1,9 @@
 import type { FieldSchema } from '@workspace/elt';
-import type { ContactsView, ValueRow } from '@workspace/sdk-apple-contacts';
+import type {
+  AddressBookStore,
+  ContactsView,
+  ValueRow,
+} from '@workspace/sdk-apple-contacts';
 import { eventKitFields } from '@workspace/source-apple-macos/eventkit-fields';
 
 import { AppleContactsStream } from './apple-contacts-stream.ts';
@@ -9,7 +13,7 @@ import {
   attributeRecord,
   explained,
 } from './contacts-fields.ts';
-import type { ContactSelection } from './contacts-scan.ts';
+import type { ContactSelection, ContactsScan } from './contacts-scan.ts';
 
 export const labeledValue =
   "Primary key id; contactId refers to contacts.id, and a contact can have several. label is the stored, unlocalized label. isPrimary, isPrivate and orderingIndex pass through as stored; whether orderingIndex orders a contact's values densely or uniquely is not verified.";
@@ -50,7 +54,11 @@ export abstract class LabeledValueStream<
     return selection.contact(row.values.owner);
   }
 
-  protected records(row: Row): Record<string, unknown>[] {
+  protected records(
+    row: Row,
+    _store: AddressBookStore,
+    _scan: ContactsScan,
+  ): Record<string, unknown>[] {
     return [
       {
         id: row.id,
