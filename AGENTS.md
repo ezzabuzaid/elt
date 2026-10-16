@@ -45,6 +45,10 @@ When the user asks how to get rid of a mechanism, name the problem class it answ
 
 When the user names a capability, take its simplest literal reading and restate it as "when X, then Y" with the user's own example before you propose a mechanism. eca actions went this way: a design of rungs, typed proposals and host allowlists answered a question nobody asked. The user meant that an action is an instruction to an agent: when "I ordered food", run `codex "log my calorie intake from the food I ordered"`.
 
+## Build the API shape the plan names
+
+Build the command, tool or API the approved plan names, in that shape. Avoiding a copy is no reason to change it: the Rule of Three accepts a second copy, recorded in a ledger. When a different shape seems better, ask before building it. People went this way: the plan named a standalone `people` command, it was first folded into `query people` to avoid copying `query`'s 25-line statement runner, and the user moved it back beside `query`.
+
 ## Name the standard term
 
 When you tell the user about a problem or a design, name the standard software-engineering term for it, define it once in one line with a well-known example, and then use it. Do this in every message, status notes included, not only in proposals: the user reads to learn as well as to decide. The parse-concurrency research went this way: "one slow parse holds up the rows behind it" is head-of-line blocking, "the file is valid until the next pull" is a lending iterator, "read ahead" is prefetching, and "a file handle elt closes" is ownership transfer of a disposable resource.
