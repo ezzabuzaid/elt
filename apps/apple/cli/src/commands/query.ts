@@ -78,14 +78,16 @@ export class QueryCommand extends Command {
 
   protected async run(declaration: Declaration): Promise<Output> {
     const name: string = declaration.processedArgs[0];
-    const sql: string | undefined = declaration.processedArgs[1];
-    if (declaration.opts().tables === true) {
-      using database = new Federation({
-        main: { name },
-        locate: this.imports.locate,
-        timeout: 30_000,
-      });
-      const connector = this.imports.connector(name);
+    const tables = declaration.opts().tables === true;
+    if (!tables && declaration.processedArgs[1] === undefined)
+      throw new Error('Give one SQL statement, or --tables');
+    using database = new Federation({
+      main: { name },
+      locate: this.imports.locate,
+      timeout: 30_000,
+    });
+    const connector = this.imports.connector(name);
+    if (tables) {
       const summaries = [
         ...views(database, connector),
         ...connector.presets().map(({ name: view }) => ({
@@ -103,14 +105,8 @@ export class QueryCommand extends Command {
           ),
       };
     }
-    if (sql === undefined)
-      throw new Error('Give one SQL statement, or --tables');
-    using database = new Federation({
-      main: { name },
-      locate: this.imports.locate,
-      timeout: 30_000,
-    });
-    loadPresets(database, this.imports.connector(name));
+    const sql: string = declaration.processedArgs[1];
+    loadPresets(database, connector);
     const { columns, rows } = database.query(sql);
     return {
       data: rows.map((row) =>

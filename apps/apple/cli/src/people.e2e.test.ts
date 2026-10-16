@@ -254,12 +254,22 @@ test('query preserves main, schema PRAGMAs, positional output and statement reje
   assert.match(write.stderr, /readonly/);
 });
 
-test('query preserves missing primary import errors for SQL and table listings', async () => {
+test('query preserves missing-SQL and primary import errors for SQL and table listings', async () => {
   await using scratch = await mkdtempDisposable(join(tmpdir(), 'query-cli-'));
   const paths = await importsAt(scratch.path);
   const calendar = paths.get('calendar');
   assert.ok(calendar);
   rmSync(calendar);
+  for (const name of ['books', 'calendar', 'contacts']) {
+    const result = spawnSync(process.execPath, [entry, 'query', name], {
+      cwd: scratch.path,
+      env: { ...process.env, HOME: scratch.path },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Give one SQL statement, or --tables/);
+    assert.equal(result.stdout, '');
+  }
   for (const [name, error] of [
     ['books', /Books is not set up; run: setup/],
     ['calendar', /Calendar has not synced yet; run: sync/],
